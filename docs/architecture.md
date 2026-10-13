@@ -1,14 +1,13 @@
-# Isomorphic Exam Synthesizer — Architecture & Component Breakdown
+﻿# Isomorphic Exam Synthesizer — Architecture & Component Breakdown
 
 > **Tài liệu phân rã kiến trúc chi tiết (Architecture Breakdown) — Phiên bản hoàn chỉnh**
-> Dựa trên tài liệu đặc tả MVP: [description.md](file:///c:/Users/ASUS%20Vivobook/Desktop/CT%20projects/description.md)
 > **Tech Stack:** React + Vite + TypeScript (Frontend) · Python / FastAPI (Backend) · Supabase (Database / Auth / Storage) · Docker (Container) · Gemini API (AI Service) · Typst (PDF Compiler).
 
 > [!IMPORTANT]
-> **Ranh giới MVP vs Extension:** Tài liệu này chỉ mô tả các thành phần thuộc phạm vi MVP. Các tính năng mở rộng (PDF input, DOCX layout preservation, interactive difficulty adjustment, scoring rubrics, essay questions) được loại trừ rõ ràng theo description §2.1 và sẽ không xuất hiện trong kiến trúc này.
+> **Ranh giới MVP vs Extension:** Tài liệu này chỉ mô tả các thành phần thuộc phạm vi MVP. Các tính năng mở rộng (PDF input, DOCX layout preservation, interactive difficulty adjustment, scoring rubrics, essay questions) được loại trừ rõ ràng khỏi phạm vi kiến trúc này.
 
 > [!NOTE]
-> **Disclaimer về Validation:** Bộ kiểm tra tự động (VAL-01 đến VAL-03) chỉ đảm bảo tính đúng đắn về **cú pháp, logic phương án và miền xác định toán học**. Validator **KHÔNG** đảm bảo độ khó tương đương giữa các mã đề — đây là mục tiêu đánh giá thực nghiệm (empirical evaluation) thông qua phản hồi giảng viên và khảo sát thí sinh, theo description §2.3 và §8.
+> **Disclaimer về Validation:** Bộ kiểm tra tự động (VAL-01 đến VAL-03) chỉ đảm bảo tính đúng đắn về **cú pháp, logic phương án và miền xác định toán học**. Validator **KHÔNG** đảm bảo độ khó tương đương giữa các mã đề — đây là mục tiêu đánh giá thực nghiệm (empirical evaluation) thông qua phản hồi của giảng viên và khảo sát thực nghiệm.
 
 ---
 
@@ -102,13 +101,13 @@ flowchart TB
 | :--- | :--- | :--- | :--- |
 | **FE-01** | **Auth & User State** | Đăng nhập Google OAuth qua Supabase Auth, lưu trữ/refresh JWT, điều hướng Protected Routes, hiển thị thông tin user. | UC01, UC02 |
 | **FE-02** | **Dashboard & History** | Danh sách đề thi đã lưu: ngày tạo, trạng thái (Draft → Reviewed → Exported). Cho phép xem lại, tải về hoặc **tái sử dụng phiên** (reuse session — bắt đầu phiên mới từ source đã xác nhận). | UC03 |
-| **FE-03** | **Analytics & Metrics View** | Thống kê: tổng số mã đề đã tạo, tỷ lệ duyệt lần đầu (*first-pass acceptance rate*), tần suất sinh lại câu (*regeneration frequency*). **Không** hiển thị "comparative time savings" (loại khỏi MVP theo description §4 UC04). | UC04 |
-| **FE-04** | **Stage 1: Document Ingestor** | Kéo thả upload file (`.docx`, `.tex`, `.md`) hoặc nhập text trực tiếp. **Chặn nhận file PDF** (MVP chỉ export PDF, không input PDF — description §2.1). Giới hạn MIME types cho phép và kích thước file tối đa. | UC05 |
-| **FE-05** | **Stage 1: Source Editor & Blueprint Confirmer** | Hiển thị câu hỏi đã bóc tách kèm Blueprint (biến số, khoảng giá trị, điều kiện bất biến). Cho phép giảng viên **chỉnh sửa nội dung nguồn và blueprint** trước khi bấm "Confirm" (description §4 UC05–UC06: "produce an editable structured source" và "instructor correction and confirmation"). Bao gồm **Blueprint Rule Renderer** hiển thị quy tắc biến thể dạng ngôn ngữ tự nhiên / toán học thân thiện (description §2.2: "readable rule summary"). | UC05, UC06 |
+| **FE-03** | **Analytics & Metrics View** | Thống kê: tổng số mã đề đã tạo, tỷ lệ duyệt lần đầu (*first-pass acceptance rate*), tần suất sinh lại câu (*regeneration frequency*). **Không** hiển thị "comparative time savings". | UC04 |
+| **FE-04** | **Stage 1: Document Ingestor** | Kéo thả upload file (`.docx`, `.tex`, `.md`) hoặc nhập text trực tiếp. **Chặn nhận file PDF** (Chỉ hỗ trợ xuất PDF, không nhận input PDF để đảm bảo độ chính xác bóc tách). Giới hạn MIME types cho phép và kích thước file tối đa. | UC05 |
+| **FE-05** | **Stage 1: Source Editor & Blueprint Confirmer** | Hiển thị câu hỏi đã bóc tách kèm Blueprint (biến số, khoảng giá trị, điều kiện bất biến). Cho phép giảng viên **chỉnh sửa nội dung nguồn và blueprint** trước khi bấm "Confirm". Bao gồm **Blueprint Rule Renderer** hiển thị quy tắc biến thể dạng ngôn ngữ tự nhiên / toán học thân thiện. | UC05, UC06 |
 | **FE-06** | **Stage 2: Configurator** | Form cấu hình: chọn số lượng mã đề ($N \in [1, 4]$), bật/tắt chế độ biến thể (variation modes) từ Blueprint đã xác nhận, thiết lập ordering preferences. Validation phía client + server-side (BE-04). | UC07 |
-| **FE-07** | **Stage 3: Side-by-Side Reviewer** | Giao diện cốt lõi: so sánh song song **ánh xạ 1-1** (1-to-1 question mapping) giữa câu gốc và câu biến thể. Hiển thị **warning badges** từ `validation_report` cho các câu bị lỗi syntax/duplicate/domain. **KHÔNG** cho phép chỉnh sửa text thủ công trên câu sinh (description §6.2: "disallowing manual text edits to preserve blueprint validity"). | UC09 |
+| **FE-07** | **Stage 3: Side-by-Side Reviewer** | Giao diện cốt lõi: so sánh song song **ánh xạ 1-1** (1-to-1 question mapping) giữa câu gốc và câu biến thể. Hiển thị **warning badges** từ `validation_report` cho các câu bị lỗi syntax/duplicate/domain. **KHÔNG** cho phép chỉnh sửa text thủ công trên câu sinh nhằm bảo toàn tính toàn vẹn của Blueprint. | UC09 |
 | **FE-08** | **Stage 3: Review Action Bar** | Cung cấp thao tác nhị phân nghiêm ngặt cho từng câu: **Accept** (chấp nhận) hoặc **Reject** (từ chối → kích hoạt targeted regeneration). Nút khẩn cấp **Revert to Source** để quay về câu gốc đã xác thực khi AI sinh lại liên tục thất bại. **Tuyệt đối không** có ô nhập text thủ công. | UC09 |
-| **FE-09** | **Final Approval & Package Preview** | Sau khi 100% câu được Accept: hiển thị bản xem trước toàn bộ các mã đề sau khi xáo trộn (shuffled), bảng ma trận đáp án, lời giải chi tiết. Giảng viên bấm **"Approve Final Package"** để khóa nội dung và cho phép xuất bản. Đây là bước tách biệt khỏi Download (description §5 Stage 3: Final Approval → Export). | UC09, UC10 |
+| **FE-09** | **Final Approval & Package Preview** | Sau khi 100% câu được Accept: hiển thị bản xem trước toàn bộ các mã đề sau khi xáo trộn (shuffled), bảng ma trận đáp án, lời giải chi tiết. Giảng viên bấm **"Approve Final Package"** để khóa nội dung và cho phép xuất bản. Đây là bước tách biệt khỏi Download. | UC09, UC10 |
 | **FE-10** | **Export Download Center** | Sau khi Final Approval: nút tải về gói PDF đề thi, PDF đáp án, LaTeX/Markdown sạch (.zip). Chỉ khả dụng sau khi FE-09 hoàn tất phê duyệt. | UC10 |
 | **FE-11** | **Math Renderer Component** | Component dùng chung sử dụng `KaTeX` (hoặc `react-katex`) kết hợp `react-markdown` để render mượt mà mọi công thức Toán học trên toàn bộ giao diện. | Tất cả |
 | **FE-12** | **Generation Progress Tracker** | Component theo dõi tiến trình sinh đề qua kênh **SSE** (Server-Sent Events): hiển thị thanh tiến trình (progress bar), trạng thái từng câu đang sinh/đang validate/hoàn tất, và thông báo lỗi retry real-time. | UC08 |
@@ -122,13 +121,13 @@ flowchart TB
 | **BE-01** | **API Router & Auth Middleware** | Điểm tiếp nhận request, kiểm tra JWT token (Supabase), xử lý CORS, phân quyền user. Tất cả endpoints sử dụng **async** (`async def`). | Tất cả |
 | **BE-02** | **Document Parsing Service** | Bóc tách câu hỏi, 4 phương án A/B/C/D, đáp án, và lời giải gốc (nếu có) từ file tải lên. Sử dụng `python-docx` (DOCX), regex/AST (LaTeX), parser (Markdown). **Chặn** file PDF ở tầng server (validate MIME + extension). Giới hạn kích thước file. | UC05 |
 | **BE-03** | **Blueprint Correction & Management Service** | Quản lý vòng đời Blueprint: nhận bản trích xuất từ AI-02, cung cấp **PATCH API** cho giảng viên chỉnh sửa source và blueprint trước khi xác nhận, lưu bản đã duyệt dạng JSONB. | UC06 |
-| **BE-04** | **Config Validator** | Kiểm tra tính hợp lệ **server-side** cho cấu hình sinh đề: $N \in [1, 4]$, variation modes phải thuộc tập cho phép từ Blueprint đã xác nhận, ordering preferences hợp lệ. Trả thông báo xung đột rõ ràng nếu cấu hình vi phạm ràng buộc (description §5 Stage 2: "Explain conflict"). | UC07 |
-| **BE-05** | **Generation Orchestrator** | Điều phối luồng sinh $N \le 4$ mã đề: gửi prompt đến AI (AI-03, AI-04) → nhận kết quả → chuyển sang Validator (VAL-01..04) → kích hoạt Auto-retry nếu lỗi (tối đa 3 lần). **Sau 3 lần retry thất bại: vẫn trả draft kèm `validation_report` chứa warning badges** để giảng viên xem xét — KHÔNG chặn pipeline (description §4 UC08: "return drafts with validation warning badges"). | UC08 |
+| **BE-04** | **Config Validator** | Kiểm tra tính hợp lệ **server-side** cho cấu hình sinh đề: $N \in [1, 4]$, variation modes phải thuộc tập cho phép từ Blueprint đã xác nhận, ordering preferences hợp lệ. Trả thông báo xung đột rõ ràng nếu cấu hình vi phạm ràng buộc. | UC07 |
+| **BE-05** | **Generation Orchestrator** | Điều phối luồng sinh $N \le 4$ mã đề: gửi prompt đến AI (AI-03, AI-04) → nhận kết quả → chuyển sang Validator (VAL-01..04) → kích hoạt Auto-retry nếu lỗi (tối đa 3 lần). **Sau 3 lần retry thất bại: vẫn trả draft kèm `validation_report` chứa warning badges** để giảng viên xem xét — KHÔNG chặn pipeline. | UC08 |
 | **BE-06** | **Background Job & Progress Streamer** | Sinh đề cho $N$ mã đề × nhiều câu hỏi có thể mất hàng chục giây đến vài phút. Module này quản lý **background task** (FastAPI `BackgroundTasks` hoặc task queue) và **stream tiến trình real-time** qua **Server-Sent Events (SSE)** endpoint: trạng thái từng câu (generating → validating → done / retrying), phần trăm hoàn thành, thông báo lỗi. | UC08 |
 | **BE-07** | **Targeted Regeneration Service** | Tiếp nhận sự kiện Reject một câu cụ thể từ FE-08: gọi AI sinh lại **duy nhất câu đó** (giữ nguyên toàn bộ các câu còn lại), chạy validate → lưu `validation_report` mới → trả kết quả về màn hình Review để giảng viên re-review bắt buộc. | UC09 |
 | **BE-08** | **Fallback & Revert Handler** | Khi AI sinh lại liên tục thất bại cho một câu cụ thể: cho phép phục hồi (revert) câu biến thể về lại **nguyên bản câu hỏi gốc đã xác thực** (truy xuất qua FK `source_question_id`). Cập nhật trạng thái câu thành `approved` (với flag `is_reverted = true`). | UC09 |
-| **BE-09** | **Shuffler & Key Synchronizer** | Chỉ chạy **sau khi 100% câu hỏi được Approve** (description §4, §5): thực hiện hoán vị ngẫu nhiên thứ tự câu và thứ tự các lựa chọn A/B/C/D cho từng mã đề; tự động đồng bộ lại bảng ma trận đáp án (`answer_keys`) và ánh xạ lời giải khớp chính xác với từng mã đề mới. | UC09 |
-| **BE-10** | **Audit, Statistics & Observability Logger** | Ghi nhật ký tương tác chi tiết với enum `action_type` (`ACCEPT`, `REJECT`, `REGENERATE`, `REVERT`). Tổng hợp dữ liệu thống kê cho UC04: first-pass acceptance rate, regeneration frequency. Đo **latency** (thời gian phản hồi AI, thời gian validate), **failure rate** (tỷ lệ retry/revert), **recovery** (description §8: stability metrics). | UC04 |
+| **BE-09** | **Shuffler & Key Synchronizer** | Chỉ chạy **sau khi 100% câu hỏi được Approve** thực hiện hoán vị ngẫu nhiên thứ tự câu và thứ tự các lựa chọn A/B/C/D cho từng mã đề; tự động đồng bộ lại bảng ma trận đáp án (`answer_keys`) và ánh xạ lời giải khớp chính xác với từng mã đề mới. | UC09 |
+| **BE-10** | **Audit, Statistics & Observability Logger** | Ghi nhật ký tương tác chi tiết với enum `action_type` (`ACCEPT`, `REJECT`, `REGENERATE`, `REVERT`). Tổng hợp dữ liệu thống kê cho UC04: first-pass acceptance rate, regeneration frequency. Đo **latency** (thời gian phản hồi AI, thời gian validate), **failure rate** (tỷ lệ retry/revert), **recovery**. | UC04 |
 
 ---
 
@@ -147,7 +146,7 @@ flowchart TB
 ### 2.4. Validation Engine (Python — SymPy & Rule Checker)
 
 > [!WARNING]
-> **Giới hạn của Validator:** SymPy (VAL-03) chỉ kiểm tra hiệu quả cho các bài toán **giải tích, đại số thuần túy** (phương trình, bất phương trình, đạo hàm, tích phân, giới hạn). Đối với các dạng khó phân tích hình thức (hình học phức tạp, xác suất, tổ hợp, chứng minh, word problems), hệ thống sẽ **fallback sang Rule-Based Checker** (VAL-04). Description §7.2 quy định rõ: "Complete one targeted mathematics question family end to end before expanding where validation is feasible."
+> **Giới hạn của Validator:** SymPy (VAL-03) chỉ kiểm tra hiệu quả cho các bài toán **giải tích, đại số thuần túy** (phương trình, bất phương trình, đạo hàm, tích phân, giới hạn). Đối với các dạng khó phân tích hình thức (hình học phức tạp, xác suất, tổ hợp, chứng minh, word problems), hệ thống sẽ **fallback sang Rule-Based Checker** (VAL-04). Hệ thống ưu tiên hoàn thiện trọn vẹn nhóm bài toán giải tích/đại số trước khi mở rộng các dạng toán khác.
 
 | Mã | Tên Module | Mô tả & Trách nhiệm | Ánh xạ UC |
 | :--- | :--- | :--- | :--- |
@@ -194,9 +193,9 @@ Mỗi câu hỏi được validate sẽ sinh ra một `validation_report` (JSONB
 | :--- | :--- | :--- |
 | **`users`** | Định danh giảng viên từ Google OAuth. | `id` (UUID PK), `email`, `name`, `avatar_url`, `created_at` |
 | **`exam_sessions`** | Phiên làm việc chính. | `id` (UUID PK), `user_id` (FK → users), `title`, `subject`, `status` (ENUM: `draft`, `blueprinted`, `configured`, `generated`, `reviewed`, `approved`, `exported`), `created_at`, `updated_at` |
-| **`source_questions`** | Câu hỏi gốc bóc tách từ đề ban đầu. | `id` (UUID PK), `session_id` (FK), `question_no` (INT), `stem_latex` (TEXT), `options` (JSONB — mảng 4 phương án), `correct_option` (CHAR: A/B/C/D), `solution_md` (TEXT, nullable — lời giải gốc nếu có, description §2.1: "optional source solutions"), `raw_source` (TEXT) |
+| **`source_questions`** | Câu hỏi gốc bóc tách từ đề ban đầu. | `id` (UUID PK), `session_id` (FK), `question_no` (INT), `stem_latex` (TEXT), `options` (JSONB — mảng 4 phương án), `correct_option` (CHAR: A/B/C/D), `solution_md` (TEXT, nullable — lời giải gốc nếu có), `raw_source` (TEXT) |
 | **`question_blueprints`** | Cấu trúc Blueprint dạng JSONB. | `id` (UUID PK), `source_question_id` (FK → source_questions, **1-to-1**), `parameters` (JSONB — danh sách biến, khoảng giá trị), `invariants` (JSONB — điều kiện bất biến), `variation_modes` (JSONB — các chế độ biến đổi cho phép), `readable_summary` (TEXT — mô tả thân thiện), `confirmed_at` (TIMESTAMP, nullable) |
-| **`generation_configs`** | Cấu hình sinh đề cho phiên (description §4 UC07). | `id` (UUID PK), `session_id` (FK → exam_sessions, **1-to-1**), `n_versions` (INT, 1–4), `active_variation_modes` (JSONB — chế độ biến thể đang bật), `ordering_preferences` (JSONB), `created_at` |
+| **`generation_configs`** | Cấu hình sinh đề cho phiên. | `id` (UUID PK), `session_id` (FK → exam_sessions, **1-to-1**), `n_versions` (INT, 1–4), `active_variation_modes` (JSONB — chế độ biến thể đang bật), `ordering_preferences` (JSONB), `created_at` |
 | **`exam_versions`** | Thông tin $N$ mã đề đã sinh. | `id` (UUID PK), `session_id` (FK), `version_label` (VARCHAR — "101", "102", ...), `shuffle_seed` (INT, nullable — ghi lại seed hoán vị), `is_finalized` (BOOL) |
 | **`version_questions`** | Chi tiết từng câu của từng mã đề. **Bảng trung tâm của hệ thống.** | `id` (UUID PK), `version_id` (FK → exam_versions), **`source_question_id`** (FK → source_questions — **ánh xạ 1-to-1 bắt buộc**, phục vụ side-by-side và Revert), `question_no` (INT — thứ tự sau shuffle), `original_no` (INT — thứ tự trước shuffle), `stem_latex` (TEXT), `options` (JSONB), `correct_option` (CHAR), **`solution_md`** (TEXT — lời giải chi tiết), **`solution_latex`** (TEXT, nullable), `status` (ENUM: `pending`, `approved`, `rejected`), `is_reverted` (BOOL DEFAULT false — đánh dấu câu đã revert về gốc), **`validation_report`** (JSONB — kết quả kiểm tra tự động, phục vụ warning badges), `retry_count` (INT DEFAULT 0) |
 | **`answer_keys`** | Ma trận đáp án chính thức sau shuffle. | `id` (UUID PK), `version_id` (FK → exam_versions), `question_no` (INT — thứ tự sau shuffle), `correct_option` (CHAR: A/B/C/D) |
@@ -330,11 +329,26 @@ erDiagram
 
 ```text
 isomorphic-exam-synthesizer/
-├── docker-compose.yml
-├── .env.example
-├── .gitignore
-├── description.md
-├── architecture.md
+├── docker-compose.yml                     # Docker Compose điều phối FE & BE
+├── .env.example                           # Mẫu biến môi trường
+├── .gitignore                             # Cấu hình bỏ qua file nhạy cảm/tạm
+├── .gitattributes                         # Tự động chuẩn hóa line endings (LF/CRLF)
+├── CONTRIBUTING.md                        # Hướng dẫn đóng góp & quy ước git
+├── LICENSE
+├── README.md
+│
+├── .github/                               # CI/CD & GITHUB TEMPLATES
+│   ├── workflows/
+│   │   └── ci.yml                         # Pipeline kiểm tra tự động (Lint, Typecheck, Build)
+│   ├── ISSUE_TEMPLATE/
+│   │   ├── task.md                        # Mẫu tạo task trong sprint
+│   │   └── bug_report.md                  # Mẫu báo cáo lỗi
+│   └── pull_request_template.md           # Mẫu mô tả Pull Request
+│
+├── docs/                                  # TÀI LIỆU HỆ THỐNG
+│   ├── architecture.md                    # Tài liệu phân rã kiến trúc chi tiết
+│   ├── description.md                     # Đặc tả yêu cầu & phạm vi MVP
+│   └── planning.md                        # Kế hoạch triển khai & task breakdown
 │
 ├── frontend/                              # REACT + VITE + TYPESCRIPT
 │   ├── Dockerfile
@@ -343,60 +357,20 @@ isomorphic-exam-synthesizer/
 │   ├── tsconfig.json
 │   ├── src/
 │   │   ├── components/                    # UI chung: Layout, KaTeX Renderer, ProgressBar
-│   │   │   ├── MathRenderer.tsx           # FE-11: KaTeX + react-markdown
-│   │   │   ├── ProgressTracker.tsx        # FE-12: SSE progress bar
-│   │   │   └── WarningBadge.tsx           # Render validation_report badges
-│   │   ├── features/
-│   │   │   ├── auth/                      # FE-01: Google OAuth login
-│   │   │   ├── dashboard/                 # FE-02, FE-03: History + Analytics
-│   │   │   ├── stage1-ingestion/          # FE-04, FE-05: Upload, Edit & Blueprint Confirm
-│   │   │   ├── stage2-config/             # FE-06: Generation configurator
-│   │   │   ├── stage3-review/             # FE-07, FE-08: Side-by-side + Action bar
-│   │   │   ├── approval/                  # FE-09: Final Approval & Preview
-│   │   │   └── export/                    # FE-10: Download center
-│   │   ├── hooks/                         # Custom hooks (useSSE, useAuth, useExamSession)
-│   │   ├── services/                      # API client (axios/fetch) + Supabase client
-│   │   └── types/                         # TypeScript interfaces (Exam, Blueprint, ...)
+│   │   ├── features/                      # Modules chức năng theo từng Stage
+│   │   ├── hooks/                         # Custom hooks (useSSE, useAuth, ...)
+│   │   ├── services/                      # API client + Supabase client
+│   │   └── types/                         # TypeScript interfaces
 │
 └── backend/                               # PYTHON / FASTAPI
     ├── Dockerfile
     ├── requirements.txt
     ├── app/
     │   ├── main.py                        # Entry point FastAPI + CORS + lifespan
-    │   ├── api/
-    │   │   ├── auth.py                    # BE-01: JWT validation routes
-    │   │   ├── sessions.py                # CRUD exam sessions
-    │   │   ├── ingest.py                  # BE-02: Upload & parse
-    │   │   ├── blueprints.py              # BE-03: PATCH/confirm blueprints
-    │   │   ├── config.py                  # BE-04: Validate & save generation config
-    │   │   ├── generate.py                # BE-05, BE-06: Orchestrate + SSE stream
-    │   │   ├── review.py                  # BE-07, BE-08: Accept/Reject/Revert
-    │   │   ├── finalize.py                # BE-09: Shuffle + sync keys
-    │   │   └── export.py                  # EXP-01..03: Build + compile + zip
-    │   ├── core/
-    │   │   ├── config.py                  # Env vars, settings (Pydantic BaseSettings)
-    │   │   ├── security.py                # JWT decode, Supabase token verification
-    │   │   ├── database.py                # Async connection pool (asyncpg / supabase-py)
-    │   │   └── observability.py           # BE-10: Structured logging, latency tracking
-    │   ├── models/
-    │   │   ├── schemas.py                 # Pydantic request/response models
-    │   │   └── db_models.py               # SQLAlchemy / raw SQL table definitions
-    │   └── services/
-    │       ├── parser/                    # BE-02: DOCX, LaTeX, MD parsers
-    │       ├── ai/
-    │       │   ├── client.py              # AI-01: Gemini SDK wrapper + backoff + batch
-    │       │   ├── prompts/               # AI-02..04: Prompt templates (Jinja2 / f-string)
-    │       │   └── schema_repair.py       # AI-05: Schema validation + repair pass
-    │       ├── validator/
-    │       │   ├── syntax_checker.py      # VAL-01
-    │       │   ├── logic_checker.py       # VAL-02
-    │       │   ├── sympy_evaluator.py     # VAL-03
-    │       │   └── rule_checker.py        # VAL-04: Fallback for non-SymPy types
-    │       ├── synchronizer/              # BE-09: Shuffle + key sync
-    │       └── exporter/
-    │           ├── latex_builder.py        # EXP-01
-    │           ├── typst_compiler.py       # EXP-02: Typst binary invocation
-    │           └── zip_bundler.py          # EXP-03
+    │   ├── api/                           # Các router endpoints
+    │   ├── core/                          # Cấu hình, bảo mật, kết nối DB
+    │   ├── models/                        # Pydantic schemas & DB models
+    │   └── services/                      # Parser, AI Gemini, Validator, Exporter
 ```
 
 ---

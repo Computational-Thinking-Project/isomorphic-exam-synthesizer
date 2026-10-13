@@ -1,41 +1,24 @@
-# Isomorphic Exam Synthesizer — Kế Hoạch Triển Khai (v3.2 — Baseline Triển Khai Thực Tế)
+# Isomorphic Exam Synthesizer — Kế Hoạch Triển Khai
 
-> **Tài liệu kế hoạch tối ưu dành cho nhóm 7 người (Baseline Triển Khai Thực Tế — Implementation Baseline)**  
-> Tham chiếu: [description.md](file:///c:/Users/ASUS%20Vivobook/Desktop/CT%20projects/description.md) · [architecture.md](file:///c:/Users/ASUS%20Vivobook/Desktop/CT%20projects/architecture.md)  
-> **Mô hình làm việc:** Part-time ~15–20h/tuần/người · Tổng thời gian: **4 tuần (28 ngày lịch: 14/10/2026 – 10/11/2026)** · **Ngân sách tải khả dụng:** 420–560 giờ công tổng cộng  
-> **Đánh giá mức độ sẵn sàng triển khai:** **Baseline Triển Khai Thực Tế (Đã giải quyết trọn vẹn 12/12 điểm phản biện kỹ thuật: (1) Khớp 100% bảng giờ công và đối chiếu từng thành viên $\le 60$h, dự phòng 3.3%–27.5%; (2) Giới hạn cứng MVP 20 câu nguồn / trần 250 API calls / session; (3) Hợp đồng đủ 2 API Ingestion & CRUD câu nguồn & Blueprint lần đầu; (4) Siết chặt RLS audit log bảng security_events bất biến, ON DELETE SET NULL; (5) Giữ nguyên câu nguồn, chỉ escape XML an toàn; (6) Khai báo antlr4-python3-runtime và Docker CI smoke test cho SymPy; (7) Giao thức SSE reconnect cấp mới ticket và lưu tiến độ DB cho Crash Recovery; (8) Mô hình dữ liệu chuẩn Canonical Data Model cho deterministic shuffle; (9) SQL First-Pass chuẩn xác theo hành động thẩm định đầu tiên, chốt đúng 4 thẻ KPI MVP; (10) Nén Mermaid Gantt chart khớp đúng 28 ngày lịch kết thúc ngày 10/11/2026 và gắn TASK-402b vào TASK-405; (11) Đồng bộ Fallback Cut-List 10 bảng, 4 định dạng, ngắt SymPy sang Rule Fallback an toàn; (12) Chuẩn hóa tuyên bố mức độ sẵn sàng thực tế).**  
-> **Nguyên tắc cốt lõi:** Single Ownership (1 Chủ trì duy nhất / task) · Hỗ trợ chéo định lượng · Contract-first · Security by Design · Relational RLS · Finite Scope Bounds
+> **Kế hoạch triển khai dự án cho nhóm 7 thành viên**  
+> **Thời gian:** 4 tuần (14/10/2026 – 10/11/2026)  
+> **Nguyên tắc cốt lõi:** Single Ownership · Contract-first · Continuous Integration & Quality Gates
 
 ---
 
-## 1. Phân công nhân sự & Định lượng tải công việc (Workload Budget & Reconciliation)
+## 1. Phân công nhân sự & Vai trò kỹ thuật
 
-*Ngân sách thời gian khả dụng của mỗi thành viên: 15–20 giờ/tuần $\times$ 4 tuần = 60–80 giờ công (Tổng nhóm: 420–560 giờ công).*
+| Ký hiệu | Vai trò | Trọng tâm phụ trách chính | Danh sách task phụ trách |
+| :--- | :--- | :--- | :--- |
+| **FE1** | Frontend Core 1 | Setup FE, Auth UI, Dashboard, KaTeX, Stage 1 Ingestion, Blueprint Editor, Thống kê | TASK-003, 101, 103, 105, 201, 203b, 204, 401 |
+| **FE2** | Frontend Core 2 | CloneModal, Stage 2 Config, SSE Progress, Review 1-1, Action Bar, Final Approval, Export Center | TASK-103b, 206, 208, 301, 302, 305, 307 |
+| **BE1** | Backend Core & Lead | Setup BE, Auth JWT, Sessions CRUD, Parsers (DOCX/LaTeX/MD), Blueprint APIs, Review API, Final Approval API | TASK-004, 102, 104, 202, 205, 303, 305b |
+| **BE2** | Backend Engine | Rate Limit, Config Validator, Orchestrator SSE, Health Metrics, Shuffler, Typst PDF Compiler | TASK-005, 207a, 207b, 207c, 304, 306a |
+| **AI** | AI & Prompt Specialist | Gemini Client, Schema Repair, Variant Generator, Blueprint Prompt, Solution Prompt, LaTeX/MD Bundler, Prompt Tuning | TASK-106, 106b, 106c, 203, 402, 306b, 404 |
+| **VAL** | Math & Validation | Syntax & Logic, SymPy ProcessPool, Rule Fallback, Validation Aggregator, Math Metrics, Thẩm định Lời giải | TASK-107a, 107b, 107c, 107d, 401b, 402b |
+| **OPS** | DevOps & QA | Repo CI/CD, Docker Compose, Database RLS, E2E Golden Test, Test Biên, Khảo sát Giảng viên, Video Demo | TASK-000, 001, 002, 403, 403b, 403c, 405 |
 
-### 1.1. Bảng phân bổ nhân sự và tải công việc
-
-| Ký hiệu | Vai trò kỹ thuật | Trọng tâm phụ trách chính (Single Owner) | Số task Owner | Giờ Owner | Giờ Contributor | Tổng giờ | Tải dự kiến (60h - 80h) | Độ tin cậy |
-| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
-| **FE1** | Frontend Core 1 | Setup FE (003), Auth UI (101), Dashboard (103), KaTeX (105), Stage 1 Upload (201), S1 Incomplete (203b), Blueprint Editor (204), Stats UI (401). | **8** | 48h | 6h *(TASK-305: 2h, TASK-405: 4h)* | **54h** | 67.5% – 90.0% | Cao |
-| **FE2** | Frontend Core 2 | CloneModal (103b), Stage 2 Config (206), SSE Progress (208), Review 1-1 (301), Action Bar (302), Final Approval UI (305), Export Center (307). | **7** | 50h | 4h *(TASK-403: 4h)* | **54h** | 67.5% – 90.0% | Cao |
-| **BE1** | Backend Core & Lead | Setup BE (004), Auth JWT (102), Sessions CRUD (104), Parsers DOCX/TeX/MD (202), Blueprint APIs (205), Review API (303), Final Approval API (305b). | **7** | 48h | 6h *(TASK-002: 2h, TASK-203b: 2h, TASK-401: 2h)* | **54h** | 67.5% – 90.0% | Cao |
-| **BE2** | Backend Engine | Rate Limit (005), Config Validator (207a), Orchestrator SSE (207b), Health Metrics (207c), Shuffler (304), Typst PDF (306a). | **6** | 46h | 6h *(TASK-305b: 2h, TASK-307: 2h, TASK-403b: 2h)* | **52h** | 65.0% – 86.7% | Cao |
-| **AI** | AI & Text Specialist | Gemini Client (106), Schema Repair (106b), Variant AI-03 (106c), Blueprint Prompt (203), Solution Prompt (402), XeLaTeX/MD Bundler (306b), Prompt Tuning (404). | **7** | 50h | 4h *(TASK-000: 2h, TASK-207b: 2h)* | **54h** | 67.5% – 90.0% | Cao |
-| **VAL** | Math & Validation | Syntax & Logic (107a), SymPy ProcessPool (107b), Rule Fallback (107c), Validation Aggregator (107d), Math Metrics (401b), Solution Audit (402b). | **6** | 44h | 10h *(TASK-106c: 2h, TASK-303: 2h, TASK-304: 2h, TASK-403c: 4h)* | **54h** | 67.5% – 90.0% | Cao |
-| **OPS** | DevOps & QA | Repo/CI (000), Docker (001), Relational RLS (002), E2E Golden Test (403), Test Biên (403b), Khảo sát Giảng viên (403c), Video Demo (405). | **7** | 50h | 4h *(TASK-005: 2h, TASK-404: 2h)* | **54h** | 67.5% – 90.0% | Cao |
-| **Tổng** | **Toàn đội 7 người** | **Tổng cộng 48 tasks (Khớp 100% giữa Task-level và Member-level)** | **48** | **336h** | **40h** | **376h** | **67.1% – 89.5%** | **Khả thi cao** |
-
-### 1.2. Bảng đối chiếu khớp số giờ (Workload Reconciliation)
-- **Tổng ước lượng 48 task (Sum of 48 Task Estimates):** $\mathbf{376\text{ giờ công}}$ (mỗi thẻ task ghi rõ: `Ước lượng = Giờ Owner + Giờ Contributor`).
-- **Tổng giờ trách nhiệm chính (Owner Hours):** $\mathbf{336\text{ giờ công}}$ (chiếm 89.4% khối lượng).
-- **Tổng giờ hỗ trợ chéo định lượng (Contributor Hours):** $\mathbf{40\text{ giờ công}}$ (chiếm 10.6% khối lượng, được phân bổ minh bạch cho từng phần việc liên mô-đun).
-- **Tổng thời gian phân bổ thực tế:** $336\text{h} + 40\text{h} = \mathbf{376\text{ giờ công}}$ (khớp chính xác 100% với tổng số giờ của 48 task).
-- **Đánh giá mức độ an toàn và dự phòng ngân sách (Buffer Analysis):**
-  - Tại trần năng lực tối thiểu **15 giờ/tuần** ($15\text{h} \times 4 \times 7 = 420\text{h}$): Nhóm sử dụng $376\text{h} / 420\text{h} = 89.5\%$, còn dư **44 giờ công dự phòng (tương đương 10.5% buffer)**.
-  - Tại trần năng lực tối đa **20 giờ/tuần** ($20\text{h} \times 4 \times 7 = 560\text{h}$): Nhóm sử dụng $376\text{h} / 560\text{h} = 67.1\%$, còn dư **184 giờ công dự phòng (tương đương 32.9% buffer)**.
-  - Tại mức trung bình **17.5 giờ/tuần** ($17.5\text{h} \times 4 \times 7 = 490\text{h}$): Nhóm sử dụng $376\text{h} / 490\text{h} = 76.7\%$, còn dư **114 giờ công dự phòng (tương đương 23.3% buffer)**.
-  - **Kiểm soát cá nhân an toàn tuyệt đối:** Mọi thành viên đều có tổng giờ **$\le 54\text{h}$** (thấp hơn ngưỡng 60h ít nhất 6 giờ dự phòng cá nhân ngay cả khi làm ở mức tối thiểu 15h/tuần). Đặc biệt OPS chỉ gánh 54h, đảm bảo đầy đủ năng lực điều phối kiểm thử và bàn giao sản phẩm cuối kỳ.
-- **Quy tắc Single Ownership:** Mỗi task trong số 48 task có **đúng 1 thành viên chịu trách nhiệm chính (Owner)** về code và nghiệm thu; thành viên hỗ trợ (Contributor) chỉ nhận phần việc con cụ thể đã định nghĩa rõ trong mô tả task.
+*Mỗi task có duy nhất 1 thành viên chịu trách nhiệm chính (Owner); các thành viên hỗ trợ liên mô-đun (Contributor) phối hợp theo ma trận sở hữu mã nguồn.*
 
 ---
 
@@ -60,7 +43,6 @@
 
 ### TASK-000 · Tạo repository, cấu trúc thư mục, CI Pipeline, Phạm vi Toán Học & Ngân Sách Quota (Scope Bounds)
 - **Người làm:** OPS (Owner) + AI (Contributor)
-- **Ước lượng:** 8 giờ (Owner OPS: 6h, Contributor AI: 2h) · **Độ tin cậy:** Cao
 - **Trạng thái:** ⬜
 
 **Mô tả:** Tạo repo GitHub/GitLab với cấu trúc thư mục chuẩn theo architecture.md, thiết lập quy chuẩn đóng góp, pipeline CI tự động, khoanh vùng miền toán học mục tiêu và kiểm soát ngân sách quota có thể kiểm chứng cho MVP.
@@ -103,7 +85,6 @@
 
 ### TASK-001 · Tạo Docker Compose và Dockerfiles
 - **Người làm:** OPS (Owner)
-- **Ước lượng:** 8 giờ (Owner OPS: 8h) · **Độ tin cậy:** Cao
 - **Trạng thái:** ⬜
 
 **Mô tả:** Đóng gói toàn bộ môi trường Frontend và Backend vào Docker để mọi thành viên chạy được với 1 lệnh duy nhất.
@@ -120,7 +101,6 @@
 
 ### TASK-002 · Tạo cơ sở dữ liệu Supabase, Relational RLS, Auth Trigger & Hợp Đồng DDL Đồng Bộ (SEC-01, SEC-09)
 - **Người làm:** OPS (Owner) + BE1 (Contributor)
-- **Ước lượng:** 14 giờ (Owner OPS: 12h, Contributor BE1: 2h) · **Độ tin cậy:** Cao
 - **Trạng thái:** ⬜
 
 **Mô tả:** Tạo project Supabase, chạy DDL chuẩn hóa 10 bảng (9 bảng nghiệp vụ + 1 bảng `security_events` tách riêng), đồng bộ 100% các cột Canonical, Permutation, Invariant Index `is_current`, Quota Tracking Counters, Database Trigger đồng bộ tài khoản Google OAuth có bảo vệ search_path, cài đặt Relational RLS bao phủ toàn bộ bảng (gồm cả `users`) và script Storage Retention.
@@ -243,7 +223,6 @@
 
 ### TASK-003 · Khởi tạo project Frontend (React + Vite + TypeScript)
 - **Người làm:** FE1 (Owner)
-- **Ước lượng:** 6 giờ (Owner FE1: 6h) · **Độ tin cậy:** Cao
 - **Trạng thái:** ⬜
 
 **Mô tả:** Tạo project React với Vite và TypeScript, cài đặt bộ thư viện chuẩn và định nghĩa toàn bộ Typescript Interfaces.
@@ -260,7 +239,6 @@
 
 ### TASK-004 · Khởi tạo project Backend (Python + FastAPI), Phân Tách Client DB & API Contract (SEC-01, ALIGN-01)
 - **Người làm:** BE1 (Owner)
-- **Ước lượng:** 6 giờ (Owner BE1: 6h) · **Độ tin cậy:** Cao
 - **Trạng thái:** ⬜
 
 **Mô tả:** Tạo project FastAPI, cấu hình Pydantic v2 schemas làm hợp đồng API chuẩn, tạo tài liệu hợp đồng endpoints chi tiết `docs/api-contract.md`, bảo vệ khóa bí mật và phân tách client DB.
@@ -302,7 +280,6 @@
 
 ### TASK-005 · Rate Limiting Middleware & Cấu hình CORS chặt chẽ (SEC-05, SEC-06, SEC-10)
 - **Người làm:** BE2 (Owner) + OPS (Contributor)
-- **Ước lượng:** 6 giờ (Owner BE2: 4h, Contributor OPS: 2h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-004
 - **Trạng thái:** ⬜
 
@@ -335,7 +312,6 @@
 
 ### TASK-101 · Giao diện đăng nhập Google & Interceptor Token (FE-01)
 - **Người làm:** FE1 (Owner)
-- **Ước lượng:** 6 giờ (Owner FE1: 6h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-002, TASK-003
 - **Trạng thái:** ⬜
 
@@ -352,7 +328,6 @@
 
 ### TASK-102 · API xác thực JWT phía Backend & Whitelist Ownership (BE-01, SEC-07)
 - **Người làm:** BE1 (Owner)
-- **Ước lượng:** 6 giờ (Owner BE1: 6h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-004
 - **Trạng thái:** ⬜
 
@@ -370,7 +345,6 @@
 
 ### TASK-103 · Dashboard danh sách phiên làm việc (FE-02)
 - **Người làm:** FE1 (Owner)
-- **Ước lượng:** 6 giờ (Owner FE1: 6h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-101
 - **Trạng thái:** ⬜
 
@@ -387,7 +361,6 @@
 
 ### TASK-103b · Tái sử dụng phiên làm việc cũ — Reuse Session Modal (FE2, UC03)
 - **Người làm:** FE2 (Owner)
-- **Ước lượng:** 4 giờ (Owner FE2: 4h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-103 *(Mock UI)*; Phụ thuộc tích hợp: TASK-104 *(API Clone)*
 - **Trạng thái:** ⬜
 
@@ -403,7 +376,6 @@
 
 ### TASK-104 · API quản lý Exam Sessions CRUD (BE-01)
 - **Người làm:** BE1 (Owner)
-- **Ước lượng:** 8 giờ (Owner BE1: 8h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-102
 - **Trạng thái:** ⬜
 
@@ -420,7 +392,6 @@
 
 ### TASK-105 · Component MathRenderer KaTeX & Chống XSS (FE-11)
 - **Người làm:** FE1 (Owner)
-- **Ước lượng:** 8 giờ (Owner FE1: 8h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-003
 - **Trạng thái:** ⬜
 
@@ -438,7 +409,6 @@
 
 ### TASK-106 · Gemini SDK Client, Structured Outputs & Phòng chống Prompt Injection (AI-01, SEC-02)
 - **Người làm:** AI (Owner)
-- **Ước lượng:** 10 giờ (Owner AI: 10h) · **Độ tin cậy:** Trung bình
 - **Phụ thuộc:** TASK-004
 - **Trạng thái:** ⬜
 
@@ -462,7 +432,6 @@
 
 ### TASK-106b · Cơ chế sửa lỗi cấu trúc tự động — Schema Repair Pass (AI-05)
 - **Người làm:** AI (Owner)
-- **Ước lượng:** 6 giờ (Owner AI: 6h) · **Độ tin cậy:** Trung bình
 - **Phụ thuộc:** TASK-106
 - **Trạng thái:** ⬜
 
@@ -478,7 +447,6 @@
 
 ### TASK-106c · Pipeline sinh câu hỏi biến thể đẳng cấu — Isomorphic Variant Generator (AI-03)
 - **Người làm:** AI (Owner) + VAL (Contributor)
-- **Ước lượng:** 10 giờ (Owner AI: 8h, Contributor VAL: 2h) · **Độ tin cậy:** Trung bình
 - **Phụ thuộc:** TASK-106b
 - **Trạng thái:** ⬜
 
@@ -505,7 +473,6 @@
 
 ### TASK-107a · Syntax Checker & Logic Checker (VAL-01, VAL-02)
 - **Người làm:** VAL (Owner)
-- **Ước lượng:** 8 giờ (Owner VAL: 8h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-004, TASK-106
 - **Trạng thái:** ⬜
 
@@ -520,7 +487,6 @@
 
 ### TASK-107b · SymPy Evaluator với ProcessPool Isolation Timeout (VAL-03)
 - **Người làm:** VAL (Owner)
-- **Ước lượng:** 8 giờ (Owner VAL: 8h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-107a
 - **Trạng thái:** ⬜
 
@@ -540,7 +506,6 @@
 
 ### TASK-107c · Rule-Based Fallback Checker Độc Lập (VAL-04)
 - **Người làm:** VAL (Owner)
-- **Ước lượng:** 8 giờ (Owner VAL: 8h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-107a *(Độc lập về mặt logic với SymPy, không chạy tuần tự)*
 - **Trạng thái:** ⬜
 
@@ -555,7 +520,6 @@
 
 ### TASK-107d · Validation Aggregator & ValidationReport Schema
 - **Người làm:** VAL (Owner)
-- **Ước lượng:** 6 giờ (Owner VAL: 6h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-107b, TASK-107c
 - **Trạng thái:** ⬜
 
@@ -577,7 +541,6 @@
 
 ### TASK-201 · Giao diện Upload đề nguồn (FE-04)
 - **Người làm:** FE1 (Owner)
-- **Ước lượng:** 6 giờ (Owner FE1: 6h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-103 *(Mock UI)*; Phụ thuộc tích hợp: TASK-104
 - **Trạng thái:** ⬜
 
@@ -594,7 +557,6 @@
 
 ### TASK-202 · API nhận và bóc tách đề thi an toàn — File & Direct Input (BE-02, SEC-04)
 - **Người làm:** BE1 (Owner)
-- **Ước lượng:** 8 giờ (Owner BE1: 8h) · **Độ tin cậy:** Trung bình
 - **Phụ thuộc:** TASK-102; Phụ thuộc tích hợp: TASK-104
 - **Trạng thái:** ⬜
 
@@ -624,7 +586,6 @@
 
 ### TASK-203 · Prompt trích xuất Blueprint từ câu hỏi gốc (AI-02)
 - **Người làm:** AI (Owner)
-- **Ước lượng:** 8 giờ (Owner AI: 8h) · **Độ tin cậy:** Trung bình
 - **Phụ thuộc:** TASK-106b
 - **Trạng thái:** ⬜
 
@@ -640,7 +601,6 @@
 
 ### TASK-402 · Prompt sinh lời giải chi tiết từng bước (AI-04)
 - **Người làm:** AI (Owner)
-- **Ước lượng:** 6 giờ (Owner AI: 6h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-106b
 - **Trạng thái:** ⬜
 
@@ -655,7 +615,6 @@
 
 ### TASK-203b · Xử lý vòng lặp nội dung không đầy đủ — Stage 1 Incomplete Loop (FE1 + BE1)
 - **Người làm:** FE1 (Owner) + BE1 (Contributor)
-- **Ước lượng:** 6 giờ (Owner FE1: 4h, Contributor BE1: 2h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-201, TASK-202
 - **Trạng thái:** ⬜
 
@@ -670,7 +629,6 @@
 
 ### TASK-204 · Giao diện xem, chỉnh sửa Blueprint và Xác nhận (FE-05)
 - **Người làm:** FE1 (Owner)
-- **Ước lượng:** 6 giờ (Owner FE1: 6h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-201 *(Mock UI)*; Phụ thuộc tích hợp: TASK-203 *(Dữ liệu Blueprint thật)*
 - **Trạng thái:** ⬜
 
@@ -691,7 +649,6 @@
 
 ### TASK-205 · API quản lý câu nguồn và xác nhận Blueprint (BE-01)
 - **Người làm:** BE1 (Owner)
-- **Ước lượng:** 8 giờ (Owner BE1: 8h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-202; Phụ thuộc tích hợp: TASK-203
 - **Trạng thái:** ⬜
 
@@ -709,7 +666,6 @@
 
 ### TASK-206 · Giao diện cấu hình sinh đề Stage 2 (FE-06)
 - **Người làm:** FE2 (Owner)
-- **Ước lượng:** 8 giờ (Owner FE2: 8h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-003 *(Mock UI)*; Phụ thuộc tích hợp: TASK-204, TASK-205
 - **Trạng thái:** ⬜
 
@@ -729,7 +685,6 @@
 
 ### TASK-207a · API xác thực cấu hình sinh đề (BE-04)
 - **Người làm:** BE2 (Owner)
-- **Ước lượng:** 8 giờ (Owner BE2: 8h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-205
 - **Trạng thái:** ⬜
 
@@ -745,7 +700,6 @@
 
 ### TASK-207b · Background Job Orchestrator & SSE Protocol Chuẩn Hóa (BE-05, BE-06)
 - **Người làm:** BE2 (Owner) + AI (Contributor)
-- **Ước lượng:** 12 giờ (Owner BE2: 10h, Contributor AI: 2h) · **Độ tin cậy:** Trung bình
 - **Phụ thuộc:** TASK-106c, TASK-107d, TASK-207a, TASK-402
 - **Trạng thái:** ⬜
 
@@ -799,7 +753,6 @@
 
 ### TASK-207c · Endpoint Health & Observability Metrics có Auth (BE-10)
 - **Người làm:** BE2 (Owner)
-- **Ước lượng:** 6 giờ (Owner BE2: 6h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-004
 - **Trạng thái:** ⬜
 
@@ -818,7 +771,6 @@
 
 ### TASK-208 · Giao diện thanh tiến trình thời gian thực SSE (FE-12)
 - **Người làm:** FE2 (Owner)
-- **Ước lượng:** 8 giờ (Owner FE2: 8h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-206 *(UI Flow)*; Phụ thuộc tích hợp: TASK-207b *(SSE Protocol)*
 - **Trạng thái:** ⬜
 
@@ -844,7 +796,6 @@
 
 ### TASK-301 · Giao diện Review 1-1 & Chốt chặn Review đồng thời (FE-07)
 - **Người làm:** FE2 (Owner)
-- **Ước lượng:** 10 giờ (Owner FE2: 10h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-003, TASK-105 *(Mock UI)*; Phụ thuộc tích hợp: TASK-207b
 - **Trạng thái:** ⬜
 
@@ -865,7 +816,6 @@
 
 ### TASK-302 · Action Bar — Duyệt, Từ chối sinh lại, Hoàn nguyên (FE-08)
 - **Người làm:** FE2 (Owner)
-- **Ước lượng:** 8 giờ (Owner FE2: 8h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-301
 - **Trạng thái:** ⬜
 
@@ -882,7 +832,6 @@
 
 ### TASK-303 · API Review — Vòng đời câu hỏi (is_current), Revert Nguyên Tử & Vô Hiệu Hóa Shuffle (BE-07, BE-08, BE-10)
 - **Người làm:** BE1 (Owner) + VAL (Contributor)
-- **Ước lượng:** 10 giờ (Owner BE1: 8h, Contributor VAL: 2h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-207b
 - **Trạng thái:** ⬜
 
@@ -921,7 +870,6 @@
 
 ### TASK-304 · API Shuffle tuân thủ Ordering Preferences, Mô hình Dữ liệu Chuẩn & Đồng bộ Đáp án (BE-09)
 - **Người làm:** BE2 (Owner) + VAL (Contributor)
-- **Ước lượng:** 10 giờ (Owner BE2: 8h, Contributor VAL: 2h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-303
 - **Trạng thái:** ⬜
 
@@ -964,7 +912,6 @@
 
 ### TASK-305 · Giao diện Phê duyệt cuối cùng — Final Approval (FE2 + FE1 hỗ trợ) (FE-09)
 - **Người làm:** FE2 (Owner) + FE1 (Contributor: Bảng đáp án tổng hợp)
-- **Ước lượng:** 6 giờ (Owner FE2: 4h, Contributor FE1: 2h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-302, TASK-304
 - **Trạng thái:** ⬜
 
@@ -988,7 +935,6 @@
 
 ### TASK-305b · API Phê duyệt cuối cùng & Khóa nội dung (BE-09, SEC-08)
 - **Người làm:** BE1 (Owner) + BE2 (Contributor)
-- **Ước lượng:** 6 giờ (Owner BE1: 4h, Contributor BE2: 2h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-304
 - **Trạng thái:** ⬜
 
@@ -1008,7 +954,6 @@
 
 ### TASK-306a · Export Engine — Biên dịch PDF bằng Typst An Toàn (EXP-02, EXP-03, SEC-03)
 - **Người làm:** BE2 (Owner)
-- **Ước lượng:** 10 giờ (Owner BE2: 10h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-001; Phụ thuộc tích hợp: TASK-305b
 - **Trạng thái:** ⬜
 
@@ -1027,7 +972,6 @@
 
 ### TASK-306b · Clean LaTeX & Markdown Export Bundler (EXP-01)
 - **Người làm:** AI (Owner)
-- **Ước lượng:** 8 giờ (Owner AI: 8h) · **Độ tin cậy:** Trung bình
 - **Phụ thuộc:** TASK-305b, TASK-306a *(Phải có các file PDF do TASK-306a biên dịch trước khi đóng gói vào ZIP)*
 - **Trạng thái:** ⬜
 
@@ -1048,7 +992,6 @@
 
 ### TASK-307 · Giao diện & Hợp đồng API Tải gói đề thi — Export Download Center (FE-10)
 - **Người làm:** FE2 (Owner) + BE2 (Contributor)
-- **Ước lượng:** 10 giờ (Owner FE2: 8h, Contributor BE2: 2h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-305, TASK-305b, TASK-306a, TASK-306b
 - **Trạng thái:** ⬜
 
@@ -1078,7 +1021,6 @@
 
 ### TASK-401 · Dashboard thống kê chỉ số tương tác (FE1 + BE1) (FE-03, BE-10)
 - **Người làm:** FE1 (UI) + BE1 (API & SQL)
-- **Ước lượng:** 8 giờ (Owner FE1: 6h, Contributor BE1: 2h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-303
 - **Trạng thái:** ⬜
 
@@ -1132,7 +1074,6 @@
 
 ### TASK-401b · Định nghĩa công thức & Tính toán Metrics toán học (VAL) (BE-10)
 - **Người làm:** VAL (Owner)
-- **Ước lượng:** 6 giờ (Owner VAL: 6h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-303 *(Bắt đầu sớm song song với TASK-401 ngay khi có dữ liệu review_logs)*
 - **Trạng thái:** ⬜
 
@@ -1154,7 +1095,6 @@
 
 ### TASK-402b · Thẩm định chất lượng lời giải chi tiết qua mẫu thực tế (VAL)
 - **Người làm:** VAL (Owner)
-- **Ước lượng:** 8 giờ (Owner VAL: 8h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-403 *(Trích xuất mẫu từ kết quả chạy test 5 bộ đề thực tế)*
 - **Trạng thái:** ⬜
 
@@ -1173,7 +1113,6 @@
 
 ### TASK-403 · Kiểm thử toàn diện E2E với 5 bộ đề và 4 phương thức nhập liệu
 - **Người làm:** OPS (Owner) + FE2 (Contributor)
-- **Ước lượng:** 12 giờ (Owner OPS: 8h, Contributor FE2: 4h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** Tất cả các task Giai đoạn 1–3 hoàn thành
 - **Trạng thái:** ⬜
 
@@ -1203,7 +1142,6 @@
 
 ### TASK-403b · Kiểm thử các trường hợp biên & Chế độ suy giảm (Degraded Mode)
 - **Người làm:** OPS (Owner) + BE2 (Contributor)
-- **Ước lượng:** 6 giờ (Owner OPS: 4h, Contributor BE2: 2h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-403
 - **Trạng thái:** ⬜
 
@@ -1219,11 +1157,10 @@
 
 ### TASK-403c · Khảo sát thực tế & Thu thập phản hồi giảng viên (Instructor Pilot)
 - **Người làm:** OPS (Owner) + VAL (Contributor)
-- **Ước lượng:** 12 giờ (Owner OPS: 8h, Contributor VAL: 4h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-403b *(Thực hiện khi hệ thống đã ổn định)*
 - **Trạng thái:** ⬜
 
-**Mô tả:** Mời giảng viên thực tế trải nghiệm sản phẩm để thu thập bằng chứng thực nghiệm cho báo cáo [description.md §8](file:///c:/Users/ASUS%20Vivobook/Desktop/CT%20projects/description.md).
+**Mô tả:** Mời giảng viên thực tế trải nghiệm sản phẩm để thu thập bằng chứng thực nghiệm cho báo cáo [description.md §8](description.md).
 
 **Yêu cầu cụ thể phải làm được:**
 - [ ] **Giai đoạn 1 (Chuẩn bị):** Soạn phiếu câu hỏi khảo sát định lượng (thang đo 1–5) và mời 1–2 giáo viên/giảng viên dạy Toán THPT.
@@ -1237,7 +1174,6 @@
 
 ### TASK-404 · Tối ưu hiệu năng và Quản trị Prompt Versioning
 - **Người làm:** AI (Owner: Prompt Tuning) + OPS (Contributor)
-- **Ước lượng:** 6 giờ (Owner AI: 4h, Contributor OPS: 2h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-403
 - **Trạng thái:** ⬜
 
@@ -1256,7 +1192,6 @@
 
 ### TASK-405 · Hoàn thiện tài liệu và video demo sản phẩm
 - **Người làm:** OPS (Owner) + FE1 (Contributor)
-- **Ước lượng:** 8 giờ (Owner OPS: 4h, Contributor FE1: 4h) · **Độ tin cậy:** Cao
 - **Phụ thuộc:** TASK-402b, TASK-403, TASK-403b, TASK-403c, TASK-404 *(Có thể chuẩn bị kịch bản sớm, hoàn thiện tài liệu sau khi có kết quả thực nghiệm và biên bản thẩm định lời giải)*
 - **Trạng thái:** ⬜
 
