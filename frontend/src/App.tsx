@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 export default function App() {
   const [backendStatus, setBackendStatus] = useState<string>('Đang kiểm tra kết nối backend...');
