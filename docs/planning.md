@@ -48,8 +48,8 @@
 **Mô tả:** Tạo repo GitHub/GitLab với cấu trúc thư mục chuẩn theo architecture.md, thiết lập quy chuẩn đóng góp, pipeline CI tự động, khoanh vùng miền toán học mục tiêu và kiểm soát ngân sách quota có thể kiểm chứng cho MVP.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] Tạo repo với 2 nhánh chính: `main` (production-ready) và `develop` (nhánh tích hợp hàng ngày).
-- [ ] Tạo cấu trúc thư mục: `frontend/src/features/`, `frontend/src/components/`, `frontend/src/types/`, `backend/app/api/`, `backend/app/services/`, `docs/`.
+- [ ] Tạo repo với 2 nhánh chính: `main` (production-ready) và `dev` (nhánh tích hợp hàng ngày).
+- [ ] Tạo cấu trúc thư mục: `frontend/src/features/`, `frontend/src/components/`, `frontend/src/models/`, `backend/app/api/`, `backend/app/services/`, `docs/`.
 - [ ] **Khoanh vùng Miền Toán Học Mục Tiêu cho MVP (Target Math Family for Deterministic Validation):**
   - **Miền trọng tâm của MVP:** Đại số & Giải tích THPT chuẩn (Khảo sát hàm số, Đạo hàm, Cực trị, Mũ & Logarit, Tích phân & Nguyên hàm, Phương trình / Bất phương trình đại số).
   - Đây là tập toán mà SymPy CAS giải tích chính xác tuyệt đối, bóc tách LaTeX xác định và AI trích xuất blueprint chuẩn hóa nhất.
@@ -68,18 +68,18 @@
     - **Giai đoạn Thẩm Định & Sinh Lại Đơn Lẻ (Stage 3 Review Re-generation):**
       - Cấp riêng ngân sách độc lập **30 API calls** (theo dõi qua `exam_sessions.gemini_review_calls`), cho phép giảng viên từ chối và sinh lại tối đa 10 câu đơn lẻ trong suốt buổi review mà không lo bị chặn bởi quota của Stage 2.
 - [ ] **Thiết lập GitHub Actions CI Pipeline (`.github/workflows/ci.yml`):**
-  - Chạy tự động trên mọi Pull Request vào `develop` và `main`.
+  - Chạy tự động trên mọi Pull Request vào `dev` và `main`.
   - Backend Check: Linting với `ruff`, Type check với `mypy --strict`, Unit tests với `pytest`.
   - **SymPy LaTeX Parser Smoke Test:** Chạy kiểm tra ANTLR runtime trong container Docker:
     `python -c "import sympy; from sympy.parsing.latex import parse_latex; assert parse_latex('x^2 + 1') is not None"`, đảm bảo parser toán học hoạt động hoàn hảo trước khi merge code.
-  - Frontend Check: Linting với `eslint`, Type check với `tsc --noEmit`, Component tests với `vitest`.
-  - Schema Consistency Check: Smoke test kiểm tra sự đồng bộ cấu trúc giữa `schemas.py` và `types/index.ts`.
+  - Frontend Check: Linting với `eslint`, Build test với `npm run build`, Component tests với `vitest`.
+  - Schema Consistency Check: Smoke test kiểm tra sự đồng bộ cấu trúc giữa `schemas.py` và frontend data contracts / JSON fixtures.
   - Bắt buộc pass 100% CI checks mới được merge PR.
 - [ ] Tạo file `README.md` hướng dẫn cách chạy dự án (cài Docker Desktop, clone, `docker compose up`).
 - [ ] Tạo file `CONTRIBUTING.md` quy định: Conventional Commits (`feat(module): ...`, `fix(module): ...`), Branch naming (`feat/task-XXX-desc`), quy trình Pull Request và ma trận Code Review.
 - [ ] Tạo file `.gitignore` cho cả Node.js và Python (chặn `node_modules/`, `.env`, `__pycache__/`, `*.pyc`, `.pytest_cache/`).
 - [ ] Tạo file `.env.example` liệt kê đầy đủ các biến kèm giải thích: `GEMINI_API_KEY`, `GEMINI_MODEL=gemini-2.5-flash` (mô hình ổn định hiện hành hỗ trợ Structured Outputs; cấu hình linh hoạt qua `.env`, chạy smoke test xác minh schema JSON, quota và chi phí), `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CORS_ORIGINS`, `MAX_UPLOAD_SIZE_MB=10`.
-- [ ] Thiết lập Branch Protection Rule: yêu cầu Pull Request + ít nhất 1 người review trước khi merge vào `develop`.
+- [ ] Thiết lập Branch Protection Rule: yêu cầu Pull Request + ít nhất 1 người review trước khi merge vào `dev`.
 
 ---
 
@@ -109,7 +109,7 @@
 - [ ] Tạo project Supabase mới (chọn region Đông Nam Á: Singapore).
 - [ ] Chạy SQL script tạo đủ 10 bảng: `users`, `exam_sessions`, `source_questions`, `question_blueprints`, `generation_configs`, `exam_versions`, `version_questions`, `answer_keys`, `review_logs`, và `security_events` kèm Foreign Keys, Indexes và các ENUM types chuẩn hóa đồng bộ toàn hệ thống:
   - `session_status`: `'draft'`, `'blueprinted'`, `'configured'`, `'generating'`, `'partial_generated'`, `'generated'`, `'reviewed'`, `'approved'`, `'exported'`, `'failed'`. *(Bổ sung `partial_generated` để đại diện cho phiên có kết quả một phần khi chạm trần quota hoặc timeout, cho phép review nhưng cấm xuất bản)*.
-  - `question_status`: `'pending_review'`, `'approved'`, `'rejected'`, `'regenerating'`. *(Bổ sung `regenerating` để tương thích 100% với bước khóa tạm thời trong DB transaction của TASK-303, đồng bộ sang Pydantic và TypeScript)*.
+  - `question_status`: `'pending_review'`, `'approved'`, `'rejected'`, `'regenerating'`. *(Bổ sung `regenerating` để tương thích 100% với bước khóa tạm thời trong DB transaction của TASK-303, đồng bộ sang Pydantic và Frontend)*.
   - `review_action_type`: `'ACCEPT'`, `'REJECT'`, `'REVERT'`, `'REJECT_FAILED'`. *(Chỉ chứa hành động thẩm định câu hỏi; cảnh báo prompt injection được chuyển sang bảng `security_events`)*.
 - [ ] **Bổ sung các trường Quota & Kiểm soát phiên trong `exam_sessions`:**
   - `gemini_call_count`: `INTEGER NOT NULL DEFAULT 0` (bộ đếm số lần gọi API trong Batch Generation).
@@ -221,19 +221,19 @@
 
 ---
 
-### TASK-003 · Khởi tạo project Frontend (React + Vite + TypeScript)
+### TASK-003 · Khởi tạo project Frontend (React + Vite + JavaScript)
 - **Người làm:** FE1 (Owner)
 - **Trạng thái:** ⬜
 
-**Mô tả:** Tạo project React với Vite và TypeScript, cài đặt bộ thư viện chuẩn và định nghĩa toàn bộ Typescript Interfaces.
+**Mô tả:** Tạo project React với Vite và JavaScript (JSX), cài đặt bộ thư viện chuẩn và chuẩn bị cấu trúc thư mục, data contracts.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] Khởi tạo thư mục `frontend/` bằng template `react-ts`.
+- [ ] Khởi tạo thư mục `frontend/` bằng template React Vite (`.jsx`, `.js`).
 - [ ] Cài đặt các thư viện: `@supabase/supabase-js`, `katex`, `react-markdown`, `rehype-katex`, `remark-math`, `axios`, `react-router-dom`, `zustand`, `lucide-react`.
-- [ ] Cài đặt và cấu hình styling: `tailwindcss`, `@tailwindcss/typography`, `@shadcn/ui`.
-- [ ] Tạo file `src/types/index.ts` định nghĩa toàn bộ data models: `User`, `ExamSession`, `SourceQuestion`, `QuestionBlueprint`, `GenerationConfig`, `ExamVersion`, `VersionQuestion` (kèm `is_current`, `regenerated_from_id`), `ValidationReport`, `ReviewLog`.
-- [ ] Tạo `src/services/api.ts` (Axios instance trỏ vào `/api`) và `src/services/supabase.ts` (Supabase client).
-- [ ] Cấu hình alias `@/` trỏ về `src/` trong `tsconfig.json` và `vite.config.ts`.
+- [ ] Cài đặt và cấu hình styling: `tailwindcss`, `postcss`, `autoprefixer`.
+- [ ] Chuẩn bị các JSON fixtures / helpers định nghĩa toàn bộ data models: `User`, `ExamSession`, `SourceQuestion`, `QuestionBlueprint`, `GenerationConfig`, `ExamVersion`, `VersionQuestion` (kèm `is_current`, `regenerated_from_id`), `ValidationReport`, `ReviewLog`.
+- [ ] Tạo `src/services/api.js` (Axios instance trỏ vào `/api`) và `src/services/supabase.js` (Supabase client).
+- [ ] Cấu hình alias `@/` trỏ về `src/` trong `vite.config.js`.
 
 ---
 
@@ -352,7 +352,7 @@
 
 **Yêu cầu cụ thể phải làm được:**
 - [ ] Trang `/dashboard` gọi `GET /api/sessions` hiển thị danh sách đề thi dạng thẻ (cards) hoặc bảng.
-- [ ] Tách component `src/features/dashboard/DashboardSessionCard.tsx`: hiển thị Tên đề, Môn học, Ngày tạo, Badge trạng thái. Component này expose prop `onClone(session: ExamSession)` để bàn giao kết nối cho FE2.
+- [ ] Tách component `src/features/dashboard/DashboardSessionCard.jsx`: hiển thị Tên đề, Môn học, Ngày tạo, Badge trạng thái. Component này expose prop `onClone(session)` để bàn giao kết nối cho FE2.
 - [ ] Nút "Tạo đề mới" chuyển hướng đến `/session/new/stage1`.
 - [ ] Nút "Tiếp tục" chuyển hướng trực tiếp đến đúng Stage đang dở dựa trên trạng thái của session.
 - [ ] Empty state thân thiện khi chưa có đề nào.
@@ -367,7 +367,7 @@
 **Mô tả:** Xây dựng modal nhân bản/tái sử dụng phiên làm việc cũ theo Use Case UC03.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] Tạo riêng component `src/features/dashboard/CloneSessionModal.tsx` (tránh xung đột code trong `Dashboard.tsx`).
+- [ ] Tạo riêng component `src/features/dashboard/CloneSessionModal.jsx` (tránh xung đột code trong `Dashboard.jsx`).
 - [ ] Lắng nghe sự kiện `onClone` từ `DashboardSessionCard` của FE1 $\rightarrow$ mở Modal nhập tiêu đề mới cho bản sao chép.
 - [ ] Gọi API `POST /api/sessions/{session_id}/clone` $\rightarrow$ nhận `new_session_id`.
 - [ ] Chuyển hướng người dùng vào phiên mới tại màn hình Stage 1 để sẵn sàng tùy biến.
@@ -398,8 +398,8 @@
 **Mô tả:** Component render công thức toán học KaTeX, hỗ trợ Markdown, xử lý chuẩn Unicode tiếng Việt và chống tấn công XSS.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] Tạo `src/components/MathRenderer.tsx` nhận `content: string`.
-- [ ] Tích hợp `react-markdown` + `remark-math` + `rehype-katex`, import CSS của KaTeX tại `main.tsx`.
+- [ ] Tạo `src/components/MathRenderer.jsx` nhận `content: string`.
+- [ ] Tích hợp `react-markdown` + `remark-math` + `rehype-katex`, import CSS của KaTeX tại `main.jsx`.
 - [ ] **Chống tấn công XSS:** Cấu hình `react-markdown` bật cờ `skipHtml={true}` hoặc tích hợp `rehype-sanitize` để tự động lọc bỏ các thẻ `<script>`, `<iframe>` hay `onerror` nếu người dùng cố tình chèn mã độc vào đề thi.
 - [ ] Hỗ trợ cả công thức nội dòng (`$...$`) và khối công thức riêng (`$$...$$`).
 - [ ] Xử lý an toàn: nếu công thức LaTeX lỗi cú pháp $\rightarrow$ hiển thị text gốc kèm icon cảnh báo thay vì làm sập trang web.
@@ -918,15 +918,14 @@
 **Mô tả:** Màn hình xem trước bản đề thi hoàn chỉnh sau khi xáo trộn và bước xác nhận xuất bản.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] **Thống nhất Props Interface giữa FE1 và FE2:**
-  ```typescript
-  interface MatrixAnswerTableProps {
-    versions: ExamVersion[];
-    answerKeys: AnswerKey[];
-    activeVersionCode?: string;
-  }
+- [ ] **Thống nhất cấu trúc Props giữa FE1 và FE2:**
+  ```javascript
+  // MatrixAnswerTable Props:
+  // - versions: Array<ExamVersion>
+  // - answerKeys: Array<AnswerKey>
+  // - activeVersionCode?: string
   ```
-- [ ] **FE1 hỗ trợ:** Xây dựng component `src/features/review/MatrixAnswerTable.tsx` nhận đúng props trên, hiển thị bảng ma trận đối chiếu đáp án N mã đề $\times$ X câu (Câu 1 $\rightarrow$ Đề 101: A, Đề 102: C...).
+- [ ] **FE1 hỗ trợ:** Xây dựng component `src/features/review/MatrixAnswerTable.jsx` nhận đúng props trên, hiển thị bảng ma trận đối chiếu đáp án N mã đề $\times$ X câu (Câu 1 $\rightarrow$ Đề 101: A, Đề 102: C...).
 - [ ] **FE2 chủ trì:** Trang `/session/:id/approval` tích hợp xem trước từng mã đề (đã đánh số lại từ 1) và nhúng component `MatrixAnswerTable` của FE1 vào Tab Đáp án.
 - [ ] Nút **"Phê duyệt toàn bộ gói đề"** mở modal cảnh báo: *"Sau khi phê duyệt, đề thi sẽ được khóa vĩnh viễn và chuyển sang bước xuất bản file"*.
 - [ ] Bấm xác nhận $\rightarrow$ gọi API phê duyệt (`TASK-305b`) và chuyển hướng sang màn hình tải về.
@@ -1334,8 +1333,8 @@ Trước khi nghiệm thu toàn bộ dự án, OPS và cả nhóm đối chiếu
 | :--- | :--- | :--- |
 | **Python Functions / Variables** | `snake_case` | `validate_question()`, `stem_latex` |
 | **Python Classes / Pydantic** | `PascalCase` | `QuestionBlueprint`, `ValidationReport` |
-| **TypeScript Components** | `PascalCase` | `MathRenderer.tsx`, `CloneSessionModal.tsx` |
-| **TypeScript Functions / Hooks** | `camelCase` | `useAuth()`, `fetchSessions()` |
+| **React JSX Components** | `PascalCase` | `MathRenderer.jsx`, `CloneSessionModal.jsx` |
+| **JavaScript Functions / Hooks** | `camelCase` | `useAuth()`, `fetchSessions()` |
 | **Database Tables** | `snake_case` (số nhiều) | `exam_sessions`, `version_questions` |
 | **Database Columns / Foreign Keys** | `snake_case` | `created_at`, `source_question_id`, `is_current` |
 | **RESTful API Routes** | `kebab-case` (danh từ số nhiều) | `/api/sessions`, `/api/blueprints` |
@@ -1352,10 +1351,10 @@ Trước khi nghiệm thu toàn bộ dự án, OPS và cả nhóm đối chiếu
 * **Branch Naming:**  
   `feat/task-101-google-auth`, `fix/task-202-docx-parser`
 * **Ma trận thẩm định Pull Request (Who Reviews Whom):**
-  * PR thuộc **Frontend** (`frontend/*`): FE1 review code cho FE2 (hoặc ngược lại); BE1 review API types.
+  * PR thuộc **Frontend** (`frontend/*`): FE1 review code cho FE2 (hoặc ngược lại); BE1 review API contracts.
   * PR thuộc **Backend** (`backend/app/*`): BE1 review cho BE2 (hoặc ngược lại).
   * PR thuộc **AI / Math** (`ai/*`, `validator/*`): BE1 hoặc BE2 review tính tương thích interface.
-  * Nhánh `develop` lên `main`: Bắt buộc **OPS** kiểm tra CI và duyệt merge.
+  * Nhánh `dev` lên `main`: Bắt buộc **OPS** kiểm tra CI và duyệt merge.
 
 ### 6.3. Xử lý lỗi & Bản địa hóa giao tiếp (Error Handling & Localization)
 
@@ -1366,9 +1365,9 @@ Trước khi nghiệm thu toàn bộ dự án, OPS và cả nhóm đối chiếu
     "detail": "Selected variation mode is not supported by confirmed blueprint"
   }
   ```
-* **Phía Frontend:** Tạo file từ điển `src/constants/errorMessages.ts` để map từ `code` của Backend sang câu thông báo tiếng Việt thân thiện:
-  ```typescript
-  export const ERROR_MESSAGES: Record<string, string> = {
+* **Phía Frontend:** Tạo file từ điển `src/constants/errorMessages.js` để map từ `code` của Backend sang câu thông báo tiếng Việt thân thiện:
+  ```javascript
+  export const ERROR_MESSAGES = {
     ERR_CONFIG_CONFLICT: "Cấu hình không tương thích với Blueprint đã xác nhận.",
     ERR_SESSION_GENERATING: "Phiên đề đang trong tiến trình sinh nền, vui lòng chờ.",
     ERR_SESSION_LOCKED: "Phiên đề đã được phê duyệt và khóa nội dung.",
@@ -1382,7 +1381,7 @@ Trước khi nghiệm thu toàn bộ dự án, OPS và cả nhóm đối chiếu
 | Thời điểm | Mục đích họp đồng bộ (Sync) | Thành viên tham gia | Kết quả đầu ra bắt buộc (Output) |
 | :---: | :--- | :--- | :--- |
 | **Day 0** | **Kick-off toàn đội & CI Setup** | Cả 7 người | Docker chạy trên 7 máy; CI pipeline xanh; chốt Naming & Scope Bounds. |
-| **Day 1** | **Chốt hợp đồng Dữ liệu (Schema Sync)** | BE1, FE1, FE2 | Khớp 1-1 giữa `schemas.py` và `types/index.ts`. Tạo mock data. |
+| **Day 1** | **Chốt hợp đồng Dữ liệu (Schema Sync)** | BE1, FE1, FE2 | Khớp 1-1 giữa `schemas.py` và models/fixtures Frontend. Tạo mock data. |
 | **Day 5** | **Chốt giao thức SSE & Event Schema** | BE2, FE2 | Thống nhất JSON schema của Server-Sent Events (TASK-207b). |
 | **Day 7** | **Bàn giao Prompt AI-03 & AI-04** | AI, BE1, BE2 | Chốt định dạng đầu vào/đầu ra của Isomorphic Variant và Solution. |
 | **Day 12** | **Chốt cấu trúc Dual Export** | BE2, AI, FE2 | Thống nhất cấu trúc template Typst và XeLaTeX ZIP bundle. |
@@ -1392,11 +1391,11 @@ Trước khi nghiệm thu toàn bộ dự án, OPS và cả nhóm đối chiếu
 
 | Đường dẫn thư mục / File | Người chịu trách nhiệm chính (Owner) | Người phản biện (Reviewer) |
 | :--- | :---: | :---: |
-| `frontend/src/types/index.ts` | **FE1** | BE1 |
+| `frontend/src/models/*` | **FE1** | BE1 |
 | `backend/app/models/schemas.py` | **BE1** | FE1 |
-| `frontend/src/components/MathRenderer.tsx` | **FE1** | FE2 |
-| `frontend/src/features/dashboard/CloneSessionModal.tsx` | **FE2** | FE1 |
-| `frontend/src/features/review/MatrixAnswerTable.tsx` | **FE1** | FE2 |
+| `frontend/src/components/MathRenderer.jsx` | **FE1** | FE2 |
+| `frontend/src/features/dashboard/CloneSessionModal.jsx` | **FE2** | FE1 |
+| `frontend/src/features/review/MatrixAnswerTable.jsx` | **FE1** | FE2 |
 | `frontend/src/features/review/*` | **FE2** | FE1 |
 | `backend/app/services/ai/*` | **AI** | BE1 |
 | `backend/app/services/validator/*` | **VAL** | BE2 |
@@ -1446,6 +1445,6 @@ Trước khi nghiệm thu toàn bộ dự án, OPS và cả nhóm đối chiếu
 2. **Nguyên tắc Idempotent:** Tất cả câu lệnh SQL phải hỗ trợ chạy lại mà không báo lỗi:  
    `ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...`, `CREATE INDEX IF NOT EXISTS ...`.
 3. **Phân quyền thực thi:** **Chỉ OPS** có quyền thực thi file migration trên Supabase Database Production/Shared.
-4. **Đồng bộ mã nguồn bắt buộc:** Mọi Pull Request có file migration SQL **bắt buộc phải cập nhật đồng thời** cả Pydantic schema (`schemas.py`) và TypeScript interface (`types/index.ts`) trong cùng 1 PR.
+4. **Đồng bộ mã nguồn bắt buộc:** Mọi Pull Request có file migration SQL **bắt buộc phải cập nhật đồng thời** cả Pydantic schema (`schemas.py`) và Frontend models / JSON fixtures trong cùng 1 PR.
 
 

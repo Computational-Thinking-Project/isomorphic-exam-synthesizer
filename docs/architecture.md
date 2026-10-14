@@ -1,7 +1,7 @@
-﻿# Isomorphic Exam Synthesizer — Architecture & Component Breakdown
+# Isomorphic Exam Synthesizer — Architecture & Component Breakdown
 
 > **Tài liệu phân rã kiến trúc chi tiết (Architecture Breakdown) — Phiên bản hoàn chỉnh**
-> **Tech Stack:** React + Vite + TypeScript (Frontend) · Python / FastAPI (Backend) · Supabase (Database / Auth / Storage) · Docker (Container) · Gemini API (AI Service) · Typst (PDF Compiler).
+> **Tech Stack:** React + Vite + JavaScript (JSX) (Frontend) · Python / FastAPI (Backend) · Supabase (Database / Auth / Storage) · Docker (Container) · Gemini API (AI Service) · Typst (PDF Compiler).
 
 > [!IMPORTANT]
 > **Ranh giới MVP vs Extension:** Tài liệu này chỉ mô tả các thành phần thuộc phạm vi MVP. Các tính năng mở rộng (PDF input, DOCX layout preservation, interactive difficulty adjustment, scoring rubrics, essay questions) được loại trừ rõ ràng khỏi phạm vi kiến trúc này.
@@ -15,7 +15,7 @@
 
 ```mermaid
 flowchart TB
-    subgraph ClientLayer ["1. FRONTEND LAYER (React + Vite + TypeScript)"]
+    subgraph ClientLayer ["1. FRONTEND LAYER (React + Vite + JavaScript / JSX)"]
         direction TB
         FE_Auth["1.1 Auth & Session Manager"]
         FE_Dash["1.2 Dashboard & Statistics"]
@@ -95,7 +95,7 @@ flowchart TB
 
 ## 2. Phân rã chi tiết từng thành phần (Detailed Breakdown)
 
-### 2.1. Frontend Layer (React + Vite + TypeScript)
+### 2.1. Frontend Layer (React + Vite + JavaScript / JSX)
 
 | Mã | Tên Module | Mô tả & Trách nhiệm | Ánh xạ UC |
 | :--- | :--- | :--- | :--- |
@@ -350,17 +350,17 @@ isomorphic-exam-synthesizer/
 │   ├── description.md                     # Đặc tả yêu cầu & phạm vi MVP
 │   └── planning.md                        # Kế hoạch triển khai & task breakdown
 │
-├── frontend/                              # REACT + VITE + TYPESCRIPT
+├── frontend/                              # REACT + VITE + JAVASCRIPT
 │   ├── Dockerfile
 │   ├── nginx.conf                         # Reverse proxy /api → backend
 │   ├── package.json
-│   ├── tsconfig.json
+│   ├── vite.config.js
 │   ├── src/
 │   │   ├── components/                    # UI chung: Layout, KaTeX Renderer, ProgressBar
 │   │   ├── features/                      # Modules chức năng theo từng Stage
 │   │   ├── hooks/                         # Custom hooks (useSSE, useAuth, ...)
 │   │   ├── services/                      # API client + Supabase client
-│   │   └── types/                         # TypeScript interfaces
+│   │   └── models/                        # JavaScript data contracts / helpers
 │
 └── backend/                               # PYTHON / FASTAPI
     ├── Dockerfile
