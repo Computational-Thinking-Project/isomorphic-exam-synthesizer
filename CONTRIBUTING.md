@@ -6,7 +6,7 @@ Nhằm đảm bảo tính nhất quán, an toàn bảo mật và chất lượng
 
 ## 1. Quy ước Nhánh (Branching Strategy)
 - **`main`**: Nhánh chính, luôn ở trạng thái production-ready và ổn định.
-- **`develop`**: Nhánh tích hợp hàng ngày của toàn đội. Mọi nhánh tính năng đều rẽ nhánh từ `develop` và tạo Pull Request (PR) về `develop`.
+- **`dev`**: Nhánh tích hợp hàng ngày của toàn đội. Mọi nhánh tính năng đều rẽ nhánh từ `dev` và tạo Pull Request (PR) về `dev`. (Lưu ý: repo hỗ trợ cả `dev` và `develop`).
 - **Nhánh tính năng / sửa lỗi:**
   - Quy tắc đặt tên: `<type>/<task-id>-<short-description>`
   - Ví dụ:
@@ -35,7 +35,7 @@ Thông điệp commit phải tuân theo cấu trúc:
 ## 3. Quy trình Pull Request (PR)
 1. Trước khi tạo PR, đảm bảo code đã pass các kiểm tra cục bộ:
    - Backend: `ruff check app` và `mypy app`
-   - Frontend: `npm run lint` và `npx tsc --noEmit`
-2. Tạo PR từ nhánh tính năng vào nhánh `develop`.
+   - Frontend: `npm run lint` và `npm run build`
+2. Tạo PR từ nhánh tính năng vào nhánh `dev` (hoặc `develop`).
 3. Bắt buộc vượt qua 100% kiểm tra của **GitHub Actions CI Pipeline** (`.github/workflows/ci.yml`).
 4. Ít nhất 1 thành viên review và phê duyệt (Approve) trước khi merge.

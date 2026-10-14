@@ -37,11 +37,11 @@ Sau khi khởi chạy thành công:
 
 ```text
 isomorphic-exam-synthesizer/
-├── frontend/                  # React + Vite + TypeScript (Single Page Application)
+├── frontend/                  # React + Vite + JavaScript / JSX (Single Page Application)
 │   ├── src/
 │   │   ├── components/        # KaTeX MathRenderer, ProgressTracker, WarningBadges
 │   │   ├── features/          # Auth, Dashboard, Stage 1 (Ingest), Stage 2 (Config), Stage 3 (Review), Approval, Export
-│   │   └── types/             # TypeScript data contracts
+│   │   └── models/            # JavaScript data contracts / helpers
 │   └── nginx.conf             # Reverse proxy /api/* -> backend container
 ├── backend/                   # Python 3.11 / FastAPI async engine
 │   ├── app/
@@ -51,14 +51,14 @@ isomorphic-exam-synthesizer/
 │   │   └── services/          # Parsers, AI Pipelines, 4-tier Validator, Exporter (Typst)
 │   └── Dockerfile             # Python 3.11-slim + Typst binary
 ├── docs/                      # Tài liệu kiến trúc, đặc tả & hợp đồng API
-├── .github/workflows/ci.yml   # CI Pipeline: Linting, Typecheck, SymPy smoke test
+├── .github/workflows/ci.yml   # CI Pipeline: Linting, Backend TypeCheck, SymPy smoke test
 └── docker-compose.yml         # Container orchestration
 ```
 
 ---
 
 ## 🛠 Tech Stack
-- **Frontend:** React 18, Vite, TypeScript, TailwindCSS, KaTeX, Zustand.
+- **Frontend:** React 18, Vite, JavaScript (JSX), TailwindCSS, KaTeX, Zustand.
 - **Backend:** FastAPI, Python 3.11, Pydantic v2, SymPy (CAS), Typst (PDF).
 - **AI Service:** Google Gemini API (Structured Outputs).
 - **Database & Auth:** Supabase (PostgreSQL với Row-Level Security, Google OAuth).
