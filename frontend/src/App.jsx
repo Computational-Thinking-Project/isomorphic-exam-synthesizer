@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 
 export default function App() {
-  const [backendStatus, setBackendStatus] = useState<string>('Đang kiểm tra kết nối backend...');
-  const [loading, setLoading] = useState<boolean>(true);
+  const [backendStatus, setBackendStatus] = useState('Đang kiểm tra kết nối backend...');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetch('/api/health/metrics')
@@ -49,7 +49,7 @@ export default function App() {
         <div className="grid grid-cols-2 gap-4 text-xs text-slate-400 border-t border-slate-800/80 pt-4">
           <div>
             <span className="block font-medium text-slate-300">Frontend:</span>
-            React 18 + Vite + TypeScript (Port 3000)
+            React 18 + Vite + JavaScript (Port 3000)
           </div>
           <div>
             <span className="block font-medium text-slate-300">Backend:</span>

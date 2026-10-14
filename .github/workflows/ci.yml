@@ -2,9 +2,9 @@ name: CI Pipeline
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, dev, develop]
   pull_request:
-    branches: [main, develop]
+    branches: [main, dev, develop]
 
 jobs:
   backend-test:
@@ -56,10 +56,6 @@ jobs:
       - name: Install Frontend Dependencies
         working-directory: ./frontend
         run: npm ci || npm install
-
-      - name: Frontend TypeScript Type Check
-        working-directory: ./frontend
-        run: npx tsc --noEmit
 
       - name: Frontend Build Verification
         working-directory: ./frontend
