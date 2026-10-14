@@ -39,20 +39,28 @@ Sau khi khởi chạy thành công:
 isomorphic-exam-synthesizer/
 ├── frontend/                  # React + Vite + JavaScript / JSX (Single Page Application)
 │   ├── src/
-│   │   ├── components/        # KaTeX MathRenderer, ProgressTracker, WarningBadges
-│   │   ├── features/          # Auth, Dashboard, Stage 1 (Ingest), Stage 2 (Config), Stage 3 (Review), Approval, Export
-│   │   └── models/            # JavaScript data contracts / helpers
-│   └── nginx.conf             # Reverse proxy /api/* -> backend container
+│   │   ├── components/        # KaTeX MathRenderer, WarningBadges, UI dùng chung
+│   │   ├── features/          # Auth, Dashboard, Stage 1 (Ingest), Stage 2, Stage 3
+│   │   ├── hooks/             # Custom hooks (useAuth, useSSE, ...)
+│   │   ├── services/          # API client (api.js), Supabase client, mocks
+│   │   └── models/            # JavaScript data contracts / helpers / JSON fixtures
+│   ├── Dockerfile             # Multi-stage build + Nginx static serving
+│   ├── nginx.conf             # Reverse proxy /api/* -> backend container
+│   ├── package.json           # Frontend dependencies & scripts
+│   └── vite.config.js         # Cấu hình Vite & alias path
 ├── backend/                   # Python 3.11 / FastAPI async engine
 │   ├── app/
-│   │   ├── api/               # API endpoints
-│   │   ├── core/              # Config, security, database pool
-│   │   ├── models/            # Pydantic schemas khớp contracts
-│   │   └── services/          # Parsers, AI Pipelines, 4-tier Validator, Exporter (Typst)
-│   └── Dockerfile             # Python 3.11-slim + Typst binary
-├── docs/                      # Tài liệu kiến trúc, đặc tả & hợp đồng API
+│   │   ├── api/               # API endpoints & dependencies (Auth, JWT, Ownership)
+│   │   ├── core/              # Config, rate limit, CORS, error handlers
+│   │   ├── models/            # Pydantic schemas khớp contracts & DB models
+│   │   └── services/          # Parsers, AI Gemini, 4-tier Validator, Exporter
+│   ├── scripts/               # Scripts kiểm thử độc lập (smoke tests API, AI, CAS)
+│   ├── Dockerfile             # Python 3.11-slim + Typst binary
+│   └── requirements.txt       # Backend dependencies
+├── agents/                    # Thư mục cấu hình workspace theo thành viên nhóm
+├── docs/                      # Tài liệu kiến trúc, đặc tả, kế hoạch & change log
 ├── .github/workflows/ci.yml   # CI Pipeline: Linting, Backend TypeCheck, SymPy smoke test
-└── docker-compose.yml         # Container orchestration
+└── docker-compose.yml         # Container orchestration (Frontend + Backend)
 ```
 
 ---
