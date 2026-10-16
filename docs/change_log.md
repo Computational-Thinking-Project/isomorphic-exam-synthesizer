@@ -14,3 +14,11 @@
 ## Chi tiết các Quyết định
 
 *(Các quyết định kỹ thuật sẽ được cập nhật tại đây khi có thay đổi trong quá trình code)*
+### DEC-TV1-001: Chuẩn bị Login UI và kiểm tra frontend
+
+- Ngày/người thực hiện: 16/10/2026 — Trung Anh, TV1.
+- Bối cảnh: TASK-101 cần màn đăng nhập; frontend có script lint nhưng chưa có công cụ và cấu hình ESLint.
+- Quyết định: bổ sung ESLint cho JavaScript/JSX và React Hooks, lockfile, trang /login và router đầu vào.
+- Phạm vi ảnh hưởng: frontend package/config, App.jsx và features/auth/LoginPage.jsx.
+- Giới hạn: nút Google chỉ hiển thị thông báo; chưa kết nối Supabase hoặc xác thực người dùng.
+- Kiểm tra: mở/bấm/reload trang login; npm run lint và npm run build thành công.
