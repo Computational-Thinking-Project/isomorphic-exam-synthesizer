@@ -4,13 +4,12 @@ from pathlib import Path
 from typing import List, Optional
 
 from app.models.schemas import (
-    SourceQuestion,
-    GeneratedVariant,
     ExamDraftPackage,
+    GeneratedVariant,
+    SourceQuestion,
 )
-from app.services.ai.mock_client import BaseAIClient
 from app.services.ai.client import GeminiClient
-from app.services.ai.schema_repair import repair_json_output
+from app.services.ai.mock_client import BaseAIClient
 
 logger = logging.getLogger(__name__)
 

@@ -1,11 +1,10 @@
 import json
 import logging
 import re
-from typing import Type, TypeVar, Optional, Any
-from pydantic import BaseModel, ValidationError
-from google.genai import types
+from typing import Any, Optional, Type, TypeVar
 
-from app.core.config import settings
+from google.genai import types
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +94,7 @@ YÊU CẦU:
                     contents=repair_prompt,
                     config=config,
                 )
-                repaired_raw = extract_json_str(response.text)
+                repaired_raw = extract_json_str(response.text or "")
                 data = json.loads(repaired_raw)
                 repaired_obj = target_schema(**data)
                 logger.info("AI Repair thành công ở lượt %d!", attempt)

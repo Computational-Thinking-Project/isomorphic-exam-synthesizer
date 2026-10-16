@@ -1,7 +1,7 @@
 import json
+from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional
-from abc import ABC, abstractmethod
 
 from app.models.schemas import GeneratedVariant, SourceQuestion
 

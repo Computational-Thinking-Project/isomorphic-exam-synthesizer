@@ -5,6 +5,7 @@ import re
 import time
 import unicodedata
 from typing import Optional
+
 from google import genai
 from google.genai import types
 
@@ -149,7 +150,9 @@ Yêu cầu:
                 )
 
                 # Parse JSON từ response của Gemini
-                raw_text = response.text
+                raw_text = response.text or ""
+                if not raw_text:
+                    raise ValueError("Gemini API trả về phản hồi rỗng.")
                 try:
                     variant_data = json.loads(raw_text)
                     return GeneratedVariant(**variant_data)
