@@ -22,3 +22,6 @@
 - Phạm vi ảnh hưởng: frontend package/config, App.jsx và features/auth/LoginPage.jsx.
 - Giới hạn: nút Google chỉ hiển thị thông báo; chưa kết nối Supabase hoặc xác thực người dùng.
 - Kiểm tra: mở/bấm/reload trang login; npm run lint và npm run build thành công.
+- Bổ sung: auth store dùng Zustand, ProtectedRoute và trang thử /auth-preview chỉ trong development.
+- Kiểm thử bổ sung: ba unit test cho auth store bằng Node test runner; thêm script npm run test.
+- Giới hạn: phiên mẫu không lưu sau reload; chưa kết nối Supabase, Google login hoặc API thật.
