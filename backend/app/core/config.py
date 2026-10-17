@@ -8,7 +8,7 @@ class Settings(BaseSettings):
 
     # AI Service
     GEMINI_API_KEY: SecretStr = SecretStr("")
-    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
 
     # Supabase Credentials
     SUPABASE_URL: str = ""
@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     FRONTEND_PORT: int = 3000
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "backend/.env", "../.env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
