@@ -1,0 +1,14 @@
+{
+  "variant_id": "var_q1_v1",
+  "source_question_id": "q1",
+  "question_text": "Gieo đồng thời hai con xúc xắc cân đối và đồng chất. Xác định xác suất để giá trị tuyệt đối của hiệu hai số xuất hiện trên mặt xúc xắc là một nghiệm của phương trình bậc hai $x^2 - 5x + 4 = 0$?",
+  "options": [
+    "$\\dfrac{7}{18}$",
+    "$\\dfrac{5}{18}$",
+    "$\\dfrac{1}{3}$",
+    "$\\dfrac{11}{36}$"
+  ],
+  "correct_answer": "$\\dfrac{7}{18}$",
+  "solution_steps": "1. Giải phương trình $x^2 - 5x + 4 = 0 \\iff (x-1)(x-4) = 0 \\iff x = 1$ hoặc $x = 4$.\n2. Xét $x = 1$: Các cặp số $(a, b)$ có $|a - b| = 1$ là: $(1,2), (2,3), (3,4), (4,5), (5,6)$ và hoán vị $\\rightarrow 10$ trường hợp.\n3. Xét $x = 4$: Các cặp số $(a, b)$ có $|a - b| = 4$ là: $(1,5), (2,6), (5,1), (6,2) \\rightarrow 4$ trường hợp.\n4. Tổng số biến cố thuận lợi: $10 + 4 = 14$.\n5. Xác suất cần tính: $P = \\dfrac{14}{36} = \\dfrac{7}{18}$.",
+  "seed": 42
+}
