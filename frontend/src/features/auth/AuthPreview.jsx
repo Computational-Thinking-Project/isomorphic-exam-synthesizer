@@ -59,6 +59,15 @@ export default function AuthPreview() {
         <button
           type="button"
           className={buttonClass}
+          disabled={status !== 'authenticated'}
+          onClick={() => navigate('/dashboard')}
+        >
+          Mở Dashboard
+        </button>
+
+        <button
+          type="button"
+          className={buttonClass}
           onClick={() => setUser(null)}
         >
           Đăng xuất mẫu
