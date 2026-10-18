@@ -59,3 +59,62 @@ class UserProfile(BaseModel):
     name: Optional[str] = Field(None, description="Tên người dùng")
     created_at: Optional[str] = Field(None, description="Thời điểm tạo tài khoản")
 
+
+class SessionCreate(BaseModel):
+    """Payload tạo mới phiên làm việc (Stage 1)."""
+    title: str = Field(..., min_length=1, max_length=255, description="Tiêu đề phiên làm việc")
+    subject: str = Field(default="Toán", max_length=100, description="Môn học")
+    grade: int = Field(default=12, ge=1, le=12, description="Khối lớp (mặc định 12)")
+
+
+class SessionUpdate(BaseModel):
+    """Payload cập nhật thông tin phiên làm việc."""
+    title: Optional[str] = Field(None, min_length=1, max_length=255, description="Tiêu đề phiên làm việc")
+    subject: Optional[str] = Field(None, max_length=100, description="Môn học")
+    grade: Optional[int] = Field(None, ge=1, le=12, description="Khối lớp")
+
+
+class SessionCloneRequest(BaseModel):
+    """Payload nhân bản phiên làm việc (UC03 / TASK-103b)."""
+    new_title: Optional[str] = Field(None, max_length=255, description="Tiêu đề mới cho bản sao chép")
+
+
+class SessionItem(BaseModel):
+    """Thông tin tóm tắt một phiên làm việc."""
+    id: str
+    user_id: str
+    title: str
+    subject: str
+    grade: int
+    status: str
+    gemini_call_count: int = 0
+    retry_count: int = 0
+    approved_at: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class SessionListResponse(BaseModel):
+    """Danh sách các phiên làm việc có hỗ trợ phân trang."""
+    items: List[SessionItem]
+    total: int
+    page: int
+    page_size: int
+
+
+class SessionDetailResponse(BaseModel):
+    """Chi tiết phiên làm việc kèm danh sách câu hỏi nguồn và mã đề."""
+    id: str
+    user_id: str
+    title: str
+    subject: str
+    grade: int
+    status: str
+    gemini_call_count: int = 0
+    retry_count: int = 0
+    approved_at: Optional[str] = None
+    created_at: str
+    updated_at: str
+    source_questions: List[dict] = Field(default_factory=list, description="Danh sách câu hỏi gốc")
+    exam_versions: List[dict] = Field(default_factory=list, description="Danh sách các mã đề")
+
