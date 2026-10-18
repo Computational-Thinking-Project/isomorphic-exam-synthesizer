@@ -9,6 +9,7 @@ import LoginPage from './features/auth/LoginPage.jsx';
 import ProtectedRoute from './features/auth/ProtectedRoute.jsx';
 import AuthPreview from './features/auth/AuthPreview.jsx';
 import { useAuthStore } from './features/auth/authStore.js';
+import DashboardRoute from './features/dashboard/DashboardRoute.jsx';
 
 export default function App() {
   const setUser = useAuthStore((state) => state.setUser);
@@ -23,7 +24,9 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-
+          <Route element={<ProtectedRoute />}>
+              <Route path="/dashboard" element={<DashboardRoute />} />
+          </Route>
         {import.meta.env.DEV && (
           <Route path="/auth-preview" element={<AuthPreview />}>
             <Route
