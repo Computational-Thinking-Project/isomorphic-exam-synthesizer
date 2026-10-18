@@ -1,7 +1,7 @@
 import { StrictMode, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import MathRenderer from './MathRenderer.jsx';
-import '../../index.css';
+import '../index.css';
 
 const sampleVariant = {
   question:
