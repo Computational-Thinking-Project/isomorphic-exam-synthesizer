@@ -38,3 +38,26 @@ test('không giữ trạng thái đăng nhập khi người dùng thiếu ID', (
     assert.equal(useAuthStore.getState().status, 'unauthenticated');
     assert.equal(useAuthStore.getState().user, null);
 });
+
+test('có phiên vẫn phải chờ profile và mất phiên phải xóa dữ liệu', () => {
+    useAuthStore.getState().setUser(sampleUser);
+
+    useAuthStore.getState().setSession({
+        access_token: 'unit-test-token',
+        user: { id: 'test-user-002' },
+    });
+
+    const pending = useAuthStore.getState();
+
+    assert.equal(pending.status, 'profile_pending');
+    assert.equal(pending.user, null);
+    assert.equal(pending.session.user.id, 'test-user-002');
+
+    useAuthStore.getState().setSession(null);
+
+    const signedOut = useAuthStore.getState();
+
+    assert.equal(signedOut.status, 'unauthenticated');
+    assert.equal(signedOut.session, null);
+    assert.equal(signedOut.user, null);
+});
