@@ -3,7 +3,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import health, users
+from app.api.routes import health, sessions, users
 
 app = FastAPI(
     title="Isomorphic Exam Synthesizer API",
@@ -28,4 +28,6 @@ app.add_middleware(
 # Include Routers
 app.include_router(health.router)
 app.include_router(users.router, prefix="/api/users", tags=["Users"])
+app.include_router(sessions.router, prefix="/api/sessions", tags=["Sessions"])
+
 
