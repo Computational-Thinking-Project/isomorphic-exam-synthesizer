@@ -3,6 +3,8 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes import health, users
+
 app = FastAPI(
     title="Isomorphic Exam Synthesizer API",
     description="Backend engine for isomorphic math exam synthesis, validation, and export.",
@@ -23,21 +25,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include Routers
+app.include_router(health.router)
+app.include_router(users.router, prefix="/api/users", tags=["Users"])
 
-@app.get("/health", tags=["System"])
-async def health_check():
-    """Liveness probe endpoint for Docker healthcheck."""
-    return {
-        "status": "healthy",
-        "service": "backend",
-        "environment": os.getenv("ENVIRONMENT", "development"),
-    }
-
-
-@app.get("/api/health/metrics", tags=["System"])
-async def metrics_check():
-    """Basic health metrics check for backend service."""
-    return {
-        "status": "operational",
-        "gemini_model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
-    }
