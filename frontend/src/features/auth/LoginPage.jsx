@@ -1,12 +1,70 @@
 import { useState } from 'react';
+import { getSupabase } from '../../services/supabase.js';
+import { useAuthStore } from './authStore.js';
 
 export default function LoginPage() {
   const [notice, setNotice] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState('');
+  const status = useAuthStore((state) => state.status);
 
-  function handleGoogleSignIn() {
-    setNotice(
-      'Đăng nhập Google chưa được kết nối. Đây là bản kiểm tra giao diện.',
-    );
+  const sessionNotice = status === 'checking' ? 'Đang khôi phục phiên đăng nhập…'
+                      : status === 'profile_pending' ? 'Đã có phiên đăng nhập. Bước kiểm tra hồ sơ chưa được kết nối nên chưa thể mở Dashboard.'
+                      : '';
+
+  async function handleGoogleSignIn() {
+    if (isSubmitting || isSigningOut) return;
+
+    setSignOutError('');
+
+    setIsSubmitting(true);
+    setNotice('Đang chuyển đến Google…');
+
+    try {
+      const { error } = await getSupabase().auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/login`,
+        },
+      });
+
+      if (error) throw error;
+    } catch (cause) {
+      setNotice(
+        cause instanceof Error
+          ? cause.message
+          : 'Không thể bắt đầu đăng nhập. Vui lòng thử lại.',
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleSignOut() {
+    if (isSubmitting || isSigningOut) return;
+
+    setIsSigningOut(true);
+    setSignOutError('');
+    setNotice('');
+
+    try {
+      const { error } = await getSupabase().auth.signOut({
+        scope: 'local',
+      });
+
+      if (error) throw error;
+
+      setNotice('Đã đăng xuất.');
+    } catch (cause) {
+      setSignOutError(
+        cause instanceof Error
+          ? cause.message
+          : 'Không thể đăng xuất. Vui lòng thử lại.',
+      );
+    } finally {
+      setIsSigningOut(false);
+    }
   }
 
   return (
@@ -30,18 +88,43 @@ export default function LoginPage() {
         <button
           type="button"
           onClick={handleGoogleSignIn}
-          className="mt-8 w-full rounded-lg bg-sky-400 px-4 py-3 font-semibold text-slate-950 hover:bg-sky-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-sky-400"
+          disabled={
+            isSubmitting ||
+            isSigningOut ||
+            status === 'checking' ||
+            status === 'profile_pending'
+          }
+          className="mt-8 w-full rounded-lg bg-sky-400 px-4 py-3 font-semibold text-slate-950 hover:bg-sky-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-sky-400 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Đăng nhập bằng Google
+          {isSubmitting
+            ? 'Đang chuyển đến Google…'
+            : 'Đăng nhập bằng Google'}
         </button>
+
+        {status === 'profile_pending' && (
+          <button
+            type="button"
+            onClick={handleSignOut}
+            disabled={isSigningOut || isSubmitting}
+            className="mt-3 w-full rounded-lg border border-slate-600 px-4 py-3 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isSigningOut ? 'Đang đăng xuất…' : 'Đăng xuất'}
+          </button>
+        )}
 
         <p
           role="status"
           aria-live="polite"
           className="mt-4 text-sm text-slate-300"
         >
-          {notice}
+          {sessionNotice || notice}
         </p>
+
+        {signOutError && (
+          <p role="alert" className="mt-3 text-sm text-rose-300">
+            {signOutError}
+          </p>
+        )}
       </section>
     </main>
   );
