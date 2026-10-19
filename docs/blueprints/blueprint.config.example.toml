@@ -1,0 +1,24 @@
+# Defaults for the standalone blueprint tool; load explicitly with --config.
+# Pass credentials through GEMINI_API_KEY; never store an API key in this file.
+
+[ai]
+provider = "gemini"
+model = "gemini-3.5-flash-lite"
+request_timeout_seconds = 120
+item_timeout_seconds = 360
+max_requests_per_item = 3
+max_output_tokens = 16384
+# Leave sampling and thinking parameters at provider defaults unless configured.
+
+[batch]
+concurrency = 3
+
+[resources]
+# Relative resource paths resolve from the installed tool/repository, not caller cwd.
+schema_path = "docs/blueprints/science-blueprint.schema.json"
+prompt_directory = "scripts/blueprint/blueprint_tool/prompts"
+
+[output]
+encoding = "utf-8"
+atomic_write = true
+log_level = "INFO"

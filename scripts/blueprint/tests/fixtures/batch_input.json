@@ -1,0 +1,209 @@
+{
+  "questions": [
+    {
+      "source": {
+        "question_id": "biology_osmosis_explanation_v2_source",
+        "content": [
+          {
+            "id": "SRC_STEM",
+            "type": "text",
+            "text": "Một tế bào thực vật còn sống được đặt trong dung dịch ưu trương. Sau một thời gian, khối nguyên sinh co lại và tách khỏi thành tế bào. Hãy giải thích hiện tượng bằng sự di chuyển của nước qua màng sinh chất. Giả sử chất tan không đi qua màng trong thời gian xét."
+          }
+        ],
+        "options": [],
+        "supplied_answer": null,
+        "supplied_solution": null,
+        "references": []
+      },
+      "context": {
+        "subject": "biology",
+        "language": "vi"
+      }
+    },
+    {
+      "source": {
+        "question_id": "chemistry_mass_conservation_v2_source",
+        "content": [
+          {
+            "id": "SRC_STEM",
+            "type": "text",
+            "text": "Theo mô hình hóa học phổ thông, một phản ứng hóa học diễn ra trong hệ kín, không trao đổi chất với môi trường và không có phản ứng hạt nhân. Đại lượng nào của toàn bộ hệ luôn được bảo toàn?"
+          }
+        ],
+        "options": [
+          {
+            "id": "A",
+            "content": [
+              {
+                "id": "OPT_A",
+                "type": "text",
+                "text": "Tổng khối lượng."
+              }
+            ]
+          },
+          {
+            "id": "B",
+            "content": [
+              {
+                "id": "OPT_B",
+                "type": "text",
+                "text": "Tổng số phân tử."
+              }
+            ]
+          },
+          {
+            "id": "C",
+            "content": [
+              {
+                "id": "OPT_C",
+                "type": "text",
+                "text": "Tổng thể tích các chất khí."
+              }
+            ]
+          },
+          {
+            "id": "D",
+            "content": [
+              {
+                "id": "OPT_D",
+                "type": "text",
+                "text": "Số mol của từng chất."
+              }
+            ]
+          }
+        ],
+        "supplied_answer": {
+          "option_ids": [
+            "A"
+          ],
+          "value": null,
+          "explanation": null
+        },
+        "supplied_solution": null,
+        "references": []
+      },
+      "context": {
+        "subject": "chemistry",
+        "language": "vi"
+      }
+    },
+    {
+      "source": {
+        "question_id": "math_partition_probability_v2_source",
+        "content": [
+          {
+            "id": "SRC_STEM",
+            "type": "text",
+            "text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Dũng có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Dũng lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?"
+          }
+        ],
+        "options": [
+          {
+            "id": "A",
+            "content": [
+              {
+                "id": "OPT_A",
+                "type": "text",
+                "text": "1856"
+              }
+            ]
+          },
+          {
+            "id": "B",
+            "content": [
+              {
+                "id": "OPT_B",
+                "type": "text",
+                "text": "1334"
+              }
+            ]
+          },
+          {
+            "id": "C",
+            "content": [
+              {
+                "id": "OPT_C",
+                "type": "text",
+                "text": "928"
+              }
+            ]
+          },
+          {
+            "id": "D",
+            "content": [
+              {
+                "id": "OPT_D",
+                "type": "text",
+                "text": "2552"
+              }
+            ]
+          }
+        ],
+        "supplied_answer": {
+          "option_ids": [
+            "A"
+          ],
+          "value": {
+            "type": "integer",
+            "value": 1856
+          },
+          "explanation": null
+        },
+        "supplied_solution": null,
+        "references": []
+      },
+      "context": {
+        "subject": "mathematics",
+        "language": "vi"
+      }
+    },
+    {
+      "source": {
+        "question_id": "physics_newton_acceleration_v2_source",
+        "content": [
+          {
+            "id": "SRC_STEM",
+            "type": "text",
+            "text": "Trong hệ quy chiếu quán tính, một vật có khối lượng không đổi chịu hợp lực theo cơ học Newton. Các đại lượng được cho trong bảng. Tính độ lớn gia tốc của vật, theo m/s²."
+          },
+          {
+            "id": "SRC_TABLE",
+            "type": "table",
+            "columns": [
+              "Đại lượng",
+              "Giá trị",
+              "Đơn vị"
+            ],
+            "rows": [
+              [
+                "Khối lượng",
+                2,
+                "kg"
+              ],
+              [
+                "Độ lớn hợp lực",
+                6,
+                "N"
+              ]
+            ]
+          }
+        ],
+        "options": [],
+        "supplied_answer": {
+          "option_ids": [],
+          "value": {
+            "type": "integer",
+            "value": 3
+          },
+          "explanation": null
+        },
+        "supplied_solution": null,
+        "references": []
+      },
+      "context": {
+        "subject": "physics",
+        "language": "vi"
+      }
+    }
+  ]
+}

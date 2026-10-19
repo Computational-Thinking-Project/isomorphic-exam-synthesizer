@@ -1,0 +1,431 @@
+{
+  "requirement": {
+    "blueprint_id": "physics_newton_acceleration_v2",
+    "schema_version": "0.4.0",
+    "subject": "physics",
+    "language": "vi",
+    "language_policy": {
+      "field_names": "en",
+      "descriptive_values": "source_language",
+      "machine_codes": "stable"
+    },
+    "source": {
+      "question_id": "physics_newton_acceleration_v2_source",
+      "content": [
+        {
+          "id": "SRC_STEM",
+          "type": "text",
+          "text": "Trong hệ quy chiếu quán tính, một vật có khối lượng không đổi chịu hợp lực theo cơ học Newton. Các đại lượng được cho trong bảng. Tính độ lớn gia tốc của vật, theo m/s²."
+        },
+        {
+          "id": "SRC_TABLE",
+          "type": "table",
+          "columns": [
+            "Đại lượng",
+            "Giá trị",
+            "Đơn vị"
+          ],
+          "rows": [
+            [
+              "Khối lượng",
+              2,
+              "kg"
+            ],
+            [
+              "Độ lớn hợp lực",
+              6,
+              "N"
+            ]
+          ]
+        }
+      ],
+      "options": [],
+      "supplied_answer": {
+        "option_ids": [],
+        "value": {
+          "type": "integer",
+          "value": 3
+        },
+        "explanation": null
+      },
+      "supplied_solution": null,
+      "references": []
+    },
+    "assessment": {
+      "id": "R_ASSESSMENT",
+      "objective": "Áp dụng trực tiếp định luật II Newton để tính độ lớn gia tốc.",
+      "knowledge": [
+        "Định luật II Newton."
+      ],
+      "cognitive_operations": [
+        "Nhận diện đại lượng từ bảng.",
+        "Thay vào công thức.",
+        "Tính một phép chia."
+      ],
+      "prerequisites": [
+        "Ý nghĩa hợp lực và đơn vị SI."
+      ]
+    },
+    "knowledge_basis": [
+      {
+        "id": "K_NEWTON",
+        "description": "Trong hệ quy chiếu quán tính, vật khối lượng không đổi thỏa F_hợp = m a theo cơ học Newton.",
+        "origin": "inferred",
+        "evidence_refs": []
+      }
+    ],
+    "semantic_model": {
+      "id": "R_MODEL",
+      "entities": [
+        {
+          "id": "E_BODY",
+          "kind": "physical_object",
+          "description": "Vật có khối lượng không đổi trong hệ quy chiếu quán tính."
+        }
+      ],
+      "quantities": [
+        {
+          "id": "Q_M",
+          "symbol": "m",
+          "description": "Khối lượng của vật.",
+          "role": "given",
+          "value": {
+            "type": "integer",
+            "value": 2
+          },
+          "unit": "kg"
+        },
+        {
+          "id": "Q_F",
+          "symbol": "F",
+          "description": "Độ lớn hợp lực.",
+          "role": "given",
+          "value": {
+            "type": "integer",
+            "value": 6
+          },
+          "unit": "N"
+        },
+        {
+          "id": "Q_A",
+          "symbol": "a",
+          "description": "Độ lớn gia tốc.",
+          "role": "unknown",
+          "value": null,
+          "unit": "m/s^2"
+        }
+      ],
+      "relations": [
+        {
+          "id": "REL_NEWTON",
+          "description": "Gia tốc bằng hợp lực chia khối lượng.",
+          "role": "derived",
+          "formalism": "math_expression",
+          "expression": "a = F/m",
+          "refs": [
+            "Q_F",
+            "Q_M",
+            "Q_A"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "id": "AS_FRAME",
+          "description": "Hệ quy chiếu quán tính; khối lượng không đổi; áp dụng cơ học Newton.",
+          "origin": "source",
+          "evidence_refs": [
+            "SRC_STEM"
+          ]
+        }
+      ],
+      "target": {
+        "id": "TARGET",
+        "description": "Tính độ lớn gia tốc.",
+        "quantity_ref": "Q_A"
+      }
+    },
+    "reasoning_model": {
+      "id": "R_REASONING",
+      "steps": [
+        {
+          "id": "STEP1",
+          "description": "Đọc khối lượng và hợp lực từ bảng.",
+          "depends_on": []
+        },
+        {
+          "id": "STEP2",
+          "description": "Dùng a = F/m.",
+          "depends_on": [
+            "STEP1"
+          ]
+        },
+        {
+          "id": "STEP3",
+          "description": "Tính kết quả và ghi đơn vị m/s².",
+          "depends_on": [
+            "STEP2"
+          ]
+        }
+      ],
+      "accepted_alternatives": [],
+      "forbidden_shortcuts": []
+    },
+    "invariants": [
+      {
+        "id": "I_LAW",
+        "category": "knowledge",
+        "description": "Áp dụng trực tiếp định luật II Newton trong các điều kiện đã nêu."
+      },
+      {
+        "id": "I_TARGET",
+        "category": "relations",
+        "description": "Cho khối lượng và hợp lực, hỏi độ lớn gia tốc."
+      },
+      {
+        "id": "I_WORK",
+        "category": "workload",
+        "description": "Một phép chia với đơn vị SI có sẵn; không phân tích thêm lực."
+      }
+    ],
+    "variation_policy": {
+      "id": "R_VARIATION",
+      "equivalence_level": "strict_structure",
+      "allowed_transformations": [
+        {
+          "id": "V_VALUES",
+          "dimension": "values",
+          "description": "Đổi khối lượng và hợp lực.",
+          "target_refs": [
+            "Q_M",
+            "Q_F"
+          ],
+          "preconditions": [
+            "Khối lượng dương, hợp lực dương.",
+            "F/m là số nguyên dương."
+          ],
+          "limits": []
+        },
+        {
+          "id": "V_NAME",
+          "dimension": "names",
+          "description": "Đổi tên gọi vật.",
+          "target_refs": [
+            "E_BODY"
+          ],
+          "preconditions": [
+            "Không thêm tính chất làm đổi mô hình lực."
+          ],
+          "limits": []
+        }
+      ],
+      "parameter_domains": [
+        {
+          "quantity_ref": "Q_M",
+          "description": "Chọn khối lượng 2, 3 hoặc 4 kg.",
+          "allowed_values": [
+            {
+              "type": "integer",
+              "value": 2
+            },
+            {
+              "type": "integer",
+              "value": 3
+            },
+            {
+              "type": "integer",
+              "value": 4
+            }
+          ],
+          "minimum": null,
+          "maximum": null,
+          "conditions": []
+        },
+        {
+          "quantity_ref": "Q_F",
+          "description": "Chọn hợp lực 6, 8 hoặc 12 N.",
+          "allowed_values": [
+            {
+              "type": "integer",
+              "value": 6
+            },
+            {
+              "type": "integer",
+              "value": 8
+            },
+            {
+              "type": "integer",
+              "value": 12
+            }
+          ],
+          "minimum": null,
+          "maximum": null,
+          "conditions": [
+            "Chọn đồng thời với m sao cho F/m là số nguyên."
+          ]
+        }
+      ],
+      "forbidden_changes": [
+        "Cho lực kéo thay vì hợp lực rồi yêu cầu suy ra ma sát.",
+        "Đổi sang tìm quãng đường.",
+        "Đổi đơn vị đòi thêm bước quy đổi."
+      ],
+      "workload_limits": [
+        "Một phép chia số nguyên.",
+        "Giữ bảng gồm đúng hai đại lượng đã cho."
+      ]
+    },
+    "response_spec": {
+      "id": "R_RESPONSE",
+      "format": "numeric",
+      "option_count": null,
+      "correct_option_count": null,
+      "grading": {
+        "mode": "exact_value",
+        "expected_unit": "m/s^2",
+        "numeric_tolerance": null,
+        "rounding_rule": null,
+        "rubric": []
+      },
+      "distractor_policy": null
+    },
+    "presentation": {
+      "id": "R_PRESENTATION",
+      "allowed_content_types": [
+        "text",
+        "formula",
+        "table"
+      ],
+      "requires_image": false,
+      "instructions": [
+        "Mô tả, đề sinh ra và lời giải dùng cùng ngôn ngữ với đề nguồn.",
+        "Cung cấp đủ dữ kiện bằng văn bản, công thức hoặc bảng; không dẫn tới hình, sơ đồ hoặc đồ thị cần đọc."
+      ]
+    }
+  },
+  "constraint": {
+    "validation_policy": {
+      "outcomes": [
+        "pass",
+        "fail",
+        "unknown"
+      ],
+      "required_unknown_action": "block_automatic_acceptance",
+      "advisory_can_override_required": false
+    },
+    "source_check": {
+      "computed_answer": {
+        "option_ids": [],
+        "value": {
+          "type": "integer",
+          "value": 3
+        },
+        "explanation": "a = 6/2 = 3 m/s²."
+      },
+      "methods": [
+        "exact_math",
+        "unit_analysis"
+      ],
+      "evidence": [
+        "6 N / 2 kg = 3 m/s² trong mô hình đã nêu."
+      ]
+    },
+    "rules": [
+      {
+        "id": "C_LANGUAGE",
+        "requirement_refs": [
+          "R_PRESENTATION"
+        ],
+        "scope": "blueprint",
+        "severity": "required",
+        "description": "Tuân thủ quy tắc ngôn ngữ và phạm vi không hình ảnh.",
+        "verification_methods": [
+          "schema",
+          "semantic_rubric",
+          "human_review"
+        ],
+        "pass_criteria": "Tên trường và mã máy giữ nguyên; mô tả theo ngôn ngữ đề nguồn; không có hình nhúng, đường dẫn hình hoặc dữ kiện chỉ đọc được từ hình.",
+        "on_failure": "reject"
+      },
+      {
+        "id": "C_CONTENT",
+        "requirement_refs": [
+          "R_PRESENTATION"
+        ],
+        "scope": "candidate",
+        "severity": "required",
+        "description": "Đề và lời giải cuối cùng tự đầy đủ, đúng ngôn ngữ và không cần hình.",
+        "verification_methods": [
+          "semantic_rubric",
+          "human_review"
+        ],
+        "pass_criteria": "Không có lời dẫn tới hình vẽ, dữ kiện bị lược mất hoặc hình được nhúng trong văn bản/công thức.",
+        "on_failure": "reject"
+      },
+      {
+        "id": "C_EQUIVALENCE",
+        "requirement_refs": [
+          "R_ASSESSMENT",
+          "R_REASONING",
+          "R_VARIATION"
+        ],
+        "scope": "source_candidate",
+        "severity": "required",
+        "description": "Giữ kiến thức, thao tác nhận thức và giới hạn biến đổi khi so với câu nguồn.",
+        "verification_methods": [
+          "semantic_rubric",
+          "human_review"
+        ],
+        "pass_criteria": "Mọi biến đổi nằm trong chính sách; không thêm kỹ năng bắt buộc và không cung cấp sẵn bước suy luận đang được đánh giá.",
+        "on_failure": "reject"
+      },
+      {
+        "id": "C_RESPONSE",
+        "requirement_refs": [
+          "R_RESPONSE"
+        ],
+        "scope": "candidate",
+        "severity": "required",
+        "description": "Đáp án và lời giải khớp câu hỏi cuối cùng.",
+        "verification_methods": [
+          "semantic_rubric",
+          "human_review"
+        ],
+        "pass_criteria": "Tính hoặc suy ra lại đáp án từ dữ kiện mới; đáp án, đơn vị, tiêu chí chấm và các phương án phù hợp định dạng đã chọn.",
+        "on_failure": "reject"
+      },
+      {
+        "id": "C_NEWTON",
+        "requirement_refs": [
+          "I_LAW",
+          "I_TARGET"
+        ],
+        "scope": "candidate",
+        "severity": "required",
+        "description": "Kiểm tra điều kiện và công thức.",
+        "verification_methods": [
+          "domain_rule",
+          "semantic_rubric"
+        ],
+        "pass_criteria": "Dữ kiện là hợp lực, m > 0; các điều kiện của cơ học Newton được nêu.",
+        "on_failure": "reject"
+      },
+      {
+        "id": "C_UNITS",
+        "requirement_refs": [
+          "I_WORK",
+          "R_RESPONSE"
+        ],
+        "scope": "candidate",
+        "severity": "required",
+        "description": "Kiểm tra đơn vị và kết quả.",
+        "verification_methods": [
+          "exact_math",
+          "unit_analysis"
+        ],
+        "pass_criteria": "a = F/m; đơn vị là m/s²; không thêm bước đổi đơn vị.",
+        "on_failure": "reject"
+      }
+    ]
+  }
+}

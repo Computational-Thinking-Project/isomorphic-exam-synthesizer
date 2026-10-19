@@ -1,0 +1,48 @@
+{
+  "source": {
+    "question_id": "physics_newton_acceleration_v2_source",
+    "content": [
+      {
+        "id": "SRC_STEM",
+        "type": "text",
+        "text": "Trong hệ quy chiếu quán tính, một vật có khối lượng không đổi chịu hợp lực theo cơ học Newton. Các đại lượng được cho trong bảng. Tính độ lớn gia tốc của vật, theo m/s²."
+      },
+      {
+        "id": "SRC_TABLE",
+        "type": "table",
+        "columns": [
+          "Đại lượng",
+          "Giá trị",
+          "Đơn vị"
+        ],
+        "rows": [
+          [
+            "Khối lượng",
+            2,
+            "kg"
+          ],
+          [
+            "Độ lớn hợp lực",
+            6,
+            "N"
+          ]
+        ]
+      }
+    ],
+    "options": [],
+    "supplied_answer": {
+      "option_ids": [],
+      "value": {
+        "type": "integer",
+        "value": 3
+      },
+      "explanation": null
+    },
+    "supplied_solution": null,
+    "references": []
+  },
+  "context": {
+    "subject": "physics",
+    "language": "vi"
+  }
+}

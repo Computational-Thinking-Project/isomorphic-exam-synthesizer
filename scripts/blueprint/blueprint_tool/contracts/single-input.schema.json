@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:blueprint:single-input:1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["source"],
+  "properties": {
+    "source": {"$ref": "urn:blueprint:science:0.4.0#/$defs/source"},
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "subject": {"anyOf": [{"$ref": "urn:blueprint:science:0.4.0#/$defs/requirement/properties/subject"}, {"type": "null"}]},
+        "language": {"anyOf": [{"$ref": "urn:blueprint:science:0.4.0#/$defs/requirement/properties/language"}, {"type": "null"}]},
+        "audience": {"type": ["string", "null"], "minLength": 1},
+        "generation_preferences": {"type": ["string", "null"], "minLength": 1}
+      }
+    }
+  }
+}

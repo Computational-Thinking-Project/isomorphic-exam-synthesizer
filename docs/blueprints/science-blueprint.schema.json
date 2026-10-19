@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Cấu trúc blueprint chung cho các môn tự nhiên, không dùng hình ảnh",
+  "description": "Bản thiết kế 0.4.0 cho Toán, Vật lý, Hóa học và Sinh học. Blueprint được cập nhật liên tục: sinh một candidate, sau đó chỉnh blueprint và generator dựa trên candidate. Tên trường và mã máy cố định bằng tiếng Anh; mô tả trong từng blueprint theo ngôn ngữ đề nguồn. Schema kiểm tra cấu trúc, không chứng minh tính đúng chuyên môn.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["requirement", "constraint"],
+  "properties": {
+    "requirement": { "$ref": "#/$defs/requirement" },
+    "constraint": { "$ref": "#/$defs/constraint" }
+  },
+  "$defs": {
+    "text": { "type": "string", "minLength": 1 },
+    "id": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$" },
+    "texts": { "type": "array", "items": { "$ref": "#/$defs/text" } },
+    "refs": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
+    "nullable_text": { "anyOf": [{ "$ref": "#/$defs/text" }, { "type": "null" }] },
+    "value": {
+      "description": "Giá trị có kiểu. Số thập phân lưu bằng chuỗi để giữ độ chính xác; biểu thức là dữ liệu, không được thực thi như mã.",
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": { "type": { "const": "integer" }, "value": { "type": "integer" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": { "type": { "const": "decimal" }, "value": { "type": "string", "pattern": "^-?[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?$" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "numerator", "denominator"], "properties": { "type": { "const": "rational" }, "numerator": { "type": "integer" }, "denominator": { "type": "integer", "minimum": 1 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": { "type": { "enum": ["symbolic", "text"] }, "value": { "$ref": "#/$defs/text" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "value"], "properties": { "type": { "const": "boolean" }, "value": { "type": "boolean" } } }
+      ]
+    },
+    "nullable_value": { "anyOf": [{ "$ref": "#/$defs/value" }, { "type": "null" }] },
+    "block": {
+      "description": "Nội dung trực tiếp dạng văn bản, công thức hoặc bảng; không có trường chứa hình hoặc đường dẫn hình.",
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["id", "type", "text"], "properties": { "id": { "$ref": "#/$defs/id" }, "type": { "const": "text" }, "text": { "$ref": "#/$defs/text" } } },
+        { "type": "object", "additionalProperties": false, "required": ["id", "type", "notation", "expression"], "properties": { "id": { "$ref": "#/$defs/id" }, "type": { "const": "formula" }, "notation": { "enum": ["latex", "plain", "chemical_equation"] }, "expression": { "$ref": "#/$defs/text" } } },
+        { "type": "object", "additionalProperties": false, "required": ["id", "type", "columns", "rows"], "properties": { "id": { "$ref": "#/$defs/id" }, "type": { "const": "table" }, "columns": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/text" } }, "rows": { "type": "array", "minItems": 1, "items": { "type": "array", "minItems": 1, "items": { "type": ["string", "number", "boolean", "null"] } } } } }
+      ]
+    },
+    "blocks": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/block" } },
+    "answer": {
+      "type": "object", "additionalProperties": false,
+      "required": ["option_ids", "value", "explanation"],
+      "properties": {
+        "option_ids": { "$ref": "#/$defs/refs" },
+        "value": { "$ref": "#/$defs/nullable_value" },
+        "explanation": { "$ref": "#/$defs/nullable_text" }
+      },
+      "anyOf": [
+        { "properties": { "option_ids": { "minItems": 1 } } },
+        { "properties": { "value": { "type": "object" } } },
+        { "properties": { "explanation": { "type": "string" } } }
+      ]
+    },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["question_id", "content", "options", "supplied_answer", "supplied_solution", "references"],
+      "properties": {
+        "question_id": { "$ref": "#/$defs/id" },
+        "content": { "$ref": "#/$defs/blocks" },
+        "options": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["id", "content"], "properties": { "id": { "$ref": "#/$defs/id" }, "content": { "$ref": "#/$defs/blocks" } } } },
+        "supplied_answer": { "anyOf": [{ "$ref": "#/$defs/answer" }, { "type": "null" }] },
+        "supplied_solution": { "anyOf": [{ "$ref": "#/$defs/blocks" }, { "type": "null" }] },
+        "references": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["id", "title", "locator", "url"], "properties": { "id": { "$ref": "#/$defs/id" }, "title": { "$ref": "#/$defs/text" }, "locator": { "$ref": "#/$defs/text" }, "url": { "$ref": "#/$defs/nullable_text" } } } }
+      }
+    },
+    "claim": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "description", "origin", "evidence_refs"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "description": { "$ref": "#/$defs/text" },
+        "origin": { "enum": ["source", "inferred", "reference"] },
+        "evidence_refs": { "$ref": "#/$defs/refs" }
+      },
+      "allOf": [
+        { "if": { "properties": { "origin": { "enum": ["source", "reference"] } } }, "then": { "properties": { "evidence_refs": { "minItems": 1 } } } }
+      ]
+    },
+    "assessment": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "objective", "knowledge", "cognitive_operations", "prerequisites"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" }, "objective": { "$ref": "#/$defs/text" },
+        "knowledge": { "allOf": [{ "$ref": "#/$defs/texts" }], "minItems": 1 },
+        "cognitive_operations": { "allOf": [{ "$ref": "#/$defs/texts" }], "minItems": 1 },
+        "prerequisites": { "$ref": "#/$defs/texts" }
+      }
+    },
+    "semantic_model": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "entities", "quantities", "relations", "assumptions", "target"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "entities": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["id", "kind", "description"], "properties": { "id": { "$ref": "#/$defs/id" }, "kind": { "enum": ["abstract_object", "physical_object", "substance", "organism", "population", "process", "system", "event", "set"] }, "description": { "$ref": "#/$defs/text" } } } },
+        "quantities": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["id", "symbol", "description", "role", "value", "unit"], "properties": { "id": { "$ref": "#/$defs/id" }, "symbol": { "$ref": "#/$defs/nullable_text" }, "description": { "$ref": "#/$defs/text" }, "role": { "enum": ["given", "derived", "unknown"] }, "value": { "$ref": "#/$defs/nullable_value" }, "unit": { "$ref": "#/$defs/nullable_text" } } } },
+        "relations": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["id", "description", "role", "formalism", "expression", "refs"], "properties": { "id": { "$ref": "#/$defs/id" }, "description": { "$ref": "#/$defs/text" }, "role": { "enum": ["given", "derived"] }, "formalism": { "enum": ["none", "latex", "math_expression", "logic", "chemical_equation"] }, "expression": { "$ref": "#/$defs/nullable_text" }, "refs": { "$ref": "#/$defs/refs" } }, "allOf": [{ "if": { "properties": { "formalism": { "const": "none" } } }, "then": { "properties": { "expression": { "type": "null" } } }, "else": { "properties": { "expression": { "$ref": "#/$defs/text" } } } }] } },
+        "assumptions": { "type": "array", "items": { "$ref": "#/$defs/claim" } },
+        "target": { "type": "object", "additionalProperties": false, "required": ["id", "description", "quantity_ref"], "properties": { "id": { "$ref": "#/$defs/id" }, "description": { "$ref": "#/$defs/text" }, "quantity_ref": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] } } }
+      }
+    },
+    "reasoning_model": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "steps", "accepted_alternatives", "forbidden_shortcuts"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "steps": { "type": "array", "minItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["id", "description", "depends_on"], "properties": { "id": { "$ref": "#/$defs/id" }, "description": { "$ref": "#/$defs/text" }, "depends_on": { "$ref": "#/$defs/refs" } } } },
+        "accepted_alternatives": { "$ref": "#/$defs/texts" },
+        "forbidden_shortcuts": { "$ref": "#/$defs/texts" }
+      }
+    },
+    "invariant": {
+      "type": "object", "additionalProperties": false, "required": ["id", "category", "description"],
+      "properties": { "id": { "$ref": "#/$defs/id" }, "category": { "enum": ["knowledge", "relations", "reasoning", "workload", "context", "distribution", "response"] }, "description": { "$ref": "#/$defs/text" } }
+    },
+    "parameter_domain": {
+      "type": "object", "additionalProperties": false,
+      "required": ["quantity_ref", "description", "allowed_values", "minimum", "maximum", "conditions"],
+      "properties": {
+        "quantity_ref": { "$ref": "#/$defs/id" }, "description": { "$ref": "#/$defs/text" },
+        "allowed_values": { "anyOf": [{ "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/value" } }, { "type": "null" }] },
+        "minimum": { "$ref": "#/$defs/nullable_value" }, "maximum": { "$ref": "#/$defs/nullable_value" },
+        "conditions": { "$ref": "#/$defs/texts" }
+      }
+    },
+    "variation_policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "equivalence_level", "allowed_transformations", "parameter_domains", "forbidden_changes", "workload_limits"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" }, "equivalence_level": { "enum": ["strict_structure", "assessment_equivalent"] },
+        "allowed_transformations": { "type": "array", "minItems": 1, "items": { "type": "object", "additionalProperties": false, "required": ["id", "dimension", "description", "target_refs", "preconditions", "limits"], "properties": { "id": { "$ref": "#/$defs/id" }, "dimension": { "enum": ["wording", "names", "context", "values", "representation", "option_order"] }, "description": { "$ref": "#/$defs/text" }, "target_refs": { "$ref": "#/$defs/refs" }, "preconditions": { "$ref": "#/$defs/texts" }, "limits": { "$ref": "#/$defs/texts" } } } },
+        "parameter_domains": { "type": "array", "items": { "$ref": "#/$defs/parameter_domain" } },
+        "forbidden_changes": { "$ref": "#/$defs/texts" }, "workload_limits": { "$ref": "#/$defs/texts" }
+      }
+    },
+    "grading": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "expected_unit", "numeric_tolerance", "rounding_rule", "rubric"],
+      "properties": {
+        "mode": { "enum": ["option_keys", "exact_value", "symbolic_equivalence", "rubric"] },
+        "expected_unit": { "$ref": "#/$defs/nullable_text" },
+        "numeric_tolerance": { "anyOf": [{ "type": "null" }, { "type": "object", "additionalProperties": false, "required": ["absolute", "relative"], "properties": { "absolute": { "type": "number", "minimum": 0 }, "relative": { "type": "number", "minimum": 0 } } }] },
+        "rounding_rule": { "$ref": "#/$defs/nullable_text" },
+        "rubric": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["id", "description", "max_score"], "properties": { "id": { "$ref": "#/$defs/id" }, "description": { "$ref": "#/$defs/text" }, "max_score": { "type": "number", "exclusiveMinimum": 0 } } } }
+      },
+      "allOf": [{ "if": { "properties": { "mode": { "const": "rubric" } } }, "then": { "properties": { "rubric": { "minItems": 1 } } } }]
+    },
+    "response_spec": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "format", "option_count", "correct_option_count", "grading", "distractor_policy"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" }, "format": { "enum": ["single_choice", "multiple_choice", "true_false", "numeric", "short_text", "explanation"] },
+        "option_count": { "type": ["integer", "null"], "minimum": 2 },
+        "correct_option_count": { "type": ["integer", "null"], "minimum": 1 },
+        "grading": { "$ref": "#/$defs/grading" },
+        "distractor_policy": { "anyOf": [{ "type": "null" }, { "type": "object", "additionalProperties": false, "required": ["error_models", "rules"], "properties": { "error_models": { "$ref": "#/$defs/texts" }, "rules": { "allOf": [{ "$ref": "#/$defs/texts" }], "minItems": 1 } } }] }
+      },
+      "allOf": [
+        { "if": { "properties": { "format": { "enum": ["single_choice", "multiple_choice"] } } }, "then": { "properties": { "option_count": { "type": "integer" }, "correct_option_count": { "type": "integer" }, "grading": { "properties": { "mode": { "const": "option_keys" } } }, "distractor_policy": { "type": "object" } } }, "else": { "properties": { "option_count": { "type": "null" }, "correct_option_count": { "type": "null" }, "distractor_policy": { "type": "null" }, "grading": { "properties": { "mode": { "not": { "const": "option_keys" } } } } } } },
+        { "if": { "properties": { "format": { "const": "single_choice" } } }, "then": { "properties": { "correct_option_count": { "const": 1 } } } },
+        { "if": { "properties": { "format": { "const": "explanation" } } }, "then": { "properties": { "grading": { "properties": { "mode": { "const": "rubric" } } } } } },
+        { "if": { "properties": { "format": { "const": "numeric" } } }, "then": { "properties": { "grading": { "properties": { "mode": { "const": "exact_value" } } } } } },
+        { "if": { "properties": { "format": { "const": "true_false" } } }, "then": { "properties": { "grading": { "properties": { "mode": { "const": "exact_value" } } } } } }
+      ]
+    },
+    "presentation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "allowed_content_types", "requires_image", "instructions"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" }, "allowed_content_types": { "const": ["text", "formula", "table"] },
+        "requires_image": { "const": false }, "instructions": { "$ref": "#/$defs/texts" }
+      }
+    },
+    "requirement": {
+      "type": "object", "additionalProperties": false,
+      "required": ["blueprint_id", "schema_version", "subject", "language", "language_policy", "source", "assessment", "knowledge_basis", "semantic_model", "reasoning_model", "invariants", "variation_policy", "response_spec", "presentation"],
+      "properties": {
+        "blueprint_id": { "$ref": "#/$defs/id" }, "schema_version": { "const": "0.4.0" },
+        "subject": { "enum": ["mathematics", "physics", "chemistry", "biology", "integrated_science"] },
+        "language": { "type": "string", "pattern": "^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$" },
+        "language_policy": { "const": { "field_names": "en", "descriptive_values": "source_language", "machine_codes": "stable" } },
+        "source": { "$ref": "#/$defs/source" }, "assessment": { "$ref": "#/$defs/assessment" },
+        "knowledge_basis": { "type": "array", "items": { "$ref": "#/$defs/claim" } },
+        "semantic_model": { "$ref": "#/$defs/semantic_model" }, "reasoning_model": { "$ref": "#/$defs/reasoning_model" },
+        "invariants": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/invariant" } },
+        "variation_policy": { "$ref": "#/$defs/variation_policy" }, "response_spec": { "$ref": "#/$defs/response_spec" },
+        "presentation": { "$ref": "#/$defs/presentation" }
+      },
+      "allOf": [
+        { "if": { "properties": { "response_spec": { "properties": { "format": { "enum": ["single_choice", "multiple_choice"] } } } } }, "then": { "properties": { "source": { "properties": { "options": { "minItems": 2 } } } } }, "else": { "properties": { "source": { "properties": { "options": { "maxItems": 0 } } } } } }
+      ]
+    },
+    "verification_method": { "enum": ["schema", "exact_math", "enumeration", "unit_analysis", "domain_rule", "reference_check", "semantic_rubric", "human_review"] },
+    "constraint": {
+      "type": "object", "additionalProperties": false,
+      "required": ["validation_policy", "source_check", "rules"],
+      "properties": {
+        "validation_policy": { "const": { "outcomes": ["pass", "fail", "unknown"], "required_unknown_action": "block_automatic_acceptance", "advisory_can_override_required": false } },
+        "source_check": {
+          "type": "object", "additionalProperties": false,
+          "required": ["computed_answer", "methods", "evidence"],
+          "properties": {
+            "computed_answer": { "anyOf": [{ "$ref": "#/$defs/answer" }, { "type": "null" }] },
+            "methods": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/verification_method" } },
+            "evidence": { "$ref": "#/$defs/texts" }
+          }
+        },
+        "rules": { "type": "array", "minItems": 1, "items": {
+          "type": "object", "additionalProperties": false,
+          "required": ["id", "requirement_refs", "scope", "severity", "description", "verification_methods", "pass_criteria", "on_failure"],
+          "properties": {
+            "id": { "$ref": "#/$defs/id" }, "requirement_refs": { "allOf": [{ "$ref": "#/$defs/refs" }], "minItems": 1 },
+            "scope": { "enum": ["blueprint", "source", "candidate", "source_candidate", "batch"] },
+            "severity": { "enum": ["required", "advisory"] }, "description": { "$ref": "#/$defs/text" },
+            "verification_methods": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/verification_method" } },
+            "pass_criteria": { "$ref": "#/$defs/text" }, "on_failure": { "enum": ["reject", "regenerate", "review"] }
+          }
+        } }
+      }
+    }
+  }
+}
