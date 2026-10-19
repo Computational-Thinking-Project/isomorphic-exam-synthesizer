@@ -8,7 +8,7 @@ or PowerShell 7 (pwsh on macOS/Linux).
 
 Install Docker Desktop from https://docs.docker.com/desktop/setup/install/.
 On Windows choose Linux containers with WSL 2. Reopen the terminal after installing.
-The development configuration requires Compose 2.32.0 or later.
+The development configuration requires Compose 2.24.4 or later.
 Clone the repository, check out dev, and run from its root:
 
 ~~~powershell
@@ -74,7 +74,9 @@ Do not paste docker compose config output: it expands secrets. Use config --quie
 
 ## Source and dependency changes
 
-Compose Watch syncs source; dependencies remain in images. Windows node_modules
+The up command builds the current source before starting Watch; it does not rely
+on newer initial_sync schema support. Compose Watch then syncs edits while running.
+Dependencies remain in images. Windows node_modules
 and .venv are excluded. Vite/Uvicorn reload source edits; manifests trigger rebuilds.
 Tests use run --build to include the current checkout without requiring a watcher.
 

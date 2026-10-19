@@ -17,6 +17,10 @@ jobs:
       COMPOSE_PROJECT_NAME: exam-ci-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v4
+      - name: Docker versions
+        run: |
+          docker version
+          docker compose version
       - name: Prepare development configuration
         shell: pwsh
         run: ./scripts/dev.ps1 setup

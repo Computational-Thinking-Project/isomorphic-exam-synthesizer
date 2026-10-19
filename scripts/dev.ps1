@@ -93,8 +93,8 @@ try {
     $composeVersion = & $script:DockerCli compose version --short
     if ($LASTEXITCODE -ne 0) { throw 'Docker Compose is missing. Update Docker Desktop.' }
     $versionMatch = [regex]::Match([string]$composeVersion, '\d+\.\d+\.\d+')
-    if (-not $versionMatch.Success -or [version]$versionMatch.Value -lt [version]'2.32.0') {
-        throw 'Docker Compose 2.32.0 or later is required for initial_sync and the dev overlay.'
+    if (-not $versionMatch.Success -or [version]$versionMatch.Value -lt [version]'2.24.4') {
+        throw 'Docker Compose 2.24.4 or later is required for the dev overlay.'
     }
     $script:ComposeOptions = @(
         'compose', '--project-directory', $repoRoot,
@@ -104,6 +104,7 @@ try {
     )
 
     if ($Action -eq 'setup') {
+        Write-Host "Docker Compose $composeVersion"
         if (-not (Test-Path -LiteralPath $envFile)) {
             Copy-Item -LiteralPath (Join-Path $repoRoot '.env.example') -Destination $envFile
             Write-Host 'Created .env. Local health/UI/mock tests do not require cloud keys.'
