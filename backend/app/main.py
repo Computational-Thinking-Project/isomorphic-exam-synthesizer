@@ -1,7 +1,9 @@
 import os
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+
+from app.core.cors import register_cors
+from app.core.rate_limit import limiter, register_rate_limiter
 
 app = FastAPI(
     title="Isomorphic Exam Synthesizer API",
@@ -11,20 +13,12 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# CORS configuration (SEC-06)
-cors_origins_str = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
-cors_origins = [origin.strip() for origin in cors_origins_str.split(",") if origin.strip()]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=cors_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "PUT"],
-    allow_headers=["*"],
-)
+register_rate_limiter(app)
+register_cors(app)
 
 
 @app.get("/health", tags=["System"])
+@limiter.exempt
 async def health_check():
     """Liveness probe endpoint for Docker healthcheck."""
     return {
@@ -35,6 +29,7 @@ async def health_check():
 
 
 @app.get("/api/health/metrics", tags=["System"])
+@limiter.exempt
 async def metrics_check():
     """Basic health metrics check for backend service."""
     return {
