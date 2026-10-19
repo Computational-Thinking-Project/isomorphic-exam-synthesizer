@@ -61,3 +61,41 @@ test('có phiên vẫn phải chờ profile và mất phiên phải xóa dữ li
     assert.equal(signedOut.session, null);
     assert.equal(signedOut.user, null);
 });
+
+test('phân biệt đổi tài khoản với refresh token cùng tài khoản', () => {
+    const store = useAuthStore;
+
+    store.getState().setSession({
+        access_token: 'test-token-a1',
+        user: { id: 'account-a' },
+    });
+
+    const versionA = store.getState().sessionVersion;
+
+    // Refresh cùng tài khoản không làm mất hiệu lực request hiện tại.
+    store.getState().setSession({
+        access_token: 'test-token-a2',
+        user: { id: 'account-a' },
+    });
+
+    assert.equal(store.getState().sessionVersion, versionA);
+
+    // Đổi sang B phải làm mất hiệu lực request của A.
+    store.getState().setSession({
+        access_token: 'test-token-b',
+        user: { id: 'account-b' },
+    });
+
+    assert.ok(store.getState().sessionVersion > versionA);
+
+    const versionB = store.getState().sessionVersion;
+
+    // Đăng xuất rồi vào lại cùng B vẫn là lượt đăng nhập mới.
+    store.getState().setSession(null);
+    store.getState().setSession({
+        access_token: 'test-token-b-new',
+        user: { id: 'account-b' },
+    });
+
+    assert.ok(store.getState().sessionVersion > versionB);
+});
