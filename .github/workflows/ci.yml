@@ -34,6 +34,9 @@ jobs:
         run: |
           mypy backend/app --ignore-missing-imports
 
+      - name: Backend Unit and Security Tests
+        run: python -m pytest backend/tests -q
+
       - name: SymPy LaTeX Parser Smoke Test (ANTLR Runtime Verification)
         run: |
           python -c "import sympy; from sympy.parsing.latex import parse_latex; res = parse_latex('x^2 + 1'); assert res is not None; print('SymPy LaTeX parser verified:', res)"
