@@ -130,4 +130,3 @@ GitHub Actions đã được cấu hình bước pytest nhưng chưa chạy trê
 - Limiter dùng SlowAPI `_inject_headers` trong một handler riêng; kiểm tra lại khi nâng phiên bản SlowAPI. Phiên bản đã thử: 0.1.10.
 - Chống flood trước bước gọi Supabase Auth và trust forwarded IP cần thiết kế cùng auth/proxy thực tế, chưa nằm trong implementation này.
 - Cảnh báo Compose `version` obsolete và TestClient/httpx deprecation vẫn còn; không đổi môi trường/dependencies của Tâm trong PR này.
-
