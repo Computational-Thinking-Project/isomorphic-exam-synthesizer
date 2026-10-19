@@ -15,6 +15,24 @@ export const useAuthStore = create((set) => ({
         }));
     },
 
+    requireReauthentication: (expectedVersion) => {
+        set((state) => {
+            if (
+                state.sessionVersion !== expectedVersion ||
+                !state.session ||
+                state.status === 'reauth_required'
+            ) {
+                return state;
+            }
+
+            return {
+                status: 'reauth_required',
+                user: null,
+                sessionVersion: state.sessionVersion + 1,
+            };
+        });
+    },
+
     setSession: (session) => {
         const validSession = Boolean(
             session &&
@@ -34,14 +52,23 @@ export const useAuthStore = create((set) => ({
             return;
         }
 
-        set((state) => ({
-            status: 'profile_pending',
-            session,
-            user: null,
-            sessionVersion:
-                state.sessionVersion +
-                (state.session?.user.id !== session.user.id ? 1 : 0),
-        }));
+        set((state) => {
+            const sameRejectedSession =
+                state.status === 'reauth_required' &&
+                state.session?.user.id === session.user.id &&
+                state.session.access_token === session.access_token;
+
+            if (sameRejectedSession) return state;
+
+            return {
+                status: 'profile_pending',
+                session,
+                user: null,
+                sessionVersion:
+                    state.sessionVersion +
+                    (state.session?.user.id !== session.user.id ? 1 : 0),
+            };
+        });
     },
 
     // Tạm giữ cho code mẫu cũ; chưa dùng để xác nhận profile thật.

@@ -14,6 +14,7 @@ function assertSameAccount(config, session = useAuthStore.getState().session) {
     const scope = config._authScope;
 
     if (
+        state.status === 'reauth_required' ||
         scope.version !== state.sessionVersion ||
         scope.userId !== (state.session?.user.id ?? null) ||
         scope.userId !== (session?.user.id ?? null)

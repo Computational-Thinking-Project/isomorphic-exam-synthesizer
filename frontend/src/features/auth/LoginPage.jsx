@@ -9,9 +9,14 @@ export default function LoginPage() {
   const [signOutError, setSignOutError] = useState('');
   const status = useAuthStore((state) => state.status);
 
-  const sessionNotice = status === 'checking' ? 'Đang khôi phục phiên đăng nhập…'
-                      : status === 'profile_pending' ? 'Đã có phiên đăng nhập. Bước kiểm tra hồ sơ chưa được kết nối nên chưa thể mở Dashboard.'
-                      : '';
+  const sessionNotice =
+    status === 'checking'
+        ? 'Đang khôi phục phiên đăng nhập…'
+        : status === 'reauth_required'
+            ? 'Phiên hiện tại không thể tiếp tục sử dụng. Hãy đăng xuất rồi đăng nhập lại.'
+            : status === 'profile_pending'
+                ? 'Đã có phiên đăng nhập. Bước kiểm tra hồ sơ chưa được kết nối nên chưa thể mở Dashboard.'
+                : '';
 
   async function handleGoogleSignIn() {
     if (isSubmitting || isSigningOut) return;
@@ -92,7 +97,8 @@ export default function LoginPage() {
             isSubmitting ||
             isSigningOut ||
             status === 'checking' ||
-            status === 'profile_pending'
+            status === 'profile_pending' ||
+            status === 'reauth_required'
           }
           className="mt-8 w-full rounded-lg bg-sky-400 px-4 py-3 font-semibold text-slate-950 hover:bg-sky-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-sky-400 disabled:cursor-not-allowed disabled:opacity-60"
         >
@@ -101,7 +107,7 @@ export default function LoginPage() {
             : 'Đăng nhập bằng Google'}
         </button>
 
-        {status === 'profile_pending' && (
+        {(status === 'profile_pending' || status === 'reauth_required') && (
           <button
             type="button"
             onClick={handleSignOut}

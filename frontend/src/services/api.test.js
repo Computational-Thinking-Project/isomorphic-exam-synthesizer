@@ -95,6 +95,27 @@ test('gắn token hiện tại và bỏ Authorization cũ khi không có phiên'
     assert.deepEqual(context.counts, { refreshes: 0, calls: 2 });
 });
 
+test('reauth_required chặn request mới trước khi đọc SDK hoặc gửi HTTP', options, async () => {
+    const context = fixture();
+    useAuthStore.getState().requireReauthentication(
+        useAuthStore.getState().sessionVersion,
+    );
+    const version = useAuthStore.getState().sessionVersion;
+    let sessionReads = 0;
+    auth.getSession = async () => {
+        sessionReads += 1;
+        return { data: { session: makeSession() }, error: null };
+    };
+    context.adapter(ok);
+
+    await assert.rejects(api.get('/test'), (error) => axios.isCancel(error));
+
+    assert.equal(sessionReads, 0);
+    assert.deepEqual(context.counts, { refreshes: 0, calls: 0 });
+    assert.equal(useAuthStore.getState().status, 'reauth_required');
+    assert.equal(useAuthStore.getState().sessionVersion, version);
+});
+
 test('401 refresh và retry bằng token mới', options, async () => {
     const context = fixture();
     context.adapter(rejectOldToken);
