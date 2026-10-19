@@ -2,6 +2,7 @@ import axios from 'axios';
 import { getSupabase } from './supabase.js';
 import { refreshSessionOnce } from './authRefresh.js';
 import { useAuthStore } from '../features/auth/authStore.js';
+import { classifyAuthError } from './authErrors.js';
 
 export const api = axios.create({
     baseURL: '/api',
@@ -26,12 +27,44 @@ function assertSameAccount(config, session = useAuthStore.getState().session) {
     }
 }
 
-async function getCurrentSession(config) {
+function requireReauthenticationForRequest(config, expectedToken) {
     assertSameAccount(config);
-    const { data, error } = await getSupabase().auth.getSession();
+    const state = useAuthStore.getState();
+
+    if ((state.session?.access_token ?? null) !== expectedToken) {
+        throw new axios.CanceledError(
+            'Phiên đã được cập nhật. Request cũ đã bị hủy.',
+            config,
+        );
+    }
+
+    state.requireReauthentication(config._authScope.version);
+}
+
+function failAuthRequest(error, config, expectedToken) {
     assertSameAccount(config);
 
-    if (error) throw error;
+    if (classifyAuthError(error) === 'expired') {
+        requireReauthenticationForRequest(config, expectedToken);
+    }
+
+    throw error;
+}
+
+async function getCurrentSession(config) {
+    assertSameAccount(config);
+
+    const expectedToken =
+        useAuthStore.getState().session?.access_token ?? null;
+
+    const { data, error } = await getSupabase().auth.getSession()
+        .catch((cause) => {
+            failAuthRequest(cause, config, expectedToken);
+        });
+
+    if (error) {
+        failAuthRequest(error, config, expectedToken);
+    }
 
     assertSameAccount(config, data.session);
     return data.session;
@@ -69,9 +102,13 @@ api.interceptors.response.use(
 
         if (
             error.response?.status !== 401 ||
-            !config._authToken ||
-            config._authRetried
+            !config._authToken
         ) {
+            throw error;
+        }
+
+        if (config._authRetried) {
+            requireReauthenticationForRequest(config, config._authToken);
             throw error;
         }
 
@@ -83,8 +120,7 @@ api.interceptors.response.use(
             try {
                 session = await refreshSessionOnce();
             } catch (refreshError) {
-                assertSameAccount(config);
-                throw refreshError;
+                failAuthRequest(refreshError, config, session.access_token);
             }
         }
 
