@@ -22,7 +22,7 @@
 
 ### 1.3 AI/IT Assistance and Practical Output
 - AI assists with question analysis, variation rules, and drafting questions and solutions. Software manages versions, checks supported constraints, synchronizes keys, and exports files. Instructors retain review and approval authority.
-- **Value chain:** Import source $\to$ generate and check $\to$ instructor review $\to$ download approved exams, keys, and solutions for assessment use and manual grading. Users interact through forms and review screens.
+- **Value chain:** Import source $\to$ generate and check $\to$ instructor review $\to$ download approved exams, keys, and solutions for assessment use and manual grading. Users interact through preview, configuration, and review screens.
 
 ---
 
@@ -211,7 +211,7 @@ flowchart TB
     S2_3 -. "Re-validated" .-> S3_1
 ```
 
-> **Figure 2: The three-stage user/function pipeline.** Blue cards (`▶`) show instructor actions; purple and teal cards (`◆`) show system functions. Orange dashed paths (`↺`) are conditional exceptions. Stage-header arrows show the left-to-right stage order. Rejected items trigger targeted regeneration and automated validation before returning to Item Review (with a safe fallback to revert to source items); shuffling occurs only after all items are approved. Stage 3 corresponds directly to UC09.
+> **Figure 2: The three-stage user/function pipeline.** Blue cards (`▶`) show instructor actions; purple and teal cards (`◆`) show system functions. Orange dashed paths (`↺`) are conditional exceptions. Stage-header arrows show the left-to-right stage order. In Stage 1, instructors verify extracted content and blueprints, re-extracting flawed items with AI or confirming all items (file errors prompt a re-upload). In Stage 3, rejected items trigger targeted regeneration and automated validation before returning to Item Review (with a safe fallback to revert to source items); shuffling occurs only after all items are approved. Stage 3 corresponds directly to UC09.
 
 ---
 
@@ -222,7 +222,8 @@ flowchart TB
 
 ### 6.2 Main Screens and User Control
 - Provide sign-in, dashboard, import/confirmation, configuration, review/comparison, and preview/export screens.
-- The review screen presents side-by-side comparison with binary Accept/Reject actions per item (disallowing manual text edits to preserve blueprint validity), automated warning badges for failed checks, targeted regeneration, and a safe fallback option to revert persistent failures to the verified source question.
+- The Stage 1 confirmation screen displays read-only extracted source questions and AI-proposed blueprints with readable rule summaries, allowing instructors to trigger targeted AI re-extraction on individual flawed blueprints or confirm all items without manual text or parameter editing.
+- The Stage 3 review screen presents side-by-side comparison with binary Accept/Reject actions per item (disallowing manual text edits to preserve blueprint validity), automated warning badges for failed checks, targeted regeneration, and a safe fallback option to revert persistent failures to the verified source question.
 
 ### 6.3 Storage and AI Integration
 - Store account references, sessions, sources, rules, configurations, versions, keys, approval decisions, and interaction history. History includes instructor requests, AI outputs, and approval/rejection decisions; the chosen authentication mechanism manages sign-in sessions.
