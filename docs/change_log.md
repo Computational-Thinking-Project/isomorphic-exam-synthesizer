@@ -8,6 +8,7 @@
 ## 📋 Mục lục các Quyết định
 
 - [ADR-001: Chuẩn hóa Model AI `gemini-3.5-flash-lite`, Schema Repair Pass và Kiến Trúc Black-Box Generator](#adr-001-chuẩn-hóa-model-ai-gemini-35-flash-lite-schema-repair-pass-và-kiến-trúc-black-box-generator)
+- [ADR-002: Tinh Giản Quy Trình Stage 1 — Bỏ Sửa Nội Dung Tay và Tối Giản Thao Tác Blueprint](#adr-002-tinh-giản-quy-trình-stage-1--bỏ-sửa-nội-dung-tay-và-tối-giản-thao-tác-blueprint)
 - [DEC-TV1-001: Chuẩn bị Login UI và kiểm tra frontend](#dec-tv1-001-chuẩn-bị-login-ui-và-kiểm-tra-frontend)
 
 ---
@@ -33,6 +34,24 @@
   - 100% các unit test (11/11 tests) chạy độc lập siêu nhanh (< 1s) với Mock Client.
   - Smoke test với Google Gemini API thật đạt độ trễ ~3.05s với 100% độ chính xác Pydantic schema.
   - Backend Router (TV3) và Frontend (TV1/TV2) có thể cắm trực tiếp mà không cần cấu hình phức tạp.
+
+### ADR-002: Tinh Giản Quy Trình Stage 1 — Bỏ Sửa Nội Dung Tay và Tối Giản Thao Tác Blueprint
+* **Ngày quyết định:** 20/10/2026
+* **Người đề xuất:** TV3 (Nguyễn Bá Duy) + TV4 (Nguyễn Nhật Quỳnh)
+* **Bối cảnh:**
+  1. Thiết kế ban đầu dự kiến cung cấp trình biên tập câu hỏi trực tiếp trên web (`PUT /api/source-questions/{id}`) và sửa thông số Blueprint (`PATCH /api/blueprints/{id}`).
+  2. Việc cho phép chỉnh sửa nội dung văn bản tự do trên web làm tăng đáng kể bề mặt tấn công (XSS, Injection), phức tạp hóa việc xử lý lỗi parsing công thức toán và đi ngược lại triết lý "không cho phép sửa nội dung tay để bảo toàn tính toàn vẹn của bài toán".
+  3. Khi file đề nạp vào bị lỗi (thiếu đáp án, format sai), giải pháp tối ưu và an toàn nhất là thông báo lỗi rõ ràng để giảng viên tự sửa file gốc trên máy và upload lại.
+* **Quyết định:**
+  1. **Ở Stage 1 (Source & Blueprint Preview):** Giảng viên chuyển sang chế độ xem chỉ đọc (Read-only). Chỉ có 2 hành động duy nhất:
+     - Bấm nút **"Trích xuất lại"** (`POST /api/blueprints/{id}/re-extract`) nếu AI phân tích sai câu nào.
+     - Bấm nút **"Xác nhận tất cả"** (`POST /api/sessions/{id}/blueprints/confirm-all`) để khóa cấu trúc và chuyển sang Stage 2.
+  2. **Loại bỏ endpoint `PUT /api/source-questions/{id}`** và **`PATCH /api/blueprints/{id}`** khỏi phạm vi dự án.
+  3. **Giữ nguyên chính sách CORS chặn `PUT`** (`ALLOWED_CORS_METHODS = ("GET", "POST", "PATCH", "DELETE")`), bảo vệ backend tuyệt đối.
+  4. Cập nhật đồng bộ các tài liệu: `docs/description.md`, `docs/architecture.md`, và ban hành `docs/api/endpoint-conventions.md`.
+* **Hệ quả / Tác động:**
+  - Tiết kiệm đáng kể khối lượng công việc cho TV1 (Frontend không cần làm các form editor phức tạp `ParameterBoundsCard`, `DirectInputTab`) và TV3 (Backend không cần làm và bảo trì API `PUT`).
+  - Giao diện người dùng tinh gọn (Zero-Friction), giảng viên chỉ cần xem và bấm 1 nút xác nhận.
 
 ### DEC-TV1-001: Chuẩn bị Login UI và kiểm tra frontend
 

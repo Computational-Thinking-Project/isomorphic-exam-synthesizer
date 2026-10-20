@@ -129,8 +129,8 @@ flowchart LR
 - **UC01–02 — Accounts:** Receive Google authentication, verify identity, and create or retrieve the account; open the instructor's signed-in workspace.
 - **UC03 — Saved Exams:** Retrieve the selected session's source, rules, versions, and approval state; allow viewing, downloading, or reuse.
 - **UC04 — Statistics:** Aggregate recorded sessions; show version counts, first-pass acceptance rates (percentage of items approved on initial review without requiring re-generation), and regeneration frequencies. Comparative time savings are reserved for empirical evaluation.
-- **UC05 — Import:** Receive source exam and answer key; extract questions, options, formulas, and answers, flagging missing or malformed elements; produce an editable structured source.
-- **UC06 — Blueprint Confirmation:** Present extracted content and proposed question blueprints for instructor correction and confirmation; save the approved source and permitted variations (parameter bounds and invariant conditions).
+- **UC05 — Import:** Receive source exam and answer key; extract questions, options, formulas, and answers, flagging missing or malformed elements; produce a verified structured source representation (notifying instructors to re-upload if file format errors or missing answers are detected).
+- **UC06 — Blueprint Confirmation:** Present extracted content and proposed question blueprints for instructor verification and confirmation (supporting targeted AI re-extraction for individual flawed blueprints or confirming all valid blueprints without manual in-place editing); save the approved source and permitted variations (parameter bounds and invariant conditions).
 - **UC07 — Configuration:** Receive version count $N \in [1, 4]$, toggle active variation modes from the confirmed blueprint, and set ordering preferences; validate input constraints and save generation requirements.
 - **UC08 — Generation:** Use confirmed blueprints and settings to synthesize variants, keys, and detailed solutions with automated constraint checks. Apply automated retries upon syntax or mathematical failures; if repeated retries fail, return drafts with validation warning badges for instructor review.
 - **UC09 — Review and Finalization:** Spanning the entirety of Stage 3, this function presents drafts and automated check results for question-by-question comparison against source items (preserving 1-to-1 question mapping). Instructors perform per-item binary approval or rejection for targeted re-generation; re-generated items are re-validated and re-reviewed. If automated re-generation repeatedly fails, instructors can revert the target item to the verified source question as a safe exit. After all items are accepted, the system executes question/option shuffling, synchronizes keys, provides package preview, and records final instructor approval.
@@ -154,8 +154,8 @@ flowchart TB
         direction TB
         S1_1["▶ INSTRUCTOR: Source Input<br/>• Upload LaTeX, DOCX, MD or enter text<br/>• Provide key; source solutions if available"]
         S1_2["◆ SYSTEM: Source Analysis<br/>• Extract questions, options and keys<br/>• Propose blueprints and variation bounds"]
-        S1_3["▶ INSTRUCTOR: Confirmation<br/>• Verify questions, options and answers<br/>• Confirm blueprints and permitted variations"]
-        S1_Warn{{"↺ If Content / Rules Are Incomplete:<br/>Edit or re-upload; analyze and review again"}}
+        S1_3["▶ INSTRUCTOR: Confirmation<br/>• Verify questions, options and answers<br/>• Confirm all blueprints or re-extract flawed items"]
+        S1_Warn{{"↺ If Incomplete or Blueprint Flawed:<br/>Re-upload if file error, or re-extract flawed item"}}
         S1_Res["✓ Stage 1 Deliverable:<br/>Confirmed source exam and question blueprints"]
 
         S1_1 --> S1_2
