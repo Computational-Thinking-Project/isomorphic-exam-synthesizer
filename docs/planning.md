@@ -577,8 +577,8 @@
   - `markdown_parser.py`: Bóc tách cú pháp Markdown chuẩn và công thức LaTeX `$...$`.
 - [ ] **Nhận diện Bảng đáp án riêng biệt (Separate Answer Key Parsing):**
   - Quét tìm bảng đáp án ở cuối đề thi (dạng `1.A 2.B...` hoặc `1-A, 2-B...`) để tự động map vào `correct_option` của từng câu.
-  - Nếu câu hỏi không tìm thấy đáp án hoặc không thể xác định $\rightarrow$ gắn cờ `has_missing_answer = true` và đưa vào danh sách câu chưa hoàn chỉnh để người dùng điền tay ở `Stage 1 Incomplete Loop` (`TASK-203b`).
-- [ ] **Xử lý OMML / Equation Editor cũ:** Nếu DOCX chứa công thức dạng ảnh hoặc OMML mà không trích xuất được text $\rightarrow$ đánh dấu câu đó là `incomplete` (cờ `has_unparsed_omml = true`) để kích hoạt vòng lặp `TASK-203b`.
+  - Nếu câu hỏi không tìm thấy đáp án hoặc không thể xác định $\rightarrow$ gắn cờ `has_missing_answer = true` và trả về mã lỗi HTTP 422 cảnh báo danh sách câu chưa hoàn chỉnh để người dùng sửa file gốc và tải lại ở `Stage 1 Incomplete Loop` (`TASK-203b`).
+- [ ] **Xử lý OMML / Equation Editor cũ:** Nếu DOCX chứa công thức dạng ảnh hoặc OMML mà không trích xuất được text $\rightarrow$ đánh dấu câu đó là `incomplete` (cờ `has_unparsed_omml = true`) để cảnh báo ở Stage 1.
 - [ ] Chuẩn hóa bảng mã tiếng Việt sang **Unicode NFC** để tránh lỗi font chữ.
 - [ ] Lưu danh sách câu hỏi vào bảng `source_questions`.
 
@@ -594,7 +594,7 @@
 **Yêu cầu cụ thể phải làm được:**
 - [ ] Định nghĩa Pydantic model `QuestionBlueprint`: danh sách `parameters` (tên biến, giá trị hiện tại, khoảng giá trị `min`–`max`), danh sách `invariants` (điều kiện giữ nguyên phương pháp giải), các `variation_modes` cho phép, và `readable_summary` tiếng Việt.
 - [ ] Xây dựng prompt Few-shot hướng dẫn AI nhận diện đúng các tham số có thể biến thiên mà không làm thay đổi phương pháp giải bài toán.
-- [ ] **Quy trình Trích xuất Blueprint Ban đầu (Initial Pipeline):** Ngay sau khi bóc tách xong đề nguồn từ `TASK-202` (hoặc sau khi giảng viên xác nhận sửa các câu incomplete ở `TASK-203b`), backend tự động gọi pipeline trích xuất hàng loạt (kết hợp `asyncio.Semaphore(3)`) hoặc qua endpoint `POST /api/sessions/{session_id}/blueprints/extract-all` để tạo trước Blueprint cho toàn bộ câu nguồn và lưu vào bảng `question_blueprints`.
+- [ ] **Quy trình Trích xuất Blueprint Ban đầu (Initial Pipeline):** Ngay sau khi bóc tách hợp lệ toàn bộ đề nguồn từ `TASK-202`, backend tự động gọi pipeline trích xuất hàng loạt (kết hợp `asyncio.Semaphore(3)`) hoặc qua endpoint `POST /api/sessions/{session_id}/blueprints/extract-all` để tạo trước Blueprint cho toàn bộ câu nguồn và lưu vào bảng `question_blueprints`.
 - [ ] Kiểm thử prompt với 3 chuyên đề toán: Phương trình bậc 2, Khảo sát hàm số, Tích phân.
 
 ---
@@ -621,46 +621,39 @@
 **Mô tả:** Xử lý trường hợp file đề thi bị thiếu cấu trúc hoặc parser không bóc tách được câu hỏi (`S1_Warn`).
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] Phía Backend: Nếu parser nhận diện được ít hơn 1 câu, thiếu phương án hoặc thiếu đáp án (`has_missing_answer = true`) $\rightarrow$ trả về HTTP 422 kèm danh sách các dòng bị lỗi cấu trúc.
-- [ ] Phía Frontend: Hiển thị hộp thoại cảnh báo `Content Incomplete Warning` chỉ rõ các câu không parse được hoặc thiếu đáp án đúng.
-- [ ] Cung cấp 2 lựa chọn xử lý tức thì cho giảng viên: (1) Bấm "Tải lại file khác", hoặc (2) Chuyển sang tab "Nhập trực tiếp" với nội dung văn bản đã được đổ sẵn vào ô soạn thảo để sửa tay.
+- [ ] Phía Backend: Nếu parser nhận diện được ít hơn 1 câu, thiếu phương án hoặc thiếu đáp án (`has_missing_answer = true`) $\rightarrow$ trả về HTTP 422 kèm danh sách các câu/dòng bị lỗi cấu trúc hoặc thiếu đáp án.
+- [ ] Phía Frontend: Hiển thị hộp thoại cảnh báo `Content Incomplete Warning` liệt kê danh sách câu lỗi, hướng dẫn giảng viên chỉnh sửa tệp nguồn trên máy cá nhân và cung cấp nút bấm "Tải lại file khác" (loại bỏ hoàn toàn cơ chế chuyển tab sửa trực tiếp trên web để bảo toàn tính toàn vẹn của tệp nguồn theo ADR-002).
 
 ---
 
-### TASK-204 · Giao diện xem, chỉnh sửa Blueprint và Xác nhận (FE-05)
+### TASK-204 · Giao diện xem Blueprint và Xác nhận — Blueprint Viewer & Confirmer (FE-05)
 - **Người làm:** FE1 (Owner)
 - **Phụ thuộc:** TASK-201 *(Mock UI)*; Phụ thuộc tích hợp: TASK-203 *(Dữ liệu Blueprint thật)*
 - **Trạng thái:** ⬜
 
-**Mô tả:** Giao diện cho phép giảng viên duyệt, tinh chỉnh câu nguồn và các tham số biến thể Blueprint trước khi tiến hành sinh đề.
+**Mô tả:** Giao diện hiển thị chỉ đọc (Read-only) cho phép giảng viên thẩm định câu nguồn và các quy tắc biến thể Blueprint, cung cấp nút trích xuất lại từng câu và xác nhận chuyển sang Stage 2.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] Hiển thị danh sách câu hỏi gốc bằng `MathRenderer`.
-- [ ] **Chỉnh sửa toàn diện câu nguồn (Source Question Editing):** Cho phép giảng viên bấm vào từng câu hỏi để sửa nội dung thân câu (`stem_latex`), sửa 4 phương án lựa chọn, chọn lại đáp án đúng (`correct_option`), và bổ sung lời giải mẫu tùy chọn. Gọi `PUT /api/source-questions/{id}`.
-- [ ] **Badge cảnh báo OMML & Thiếu đáp án:**
-  - Nếu câu có `has_unparsed_omml = true` $\rightarrow$ hiển thị huy hiệu màu vàng *"Công thức chưa đọc được (OMML/Ảnh)"*.
-  - Nếu câu có `has_missing_answer = true` $\rightarrow$ hiển thị huy hiệu màu cam *"Chưa xác định đáp án đúng"*, bắt buộc chọn trước khi xác nhận.
-- [ ] Hiển thị thẻ Blueprint bên cạnh: danh sách tham số (có thể sửa khoảng giá trị `min`/`max`), các điều kiện bất biến, và tóm tắt quy tắc tiếng Việt.
-- [ ] Khi câu nguồn bị sửa $\rightarrow$ cung cấp nút bấm "Trích xuất lại bằng AI" (`POST /api/blueprints/{id}/re-extract`) hoặc cho phép sửa trực tiếp thông số Blueprint.
-- [ ] Nút "Xác nhận tất cả và tiếp tục" gọi `POST /api/sessions/{session_id}/blueprints/confirm-all` để khóa cấu trúc và chuyển sang Stage 2.
-- [ ] Cơ chế tự động lưu nháp (Auto-save debounce 1s) khi giảng viên sửa thông số.
+- [ ] Hiển thị danh sách câu hỏi gốc bằng `MathRenderer` ở chế độ chỉ đọc (Read-only, tuyệt đối không bố trí ô nhập văn bản sửa đề).
+- [ ] **Badge cảnh báo OMML:** Nếu câu có `has_unparsed_omml = true` $\rightarrow$ hiển thị huy hiệu màu vàng *"Công thức chưa đọc được (OMML/Ảnh)"*.
+- [ ] Hiển thị thẻ Blueprint bên cạnh: danh sách tham số, các điều kiện bất biến, và tóm tắt quy tắc tiếng Việt ở chế độ chỉ đọc.
+- [ ] **Nút "Trích xuất lại" cho từng câu:** Cung cấp nút bấm gọi `POST /api/blueprints/{blueprint_id}/re-extract` nếu AI phân tích chưa chuẩn xác, cập nhật lại Blueprint của câu đó mà không cần tải lại cả đề.
+- [ ] **Nút "Xác nhận tất cả và tiếp tục":** Gọi `POST /api/sessions/{session_id}/blueprints/confirm-all` để khóa toàn bộ cấu trúc Blueprint của phiên và chuyển thẳng sang Stage 2.
+- [ ] Loại bỏ hoàn toàn cơ chế sửa tay đề gốc, sửa tay khoảng giá trị min/max và cơ chế Auto-save debounce (tuân thủ ADR-002: Zero-Editing Stage 1).
 
 ---
 
-### TASK-205 · API quản lý câu nguồn và xác nhận Blueprint (BE-01)
+### TASK-205 · API trích xuất và xác nhận Blueprint (BE-03)
 - **Người làm:** BE1 (Owner)
 - **Phụ thuộc:** TASK-202; Phụ thuộc tích hợp: TASK-203
 - **Trạng thái:** ⬜
 
-**Mô tả:** Các endpoints quản lý, cập nhật câu hỏi nguồn và khóa dữ liệu Blueprint của phiên làm việc.
+**Mô tả:** Các endpoints phục vụ trích xuất quy tắc, tái trích xuất đơn lẻ và khóa dữ liệu Blueprint của phiên làm việc (loại bỏ PUT /api/source-questions và PATCH /api/blueprints theo ADR-002).
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] `POST /api/sessions/{session_id}/blueprints/extract-all`: Trích xuất Blueprint hàng loạt lần đầu cho toàn bộ câu nguồn trong phiên.
-- [ ] `PUT /api/source-questions/{question_id}` — gọi `assert_ownership` $\rightarrow$ cập nhật nội dung câu nguồn, các phương án, đáp án đúng và lời giải mẫu.
-- [ ] `PATCH /api/blueprints/{blueprint_id}` — gọi `assert_ownership` $\rightarrow$ cập nhật khoảng giá trị và điều kiện bất biến của blueprint.
-- [ ] `POST /api/blueprints/{blueprint_id}/confirm` — gọi `assert_ownership` $\rightarrow$ đánh dấu xác nhận câu hỏi (`confirmed_at = now()`).
-- [ ] `POST /api/blueprints/{blueprint_id}/re-extract` — gọi AI trích xuất lại quy tắc cho câu hỏi nguồn đó.
-- [ ] `POST /api/sessions/{session_id}/blueprints/confirm-all` — kiểm tra toàn bộ câu hỏi đã có quy tắc hợp lệ $\rightarrow$ cập nhật trạng thái session sang `blueprinted`.
+- [ ] `POST /api/sessions/{session_id}/blueprints/extract-all`: Trích xuất Blueprint hàng loạt lần đầu cho toàn bộ câu nguồn trong phiên (gọi `assert_ownership`).
+- [ ] `POST /api/blueprints/{blueprint_id}/re-extract`: Gọi `assert_ownership`, kích hoạt AI trích xuất lại quy tắc cho câu hỏi nguồn chỉ định khi giảng viên yêu cầu trích xuất lại.
+- [ ] `POST /api/sessions/{session_id}/blueprints/confirm-all`: Gọi `assert_ownership`, kiểm tra toàn bộ câu hỏi đã có quy tắc hợp lệ $\rightarrow$ cập nhật trạng thái session sang `blueprinted` và khóa cấu trúc chuyển sang Stage 2.
 
 ---
 
@@ -1209,11 +1202,11 @@ Bảng nguồn chân lý duy nhất (Single Source of Truth) định nghĩa vòn
 
 | Trạng thái (`status`) | Ý nghĩa nghiệp vụ | Điều kiện chuyển vào (Trigger) | Thao tác được phép | Thao tác bị chặn |
 | :--- | :--- | :--- | :--- | :--- |
-| **`draft`** | Đang tải lên và bóc tách đề nguồn | Tạo session mới (`POST /api/sessions`) | Upload file, sửa câu gốc, nhập text trực tiếp | Cấu hình sinh đề, Review |
-| **`blueprinted`** | Tất cả Blueprint câu nguồn đã xác nhận | Bấm "Xác nhận tất cả" (`/confirm-all`) | Chỉnh sửa khoảng giá trị Blueprint, chuyển sang Stage 2 | Bấm Generate khi chưa lưu config |
+| **`draft`** | Đang tải lên và bóc tách đề nguồn | Tạo session mới (`POST /api/sessions`) | Upload file (.docx, .tex, .md), nhập text trực tiếp, trích xuất lại Blueprint | Sửa nội dung đề gốc bằng tay, Cấu hình sinh đề, Review |
+| **`blueprinted`** | Tất cả Blueprint câu nguồn đã xác nhận | Bấm "Xác nhận tất cả" (`/confirm-all`) | Chuyển sang Stage 2 (Cấu hình sinh đề) | Sửa tay đề gốc và Blueprint, Bấm Generate khi chưa lưu config |
 | **`configured`** | Đã lưu cấu hình sinh đề hợp lệ | Gửi cấu hình thành công (`POST /config`) | Xem tóm tắt cấu hình, bấm "Bắt đầu sinh đề" | Sửa đề nguồn Stage 1 |
 | **`generating`** | Background job đang sinh đề & validate | Bấm "Generate" (`POST /generate`) | Xem thanh tiến trình SSE real-time (hỗ trợ auto-reconnect) | Bấm Generate lần 2, gọi API Review (chặn 409) |
-| **`partial_generated`** | Sinh được một phần (chạm trần quota 250 calls hoặc lỗi cục bộ một số câu) | Background job dừng do đạt quota ceiling hoặc lỗi biến thể lẻ | Xem danh sách câu đã hoàn tất, thẩm định/duyệt/sửa tay câu hiện có | Shuffle mã đề, Xuất bản file (`/export`), Phê duyệt toàn bộ (`/finalize/approve`) (chặn 400/409 cho đến khi đủ câu) |
+| **`partial_generated`** | Sinh được một phần (chạm trần quota 250 calls hoặc lỗi cục bộ một số câu) | Background job dừng do đạt quota ceiling hoặc lỗi biến thể lẻ | Xem danh sách câu đã hoàn tất, thẩm định/duyệt (Accept, Reject/Regenerate, Revert) câu hiện có | Sửa tay câu hỏi, Shuffle mã đề, Xuất bản file (`/export`), Phê duyệt toàn bộ (`/finalize/approve`) (chặn 400/409 cho đến khi đủ câu) |
 | **`generated`** | Đã sinh xong $N$ mã đề, sẵn sàng review | Background job hoàn tất, phát SSE `done` | Duyệt từng câu (Accept, Reject, Revert), xem so sánh 1-1 | Shuffle mã đề, Xuất bản file |
 | **`reviewed`** | 100% câu hiện hành của $N$ mã đề đã duyệt | Câu cuối cùng chuyển sang `approved` | Xem trước bản đề, bấm "Xáo trộn mã đề" (`/shuffle`) | Sửa Blueprint. Nếu có câu bị Reject/Revert lại $\rightarrow$ tự động hạ về `generated` và reset shuffle để bảo toàn tính toàn vẹn |
 | **`approved`** | Giảng viên đã duyệt gói cuối (Khóa nội dung) | Bấm "Phê duyệt toàn bộ" (`/finalize/approve`) | Xem trước bản in, chuyển sang màn hình Export | **Khóa cứng:** Cấm mọi sửa đổi câu, reject, shuffle (chặn 423) |
@@ -1259,8 +1252,8 @@ gantt
     TASK-203 Prompt Blueprint AI-02 (AI)         :t203, 2026-10-25, 2d
     TASK-402 Prompt Lời giải AI-04 (AI)          :t402, 2026-10-25, 2d
     TASK-203b Stage 1 Incomplete Loop (FE1)      :t203b, after t201 t202, 1d
-    TASK-204 UI Blueprint Editor (FE1)           :t204, after t201 t203, 2d
-    TASK-205 API Blueprint CRUD (BE1)            :t205, after t202 t203, 2d
+    TASK-204 UI Blueprint Viewer & Confirm (FE1) :t204, after t201 t203, 2d
+    TASK-205 API Blueprint Extract & Confirm (BE1):t205, after t202 t203, 2d
     TASK-206 UI Stage 2 Config (FE2 - Mock)      :t206, 2026-10-25, 2d
     TASK-207a API Config Validator (BE2)         :t207a, after t205, 1d
     TASK-207b Background Job & SSE (BE2)         :t207b, after t106c t107d t207a t402, 2d
@@ -1301,7 +1294,7 @@ Trước khi nghiệm thu toàn bộ dự án, OPS và cả nhóm đối chiếu
 - [ ] **Tái sử dụng phiên:** Thử tính năng **Reuse Session** $\rightarrow$ tạo được bản sao phiên cũ thành công qua modal độc lập `CloneSessionModal`.
 - [ ] **Chặn PDF đầu vào:** Kéo file PDF vào Stage 1 $\rightarrow$ hệ thống chặn ngay và báo lỗi đỏ rõ ràng.
 - [ ] **Bao phủ 4 phương thức nạp đề:** Kiểm tra nạp thành công đề từ cả 4 nguồn: `.docx`, `.tex`, `.md`, và Tab "Nhập trực tiếp".
-- [ ] **Bảo vệ DOCX & Xử lý OMML:** Nạp file DOCX chứa Equation Editor cũ $\rightarrow$ parser bỏ qua OMML và hiển thị badge màu vàng cảnh báo, kích hoạt đúng hộp thoại `Content Incomplete` để sửa tay.
+- [ ] **Bảo vệ DOCX & Xử lý OMML:** Nạp file DOCX chứa Equation Editor cũ $\rightarrow$ parser bỏ qua OMML và hiển thị badge màu vàng cảnh báo, kích hoạt đúng hộp thoại `Content Incomplete` thông báo người dùng tải lại file chuẩn.
 - [ ] **Trích xuất & Xác nhận Blueprint:** AI-02 trích xuất được Blueprint kèm tóm tắt tiếng Việt $\rightarrow$ xác nhận thành công $\rightarrow$ chuyển trạng thái sang `blueprinted`.
 - [ ] **Cấu hình & Xung đột:** Thử chọn variation mode không có trong Blueprint $\rightarrow$ hệ thống chặn và giải thích xung đột rõ ràng; chọn mode hợp lệ $\rightarrow$ chuyển trạng thái sang `configured`.
 - [ ] **Tiến trình sinh đề SSE:** Bấm sinh $N=4$ mã đề $\rightarrow$ thanh tiến trình SSE hiển thị phần trăm thời gian thực mượt mà $\rightarrow$ hoàn tất chuyển sang `generated`.
@@ -1412,7 +1405,7 @@ Trước khi nghiệm thu toàn bộ dự án, OPS và cả nhóm đối chiếu
 | Mức độ ưu tiên | Tính năng / Module | Phương án dự phòng (Fallback Plan) | Tác động đến nghiệm thu |
 | :--- | :--- | :--- | :--- |
 | **P0: Cốt lõi cấm cắt (Non-negotiable)** | • Xác thực Google Auth & RLS bảo mật 10 bảng (kèm bảng `security_events` bất biến, audit log không thể sửa/xóa)<br>• Bóc tách đề nguồn (DOCX / LaTeX / Markdown / Nhập tay)<br>• Blueprint & Sinh biến thể $N \le 4$ mã đề (tối đa 20 câu nguồn / 250 API calls)<br>• Giao diện Thẩm định 1-1 (Accept/Reject/Revert)<br>• Xuất bản PDF in ấn (Typst) & Bảng đáp án | **Tuyệt đối không cắt.** Bắt buộc hoàn thành 100% để đáp ứng yêu cầu môn học CSC10014. | Không ảnh hưởng; là linh hồn của đồ án. |
-| **P1: Hạ cấp kỹ thuật (Graceful Downgrade)** | • **SymPy ProcessPool (`TASK-107b`):** Nếu môi trường cục bộ gặp trục trặc IPC/multiprocessing $\rightarrow$ ngắt gọi SymPy an toàn và chuyển thẳng sang **Rule Fallback Checker (`TASK-107c`)** với cờ cảnh báo `validation_status = 'passed_rule_fallback'`, tuyệt đối không chạy timeout in-process gây nghẽn GIL/CPU.<br>• **Parser OMML phức tạp (`TASK-202`):** Không cố parse 100% biểu thức lạ; gắn cờ `has_unparsed_omml = true` và hướng dẫn người dùng sửa qua `Content Incomplete Dialog`.<br>• **Dual Export XeLaTeX (`TASK-306b`):** Trọng tâm hoàn thiện xuất sắc file PDF in ấn chuẩn đẹp qua Typst (`TASK-306a`) + file `.tex` chuẩn cú pháp UTF-8 sạch sẽ kèm template chuẩn; nếu môi trường máy phát triển thiếu TeXLive/XeLaTeX compiler, cho phép hoãn bước tự động compile XeLaTeX tại local và kiểm tra tính toàn vẹn cú pháp qua script parser. | Chấp nhận được; hệ thống vẫn vận hành an toàn và mượt mà. |
+| **P1: Hạ cấp kỹ thuật (Graceful Downgrade)** | • **SymPy ProcessPool (`TASK-107b`):** Nếu môi trường cục bộ gặp trục trặc IPC/multiprocessing $\rightarrow$ ngắt gọi SymPy an toàn và chuyển thẳng sang **Rule Fallback Checker (`TASK-107c`)** với cờ cảnh báo `validation_status = 'passed_rule_fallback'`, tuyệt đối không chạy timeout in-process gây nghẽn GIL/CPU.<br>• **Parser OMML phức tạp (`TASK-202`):** Không cố parse 100% biểu thức lạ; gắn cờ `has_unparsed_omml = true` và hiển thị cảnh báo qua `Content Incomplete Dialog` để người dùng sửa lại file gốc.<br>• **Dual Export XeLaTeX (`TASK-306b`):** Trọng tâm hoàn thiện xuất sắc file PDF in ấn chuẩn đẹp qua Typst (`TASK-306a`) + file `.tex` chuẩn cú pháp UTF-8 sạch sẽ kèm template chuẩn; nếu môi trường máy phát triển thiếu TeXLive/XeLaTeX compiler, cho phép hoãn bước tự động compile XeLaTeX tại local và kiểm tra tính toàn vẹn cú pháp qua script parser. | Chấp nhận được; hệ thống vẫn vận hành an toàn và mượt mà. |
 | **P2: Cắt giảm an toàn nếu quá tải (Safe Cuts)** | • **Tùy chọn Shuffle riêng biệt (`TASK-206`, `TASK-304`):** Mặc định bật cả đảo câu và đảo phương án, tạm ẩn giao diện toggle tùy biến nâng cao.<br>• **Biểu đồ thống kê nâng cao (`TASK-401`):** Giữ lại các thẻ KPI số liệu cơ bản (First-pass rate, Recovery rate), hoãn biểu đồ Chart.js phân bố phức tạp.<br>• **Metrics Observability (`TASK-207c`):** Trả về JSON trạng thái tối giản, hoãn các metric đo lường uptime/call_rate chi tiết. | Hoàn toàn không ảnh hưởng đến kịch bản demo và tiêu chí chấm điểm của giảng viên. |
 
 ---
