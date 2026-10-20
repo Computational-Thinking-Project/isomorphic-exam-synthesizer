@@ -22,6 +22,31 @@ export const katexPlugins = [
 ];
 
 /**
+ * Components định dạng danh sách (ol, ul, li) cho ReactMarkdown
+ * Khắc phục hiện tượng Tailwind Preflight xóa số thứ tự và bullet.
+ */
+export const markdownListComponents = {
+  ol: ({ children, className = '', ...props }) =>
+    React.createElement(
+      'ol',
+      { className: `list-decimal pl-6 space-y-1 my-2 text-slate-100 ${className}`, ...props },
+      children,
+    ),
+  ul: ({ children, className = '', ...props }) =>
+    React.createElement(
+      'ul',
+      { className: `list-disc pl-6 space-y-1 my-2 text-slate-100 ${className}`, ...props },
+      children,
+    ),
+  li: ({ children, className = '', ...props }) =>
+    React.createElement(
+      'li',
+      { className: `pl-1 leading-relaxed ${className}`, ...props },
+      children,
+    ),
+};
+
+/**
  * Tạo element ReactMarkdown với cấu hình toán học chuẩn
  * @param {Object} options
  * @param {string} options.content - Nội dung Markdown/LaTeX
@@ -36,11 +61,14 @@ export function createMathElement({ content = '', inline = false }) {
     {
       remarkPlugins: [katexPlugins[0]],
       rehypePlugins: [katexPlugins[1]],
-      components: inline
-        ? {
-            p: ({ children }) => React.createElement('span', null, children),
-          }
-        : undefined,
+      components: {
+        ...markdownListComponents,
+        ...(inline
+          ? {
+              p: ({ children }) => React.createElement('span', null, children),
+            }
+          : {}),
+      },
     },
     safeContent,
   );

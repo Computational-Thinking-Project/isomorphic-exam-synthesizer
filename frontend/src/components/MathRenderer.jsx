@@ -1,24 +1,48 @@
 import { Component } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { katexPlugins } from './mathRendererCore.js';
+import { katexPlugins, markdownListComponents } from './mathRendererCore.js';
 import 'katex/dist/katex.min.css';
 
 /**
  * Error boundary nội bộ để bảo vệ ứng dụng khỏi sập màn hình
  * nếu cú pháp LaTeX hoặc Markdown parser gặp lỗi nghiêm trọng.
+ * Hỗ trợ tự động phục hồi (reset hasError) khi nội dung content thay đổi.
  */
-class MathErrorBoundary extends Component {
+export class MathErrorBoundary extends Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false };
+    this.state = {
+      hasError: false,
+      prevFallbackContent: props.fallbackContent,
+    };
   }
 
   static getDerivedStateFromError() {
     return { hasError: true };
   }
 
+  static getDerivedStateFromProps(props, state) {
+    // Khi nội dung content thay đổi, tự động reset trạng thái lỗi để thử parse lại
+    if (props.fallbackContent !== state.prevFallbackContent) {
+      return {
+        hasError: false,
+        prevFallbackContent: props.fallbackContent,
+      };
+    }
+    return null;
+  }
+
   componentDidCatch(error, info) {
     console.warn('MathRenderer parser fallback:', error?.message || error, info);
+  }
+
+  componentDidUpdate(prevProps) {
+    if (this.state.hasError && prevProps.fallbackContent !== this.props.fallbackContent) {
+      this.setState({
+        hasError: false,
+        prevFallbackContent: this.props.fallbackContent,
+      });
+    }
   }
 
   render() {
@@ -55,7 +79,7 @@ export default function MathRenderer({
   const Container = inline ? 'span' : 'div';
 
   return (
-    <MathErrorBoundary fallbackContent={safeContent}>
+    <MathErrorBoundary key={safeContent} fallbackContent={safeContent}>
       <Container
         className={`math-renderer ${
           inline ? 'inline-block' : 'space-y-2'
@@ -64,14 +88,15 @@ export default function MathRenderer({
         <ReactMarkdown
           remarkPlugins={[katexPlugins[0]]}
           rehypePlugins={[katexPlugins[1]]}
-          components={
-            inline
+          components={{
+            ...markdownListComponents,
+            ...(inline
               ? {
                   // Thay thẻ <p> thành <span> khi ở chế độ inline để tránh lồng khối không hợp lệ
                   p: ({ children }) => <span>{children}</span>,
                 }
-              : undefined
-          }
+              : {}),
+          }}
         >
           {safeContent}
         </ReactMarkdown>

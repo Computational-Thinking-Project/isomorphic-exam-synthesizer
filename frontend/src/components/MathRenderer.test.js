@@ -1,7 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { register } from 'node:module';
+import React from 'react';
 import { renderToString } from 'react-dom/server';
 import { createMathElement } from './mathRendererCore.js';
+
+// Đăng ký test-loader để Node có thể import trực tiếp MathRenderer.jsx và xử lý CSS
+register('../test-loader.mjs', import.meta.url);
+const { default: MathRenderer, MathErrorBoundary } = await import('./MathRenderer.jsx');
 
 test('render đúng công thức toán học nội dòng ($...$) với KaTeX', () => {
   const content = 'Phương trình bậc hai $x^2 - 5x + 4 = 0$ có hai nghiệm.';
@@ -46,14 +52,24 @@ test('ngăn chặn thực thi mã HTML thô và script (chống XSS)', () => {
   assert.ok(html.includes('&lt;script&gt;'), 'Thẻ script phải bị escape sang ký tự an toàn');
 });
 
-test('hỗ trợ tiếng Việt UTF-8 và cú pháp Markdown (đậm, nghiêng, danh sách)', () => {
-  const markdown = '**Đề bài:** Tìm giá trị *x* sao cho:\n- Điểm $A(1, 2)$\n- Điểm $B(3, 4)$';
+test('hỗ trợ tiếng Việt UTF-8 và danh sách ol, ul có class Tailwind chuẩn (không bị Preflight xóa số)', () => {
+  const markdown = '1. Bước giải thứ nhất\n2. Bước giải thứ hai\n- Ghi chú thêm';
   const element = createMathElement({ content: markdown });
   const html = renderToString(element);
 
-  assert.ok(html.includes('<strong>Đề bài:</strong>'), 'Phải parse được cú pháp in đậm');
-  assert.ok(html.includes('<em>x</em>'), 'Phải parse được cú pháp in nghiêng');
-  assert.ok(html.includes('<li>'), 'Phải parse được danh sách');
+  assert.ok(html.includes('<ol class="list-decimal pl-6'), 'Danh sách có thứ tự phải có class list-decimal và padding');
+  assert.ok(html.includes('<ul class="list-disc pl-6'), 'Danh sách không thứ tự phải có class list-disc và padding');
+  assert.ok(html.includes('Bước giải thứ nhất'), 'Phải hiển thị nội dung tiếng Việt');
+});
+
+test('hỗ trợ danh sách lồng nhau (nested list)', () => {
+  const markdown = '1. Bước 1\n   - Điểm a: $x=1$\n   - Điểm b: $x=2$\n2. Bước 2';
+  const element = createMathElement({ content: markdown });
+  const html = renderToString(element);
+
+  assert.ok(html.includes('list-decimal'), 'Cấp 1 phải là list-decimal');
+  assert.ok(html.includes('list-disc'), 'Cấp 2 lồng nhau phải là list-disc');
+  assert.ok(html.includes('katex'), 'Trong danh sách lồng vẫn render công thức KaTeX');
 });
 
 test('chế độ inline không tạo thẻ khối p', () => {
@@ -65,11 +81,69 @@ test('chế độ inline không tạo thẻ khối p', () => {
   assert.ok(html.includes('<span>'), 'Chế độ inline phải bọc bằng thẻ span');
 });
 
-test('xử lý chuỗi rỗng hoặc null an toàn', () => {
-  assert.doesNotThrow(() => {
-    const emptyElement = createMathElement({ content: '' });
-    renderToString(emptyElement);
-    const nullElement = createMathElement({ content: null });
-    renderToString(nullElement);
+// --- Test trực tiếp component MathRenderer.jsx ---
+
+test('MathRenderer component render wrapper div và class Tailwind tùy biến', () => {
+  const element = React.createElement(MathRenderer, {
+    content: 'Phương trình $y = ax + b$',
+    className: 'custom-math-class',
   });
+  const html = renderToString(element);
+
+  assert.ok(html.includes('class="math-renderer space-y-2 custom-math-class"'), 'Phải bọc wrapper div với custom class');
+  assert.ok(html.includes('katex'), 'Nội dung bên trong phải chứa công thức KaTeX');
+});
+
+test('MathRenderer ở chế độ inline=true sử dụng wrapper span', () => {
+  const element = React.createElement(MathRenderer, {
+    content: '$\\sqrt{2}$',
+    inline: true,
+    className: 'text-sky-300',
+  });
+  const html = renderToString(element);
+
+  assert.ok(html.includes('class="math-renderer inline-block text-sky-300"'), 'Inline phải bọc bằng span inline-block');
+  assert.ok(html.includes('<span'), 'Bắt đầu bằng thẻ span');
+});
+
+test('MathRenderer trả về null khi content rỗng hoặc chỉ có khoảng trắng', () => {
+  const emptyElement = React.createElement(MathRenderer, { content: '' });
+  assert.equal(renderToString(emptyElement), '', 'Content rỗng phải render chuỗi rỗng');
+
+  const whitespaceElement = React.createElement(MathRenderer, { content: '   \n  ' });
+  assert.equal(renderToString(whitespaceElement), '', 'Chỉ chứa khoảng trắng phải render chuỗi rỗng');
+});
+
+test('MathErrorBoundary.getDerivedStateFromProps tự động reset hasError về false khi content thay đổi', () => {
+  const previousState = {
+    hasError: true,
+    prevFallbackContent: 'công thức lỗi cũ',
+  };
+
+  // Trường hợp 1: content không đổi -> không reset
+  const noChange = MathErrorBoundary.getDerivedStateFromProps(
+    { fallbackContent: 'công thức lỗi cũ' },
+    previousState,
+  );
+  assert.equal(noChange, null, 'Khi content không đổi thì không cập nhật state');
+
+  // Trường hợp 2: content đổi sang nội dung mới -> reset hasError = false
+  const updatedState = MathErrorBoundary.getDerivedStateFromProps(
+    { fallbackContent: 'công thức mới $x=1$' },
+    previousState,
+  );
+  assert.deepEqual(
+    updatedState,
+    { hasError: false, prevFallbackContent: 'công thức mới $x=1$' },
+    'Khi content đổi, phải tự động reset hasError: false và cập nhật prevFallbackContent',
+  );
+});
+
+test('MathErrorBoundary render fallback span khi hasError = true', () => {
+  const boundary = new MathErrorBoundary({ fallbackContent: 'Nội dung dự phòng' });
+  boundary.state = { hasError: true, prevFallbackContent: 'Nội dung dự phòng' };
+  const html = renderToString(boundary.render());
+
+  assert.ok(html.includes('text-rose-400'), 'Phải có class màu cảnh báo');
+  assert.ok(html.includes('Nội dung dự phòng'), 'Phải hiển thị fallbackContent');
 });

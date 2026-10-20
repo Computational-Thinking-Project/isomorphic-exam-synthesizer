@@ -4,9 +4,11 @@
 
 ## Tính năng & An toàn
 1. **KaTeX Integration**: Nhúng sẵn `katex/dist/katex.min.css`, hiển thị chính xác các ký hiệu toán học phổ biến (phân số `\dfrac`, căn bậc hai `\sqrt`, tích phân `\int`, v.v.).
-2. **Khả năng chịu lỗi (Error Resilience)**: Cấu hình `throwOnError: false` với mã màu `#ef4444`. Công thức LaTeX sai cú pháp không làm vỡ hoặc sập toàn bộ ứng dụng React.
+2. **Khả năng chịu lỗi & Tự phục hồi (Resilience & Auto-recovery)**: 
+   - Cấu hình `throwOnError: false` với mã màu `#ef4444`. Công thức LaTeX sai cú pháp không làm vỡ hoặc sập ứng dụng.
+   - Bọc `MathErrorBoundary` với `getDerivedStateFromProps` và `key={content}`: khi nội dung được cập nhật sang công thức hợp lệ mới, component tự động phục hồi khỏi trạng thái lỗi mà không cần unmount.
 3. **Chống XSS**: Không bật `rehype-raw`, toàn bộ mã HTML độc hại (`<script>`, `<img onerror>`) bị escape an toàn.
-4. **Hỗ trợ tiếng Việt**: Hiển thị trơn tru các câu hỏi trắc nghiệm tiếng Việt kết hợp công thức toán học.
+4. **Hỗ trợ tiếng Việt & Danh sách có cấu trúc**: Tùy biến `ol` (`list-decimal pl-6`), `ul` (`list-disc pl-6`), `li` để khắc phục việc Tailwind CSS Preflight xóa số thứ tự các bước giải toán. Hỗ trợ danh sách lồng nhau (nested lists).
 
 ## Đặc tả Props
 
@@ -33,18 +35,11 @@ import MathRenderer from './components/MathRenderer.jsx';
   <MathRenderer content="$\dfrac{7}{18}$" inline />
 </div>
 
-// 3. Hiển thị công thức dạng khối
+// 3. Hiển thị lời giải nhiều bước có số thứ tự
 <MathRenderer
-  content="$$\int_{0}^{1} x \, dx = \dfrac{1}{2}$$"
+  content={`1. Bước 1: Giải phương trình $x^2 - 4 = 0 \\iff x = \\pm 2$.\n2. Bước 2: Kết luận nghiệm.`}
 />
 ```
-
-## Xem thử giao diện (Standalone Preview)
-
-Từ thư mục `frontend/`, chạy `npm run dev` và mở đường dẫn `/math-preview.html` trên trình duyệt. Trang preview cung cấp:
-- Đề thi mẫu tương thích với contract fixture `contracts/fixtures/variant.json`.
-- Kiểm tra hiển thị công thức lỗi.
-- Live playground cho phép nhập trực tiếp nội dung để xem kết quả tức thì.
 
 ## Kiểm thử tự động
 
@@ -53,4 +48,4 @@ npm test
 npm run lint
 npm run build
 ```
-Bộ test tự động `MathRenderer.test.js` kiểm tra đầy đủ 7 trường hợp: công thức inline, block, tiếng Việt, xử lý lỗi LaTeX, chống XSS, chế độ inline và giá trị rỗng.
+Bộ test tự động `MathRenderer.test.js` bao phủ 12 ca kiểm thử cho cả core parsing, Tailwind list styling, component wrapper, và cơ chế tự phục hồi của `MathErrorBoundary`.
