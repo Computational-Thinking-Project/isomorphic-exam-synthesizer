@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { mockCloneSession } from '../../services/mocks/cloneMock.js';
 
 const primaryButtonClass =
@@ -13,6 +13,11 @@ const secondaryButtonClass =
   'focus-visible:outline-offset-4 focus-visible:outline-sky-400 ' +
   'disabled:cursor-not-allowed disabled:opacity-50';
 
+function getDefaultTitle(session) {
+  if (!session) return '';
+  return session.title ? `[Bản sao] ${session.title}` : '[Bản sao] Đề mới';
+}
+
 /**
  * Modal nhân bản phiên làm việc (CloneSessionModal — TASK-103b).
  *
@@ -21,6 +26,7 @@ const secondaryButtonClass =
  * @param {Object|null} props.session - Đối tượng phiên cần nhân bản ({ id, title, ... })
  * @param {Function} props.onClose - Callback khi đóng/hủy modal
  * @param {Function} props.onSuccess - Callback khi nhân bản thành công: onSuccess(newSession)
+ *   Lưu ý: cloneFn bắt buộc trả về trực tiếp đối tượng phiên mới (unwrap response data)
  * @param {Function} [props.cloneFn=mockCloneSession] - Hàm thực hiện clone (hỗ trợ DI/mock/real API)
  */
 export default function CloneSessionModal({
@@ -30,40 +36,127 @@ export default function CloneSessionModal({
   onSuccess,
   cloneFn = mockCloneSession,
 }) {
-  const [title, setTitle] = useState('');
+  const [title, setTitle] = useState(() => getDefaultTitle(session));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
-  const inputRef = useRef(null);
 
-  // Khởi tạo tiêu đề gợi ý và reset lỗi mỗi khi mở modal với phiên mới
+  const inputRef = useRef(null);
+  const modalBoxRef = useRef(null);
+  const triggerElementRef = useRef(null);
+  const activeRequestIdRef = useRef(0);
+  const isMountedRef = useRef(true);
+
+  // Ghi nhận trạng thái mount và hủy request cũ khi unmount
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      activeRequestIdRef.current += 1;
+    };
+  }, []);
+
+  // Đóng modal và khôi phục vị trí focus bàn phím về nút đã kích hoạt
+  const handleClose = useCallback(() => {
+    if (isSubmitting) return;
+
+    if (triggerElementRef.current && typeof triggerElementRef.current.focus === 'function') {
+      try {
+        triggerElementRef.current.focus();
+      } catch {
+        // Bỏ qua nếu element kích hoạt không còn trên DOM
+      }
+    }
+
+    if (onClose) {
+      onClose();
+    }
+  }, [isSubmitting, onClose]);
+
+  // Khởi tạo tiêu đề gợi ý, reset lỗi và lưu trigger element mỗi khi mở modal
   useEffect(() => {
     if (isOpen && session) {
-      const defaultTitle = session.title ? `[Bản sao] ${session.title}` : '[Bản sao] Đề mới';
-      setTitle(defaultTitle);
+      // Lưu lại phần tử đang được focus trước khi mở modal
+      if (typeof document !== 'undefined' && document.activeElement) {
+        triggerElementRef.current = document.activeElement;
+      }
+
+      setTitle(getDefaultTitle(session));
       setErrorMessage('');
       setIsSubmitting(false);
+      // Tăng request ID để hủy hiệu lực mọi response cũ trước đó
+      activeRequestIdRef.current += 1;
 
       // Focus vào ô input sau khi render
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (inputRef.current) {
           inputRef.current.focus();
           inputRef.current.select();
         }
       }, 50);
+
+      return () => clearTimeout(timer);
     }
   }, [isOpen, session]);
 
-  // Lắng nghe phím ESC để đóng modal an toàn
+  // Focus trap: Giữ vị trí chọn (Tab/Shift+Tab) bên trong modal và xử lý phím ESC
   useEffect(() => {
+    if (!isOpen) return;
+
     function handleKeyDown(event) {
-      if (event.key === 'Escape' && isOpen && !isSubmitting) {
-        onClose();
+      if (event.key === 'Escape') {
+        if (!isSubmitting) {
+          event.preventDefault();
+          handleClose();
+        }
+        return;
+      }
+
+      if (event.key === 'Tab') {
+        // Khi đang submit, khóa toàn bộ di chuyển focus ra ngoài
+        if (isSubmitting) {
+          event.preventDefault();
+          return;
+        }
+
+        if (!modalBoxRef.current) return;
+
+        const focusableElements = modalBoxRef.current.querySelectorAll(
+          'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        );
+
+        if (!focusableElements || focusableElements.length === 0) {
+          event.preventDefault();
+          return;
+        }
+
+        const firstElement = focusableElements[0];
+        const lastElement = focusableElements[focusableElements.length - 1];
+
+        if (event.shiftKey) {
+          // Shift + Tab: nếu đang ở phần tử đầu tiên, chuyển focus về phần tử cuối cùng
+          if (
+            document.activeElement === firstElement ||
+            !modalBoxRef.current.contains(document.activeElement)
+          ) {
+            event.preventDefault();
+            lastElement.focus();
+          }
+        } else {
+          // Tab: nếu đang ở phần tử cuối cùng, chuyển focus về phần tử đầu tiên
+          if (
+            document.activeElement === lastElement ||
+            !modalBoxRef.current.contains(document.activeElement)
+          ) {
+            event.preventDefault();
+            firstElement.focus();
+          }
+        }
       }
     }
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isSubmitting, onClose]);
+  }, [isOpen, isSubmitting, handleClose]);
 
   if (!isOpen || !session) {
     return null;
@@ -78,19 +171,31 @@ export default function CloneSessionModal({
       return;
     }
 
+    const currentRequestId = activeRequestIdRef.current + 1;
+    activeRequestIdRef.current = currentRequestId;
+
     setIsSubmitting(true);
     setErrorMessage('');
 
     try {
       const clonedSession = await cloneFn(session.id, title.trim());
 
+      // Nếu component đã unmount hoặc có request mới hơn -> bỏ qua kết quả
+      if (!isMountedRef.current || currentRequestId !== activeRequestIdRef.current) {
+        return;
+      }
+
       setIsSubmitting(false);
       if (onSuccess) {
         onSuccess(clonedSession);
       }
-      onClose();
+      handleClose();
     } catch (cause) {
-      // Lỗi: giữ nguyên modal, giữ input để người dùng chỉnh sửa và thử lại
+      // Bỏ qua lỗi nếu request này đã cũ hoặc đã bị hủy
+      if (!isMountedRef.current || currentRequestId !== activeRequestIdRef.current) {
+        return;
+      }
+
       setIsSubmitting(false);
       const message =
         cause instanceof Error && cause.message
@@ -102,7 +207,7 @@ export default function CloneSessionModal({
 
   function handleBackdropClick(event) {
     if (event.target === event.currentTarget && !isSubmitting) {
-      onClose();
+      handleClose();
     }
   }
 
@@ -114,7 +219,10 @@ export default function CloneSessionModal({
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm"
       onClick={handleBackdropClick}
     >
-      <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl">
+      <div
+        ref={modalBoxRef}
+        className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl"
+      >
         <header className="mb-4">
           <h2 id="clone-modal-title" className="text-xl font-semibold text-slate-100">
             Nhân bản phiên đề thi
@@ -166,7 +274,7 @@ export default function CloneSessionModal({
               type="button"
               className={secondaryButtonClass}
               disabled={isSubmitting}
-              onClick={onClose}
+              onClick={handleClose}
             >
               Hủy
             </button>
