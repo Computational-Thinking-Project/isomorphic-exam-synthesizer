@@ -10,7 +10,7 @@
 
 | Ký hiệu | Vai trò | Trọng tâm phụ trách chính | Danh sách task phụ trách |
 | :--- | :--- | :--- | :--- |
-| **FE1** | Frontend Core 1 | Setup FE, Auth UI, Dashboard, KaTeX, Stage 1 Ingestion, Blueprint Editor, Thống kê | TASK-003, 101, 103, 105, 201, 203b, 204, 401 |
+| **FE1** | Frontend Core 1 | Setup FE, Auth UI, Dashboard, KaTeX, Stage 1 Ingestion, Blueprint Viewer & Confirmer, Thống kê | TASK-003, 101, 103, 105, 201, 203b, 204, 401 |
 | **FE2** | Frontend Core 2 | CloneModal, Stage 2 Config, SSE Progress, Review 1-1, Action Bar, Final Approval, Export Center | TASK-103b, 206, 208, 301, 302, 305, 307 |
 | **BE1** | Backend Core & Lead | Setup BE, Auth JWT, Sessions CRUD, Parsers (DOCX/LaTeX/MD), Blueprint APIs, Review API, Final Approval API | TASK-004, 102, 104, 202, 205, 303, 305b |
 | **BE2** | Backend Engine | Rate Limit, Config Validator, Orchestrator SSE, Health Metrics, Shuffler, Typst PDF Compiler | TASK-005, 207a, 207b, 207c, 304, 306a |
@@ -577,10 +577,12 @@
   - `markdown_parser.py`: Bóc tách cú pháp Markdown chuẩn và công thức LaTeX `$...$`.
 - [ ] **Nhận diện Bảng đáp án riêng biệt (Separate Answer Key Parsing):**
   - Quét tìm bảng đáp án ở cuối đề thi (dạng `1.A 2.B...` hoặc `1-A, 2-B...`) để tự động map vào `correct_option` của từng câu.
-  - Nếu câu hỏi không tìm thấy đáp án hoặc không thể xác định $\rightarrow$ gắn cờ `has_missing_answer = true` và trả về mã lỗi HTTP 422 cảnh báo danh sách câu chưa hoàn chỉnh để người dùng sửa file gốc và tải lại ở `Stage 1 Incomplete Loop` (`TASK-203b`).
-- [ ] **Xử lý OMML / Equation Editor cũ:** Nếu DOCX chứa công thức dạng ảnh hoặc OMML mà không trích xuất được text $\rightarrow$ đánh dấu câu đó là `incomplete` (cờ `has_unparsed_omml = true`) để cảnh báo ở Stage 1.
+  - Nếu câu hỏi không tìm thấy đáp án hoặc không thể xác định $\rightarrow$ gắn cờ `has_missing_answer = true` và kích hoạt luồng HTTP 422 (`TASK-203b`).
+- [ ] **Xử lý OMML / Equation Editor cũ:** Nếu DOCX chứa công thức dạng ảnh hoặc OMML mà không trích xuất được text $\rightarrow$ đánh dấu câu đó là `incomplete` (cờ `has_unparsed_omml = true`). Do Stage 1 tuân thủ triệt để Zero-Editing (không sửa tay trên web), câu có cờ này cũng được kích hoạt luồng HTTP 422 (`TASK-203b`) yêu cầu người dùng chuẩn hóa lại công thức trong file gốc trước khi nạp lại.
 - [ ] Chuẩn hóa bảng mã tiếng Việt sang **Unicode NFC** để tránh lỗi font chữ.
-- [ ] Lưu danh sách câu hỏi vào bảng `source_questions`.
+- [ ] **Cơ chế Giao dịch & Ghi đè An toàn (Atomic Ingestion & Idempotent Replace):**
+  - **Ghi đè bản nháp cũ:** Mỗi khi gọi endpoint nạp đề (`ingest-file` / `ingest-text`) cho cùng một `session_id`, backend tự động xóa sạch dữ liệu `source_questions` và `question_blueprints` cũ (nếu có) của phiên đó trước khi xử lý, chống trùng lặp dữ liệu khi nạp lại file.
+  - **Tính nguyên tử (Atomic Commit):** Chỉ commit lưu danh sách câu hỏi vào bảng `source_questions` khi 100% câu hỏi bóc tách hợp lệ (không thiếu đáp án, không lỗi OMML, số câu $\in [1, 20]$). Nếu phát hiện bất kỳ câu nào lỗi $\rightarrow$ lập tức rollback toàn bộ giao dịch, không lưu bản ghi rác nào vào DB, giữ nguyên trạng thái `draft` với 0 câu hỏi nguồn và trả về mã lỗi HTTP 422 kèm danh sách chi tiết các câu lỗi.
 
 ---
 
@@ -618,11 +620,15 @@
 - **Phụ thuộc:** TASK-201, TASK-202
 - **Trạng thái:** ⬜
 
-**Mô tả:** Xử lý trường hợp file đề thi bị thiếu cấu trúc hoặc parser không bóc tách được câu hỏi (`S1_Warn`).
+**Mô tả:** Xử lý trường hợp file đề thi bị thiếu cấu trúc, thiếu đáp án hoặc parser gặp công thức OMML không đọc được text (`S1_Warn`).
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] Phía Backend: Nếu parser nhận diện được ít hơn 1 câu, thiếu phương án hoặc thiếu đáp án (`has_missing_answer = true`) $\rightarrow$ trả về HTTP 422 kèm danh sách các câu/dòng bị lỗi cấu trúc hoặc thiếu đáp án.
-- [ ] Phía Frontend: Hiển thị hộp thoại cảnh báo `Content Incomplete Warning` liệt kê danh sách câu lỗi, hướng dẫn giảng viên chỉnh sửa tệp nguồn trên máy cá nhân và cung cấp nút bấm "Tải lại file khác" (loại bỏ hoàn toàn cơ chế chuyển tab sửa trực tiếp trên web để bảo toàn tính toàn vẹn của tệp nguồn theo ADR-002).
+- [ ] Phía Backend: Kiểm tra tính toàn vẹn câu hỏi:
+  - Nếu parser nhận diện ít hơn 1 câu, vượt quá 20 câu, thiếu phương án A/B/C/D, thiếu đáp án đúng (`has_missing_answer = true`), hoặc chứa công thức OMML không trích xuất được text (`has_unparsed_omml = true`) $\rightarrow$ rollback giao dịch DB (không lưu câu hỏi rác) và trả về mã HTTP 422 Unprocessable Entity.
+  - Payload lỗi chi tiết gồm: mã lỗi (`ERR_MISSING_ANSWER`, `ERR_UNPARSED_OMML`, `ERR_STRUCTURE_INVALID`) kèm danh sách số thứ tự câu hỏi và nguyên nhân cụ thể.
+- [ ] Phía Frontend: Bắt mã lỗi HTTP 422 và hiển thị hộp thoại cảnh báo `Content Incomplete Warning`:
+  - Liệt kê chi tiết danh sách câu lỗi kèm hướng dẫn hành động (ví dụ: bổ sung đáp án vào bảng đáp án cuối file, hoặc chuyển đổi công thức Equation Word sang chuẩn tương thích).
+  - Cung cấp nút bấm "Tải lại file khác" để giảng viên chọn file đã sửa từ máy tính (loại bỏ hoàn toàn cơ chế chuyển tab sửa trực tiếp trên web để bảo toàn tính toàn vẹn của tệp nguồn theo ADR-002).
 
 ---
 
@@ -635,10 +641,9 @@
 
 **Yêu cầu cụ thể phải làm được:**
 - [ ] Hiển thị danh sách câu hỏi gốc bằng `MathRenderer` ở chế độ chỉ đọc (Read-only, tuyệt đối không bố trí ô nhập văn bản sửa đề).
-- [ ] **Badge cảnh báo OMML:** Nếu câu có `has_unparsed_omml = true` $\rightarrow$ hiển thị huy hiệu màu vàng *"Công thức chưa đọc được (OMML/Ảnh)"*.
-- [ ] Hiển thị thẻ Blueprint bên cạnh: danh sách tham số, các điều kiện bất biến, và tóm tắt quy tắc tiếng Việt ở chế độ chỉ đọc.
-- [ ] **Nút "Trích xuất lại" cho từng câu:** Cung cấp nút bấm gọi `POST /api/blueprints/{blueprint_id}/re-extract` nếu AI phân tích chưa chuẩn xác, cập nhật lại Blueprint của câu đó mà không cần tải lại cả đề.
-- [ ] **Nút "Xác nhận tất cả và tiếp tục":** Gọi `POST /api/sessions/{session_id}/blueprints/confirm-all` để khóa toàn bộ cấu trúc Blueprint của phiên và chuyển thẳng sang Stage 2.
+- [ ] Hiển thị thẻ Blueprint bên cạnh từng câu hỏi: danh sách tham số, các điều kiện bất biến, và tóm tắt quy tắc tiếng Việt ở chế độ chỉ đọc.
+- [ ] **Nút "Trích xuất lại" cho từng câu:** Cung cấp nút bấm gọi `POST /api/blueprints/{blueprint_id}/re-extract` nếu AI phân tích chưa chuẩn xác, cập nhật lại Blueprint của câu đó (chỉ khả dụng khi phiên đang ở trạng thái `draft`).
+- [ ] **Nút "Xác nhận tất cả và tiếp tục":** Gọi `POST /api/sessions/{session_id}/blueprints/confirm-all` để khóa toàn bộ cấu trúc Blueprint của phiên và chuyển thẳng sang Stage 2 (tự động disable nếu còn câu chưa có Blueprint hợp lệ).
 - [ ] Loại bỏ hoàn toàn cơ chế sửa tay đề gốc, sửa tay khoảng giá trị min/max và cơ chế Auto-save debounce (tuân thủ ADR-002: Zero-Editing Stage 1).
 
 ---
@@ -648,12 +653,21 @@
 - **Phụ thuộc:** TASK-202; Phụ thuộc tích hợp: TASK-203
 - **Trạng thái:** ⬜
 
-**Mô tả:** Các endpoints phục vụ trích xuất quy tắc, tái trích xuất đơn lẻ và khóa dữ liệu Blueprint của phiên làm việc (loại bỏ PUT /api/source-questions và PATCH /api/blueprints theo ADR-002).
+**Mô tả:** Các endpoints phục vụ trích xuất quy tắc, tái trích xuất đơn lẻ và khóa dữ liệu Blueprint của phiên làm việc kèm kiểm tra điều kiện chuyển trạng thái nghiêm ngặt (loại bỏ PUT /api/source-questions và PATCH /api/blueprints theo ADR-002).
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] `POST /api/sessions/{session_id}/blueprints/extract-all`: Trích xuất Blueprint hàng loạt lần đầu cho toàn bộ câu nguồn trong phiên (gọi `assert_ownership`).
-- [ ] `POST /api/blueprints/{blueprint_id}/re-extract`: Gọi `assert_ownership`, kích hoạt AI trích xuất lại quy tắc cho câu hỏi nguồn chỉ định khi giảng viên yêu cầu trích xuất lại.
-- [ ] `POST /api/sessions/{session_id}/blueprints/confirm-all`: Gọi `assert_ownership`, kiểm tra toàn bộ câu hỏi đã có quy tắc hợp lệ $\rightarrow$ cập nhật trạng thái session sang `blueprinted` và khóa cấu trúc chuyển sang Stage 2.
+- [ ] `POST /api/sessions/{session_id}/blueprints/extract-all`:
+  - Gọi `assert_ownership` kiểm tra quyền sở hữu phiên.
+  - Điều kiện tiên quyết: Phiên phải ở trạng thái `draft` và đã có dữ liệu câu nguồn từ `TASK-202`.
+  - Thực thi trích xuất Blueprint hàng loạt lần đầu cho toàn bộ câu nguồn trong phiên và lưu vào `question_blueprints`.
+- [ ] `POST /api/blueprints/{blueprint_id}/re-extract`:
+  - Gọi `assert_ownership` kiểm tra quyền sở hữu.
+  - **Ràng buộc trạng thái (Precondition):** Chỉ cho phép thực hiện khi phiên làm việc đang ở trạng thái `draft`. Nếu phiên đã được xác nhận (`blueprinted` hoặc các trạng thái sau) $\rightarrow$ từ chối và trả về HTTP `409 Conflict`.
+  - Kích hoạt AI trích xuất lại quy tắc cho câu hỏi nguồn chỉ định, ghi đè bản ghi Blueprint cũ của câu đó.
+- [ ] `POST /api/sessions/{session_id}/blueprints/confirm-all`:
+  - Gọi `assert_ownership` kiểm tra quyền sở hữu.
+  - **Kiểm tra tính toàn vẹn 100% (Strict Validation):** Kiểm tra toàn bộ câu hỏi nguồn trong phiên đã có bản ghi Blueprint hợp lệ và không có câu nào mang cờ lỗi (`has_missing_answer == false`, `has_unparsed_omml == false`). Nếu còn bất kỳ câu nào chưa có Blueprint hoặc không hợp lệ $\rightarrow$ trả về HTTP `422 Unprocessable Entity` kèm danh sách câu chưa hoàn tất.
+  - Khi 100% hợp lệ $\rightarrow$ cập nhật trạng thái session sang `blueprinted`, đóng băng dữ liệu cấu trúc Blueprint và cho phép chuyển tiếp sang Stage 2.
 
 ---
 
@@ -1294,7 +1308,7 @@ Trước khi nghiệm thu toàn bộ dự án, OPS và cả nhóm đối chiếu
 - [ ] **Tái sử dụng phiên:** Thử tính năng **Reuse Session** $\rightarrow$ tạo được bản sao phiên cũ thành công qua modal độc lập `CloneSessionModal`.
 - [ ] **Chặn PDF đầu vào:** Kéo file PDF vào Stage 1 $\rightarrow$ hệ thống chặn ngay và báo lỗi đỏ rõ ràng.
 - [ ] **Bao phủ 4 phương thức nạp đề:** Kiểm tra nạp thành công đề từ cả 4 nguồn: `.docx`, `.tex`, `.md`, và Tab "Nhập trực tiếp".
-- [ ] **Bảo vệ DOCX & Xử lý OMML:** Nạp file DOCX chứa Equation Editor cũ $\rightarrow$ parser bỏ qua OMML và hiển thị badge màu vàng cảnh báo, kích hoạt đúng hộp thoại `Content Incomplete` thông báo người dùng tải lại file chuẩn.
+- [ ] **Bảo vệ DOCX & Xử lý OMML:** Nạp file DOCX chứa Equation Editor cũ không đọc được text $\rightarrow$ parser phát hiện cờ `has_unparsed_omml = true`, kích hoạt mã lỗi HTTP 422 và hộp thoại `Content Incomplete Warning` hướng dẫn người dùng chuẩn hóa file và tải lại.
 - [ ] **Trích xuất & Xác nhận Blueprint:** AI-02 trích xuất được Blueprint kèm tóm tắt tiếng Việt $\rightarrow$ xác nhận thành công $\rightarrow$ chuyển trạng thái sang `blueprinted`.
 - [ ] **Cấu hình & Xung đột:** Thử chọn variation mode không có trong Blueprint $\rightarrow$ hệ thống chặn và giải thích xung đột rõ ràng; chọn mode hợp lệ $\rightarrow$ chuyển trạng thái sang `configured`.
 - [ ] **Tiến trình sinh đề SSE:** Bấm sinh $N=4$ mã đề $\rightarrow$ thanh tiến trình SSE hiển thị phần trăm thời gian thực mượt mà $\rightarrow$ hoàn tất chuyển sang `generated`.
@@ -1405,7 +1419,7 @@ Trước khi nghiệm thu toàn bộ dự án, OPS và cả nhóm đối chiếu
 | Mức độ ưu tiên | Tính năng / Module | Phương án dự phòng (Fallback Plan) | Tác động đến nghiệm thu |
 | :--- | :--- | :--- | :--- |
 | **P0: Cốt lõi cấm cắt (Non-negotiable)** | • Xác thực Google Auth & RLS bảo mật 10 bảng (kèm bảng `security_events` bất biến, audit log không thể sửa/xóa)<br>• Bóc tách đề nguồn (DOCX / LaTeX / Markdown / Nhập tay)<br>• Blueprint & Sinh biến thể $N \le 4$ mã đề (tối đa 20 câu nguồn / 250 API calls)<br>• Giao diện Thẩm định 1-1 (Accept/Reject/Revert)<br>• Xuất bản PDF in ấn (Typst) & Bảng đáp án | **Tuyệt đối không cắt.** Bắt buộc hoàn thành 100% để đáp ứng yêu cầu môn học CSC10014. | Không ảnh hưởng; là linh hồn của đồ án. |
-| **P1: Hạ cấp kỹ thuật (Graceful Downgrade)** | • **SymPy ProcessPool (`TASK-107b`):** Nếu môi trường cục bộ gặp trục trặc IPC/multiprocessing $\rightarrow$ ngắt gọi SymPy an toàn và chuyển thẳng sang **Rule Fallback Checker (`TASK-107c`)** với cờ cảnh báo `validation_status = 'passed_rule_fallback'`, tuyệt đối không chạy timeout in-process gây nghẽn GIL/CPU.<br>• **Parser OMML phức tạp (`TASK-202`):** Không cố parse 100% biểu thức lạ; gắn cờ `has_unparsed_omml = true` và hiển thị cảnh báo qua `Content Incomplete Dialog` để người dùng sửa lại file gốc.<br>• **Dual Export XeLaTeX (`TASK-306b`):** Trọng tâm hoàn thiện xuất sắc file PDF in ấn chuẩn đẹp qua Typst (`TASK-306a`) + file `.tex` chuẩn cú pháp UTF-8 sạch sẽ kèm template chuẩn; nếu môi trường máy phát triển thiếu TeXLive/XeLaTeX compiler, cho phép hoãn bước tự động compile XeLaTeX tại local và kiểm tra tính toàn vẹn cú pháp qua script parser. | Chấp nhận được; hệ thống vẫn vận hành an toàn và mượt mà. |
+| **P1: Hạ cấp kỹ thuật (Graceful Downgrade)** | • **SymPy ProcessPool (`TASK-107b`):** Nếu môi trường cục bộ gặp trục trặc IPC/multiprocessing $\rightarrow$ ngắt gọi SymPy an toàn và chuyển thẳng sang **Rule Fallback Checker (`TASK-107c`)** với cờ cảnh báo `validation_status = 'passed_rule_fallback'`, tuyệt đối không chạy timeout in-process gây nghẽn GIL/CPU.<br>• **Parser OMML phức tạp (`TASK-202`):** Không cố parse 100% biểu thức lạ; nếu không đọc được text thì gắn cờ `has_unparsed_omml = true` và kích hoạt lỗi HTTP 422 để hướng dẫn người dùng chuẩn hóa lại file Word hoặc chuyển sang LaTeX/Markdown.<br>• **Dual Export XeLaTeX (`TASK-306b`):** Trọng tâm hoàn thiện xuất sắc file PDF in ấn chuẩn đẹp qua Typst (`TASK-306a`) + file `.tex` chuẩn cú pháp UTF-8 sạch sẽ kèm template chuẩn; nếu môi trường máy phát triển thiếu TeXLive/XeLaTeX compiler, cho phép hoãn bước tự động compile XeLaTeX tại local và kiểm tra tính toàn vẹn cú pháp qua script parser. | Chấp nhận được; hệ thống vẫn vận hành an toàn và mượt mà. |
 | **P2: Cắt giảm an toàn nếu quá tải (Safe Cuts)** | • **Tùy chọn Shuffle riêng biệt (`TASK-206`, `TASK-304`):** Mặc định bật cả đảo câu và đảo phương án, tạm ẩn giao diện toggle tùy biến nâng cao.<br>• **Biểu đồ thống kê nâng cao (`TASK-401`):** Giữ lại các thẻ KPI số liệu cơ bản (First-pass rate, Recovery rate), hoãn biểu đồ Chart.js phân bố phức tạp.<br>• **Metrics Observability (`TASK-207c`):** Trả về JSON trạng thái tối giản, hoãn các metric đo lường uptime/call_rate chi tiết. | Hoàn toàn không ảnh hưởng đến kịch bản demo và tiêu chí chấm điểm của giảng viên. |
 
 ---
