@@ -8,7 +8,7 @@ Includes:
 
 from typing import Any, Optional, cast
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from supabase import Client
 
 from app.core.database import get_authenticated_client, get_service_role_client, get_supabase_client
@@ -28,12 +28,14 @@ ALLOWED_TABLES: set[str] = {
 
 
 async def get_current_user(
+    request: Optional[Request] = None,
     authorization: Optional[str] = Header(None, alias="Authorization"),
 ) -> CurrentUser:
     """Extract and verify Bearer JWT token from Authorization header.
 
     Calls Supabase Auth to validate the token and returns the CurrentUser object.
     Raises HTTP 401 if token is missing, malformed, expired, or invalid.
+    Also populates ``request.state.authenticated_user_id`` for downstream rate limiting.
     """
     if not authorization:
         raise HTTPException(
@@ -66,12 +68,18 @@ async def get_current_user(
         metadata = getattr(user, "user_metadata", {}) or {}
         user_name = metadata.get("full_name") or metadata.get("name")
 
-        return CurrentUser(
+        current_user = CurrentUser(
             id=str(user.id),
             email=str(getattr(user, "email", "") or ""),
             name=user_name,
             access_token=token,
         )
+
+        # Populate authenticated_user_id on request state for rate limiting (TASK-005 contract)
+        if request is not None and hasattr(request, "state"):
+            request.state.authenticated_user_id = current_user.id
+
+        return current_user
     except HTTPException:
         raise
     except Exception as exc:

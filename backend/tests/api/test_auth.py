@@ -143,3 +143,21 @@ def test_users_me_fallback_when_db_record_absent(client, mock_user_response, tes
     assert data["email"] == "teacher@school.edu.vn"
     assert data["name"] == "Thầy Nguyễn Văn A"
     assert data["created_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_sets_authenticated_user_id_on_request_state(
+    mock_user_response, test_user_id
+):
+    """Ensure authenticated_user_id is populated on request.state for rate limiting (TASK-005 contract)."""
+    from types import SimpleNamespace
+
+    mock_supabase = MagicMock()
+    mock_supabase.auth.get_user.return_value = mock_user_response
+    mock_request = SimpleNamespace(state=SimpleNamespace())
+
+    with patch("app.api.dependencies.get_supabase_client", return_value=mock_supabase):
+        user = await get_current_user(request=mock_request, authorization="Bearer valid-jwt-token")
+
+    assert user.id == test_user_id
+    assert getattr(mock_request.state, "authenticated_user_id", None) == test_user_id
