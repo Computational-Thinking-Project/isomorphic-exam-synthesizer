@@ -753,7 +753,7 @@
 **Yêu cầu cụ thể phải làm được:**
 - [ ] Hiển thị danh sách câu hỏi gốc bằng `MathRenderer` ở chế độ chỉ đọc (Read-only, tuyệt đối không bố trí ô nhập văn bản sửa đề).
 - [ ] Hiển thị thẻ Blueprint bên cạnh từng câu hỏi: danh sách tham số, các điều kiện bất biến, và tóm tắt quy tắc tiếng Việt ở chế độ chỉ đọc.
-- [ ] **Nút "Trích xuất lại" cho từng câu:** Cung cấp nút bấm gọi `POST /api/sessions/{session_id}/blueprints/{blueprint_id}/regenerate` (hoặc `/re-extract`) nếu AI phân tích chưa chuẩn xác, cập nhật lại Blueprint của câu đó (chỉ khả dụng khi phiên đang ở trạng thái `draft`).
+- [ ] **Nút "Trích xuất lại" cho từng câu:** Cung cấp nút bấm gọi `POST /api/sessions/{session_id}/blueprints/{blueprint_id}/re-extract` nếu AI phân tích chưa chuẩn xác, cập nhật lại Blueprint của câu đó (chỉ khả dụng khi phiên đang ở trạng thái `draft`).
 - [ ] **Nút "Xác nhận tất cả và tiếp tục":** Gọi `POST /api/sessions/{session_id}/blueprints/confirm-all` để khóa toàn bộ cấu trúc Blueprint của phiên và chuyển thẳng sang Stage 2 (tự động disable nếu còn câu chưa có Blueprint hợp lệ).
 - [ ] **Tiêu chí hiển thị Cảnh báo An ninh & Chốt chặn xác nhận (SEC-02, P1.9):**
   - Nếu câu nguồn mang cờ `has_security_warning == true` (do phát hiện nguy cơ Prompt Injection / ký tự điều khiển bất thường từ `TASK-202`):
@@ -775,7 +775,7 @@
   - Gọi `assert_ownership` kiểm tra quyền sở hữu phiên.
   - Điều kiện tiên quyết: Phiên phải ở trạng thái `draft` và đã có dữ liệu câu nguồn từ `TASK-202`.
   - Thực thi trích xuất Blueprint hàng loạt lần đầu cho toàn bộ câu nguồn trong phiên và lưu vào `question_blueprints`.
-- [ ] `POST /api/sessions/{session_id}/blueprints/{blueprint_id}/regenerate` (hoặc `/re-extract`):
+- [ ] `POST /api/sessions/{session_id}/blueprints/{blueprint_id}/re-extract`:
   - Gọi `assert_ownership` kiểm tra quyền sở hữu.
   - **Ràng buộc trạng thái (Precondition):** Chỉ cho phép thực hiện khi phiên làm việc đang ở trạng thái `draft`. Nếu phiên đã được xác nhận (`blueprinted` hoặc các trạng thái sau) $\rightarrow$ từ chối và trả về HTTP `409 Conflict`.
   - Kích hoạt AI trích xuất lại quy tắc cho câu hỏi nguồn chỉ định, ghi đè bản ghi Blueprint cũ của câu đó.
@@ -907,9 +907,9 @@
 
 **Yêu cầu cụ thể phải làm được:**
 - [ ] Xây dựng custom hook `useSSE(sessionId)`:
-  - Gọi `POST /api/sessions/{session_id}/events/ticket` mang JWT Bearer token để lấy ticket xác thực ngắn hạn.
-  - Khởi tạo `EventSource` trỏ đến `GET /api/sessions/{session_id}/events?ticket={ticket}&last_event_id={lastId}`.
-  - **Tự động kết nối lại thông minh (P1.6 Reconnection):** Khi kết nối bị gián đoạn (`onerror`), hook tự động xin ticket mới và kết nối lại kèm `last_event_id` của event cuối cùng đã nhận để nhận replay các sự kiện bị gián đoạn.
+  - **Khởi tạo kết nối tức thì (Per-connection Ticket):** Gọi `POST /api/sessions/{session_id}/events/ticket` mang JWT Bearer token để lấy ticket xác thực ngắn hạn (**TTL: 60s**) ngay trước khi mở kết nối. Tuyệt đối không lưu ticket vào `localStorage` hay state dùng chung lâu dài (tránh hết hạn ticket).
+  - Khởi tạo `EventSource` trỏ đến `GET /api/sessions/{session_id}/events?ticket={ticket}&last_event_id={lastId}`. Ticket là loại one-time handshake (backend tiêu thụ ngay khi kết nối thành công).
+  - **Tự động kết nối lại thông minh (P1.6 Reconnection):** Khi kết nối bị gián đoạn hoặc lỗi (`onerror`), hook đóng kết nối cũ, tự động gọi lại endpoint xin một ticket mới và khởi tạo `EventSource` mới kèm `last_event_id` của event cuối cùng đã nhận để nhận replay các sự kiện bị gián đoạn từ ring-buffer 50 events của backend.
 - [ ] Parse payload chuẩn theo cấu trúc đã thống nhất ở TASK-207b.
 - [ ] Hiển thị thanh tiến trình tổng thể (% hoàn thành) kèm ước lượng thời gian còn lại.
 - [ ] Danh sách thẻ câu hỏi với icon trạng thái thời gian thực: Đang sinh ⏳, Đang kiểm tra 🔍, Đạt chuẩn ✅, Cảnh báo ⚠️, Thử lại 🔄.

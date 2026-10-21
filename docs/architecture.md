@@ -120,7 +120,7 @@ flowchart TB
 | :--- | :--- | :--- | :--- |
 | **BE-01** | **API Router & Auth Middleware** | Điểm tiếp nhận request, kiểm tra JWT token (Supabase), xử lý CORS, phân quyền user. Tất cả endpoints sử dụng **async** (`async def`). | Tất cả |
 | **BE-02** | **Document Parsing Service** | Bóc tách câu hỏi, 4 phương án A/B/C/D, đáp án, và lời giải gốc (nếu có) từ file tải lên. Sử dụng `python-docx` (DOCX), regex/AST (LaTeX), parser (Markdown). **Chặn** file PDF ở tầng server (validate MIME + extension). Giới hạn kích thước file. | UC05 |
-| **BE-03** | **Blueprint Management & Extraction Service** | Quản lý vòng đời Blueprint: nhận bản trích xuất từ AI-02, cung cấp API trích xuất lại theo từng câu (`POST /api/sessions/{session_id}/blueprints/{blueprint_id}/regenerate`) và khóa cấu trúc hàng loạt (`POST /api/sessions/{session_id}/blueprints/confirm-all`), lưu bản đã duyệt dạng JSONB. | UC06 |
+| **BE-03** | **Blueprint Management & Extraction Service** | Quản lý vòng đời Blueprint: nhận bản trích xuất từ AI-02, cung cấp API trích xuất lại theo từng câu (`POST /api/sessions/{session_id}/blueprints/{blueprint_id}/re-extract`) và khóa cấu trúc hàng loạt (`POST /api/sessions/{session_id}/blueprints/confirm-all`), lưu bản đã duyệt dạng JSONB. | UC06 |
 | **BE-04** | **Config Validator** | Kiểm tra tính hợp lệ **server-side** cho cấu hình sinh đề: $N \in [1, 4]$, variation modes phải thuộc tập cho phép từ Blueprint đã xác nhận, ordering preferences hợp lệ. Trả thông báo xung đột rõ ràng nếu cấu hình vi phạm ràng buộc. | UC07 |
 | **BE-05** | **Generation Orchestrator** | Điều phối luồng sinh $N \le 4$ mã đề: gửi prompt đến AI (AI-03, AI-04) → nhận kết quả → chuyển sang Validator (VAL-01..04) → kích hoạt Auto-retry nếu lỗi (tối đa 3 lần). **Sau 3 lần retry thất bại: vẫn trả draft kèm `validation_report` chứa warning badges** để giảng viên xem xét — KHÔNG chặn pipeline. | UC08 |
 | **BE-06** | **Background Job & Progress Streamer** | Sinh đề cho $N$ mã đề × nhiều câu hỏi có thể mất hàng chục giây đến vài phút. Module này quản lý **background task** (FastAPI `BackgroundTasks` hoặc task queue) và **stream tiến trình real-time** qua **Server-Sent Events (SSE)** endpoint (`GET /api/sessions/{session_id}/events?ticket={ticket}&last_event_id={id}`) với cơ chế cấp ticket xác thực ngắn hạn (`POST /api/sessions/{session_id}/events/ticket`): trạng thái từng câu (generating → validating → done / retrying), phần trăm hoàn thành, thông báo lỗi và cơ chế replay sự kiện. | UC08 |
@@ -443,7 +443,7 @@ sequenceDiagram
 
     alt Question blueprint flawed
         I ->> FE: Click "Re-extract" on flawed question
-        FE ->> BE: POST /api/sessions/{session_id}/blueprints/{blueprint_id}/regenerate (BE-03)
+        FE ->> BE: POST /api/sessions/{session_id}/blueprints/{blueprint_id}/re-extract (BE-03)
         BE ->> AI: Re-analyze question (AI-02)
         AI -->> BE: New blueprint JSON
         BE ->> DB: Overwrite question_blueprints
