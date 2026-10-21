@@ -11,7 +11,7 @@ from typing import Any, Optional, cast
 
 import httpx
 from fastapi import Depends, Header, HTTPException, Request, status
-from supabase import Client
+from supabase import AuthApiError, AuthRetryableError, Client
 
 from app.core.database import get_authenticated_client, get_service_role_client, get_supabase_client
 from app.models.schemas import CurrentUser
@@ -100,11 +100,30 @@ async def get_current_user(
         return current_user
     except HTTPException:
         raise
-    except (httpx.RequestError, httpx.TimeoutException) as exc:
-        logger.error("Network error communicating with Supabase Auth: %s", exc)
+    except (httpx.RequestError, httpx.TimeoutException, AuthRetryableError) as exc:
+        logger.error("Network or retryable error communicating with Supabase Auth: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication service temporarily unavailable",
+        ) from exc
+    except AuthApiError as exc:
+        if exc.status >= 500:
+            logger.error("Supabase Auth server error (%d): %s", exc.status, exc)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Authentication service temporarily unavailable",
+            ) from exc
+        if exc.status == status.HTTP_429_TOO_MANY_REQUESTS:
+            logger.warning("Supabase Auth rate limit reached: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Authentication service rate limit exceeded. Please try again later.",
+            ) from exc
+        logger.warning("Supabase Auth rejected token (%d): %s", exc.status, exc)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
         ) from exc
     except Exception as exc:
         logger.warning("Token validation failed: %s", exc)
