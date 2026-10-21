@@ -1,34 +1,20 @@
-FROM python:3.11-slim
-
-# Prevent Python from writing .pyc files and enable unbuffered output
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
-
+FROM python:3.11-slim-bookworm@sha256:0a310eeecf4e1f5a0743f9a6520c90c88d089c903ca5fd283f501e3a805f5f89
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
-
-# Install system dependencies needed for Typst download and healthcheck
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    xz-utils \
-    ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends curl xz-utils ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-
-# Download and install Typst binary (v0.11.1)
 ENV TYPST_VERSION=v0.11.1
-RUN curl -fsSL "https://github.com/typst/typst/releases/download/${TYPST_VERSION}/typst-x86_64-unknown-linux-musl.tar.xz" \
-    | tar -xJ --strip-components=1 -C /usr/local/bin typst-x86_64-unknown-linux-musl/typst \
-    && chmod +x /usr/local/bin/typst \
+ARG TARGETARCH
+RUN case "$TARGETARCH" in amd64) arch=x86_64 ;; arm64) arch=aarch64 ;; \
+      *) echo "Unsupported architecture: $TARGETARCH" >&2; exit 1 ;; esac \
+    && curl -fsSL --retry 3 -o /tmp/typst.tar.xz \
+      "https://github.com/typst/typst/releases/download/${TYPST_VERSION}/typst-${arch}-unknown-linux-musl.tar.xz" \
+    && tar -xJf /tmp/typst.tar.xz --strip-components=1 -C /usr/local/bin "typst-${arch}-unknown-linux-musl/typst" \
+    && rm /tmp/typst.tar.xz \
     && typst --version
-
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy application source code
+COPY requirements.txt requirements.lock ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock && pip check
+RUN pip install --dry-run --no-index --no-deps -r requirements.txt
 COPY . .
-
-# Expose backend port
 EXPOSE 8000
-
-# Run with single worker to guarantee accurate in-memory rate limiting (SEC-10)
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

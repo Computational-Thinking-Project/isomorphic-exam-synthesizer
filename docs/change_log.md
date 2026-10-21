@@ -45,3 +45,21 @@
 - Bổ sung: auth store dùng Zustand, ProtectedRoute và trang thử /auth-preview chỉ trong development.
 - Kiểm thử bổ sung: ba unit test cho auth store bằng Node test runner; thêm script npm run test.
 - Giới hạn: phiên mẫu không lưu sau reload; chưa kết nối Supabase, Google login hoặc API thật.
+
+### DEC-TV6-001: Shared Docker development workflow
+
+- Date/author: 2026-10-19 — Khánh Tâm (TV6).
+- Context: the original Compose stack serves a static frontend; host dependency
+  installs, floating Python versions and fixed container/network names make team
+  onboarding inconsistent.
+- Decision: keep the static Nginx build, add a Compose Watch development overlay,
+  a PowerShell setup/doctor/up/test/smoke/logs/down helper, Python dependency
+  lock/hashes, pinned image digests, and container build/smoke CI.
+- Node moves to the 22 line in Docker and existing CI to support the frontend's
+  ESLint 10 engine requirements. Frontend packages and the build tool are unchanged.
+- Frontend public Vite configuration is passed explicitly; backend secrets are not
+  passed to frontend containers/builds. Vite's Docker proxy uses backend:8000.
+- Impact/review: TV1 frontend startup/public env, TV3 backend startup/env/dependencies,
+  TV4 CI. No API/schema, Gemini client, generator or validator implementation changes.
+- Verification: see the Docker PR and docs/logbook.md for actual results; real cloud
+  integration, another member's machine and ARM execution remain separate checks.
