@@ -10,7 +10,7 @@ ALLOWED_CORS_HEADERS = ("Authorization", "Content-Type")
 
 
 def parse_cors_origins(raw_origins: str) -> list[str]:
-    """Parse, trim, and de-duplicate a comma-separated origin list.
+    """Normalize trailing slashes, trim, and de-duplicate configured origins.
 
     A wildcard origin is rejected because this application allows credentialed
     browser requests and must enumerate trusted origins explicitly.
@@ -18,7 +18,7 @@ def parse_cors_origins(raw_origins: str) -> list[str]:
 
     origins: list[str] = []
     for candidate in raw_origins.split(","):
-        origin = candidate.strip()
+        origin = candidate.strip().rstrip("/")
         if not origin:
             continue
         if origin == "*":
