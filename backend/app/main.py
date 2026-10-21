@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.api.routes import health, users
+from app.api.routes import health, sessions, users
 from app.core.cors import register_cors
 from app.core.rate_limit import register_rate_limiter
 
@@ -18,3 +18,4 @@ register_cors(app)
 # Include Routers
 app.include_router(health.router)
 app.include_router(users.router, prefix="/api/users", tags=["Users"])
+app.include_router(sessions.router, prefix="/api/sessions", tags=["Sessions"])
