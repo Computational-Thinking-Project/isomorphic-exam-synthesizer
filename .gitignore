@@ -1,6 +1,9 @@
 # Environment & Secrets
 .env
 .env.local
+.env.*
+!.env.example
+!**/.env.example
 *.pem
 *.key
 
@@ -31,3 +34,4 @@ Thumbs.db
 *.pdf
 scratch/
 agents/
+.artifacts/
