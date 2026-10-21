@@ -5,8 +5,17 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
+from starlette.requests import Request
+
 from app.main import app
 from app.models.schemas import CurrentUser
+
+
+@pytest.fixture
+def dummy_request() -> Request:
+    """Create a dummy Starlette Request object for direct dependency testing."""
+    return Request({"type": "http", "headers": []})
+
 
 
 @pytest.fixture

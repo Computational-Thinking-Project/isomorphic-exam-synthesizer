@@ -14,11 +14,16 @@ Tài liệu quy định chuẩn chữ ký hàm cho API endpoint khi gắn **Rate
 @crud_rate_limit
 async def list_sessions(
     request: Request,                                       # Bắt buộc: để SlowAPI định danh user/IP
-    response: Response,                                      # Khuyên dùng: để SlowAPI chèn header X-RateLimit-*
+    response: Response,                                      # Bắt buộc khi trả dict/Pydantic: để SlowAPI chèn header X-RateLimit-*
     current_user: CurrentUser = Depends(get_current_user),  # Gán request.state.authenticated_user_id
 ):
     return {"ok": True}
 ```
+
+> **Quy định về tham số `response: Response`:**
+> - **Bắt buộc:** Đối với mọi endpoint trả về `dict` hoặc `Pydantic model` có gắn `@crud_rate_limit` hoặc `@generation_rate_limit`. Nếu thiếu, SlowAPI không thể inject các headers hạn ngạch (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`) vào phản hồi HTTP của client.
+> - **Không cần thiết:** Đối với endpoint trả về trực tiếp đối tượng `Response(...)` (chẳng hạn `Response(status_code=204)` ở route DELETE), SlowAPI sẽ tự động chỉnh sửa trực tiếp đối tượng Response được trả về nên không cần nhận thêm tham số `response: Response`.
+
 
 ---
 
@@ -60,6 +65,6 @@ async def generate(request: Request, response: Response, ...):
 
 ## 5. Checklist trước khi tạo Route mới
 - [ ] Đã khai báo tham số `request: Request`.
-- [ ] Đã thêm `response: Response` (nếu trả dict/Pydantic).
+- [ ] Đã thêm `response: Response` (bắt buộc khi trả dict/Pydantic có bật rate limit; không cần nếu trả Response trực tiếp).
 - [ ] Không trùng tên biến `response = ...` trong thân hàm.
 - [ ] Thứ tự decorator: `@router` ở trên, `@rate_limit` ở dưới.

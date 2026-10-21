@@ -6,13 +6,17 @@ Includes:
 - assert_ownership: Defense-in-depth resource ownership check against ALLOWED_TABLES whitelist.
 """
 
+import logging
 from typing import Any, Optional, cast
 
+import httpx
 from fastapi import Depends, Header, HTTPException, Request, status
 from supabase import Client
 
 from app.core.database import get_authenticated_client, get_service_role_client, get_supabase_client
 from app.models.schemas import CurrentUser
+
+logger = logging.getLogger(__name__)
 
 # Whitelist of tables permitted for ownership verification (SEC-07)
 ALLOWED_TABLES: set[str] = {
@@ -28,7 +32,7 @@ ALLOWED_TABLES: set[str] = {
 
 
 async def get_current_user(
-    request: Optional[Request] = None,
+    request: Request,
     authorization: Optional[str] = Header(None, alias="Authorization"),
 ) -> CurrentUser:
     """Extract and verify Bearer JWT token from Authorization header.
@@ -56,6 +60,20 @@ async def get_current_user(
 
     try:
         supabase = get_supabase_client()
+    except RuntimeError as exc:
+        logger.error("Supabase client configuration error: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service is misconfigured",
+        ) from exc
+    except Exception as exc:
+        logger.error("Failed to initialize Supabase client: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service initialization error",
+        ) from exc
+
+    try:
         user_response = supabase.auth.get_user(token)
         if not user_response or not getattr(user_response, "user", None):
             raise HTTPException(
@@ -76,16 +94,23 @@ async def get_current_user(
         )
 
         # Populate authenticated_user_id on request state for rate limiting (TASK-005 contract)
-        if request is not None and hasattr(request, "state"):
+        if hasattr(request, "state"):
             request.state.authenticated_user_id = current_user.id
 
         return current_user
     except HTTPException:
         raise
+    except (httpx.RequestError, httpx.TimeoutException) as exc:
+        logger.error("Network error communicating with Supabase Auth: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service temporarily unavailable",
+        ) from exc
     except Exception as exc:
+        logger.warning("Token validation failed: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Token validation failed: {str(exc)}",
+            detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 

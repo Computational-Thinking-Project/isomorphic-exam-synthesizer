@@ -2,65 +2,70 @@
 
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from app.api.dependencies import get_current_user
 from app.models.schemas import CurrentUser
 
 
 @pytest.mark.asyncio
-async def test_get_current_user_missing_header():
+async def test_get_current_user_missing_header(dummy_request):
     """Raise 401 when Authorization header is absent."""
     with pytest.raises(HTTPException) as exc_info:
-        await get_current_user(authorization=None)
+        await get_current_user(request=dummy_request, authorization=None)
     assert exc_info.value.status_code == 401
     assert "Missing authorization header" in exc_info.value.detail
 
 
 @pytest.mark.asyncio
-async def test_get_current_user_invalid_format():
+async def test_get_current_user_invalid_format(dummy_request):
     """Raise 401 when Authorization header is not 'Bearer <token>'."""
     for invalid_header in ["Token 123", "Bearer", "Bearer  ", "Basic 123", "JustAToken"]:
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(authorization=invalid_header)
+            await get_current_user(request=dummy_request, authorization=invalid_header)
         assert exc_info.value.status_code == 401
         assert "Invalid authorization header format" in exc_info.value.detail
 
 
 @pytest.mark.asyncio
-async def test_get_current_user_valid_token(mock_user_response, test_user_id):
-    """Return CurrentUser when token is valid."""
+async def test_get_current_user_valid_token(dummy_request, mock_user_response, test_user_id):
+    """Return CurrentUser when token is valid and populate request.state.authenticated_user_id."""
     mock_supabase = MagicMock()
     mock_supabase.auth.get_user.return_value = mock_user_response
 
     with patch("app.api.dependencies.get_supabase_client", return_value=mock_supabase):
-        user = await get_current_user(authorization="Bearer valid-jwt-token")
+        user = await get_current_user(request=dummy_request, authorization="Bearer valid-jwt-token")
 
     assert isinstance(user, CurrentUser)
     assert user.id == test_user_id
     assert user.email == "teacher@school.edu.vn"
     assert user.name == "Thầy Nguyễn Văn A"
     assert user.access_token == "valid-jwt-token"
+    assert getattr(dummy_request.state, "authenticated_user_id", None) == test_user_id
     mock_supabase.auth.get_user.assert_called_once_with("valid-jwt-token")
 
 
 @pytest.mark.asyncio
-async def test_get_current_user_expired_or_invalid_token():
-    """Raise 401 when Supabase Auth rejects the token."""
+async def test_get_current_user_expired_or_invalid_token(dummy_request):
+    """Raise 401 when Supabase Auth rejects the token, with sanitized error message."""
     mock_supabase = MagicMock()
-    mock_supabase.auth.get_user.side_effect = Exception("JWT expired")
+    mock_supabase.auth.get_user.side_effect = Exception("JWT expired or signature invalid")
 
     with patch("app.api.dependencies.get_supabase_client", return_value=mock_supabase):
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(authorization="Bearer expired-jwt-token")
+            await get_current_user(request=dummy_request, authorization="Bearer expired-jwt-token")
 
     assert exc_info.value.status_code == 401
-    assert "Token validation failed" in exc_info.value.detail
+    assert "Invalid or expired token" in exc_info.value.detail
+    # Must not leak raw exception detail
+    assert "JWT expired or signature invalid" not in exc_info.value.detail
 
 
 @pytest.mark.asyncio
-async def test_get_current_user_null_user_response():
+async def test_get_current_user_null_user_response(dummy_request):
     """Raise 401 when Supabase Auth returns empty user."""
     mock_supabase = MagicMock()
     empty_response = MagicMock()
@@ -69,10 +74,38 @@ async def test_get_current_user_null_user_response():
 
     with patch("app.api.dependencies.get_supabase_client", return_value=mock_supabase):
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(authorization="Bearer empty-user-jwt")
+            await get_current_user(request=dummy_request, authorization="Bearer empty-user-jwt")
 
     assert exc_info.value.status_code == 401
     assert "Invalid or expired token" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_configuration_error(dummy_request):
+    """Raise 500 when Supabase client is misconfigured (e.g. missing env vars)."""
+    with patch(
+        "app.api.dependencies.get_supabase_client",
+        side_effect=RuntimeError("SUPABASE_URL and SUPABASE_ANON_KEY must be configured"),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user(request=dummy_request, authorization="Bearer valid-token")
+
+    assert exc_info.value.status_code == 500
+    assert "Authentication service is misconfigured" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_network_error(dummy_request):
+    """Raise 503 when network connection to Supabase Auth fails."""
+    mock_supabase = MagicMock()
+    mock_supabase.auth.get_user.side_effect = httpx.ConnectError("Failed to connect to Supabase")
+
+    with patch("app.api.dependencies.get_supabase_client", return_value=mock_supabase):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_current_user(request=dummy_request, authorization="Bearer valid-token")
+
+    assert exc_info.value.status_code == 503
+    assert "Authentication service temporarily unavailable" in exc_info.value.detail
 
 
 def test_users_me_unauthorized(client):

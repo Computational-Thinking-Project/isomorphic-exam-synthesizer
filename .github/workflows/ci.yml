@@ -38,6 +38,17 @@ jobs:
         run: |
           python -c "import sympy; from sympy.parsing.latex import parse_latex; res = parse_latex('x^2 + 1'); assert res is not None; print('SymPy LaTeX parser verified:', res)"
 
+      - name: Backend Unit & Integration Tests (Pytest)
+        working-directory: ./backend
+        run: |
+          pytest tests -v
+        env:
+          ENVIRONMENT: test
+          SUPABASE_URL: https://mock.supabase.co
+          SUPABASE_ANON_KEY: mock-anon-key
+          SUPABASE_SERVICE_ROLE_KEY: mock-service-role-key
+
+
   frontend-test:
     name: Frontend Lint & Build
     runs-on: ubuntu-latest
