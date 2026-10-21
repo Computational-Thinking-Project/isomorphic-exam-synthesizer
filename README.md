@@ -5,31 +5,37 @@
 
 ---
 
-## 🚀 Hướng dẫn Chạy Nhanh (Quick Start)
+## Quick start (Docker)
 
-### 1. Yêu cầu Tiên quyết (Prerequisites)
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Hỗ trợ WSL 2 trên Windows / macOS / Linux).
-- Git.
+Install Git and Docker Desktop (Linux containers / WSL 2 on Windows), then reopen
+your terminal. No host Python or Node installation is needed.
 
-### 2. Thiết lập Biến Môi trường
-Tạo file `.env` từ file mẫu `.env.example`:
-```bash
-cp .env.example .env
-```
-Điền các giá trị cần thiết vào `.env`:
-- `GEMINI_API_KEY`: API key lấy từ [Google AI Studio](https://aistudio.google.com/).
-- `SUPABASE_URL` & `SUPABASE_ANON_KEY`: Lấy từ dự án Supabase.
+From the repository root, on Windows:
 
-### 3. Khởi chạy với Docker Compose
-Chạy toàn bộ hệ thống (Frontend + Backend) chỉ bằng 1 câu lệnh duy nhất:
-```bash
-docker compose up --build
-```
+~~~powershell
+.\scripts\dev.ps1 setup
+.\scripts\dev.ps1 doctor
+.\scripts\dev.ps1 up
+~~~
 
-Sau khi khởi chạy thành công:
-- **Frontend SPA:** [http://localhost:3000](http://localhost:3000)
-- **Backend API Docs (Swagger UI):** [http://localhost:8000/docs](http://localhost:8000/docs)
-- **Backend Health Check:** [http://localhost:8000/health](http://localhost:8000/health)
+Frontend: http://localhost:3000. API docs: http://localhost:8000/docs.
+The up command waits for health checks and starts watching source changes.
+Ctrl+C stops watching; use the down command to stop the containers.
+
+~~~powershell
+.\scripts\dev.ps1 test
+.\scripts\dev.ps1 logs
+.\scripts\dev.ps1 down
+~~~
+
+Setup preserves an existing .env. Empty cloud keys support local health checks,
+the current mock UI and mock tests; real Gemini/Supabase/Google login requires
+the corresponding credentials and integration work. Never commit real secrets.
+
+For macOS/Linux use PowerShell 7: pwsh ./scripts/dev.ps1 setup (and the same actions).
+For static Nginx build verification, stop dev and use docker compose up --build --detach --wait.
+
+See [team setup, credentials, dependency updates and troubleshooting](docs/setup-docker.md).
 
 ---
 
