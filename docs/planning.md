@@ -707,7 +707,7 @@
 **Yêu cầu cụ thể phải làm được:**
 - [ ] Định nghĩa Pydantic model `QuestionBlueprint`: danh sách `parameters` (tên biến, giá trị hiện tại, khoảng giá trị `min`–`max`), danh sách `invariants` (điều kiện giữ nguyên phương pháp giải), các `variation_modes` cho phép, và `readable_summary` tiếng Việt.
 - [ ] Xây dựng prompt Few-shot hướng dẫn AI nhận diện đúng các tham số có thể biến thiên mà không làm thay đổi phương pháp giải bài toán.
-- [ ] **Quy trình Trích xuất Blueprint Ban đầu (Initial Pipeline):** Ngay sau khi bóc tách hợp lệ toàn bộ đề nguồn từ `TASK-202`, backend tự động gọi pipeline trích xuất hàng loạt (kết hợp `asyncio.Semaphore(3)`) hoặc qua endpoint `POST /api/sessions/{session_id}/blueprints/extract-all` để tạo trước Blueprint cho toàn bộ câu nguồn và lưu vào bảng `question_blueprints`.
+- [ ] **Quy trình Trích xuất Blueprint Ban đầu (Initial Pipeline):** Ngay sau khi bóc tách hợp lệ toàn bộ đề nguồn từ `TASK-202`, backend tự động gọi pipeline trích xuất hàng loạt (kết hợp `asyncio.Semaphore(3)`) để tạo trước Blueprint nội bộ cho toàn bộ câu nguồn và lưu vào bảng `question_blueprints`.
 - [ ] Kiểm thử prompt với 3 chuyên đề toán: Phương trình bậc 2, Khảo sát hàm số, Tích phân.
 
 ---
