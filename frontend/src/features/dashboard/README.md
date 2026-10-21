@@ -49,12 +49,12 @@ TV1 owns the page/card and `DashboardRoute.jsx`, which supplies the stable mock 
 
 ## Verification and remaining work
 
-Current documentation checkpoint, 19/10/2026:
+Current documentation checkpoint, updated 21/10/2026:
 
 - Google sign-in/session handling is implemented, but profile verification is not connected. `ProtectedRoute` requires `authenticated` and an application user; `profile_pending` cannot enter Dashboard.
 - Dashboard's loader and create/open/clone callbacks still use mocks/notices. `DashboardRoute.jsx` also retains a development-only **Đăng xuất mẫu** control that only clears the auth store; it is not the Supabase sign-out flow. Replace it when integrating the authenticated Dashboard; use the real sign-out button on `/login` at this checkpoint.
 - The recorded auth checkpoint is 37 unit tests, lint/build and 20 controlled browser bootstrap checks; see the [frontend setup guide](../../../README.md) for scope and limits. These are not Dashboard API or Clone Modal tests and were not rerun for this documentation-only change.
-- This update was checked against the source and local documentation links. No new browser, backend, Docker or account-isolation checks were run.
+- On 21/10/2026, the author reported Docker setup/startup and manual Google sign-in, session restoration, profile-pending route protection and sign-out checks completed. Container checks passed: backend 70 tests with one Starlette deprecation warning, SymPy parser, and frontend tests/lint/build. See the frontend setup guide for scope; these results do not verify Dashboard APIs, Clone Modal, account isolation or the static Nginx build. The documentation agent did not rerun those checks.
 
 Historical Dashboard UI verification on 17/10/2026, before the real auth changes above:
 
@@ -65,6 +65,6 @@ Historical Dashboard UI verification on 17/10/2026, before the real auth changes
 
 The last author-provided `npm audit` report on 17/10/2026 contained 15 vulnerabilities (4 low, 5 moderate, 6 high). Audit has not passed; no dependency upgrades or `npm audit fix --force` were applied in this increment. Dependency remediation requires separate compatibility checks and review.
 
-Remaining work: integrate TV3/Duy's application profile and session APIs after review; display the user name/avatar and use real sign-out in Dashboard; integrate TV2/Bội Anh's Clone Modal after its review fixes; connect create/open navigation and refresh the list after cloning. Then verify real session persistence, errors and data separation between accounts with the backend. Coordinate Docker/env verification with TV6/Tâm.
+Remaining work: integrate TV3/Duy's application profile and session APIs after review; display the user name/avatar and use real sign-out in Dashboard; integrate TV2/Bội Anh's Clone Modal after its review fixes; connect create/open navigation and refresh the list after cloning. Then verify application data persistence, errors and data separation between accounts with the backend. Repeat Docker checks when integrating those changes; the current Auth startup checkpoint does not verify those APIs.
 
 The visual layout remains provisional. Apply the agreed design in its own implementation step; this README update does not change or approve the interface.
