@@ -42,3 +42,20 @@ class ExamDraftPackage(BaseModel):
     version_id: str = Field(..., description="Mã định danh phiên bản đề")
     version_index: int = Field(..., description="Số thứ tự phiên bản (1, 2, ... N)")
     variants: List[GeneratedVariant] = Field(default_factory=list, description="Danh sách các câu hỏi biến thể")
+
+
+class CurrentUser(BaseModel):
+    """Thông tin người dùng đã xác thực từ Supabase Auth JWT."""
+    id: str = Field(..., description="Supabase Auth UUID")
+    email: str = Field(..., description="Email người dùng")
+    name: Optional[str] = Field(None, description="Tên hiển thị người dùng")
+    access_token: str = Field(..., description="JWT Bearer token")
+
+
+class UserProfile(BaseModel):
+    """Thông tin hồ sơ người dùng trả về từ public.users."""
+    id: str = Field(..., description="UUID người dùng")
+    email: str = Field(..., description="Email người dùng")
+    name: Optional[str] = Field(None, description="Tên người dùng")
+    created_at: Optional[str] = Field(None, description="Thời điểm tạo tài khoản")
+
