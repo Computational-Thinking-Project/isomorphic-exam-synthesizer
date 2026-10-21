@@ -19,7 +19,7 @@ flowchart TB
         direction TB
         FE_Auth["1.1 Auth & Session Manager"]
         FE_Dash["1.2 Dashboard & Statistics"]
-        FE_S1["1.3 Stage 1: Ingestion, Preview & Blueprint Confirmation"]
+        FE_S1["1.3 Stage 1: Ingestion, Source Preview & Confirmation"]
         FE_S2["1.4 Stage 2: Generation Configurator"]
         FE_S3["1.5 Stage 3: 1-to-1 Side-by-Side Review"]
         FE_Approve["1.6 Final Approval & Package Preview"]
@@ -32,7 +32,7 @@ flowchart TB
         direction TB
         BE_Gateway["2.1 API Router & Auth Middleware"]
         BE_Parser["2.2 Document Parser Service"]
-        BE_Blueprint["2.3 Blueprint Correction & Management"]
+        BE_Blueprint["2.3 Auto-Blueprint & Source Confirmation"]
         BE_ConfigVal["2.4 Config Validator"]
         BE_Orchestrator["2.5 Generation Orchestrator (Auto-retry)"]
         BE_JobStream["2.6 Background Job & Progress Streamer (SSE)"]
@@ -103,7 +103,7 @@ flowchart TB
 | **FE-02** | **Dashboard & History** | Danh sách đề thi đã lưu: ngày tạo, trạng thái (Draft → Reviewed → Exported). Cho phép xem lại, tải về hoặc **tái sử dụng phiên** (reuse session — bắt đầu phiên mới từ source đã xác nhận). | UC03 |
 | **FE-03** | **Analytics & Metrics View** | Thống kê: tổng số mã đề đã tạo, tỷ lệ duyệt lần đầu (*first-pass acceptance rate*), tần suất sinh lại câu (*regeneration frequency*). **Không** hiển thị "comparative time savings". | UC04 |
 | **FE-04** | **Stage 1: Document Ingestor** | Kéo thả upload file (`.docx`, `.tex`, `.md`) hoặc nhập text trực tiếp. **Chặn nhận file PDF** (Chỉ hỗ trợ xuất PDF, không nhận input PDF để đảm bảo độ chính xác bóc tách). Giới hạn MIME types cho phép và kích thước file tối đa. | UC05 |
-| **FE-05** | **Stage 1: Blueprint Viewer & Confirmer** | Hiển thị danh sách câu hỏi đã bóc tách kèm Blueprint (biến số, khoảng giá trị, điều kiện bất biến) ở chế độ chỉ đọc. Bao gồm **Blueprint Rule Renderer** hiển thị quy tắc biến thể dạng ngôn ngữ tự nhiên / toán học thân thiện. Giảng viên chỉ có 2 thao tác: bấm **"Trích xuất lại"** cho từng câu bị lỗi/sai hoặc bấm **"Xác nhận tất cả"** khi toàn bộ câu đã chuẩn (không cho phép sửa text hay thông số thủ công). | UC05, UC06 |
+| **FE-05** | **Stage 1: Source Question Previewer & Confirmer** | Hiển thị danh sách câu hỏi và đáp án nguồn đã bóc tách bằng KaTeX ở chế độ chỉ đọc (Read-only), cho phép giảng viên kiểm tra độ chính xác của đề gốc. Toàn bộ cơ chế Blueprint được chuyển thành **hộp đen (black box)** ngầm phía sau: không hiển thị thẻ tham số/quy tắc và không có nút trích xuất lại Blueprint. Giảng viên chỉ có 1 thao tác chính: bấm **"Xác nhận đề gốc và tiếp tục"** (kèm checkbox an ninh bắt buộc nếu có cảnh báo) để chuyển sang Stage 2. | UC05, UC06 |
 | **FE-06** | **Stage 2: Configurator** | Form cấu hình: chọn số lượng mã đề ($N \in [1, 4]$), bật/tắt chế độ biến thể (variation modes) từ Blueprint đã xác nhận, thiết lập ordering preferences. Validation phía client + server-side (BE-04). | UC07 |
 | **FE-07** | **Stage 3: Side-by-Side Reviewer** | Giao diện cốt lõi: so sánh song song **ánh xạ 1-1** (1-to-1 question mapping) giữa câu gốc và câu biến thể. Hiển thị **warning badges** từ `validation_report` cho các câu bị lỗi syntax/duplicate/domain. **KHÔNG** cho phép chỉnh sửa text thủ công trên câu sinh nhằm bảo toàn tính toàn vẹn của Blueprint. | UC09 |
 | **FE-08** | **Stage 3: Review Action Bar** | Cung cấp thao tác nhị phân nghiêm ngặt cho từng câu: **Accept** (chấp nhận) hoặc **Reject** (từ chối → kích hoạt targeted regeneration). Nút khẩn cấp **Revert to Source** để quay về câu gốc đã xác thực khi AI sinh lại liên tục thất bại. **Tuyệt đối không** có ô nhập text thủ công. | UC09 |
@@ -120,7 +120,7 @@ flowchart TB
 | :--- | :--- | :--- | :--- |
 | **BE-01** | **API Router & Auth Middleware** | Điểm tiếp nhận request, kiểm tra JWT token (Supabase), xử lý CORS, phân quyền user. Tất cả endpoints sử dụng **async** (`async def`). | Tất cả |
 | **BE-02** | **Document Parsing Service** | Bóc tách câu hỏi, 4 phương án A/B/C/D, đáp án, và lời giải gốc (nếu có) từ file tải lên. Sử dụng `python-docx` (DOCX), regex/AST (LaTeX), parser (Markdown). **Chặn** file PDF ở tầng server (validate MIME + extension). Giới hạn kích thước file. | UC05 |
-| **BE-03** | **Blueprint Management & Extraction Service** | Quản lý vòng đời Blueprint: nhận bản trích xuất từ AI-02, cung cấp API trích xuất lại theo từng câu (`POST /api/sessions/{session_id}/blueprints/{blueprint_id}/re-extract`) và khóa cấu trúc hàng loạt (`POST /api/sessions/{session_id}/blueprints/confirm-all`), lưu bản đã duyệt dạng JSONB. | UC06 |
+| **BE-03** | **Source Confirmation & Auto-Blueprint Engine** | Vận hành động cơ Blueprint hộp đen: tự động kích hoạt AI-02 trích xuất quy tắc ngầm sau khi nạp đề nguồn thành công và lưu vào `question_blueprints`. Cung cấp API xác nhận đề gốc (`POST /api/sessions/{session_id}/confirm-source`) để khóa dữ liệu đề nguồn, kiểm tra Blueprint nội bộ sẵn sàng, xác thực cảnh báo an ninh và chuyển trạng thái session sang `blueprinted` / sẵn sàng cấu hình. Loại bỏ các endpoint người dùng can thiệp/sửa đổi Blueprint. | UC06 |
 | **BE-04** | **Config Validator** | Kiểm tra tính hợp lệ **server-side** cho cấu hình sinh đề: $N \in [1, 4]$, variation modes phải thuộc tập cho phép từ Blueprint đã xác nhận, ordering preferences hợp lệ. Trả thông báo xung đột rõ ràng nếu cấu hình vi phạm ràng buộc. | UC07 |
 | **BE-05** | **Generation Orchestrator** | Điều phối luồng sinh $N \le 4$ mã đề: gửi prompt đến AI (AI-03, AI-04) → nhận kết quả → chuyển sang Validator (VAL-01..04) → kích hoạt Auto-retry nếu lỗi (tối đa 3 lần). **Sau 3 lần retry thất bại: vẫn trả draft kèm `validation_report` chứa warning badges** để giảng viên xem xét — KHÔNG chặn pipeline. | UC08 |
 | **BE-06** | **Background Job & Progress Streamer** | Sinh đề cho $N$ mã đề × nhiều câu hỏi có thể mất hàng chục giây đến vài phút. Module này quản lý **background task** (FastAPI `BackgroundTasks` hoặc task queue) và **stream tiến trình real-time** qua **Server-Sent Events (SSE)** endpoint (`GET /api/sessions/{session_id}/events?ticket={ticket}&last_event_id={id}`) với cơ chế cấp ticket xác thực ngắn hạn (`POST /api/sessions/{session_id}/events/ticket`): trạng thái từng câu (generating → validating → done / retrying), phần trăm hoàn thành, thông báo lỗi và cơ chế replay sự kiện. | UC08 |
@@ -136,7 +136,7 @@ flowchart TB
 | Mã | Tên Module | Mô tả & Trách nhiệm | Ánh xạ UC |
 | :--- | :--- | :--- | :--- |
 | **AI-01** | **Gemini Client Wrapper** | Quản lý kết nối SDK (`google-genai`), xử lý API Key, thiết lập timeout. Cơ chế **exponential backoff** khi bị rate limit. **Chiến lược batch/concurrent** cho pipeline $N \le 4$ mã đề × nhiều câu: dùng `asyncio.gather` với semaphore để kiểm soát số lượng request song song, tránh vượt rate limit. Hỗ trợ Prompt Caching nếu API cho phép (giảm token chi phí cho phần Blueprint lặp lại). | Tất cả |
-| **AI-02** | **Blueprint Extraction Pipeline** | Prompt chuyên biệt phân tích câu hỏi gốc: trích xuất hằng số, biến số, khoảng giá trị tham số, điều kiện bất biến. Là **include** của UC05 (UC05 → UC11). Có cơ chế **retry/fallback** nếu AI trích xuất sai: gửi lại prompt với phản hồi lỗi; nếu thất bại, trả kết quả rỗng và thông báo để giảng viên bấm trích xuất lại bằng AI (Zero-Editing Stage 1). | UC11 |
+| **AI-02** | **Blueprint Extraction Pipeline** | Prompt chuyên biệt phân tích câu hỏi gốc: trích xuất hằng số, biến số, khoảng giá trị tham số, điều kiện bất biến (chạy như hộp đen tự động ở backend). Là **include** của UC05 (UC05 → UC11). Tự động retry nội bộ với schema repair nếu AI trích xuất sai để đảm bảo blueprint sẵn sàng cho Stage 2 mà không yêu cầu giảng viên can thiệp. | UC11 |
 | **AI-03** | **Isomorphic Variant Generator** | Prompt sinh câu hỏi biến thể dựa trên Blueprint đã xác nhận: đảm bảo cùng phương pháp giải, thay đổi dữ liệu theo quy tắc cho phép, tạo 3 phương án nhiễu (distractors) hợp lý. | UC12 |
 | **AI-04** | **Step-by-Step Solver** | Prompt giải chi tiết từng bước cho từng câu biến thể: phục vụ giảng viên chấm thi, kiểm tra đối chiếu, và xuất bản kèm gói lời giải. | UC12 |
 | **AI-05** | **Structured Output Enforcer & Schema Repair** | Ràng buộc phản hồi Gemini theo **JSON Schema** chuẩn (Pydantic models). Khi Gemini trả JSON sai schema lần đầu: thực hiện **schema repair pass** — gửi lại prompt kèm thông báo lỗi schema cụ thể (trường thiếu, kiểu sai) để AI tự sửa, trước khi kích hoạt full retry ở tầng Orchestrator. | Tất cả |
@@ -434,25 +434,16 @@ sequenceDiagram
         FE -->> I: Show Content Incomplete popup (Re-upload required)
     else Ingestion Valid
         BE ->> DB: Transaction: Delete old draft -> Insert source_questions
-        BE ->> AI: Extract blueprints (AI-02 / UC11)
+        BE ->> AI: Extract blueprints (AI-02 / UC11 - Black box)
         AI -->> BE: Structured blueprint JSON
-        BE ->> DB: Save question_blueprints
-        BE -->> FE: Return parsed questions + blueprints
-        FE -->> I: Display read-only source & Blueprint Rule Renderer
+        BE ->> DB: Save question_blueprints (Internal)
+        BE -->> FE: Return parsed source questions & answers
+        FE -->> I: Render read-only source preview (KaTeX)
     end
 
-    alt Question blueprint flawed
-        I ->> FE: Click "Re-extract" on flawed question
-        FE ->> BE: POST /api/sessions/{session_id}/blueprints/{blueprint_id}/re-extract (BE-03)
-        BE ->> AI: Re-analyze question (AI-02)
-        AI -->> BE: New blueprint JSON
-        BE ->> DB: Overwrite question_blueprints
-        BE -->> FE: Return updated blueprint
-    end
-
-    I ->> FE: Click "Confirm All"
-    FE ->> BE: POST /api/sessions/{session_id}/blueprints/confirm-all (BE-03)
-    BE ->> DB: Lock & set session status -> blueprinted
+    I ->> FE: Click "Confirm Source & Proceed"
+    FE ->> BE: POST /api/sessions/{session_id}/confirm-source (BE-03)
+    BE ->> DB: Lock source & set session status -> blueprinted
 
     Note over I, S: ── Stage 2: Isomorphic Generation ──
 

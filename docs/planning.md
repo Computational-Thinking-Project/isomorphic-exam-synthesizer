@@ -743,47 +743,43 @@
 
 ---
 
-### TASK-204 · Giao diện xem Blueprint và Xác nhận — Blueprint Viewer & Confirmer (FE-05)
+### TASK-204 · Giao diện xem trước câu hỏi nguồn và Xác nhận — Source Question Previewer & Confirmer (FE-05)
 - **Người làm:** FE1 (Owner)
-- **Phụ thuộc:** TASK-201 *(Mock UI)*; Phụ thuộc tích hợp: TASK-203 *(Dữ liệu Blueprint thật)*
+- **Phụ thuộc:** TASK-201 *(Mock UI)*; Phụ thuộc tích hợp: TASK-202 *(Dữ liệu câu nguồn đã bóc tách)*
 - **Trạng thái:** ⬜
 
-**Mô tả:** Giao diện hiển thị chỉ đọc (Read-only) cho phép giảng viên thẩm định câu nguồn và các quy tắc biến thể Blueprint, cung cấp nút trích xuất lại từng câu và xác nhận chuyển sang Stage 2.
+**Mô tả:** Giao diện hiển thị chỉ đọc (Read-only) cho phép giảng viên thẩm định câu hỏi nguồn và đáp án gốc đã bóc tách bằng KaTeX, kiểm tra tính đầy đủ trước khi xác nhận chuyển sang Stage 2. Toàn bộ cơ chế Blueprint được chuyển thành hộp đen ngầm (black box), không hiển thị trên giao diện người dùng và không cung cấp thao tác trích xuất lại Blueprint thủ công.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] Hiển thị danh sách câu hỏi gốc bằng `MathRenderer` ở chế độ chỉ đọc (Read-only, tuyệt đối không bố trí ô nhập văn bản sửa đề).
-- [ ] Hiển thị thẻ Blueprint bên cạnh từng câu hỏi: danh sách tham số, các điều kiện bất biến, và tóm tắt quy tắc tiếng Việt ở chế độ chỉ đọc.
-- [ ] **Nút "Trích xuất lại" cho từng câu:** Cung cấp nút bấm gọi `POST /api/sessions/{session_id}/blueprints/{blueprint_id}/re-extract` nếu AI phân tích chưa chuẩn xác, cập nhật lại Blueprint của câu đó (chỉ khả dụng khi phiên đang ở trạng thái `draft`).
-- [ ] **Nút "Xác nhận tất cả và tiếp tục":** Gọi `POST /api/sessions/{session_id}/blueprints/confirm-all` để khóa toàn bộ cấu trúc Blueprint của phiên và chuyển thẳng sang Stage 2 (tự động disable nếu còn câu chưa có Blueprint hợp lệ).
+- [ ] Hiển thị danh sách câu hỏi gốc và 4 phương án A/B/C/D bằng `MathRenderer` (KaTeX) ở chế độ chỉ đọc (Read-only, tuyệt đối không bố trí ô nhập văn bản sửa đề theo nguyên tắc Zero-Editing Stage 1).
+- [ ] Hiển thị rõ ràng đáp án đúng đã nhận diện cho từng câu hỏi nguồn.
+- [ ] **Loại bỏ thẻ hiển thị Blueprint & Nút trích xuất lại Blueprint:** Blueprint hoàn toàn là hộp đen (Black Box) chạy ngầm ở backend phục vụ sinh đề ở Stage 2/3. Giảng viên không cần và không thể can thiệp vào tham số, điều kiện bất biến hay quy tắc biến thể Blueprint.
+- [ ] **Nút "Xác nhận đề gốc và tiếp tục":** Gọi `POST /api/sessions/{session_id}/confirm-source` để khóa toàn bộ đề nguồn và chuyển thẳng sang Stage 2 (tự động disable nếu danh sách câu nguồn rỗng hoặc chưa tải xong).
 - [ ] **Tiêu chí hiển thị Cảnh báo An ninh & Chốt chặn xác nhận (SEC-02, P1.9):**
   - Nếu câu nguồn mang cờ `has_security_warning == true` (do phát hiện nguy cơ Prompt Injection / ký tự điều khiển bất thường từ `TASK-202`):
     - Hiển thị **Amber Security Badge** ("⚠️ Cảnh báo an ninh") nổi bật trên đầu thẻ câu hỏi kèm tooltip/popover giải thích chi tiết cảnh báo an ninh.
-    - **Hộp kiểm xác nhận an toàn bắt buộc:** Nếu phiên có ít nhất 1 câu mang cờ `has_security_warning == true`, nút *"Xác nhận tất cả và tiếp tục"* bị vô hiệu hóa (disabled) cho đến khi giảng viên tích chọn hộp kiểm: `[ ] Tôi đã đọc và kiểm tra các câu hỏi có cảnh báo an ninh, xác nhận nội dung an toàn để tiếp tục sinh đề.` Khi đó, request `POST /api/sessions/{session_id}/blueprints/confirm-all` sẽ gửi kèm `{ "acknowledged_security_warnings": true }` để backend xác thực.
+    - **Hộp kiểm xác nhận an toàn bắt buộc:** Nếu phiên có ít nhất 1 câu mang cờ `has_security_warning == true`, nút *"Xác nhận đề gốc và tiếp tục"* bị vô hiệu hóa (disabled) cho đến khi giảng viên tích chọn hộp kiểm: `[ ] Tôi đã đọc và kiểm tra các câu hỏi có cảnh báo an ninh, xác nhận nội dung an toàn để tiếp tục sinh đề.` Khi đó, request `POST /api/sessions/{session_id}/confirm-source` sẽ gửi kèm `{ "acknowledged_security_warnings": true }` để backend xác thực.
 - [ ] Loại bỏ hoàn toàn cơ chế sửa tay đề gốc, sửa tay khoảng giá trị min/max và cơ chế Auto-save debounce (tuân thủ ADR-002: Zero-Editing Stage 1).
 
 ---
 
-### TASK-205 · API trích xuất và xác nhận Blueprint (BE-03)
+### TASK-205 · API xác nhận đề nguồn & Kích hoạt Blueprint nội bộ (BE-03)
 - **Người làm:** BE1 (Owner)
 - **Phụ thuộc:** TASK-202; Phụ thuộc tích hợp: TASK-203
 - **Trạng thái:** ⬜
 
-**Mô tả:** Các endpoints phục vụ trích xuất quy tắc, tái trích xuất đơn lẻ và khóa dữ liệu Blueprint của phiên làm việc kèm kiểm tra điều kiện chuyển trạng thái nghiêm ngặt (loại bỏ PUT /api/source-questions và PATCH /api/blueprints theo ADR-002).
+**Mô tả:** Động cơ vận hành Blueprint như một hộp đen tự động ở backend và cung cấp API xác nhận đề nguồn chuyển trạng thái phiên sang Stage 2, loại bỏ các API can thiệp/tái trích xuất Blueprint thủ công từ phía người dùng.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] `POST /api/sessions/{session_id}/blueprints/extract-all`:
+- [ ] **Quy trình Blueprint Hộp Đen (Automatic Black-Box Engine):**
+  - Khi `POST /api/sessions/{session_id}/ingest-file` hoặc `ingest-text` thành công ở `TASK-202`, backend tự động gọi `AI-02` (TASK-203) trích xuất cấu trúc quy tắc biến thể ngầm và lưu trực tiếp vào bảng `question_blueprints` dưới dạng JSONB.
+  - Quá trình này diễn ra hoàn toàn tự động ở backend, không phơi bày ra UI và không cần endpoint công khai riêng cho người dùng tương tác hay sửa đổi.
+- [ ] `POST /api/sessions/{session_id}/confirm-source`:
   - Gọi `assert_ownership` kiểm tra quyền sở hữu phiên.
-  - Điều kiện tiên quyết: Phiên phải ở trạng thái `draft` và đã có dữ liệu câu nguồn từ `TASK-202`.
-  - Thực thi trích xuất Blueprint hàng loạt lần đầu cho toàn bộ câu nguồn trong phiên và lưu vào `question_blueprints`.
-- [ ] `POST /api/sessions/{session_id}/blueprints/{blueprint_id}/re-extract`:
-  - Gọi `assert_ownership` kiểm tra quyền sở hữu.
   - **Ràng buộc trạng thái (Precondition):** Chỉ cho phép thực hiện khi phiên làm việc đang ở trạng thái `draft`. Nếu phiên đã được xác nhận (`blueprinted` hoặc các trạng thái sau) $\rightarrow$ từ chối và trả về HTTP `409 Conflict`.
-  - Kích hoạt AI trích xuất lại quy tắc cho câu hỏi nguồn chỉ định, ghi đè bản ghi Blueprint cũ của câu đó.
-- [ ] `POST /api/sessions/{session_id}/blueprints/confirm-all`:
-  - Gọi `assert_ownership` kiểm tra quyền sở hữu.
-  - **Kiểm tra tính toàn vẹn 100% (Strict Validation):** Kiểm tra toàn bộ câu hỏi nguồn trong phiên đã có bản ghi Blueprint hợp lệ và không có câu nào mang cờ lỗi (`has_missing_answer == false`, `has_unparsed_omml == false`). Nếu còn bất kỳ câu nào chưa có Blueprint hoặc không hợp lệ $\rightarrow$ trả về HTTP `422 Unprocessable Entity` kèm danh sách câu chưa hoàn tất.
+  - **Kiểm tra tính toàn vẹn 100% (Strict Validation):** Kiểm tra toàn bộ câu hỏi nguồn trong phiên hợp lệ (`has_missing_answer == false`, `has_unparsed_omml == false`) và các bản ghi Blueprint nội bộ tương ứng đã được thiết lập. Nếu còn bất kỳ câu nào không hợp lệ $\rightarrow$ trả về HTTP `422 Unprocessable Entity`.
   - **Kiểm tra xác nhận an ninh (Security Guard - SEC-02, P1.9):** Nếu có câu mang `has_security_warning == true`, bắt buộc request body phải có `{ "acknowledged_security_warnings": true }`. Nếu không có hoặc `false` $\rightarrow$ trả về HTTP `422 Unprocessable Entity` yêu cầu người dùng xác nhận đã kiểm tra an toàn trước khi tiếp tục.
-  - Khi 100% hợp lệ $\rightarrow$ cập nhật trạng thái session sang `blueprinted`, đóng băng dữ liệu cấu trúc Blueprint và cho phép chuyển tiếp sang Stage 2.
+  - Khi 100% hợp lệ $\rightarrow$ cập nhật trạng thái session sang `blueprinted` (sẵn sàng cho cấu hình Stage 2), đóng băng dữ liệu câu nguồn.
 
 ---
 
@@ -1354,8 +1350,8 @@ Bảng nguồn chân lý duy nhất (Single Source of Truth) định nghĩa vòn
 
 | Trạng thái (`status`) | Ý nghĩa nghiệp vụ | Điều kiện chuyển vào (Trigger) | Thao tác được phép | Thao tác bị chặn |
 | :--- | :--- | :--- | :--- | :--- |
-| **`draft`** | Đang tải lên và bóc tách đề nguồn | Tạo session mới (`POST /api/sessions`) | Upload file (`POST /api/sessions/{id}/ingest-file`), nhập text (`POST /api/sessions/{id}/ingest-text`), trích xuất lại Blueprint (`POST /api/sessions/{id}/blueprints/{blueprint_id}/regenerate` hoặc `/extract-all`) | Sửa nội dung đề gốc bằng tay, Cấu hình sinh đề, Review |
-| **`blueprinted`** | Tất cả Blueprint câu nguồn đã xác nhận (100% không lỗi) | Bấm "Xác nhận tất cả" (`POST /api/sessions/{id}/blueprints/confirm-all`) | Chuyển sang Stage 2, thiết lập cấu hình (`POST /api/sessions/{id}/config`) | Sửa tay đề gốc và Blueprint, Bấm Generate khi chưa lưu config |
+| **`draft`** | Đang tải lên và bóc tách đề nguồn | Tạo session mới (`POST /api/sessions`) | Upload file (`POST /api/sessions/{id}/ingest-file`), nhập text (`POST /api/sessions/{id}/ingest-text`) | Sửa nội dung đề gốc bằng tay, Cấu hình sinh đề, Review |
+| **`blueprinted`** | Đề nguồn đã xác nhận, Blueprint nội bộ đã sẵn sàng (100% không lỗi) | Bấm "Xác nhận đề gốc và tiếp tục" (`POST /api/sessions/{id}/confirm-source`) | Chuyển sang Stage 2, thiết lập cấu hình (`POST /api/sessions/{id}/config`) | Sửa tay đề gốc và Blueprint, Bấm Generate khi chưa lưu config |
 | **`configured`** | Đã lưu cấu hình sinh đề hợp lệ | Gửi cấu hình thành công (`POST /api/sessions/{id}/config`) | Xem tóm tắt cấu hình, bấm "Bắt đầu sinh đề" (`POST /api/sessions/{id}/generate`) | Sửa đề nguồn Stage 1 |
 | **`generating`** | Background job đang sinh đề & validate | Bấm "Generate" (`POST /api/sessions/{id}/generate`) | Xem thanh tiến trình SSE real-time (`GET /api/sessions/{id}/events?ticket=...`) | Bấm Generate lần 2, gọi API Review (chặn 409) |
 | **`partial_generated`** | Sinh thiếu số lượng câu hỏi yêu cầu (do chạm trần quota 250 calls hoặc timeout tiến trình nền) | Background job kết thúc nhưng còn slot câu chưa sinh xong | Xem các câu đã sinh, thẩm định/duyệt (Accept, Reject, Revert) câu hiện có, bấm nút "Sinh bù variant thiếu" (`POST /api/sessions/{id}/retry-generation`) | Sửa tay câu hỏi, Shuffle mã đề (`/finalize/shuffle`), Phê duyệt toàn bộ (`/finalize/approve`), Xuất bản file (`/export`) (chặn 409 Locked/Conflict cho đến khi đủ câu) |
@@ -1404,8 +1400,8 @@ gantt
     TASK-203 Prompt Blueprint AI-02 (AI)         :t203, 2026-10-25, 2d
     TASK-402 Prompt Lời giải AI-04 (AI)          :t402, 2026-10-25, 2d
     TASK-203b Stage 1 Incomplete Loop (FE1)      :t203b, after t201 t202, 1d
-    TASK-204 UI Blueprint Viewer & Confirm (FE1) :t204, after t201 t203, 2d
-    TASK-205 API Blueprint Extract & Confirm (BE1):t205, after t202 t203, 2d
+    TASK-204 UI Source Preview & Confirm (FE1)   :t204, after t201 t203, 2d
+    TASK-205 API Source Confirm & Auto-BP (BE1)  :t205, after t202 t203, 2d
     TASK-206 UI Stage 2 Config (FE2 - Mock)      :t206, 2026-10-25, 2d
     TASK-207a API Config Validator (BE2)         :t207a, after t205, 1d
     TASK-207b Background Job & SSE (BE2)         :t207b, after t106c t107d t207a t402, 2d

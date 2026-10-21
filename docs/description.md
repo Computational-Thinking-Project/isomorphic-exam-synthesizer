@@ -119,7 +119,7 @@ flowchart LR
 > **Figure 1: Use Case Diagram.** Solid lines show actor participation, not process order. Google Auth and External AI Service are supporting external actors.  
 > - **INCLUDE:** Required behavior  
 > - **ACTOR:** A role external to the system  
-> - **Preconditions:** Sign-in for exam management; confirmed blueprints plus valid configuration ($N \le 4$) for generation; full approval for export.  
+> - **Preconditions:** Sign-in for exam management; verified source exam (with established internal blueprints) plus valid configuration ($N \le 4$) for generation; full approval for export.  
 > - **Review decision:** Instructors inspect generated variants question-by-question with binary accept/reject choices. Rejected items trigger targeted re-generation and automated checking, returning to the review interface; persistent failures can safely revert to the original source question until all items are accepted.
 
 ---
@@ -130,9 +130,9 @@ flowchart LR
 - **UC03 — Saved Exams:** Retrieve the selected session's source, rules, versions, and approval state; allow viewing, downloading, or reuse.
 - **UC04 — Statistics:** Aggregate recorded sessions; show version counts, first-pass acceptance rates (percentage of items approved on initial review without requiring re-generation), and regeneration frequencies. Comparative time savings are reserved for empirical evaluation.
 - **UC05 — Import:** Receive source exam and answer key; extract questions, options, formulas, and answers, flagging missing or malformed elements; produce a verified structured source representation (notifying instructors to re-upload if file format errors or missing answers are detected).
-- **UC06 — Blueprint Confirmation:** Present extracted content and proposed question blueprints for instructor verification and confirmation (supporting targeted AI re-extraction for individual flawed blueprints or confirming all valid blueprints without manual in-place editing); save the approved source and permitted variations (parameter bounds and invariant conditions).
-- **UC07 — Configuration:** Receive version count $N \in [1, 4]$, toggle active variation modes from the confirmed blueprint, and set ordering preferences; validate input constraints and save generation requirements.
-- **UC08 — Generation:** Use confirmed blueprints and settings to synthesize variants, keys, and detailed solutions with automated constraint checks. Apply automated retries upon syntax or mathematical failures; if repeated retries fail, return drafts with validation warning badges for instructor review.
+- **UC06 — Source Verification & Auto-Blueprint:** Present extracted source questions for instructor verification and approval; system automatically analyzes and establishes internal question blueprints (parameter bounds, invariant conditions, and variation modes) as an internal black-box model without requiring instructor parameter inspection.
+- **UC07 — Configuration:** Receive version count $N \in [1, 4]$ and set ordering preferences; validate input constraints and save generation requirements.
+- **UC08 — Generation:** Use internal blueprints and settings to synthesize variants, keys, and detailed solutions with automated constraint checks. Apply automated retries upon syntax or mathematical failures; if repeated retries fail, return drafts with validation warning badges for instructor review.
 - **UC09 — Review and Finalization:** Spanning the entirety of Stage 3, this function presents drafts and automated check results for question-by-question comparison against source items (preserving 1-to-1 question mapping). Instructors perform per-item binary approval or rejection for targeted re-generation; re-generated items are re-validated and re-reviewed. If automated re-generation repeatedly fails, instructors can revert the target item to the verified source question as a safe exit. After all items are accepted, the system executes question/option shuffling, synchronizes keys, provides package preview, and records final instructor approval.
 - **UC10 — Export:** Package approved exams into PDF and clean LaTeX/Markdown bundles, and save the session; provide exams, synchronized keys, and detailed solutions for assessment use and manual grading (automated student grading is excluded).
 - **UC11–13 — Supporting Behavior:** Analyze structure and constraints, synthesize question variants, keys, and step-by-step solutions, and validate items against mathematical and syntactic constraints. Advanced features like preserved DOCX layout or interactive difficulty adjustment are extensions.
@@ -150,13 +150,13 @@ flowchart TB
     %% ============================================================
     %% STAGE 1: Source Exam Preparation
     %% ============================================================
-    subgraph Stage1 ["01. Source Exam Preparation (Import → Check → Confirm)"]
+    subgraph Stage1 ["01. Source Exam Preparation (Import → Verify → Auto-Blueprint)"]
         direction TB
         S1_1["▶ INSTRUCTOR: Source Input<br/>• Upload LaTeX, DOCX, MD or enter text<br/>• Provide key; source solutions if available"]
-        S1_2["◆ SYSTEM: Source Analysis<br/>• Extract questions, options and keys<br/>• Propose blueprints and variation bounds"]
-        S1_3["▶ INSTRUCTOR: Confirmation<br/>• Verify questions, options and answers<br/>• Confirm all blueprints or re-extract flawed items"]
-        S1_Warn{{"↺ If Incomplete or Blueprint Flawed:<br/>Re-upload if file error, or re-extract flawed item"}}
-        S1_Res["✓ Stage 1 Deliverable:<br/>Confirmed source exam and question blueprints"]
+        S1_2["◆ SYSTEM: Source Analysis<br/>• Extract questions, options and keys<br/>• Internal Auto-Blueprint extraction"]
+        S1_3["▶ INSTRUCTOR: Source Verification<br/>• Preview extracted questions and keys<br/>• Confirm source content to proceed"]
+        S1_Warn{{"↺ If Incomplete / Malformed:<br/>Prompt re-upload or direct paste"}}
+        S1_Res["✓ Stage 1 Deliverable:<br/>Verified source exam & internal blueprints"]
 
         S1_1 --> S1_2
         S1_2 --> S1_3
@@ -171,7 +171,7 @@ flowchart TB
     subgraph Stage2 ["02. Isomorphic Generation (Configure → Check → Generate)"]
         direction TB
         S2_1["▶ INSTRUCTOR: Requirements<br/>• Set version count N ≤ 4<br/>• Select active variation modes and ordering"]
-        S2_2["◆ SYSTEM: Rule Compatibility<br/>• Use confirmed question blueprints<br/>• Check request against supported rules"]
+        S2_2["◆ SYSTEM: Rule Compatibility<br/>• Use internal question blueprints<br/>• Check request against supported rules"]
         S2_Warn{{"↺ If Requirements Cannot Be Met:<br/>Explain conflict; instructor adjusts parameters"}}
         S2_3["◆ SYSTEM: Draft Generation<br/>• Synthesize and validate items (N ≤ 4)<br/>• Auto-retry on error; flag with warning badges"]
         S2_Res["✓ Stage 2 Deliverable:<br/>N full draft versions, keys and check results"]
@@ -211,7 +211,7 @@ flowchart TB
     S2_3 -. "Re-validated" .-> S3_1
 ```
 
-> **Figure 2: The three-stage user/function pipeline.** Blue cards (`▶`) show instructor actions; purple and teal cards (`◆`) show system functions. Orange dashed paths (`↺`) are conditional exceptions. Stage-header arrows show the left-to-right stage order. In Stage 1, instructors verify extracted content and blueprints, re-extracting flawed items with AI or confirming all items (file errors prompt a re-upload). In Stage 3, rejected items trigger targeted regeneration and automated validation before returning to Item Review (with a safe fallback to revert to source items); shuffling occurs only after all items are approved. Stage 3 corresponds directly to UC09.
+> **Figure 2: The three-stage user/function pipeline.** Blue cards (`▶`) show instructor actions; purple and teal cards (`◆`) show system functions. Orange dashed paths (`↺`) are conditional exceptions. Stage-header arrows show the left-to-right stage order. In Stage 1, instructors verify extracted questions and keys while blueprints are established automatically as an internal engine (file errors prompt a re-upload). In Stage 3, rejected items trigger targeted regeneration and automated validation before returning to Item Review (with a safe fallback to revert to source items); shuffling occurs only after all items are approved. Stage 3 corresponds directly to UC09.
 
 ---
 
@@ -221,8 +221,8 @@ flowchart TB
 - Web supports uploads, large-screen comparison, previews, and downloads. Instructors access saved exams across computers without installation. The initial scope does not require large-scale concurrency or real-time responses.
 
 ### 6.2 Main Screens and User Control
-- Provide sign-in, dashboard, import/confirmation, configuration, review/comparison, and preview/export screens.
-- The Stage 1 confirmation screen displays read-only extracted source questions and AI-proposed blueprints with readable rule summaries, allowing instructors to trigger targeted AI re-extraction on individual flawed blueprints or confirm all items without manual text or parameter editing.
+- Provide sign-in, dashboard, import/preview, configuration, review/comparison, and preview/export screens.
+- The Stage 1 preview screen displays extracted source questions with KaTeX rendering, allowing instructors to verify extraction accuracy and confirm to proceed, while blueprint extraction executes automatically in the background as an internal engine.
 - The Stage 3 review screen presents side-by-side comparison with binary Accept/Reject actions per item (disallowing manual text edits to preserve blueprint validity), automated warning badges for failed checks, targeted regeneration, and a safe fallback option to revert persistent failures to the verified source question.
 
 ### 6.3 Storage and AI Integration
