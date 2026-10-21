@@ -243,31 +243,34 @@ async def clone_session(
     new_session = create_rows[0]
     new_session_id = str(new_session["id"])
 
-    # 4. Fetch and deep copy all source questions
-    sq_res = (
-        db.table("source_questions")
-        .select("*")
-        .eq("session_id", session_id)
-        .order("question_no", desc=False)
-        .execute()
-    )
-    sq_rows = cast(List[dict[str, Any]], sq_res.data or [])
+    # 4. Fetch and deep copy all source questions & blueprints with atomicity / cleanup guarantee
+    try:
+        sq_res = (
+            db.table("source_questions")
+            .select("*")
+            .eq("session_id", session_id)
+            .order("question_no", desc=False)
+            .execute()
+        )
+        sq_rows = cast(List[dict[str, Any]], sq_res.data or [])
 
-    for sq in sq_rows:
-        old_sq_id = str(sq["id"])
-        new_sq_payload: dict[str, Any] = {
-            "session_id": new_session_id,
-            "question_no": sq.get("question_no"),
-            "raw_content": sq.get("raw_content", ""),
-            "options": sq.get("options", {}),
-            "correct_key": sq.get("correct_key", ""),
-            "solution_md": sq.get("solution_md"),
-            "has_missing_answer": sq.get("has_missing_answer", False),
-            "has_security_warning": sq.get("has_security_warning", False),
-        }
-        ins_sq_res = db.table("source_questions").insert(cast(Any, new_sq_payload)).execute()
-        ins_sq_rows = cast(List[dict[str, Any]], ins_sq_res.data or [])
-        if ins_sq_rows:
+        for sq in sq_rows:
+            old_sq_id = str(sq["id"])
+            new_sq_payload: dict[str, Any] = {
+                "session_id": new_session_id,
+                "question_no": sq.get("question_no"),
+                "raw_content": sq.get("raw_content", ""),
+                "options": sq.get("options", {}),
+                "correct_key": sq.get("correct_key", ""),
+                "solution_md": sq.get("solution_md"),
+                "has_missing_answer": sq.get("has_missing_answer", False),
+                "has_security_warning": sq.get("has_security_warning", False),
+            }
+            ins_sq_res = db.table("source_questions").insert(cast(Any, new_sq_payload)).execute()
+            ins_sq_rows = cast(List[dict[str, Any]], ins_sq_res.data or [])
+            if not ins_sq_rows:
+                raise RuntimeError(f"Failed to clone source question {old_sq_id}")
+
             new_sq_id = str(ins_sq_rows[0]["id"])
 
             # 5. Clone corresponding blueprint if one exists
@@ -284,6 +287,20 @@ async def clone_session(
                     "rule_summary": bp.get("rule_summary"),
                     "confirmed_at": bp.get("confirmed_at"),
                 }
-                db.table("question_blueprints").insert(cast(Any, new_bp_payload)).execute()
+                ins_bp_res = db.table("question_blueprints").insert(cast(Any, new_bp_payload)).execute()
+                ins_bp_rows = cast(List[dict[str, Any]], ins_bp_res.data or [])
+                if not ins_bp_rows:
+                    raise RuntimeError(f"Failed to clone blueprint for question {old_sq_id}")
+
+    except Exception as exc:
+        # Rollback/cleanup: remove the partially cloned session to avoid orphaned data
+        try:
+            db.table("exam_sessions").delete().eq("id", new_session_id).execute()
+        except Exception:
+            pass  # Best effort cleanup
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to clone session questions or blueprints",
+        ) from exc
 
     return SessionItem(**new_session)

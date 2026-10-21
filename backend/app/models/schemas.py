@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SourceQuestion(BaseModel):
@@ -66,6 +66,14 @@ class SessionCreate(BaseModel):
     subject: str = Field(default="Toán", max_length=100, description="Môn học")
     grade: int = Field(default=12, ge=1, le=12, description="Khối lớp (mặc định 12)")
 
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, v: str) -> str:
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError("Title must not be empty or whitespace only")
+        return trimmed
+
 
 class SessionUpdate(BaseModel):
     """Payload cập nhật thông tin phiên làm việc."""
@@ -73,10 +81,30 @@ class SessionUpdate(BaseModel):
     subject: Optional[str] = Field(None, max_length=100, description="Môn học")
     grade: Optional[int] = Field(None, ge=1, le=12, description="Khối lớp")
 
+    @field_validator("title")
+    @classmethod
+    def validate_title(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            trimmed = v.strip()
+            if not trimmed:
+                raise ValueError("Title must not be empty or whitespace only")
+            return trimmed
+        return v
+
 
 class SessionCloneRequest(BaseModel):
     """Payload nhân bản phiên làm việc (UC03 / TASK-103b)."""
     new_title: Optional[str] = Field(None, max_length=255, description="Tiêu đề mới cho bản sao chép")
+
+    @field_validator("new_title")
+    @classmethod
+    def validate_new_title(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            trimmed = v.strip()
+            if not trimmed:
+                raise ValueError("New title must not be empty or whitespace only")
+            return trimmed
+        return v
 
 
 class SessionItem(BaseModel):

@@ -447,3 +447,185 @@ def test_clone_session_custom_title(client, mock_auth_user, test_user_id, auth_h
     assert response.status_code == 201
     data = response.json()
     assert data["title"] == "Tên tùy chỉnh cho bản sao"
+
+
+def test_create_session_whitespace_title_rejected(client, mock_auth_user, auth_headers):
+    """POST /api/sessions with whitespace-only title returns 422."""
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=MagicMock()),
+    ):
+        response = client.post("/api/sessions", json={"title": "   "}, headers=auth_headers)
+    assert response.status_code == 422
+
+
+def test_update_session_whitespace_title_rejected(client, mock_auth_user, auth_headers):
+    """PATCH /api/sessions/{id} with whitespace-only title returns 422."""
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=MagicMock()),
+    ):
+        response = client.patch(
+            "/api/sessions/session-1",
+            json={"title": "   "},
+            headers=auth_headers,
+        )
+    assert response.status_code == 422
+
+
+def test_clone_session_whitespace_title_rejected(client, mock_auth_user, auth_headers):
+    """POST /api/sessions/{id}/clone with whitespace-only new_title returns 422."""
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=MagicMock()),
+    ):
+        response = client.post(
+            "/api/sessions/session-1/clone",
+            json={"new_title": "   "},
+            headers=auth_headers,
+        )
+    assert response.status_code == 422
+
+
+def test_clone_session_fails_and_cleans_up_when_question_insert_returns_empty(
+    client, mock_auth_user, test_user_id, auth_headers
+):
+    """POST /api/sessions/{id}/clone triggers cleanup when question insert returns empty data."""
+    mock_db = MagicMock()
+    deleted_session_ids = []
+
+    def table_router(table_name):
+        mock_t = MagicMock()
+        if table_name == "exam_sessions":
+            # Ownership check & fetch orig session
+            exec_s = MagicMock()
+            exec_s.data = [{
+                "id": "session-orig",
+                "user_id": test_user_id,
+                "title": "Đề thi gốc",
+                "subject": "Toán",
+                "grade": 12,
+            }]
+            mock_t.select.return_value.eq.return_value.execute.return_value = exec_s
+
+            # Insert cloned session
+            exec_ins = MagicMock()
+            exec_ins.data = [{
+                "id": "session-cloned-uuid-temp",
+                "user_id": test_user_id,
+                "title": "Đề thi gốc (Bản sao)",
+                "subject": "Toán",
+                "grade": 12,
+                "status": "draft",
+                "gemini_call_count": 0,
+                "retry_count": 0,
+                "approved_at": None,
+                "created_at": "2026-10-18T12:00:00Z",
+                "updated_at": "2026-10-18T12:00:00Z",
+            }]
+            mock_t.insert.return_value.execute.return_value = exec_ins
+
+            # Delete call for cleanup
+            def record_delete_call():
+                eq_mock = MagicMock()
+                def execute_delete(col, val):
+                    if col == "id":
+                        deleted_session_ids.append(val)
+                    return MagicMock()
+                eq_mock.eq.side_effect = lambda col, val: MagicMock(execute=lambda: (deleted_session_ids.append(val), MagicMock())[1])
+                return eq_mock
+
+            mock_t.delete.side_effect = record_delete_call
+
+        elif table_name == "source_questions":
+            # Return 1 source question to copy
+            exec_sq = MagicMock()
+            exec_sq.data = [{
+                "id": "sq-1",
+                "session_id": "session-orig",
+                "question_no": 1,
+                "raw_content": "Câu 1: ...",
+            }]
+            mock_t.select.return_value.eq.return_value.order.return_value.execute.return_value = exec_sq
+
+            # Failed insert: returns empty data
+            exec_ins_sq = MagicMock()
+            exec_ins_sq.data = []
+            mock_t.insert.return_value.execute.return_value = exec_ins_sq
+
+        return mock_t
+
+    mock_db.table.side_effect = table_router
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post("/api/sessions/session-orig/clone", headers=auth_headers)
+
+    assert response.status_code == 500
+    assert "Failed to clone" in response.json()["detail"]
+    assert "session-cloned-uuid-temp" in deleted_session_ids
+
+
+def test_clone_session_fails_and_cleans_up_on_db_exception(
+    client, mock_auth_user, test_user_id, auth_headers
+):
+    """POST /api/sessions/{id}/clone triggers cleanup when DB raises unexpected exception during copying."""
+    mock_db = MagicMock()
+    deleted_session_ids = []
+
+    def table_router(table_name):
+        mock_t = MagicMock()
+        if table_name == "exam_sessions":
+            exec_s = MagicMock()
+            exec_s.data = [{
+                "id": "session-orig",
+                "user_id": test_user_id,
+                "title": "Đề thi gốc",
+                "subject": "Toán",
+                "grade": 12,
+            }]
+            mock_t.select.return_value.eq.return_value.execute.return_value = exec_s
+
+            exec_ins = MagicMock()
+            exec_ins.data = [{
+                "id": "session-cloned-crash-uuid",
+                "user_id": test_user_id,
+                "title": "Đề thi gốc (Bản sao)",
+                "subject": "Toán",
+                "grade": 12,
+                "status": "draft",
+                "gemini_call_count": 0,
+                "retry_count": 0,
+                "approved_at": None,
+                "created_at": "2026-10-18T12:00:00Z",
+                "updated_at": "2026-10-18T12:00:00Z",
+            }]
+            mock_t.insert.return_value.execute.return_value = exec_ins
+
+            mock_t.delete.side_effect = lambda: MagicMock(
+                eq=lambda col, val: MagicMock(
+                    execute=lambda: (deleted_session_ids.append(val), MagicMock())[1]
+                )
+            )
+
+        elif table_name == "source_questions":
+            mock_t.select.return_value.eq.return_value.order.return_value.execute.side_effect = RuntimeError(
+                "Connection broken"
+            )
+
+        return mock_t
+
+    mock_db.table.side_effect = table_router
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post("/api/sessions/session-orig/clone", headers=auth_headers)
+
+    assert response.status_code == 500
+    assert "Failed to clone" in response.json()["detail"]
+    assert "session-cloned-crash-uuid" in deleted_session_ids
+
