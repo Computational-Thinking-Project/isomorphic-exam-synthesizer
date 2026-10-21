@@ -265,15 +265,39 @@ def test_handler_fallback_without_limit_state() -> None:
     assert response.headers["Retry-After"] == "1"
 
 
-def test_handler_clamps_retry_after_at_window_boundary() -> None:
+@pytest.mark.parametrize(
+    "raw_retry, expected",
+    [
+        pytest.param("60", "60", id="integer"),
+        pytest.param("59.9", "60", id="decimal-rounds-up"),
+        pytest.param("1.1", "2", id="small-decimal-rounds-up"),
+        pytest.param("0", "1", id="window-boundary"),
+        pytest.param("0.9", "1", id="fraction-below-one"),
+        pytest.param("-5", "1", id="negative"),
+        pytest.param(None, "1", id="missing-header"),
+        pytest.param("", "1", id="empty"),
+        pytest.param("not-a-number", "1", id="invalid-text"),
+        pytest.param("NaN", "1", id="nan"),
+        pytest.param("inf", "1", id="positive-infinity"),
+        pytest.param("-inf", "1", id="negative-infinity"),
+    ],
+)
+def test_handler_normalizes_retry_after(raw_retry: str | None, expected: str) -> None:
+    # Inject defensive edge cases; decimals are not a confirmed SlowAPI output.
     request = _make_request()
     request.scope["app"] = FastAPI()
     request.state.view_rate_limit = object()
 
     def inject_headers(response: Response, current_limit: object) -> Response:
-        response.headers["Retry-After"] = "0"
+        if raw_retry is not None:
+            response.headers["Retry-After"] = raw_retry
+        response.headers["X-RateLimit-Remaining"] = "0"
         return response
 
     request.app.state.limiter = SimpleNamespace(_inject_headers=inject_headers)
     response = policy.rate_limit_exceeded_handler(request, cast(RateLimitExceeded, Mock()))
-    assert response.headers["Retry-After"] == "1"
+    assert response.status_code == 429
+    assert response.body == b'{"detail":"Rate limit exceeded"}'
+    assert response.headers["Retry-After"] == expected
+    assert int(response.headers["Retry-After"]) >= 1
+    assert response.headers["X-RateLimit-Remaining"] == "0"

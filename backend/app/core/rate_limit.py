@@ -5,6 +5,7 @@ using the exported decorators after their authentication dependencies run.
 """
 
 from collections.abc import Callable
+from math import ceil
 from typing import Any, TypeVar, cast
 
 from fastapi import FastAPI, Request
@@ -73,8 +74,14 @@ def rate_limit_exceeded_handler(
         # SlowAPI's own default handler uses this method to calculate the
         # X-RateLimit-* and Retry-After headers for the active window.
         response = cast(JSONResponse, limiter_instance._inject_headers(response, current_limit))
-        # At a window boundary SlowAPI may round the remaining seconds to zero.
-        response.headers["Retry-After"] = str(max(1, int(response.headers["Retry-After"])))
+        # Round up fractional seconds so clients do not retry early. Missing or
+        # malformed headers must not turn a quota response into a server error.
+        raw_retry = response.headers.get("Retry-After", "1")
+        try:
+            retry_seconds = max(1, ceil(float(raw_retry)))
+        except (ValueError, OverflowError):
+            retry_seconds = 1
+        response.headers["Retry-After"] = str(retry_seconds)
         return response
 
     # Defensive fallback for a partially configured app.  Normal registered
