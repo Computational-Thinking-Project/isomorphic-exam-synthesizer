@@ -10,4 +10,4 @@ ignore = ["E501", "EXE002"]
 minversion = "8.0"
 testpaths = ["tests"]
 pythonpath = ["."]
-asyncio_mode = "auto"
+asyncio_mode = "auto"
