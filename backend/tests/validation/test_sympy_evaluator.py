@@ -182,3 +182,56 @@ class TestTimeoutBehavior:
         assert result.passed is False
         assert result.confidence == "rule_only"
         assert "timed out" in result.detail.lower()
+
+
+class TestRegressionPhilipFeedbackPR12:
+    def test_prevent_rce_via_sympify(self):
+        """Review feedback: code execution strings must not be executed by parse_to_sympy or verify."""
+        malicious = "__import__('os').system('echo pwned')"
+        expr, err = parse_to_sympy(malicious)
+        assert expr is None
+        assert err is not None
+
+        res = verify_equation_solution("x = 2", malicious)
+        assert res.status == EvaluationStatus.UNSUPPORTED
+        assert res.passed is False
+
+    def test_question_expression_evaluation_not_misidentified_as_equation(self):
+        """Review feedback: 'Cho $x=2$. Tính $x+1$' must return UNSUPPORTED, not verify x=2."""
+        text = "Cho $x=2$. Tính $x+1$?"
+        res_3 = verify_question_math(text, "3")
+        assert res_3.status == EvaluationStatus.UNSUPPORTED
+        assert res_3.passed is False
+        assert res_3.confidence == "rule_only"
+
+        res_2 = verify_question_math(text, "2")
+        assert res_2.status == EvaluationStatus.UNSUPPORTED
+        assert res_2.passed is False
+
+    def test_no_partial_answers_trailing_tokens(self):
+        """Review feedback: candidate answers with dangling tokens like '2 +' or '2; ?' must fail."""
+        res_plus = verify_equation_solution("x = 2", "2 +")
+        assert res_plus.status == EvaluationStatus.UNSUPPORTED
+        assert res_plus.passed is False
+
+        res_qmark = verify_equation_solution("x = 2", "2; ?")
+        assert res_qmark.status == EvaluationStatus.UNSUPPORTED
+        assert res_qmark.passed is False
+
+    def test_exact_equality_no_fuzzy_threshold(self):
+        """Review feedback: equation x = 0 must reject 0.0000000001 (1e-10)."""
+        res = verify_equation_solution("x = 0", "0.0000000001")
+        assert res.status == EvaluationStatus.FAILED
+        assert res.passed is False
+
+    def test_check_result_preserves_status_and_confidence(self):
+        """Review feedback: to_check_result() must keep status and confidence for downstream handoff."""
+        res = verify_equation_solution("x = 2", "2")
+        check_res = res.to_check_result()
+        assert check_res.status == "verified"
+        assert check_res.confidence == "sympy_verified"
+
+        res_unsupported = verify_equation_solution("x = 2", "2 +")
+        check_unsupported = res_unsupported.to_check_result()
+        assert check_unsupported.status == "unsupported"
+        assert check_unsupported.confidence == "rule_only"

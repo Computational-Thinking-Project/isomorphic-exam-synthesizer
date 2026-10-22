@@ -3,7 +3,7 @@ Isolated Process Runner with Hard Timeout and Resource Reclamation.
 
 Executes a function in a separate, isolated OS process with a strict timeout.
 Ensures thorough process cleanup (terminate -> kill -> join) upon timeout,
-preventing GIL deadlocks and orphan background tasks.
+preventing GIL deadlocks, IPC pipe deadlocks, and orphan background tasks.
 """
 
 import logging
@@ -58,6 +58,8 @@ def run_with_timeout(
     Run `target_func(*args, **kwargs)` inside an isolated process with a hard timeout.
 
     Guarantees:
+    - Reads from IPC queue before waiting on process join, preventing pipe buffer deadlocks
+      on large payloads (>64-128 KiB).
     - If execution finishes within timeout, returns ProcessResult with `success=True/False`.
     - If execution exceeds timeout:
         1. Calls `process.terminate()`
@@ -79,9 +81,24 @@ def run_with_timeout(
         daemon=True,
     )
 
+    got_result = False
+    result_tuple = None
+
     try:
         process.start()
-        process.join(timeout=timeout)
+
+        # Step 1: Read from queue before waiting on join to avoid IPC pipe buffer deadlock.
+        # If payload is large (>64-128 KiB), the worker blocks on put() until parent reads.
+        try:
+            result_tuple = res_queue.get(timeout=timeout)
+            got_result = True
+        except (queue.Empty, Exception):
+            pass
+
+        # Step 2: Join process with remaining timeout
+        elapsed = time.perf_counter() - start_time
+        remaining = max(0.1, timeout - elapsed)
+        process.join(timeout=1.0 if got_result else remaining)
         duration = time.perf_counter() - start_time
 
         if process.is_alive():
@@ -114,6 +131,18 @@ def run_with_timeout(
         exit_code = process.exitcode
         duration = time.perf_counter() - start_time
 
+        if got_result and result_tuple is not None:
+            success, data, err = result_tuple
+            return ProcessResult(
+                success=success,
+                data=data,
+                error=err,
+                timed_out=False,
+                duration_sec=duration,
+                exit_code=exit_code,
+            )
+
+        # If result wasn't retrieved earlier, try reading now with short timeout
         try:
             success, data, err = res_queue.get(timeout=0.5)
             return ProcessResult(
@@ -137,7 +166,7 @@ def run_with_timeout(
     finally:
         try:
             res_queue.close()
-            res_queue.join_thread()
+            res_queue.cancel_join_thread()
         except Exception:
             pass
 

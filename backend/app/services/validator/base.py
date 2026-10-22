@@ -19,6 +19,14 @@ class CheckResult(BaseModel):
         default=None, description="Detailed explanation if failed or warning"
     )
     errors: List[str] = Field(default_factory=list, description="List of specific error messages")
+    status: Optional[str] = Field(
+        default=None,
+        description="Evaluation status (e.g. verified, failed, domain_error, unsupported, timeout)",
+    )
+    confidence: Optional[str] = Field(
+        default=None,
+        description="Confidence category (e.g. sympy_verified, rule_only)",
+    )
 
     def __bool__(self) -> bool:
         return self.passed
@@ -31,4 +39,8 @@ class CheckResult(BaseModel):
         }
         if self.detail is not None:
             res["detail"] = self.detail
+        if self.status is not None:
+            res["status"] = self.status
+        if self.confidence is not None:
+            res["confidence"] = self.confidence
         return res

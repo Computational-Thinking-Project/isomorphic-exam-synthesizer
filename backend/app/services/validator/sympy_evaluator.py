@@ -3,18 +3,21 @@ SymPy Mathematical Evaluator (VAL-03 / TASK-107b).
 
 Performs formal mathematical verification:
 1. Parse LaTeX strings to SymPy expressions with a strict 500-char bound.
+   Enforces strict parsing and AST whitelisting to prevent RCE via sympify.
 2. Verify mathematical domain constraints:
    - Denominators != 0
    - Radicands of even roots >= 0 (real domain)
    - Logarithm arguments > 0
-3. Verify equations, solutions, and mathematical expressions.
+3. Verify equations, solutions, and mathematical expressions using exact equality (no fuzzy 1e-9).
 4. Executes all CAS computations inside isolated processes with a hard 5-second
    timeout and guaranteed resource reclamation.
-5. Preserves confidence semantics:
+5. Preserves confidence and status semantics in CheckResult:
    - Verified -> 'sympy_verified'
    - Timeout / Unsupported -> 'rule_only' / warning (never false pass).
 """
 
+import ast
+import builtins
 import logging
 import re
 from enum import Enum
@@ -27,6 +30,90 @@ logger = logging.getLogger(__name__)
 
 MAX_EXPRESSION_LENGTH: int = 500
 DEFAULT_EVALUATION_TIMEOUT: float = 5.0
+
+# Safe AST nodes permitted for mathematical expression evaluation
+SAFE_AST_NODES = (
+    ast.Expression,
+    ast.BinOp,
+    ast.UnaryOp,
+    ast.Constant,
+    ast.Name,
+    ast.Call,
+    ast.Add,
+    ast.Sub,
+    ast.Mult,
+    ast.Div,
+    ast.FloorDiv,
+    ast.Mod,
+    ast.Pow,
+    ast.UAdd,
+    ast.USub,
+    ast.Load,
+)
+
+# Approved mathematical functions permitted in AST call nodes
+SAFE_MATH_CALLS = {
+    "sqrt",
+    "cbrt",
+    "sin",
+    "cos",
+    "tan",
+    "cot",
+    "sec",
+    "csc",
+    "asin",
+    "acos",
+    "atan",
+    "arcsin",
+    "arccos",
+    "arctan",
+    "sinh",
+    "cosh",
+    "tanh",
+    "log",
+    "ln",
+    "log10",
+    "log2",
+    "exp",
+    "abs",
+    "factorial",
+    "pi",
+    "E",
+    "oo",
+}
+
+# Python builtins that must never be referenced or executed via sympify
+DISALLOWED_IDENTIFIERS = set(dir(builtins)) - {"abs"}
+
+
+def is_safe_math_ast(expr: str) -> bool:
+    """
+    Validate that a python math expression string contains only safe mathematical
+    AST nodes, preventing Remote Code Execution (RCE) via sympify / eval.
+    """
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except Exception:
+        return False
+
+    for node in ast.walk(tree):
+        if not isinstance(node, SAFE_AST_NODES):
+            return False
+        if isinstance(node, ast.Constant):
+            if not isinstance(node.value, (int, float, complex)):
+                return False
+        elif isinstance(node, ast.Name):
+            if node.id.startswith("_") or node.id in DISALLOWED_IDENTIFIERS:
+                return False
+        elif isinstance(node, ast.Call):
+            if not isinstance(node.func, ast.Name):
+                return False
+            if node.func.id not in SAFE_MATH_CALLS:
+                return False
+            if node.keywords:
+                return False
+
+    return True
 
 
 class EvaluationStatus(str, Enum):
@@ -62,12 +149,17 @@ class EvaluationResult:
         return self.passed
 
     def to_check_result(self, check_name: str = "answer_verified") -> CheckResult:
-        """Convert to a standard CheckResult for aggregator / report."""
+        """
+        Convert to a standard CheckResult for aggregator / report.
+        Preserves status and confidence for downstream handoff (e.g. TV7 rule fallback).
+        """
         return CheckResult(
             check_name=check_name,
             passed=self.passed,
             detail=self.detail,
             errors=self.errors,
+            status=self.status.value,
+            confidence=self.confidence,
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -106,7 +198,7 @@ def clean_latex(text: str) -> str:
 def parse_to_sympy(expr_str: str) -> Tuple[Optional[Any], Optional[str]]:
     """
     Parse a mathematical string or LaTeX expression into a SymPy expression.
-    Enforces the 500-character upper bound.
+    Enforces the 500-character upper bound and strict parsing.
     Returns (expression, error_message).
     """
     if len(expr_str) > MAX_EXPRESSION_LENGTH:
@@ -119,11 +211,15 @@ def parse_to_sympy(expr_str: str) -> Tuple[Optional[Any], Optional[str]]:
     if not cleaned:
         return None, "Empty expression."
 
-    # First attempt: parse_latex
+    # Reject dangling operators or unclosed expressions (e.g. "2 +", "x -", "2 *")
+    if re.search(r"[+\-*/^=,\\]\s*$", cleaned):
+        return None, f"Expression '{cleaned}' has trailing or dangling operators."
+
+    # First attempt: parse_latex with strict=True
     try:
         from sympy.parsing.latex import parse_latex  # type: ignore[import-untyped]
 
-        parsed = parse_latex(cleaned)
+        parsed = parse_latex(cleaned, strict=True)
         return parsed, None
     except Exception:
         pass
@@ -134,12 +230,25 @@ def parse_to_sympy(expr_str: str) -> Tuple[Optional[Any], Optional[str]]:
 
         py_str = cleaned
         # \frac{a}{b} -> ((a)/(b))
-        py_str = re.sub(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", r"((\1)/(\2))", py_str)
+        py_str = re.sub(r"\\(?:d)?frac\{([^{}]+)\}\{([^{}]+)\}", r"((\1)/(\2))", py_str)
         # \sqrt{a} -> sqrt(a)
         py_str = re.sub(r"\\sqrt\{([^{}]+)\}", r"sqrt(\1)", py_str)
         # Implicit multiplication between digit and variable (e.g. 5x -> 5*x)
         py_str = re.sub(r"(\d)\s*([a-zA-Z])", r"\1*\2", py_str)
         py_str = py_str.replace("^", "**")
+
+        # If backslash remains, it is unparsed LaTeX
+        if "\\" in py_str:
+            return None, f"Unrecognized LaTeX macro in expression: '{cleaned}'"
+
+        # Reject trailing operators again after substitution
+        if re.search(r"[+\-*/^=,\\]\s*$", py_str):
+            return None, f"Expression '{py_str}' has trailing operator."
+
+        # AST whitelist check before passing to sympify to prevent RCE
+        if not is_safe_math_ast(py_str):
+            return None, f"Expression '{py_str}' contains unsafe or disallowed syntax."
+
         parsed = sympify(py_str)
         return parsed, None
     except Exception as exc:
@@ -277,6 +386,12 @@ def _verify_solution_internal(
         part_clean = part.strip()
         if not part_clean:
             continue
+        # Check invalid tokens or dangling characters (e.g. "2 +", "2; ?")
+        if re.search(r"[+\-*/^=,\\]\s*$", part_clean) or any(c in part_clean for c in "?!@#$%&"):
+            return (
+                EvaluationStatus.UNSUPPORTED,
+                f"Candidate answer contains invalid or dangling token: '{part_clean}'.",
+            )
         if "=" in part_clean:
             _, val_part = part_clean.split("=", 1)
             val_part = val_part.strip()
@@ -284,8 +399,13 @@ def _verify_solution_internal(
             val_part = part_clean
 
         parsed_val, err_val = parse_to_sympy(val_part)
-        if parsed_val is not None:
-            candidate_values.append(parsed_val)
+        if parsed_val is None:
+            # Philip: Do not silently ignore unparseable parts!
+            return (
+                EvaluationStatus.UNSUPPORTED,
+                f"Part '{val_part}' of candidate answer could not be parsed: {err_val}",
+            )
+        candidate_values.append(parsed_val)
 
     if not candidate_values:
         return (
@@ -303,19 +423,10 @@ def _verify_solution_internal(
                 domain_err or "Domain constraint violated.",
             )
 
-    # 4. Substitute candidate values into equation
+    # 4. Substitute candidate values into equation (exact equality, no fuzzy 1e-9 threshold)
     for val in candidate_values:
         diff = simplify(equation.lhs.subs(var_sym, val) - equation.rhs.subs(var_sym, val))
-        is_zero = False
-        if diff == 0:
-            is_zero = True
-        else:
-            try:
-                diff_val = complex(diff.evalf())
-                if abs(diff_val) < 1e-9:
-                    is_zero = True
-            except Exception:
-                pass
+        is_zero = diff == 0 or diff == 0.0 or getattr(diff, "is_zero", False) is True
 
         if not is_zero:
             return (
@@ -435,9 +546,35 @@ def verify_question_math(
     Extracts equation from the question text and runs verification in an isolated process.
 
     If question math is not formal algebra/calculus (e.g. geometry, word problems,
-    unsupported math), gracefully returns UNSUPPORTED with confidence 'rule_only',
-    ready for Rule Fallback Checker (VAL-04 / TV7).
+    expression calculation, or unsupported math), gracefully returns UNSUPPORTED with
+    confidence 'rule_only', ready for Rule Fallback Checker (VAL-04 / TV7).
     """
+    if not question_text or not question_text.strip():
+        return EvaluationResult(
+            status=EvaluationStatus.UNSUPPORTED,
+            passed=False,
+            confidence="rule_only",
+            detail="Question text is empty.",
+        )
+
+    # Check if the question is an expression evaluation rather than an equation-solving task
+    # e.g., "Cho x = 2. Tính x + 1" or "Tính giá trị của biểu thức..."
+    calculation_indicators = re.search(
+        r"\b(?:tính|giá\s*trị\s*(?:của|biểu\s*thức)?|rút\s*gọn|đạo\s*hàm|nguyên\s*hàm|tích\s*phân|xác\s*suất)\b",
+        question_text,
+        re.IGNORECASE,
+    )
+    if calculation_indicators:
+        return EvaluationResult(
+            status=EvaluationStatus.UNSUPPORTED,
+            passed=False,
+            confidence="rule_only",
+            detail=(
+                f"Question requires computation/evaluation ('{calculation_indicators.group(0)}') "
+                "rather than finding roots of an equation. Fallback to rule checking."
+            ),
+        )
+
     equation = extract_equation_from_text(question_text)
     if not equation:
         return EvaluationResult(

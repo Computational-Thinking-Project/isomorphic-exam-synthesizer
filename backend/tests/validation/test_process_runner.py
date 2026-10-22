@@ -59,3 +59,16 @@ class TestProcessRunner:
         assert result.timed_out is True
         assert result.success is False
         assert result.exit_code is not None
+
+
+def _generate_large_payload(size_bytes: int) -> str:
+    return "X" * size_bytes
+
+
+def test_large_payload_no_pipe_buffer_deadlock():
+    """Regression test for pipe buffer deadlock when returning large payloads (>128 KiB)."""
+    large_size = 256 * 1024  # 256 KiB
+    result: ProcessResult = run_with_timeout(_generate_large_payload, args=(large_size,), timeout=5.0)
+    assert result.success is True
+    assert result.timed_out is False
+    assert len(result.data) == large_size
