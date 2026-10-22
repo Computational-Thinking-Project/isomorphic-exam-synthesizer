@@ -191,3 +191,30 @@ class TestCompositeLogicCheck:
         }
         result = validate_logic_variant(data)
         assert result.passed is True
+
+
+class TestRegressionPhilipFeedback:
+    def test_prevent_rce_via_sympify(self):
+        malicious_expr = "__import__('os').system('echo pwned')"
+        assert are_expressions_equivalent(malicious_expr, "0") is not True
+
+        options = ["$1$", "$2$", "$3$", "$4$"]
+        result = check_designated_answer(malicious_expr, options)
+        assert result.passed is False
+
+    def test_option_letter_fullmatch_not_substring(self):
+        options = ["1", "2", "3", "4"]
+        result = check_logic(options, "x + a")
+        assert result.passed is False
+        assert "not found" in result.detail.lower()
+
+    def test_no_partial_expression_matching(self):
+        assert are_expressions_equivalent("x +", "x") is not True
+
+    def test_exact_equality_no_fuzzy_threshold(self):
+        assert are_expressions_equivalent("0", r"\frac{1}{10000000000}") is False
+        assert are_expressions_equivalent("0", "1e-10") is False
+
+        options = ["0", r"\frac{1}{10000000000}", "2", "3"]
+        result = check_duplicate_options(options)
+        assert result.passed is True

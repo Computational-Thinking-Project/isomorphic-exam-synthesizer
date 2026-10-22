@@ -5,10 +5,11 @@ Validates:
 1. Question text is non-empty.
 2. Exactly 4 non-empty options (A, B, C, D).
 3. LaTeX delimiter balancing (braces '{}', dollar signs '$', and math environments).
+   Enforces strict stack-based ordering for '\\[' / '\\]' and '\\(' / '\\)'.
 """
 
 import re
-from typing import Any, List, Optional, Sequence
+from typing import Any, List, Optional, Sequence, Tuple
 
 from app.services.validator.base import CheckResult
 
@@ -26,9 +27,7 @@ def check_question_not_empty(question_text: Optional[str]) -> CheckResult:
 
 
 def check_four_options(options: Optional[Sequence[str]]) -> CheckResult:
-    """
-    Check that there are exactly four non-empty options.
-    """
+    """Check that there are exactly four non-empty options."""
     if options is None:
         return CheckResult(
             check_name="four_options",
@@ -62,7 +61,7 @@ def check_latex_delimiters(text: str, field_name: str = "text") -> CheckResult:
     """
     Validate LaTeX brace balancing and dollar sign parity.
     Ignores escaped braces '\\{' and '\\}', and escaped dollars '\\$'.
-    Also verifies '\\[' / '\\]' and '\\(' / '\\)' balance.
+    Enforces stack-based ordering and nesting for '\\[' / '\\]' and '\\(' / '\\)'.
     """
     errors: List[str] = []
 
@@ -86,9 +85,7 @@ def check_latex_delimiters(text: str, field_name: str = "text") -> CheckResult:
         errors.append(f"Unclosed opening brace '{{' in {field_name} (depth={depth}).")
 
     # 2. Check dollar sign '$' parity
-    # Escaped dollars '\\$' should be ignored
     no_escaped_dollars = re.sub(r"\\\$", "", text)
-    # Remove double dollars '$$' (display math)
     no_display_math = re.sub(r"\$\$", "", no_escaped_dollars)
     single_dollar_count = no_display_math.count("$")
     if single_dollar_count % 2 != 0:
@@ -96,28 +93,39 @@ def check_latex_delimiters(text: str, field_name: str = "text") -> CheckResult:
             f"Unmatched inline math delimiter '$' in {field_name} (found {single_dollar_count} unescaped '$')."
         )
 
-    # Count display math '$$' pairs
     double_dollar_count = len(re.findall(r"\$\$", no_escaped_dollars))
-    # Each pair of $$ opens and closes display math -> total occurrences of $$ should be even
     if double_dollar_count % 2 != 0:
         errors.append(f"Unmatched display math delimiter '$$' in {field_name}.")
 
-    # 3. Check '\[' and '\]' balancing
-    open_brackets = len(re.findall(r"(?<!\\)\\\[", text))
-    close_brackets = len(re.findall(r"(?<!\\)\\\]", text))
-    if open_brackets != close_brackets:
-        errors.append(
-            f"Unmatched display brackets '\\[ ... \\]' in {field_name} "
-            f"({open_brackets} open vs {close_brackets} close)."
-        )
+    # 3. Stack-based check for '\[' / '\]' and '\(' / '\)' delimiter ordering and nesting
+    delim_tokens = list(re.finditer(r"(?<!\\)(\\\[|\\\]|\\\(|\\\))", text))
+    delim_stack: List[Tuple[str, int]] = []
+    close_to_open = {r"\]": r"\[", r"\)": r"\("}
 
-    # 4. Check '\(' and '\)' balancing
-    open_parens = len(re.findall(r"(?<!\\)\\\(", text))
-    close_parens = len(re.findall(r"(?<!\\)\\\)", text))
-    if open_parens != close_parens:
+    for m in delim_tokens:
+        tok = m.group(1)
+        pos = m.start()
+        if tok in (r"\[", r"\("):
+            delim_stack.append((tok, pos))
+        elif tok in close_to_open:
+            expected_open = close_to_open[tok]
+            if not delim_stack:
+                errors.append(
+                    f"Unmatched closing delimiter '{tok}' at character {pos} in {field_name} (no preceding opening delimiter)."
+                )
+                break
+            last_open, last_pos = delim_stack.pop()
+            if last_open != expected_open:
+                errors.append(
+                    f"Mismatched delimiter '{tok}' at character {pos} does not match '{last_open}' opened at {last_pos} in {field_name}."
+                )
+                break
+
+    if delim_stack and not any("delimiter" in e for e in errors):
+        unclosed_tok, pos = delim_stack[-1]
+        desc = "unmatched display brackets" if unclosed_tok == r"\[" else "unmatched inline parentheses"
         errors.append(
-            f"Unmatched inline parentheses '\\( ... \\)' in {field_name} "
-            f"({open_parens} open vs {close_parens} close)."
+            f"Unclosed delimiter '{unclosed_tok}' ({desc}) opened at character {pos} in {field_name}."
         )
 
     if errors:

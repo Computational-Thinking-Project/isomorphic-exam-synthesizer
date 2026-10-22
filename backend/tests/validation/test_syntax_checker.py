@@ -127,6 +127,26 @@ class TestLaTeXDelimiters:
         assert result.passed is False
         assert "unmatched display brackets" in result.detail.lower()
 
+    def test_regression_bracket_order_closing_before_opening(self):
+        r"""Regression test: '\] x \[' must fail due to reversed delimiter order."""
+        text = r"Biểu thức \] x \["
+        result = check_latex_delimiters(text)
+        assert result.passed is False
+        assert "unmatched closing delimiter" in result.detail.lower()
+
+    def test_regression_mismatched_delimiter_types(self):
+        r"""Mismatched brackets like '\[ x \)' must fail."""
+        text = r"Biểu thức \[ x \)"
+        result = check_latex_delimiters(text)
+        assert result.passed is False
+        assert "mismatched delimiter" in result.detail.lower()
+
+    def test_regression_nested_valid_delimiters(self):
+        """Correctly nested and paired delimiters should pass."""
+        text = r"Biểu thức \[ a + \( b \times c \) \]"
+        result = check_latex_delimiters(text)
+        assert result.passed is True
+
 
 class TestCompositeSyntaxCheck:
     def test_valid_question_and_options(self):

@@ -12,6 +12,8 @@ It does NOT mathematically prove that this designated answer is the correct
 solution to the problem stem (which is verified by VAL-03 SymPy Evaluator / VAL-04 Rule Checker).
 """
 
+import ast
+import builtins
 import logging
 import re
 from typing import Any, List, Optional, Sequence, Tuple
@@ -19,6 +21,90 @@ from typing import Any, List, Optional, Sequence, Tuple
 from app.services.validator.base import CheckResult
 
 logger = logging.getLogger(__name__)
+
+# Safe AST nodes permitted for mathematical expression evaluation
+SAFE_AST_NODES = (
+    ast.Expression,
+    ast.BinOp,
+    ast.UnaryOp,
+    ast.Constant,
+    ast.Name,
+    ast.Call,
+    ast.Add,
+    ast.Sub,
+    ast.Mult,
+    ast.Div,
+    ast.FloorDiv,
+    ast.Mod,
+    ast.Pow,
+    ast.UAdd,
+    ast.USub,
+    ast.Load,
+)
+
+# Approved mathematical functions permitted in AST call nodes
+SAFE_MATH_CALLS = {
+    "sqrt",
+    "cbrt",
+    "sin",
+    "cos",
+    "tan",
+    "cot",
+    "sec",
+    "csc",
+    "asin",
+    "acos",
+    "atan",
+    "arcsin",
+    "arccos",
+    "arctan",
+    "sinh",
+    "cosh",
+    "tanh",
+    "log",
+    "ln",
+    "log10",
+    "log2",
+    "exp",
+    "abs",
+    "factorial",
+    "pi",
+    "E",
+    "oo",
+}
+
+# Python builtins that must never be referenced or executed via sympify
+DISALLOWED_IDENTIFIERS = set(dir(builtins)) - {"abs"}
+
+
+def is_safe_math_ast(expr: str) -> bool:
+    """
+    Validate that a python math expression string contains only safe mathematical
+    AST nodes, preventing Remote Code Execution (RCE) via sympify / eval.
+    """
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except Exception:
+        return False
+
+    for node in ast.walk(tree):
+        if not isinstance(node, SAFE_AST_NODES):
+            return False
+        if isinstance(node, ast.Constant):
+            if not isinstance(node.value, (int, float, complex)):
+                return False
+        elif isinstance(node, ast.Name):
+            if node.id.startswith("_") or node.id in DISALLOWED_IDENTIFIERS:
+                return False
+        elif isinstance(node, ast.Call):
+            if not isinstance(node.func, ast.Name):
+                return False
+            if node.func.id not in SAFE_MATH_CALLS:
+                return False
+            if node.keywords:
+                return False
+
+    return True
 
 
 def normalize_latex_string(text: str) -> str:
@@ -52,17 +138,23 @@ def normalize_latex_string(text: str) -> str:
 def _try_parse_to_sympy(expr_str: str) -> Optional[Any]:
     """
     Attempt to parse a LaTeX or math expression string into a SymPy expression.
-    Returns None if parsing fails.
+    Enforces strict parsing and AST whitelisting to prevent partial parsing and RCE.
+    Returns None if parsing fails or expression is invalid/unsafe.
     """
     cleaned = normalize_latex_string(expr_str)
     if not cleaned:
         return None
 
-    # First attempt: parse_latex if available
+    # Reject dangling operators or unclosed expressions (e.g. "x +", "2 -", "3 *")
+    if re.search(r"[+\-*/^=,\\]\s*$", cleaned):
+        return None
+
+    # First attempt: parse_latex with strict=True
     try:
         from sympy.parsing.latex import parse_latex  # type: ignore[import-untyped]
 
-        return parse_latex(cleaned)
+        # strict=True rejects expressions with trailing unparsed tokens (e.g. "x +")
+        return parse_latex(cleaned, strict=True)
     except Exception:
         pass
 
@@ -72,11 +164,23 @@ def _try_parse_to_sympy(expr_str: str) -> Optional[Any]:
 
         py_str = cleaned
         # \frac{a}{b} -> ((a)/(b))
-        py_str = re.sub(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", r"((\1)/(\2))", py_str)
+        py_str = re.sub(r"\\(?:d)?frac\{([^{}]+)\}\{([^{}]+)\}", r"((\1)/(\2))", py_str)
         # \sqrt{a} -> sqrt(a)
         py_str = re.sub(r"\\sqrt\{([^{}]+)\}", r"sqrt(\1)", py_str)
-        # \pm -> ignored or keep
         py_str = py_str.replace("^", "**")
+
+        # If any backslash remains, it is unparsed LaTeX, do not pass to Python parser
+        if "\\" in py_str:
+            return None
+
+        # Reject trailing operators again after substitution
+        if re.search(r"[+\-*/^=,\\]\s*$", py_str):
+            return None
+
+        # Verify AST safety before passing to sympify to prevent RCE
+        if not is_safe_math_ast(py_str):
+            return None
+
         return sympify(py_str)
     except Exception:
         pass
@@ -84,10 +188,13 @@ def _try_parse_to_sympy(expr_str: str) -> Optional[Any]:
     return None
 
 
-def are_expressions_equivalent(expr_a: str, expr_b: str) -> bool:
+def are_expressions_equivalent(expr_a: str, expr_b: str) -> Optional[bool]:
     """
     Check if two option expressions are mathematically or textually equivalent.
-    Returns True if proven equivalent, False otherwise.
+    Returns:
+    - True if proven equivalent.
+    - False if proven distinct.
+    - None if inconclusive (e.g., unparseable mathematical markup).
     """
     norm_a = normalize_latex_string(expr_a)
     norm_b = normalize_latex_string(expr_b)
@@ -96,12 +203,14 @@ def are_expressions_equivalent(expr_a: str, expr_b: str) -> bool:
     if norm_a == norm_b:
         return True
 
-    # 2. Direct numeric conversion (e.g. '0.5' vs '0.50' or '1/2' as float)
+    # 2. Exact numeric conversion (e.g. '0.5' vs '0.50') - no fuzzy threshold!
     try:
         float_a = float(norm_a)
         float_b = float(norm_b)
-        if abs(float_a - float_b) < 1e-9:
+        if float_a == float_b:
             return True
+        else:
+            return False
     except (ValueError, TypeError):
         pass
 
@@ -114,27 +223,40 @@ def are_expressions_equivalent(expr_a: str, expr_b: str) -> bool:
             from sympy import simplify  # type: ignore[import-untyped]
 
             diff = simplify(sym_a - sym_b)
-            if diff == 0:
+            if diff == 0 or diff == 0.0 or getattr(diff, "is_zero", False) is True:
                 return True
-
-            # Check numeric evaluation
-            diff_eval = complex(diff.evalf())
-            if abs(diff_eval) < 1e-9:
-                return True
+            return False
         except Exception:
             pass
 
-    return False
+    # 4. Text comparison fallback
+    # If neither expression contains mathematical notation, they are distinct plain strings
+    has_math_a = any(c in expr_a for c in ["\\", "$", "{", "}", "^", "_", "+", "-", "*", "/", "="])
+    has_math_b = any(c in expr_b for c in ["\\", "$", "{", "}", "^", "_", "+", "-", "*", "/", "="])
+    if not has_math_a and not has_math_b:
+        return False
+
+    # Inconclusive when mathematical expression could not be parsed
+    return None
 
 
 def _resolve_option_letter(letter: str, options: Sequence[str]) -> Optional[Tuple[int, str]]:
     """
-    Resolve option letter ('A', 'B', 'C', 'D' or 'A.', 'Option A') to (index, option_text).
+    Resolve option letter ('A', 'B', 'C', 'D' or 'A.', 'Option A', 'Phương án A') to (index, option_text).
+    Requires full-string match to avoid falsely matching math expressions like 'x + a' as Option A.
     """
-    cleaned = letter.strip().rstrip(".").upper()
-    match = re.search(r"\b([A-D])\b", cleaned)
+    cleaned = letter.strip()
+    if cleaned.startswith("$") and cleaned.endswith("$") and len(cleaned) >= 2:
+        cleaned = cleaned[1:-1].strip()
+
+    match = re.fullmatch(
+        r"^(?:(?:Option|Phương\s*án|Đáp\s*án|Câu)\s*)?\(?([A-Da-d])\)?\.?$",
+        cleaned,
+        re.IGNORECASE,
+    )
     if match:
-        idx = ord(match.group(1)) - ord("A")
+        letter_char = match.group(1).upper()
+        idx = ord(letter_char) - ord("A")
         if 0 <= idx < len(options):
             return idx, options[idx]
     return None
