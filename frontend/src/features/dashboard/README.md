@@ -1,6 +1,6 @@
 # Dashboard UI — TASK-103
 
-Dashboard is connected to `/dashboard` under `ProtectedRoute`. Google/Supabase sign-in, session restoration and sign-out are implemented in the shared auth flow, but application profile verification is still pending. A valid Supabase session enters `profile_pending` and does not grant access to Dashboard yet.
+Dashboard is connected to `/dashboard` under `ProtectedRoute`. A Supabase session enters `profile_pending`; the shared hook requests `GET /api/users/me` and opens Dashboard only after accepting a profile for the current account/login version. TV1 reported a real profile 200 response and the correct Dashboard name on 23/10/2026.
 
 Dashboard still uses mock session data and action notices. Backend session APIs, real create/open navigation and the Clone Modal are not integrated in this branch. The current layout is provisional; TASK-101/103 are not complete.
 
@@ -19,11 +19,11 @@ npm.cmd run dev
 Use the address printed by Vite; the configured port is 3000, but Vite may choose another available port. For Supabase environment variables and Google redirects, follow the [frontend setup guide](../../../README.md). The standalone Dashboard preview below does not require a Supabase connection.
 
 1. Open `/dashboard` without a session: while auth is being checked, expect a waiting message; afterward, expect a redirect to `/login`.
-2. On `/login`, sign in with Google using the existing Supabase configuration. After returning, expect the message that a session exists but profile verification is not connected. Dashboard remains blocked.
-3. Reload: the Supabase session should be restored and return to `profile_pending`. This does not load real Dashboard data.
-4. Select **Đăng xuất** on `/login`: expect the session to end. Reload should keep you signed out; opening `/dashboard` should return to `/login`.
+2. On `/login`, sign in with Google using the existing Supabase configuration. Wait for profile verification; a successful response opens Dashboard with your name. Profile errors keep access blocked and offer retry/sign-out.
+3. Reload: restore the session, verify the profile again and return to Dashboard. The session list itself still uses sample data.
+4. Select **Đăng xuất** on Dashboard (or on Login while profile is pending): expect the session to end. Reload should keep you signed out; opening `/dashboard` should return to `/login`.
 
-The previous mock auth route has been removed. Do not manually set a mock user in the auth store to bypass profile verification. Use the standalone preview to inspect Dashboard while profile integration is pending. Its behavior does not verify authentication or protected-route access.
+The previous mock auth route has been removed. Do not manually set a mock user in the auth store to bypass profile verification. Use the standalone preview to inspect Dashboard UI states without a backend. Its behavior does not verify authentication or protected-route access.
 
 ## Standalone state preview
 
@@ -49,11 +49,11 @@ TV1 owns the page/card and `DashboardRoute.jsx`, which supplies the stable mock 
 
 ## Verification and remaining work
 
-Current documentation checkpoint, updated 21/10/2026:
+Current documentation checkpoint, updated 23/10/2026:
 
-- Google sign-in/session handling is implemented, but profile verification is not connected. `ProtectedRoute` requires `authenticated` and an application user; `profile_pending` cannot enter Dashboard.
-- Dashboard's loader and create/open/clone callbacks still use mocks/notices. `DashboardRoute.jsx` also retains a development-only **Đăng xuất mẫu** control that only clears the auth store; it is not the Supabase sign-out flow. Replace it when integrating the authenticated Dashboard; use the real sign-out button on `/login` at this checkpoint.
-- The recorded auth checkpoint is 37 unit tests, lint/build and 20 controlled browser bootstrap checks; see the [frontend setup guide](../../../README.md) for scope and limits. These are not Dashboard API or Clone Modal tests and were not rerun for this documentation-only change.
+- Profile verification is connected. `ProtectedRoute` requires `authenticated` and an application user; `profile_pending` cannot enter Dashboard. On 23/10 TV1 reported real profile 200/correct Dashboard name, reload restoring the session/profile, sign-out blocking Dashboard even after reload, and successful Google re-login. New-user trigger behavior, real expiry and account ownership still need verification.
+- Dashboard's loader and create/open/clone callbacks still use mocks/notices. Its sign-out button now calls Supabase with local scope, handles busy/failure states and relies on App's SIGNED_OUT subscription to clear the store. The profile name is displayed in the existing navbar; the avatar remains pending.
+- Agent verification on 22/10 reached 51 Node tests, lint/build and 17 separate controlled browser App checks with Auth/HTTP fixtures; see the [frontend setup guide](../../../README.md) for scope and limits. These are not Dashboard API or Clone Modal tests and were not rerun for this documentation-only change.
 - On 21/10/2026, the author reported Docker setup/startup and manual Google sign-in, session restoration, profile-pending route protection and sign-out checks completed. Container checks passed: backend 70 tests with one Starlette deprecation warning, SymPy parser, and frontend tests/lint/build. See the frontend setup guide for scope; these results do not verify Dashboard APIs, Clone Modal, account isolation or the static Nginx build. The documentation agent did not rerun those checks.
 
 Historical Dashboard UI verification on 17/10/2026, before the real auth changes above:
@@ -65,6 +65,6 @@ Historical Dashboard UI verification on 17/10/2026, before the real auth changes
 
 The last author-provided `npm audit` report on 17/10/2026 contained 15 vulnerabilities (4 low, 5 moderate, 6 high). Audit has not passed; no dependency upgrades or `npm audit fix --force` were applied in this increment. Dependency remediation requires separate compatibility checks and review.
 
-Remaining work: integrate TV3/Duy's application profile and session APIs after review; display the user name/avatar and use real sign-out in Dashboard; integrate TV2/Bội Anh's Clone Modal after its review fixes; connect create/open navigation and refresh the list after cloning. Then verify application data persistence, errors and data separation between accounts with the backend. Repeat Docker checks when integrating those changes; the current Auth startup checkpoint does not verify those APIs.
+Remaining work: verify new-user profile creation, real expiry and account isolation for Auth, add the avatar, integrate TV3/Duy's session APIs and TV2/Bội Anh's Clone Modal after review, connect create/open navigation and refresh the list after cloning. Verify application data persistence/errors/ownership with the backend. Repeat Docker checks when integrating those changes; the real Auth checks do not verify session/clone APIs.
 
 The visual layout remains provisional. Apply the agreed design in its own implementation step; this README update does not change or approve the interface.
