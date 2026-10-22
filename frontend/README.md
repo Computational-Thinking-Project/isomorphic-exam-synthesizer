@@ -105,6 +105,7 @@ Các module dùng chung:
 - [api.js](src/services/api.js): Axios client cho API sản phẩm, lấy token hiện tại, 401 refresh/retry tối đa một lần, 403 giữ nguyên lỗi. Lỗi tạm không tự yêu cầu đăng nhập lại; lỗi không còn phiên được xử lý khi scope/token vẫn hiện hành. Không gọi signOut từ interceptor.
 - [profile.js](src/services/profile.js): lấy profile qua API client dùng chung và kiểm ID/email cơ bản.
 - [useAuthProfile.js](src/features/auth/useAuthProfile.js): tải/thử lại profile, đối chiếu tài khoản/version, hủy và bỏ kết quả cũ khi cleanup.
+- [UserAvatar.jsx](src/features/auth/UserAvatar.jsx): ảnh từ metadata của phiên Google có ID khớp profile; thiếu/lỗi ảnh hiển thị chữ viết tắt. Dashboard giữ tên từ backend, reset component theo tài khoản/version/URL ảnh.
 - [authErrors.js](src/services/authErrors.js) và [authRefresh.js](src/services/authRefresh.js): phân loại lỗi Auth và chia sẻ refresh promise đồng thời.
 
 Việc kiểm phiên trong frontend không thay backend JWT validation/RLS/ownership. Không dùng publishable key làm Bearer access token hoặc ghi token/session thật vào log để kiểm.
@@ -129,7 +130,7 @@ Kiểm thủ công với tài khoản được phép: Google quay về `/login`,
 
 ## Phần đang chờ tích hợp/review
 
-- Profile của Duy đã được ghép; TV1 xác nhận API 200/đúng tên và kiểm thật reload/logout/chặn Dashboard/đăng nhập lại đạt. Còn avatar, trigger tài khoản mới, ownership A/B, expiry thật và review; chưa có nghiệm thu đầy đủ TASK-101.
+- Profile của Duy đã được ghép; TV1 xác nhận API 200/đúng tên và kiểm thật reload/logout/chặn Dashboard/đăng nhập lại đạt. Avatar đã ghép; ngày 23/10 TV1 báo kiểm flow/ảnh lỗi chuyển chữ viết tắt và npm test/lint/build đều đạt; agent đối chiếu hai file và diff-check, không chạy lại hoặc nhận đã kiểm A/B. Còn trigger tài khoản mới, ownership A/B, expiry thật và review; chưa có nghiệm thu đầy đủ TASK-101.
 - Dashboard danh sách phiên/API list/clone, Clone Modal của Bội Anh và điều hướng theo dữ liệu thật chưa được tích hợp trong nhánh Auth này.
 - Chưa nghiệm thu quyền dữ liệu thật với tài khoản A/B, expiry thật, trigger tạo profile cho user mới hoặc session API. Docker startup và profile có checkpoint tác giả kiểm ở trên; chưa kiểm bản static Nginx, CI của tổ hợp Auth mới hoặc nghiệm thu tích hợp toàn bộ.
 
