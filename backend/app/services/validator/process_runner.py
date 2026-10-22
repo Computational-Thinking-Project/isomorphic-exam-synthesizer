@@ -93,45 +93,39 @@ def run_with_timeout(
             result_tuple = res_queue.get(timeout=timeout)
             got_result = True
         except (queue.Empty, Exception):
-            pass
+            got_result = False
 
-        # Step 2: Join process with remaining timeout
         elapsed = time.perf_counter() - start_time
-        remaining = max(0.1, timeout - elapsed)
-        process.join(timeout=1.0 if got_result else remaining)
-        duration = time.perf_counter() - start_time
 
-        if process.is_alive():
-            logger.warning(
-                "Process %s timed out after %.2fs. Initiating termination/kill cleanup.",
-                process.pid,
-                timeout,
-            )
-            # 1. Graceful termination
-            process.terminate()
-            process.join(timeout=0.5)
-
-            # 2. Forceful kill if still alive
+        # Step 2: Handle timeout condition
+        if not got_result or elapsed > timeout:
             if process.is_alive():
-                process.kill()
+                logger.warning(
+                    "Process %s timed out after %.2fs. Initiating termination/kill cleanup.",
+                    process.pid,
+                    timeout,
+                )
+                process.terminate()
                 process.join(timeout=0.5)
-
-            # 3. Final join
-            process.join()
+                if process.is_alive():
+                    process.kill()
+                    process.join(timeout=0.5)
+                process.join()
 
             return ProcessResult(
                 success=False,
                 timed_out=True,
                 error=f"Execution timed out after {timeout:.1f}s.",
-                duration_sec=duration,
+                duration_sec=elapsed,
                 exit_code=process.exitcode,
             )
 
         # Process finished within timeout
+        process.join(timeout=0.5)
         exit_code = process.exitcode
         duration = time.perf_counter() - start_time
 
-        if got_result and result_tuple is not None:
+        if result_tuple is not None:
             success, data, err = result_tuple
             return ProcessResult(
                 success=success,
@@ -142,9 +136,9 @@ def run_with_timeout(
                 exit_code=exit_code,
             )
 
-        # If result wasn't retrieved earlier, try reading now with short timeout
+        # Fallback in case result was placed just as process exited
         try:
-            success, data, err = res_queue.get(timeout=0.5)
+            success, data, err = res_queue.get(timeout=0.2)
             return ProcessResult(
                 success=success,
                 data=data,
