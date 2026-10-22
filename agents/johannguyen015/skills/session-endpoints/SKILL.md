@@ -20,7 +20,8 @@ This skill provides guidelines and patterns for implementing the session ingesti
 - **Flow:**
   1. Authenticate user and verify ownership:
      ```python
-     await assert_ownership("exam_sessions", session_id, current_user.id)
+     # assert_ownership là hàm SYNC — KHÔNG dùng await
+     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
      ```
   2. Perform **SEC-04** security validation on the uploaded file:
      - Sanitize filename: `clean_name = re.sub(r'[^a-zA-Z0-9._-]', '_', file.filename)`
@@ -38,7 +39,7 @@ This skill provides guidelines and patterns for implementing the session ingesti
 - **Content-Type:** `application/json`
 - **Payload:** `{"raw_text": "..."}` ($\le 100,000$ characters).
 - **Flow:**
-  1. `await assert_ownership("exam_sessions", session_id, current_user.id)`
+  1. `assert_ownership("exam_sessions", session_id, current_user.id, db=db)` (sync call, không await)
   2. Parse with `markdown_parser.py` or `latex_parser.py` in-memory.
   3. Validate question count and format.
   4. Atomic replace into database on success.
@@ -55,38 +56,31 @@ This skill provides guidelines and patterns for implementing the session ingesti
   }
   ```
 - **Guards & Status Codes:**
-  1. **Ownership:** Verify session belongs to `current_user.id`.
+  1. **Ownership:** Verify session belongs to `current_user.id` (`assert_ownership` - sync call).
   2. **Precondition (State Machine):** Check session status. If status $\ne$ `'draft'` (e.g., already `'blueprinted'` or `'generating'`), raise:
      ```python
      raise HTTPException(status_code=409, detail="Session is not in draft state")
      ```
-  3. **Strict Validation:** Confirm all `source_questions` are valid (`has_missing_answer == False`, `has_unparsed_omml == False`) and blueprints exist. If incomplete, raise `HTTP 422`.
+  3. **Strict Validation:** Confirm `source_questions` exist and all questions are valid (`has_missing_answer == False`).
+     *(Lưu ý: `has_unparsed_omml` không có trong DB vì đã bị chặn 100% in-memory ở TASK-202 trước khi ghi DB).*
   4. **Security Guard (SEC-02):** If any question has `has_security_warning == True`:
      - If `acknowledged_security_warnings` is `False` or missing $\rightarrow$ raise `HTTP 422` with detail requiring user acknowledgment.
-  5. **State Transition:** Update session status to `'blueprinted'`. Return HTTP 200.
+  5. **State Transition:** Update blueprints `confirmed_at` và session status sang `'blueprinted'`. Return HTTP 200.
 
 ---
 
 ## 2. Atomic Ingestion & Idempotent Replace Pattern
 
-When replacing questions for a session, use a single database transaction:
+When replacing questions for a session, use PostgreSQL RPC or CASCADE delete:
 
 ```python
-async def replace_source_questions_atomically(
-    session_id: str, 
-    questions: list[SourceQuestion]
-) -> None:
-    """
-    Idempotent and atomic replacement of source questions and question blueprints.
-    Guarantees no orphaned or duplicate questions if any step fails.
-    """
-    async with db.transaction():
-        # 1. Clear old data for this session
-        await db.table("question_blueprints").delete().eq("session_id", session_id).execute()
-        await db.table("source_questions").delete().eq("session_id", session_id).execute()
-        
-        # 2. Insert new validated questions
-        await db.table("source_questions").insert([q.model_dump() for q in questions]).execute()
+# Cách 1 (Khuyến nghị): Sử dụng RPC replace_source_questions đã định nghĩa trong schema.sql
+db.rpc("replace_source_questions", {"p_session_id": session_id, "p_questions": payload}).execute()
+
+# Cách 2 (Fallback): Xóa source_questions — bảng question_blueprints tự động xóa theo CASCADE
+# (bảng question_blueprints liên kết qua source_question_id ON DELETE CASCADE, KHÔNG có session_id)
+db.table("source_questions").delete().eq("session_id", session_id).execute()
+db.table("source_questions").insert(cast(Any, insert_rows)).execute()
 ```
 
 ---

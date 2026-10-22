@@ -1,8 +1,7 @@
 """Ingestion Service for Atomic Database Replacement and Blueprint Trigger (TASK-202)."""
 
-import asyncio
 import logging
-from typing import Any, Dict, List, cast
+from typing import Any, Dict, List, Optional, cast
 
 from fastapi import HTTPException, status
 from supabase import Client
@@ -115,30 +114,33 @@ async def replace_source_questions_atomically(
 async def trigger_blueprint_pipeline(
     session_id: str,
     questions: List[Dict[str, Any]],
+    db: Optional[Any] = None,
 ) -> None:
-    """Non-blocking background trigger for AI Blueprint Extraction (TASK-203 hook).
+    """Non-blocking background trigger for AI Blueprint Extraction (TASK-203 hook / TASK-205).
 
-    Uses asyncio.Semaphore(3) to rate-limit AI calls without blocking HTTP response.
+    Extracts blueprints in the background and ensures they are persisted.
     """
-    semaphore = asyncio.Semaphore(3)
-
-    async def _extract_question(q_data: Dict[str, Any]) -> None:
-        async with semaphore:
-            # Placeholder for TASK-203 Gemini call
-            logger.debug(
-                "Blueprint hook ready: processing session %s, question %s",
-                session_id,
-                q_data.get("question_no"),
-            )
-            await asyncio.sleep(0.01)
-
     try:
-        tasks = [_extract_question(q) for q in questions]
-        await asyncio.gather(*tasks, return_exceptions=True)
-        logger.info(
-            "Blueprint pipeline trigger completed for session %s (%d questions)",
-            session_id,
-            len(questions),
-        )
+        if db is None:
+            try:
+                from app.core.database import get_service_role_client
+
+                db = get_service_role_client()
+            except Exception as client_err:
+                logger.warning(
+                    "Could not obtain service role client for background blueprint extraction: %s",
+                    client_err,
+                )
+
+        if db is not None:
+            from app.services.parser.blueprint_service import ensure_blueprints_for_session
+
+            await ensure_blueprints_for_session(db, session_id, questions)
+            logger.info("Blueprint pipeline ensured blueprints for session %s", session_id)
+        else:
+            logger.debug(
+                "Blueprint background task completed without DB client for session %s", session_id
+            )
     except Exception as exc:
         logger.error("Error in background blueprint pipeline for session %s: %s", session_id, exc)
+

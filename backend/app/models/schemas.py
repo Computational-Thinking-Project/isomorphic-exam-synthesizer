@@ -235,3 +235,24 @@ class IngestSuccessResponse(BaseModel):
     questions: List[Dict[str, Any]] = Field(
         default_factory=list, description="Danh sách câu hỏi nguồn đã lưu"
     )
+
+
+class ConfirmSourceRequest(BaseModel):
+    """Payload xác nhận đề nguồn và chuyển sang Stage 2 (TASK-205)."""
+
+    acknowledged_security_warnings: bool = Field(
+        default=False,
+        description="Xác nhận đã kiểm tra các câu hỏi có cảnh báo an ninh (SEC-02, P1.9)",
+    )
+
+
+class ConfirmSourceResponse(BaseModel):
+    """Phản hồi thành công từ endpoint confirm-source (TASK-205)."""
+
+    session_id: str = Field(..., description="Mã phiên làm việc")
+    status: Literal["blueprinted"] = "blueprinted"
+    confirmed_at: str = Field(..., description="Thời điểm xác nhận (ISO8601)")
+    total_questions: int = Field(..., description="Tổng câu nguồn đã khóa")
+    total_blueprints: int = Field(..., description="Tổng blueprints tương ứng")
+    message: str = "Source confirmed and blueprints locked successfully"
+

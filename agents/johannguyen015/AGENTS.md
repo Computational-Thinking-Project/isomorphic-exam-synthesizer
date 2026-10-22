@@ -33,3 +33,13 @@
   2. Nếu phát hiện file ngoài phạm vi bị modified (do auto-format của IDE hoặc script), phải dùng `git restore <file>` khôi phục ngay trước khi stage.
   3. Chỉ `git add` đúng các file cần thiết cho task.
 
+## 5. Kỷ Luật Lập Kế Hoạch & Kiểm Chứng Thực Tế (Grounding & Planning Rule)
+- **Tuyệt đối không suy diễn dựa trên phỏng đoán:**
+  - Bắt buộc kích hoạt skill `codebase-grounding` trước khi viết bất kỳ file kế hoạch hoặc code mới nào.
+  - Phân biệt rõ giữa tầng Pydantic DTO (in-memory) và tầng PostgreSQL persistence (`schema.sql`). Không giả định trường in-memory có trong DB.
+  - Phải mở xem định nghĩa hàm phụ trợ (sync `def` vs async `async def`) trước khi gọi; không tự động thêm `await` nếu hàm trả về sync.
+- **Quy trình lập kế hoạch 2 pha (2-Phase Planning):**
+  - Mọi kế hoạch triển khai phải tuân theo skill `task-planning`: Pha 1 (Draft) $\rightarrow$ Pha 2 (Audit thực chứng trên schema, dependencies, SDK).
+  - Bắt buộc có **Mục 0: Phát hiện & Sửa lỗi logic** trong mọi file implementation plan để ghi lại kết quả audit trước khi bước vào lập trình.
+
+

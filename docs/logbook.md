@@ -55,3 +55,27 @@
   - Total: 37/37 tests passed (100%).
   - Mypy static type checking: 0 errors in 34 source files.
   - Ruff linter & formatter: all checks passed.
+
+## 2026-10-22 — Bá Duy (BE1 / johannguyen015), TASK-205 Source Confirmation & Blueprint Activation (BE-03)
+
+- Branch: `feat/be1-task-205-confirm-source`; Base: `dev`.
+- Implemented Source Confirmation Endpoint:
+  - `POST /api/sessions/{session_id}/confirm-source`
+- Implemented Multi-Layer Guards & State Transitions:
+  - Guard 1 (Ownership): `assert_ownership` synchronous verification (HTTP 403 / 404).
+  - Guard 2 (State Precondition): Ensures session is in `'draft'` status (rejects with HTTP 409 Conflict if `'blueprinted'` or `'generating'`).
+  - Guard 3 (Data Integrity): Ensures session contains at least 1 source question and zero missing answers (`has_missing_answer == False`, HTTP 422).
+  - Guard 4 (Security SEC-02): Enforces explicit acknowledgment via `acknowledged_security_warnings: True` if any source question contains prompt injection / suspicious patterns (HTTP 422).
+  - Guard 5 (Blueprint Engine): `ensure_blueprints_for_session` guarantees 100% of source questions have active mathematical blueprints (auto-generates deterministic fallback blueprints if background pipeline was incomplete).
+  - Guard 6 (Atomic State Transition): Atomically updates blueprints `confirmed_at` and session status to `'blueprinted'`.
+- Implemented Blueprint Engine Service:
+  - `backend/app/services/parser/blueprint_service.py` with `extract_default_blueprint` and `ensure_blueprints_for_session`.
+  - Connected `trigger_blueprint_pipeline` in `ingestion_service.py` to `ensure_blueprints_for_session`.
+- Quality Verification:
+  - 12/12 new confirm-source tests passed (`pytest tests/api/test_confirm_source.py`).
+  - 49/49 total backend tests passed (100% pass rate).
+  - Mypy static type checking: 0 issues in 35 source files.
+  - Ruff linter: All checks passed on scoped files.
+- Documentation:
+  - Created API specification in `docs/api/confirm-source-endpoint.md`.
+

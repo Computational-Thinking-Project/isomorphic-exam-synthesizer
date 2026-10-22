@@ -8,12 +8,16 @@ Thư mục này chứa toàn bộ tài nguyên cấu hình cá nhân dành cho A
 
 ```text
 agents/johannguyen015/
-├── AGENTS.md                  # Quy tắc cốt lõi (In-Memory Pre-validation, Atomic Transaction, SEC-04)
+├── AGENTS.md                  # Quy tắc cốt lõi (Grounding, In-Memory Pre-validation, Git Discipline)
 ├── README.md                  # Tài liệu hướng dẫn sử dụng thư mục này
 └── skills/                    # Bộ Custom Skills cá nhân của BE1
-    ├── parser-evaluator/      # Skill bóc tách DOCX/LaTeX/MD, OMML & bảng đáp án rời (TASK-202)
+    ├── codebase-grounding/    # [MỚI] Bắt buộc đối chiếu schema, signatures, SDK thực tế trước khi code
+    │   └── SKILL.md
+    ├── task-planning/         # [MỚI] Quy trình lập kế hoạch 2 pha (Draft -> Ground Truth Audit Pass)
     │   └── SKILL.md
     ├── session-endpoints/     # Skill triển khai API Ingestion, Confirm & Preconditions (TASK-202, 205)
+    │   └── SKILL.md
+    ├── parser-evaluator/      # Skill bóc tách DOCX/LaTeX/MD, OMML & bảng đáp án rời (TASK-202)
     │   └── SKILL.md
     └── backend-code-quality/  # Skill chạy ruff, mypy, pytest 1 chạm
         └── SKILL.md

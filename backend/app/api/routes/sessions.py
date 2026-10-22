@@ -9,6 +9,8 @@ Provides endpoints for:
 - Cloning an existing session (deep copying source questions and blueprints)
 """
 
+import logging
+from datetime import datetime, timezone
 from typing import Any, List, Optional, cast
 
 from fastapi import (
@@ -29,6 +31,8 @@ from supabase import Client
 from app.api.dependencies import assert_ownership, get_current_user, get_user_db
 from app.core.rate_limit import crud_rate_limit
 from app.models.schemas import (
+    ConfirmSourceRequest,
+    ConfirmSourceResponse,
     CurrentUser,
     IngestSuccessResponse,
     IngestTextRequest,
@@ -41,6 +45,7 @@ from app.models.schemas import (
 )
 from app.services.parser import (
     assert_zero_mutation_or_raise,
+    ensure_blueprints_for_session,
     parse_docx,
     parse_latex,
     parse_markdown,
@@ -51,6 +56,8 @@ from app.services.parser.ingestion_service import (
     replace_source_questions_atomically,
     trigger_blueprint_pipeline,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -498,3 +505,118 @@ async def ingest_text(
         total_questions=len(saved_questions),
         questions=saved_questions,
     )
+
+
+@router.post(
+    "/{session_id}/confirm-source",
+    response_model=ConfirmSourceResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Confirm source exam and activate blueprints (TASK-205)",
+)
+@crud_rate_limit
+async def confirm_source(
+    session_id: str,
+    payload: ConfirmSourceRequest,
+    request: Request,
+    response: Response,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_user_db),
+) -> ConfirmSourceResponse:
+    """Confirm source exam questions, lock blueprints, and transition session to Stage 2.
+
+    Guards:
+    1. Ownership: Current user owns the exam session (Sync call).
+    2. State Precondition: Session must be in 'draft' status (HTTP 409 if not).
+    3. Data Integrity: Session must have source questions and none with missing answers (HTTP 422).
+    4. Security (SEC-02): If any question has security warnings, payload must have acknowledged_security_warnings=True (HTTP 422).
+    5. Blueprint Engine: Ensures all questions have active blueprints.
+    6. Atomic State Transition: Updates blueprints confirmed_at and session status to 'blueprinted'.
+    """
+    # Guard 1: Ownership verification (Sync function)
+    assert_ownership("exam_sessions", session_id, current_user.id, db=db)
+
+    # Guard 2: State Precondition (must be 'draft')
+    s_res = db.table("exam_sessions").select("status").eq("id", session_id).execute()
+    s_rows = cast(List[dict[str, Any]], s_res.data or [])
+    if not s_rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    session_status = str(s_rows[0].get("status", ""))
+    if session_status != "draft":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Session is in '{session_status}' state; cannot confirm source unless in 'draft'",
+        )
+
+    # Guard 3: Fetch & validate source questions
+    q_res = (
+        db.table("source_questions")
+        .select("*")
+        .eq("session_id", session_id)
+        .order("question_no", desc=False)
+        .execute()
+    )
+    questions = cast(List[dict[str, Any]], q_res.data or [])
+    if not questions:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cannot confirm source: Session has no source questions",
+        )
+
+    missing_answer_questions = [
+        q.get("question_no", "?") for q in questions if q.get("has_missing_answer") is True
+    ]
+    if missing_answer_questions:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Cannot confirm source: Questions {missing_answer_questions} have missing answers",
+        )
+
+    # Guard 4: Security warnings acknowledgment (SEC-02)
+    security_warning_questions = [
+        q.get("question_no", "?") for q in questions if q.get("has_security_warning") is True
+    ]
+    if security_warning_questions and not payload.acknowledged_security_warnings:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Questions {security_warning_questions} have security warnings (SEC-02). "
+                "Explicit acknowledgment is required by setting acknowledged_security_warnings=True"
+            ),
+        )
+
+    # Guard 5: Ensure blueprints exist for all source questions
+    total_blueprints = await ensure_blueprints_for_session(db, session_id, questions)
+
+    # Guard 6: Atomic state transition
+    now_iso = datetime.now(timezone.utc).isoformat()
+    sq_ids = [str(q["id"]) for q in questions if "id" in q]
+
+    try:
+        if sq_ids:
+            db.table("question_blueprints").update(
+                cast(Any, {"confirmed_at": now_iso})
+            ).in_("source_question_id", sq_ids).execute()
+
+        db.table("exam_sessions").update(
+            cast(Any, {"status": "blueprinted", "updated_at": now_iso})
+        ).eq("id", session_id).execute()
+    except Exception as exc:
+        logger.error(
+            "Database error during source confirmation for session %s: %s",
+            session_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to confirm source and lock blueprints: {str(exc)}",
+        ) from exc
+
+    return ConfirmSourceResponse(
+        session_id=session_id,
+        status="blueprinted",
+        confirmed_at=now_iso,
+        total_questions=len(questions),
+        total_blueprints=total_blueprints,
+        message="Source confirmed and blueprints locked successfully",
+    )
+

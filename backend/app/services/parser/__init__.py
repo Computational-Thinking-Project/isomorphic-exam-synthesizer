@@ -1,5 +1,9 @@
 """Ingestion Parser Package (TASK-202)."""
 
+from app.services.parser.blueprint_service import (
+    ensure_blueprints_for_session,
+    extract_default_blueprint,
+)
 from app.services.parser.docx_parser import parse_docx
 from app.services.parser.file_security import (
     sanitize_filename,
@@ -22,4 +26,6 @@ __all__ = [
     "upload_exam_file_to_storage",
     "validate_exam_integrity",
     "assert_zero_mutation_or_raise",
+    "extract_default_blueprint",
+    "ensure_blueprints_for_session",
 ]

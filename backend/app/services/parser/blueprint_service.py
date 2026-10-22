@@ -1,0 +1,106 @@
+"""Blueprint Engine Service for TASK-205.
+
+Provides fallback/deterministic extraction of mathematical blueprints from
+source questions and guarantees blueprint persistence for exam sessions.
+"""
+
+import logging
+import re
+from typing import Any, Dict, List, cast
+
+logger = logging.getLogger(__name__)
+
+
+def extract_default_blueprint(question: Dict[str, Any]) -> Dict[str, Any]:
+    """Deterministic fallback blueprint extraction for a single source question.
+
+    Extracts numerical parameters from question content and creates default
+    variation domains and invariant rules.
+    """
+    raw_content = question.get("raw_content", "") or ""
+
+    # Trích xuất các số thực/nguyên xuất hiện trong nội dung câu hỏi
+    # Bỏ qua các số thứ tự câu hỏi ở đầu nếu có
+    numbers = re.findall(r"-?\d+(?:\.\d+)?", raw_content)
+
+    variables: Dict[str, Any] = {}
+    domains: Dict[str, Any] = {}
+
+    for i, num_str in enumerate(numbers[:5]):  # Giới hạn tối đa 5 biến mặc định
+        try:
+            val = float(num_str) if "." in num_str else int(num_str)
+            var_name = f"param_{i + 1}"
+            variables[var_name] = val
+            domains[var_name] = {
+                "min": val - 5 if isinstance(val, int) else round(val - 5.0, 2),
+                "max": val + 5 if isinstance(val, int) else round(val + 5.0, 2),
+                "step": 1 if isinstance(val, int) else 0.5,
+            }
+        except (ValueError, TypeError):
+            continue
+
+    q_no = question.get("question_no", "?")
+    return {
+        "source_question_id": str(question["id"]),
+        "variables": variables,
+        "domains": domains,
+        "invariants": ["PRESERVE_SOLVABILITY"],
+        "variation_modes": ["NUMERICAL"],
+        "rule_summary": f"Auto-extracted {len(variables)} variable(s) from Q{q_no}",
+    }
+
+
+async def ensure_blueprints_for_session(
+    db: Any,
+    session_id: str,
+    questions: List[Dict[str, Any]],
+) -> int:
+    """Ensure every question in the session has a corresponding blueprint record.
+
+    If a question already has a blueprint, it is preserved. If any questions
+    are missing blueprints, fallback blueprints are created and inserted.
+
+    Returns:
+        int: Total number of blueprints active for this session.
+    """
+    if not questions:
+        return 0
+
+    q_ids = [str(q["id"]) for q in questions if "id" in q]
+    if not q_ids:
+        return 0
+
+    try:
+        # 1. Truy vấn các blueprint đã tồn tại cho tập câu hỏi này
+        existing_res = (
+            db.table("question_blueprints")
+            .select("source_question_id")
+            .in_("source_question_id", q_ids)
+            .execute()
+        )
+        existing_data = existing_res.data or []
+        existing_q_ids = {str(item["source_question_id"]) for item in existing_data}
+
+        # 2. Lọc các câu hỏi nguồn chưa có blueprint
+        missing_questions = [q for q in questions if str(q.get("id")) not in existing_q_ids]
+
+        # 3. Tạo và chèn blueprint bổ sung cho những câu còn thiếu
+        if missing_questions:
+            logger.info(
+                "Generating %d missing blueprints for session %s",
+                len(missing_questions),
+                session_id,
+            )
+            new_blueprints = [extract_default_blueprint(q) for q in missing_questions]
+            db.table("question_blueprints").insert(cast(Any, new_blueprints)).execute()
+
+        # Tổng số blueprints tương ứng với tổng số câu hỏi nguồn
+        return len(q_ids)
+
+    except Exception as exc:
+        logger.error(
+            "Failed to ensure blueprints for session %s: %s",
+            session_id,
+            exc,
+        )
+        raise
