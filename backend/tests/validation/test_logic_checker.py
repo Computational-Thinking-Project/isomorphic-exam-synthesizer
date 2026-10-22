@@ -240,3 +240,43 @@ class TestRegressionPhilipFeedback:
         logic_res = check_logic(options, "A")
         assert logic_res.passed is False
         assert logic_res.status == "inconclusive"
+
+    def test_equation_option_not_matching_scalar_without_variable_assignment(self):
+        """Review feedback: Answer '2' with options ['x+1=2', '3', '4', '5'] must not match."""
+        options = ["x+1=2", "3", "4", "5"]
+        ans_res = check_designated_answer("2", options)
+        assert ans_res.passed is False
+        assert ans_res.status == "failed"
+
+        logic_res = check_logic(options, "2")
+        assert logic_res.passed is False
+        assert logic_res.status == "failed"
+
+    def test_proportional_equations_equivalence(self):
+        """Review feedback: 'x=1' and '2*x=2' are proven equivalent (True)."""
+        assert are_expressions_equivalent("x = 1", "2*x = 2") is True
+        assert are_expressions_equivalent("x = 1", "2*x = 4") is False
+        # Equations with different variables are inconclusive (None), not falsely False
+        assert are_expressions_equivalent("x = 1", "y = 1") is None
+
+    def test_status_aggregation_priority_failed_over_inconclusive_over_verified(self):
+        """
+        Review feedback: Strict aggregation priority:
+        1. Options ['1', '1', 'x +', '4'], answer '5' -> failed (proven duplicate).
+        2. Options ['x +', '2', '3', '4'], answer 'A' -> inconclusive.
+        3. Options ['1', '2', '3', '4'], answer 'A' -> verified.
+        """
+        # Case 1: Proven duplicate overrides inconclusive 'x +'
+        res1 = check_logic(["1", "1", "x +", "4"], "5")
+        assert res1.passed is False
+        assert res1.status == "failed"
+
+        # Case 2: Inconclusive without proven failure
+        res2 = check_logic(["x +", "2", "3", "4"], "A")
+        assert res2.passed is False
+        assert res2.status == "inconclusive"
+
+        # Case 3: All checks verified
+        res3 = check_logic(["1", "2", "3", "4"], "A")
+        assert res3.passed is True
+        assert res3.status == "verified"

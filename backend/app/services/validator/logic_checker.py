@@ -17,7 +17,7 @@ import builtins
 import logging
 import re
 from decimal import Decimal, InvalidOperation
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Sequence, Set, Tuple
 
 from app.services.validator.base import CheckResult
 
@@ -194,6 +194,115 @@ def _try_parse_to_sympy(expr_str: str) -> Optional[Any]:
     return None
 
 
+def _compare_equations(norm_a: str, norm_b: str) -> Optional[bool]:
+    """
+    Compare two equation strings for mathematical equivalence.
+    Returns:
+    - True if proven mathematically equivalent.
+    - False if proven distinct.
+    - None if inconclusive (e.g. unsupported structure, unparseable, or different variables).
+    """
+    lhs_a_str, rhs_a_str = norm_a.split("=", 1)
+    lhs_b_str, rhs_b_str = norm_b.split("=", 1)
+
+    lhs_a_clean = lhs_a_str.strip()
+    rhs_a_clean = rhs_a_str.strip()
+    lhs_b_clean = lhs_b_str.strip()
+    rhs_b_clean = rhs_b_str.strip()
+
+    # 1. Fast path: exact same LHS string
+    if lhs_a_clean == lhs_b_clean:
+        if re.fullmatch(r"^[a-zA-Z]$", lhs_a_clean):
+            return are_expressions_equivalent(rhs_a_clean, rhs_b_clean)
+        eq_rhs = are_expressions_equivalent(rhs_a_clean, rhs_b_clean)
+        if eq_rhs is True:
+            return True
+        elif eq_rhs is False:
+            return False
+
+    # 2. Parse both equations to SymPy: e_a = lhs_a - rhs_a, e_b = lhs_b - rhs_b
+    sym_lhs_a = _try_parse_to_sympy(lhs_a_clean)
+    sym_rhs_a = _try_parse_to_sympy(rhs_a_clean)
+    sym_lhs_b = _try_parse_to_sympy(lhs_b_clean)
+    sym_rhs_b = _try_parse_to_sympy(rhs_b_clean)
+
+    if (
+        sym_lhs_a is not None
+        and sym_rhs_a is not None
+        and sym_lhs_b is not None
+        and sym_rhs_b is not None
+    ):
+        try:
+            from sympy import simplify, solve  # type: ignore[import-untyped]
+
+            e_a = sym_lhs_a - sym_rhs_a
+            e_b = sym_lhs_b - sym_rhs_b
+
+            # Direct difference: e_a - e_b == 0
+            diff = simplify(e_a - e_b)
+            if diff == 0 or getattr(diff, "is_zero", False) is True:
+                return True
+
+            # If both have the exact same set of free symbols
+            syms_a: Set[Any] = set(getattr(e_a, "free_symbols", set()))
+            syms_b: Set[Any] = set(getattr(e_b, "free_symbols", set()))
+            if syms_a and syms_a == syms_b:
+                # Proportional equations: e_a / e_b is a non-zero constant (e.g. x - 1 vs 2x - 2)
+                try:
+                    ratio = simplify(e_a / e_b)
+                    if getattr(ratio, "is_number", False) and ratio != 0:
+                        return True
+                except Exception:
+                    pass
+
+                # If single variable, compare root sets
+                if len(syms_a) == 1:
+                    try:
+                        var = next(iter(syms_a))
+                        roots_a = solve(e_a, var)
+                        roots_b = solve(e_b, var)
+                        if roots_a is not None and roots_b is not None:
+                            if sorted(str(r) for r in roots_a) == sorted(str(r) for r in roots_b):
+                                return True
+                            else:
+                                return False
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    # If cannot prove equivalent or distinct, return None (inconclusive)
+    # Crucial: DO NOT return False just because LHS strings differ
+    return None
+
+
+def aggregate_statuses(results: Sequence[CheckResult]) -> Tuple[bool, str, str]:
+    """
+    Aggregate multiple CheckResult statuses following strict priority:
+    failed > inconclusive > verified.
+
+    Returns (passed, status, confidence).
+    """
+    has_failed = any(
+        r.status == "failed" or (not r.passed and r.status != "inconclusive") for r in results
+    )
+    has_inconclusive = any(r.status == "inconclusive" for r in results)
+
+    if has_failed:
+        failed_conf = (
+            "sympy_verified"
+            if any(r.status == "failed" and r.confidence == "sympy_verified" for r in results)
+            else "rule_only"
+        )
+        return False, "failed", failed_conf
+
+    if has_inconclusive:
+        return False, "inconclusive", "rule_only"
+
+    all_sympy = all(r.confidence == "sympy_verified" for r in results)
+    return True, "verified", "sympy_verified" if all_sympy else "rule_only"
+
+
 def are_expressions_equivalent(expr_a: str, expr_b: str) -> Optional[bool]:
     """
     Check if two option expressions are mathematically or textually equivalent.
@@ -213,25 +322,23 @@ def are_expressions_equivalent(expr_a: str, expr_b: str) -> Optional[bool]:
     if is_natural_language_text(norm_a) or is_natural_language_text(norm_b):
         return norm_a == norm_b
 
-    # 3. Handle equation-style options (e.g. 'x = 1' vs 'x = 2' or 'y = 0.5' vs 'y = 1/2')
-    if "=" in norm_a and "=" in norm_b:
-        lhs_a, rhs_a = norm_a.split("=", 1)
-        lhs_b, rhs_b = norm_b.split("=", 1)
-        if lhs_a.strip() == lhs_b.strip():
-            return are_expressions_equivalent(rhs_a.strip(), rhs_b.strip())
+    # 3. Handle equation-style options
+    has_eq_a = norm_a.count("=") == 1
+    has_eq_b = norm_b.count("=") == 1
+
+    if has_eq_a and has_eq_b:
+        return _compare_equations(norm_a, norm_b)
+    elif has_eq_a ^ has_eq_b:
+        eq_side, other_side = (norm_a, norm_b) if has_eq_a else (norm_b, norm_a)
+        lhs, rhs = eq_side.split("=", 1)
+        lhs_clean = lhs.strip()
+        rhs_clean = rhs.strip()
+        # Only unpack if LHS is a single standalone variable name (e.g. x = 2 matching 2)
+        if re.fullmatch(r"^[a-zA-Z]$", lhs_clean):
+            return are_expressions_equivalent(rhs_clean, other_side)
         else:
+            # Complex equation like x+1=2 cannot match a scalar like 2
             return False
-    elif "=" in norm_a or "=" in norm_b:
-        if "=" in norm_a:
-            _, rhs_a = norm_a.split("=", 1)
-            eq_rhs = are_expressions_equivalent(rhs_a.strip(), norm_b)
-            if eq_rhs is True:
-                return True
-        elif "=" in norm_b:
-            _, rhs_b = norm_b.split("=", 1)
-            eq_rhs = are_expressions_equivalent(norm_a, rhs_b.strip())
-            if eq_rhs is True:
-                return True
 
     # 4. Exact numeric conversion via Decimal (avoids float precision loss like 2^53 vs 2^53 + 1)
     try:
@@ -465,42 +572,27 @@ def check_logic(
     Evaluates:
     - 4 options have no duplicates (textual or mathematical).
     - Exactly one designated correct answer matching an option.
+    Follows strict priority: failed > inconclusive > verified.
     """
-    errors: List[str] = []
-    status: Optional[str] = None
-    confidence: Optional[str] = None
-
-    # Check duplicates first
     dup_res = check_duplicate_options(options)
-    if not dup_res.passed:
-        errors.extend(dup_res.errors)
-        status = dup_res.status or "failed"
-        confidence = dup_res.confidence or "rule_only"
-
-    # Check designated answer
     ans_res = check_designated_answer(correct_answer, options)
-    if not ans_res.passed:
-        errors.extend(ans_res.errors)
-        if status != "inconclusive":
-            status = ans_res.status or "failed"
-            confidence = ans_res.confidence or "rule_only"
 
-    if errors:
-        return CheckResult(
-            check_name="logic_valid",
-            passed=False,
-            detail="; ".join(errors),
-            errors=errors,
-            status=status or "failed",
-            confidence=confidence or "rule_only",
-        )
+    all_results = [dup_res, ans_res]
+    errors: List[str] = []
+    for res in all_results:
+        if not res.passed:
+            errors.extend(res.errors)
+
+    passed, status, confidence = aggregate_statuses(all_results)
+    detail = "; ".join(errors) if errors else "All logic and option integrity checks passed."
 
     return CheckResult(
         check_name="logic_valid",
-        passed=True,
-        detail="All logic and option integrity checks passed.",
-        status="verified",
-        confidence="sympy_verified",
+        passed=passed,
+        detail=detail,
+        errors=errors,
+        status=status,
+        confidence=confidence,
     )
 
 

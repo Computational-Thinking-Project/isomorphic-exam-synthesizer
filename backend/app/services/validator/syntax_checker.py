@@ -123,7 +123,11 @@ def check_latex_delimiters(text: str, field_name: str = "text") -> CheckResult:
 
     if delim_stack and not any("delimiter" in e for e in errors):
         unclosed_tok, pos = delim_stack[-1]
-        desc = "unmatched display brackets" if unclosed_tok == r"\[" else "unmatched inline parentheses"
+        desc = (
+            "unmatched display brackets"
+            if unclosed_tok == r"\["
+            else "unmatched inline parentheses"
+        )
         errors.append(
             f"Unclosed delimiter '{unclosed_tok}' ({desc}) opened at character {pos} in {field_name}."
         )
