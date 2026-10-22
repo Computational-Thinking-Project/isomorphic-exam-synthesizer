@@ -3,12 +3,28 @@ import { useAuthStore } from '../auth/authStore.js';
 import DashboardPage from './DashboardPage.jsx';
 import { listDashboardSessions } from './dashboardMock.js';
 import { getSupabase } from '../../services/supabase.js';
+import UserAvatar from '../auth/UserAvatar.jsx';
 
 export default function DashboardRoute() {
   const [notice, setNotice] = useState('');
   const user = useAuthStore((state) => state.user);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState('');
+  const session = useAuthStore((state) => state.session);
+  const sessionVersion = useAuthStore((state) => state.sessionVersion);
+
+  const displayName = user?.name?.trim() || user?.email || 'Tài khoản';
+
+  const metadata =
+    user?.id && session?.user?.id === user.id
+      ? session.user.user_metadata
+      : null;
+
+  const avatarUrl = [metadata?.avatar_url, metadata?.picture].find(
+    (value) =>
+      typeof value === 'string' &&
+      value.trim().startsWith('https://'),
+  )?.trim() || '';
 
   async function handleSignOut() {
     if (isSigningOut) return;
@@ -34,9 +50,17 @@ export default function DashboardRoute() {
     <>
       <aside className="mx-auto max-w-6xl border-b border-slate-700 px-4 py-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="break-words font-medium">
-            {user?.name?.trim() || user?.email || 'Tài khoản'}
-          </p>
+          <div className="flex min-w-0 items-center gap-3">
+            <UserAvatar
+              key={`${user?.id}:${sessionVersion}:${avatarUrl}`}
+              src={avatarUrl}
+              name={displayName}
+            />
+
+            <p className="min-w-0 break-words font-medium">
+              {displayName}
+            </p>
+          </div>
 
           <p className="text-sm text-amber-300">
             Dashboard đang dùng dữ liệu mẫu, chưa kết nối API.
