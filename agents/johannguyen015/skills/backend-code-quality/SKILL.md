@@ -24,16 +24,19 @@ ruff check app/ tests/ ; mypy app/ ; pytest
 
 ## 2. Step-by-Step Commands & Fixes
 
-### A. Ruff Linter & Auto-fix
-The project enforces Python 3.11 with line length 100:
+### A. Scoped Ruff Linter & Formatter (Chỉ chạy trên file thuộc task)
+The project enforces Python 3.11 with line length 100.
+**CẢNH BÁO:** TUYỆT ĐỐI KHÔNG chạy `ruff format app/ tests/` trên toàn bộ dự án vì sẽ làm thay đổi format file của các thành viên khác gây conflict trên nhánh `dev`.
+
+Chỉ chạy trên các file/thư mục thuộc task của BE1:
 
 ```powershell
-# Kiểm tra lỗi lint
-ruff check app/ tests/
+# Ví dụ cho TASK-202:
+# 1. Kiểm tra lint scoped
+ruff check app/services/parser/ app/models/schemas.py app/api/routes/sessions.py tests/test_parsers.py tests/api/test_ingest.py
 
-# Tự động sửa các lỗi safe-fixes (import sort, unused imports, format)
-ruff check app/ tests/ --fix
-ruff format app/ tests/
+# 2. Format scoped (chỉ format đúng file thuộc task)
+ruff format app/services/parser/ app/models/schemas.py tests/test_parsers.py tests/api/test_ingest.py
 ```
 
 ### B. Mypy Static Type Checking
@@ -45,27 +48,28 @@ mypy app/
 
 *Common Mypy issues:*
 - Use `list[str]` instead of `List[str]` for Python 3.11+ built-in generics, or stick to models defined in `app/models/schemas.py`.
+- Use `typing.Any` (in hoa chữ A), không dùng `builtins.any` làm type hint.
 - Handle `Optional` return types explicitly with `None` checks.
 
 ### C. Pytest Test Suite
-Run tests with coverage and verbose output:
+Run scoped tests first, then regression tests:
 
 ```powershell
-# Chạy tất cả test
-pytest
+# Chạy test của task
+pytest tests/test_parsers.py tests/api/test_ingest.py -v
 
-# Chạy có in log output chi tiết
-pytest -s -v
-
-# Dừng ngay tại ca test đầu tiên bị fail
-pytest -x
+# Chạy kiểm tra không làm hỏng tính năng sessions cũ
+pytest tests/api/test_sessions.py -v
 ```
 
 ---
 
-## 3. Pre-Commit Sanity Checklist
+## 3. Pre-Commit Sanity Checklist & Scope Protection
 
-- [ ] Không có file `.tmp`, file log hoặc `.pytest_cache` bị thêm vào git stage.
+- [ ] **Rà soát `git status`:** Không có file nào của thành viên khác bị sửa đổi hoặc reformat ngoài ý muốn.
+- [ ] Nếu có file ngoài scope bị modified, chạy `git restore <file>` ngay lập tức.
+- [ ] Không có file `.tmp`, file log, `.pytest_cache`, hoặc file đề bài sprint (như `w2_21_10.md`) bị thêm vào git stage.
 - [ ] Mọi endpoint mới đều có unit test trong `backend/tests/`.
 - [ ] Không có `print()` statements thừa; sử dụng `logging` chuẩn của FastAPI / Uvicorn.
 - [ ] Tuân thủ Conventional Commits (ví dụ: `feat(api): implement docx ingestion parser [TASK-202]`).
+

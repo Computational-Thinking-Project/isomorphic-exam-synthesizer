@@ -20,3 +20,16 @@
 ## 3. An ninh File Upload (SEC-04)
 - Chống Path Traversal: Luôn làm sạch filename bằng `re.sub(r'[^a-zA-Z0-9._-]', '_', filename)`.
 - Chống Zip Bomb: Kiểm tra cấu trúc zip của file `.docx`, bắt buộc chứa `[Content_Types].xml` và `word/document.xml`, tỷ lệ giải nén không vượt quá 50MB.
+
+## 4. Kỷ Luật Phạm Vi Mã Nguồn & Chống Conflict Git (Scope & Git Discipline)
+- **Tuyệt đối KHÔNG tự ý format toàn bộ dự án:**
+  - KHÔNG chạy `ruff format app/ tests/` hoặc `ruff check --fix` trên toàn bộ codebase.
+  - Chỉ được format và sửa lint trên **đúng các file thuộc phạm vi task của BE1** (ví dụ: `app/services/parser/`, `test_parsers.py`, `test_ingest.py`, các file được phân công trong task).
+  - Tuyệt đối không chạm vào, không reformat các file của thành viên khác (`app/services/generation/`, `app/services/ai/`, v.v.) để tránh gây merge conflict hàng loạt trên nhánh `dev`.
+- **Không tự ý commit file quản trị sprint & file cá nhân:**
+  - Không commit các file kế hoạch sprint chung (như `w2_21_10.md`), file nháp hay scratchpad cá nhân trừ khi có chỉ đạo rõ ràng từ người dùng.
+- **Quy trình kiểm tra tính sạch (Clean Tree Verification) trước khi commit:**
+  1. Luôn chạy `git status` và `git diff --stat` để rà soát danh sách file thay đổi.
+  2. Nếu phát hiện file ngoài phạm vi bị modified (do auto-format của IDE hoặc script), phải dùng `git restore <file>` khôi phục ngay trước khi stage.
+  3. Chỉ `git add` đúng các file cần thiết cho task.
+
