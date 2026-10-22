@@ -218,3 +218,25 @@ class TestRegressionPhilipFeedback:
         options = ["0", r"\frac{1}{10000000000}", "2", "3"]
         result = check_duplicate_options(options)
         assert result.passed is True
+
+    def test_large_integer_precision_decimal_no_float_rounding(self):
+        """Review feedback: 9007199254740992 and 9007199254740993 (2^53 vs 2^53+1) must not be equal."""
+        n1 = "9007199254740992"
+        n2 = "9007199254740993"
+        assert are_expressions_equivalent(n1, n2) is False
+
+        options = [n1, "2", "3", "4"]
+        res = check_designated_answer(n2, options)
+        assert res.passed is False
+
+    def test_inconclusive_options_fail_check_logic(self):
+        """Review feedback: unparseable math like 'x +' must not pass as distinct options."""
+        options = ["x +", "2", "3", "4"]
+        dup_res = check_duplicate_options(options)
+        assert dup_res.passed is False
+        assert dup_res.status == "inconclusive"
+        assert "inconclusive" in dup_res.detail.lower()
+
+        logic_res = check_logic(options, "A")
+        assert logic_res.passed is False
+        assert logic_res.status == "inconclusive"

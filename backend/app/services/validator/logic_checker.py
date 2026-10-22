@@ -16,6 +16,7 @@ import ast
 import builtins
 import logging
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Any, List, Optional, Sequence, Tuple
 
 from app.services.validator.base import CheckResult
@@ -105,6 +106,11 @@ def is_safe_math_ast(expr: str) -> bool:
                 return False
 
     return True
+
+
+def is_natural_language_text(s: str) -> bool:
+    """Check if string is natural language text rather than a pure math expression."""
+    return bool(re.search(r"[a-zA-ZÀ-ỹ]{2,}\s+[a-zA-ZÀ-ỹ]{2,}", s))
 
 
 def normalize_latex_string(text: str) -> str:
@@ -203,18 +209,42 @@ def are_expressions_equivalent(expr_a: str, expr_b: str) -> Optional[bool]:
     if norm_a == norm_b:
         return True
 
-    # 2. Exact numeric conversion (e.g. '0.5' vs '0.50') - no fuzzy threshold!
+    # 2. Natural language text options (e.g. Vietnamese sentences)
+    if is_natural_language_text(norm_a) or is_natural_language_text(norm_b):
+        return norm_a == norm_b
+
+    # 3. Handle equation-style options (e.g. 'x = 1' vs 'x = 2' or 'y = 0.5' vs 'y = 1/2')
+    if "=" in norm_a and "=" in norm_b:
+        lhs_a, rhs_a = norm_a.split("=", 1)
+        lhs_b, rhs_b = norm_b.split("=", 1)
+        if lhs_a.strip() == lhs_b.strip():
+            return are_expressions_equivalent(rhs_a.strip(), rhs_b.strip())
+        else:
+            return False
+    elif "=" in norm_a or "=" in norm_b:
+        if "=" in norm_a:
+            _, rhs_a = norm_a.split("=", 1)
+            eq_rhs = are_expressions_equivalent(rhs_a.strip(), norm_b)
+            if eq_rhs is True:
+                return True
+        elif "=" in norm_b:
+            _, rhs_b = norm_b.split("=", 1)
+            eq_rhs = are_expressions_equivalent(norm_a, rhs_b.strip())
+            if eq_rhs is True:
+                return True
+
+    # 4. Exact numeric conversion via Decimal (avoids float precision loss like 2^53 vs 2^53 + 1)
     try:
-        float_a = float(norm_a)
-        float_b = float(norm_b)
-        if float_a == float_b:
+        dec_a = Decimal(norm_a)
+        dec_b = Decimal(norm_b)
+        if dec_a == dec_b:
             return True
         else:
             return False
-    except (ValueError, TypeError):
+    except (InvalidOperation, ValueError, TypeError):
         pass
 
-    # 3. SymPy symbolic equivalence (e.g., 1/2 vs 0.5, 2x+2 vs 2(x+1))
+    # 5. SymPy symbolic equivalence (e.g., 1/2 vs 0.5, 2x+2 vs 2(x+1))
     sym_a = _try_parse_to_sympy(expr_a)
     sym_b = _try_parse_to_sympy(expr_b)
 
@@ -229,8 +259,7 @@ def are_expressions_equivalent(expr_a: str, expr_b: str) -> Optional[bool]:
         except Exception:
             pass
 
-    # 4. Text comparison fallback
-    # If neither expression contains mathematical notation, they are distinct plain strings
+    # 6. Plain text fallback: if neither expression contains math notation, they are distinct
     has_math_a = any(c in expr_a for c in ["\\", "$", "{", "}", "^", "_", "+", "-", "*", "/", "="])
     has_math_b = any(c in expr_b for c in ["\\", "$", "{", "}", "^", "_", "+", "-", "*", "/", "="])
     if not has_math_a and not has_math_b:
@@ -279,6 +308,8 @@ def check_designated_answer(
             passed=False,
             detail="Designated correct answer is empty.",
             errors=["Correct answer must not be empty."],
+            status="failed",
+            confidence="rule_only",
         )
 
     if not options or len(options) != 4:
@@ -287,6 +318,8 @@ def check_designated_answer(
             passed=False,
             detail=f"Cannot verify correct answer: expected 4 options, got {len(options) if options else 0}.",
             errors=["Valid 4 options required to verify correct answer."],
+            status="failed",
+            confidence="rule_only",
         )
 
     ans_str = str(correct_answer).strip()
@@ -299,20 +332,38 @@ def check_designated_answer(
             check_name="one_correct",
             passed=True,
             detail=f"Correct answer letter '{ans_str}' designates Option {idx + 1} ('{opt_text}').",
+            status="verified",
+            confidence="sympy_verified",
         )
 
     # 2. Check direct / equivalent match against options
     matching_indices: List[int] = []
+    inconclusive_indices: List[int] = []
     for idx, opt in enumerate(options):
-        if are_expressions_equivalent(ans_str, str(opt)):
+        eq = are_expressions_equivalent(ans_str, str(opt))
+        if eq is True:
             matching_indices.append(idx)
+        elif eq is None:
+            inconclusive_indices.append(idx)
 
     if not matching_indices:
+        if inconclusive_indices:
+            inconclusive_opts = ", ".join(f"Option {i + 1}" for i in inconclusive_indices)
+            return CheckResult(
+                check_name="one_correct",
+                passed=False,
+                detail=f"Designated correct answer '{ans_str}' could not be conclusively compared against {inconclusive_opts}.",
+                errors=[f"Correct answer '{ans_str}' could not be resolved against options."],
+                status="inconclusive",
+                confidence="rule_only",
+            )
         return CheckResult(
             check_name="one_correct",
             passed=False,
             detail=f"Designated correct answer '{ans_str}' does not match any of the 4 options.",
             errors=[f"Correct answer '{ans_str}' was not found among the provided options."],
+            status="failed",
+            confidence="rule_only",
         )
 
     if len(matching_indices) > 1:
@@ -322,6 +373,8 @@ def check_designated_answer(
             passed=False,
             detail=f"Ambiguous correct answer: matches multiple options ({matched_str}).",
             errors=[f"Correct answer matches multiple options: {matched_str}."],
+            status="failed",
+            confidence="rule_only",
         )
 
     matched_idx = matching_indices[0]
@@ -329,6 +382,8 @@ def check_designated_answer(
         check_name="one_correct",
         passed=True,
         detail=f"Correct answer matches Option {matched_idx + 1} ('{options[matched_idx]}').",
+        status="verified",
+        confidence="sympy_verified",
     )
 
 
@@ -337,6 +392,7 @@ def check_duplicate_options(options: Optional[Sequence[str]]) -> CheckResult:
     Validate that all 4 options are mutually unique and distinct.
     Detects both textual duplicates and mathematical symbolic equivalents
     (e.g., '1/2' vs '0.5' using SymPy simplify).
+    Fails if any pair is duplicate OR inconclusive (unparseable math).
     """
     if not options or len(options) != 4:
         return CheckResult(
@@ -344,20 +400,29 @@ def check_duplicate_options(options: Optional[Sequence[str]]) -> CheckResult:
             passed=False,
             detail=f"Expected exactly 4 options to check uniqueness, got {len(options) if options else 0}.",
             errors=["Options list must contain exactly 4 items."],
+            status="failed",
+            confidence="rule_only",
         )
 
     errors: List[str] = []
     duplicates_found: List[Tuple[int, int]] = []
+    inconclusive_found: List[Tuple[int, int]] = []
 
     for i in range(len(options)):
         for j in range(i + 1, len(options)):
             opt_i = str(options[i])
             opt_j = str(options[j])
 
-            if are_expressions_equivalent(opt_i, opt_j):
+            eq = are_expressions_equivalent(opt_i, opt_j)
+            if eq is True:
                 duplicates_found.append((i, j))
                 errors.append(
                     f"Option {i + 1} ('{opt_i}') and Option {j + 1} ('{opt_j}') have duplicate/equivalent values."
+                )
+            elif eq is None:
+                inconclusive_found.append((i, j))
+                errors.append(
+                    f"Option {i + 1} ('{opt_i}') and Option {j + 1} ('{opt_j}') could not be verified for uniqueness (inconclusive expression)."
                 )
 
     if duplicates_found:
@@ -367,12 +432,27 @@ def check_duplicate_options(options: Optional[Sequence[str]]) -> CheckResult:
             passed=False,
             detail=f"Duplicate options detected: {detail_msg}",
             errors=errors,
+            status="failed",
+            confidence="sympy_verified",
+        )
+
+    if inconclusive_found:
+        detail_msg = "; ".join(errors)
+        return CheckResult(
+            check_name="no_duplicates",
+            passed=False,
+            detail=f"Inconclusive option uniqueness: {detail_msg}",
+            errors=errors,
+            status="inconclusive",
+            confidence="rule_only",
         )
 
     return CheckResult(
         check_name="no_duplicates",
         passed=True,
         detail="All 4 options are distinct and mutually exclusive.",
+        status="verified",
+        confidence="sympy_verified",
     )
 
 
@@ -387,16 +467,23 @@ def check_logic(
     - Exactly one designated correct answer matching an option.
     """
     errors: List[str] = []
+    status: Optional[str] = None
+    confidence: Optional[str] = None
 
     # Check duplicates first
     dup_res = check_duplicate_options(options)
     if not dup_res.passed:
         errors.extend(dup_res.errors)
+        status = dup_res.status or "failed"
+        confidence = dup_res.confidence or "rule_only"
 
     # Check designated answer
     ans_res = check_designated_answer(correct_answer, options)
     if not ans_res.passed:
         errors.extend(ans_res.errors)
+        if status != "inconclusive":
+            status = ans_res.status or "failed"
+            confidence = ans_res.confidence or "rule_only"
 
     if errors:
         return CheckResult(
@@ -404,12 +491,16 @@ def check_logic(
             passed=False,
             detail="; ".join(errors),
             errors=errors,
+            status=status or "failed",
+            confidence=confidence or "rule_only",
         )
 
     return CheckResult(
         check_name="logic_valid",
         passed=True,
         detail="All logic and option integrity checks passed.",
+        status="verified",
+        confidence="sympy_verified",
     )
 
 
