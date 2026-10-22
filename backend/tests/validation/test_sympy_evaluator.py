@@ -235,3 +235,15 @@ class TestRegressionPhilipFeedbackPR12:
         check_unsupported = res_unsupported.to_check_result()
         assert check_unsupported.status == "unsupported"
         assert check_unsupported.confidence == "rule_only"
+
+    def test_expression_value_question_with_alternate_wording_returns_unsupported(self):
+        """Review feedback: 'Với $x=2$, biểu thức $x+1$ bằng bao nhiêu?' must return UNSUPPORTED."""
+        text = "Với $x=2$, biểu thức $x+1$ bằng bao nhiêu?"
+        res_3 = verify_question_math(text, "3")
+        assert res_3.status == EvaluationStatus.UNSUPPORTED
+        assert res_3.passed is False
+        assert res_3.confidence == "rule_only"
+
+        res_2 = verify_question_math(text, "2")
+        assert res_2.status == EvaluationStatus.UNSUPPORTED
+        assert res_2.passed is False

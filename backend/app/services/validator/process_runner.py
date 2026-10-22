@@ -61,6 +61,8 @@ def run_with_timeout(
     - Reads from IPC queue before waiting on process join, preventing pipe buffer deadlocks
       on large payloads (>64-128 KiB).
     - If execution finishes within timeout, returns ProcessResult with `success=True/False`.
+    - Always reaps and guarantees termination of worker processes in every branch (success,
+      timeout, error), preventing orphan processes or zombie threads.
     - If execution exceeds timeout:
         1. Calls `process.terminate()`
         2. Waits up to 0.5s
@@ -120,8 +122,20 @@ def run_with_timeout(
                 exit_code=process.exitcode,
             )
 
-        # Process finished within timeout
+        # Process finished: join and guarantee worker termination in all branches
         process.join(timeout=0.5)
+        if process.is_alive():
+            logger.warning(
+                "Process %s still alive after returning result; initiating cleanup.",
+                process.pid,
+            )
+            process.terminate()
+            process.join(timeout=0.5)
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=0.5)
+            process.join()
+
         exit_code = process.exitcode
         duration = time.perf_counter() - start_time
 

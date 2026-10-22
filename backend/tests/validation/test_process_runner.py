@@ -72,3 +72,20 @@ def test_large_payload_no_pipe_buffer_deadlock():
     assert result.success is True
     assert result.timed_out is False
     assert len(result.data) == large_size
+
+
+def _fast_task_with_lingering_thread() -> str:
+    import threading
+    def _lingering():
+        time.sleep(2.0)
+    t = threading.Thread(target=_lingering, daemon=False)
+    t.start()
+    return "done_fast"
+
+
+def test_worker_termination_guaranteed_even_on_success():
+    """Regression test: worker process is fully terminated and reaped even if a lingering thread was left."""
+    res = run_with_timeout(_fast_task_with_lingering_thread, timeout=3.0)
+    assert res.success is True
+    assert res.data == "done_fast"
+    assert res.exit_code is not None

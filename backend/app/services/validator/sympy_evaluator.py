@@ -557,10 +557,10 @@ def verify_question_math(
             detail="Question text is empty.",
         )
 
-    # Check if the question is an expression evaluation rather than an equation-solving task
-    # e.g., "Cho x = 2. Tính x + 1" or "Tính giá trị của biểu thức..."
+    # 1. Negative indicator: expressions, values, calculations, geometry, parameters
+    # e.g., "Cho x = 2. Tính x + 1" or "Với x = 2, biểu thức x + 1 bằng bao nhiêu?"
     calculation_indicators = re.search(
-        r"\b(?:tính|giá\s*trị\s*(?:của|biểu\s*thức)?|rút\s*gọn|đạo\s*hàm|nguyên\s*hàm|tích\s*phân|xác\s*suất)\b",
+        r"\b(?:tính|giá\s*trị\s*(?:của|biểu\s*thức)?|rút\s*gọn|đạo\s*hàm|nguyên\s*hàm|tích\s*phân|xác\s*suất|bằng\s*bao\s*nhiêu|biểu\s*thức|thể\s*tích|diện\s*tích|khoảng\s*cách|tọa\s*độ|góc|số\s*nghiệm|tổng\s*(?:các\s*)?nghiệm|tích\s*(?:các\s*)?nghiệm)\b",
         question_text,
         re.IGNORECASE,
     )
@@ -571,8 +571,22 @@ def verify_question_math(
             confidence="rule_only",
             detail=(
                 f"Question requires computation/evaluation ('{calculation_indicators.group(0)}') "
-                "rather than finding roots of an equation. Fallback to rule checking."
+                "rather than root-finding of an equation. Fallback to rule checking."
             ),
+        )
+
+    # 2. Positive indicator: Question must be explicitly identified as equation root-solving
+    equation_task_indicators = re.search(
+        r"\b(?:giải\s*phương\s*trình|nghiệm\s*của\s*phương\s*trình|tìm\s*nghiệm|phương\s*trình[\s\S]*nghiệm|tập\s*nghiệm)\b",
+        question_text,
+        re.IGNORECASE,
+    )
+    if not equation_task_indicators:
+        return EvaluationResult(
+            status=EvaluationStatus.UNSUPPORTED,
+            passed=False,
+            confidence="rule_only",
+            detail="Question intent is not explicitly identified as equation root-solving. Fallback to rule checking.",
         )
 
     equation = extract_equation_from_text(question_text)
