@@ -1,22 +1,24 @@
 import { useState } from 'react';
 import { getSupabase } from '../../services/supabase.js';
 import { useAuthStore } from './authStore.js';
+import { Navigate } from 'react-router-dom';
 
-export default function LoginPage() {
+export default function LoginPage({ profileState }) {
   const [notice, setNotice] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState('');
   const status = useAuthStore((state) => state.status);
+  const user = useAuthStore((state) => state.user);
 
   const sessionNotice =
     status === 'checking'
-        ? 'Đang khôi phục phiên đăng nhập…'
-        : status === 'reauth_required'
-            ? 'Phiên hiện tại không thể tiếp tục sử dụng. Hãy đăng xuất rồi đăng nhập lại.'
-            : status === 'profile_pending'
-                ? 'Đã có phiên đăng nhập. Bước kiểm tra hồ sơ chưa được kết nối nên chưa thể mở Dashboard.'
-                : '';
+      ? 'Đang khôi phục phiên đăng nhập…'
+      : status === 'reauth_required'
+        ? 'Phiên hiện tại không thể tiếp tục sử dụng. Hãy đăng xuất rồi đăng nhập lại.'
+        : profileState.isLoading
+          ? 'Đang tải hồ sơ…'
+          : '';
 
   async function handleGoogleSignIn() {
     if (isSubmitting || isSigningOut) return;
@@ -72,6 +74,10 @@ export default function LoginPage() {
     }
   }
 
+  if (status === 'authenticated' && user) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
   return (
     <main className="min-h-screen flex items-center justify-center px-4 py-12">
       <section
@@ -125,6 +131,21 @@ export default function LoginPage() {
         >
           {sessionNotice || notice}
         </p>
+
+        {profileState.error && (
+          <div role="alert" className="mt-3 text-rose-300">
+            <p>{profileState.error}</p>
+
+            <button
+              type="button"
+              onClick={profileState.retry}
+              disabled={isSubmitting || isSigningOut}
+              className="mt-2 rounded-lg border border-current px-4 py-2 disabled:opacity-60"
+            >
+              Thử lại tải hồ sơ
+            </button>
+          </div>
+        )}
 
         {signOutError && (
           <p role="alert" className="mt-3 text-sm text-rose-300">

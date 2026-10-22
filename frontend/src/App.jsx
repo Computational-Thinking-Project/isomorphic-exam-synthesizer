@@ -8,6 +8,7 @@ import {
 import LoginPage from './features/auth/LoginPage.jsx';
 import ProtectedRoute from './features/auth/ProtectedRoute.jsx';
 import { useAuthStore } from './features/auth/authStore.js';
+import { useAuthProfile } from './features/auth/useAuthProfile.js';
 import DashboardRoute from './features/dashboard/DashboardRoute.jsx';
 import { getSupabase } from './services/supabase.js';
 import { classifyAuthError } from './services/authErrors.js';
@@ -17,6 +18,7 @@ export default function App() {
   const [authAttempt, setAuthAttempt] = useState(0);
   const setChecking = useAuthStore((state) => state.setChecking);
   const setSession = useAuthStore((state) => state.setSession);
+  const profileState = useAuthProfile();
 
   useEffect(() => {
     let active = true;
@@ -135,7 +137,10 @@ export default function App() {
       )}
 
       <Routes>
-        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/login"
+          element={<LoginPage profileState={profileState} />}
+        />
 
         <Route element={<ProtectedRoute />}>
           <Route path="/dashboard" element={<DashboardRoute />} />
