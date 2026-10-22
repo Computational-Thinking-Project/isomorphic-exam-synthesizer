@@ -247,3 +247,71 @@ class TestRegressionPhilipFeedbackPR12:
         res_2 = verify_question_math(text, "2")
         assert res_2.status == EvaluationStatus.UNSUPPORTED
         assert res_2.passed is False
+
+    def test_equation_with_root_selection_or_extra_condition_returns_unsupported(self):
+        """
+        Review feedback: Questions with root selection conditions (positive/negative,
+        inequalities, intervals, extrema) must return UNSUPPORTED regardless of answer.
+        """
+        # 1. Simple equation without conditions: verified or failed
+        eq_simple = "Giải $x^2-1=0$"
+        res_corr = verify_question_math(eq_simple, "1")
+        assert res_corr.status == EvaluationStatus.VERIFIED
+        assert res_corr.passed is True
+        assert res_corr.confidence == "sympy_verified"
+
+        res_wrong = verify_question_math(eq_simple, "2")
+        assert res_wrong.status == EvaluationStatus.FAILED
+        assert res_wrong.passed is False
+        assert res_wrong.confidence == "sympy_verified"
+
+        # 2. Condition: "nghiệm dương" - both answers '1' and '-1' must return UNSUPPORTED
+        q_pos = "Tìm nghiệm dương của phương trình $x^2-1=0$."
+        res_pos_1 = verify_question_math(q_pos, "1")
+        assert res_pos_1.status == EvaluationStatus.UNSUPPORTED
+        assert res_pos_1.passed is False
+        assert res_pos_1.confidence == "rule_only"
+
+        res_pos_neg1 = verify_question_math(q_pos, "-1")
+        assert res_pos_neg1.status == EvaluationStatus.UNSUPPORTED
+        assert res_pos_neg1.passed is False
+        assert res_pos_neg1.confidence == "rule_only"
+
+        # 3. Condition: "với điều kiện x > 0"
+        q_cond1 = "Giải phương trình $x^2-1=0$ với điều kiện $x>0$."
+        res_cond1 = verify_question_math(q_cond1, "-1")
+        assert res_cond1.status == EvaluationStatus.UNSUPPORTED
+        assert res_cond1.passed is False
+        assert res_cond1.confidence == "rule_only"
+
+        # 4. Condition: "với x > 0"
+        q_cond2 = "Giải phương trình $x^2-1=0$ với $x>0$"
+        res_cond2 = verify_question_math(q_cond2, "-1")
+        assert res_cond2.status == EvaluationStatus.UNSUPPORTED
+        assert res_cond2.passed is False
+        assert res_cond2.confidence == "rule_only"
+
+        # 5. Condition: "thuộc khoảng (0; 2)"
+        q_interval = "Tìm nghiệm thuộc khoảng (0; 2) của phương trình $x^2-1=0$"
+        res_interval = verify_question_math(q_interval, "1")
+        assert res_interval.status == EvaluationStatus.UNSUPPORTED
+        assert res_interval.passed is False
+        assert res_interval.confidence == "rule_only"
+
+        # 6. Condition: "lớn nhất" / "nhỏ nhất"
+        q_max = "Tìm nghiệm lớn nhất của phương trình $x^2-1=0$"
+        res_max = verify_question_math(q_max, "1")
+        assert res_max.status == EvaluationStatus.UNSUPPORTED
+        assert res_max.passed is False
+        assert res_max.confidence == "rule_only"
+
+        # 7. Preserves status and confidence in to_check_result and to_dict
+        check_res = res_pos_1.to_check_result("custom_check")
+        assert check_res.status == "unsupported"
+        assert check_res.confidence == "rule_only"
+        assert check_res.passed is False
+
+        dict_res = res_pos_1.to_dict()
+        assert dict_res["status"] == "unsupported"
+        assert dict_res["confidence"] == "rule_only"
+        assert dict_res["passed"] is False

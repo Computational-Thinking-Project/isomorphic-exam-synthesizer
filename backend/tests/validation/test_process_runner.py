@@ -68,7 +68,9 @@ def _generate_large_payload(size_bytes: int) -> str:
 def test_large_payload_no_pipe_buffer_deadlock():
     """Regression test for pipe buffer deadlock when returning large payloads (>128 KiB)."""
     large_size = 256 * 1024  # 256 KiB
-    result: ProcessResult = run_with_timeout(_generate_large_payload, args=(large_size,), timeout=5.0)
+    result: ProcessResult = run_with_timeout(
+        _generate_large_payload, args=(large_size,), timeout=5.0
+    )
     assert result.success is True
     assert result.timed_out is False
     assert len(result.data) == large_size
@@ -76,8 +78,10 @@ def test_large_payload_no_pipe_buffer_deadlock():
 
 def _fast_task_with_lingering_thread() -> str:
     import threading
+
     def _lingering():
         time.sleep(2.0)
+
     t = threading.Thread(target=_lingering, daemon=False)
     t.start()
     return "done_fast"

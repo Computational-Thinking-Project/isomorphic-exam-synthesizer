@@ -575,9 +575,35 @@ def verify_question_math(
             ),
         )
 
-    # 2. Positive indicator: Question must be explicitly identified as equation root-solving
+    # 2. Condition & root selection indicators:
+    # VAL-03 scope is strictly single-variable equation root verification without extra constraints.
+    # Questions specifying root conditions (positive/negative, integer, extremum, interval, or extra conditions)
+    # are gracefully delegated to TV7 (Rule Fallback) with status UNSUPPORTED and confidence 'rule_only'.
+    condition_indicators = re.search(
+        r"(?:"
+        r"\b(?:dương|âm|nguyên|hữu\s*tỉ|vô\s*tỉ|lớn\s*nhất|nhỏ\s*nhất|cực\s*đại|cực\s*tiểu)\b|"
+        r"\b(?:điều\s*kiện|với\s*điều\s*kiện|thỏa\s*mãn|thỏa|sao\s*cho)\b|"
+        r"\b(?:thuộc\s*(?:khoảng|đoạn|tập)?|khoảng|đoạn)\b|"
+        r"[a-zA-Z]\s*(?:[><]=?|≥|≤|\\ge|\\le|\\gt|\\lt)\s*[-+]?\d|"
+        r"[-+]?\d\s*(?:[><]=?|≥|≤|\\ge|\\le|\\gt|\\lt)\s*[a-zA-Z]"
+        r")",
+        question_text,
+        re.IGNORECASE,
+    )
+    if condition_indicators:
+        return EvaluationResult(
+            status=EvaluationStatus.UNSUPPORTED,
+            passed=False,
+            confidence="rule_only",
+            detail=(
+                f"Question contains root selection or extra condition ('{condition_indicators.group(0).strip()}') "
+                "which is out of scope for single-equation CAS verification. Fallback to rule checking."
+            ),
+        )
+
+    # 3. Positive indicator: Question must be explicitly identified as equation root-solving
     equation_task_indicators = re.search(
-        r"\b(?:giải\s*phương\s*trình|nghiệm\s*của\s*phương\s*trình|tìm\s*nghiệm|phương\s*trình[\s\S]*nghiệm|tập\s*nghiệm)\b",
+        r"\b(?:giải\s*(?:phương\s*trình)?|nghiệm\s*của\s*phương\s*trình|tìm\s*nghiệm|phương\s*trình[\s\S]*nghiệm|tập\s*nghiệm)\b",
         question_text,
         re.IGNORECASE,
     )
