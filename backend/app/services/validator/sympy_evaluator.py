@@ -551,8 +551,23 @@ CALCULATION_OR_CONDITION_WORDS = re.compile(
     re.IGNORECASE,
 )
 
-EQUATION_INTENT_PATTERN = re.compile(
-    r"\b(?:giải\s*(?:phương\s*trình)?|nghiệm\s*của\s*phương\s*trình|tìm\s*(?:tập\s*)?nghiệm|phương\s*trình[\s\S]*nghiệm|tập\s*nghiệm)\b",
+SUPPORTED_STEM_PATTERNS = [
+    # 1. "Giải [phương trình] <EQUATION>"
+    r"(?:hãy\s*)?giải\s*(?:phương\s*trình)?\s*<EQUATION>\s*[.?:]?",
+    # 2. "Tìm [tập] nghiệm [của phương trình] <EQUATION>"
+    r"(?:hãy\s*)?tìm\s*(?:tập\s*)?nghiệm\s*(?:của\s*phương\s*trình)?\s*<EQUATION>\s*[.?:]?",
+    # 3. "[Cho] phương trình <EQUATION> có [tập] nghiệm [là]"
+    r"(?:cho\s*)?phương\s*trình\s*<EQUATION>\s*có\s*(?:tập\s*)?nghiệm\s*(?:là)?\s*[.?:]?",
+    # 4. "[Cho] phương trình <EQUATION> [.] Tìm [tập] nghiệm / Nghiệm là gì [?]"
+    r"(?:cho\s*)?phương\s*trình\s*<EQUATION>\s*[.,;:]?\s*(?:tìm\s*(?:tập\s*)?nghiệm|nghiệm\s*là\s*gì)\s*[?.]?",
+    # 5. "[Hỏi] phương trình <EQUATION> có [tập] nghiệm [là]"
+    r"(?:hỏi\s*)?phương\s*trình\s*<EQUATION>\s*có\s*(?:tập\s*)?nghiệm\s*(?:là)?\s*[.?:]?",
+    # 6. "Xác định nghiệm [của phương trình] <EQUATION>"
+    r"(?:hãy\s*)?xác\s*định\s*nghiệm\s*(?:của\s*phương\s*trình)?\s*<EQUATION>\s*[.?:]?",
+]
+
+SUPPORTED_STEM_REGEX = re.compile(
+    r"^(?:" + "|".join(f"(?:{p})" for p in SUPPORTED_STEM_PATTERNS) + r")$",
     re.IGNORECASE,
 )
 
@@ -630,7 +645,7 @@ def verify_question_math(
             ),
         )
 
-    # 2. Check surrounding natural language text
+    # 2. Check surrounding natural language text for calculation/condition words
     stem_text = question_text[: seg.start()] + " " + question_text[seg.end() :]
     found_word = CALCULATION_OR_CONDITION_WORDS.search(stem_text)
     if found_word:
@@ -644,13 +659,19 @@ def verify_question_math(
             ),
         )
 
-    # 3. Positive intent: Stem must be identified as equation root-solving
-    if not EQUATION_INTENT_PATTERN.search(stem_text):
+    # 3. Full-stem whitelist verification: The entire question structure must match supported patterns
+    normalized_replaced = re.sub(
+        r"\s+", " ", question_text[: seg.start()] + "<EQUATION>" + question_text[seg.end() :]
+    ).strip()
+    if not SUPPORTED_STEM_REGEX.fullmatch(normalized_replaced):
         return EvaluationResult(
             status=EvaluationStatus.UNSUPPORTED,
             passed=False,
             confidence="rule_only",
-            detail="Question intent is not explicitly identified as equation root-solving. Fallback to rule checking.",
+            detail=(
+                f"Question structure '{normalized_replaced}' did not match supported single-equation question patterns. "
+                "Any additional conditions outside math delimiters or unclassified phrasing require rule fallback."
+            ),
         )
 
     # 4. Perform CAS verification in isolated process

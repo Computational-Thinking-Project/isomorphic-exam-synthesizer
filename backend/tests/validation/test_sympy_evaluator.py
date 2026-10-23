@@ -368,3 +368,46 @@ class TestRegressionPhilipFeedbackPR12:
         assert res_bad.status == EvaluationStatus.FAILED
         assert res_bad.passed is False
         assert res_bad.confidence == "sympy_verified"
+
+    def test_conditions_outside_math_delimiters_rejected_by_whitelist(self):
+        r"""
+        Review feedback (Round 5): Conditions outside math delimiters (ASCII or Unicode,
+        placed either before or after equation) must be rejected as UNSUPPORTED.
+        """
+        # 1. Condition after equation: ', x>0.'
+        q_after_ascii = "Giải phương trình $x^2-1=0$, x>0."
+        res_after_neg1 = verify_question_math(q_after_ascii, "-1")
+        assert res_after_neg1.status == EvaluationStatus.UNSUPPORTED
+        assert res_after_neg1.passed is False
+        assert res_after_neg1.confidence == "rule_only"
+
+        res_after_pos1 = verify_question_math(q_after_ascii, "1")
+        assert res_after_pos1.status == EvaluationStatus.UNSUPPORTED
+        assert res_after_pos1.passed is False
+        assert res_after_pos1.confidence == "rule_only"
+
+        # 2. Condition after equation (Unicode): ', x∈(0,2).'
+        q_after_unicode = "Giải phương trình $x^2-1=0$, x∈(0,2)."
+        res_uni_neg1 = verify_question_math(q_after_unicode, "-1")
+        assert res_uni_neg1.status == EvaluationStatus.UNSUPPORTED
+        assert res_uni_neg1.passed is False
+        assert res_uni_neg1.confidence == "rule_only"
+
+        res_uni_pos1 = verify_question_math(q_after_unicode, "1")
+        assert res_uni_pos1.status == EvaluationStatus.UNSUPPORTED
+        assert res_uni_pos1.passed is False
+        assert res_uni_pos1.confidence == "rule_only"
+
+        # 3. Condition before equation: 'x>0, giải phương trình $x^2-1=0$'
+        q_before_ascii = "x>0, giải phương trình $x^2-1=0$"
+        res_before_ascii = verify_question_math(q_before_ascii, "1")
+        assert res_before_ascii.status == EvaluationStatus.UNSUPPORTED
+        assert res_before_ascii.passed is False
+        assert res_before_ascii.confidence == "rule_only"
+
+        # 4. Condition before equation (Unicode): 'x∈(0,2), giải phương trình $x^2-1=0$'
+        q_before_unicode = "x∈(0,2), giải phương trình $x^2-1=0$"
+        res_before_unicode = verify_question_math(q_before_unicode, "1")
+        assert res_before_unicode.status == EvaluationStatus.UNSUPPORTED
+        assert res_before_unicode.passed is False
+        assert res_before_unicode.confidence == "rule_only"
