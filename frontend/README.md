@@ -26,17 +26,13 @@ Giữ Docker Desktop chạy Linux containers. Tại thư mục gốc repo, chạ
 
 Hai biến `VITE_*` phục vụ frontend; backend đọc hai biến không có tiền tố này. Supabase hướng dẫn dùng publishable key với Python client tại [Python quickstart](https://supabase.com/docs/guides/getting-started/quickstarts/flask). API `/api/users/me` hiện dùng key public kết hợp JWT của người đăng nhập để kiểm quyền theo user; không cần service-role key cho endpoint này.
 
-**Chẩn đoán 23/10/2026:** backend/frontend đều healthy nhưng backend đang nhận URL/key rỗng, log báo `SUPABASE_URL and SUPABASE_ANON_KEY must be configured`, còn `/api/users/me` trả 500. Điền hai biến backend trên rồi chạy lại `up` để Compose cập nhật environment; chỉ `restart` không nạp thay đổi `.env`. Chưa có bằng chứng API trả 200 sau bước sửa này. Health check đạt chỉ xác nhận server khởi động, chưa xác nhận kết nối Supabase/profile.
+### Profile trên Supabase
 
-**Kiểm tiếp 23/10/2026:** container đã nhận đủ URL/key backend và URL khớp frontend. Log lỗi profile mới là `PGRST205`, không tìm thấy `public.users` trong schema cache của Data API. Bảng đã được khai báo ở [schema.sql](../backend/scripts/schema.sql), nhưng chưa xác minh trạng thái triển khai/exposure/cache trên Supabase chung; cần Duy kiểm schema/quyền/RLS và phối hợp người quản lý DB, không tự chạy lại toàn bộ SQL hoặc dùng service-role để bỏ qua lỗi. Chưa có API profile200.
+TV1 Trung Anh và TV3 Duy cùng quản lý Supabase. Ngày 23/10/2026 TV1 đã áp [setup_auth_profiles.sql](../backend/scripts/setup_auth_profiles.sql) khi bảng `public.users`, function đồng bộ và custom trigger chưa tồn tại. Script lấy định nghĩa Auth từ [schema.sql](../backend/scripts/schema.sql), tạo bảng/FK/RLS/policy/trigger, cấp SELECT cho `authenticated` và bổ sung profile từ các tài khoản Auth đã có. Năm cờ kiểm cuối đều true; sau đó tài khoản Google B mới tự có profile với ID khớp Auth và API profile trả 200 theo kiểm thủ công của TV1.
 
-**Cập nhật từ người quản lý 23/10/2026:** TV1 Trung Anh và TV3 Duy cùng quản lý Supabase; TV1 có thể trực tiếp bổ sung bảng/cấu hình theo schema repo và ghi lại phần đã áp dụng để phối hợp với Duy. User xác nhận `public.users` chưa có. Kiểm function/trigger hiện có trước khi áp phần Auth, gồm bảng, RLS/quyền API, đồng bộ user mới và bổ sung các user đã đăng nhập trước đó; chưa có bằng chứng SQL được chạy hoặc profile trả200. Các ghi chú cần chờ Duy thao tác phía trên là checkpoint lịch sử.
+**Không chạy lại script trên project đã setup.** Script dành cho trạng thái chưa có các đối tượng Auth và không thay thế chúng. Khi triển khai schema còn lại, Duy cần đối chiếu các đối tượng Auth đã áp; không chạy nguyên `schema.sql` vì có policy trùng tên. Đây không phải migration đầy đủ cho các bảng nghiệp vụ.
 
-Kết quả SELECT do TV1 cung cấp: `users_exists=false`, `sync_function_exists=false`, `auth_triggers=[]`. Đã chuẩn bị [setup_auth_profiles.sql](../backend/scripts/setup_auth_profiles.sql) cho trạng thái chưa có các đối tượng Auth này. Script dùng bảng/function/trigger/policy từ schema nhóm, thêm quyền SELECT cho `authenticated` và bổ sung các tài khoản Auth có email đã tồn tại; không tạo dữ liệu mẫu. Toàn bộ phần ghi nằm trong một transaction, không thay thế các đối tượng đã có. Chạy một lần trong SQL Editor với role `postgres`, xem dòng kiểm cuối (các cờ true và profile_count), rồi thử lại từ Login. Chưa có kết quả thực thi/cloud200 tại checkpoint chuẩn bị này. Khi triển khai phần schema còn lại, đối chiếu các mục Auth đã áp; `schema.sql` có các policy trùng tên và không được thiết kế để chạy lại nguyên file sau setup này.
-
-**SQL Auth đã áp theo TV1 — 23/10/2026:** người dùng báo năm cờ kiểm cuối đều `true`, `profile_count=1` sau khi chạy script trong Supabase. Đây là bằng chứng bảng/function/trigger/RLS/quyền SELECT đã có và một hồ sơ đã được bổ sung; chưa chứng minh trigger hoạt động với user mới, cách ly A/B hoặc API profile trả200. Bước tiếp bấm Thử lại tải hồ sơ trên Login và kiểm Network `/api/users/me`, không chạy lại script đã áp.
-
-**Profile và phiên thật đã qua — 23/10/2026:** TV1 xác nhận yêu cầu từ ứng dụng `GET /api/users/me` trả **200**, Dashboard hiển thị đúng tên sau khi áp SQL. TV1 kiểm thủ công đạt: reload giữ phiên/profile; đăng xuất về Login, truy cập lại `/dashboard` và reload vẫn bị chặn; đăng nhập Google lại nhận profile 200 và đúng tên. Chưa kiểm trigger với tài khoản mới, ownership A/B hoặc expiry thật; các mốc lỗi500 và chuẩn bị SQL phía trên là lịch sử trước kết quả này.
+Hai lỗi đã xử lý trong quá trình setup: backend thiếu URL/key và Data API báo `PGRST205` do chưa có `public.users`. Nếu đổi `.env`, chạy lại `up` để Compose cập nhật environment; chỉ `restart` không nạp cấu hình mới. Health check đạt không thay việc kiểm API profile.
 
 Kiểm profile bằng nút đăng nhập/Thử lại tải hồ sơ trên `/login`, rồi xem yêu cầu `/api/users/me` trong Network. Mở thẳng URL này trên thanh địa chỉ không đi qua API client gắn token, nên phản hồi `401 {"detail":"Missing authorization header"}` là kết quả đúng cho yêu cầu chưa xác thực; nó khác lỗi500 của yêu cầu ứng dụng.
 
@@ -120,18 +116,28 @@ npm.cmd run lint
 npm.cmd run build
 ```
 
-Unit tests dùng source thật và Auth/HTTP giả lập, không cần key/env hoặc gọi Supabase thật. Mốc local 19/10/2026 đạt 37 unit tests, lint/build và 20 ca UI bootstrap bằng fixture có điều khiển: retry, lỗi tạm/hết phiên, StrictMode/cleanup, kết quả đến muộn và protected route. 20 ca UI là lượt kiểm browser riêng, **không** nằm trong `npm run test` và không chứng minh expiry/OAuth/backend thật. Workflow Docker mới chạy `scripts/dev.ps1 test`, gồm frontend test/lint/build; không tự chạy 20 ca browser hoặc OAuth thật. Chưa có kết quả CI cho nhánh Auth sau lần đồng bộ này.
+### Bằng chứng kiểm tại mốc chốt tài liệu 23/10/2026
 
-Mốc agent kiểm ngày 22/10 trước commit UI `08cd96a`: **51/51 Node tests**, lint/build đạt và **17/17 browser cases** riêng trên App/React StrictMode với Auth/HTTP giả lập; không cộng thành 68 npm tests. Ngày 23/10 TV1 kiểm thủ công trên tích hợp thật: profile 200/đúng tên, reload giữ phiên, đăng xuất/chặn Dashboard và Google login lại đều đạt. Chưa kiểm trigger tài khoản mới, expiry thật hoặc ownership A/B. Chưa chạy lại test/lint/build cho lượt cập nhật tài liệu này.
+| Phạm vi | Kết quả và nguồn |
+|---|---|
+| Google login, profile backend | TV1 kiểm thật: `/api/users/me` 200, Dashboard đúng tên/ảnh. |
+| Khôi phục và kết thúc phiên | TV1 kiểm thật: reload giữ phiên/profile; sign-out về Login, mở Dashboard/reload vẫn bị chặn; đăng nhập lại thành công. |
+| Tài khoản mới và đổi A/B | TV1 kiểm thật: B chưa tồn tại trước login, profile tự tạo có ID khớp Auth; reload đúng B và chuyển lại A đúng thông tin. |
+| RLS SELECT profile | TV1 chạy truy vấn `users.select('id')` không lọc tài khoản bằng JWT từng A và B: mỗi lần thành công, chỉ có một dòng ID của chính user. Không suy ra quyền ghi/sessions/storage. |
+| Refresh chủ động | TV1 gọi helper `refreshSessionOnce()` với Supabase thật rồi `getMyProfile()`: hai cờ refresh/profile khớp đều true; vẫn ở Dashboard đúng tài khoản và F5 giữ phiên. Đây chưa phải ca token tự hết hạn. |
+| Avatar | TV1 kiểm ảnh thật và đổi URL ảnh lỗi trong DevTools: chuyển chữ viết tắt, reload lấy lại ảnh. |
+| Frontend tự động | Agent kiểm ngày 22/10: 51/51 Node tests, lint/build đạt; TV1 báo test/lint/build đạt sau khi thêm avatar ngày 23/10, không cung cấp số test mới. |
+| Browser giả lập | Agent kiểm ngày 22/10: 17/17 ca App/React StrictMode với Auth/HTTP giả lập, gồm lỗi/retry, 401, logout và đổi tài khoản. Đây là lượt riêng, không cộng vào Node tests và không chứng minh expiry thật. |
+| Docker trước khi ghép profile mới | TV1 kiểm ngày 21/10 tại `225c3db`: backend 70 tests/1 warning, SymPy parser và frontend test/lint/build đạt. Không phải lượt kiểm Docker mới nhất của toàn bộ nhánh Auth. |
 
-**Checkpoint Docker do tác giả kiểm ngày 21/10/2026**, tại merge commit `225c3db` (nhận dev `c583f4a`): setup/doctor/up đạt, mở được frontend/backend docs; đã báo hoàn thành kiểm Google quay về login, reload giữ phiên, chặn Dashboard khi profile_pending và đăng xuất. Lệnh `scripts/dev.ps1 test` đạt: backend **70 passed, 1 warning**; SymPy parser và frontend test/lint/build đều đạt theo kết quả tác giả cung cấp, chưa ghi số test frontend của lượt này. Cảnh báo StarletteDeprecationWarning đề nghị chuyển TestClient từ httpx sang httpx2; chưa đổi dependency/lockfile backend trong task Auth. Agent không trực tiếp chạy lại bộ kiểm Docker này.
+Unit tests dùng source thật và Auth/HTTP giả lập, không cần key/env hoặc gọi Supabase thật. Không ghi token, email hoặc ID tài khoản thật vào tài liệu/bằng chứng. Agent không chạy lại test/lint/build trong lượt chỉ sửa tài liệu này.
 
-Kiểm thủ công với tài khoản được phép: Google quay về `/login`, profile200 mở Dashboard; reload khôi phục phiên rồi xác nhận lại profile; đăng xuất về Login và mở lại `/dashboard` vẫn bị chặn; đăng nhập lại mở đúng tài khoản.
+`scripts/dev.ps1 test` chạy backend tests, SymPy parser và frontend test/lint/build trong Docker; không tự chạy các ca browser hay Google OAuth thật. Job frontend trong [ci.yml](../.github/workflows/ci.yml) chỉ build; [docker-ci.yml](../.github/workflows/docker-ci.yml) chạy helper trên để kiểm test/lint/build trong container. Kết quả CI của head mới sau push cần xem trên PR. Warning Starlette/httpx ở checkpoint cũ chưa được sửa dependency trong task này.
 
 ## Phần đang chờ tích hợp/review
 
-- Profile của Duy đã được ghép; TV1 xác nhận API 200/đúng tên và kiểm thật reload/logout/chặn Dashboard/đăng nhập lại đạt. Avatar đã ghép; ngày 23/10 TV1 báo kiểm flow/ảnh lỗi chuyển chữ viết tắt và npm test/lint/build đều đạt; agent đối chiếu hai file và diff-check, không chạy lại hoặc nhận đã kiểm A/B. Còn trigger tài khoản mới, ownership A/B, expiry thật và review; chưa có nghiệm thu đầy đủ TASK-101.
+- TASK-101: code Google login/profile/avatar và các ca thật trong bảng trên đã có bằng chứng TV1; chưa được review/nghiệm thu. Token tự hết hạn hoặc refresh thật thất bại chưa kiểm trên cloud; hành vi 401/refresh thất bại có kiểm giả lập.
 - Dashboard danh sách phiên/API list/clone, Clone Modal của Bội Anh và điều hướng theo dữ liệu thật chưa được tích hợp trong nhánh Auth này.
-- Chưa nghiệm thu quyền dữ liệu thật với tài khoản A/B, expiry thật, trigger tạo profile cho user mới hoặc session API. Docker startup và profile có checkpoint tác giả kiểm ở trên; chưa kiểm bản static Nginx, CI của tổ hợp Auth mới hoặc nghiệm thu tích hợp toàn bộ.
+- Chưa kiểm bản static Nginx và CI của head Auth mới. Quyền ghi/sessions/storage sẽ kiểm cùng phạm vi tích hợp tương ứng; quyền SELECT profile không thay bằng chứng cho các phần đó.
 
-Đây là checkpoint frontend và profile tích hợp từng phần; **TASK-101/103 chưa được coi hoàn tất**. Không dùng mock profile để bỏ qua phần tích hợp đang chờ.
+Nhánh hiện tại: `feat/task-101-google-login` → `dev`, tiếp tục Draft PR #7. Sau Auth review/merge mới làm TASK-103 trên `feat/task-103-dashboard-api`. **Chưa đánh dấu TASK-101/103 Done.** Quyết định tích hợp và SQL được ghi ở [DEC-TV1-002](../docs/change_log.md#dec-tv1-002-tích-hợp-google-oauth-profile-và-bootstrap-auth).
