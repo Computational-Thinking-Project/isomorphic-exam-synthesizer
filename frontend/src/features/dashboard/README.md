@@ -6,6 +6,16 @@ Dashboard still uses mock session data and action notices. Backend session APIs,
 
 ## Run and check
 
+### Supabase prerequisite for TASK-103 list/clone
+
+On 24/10/2026 TV1 reported `users` exists, but `exam_sessions`, `source_questions`, `question_blueprints`, `session_status` and `question_status` are absent. A real list request returned 500; sanitized backend diagnostics identified PGRST205 for `public.exam_sessions`.
+
+For this exact preflight, [setup_dashboard_sessions.sql](../../../../backend/scripts/setup_dashboard_sessions.sql) creates the three list/clone tables, `session_status`, team ownership policies and explicit authenticated grants. **TV1 reported successful execution on 24/10/2026**, followed by a real authenticated `GET /api/sessions?page=1&page_size=20` returning 200 with `items: []`, `total: 0`, `page: 1`, `page_size: 20`. This confirms the empty-list request works; clone and session ownership across accounts remain unverified. Do not rerun the script or the full team schema over this setup. The script is intended to run once as postgres without recreating Auth or storage, and fails rather than replacing an existing object.
+
+The grants cover SELECT/INSERT on the three tables and DELETE on the session parent for clone-error cleanup. UPDATE is not granted here; later Stage/editing migrations must agree their required grants with Duy. `question_status` is not used by these three tables, and session detail additionally reads `exam_versions`; those belong to subsequent schema setup. Metadata checks after the script do not prove real list/clone or account isolation. See [DEC-TV1-003](../../../../docs/change_log.md#dec-tv1-003-bổ-sung-db-cho-dashboard-listclone).
+
+### Frontend
+
 From the frontend directory:
 
 ```powershell
