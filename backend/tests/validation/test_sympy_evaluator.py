@@ -315,3 +315,56 @@ class TestRegressionPhilipFeedbackPR12:
         assert dict_res["status"] == "unsupported"
         assert dict_res["confidence"] == "rule_only"
         assert dict_res["passed"] is False
+
+    def test_latex_supplementary_conditions_return_unsupported(self):
+        r"""
+        Review feedback (Round 4): LaTeX extra conditions ($x\in(0,2)$, $x>\frac{1}{2}$, $x\ne-1$)
+        must return UNSUPPORTED regardless of whether the answer satisfies the condition.
+        """
+        # 1. Condition: $x \in (0, 2)$
+        q_in = r"Giải phương trình $x^2-1=0$ với $x\in(0,2)$"
+        res_in_neg1 = verify_question_math(q_in, "-1")
+        assert res_in_neg1.status == EvaluationStatus.UNSUPPORTED
+        assert res_in_neg1.passed is False
+        assert res_in_neg1.confidence == "rule_only"
+
+        res_in_pos1 = verify_question_math(q_in, "1")
+        assert res_in_pos1.status == EvaluationStatus.UNSUPPORTED
+        assert res_in_pos1.passed is False
+        assert res_in_pos1.confidence == "rule_only"
+
+        # 2. Condition: $x > \frac{1}{2}$
+        q_gt = r"Giải phương trình $x^2-1=0$ với $x>\frac{1}{2}$"
+        res_gt_neg1 = verify_question_math(q_gt, "-1")
+        assert res_gt_neg1.status == EvaluationStatus.UNSUPPORTED
+        assert res_gt_neg1.passed is False
+        assert res_gt_neg1.confidence == "rule_only"
+
+        res_gt_pos1 = verify_question_math(q_gt, "1")
+        assert res_gt_pos1.status == EvaluationStatus.UNSUPPORTED
+        assert res_gt_pos1.passed is False
+        assert res_gt_pos1.confidence == "rule_only"
+
+        # 3. Condition: $x \ne -1$
+        q_ne = r"Giải phương trình $x^2-1=0$ với $x\ne-1$"
+        res_ne_neg1 = verify_question_math(q_ne, "-1")
+        assert res_ne_neg1.status == EvaluationStatus.UNSUPPORTED
+        assert res_ne_neg1.passed is False
+        assert res_ne_neg1.confidence == "rule_only"
+
+        res_ne_pos1 = verify_question_math(q_ne, "1")
+        assert res_ne_pos1.status == EvaluationStatus.UNSUPPORTED
+        assert res_ne_pos1.passed is False
+        assert res_ne_pos1.confidence == "rule_only"
+
+        # 4. Standard equation without condition: verified for 1, failed for 2
+        q_std = "Giải phương trình $x^2-1=0$"
+        res_ok = verify_question_math(q_std, "1")
+        assert res_ok.status == EvaluationStatus.VERIFIED
+        assert res_ok.passed is True
+        assert res_ok.confidence == "sympy_verified"
+
+        res_bad = verify_question_math(q_std, "2")
+        assert res_bad.status == EvaluationStatus.FAILED
+        assert res_bad.passed is False
+        assert res_bad.confidence == "sympy_verified"

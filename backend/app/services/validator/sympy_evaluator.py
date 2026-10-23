@@ -536,6 +536,27 @@ def verify_equation_solution(
     )
 
 
+DISALLOWED_MATH_SYMBOLS = re.compile(
+    r"(?:\\in|\\notin|\\subset|\\ne|\\neq|\\ge|\\le|\\geq|\\leq|\\gt|\\lt|[><]=?|≥|≤|≠|,|;|\\dots)"
+)
+
+CALCULATION_OR_CONDITION_WORDS = re.compile(
+    r"\b(?:"
+    r"tính|giá\s*trị|biểu\s*thức|rút\s*gọn|đạo\s*hàm|nguyên\s*hàm|tích\s*phân|xác\s*suất|bằng\s*bao\s*nhiêu|"
+    r"thể\s*tích|diện\s*tích|khoảng\s*cách|tọa\s*độ|góc|số\s*nghiệm|tổng\s*(?:các\s*)?nghiệm|tích\s*(?:các\s*)?nghiệm|"
+    r"dương|âm|nguyên|hữu\s*tỉ|vô\s*tỉ|lớn\s*nhất|nhỏ\s*nhất|cực\s*đại|cực\s*tiểu|"
+    r"điều\s*kiện|với\s*điều\s*kiện|với|thỏa\s*mãn|thỏa|sao\s*cho|"
+    r"thuộc|khoảng|đoạn"
+    r")\b",
+    re.IGNORECASE,
+)
+
+EQUATION_INTENT_PATTERN = re.compile(
+    r"\b(?:giải\s*(?:phương\s*trình)?|nghiệm\s*của\s*phương\s*trình|tìm\s*(?:tập\s*)?nghiệm|phương\s*trình[\s\S]*nghiệm|tập\s*nghiệm)\b",
+    re.IGNORECASE,
+)
+
+
 def verify_question_math(
     question_text: str,
     correct_answer: str,
@@ -543,11 +564,12 @@ def verify_question_math(
 ) -> EvaluationResult:
     """
     Attempt formal mathematical verification of a question stem and its correct answer.
-    Extracts equation from the question text and runs verification in an isolated process.
+    Strictly verifies that the entire input matches a supported single-variable equation
+    solving question without extra conditions, intervals, or inequalities.
 
-    If question math is not formal algebra/calculus (e.g. geometry, word problems,
-    expression calculation, or unsupported math), gracefully returns UNSUPPORTED with
-    confidence 'rule_only', ready for Rule Fallback Checker (VAL-04 / TV7).
+    If question contains extra formulas, root selection conditions, intervals,
+    or unsupported math, gracefully returns UNSUPPORTED with confidence 'rule_only'
+    for Rule Fallback Checker (VAL-04 / TV7).
     """
     if not question_text or not question_text.strip():
         return EvaluationResult(
@@ -557,57 +579,73 @@ def verify_question_math(
             detail="Question text is empty.",
         )
 
-    # 1. Negative indicator: expressions, values, calculations, geometry, parameters
-    # e.g., "Cho x = 2. Tính x + 1" or "Với x = 2, biểu thức x + 1 bằng bao nhiêu?"
-    calculation_indicators = re.search(
-        r"\b(?:tính|giá\s*trị\s*(?:của|biểu\s*thức)?|rút\s*gọn|đạo\s*hàm|nguyên\s*hàm|tích\s*phân|xác\s*suất|bằng\s*bao\s*nhiêu|biểu\s*thức|thể\s*tích|diện\s*tích|khoảng\s*cách|tọa\s*độ|góc|số\s*nghiệm|tổng\s*(?:các\s*)?nghiệm|tích\s*(?:các\s*)?nghiệm)\b",
-        question_text,
-        re.IGNORECASE,
+    # 1. Extract all mathematical segments (inline $...$, $$, \(...\), \[...\])
+    math_segments = list(
+        re.finditer(r"\$\$([^\$]+)\$\$|\$([^\$]+)\$|\\\[(.*?)\\\]|\\\((.*?)\\\)", question_text)
     )
-    if calculation_indicators:
+    if len(math_segments) == 0:
+        return EvaluationResult(
+            status=EvaluationStatus.UNSUPPORTED,
+            passed=False,
+            confidence="rule_only",
+            detail="No mathematical equation found in question stem. Fallback to rule checking.",
+        )
+
+    if len(math_segments) > 1:
+        # Multiple formulas -> supplementary condition (e.g. $x \in (0, 2)$, $x > 1/2$, $x \ne -1$)
         return EvaluationResult(
             status=EvaluationStatus.UNSUPPORTED,
             passed=False,
             confidence="rule_only",
             detail=(
-                f"Question requires computation/evaluation ('{calculation_indicators.group(0)}') "
-                "rather than root-finding of an equation. Fallback to rule checking."
+                f"Question contains multiple mathematical segments ({len(math_segments)} found). "
+                "Only single-equation root finding without additional conditions is supported in VAL-03. "
+                "Fallback to rule checking."
             ),
         )
 
-    # 2. Condition & root selection indicators:
-    # VAL-03 scope is strictly single-variable equation root verification without extra constraints.
-    # Questions specifying root conditions (positive/negative, integer, extremum, interval, or extra conditions)
-    # are gracefully delegated to TV7 (Rule Fallback) with status UNSUPPORTED and confidence 'rule_only'.
-    condition_indicators = re.search(
-        r"(?:"
-        r"\b(?:dương|âm|nguyên|hữu\s*tỉ|vô\s*tỉ|lớn\s*nhất|nhỏ\s*nhất|cực\s*đại|cực\s*tiểu)\b|"
-        r"\b(?:điều\s*kiện|với\s*điều\s*kiện|thỏa\s*mãn|thỏa|sao\s*cho)\b|"
-        r"\b(?:thuộc\s*(?:khoảng|đoạn|tập)?|khoảng|đoạn)\b|"
-        r"[a-zA-Z]\s*(?:[><]=?|≥|≤|\\ge|\\le|\\gt|\\lt)\s*[-+]?\d|"
-        r"[-+]?\d\s*(?:[><]=?|≥|≤|\\ge|\\le|\\gt|\\lt)\s*[a-zA-Z]"
-        r")",
-        question_text,
-        re.IGNORECASE,
-    )
-    if condition_indicators:
+    # Single formula found
+    seg = math_segments[0]
+    formula = (seg.group(1) or seg.group(2) or seg.group(3) or seg.group(4) or "").strip()
+
+    # Must contain exactly one '=' sign
+    if formula.count("=") != 1:
+        return EvaluationResult(
+            status=EvaluationStatus.UNSUPPORTED,
+            passed=False,
+            confidence="rule_only",
+            detail=f"Mathematical segment '{formula}' is not a single algebraic equation. Fallback to rule checking.",
+        )
+
+    # Must not contain condition or inequality symbols inside formula (e.g. \in, \ne, >, <, comma)
+    disallowed_symbol = DISALLOWED_MATH_SYMBOLS.search(formula)
+    if disallowed_symbol:
         return EvaluationResult(
             status=EvaluationStatus.UNSUPPORTED,
             passed=False,
             confidence="rule_only",
             detail=(
-                f"Question contains root selection or extra condition ('{condition_indicators.group(0).strip()}') "
-                "which is out of scope for single-equation CAS verification. Fallback to rule checking."
+                f"Equation formula contains condition/inequality symbol ('{disallowed_symbol.group(0)}'). "
+                "Fallback to rule checking."
             ),
         )
 
-    # 3. Positive indicator: Question must be explicitly identified as equation root-solving
-    equation_task_indicators = re.search(
-        r"\b(?:giải\s*(?:phương\s*trình)?|nghiệm\s*của\s*phương\s*trình|tìm\s*nghiệm|phương\s*trình[\s\S]*nghiệm|tập\s*nghiệm)\b",
-        question_text,
-        re.IGNORECASE,
-    )
-    if not equation_task_indicators:
+    # 2. Check surrounding natural language text
+    stem_text = question_text[: seg.start()] + " " + question_text[seg.end() :]
+    found_word = CALCULATION_OR_CONDITION_WORDS.search(stem_text)
+    if found_word:
+        return EvaluationResult(
+            status=EvaluationStatus.UNSUPPORTED,
+            passed=False,
+            confidence="rule_only",
+            detail=(
+                f"Question contains calculation or condition word ('{found_word.group(0)}'). "
+                "Fallback to rule checking."
+            ),
+        )
+
+    # 3. Positive intent: Stem must be identified as equation root-solving
+    if not EQUATION_INTENT_PATTERN.search(stem_text):
         return EvaluationResult(
             status=EvaluationStatus.UNSUPPORTED,
             passed=False,
@@ -615,17 +653,9 @@ def verify_question_math(
             detail="Question intent is not explicitly identified as equation root-solving. Fallback to rule checking.",
         )
 
-    equation = extract_equation_from_text(question_text)
-    if not equation:
-        return EvaluationResult(
-            status=EvaluationStatus.UNSUPPORTED,
-            passed=False,
-            confidence="rule_only",
-            detail="No solvable algebraic equation extracted from question text. Fallback to rule checking.",
-        )
-
+    # 4. Perform CAS verification in isolated process
     return verify_equation_solution(
-        equation_str=equation,
+        equation_str=formula,
         candidate_answer_str=correct_answer,
         timeout=timeout,
     )
