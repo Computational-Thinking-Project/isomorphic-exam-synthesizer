@@ -2,7 +2,7 @@
 
 Dashboard is connected to `/dashboard` under `ProtectedRoute`. A Supabase session enters `profile_pending`; the shared hook requests `GET /api/users/me` and opens Dashboard only after accepting a profile for the current account/login version. TV1 reported a real profile 200 response and the correct Dashboard name on 23/10/2026.
 
-Dashboard still uses mock session data and action notices. Backend session APIs, real create/open navigation and the Clone Modal are not integrated in this branch. The current layout is provisional; TASK-101/103 are not complete.
+Dashboard still uses mock session data and action notices. The list service exists separately but is not wired to the page; real create/open navigation and the Clone Modal are not integrated. The current layout is provisional; TASK-101/103 are not complete.
 
 ## Run and check
 
@@ -58,6 +58,12 @@ TV1 owns the page/card and `DashboardRoute.jsx`, which supplies the stable mock 
 `dashboardMock.js` supplies `listDashboardSessions({ scenario })`, where scenario is success, empty or error. Session fields are `id`, `title`, `subject`, `created_at`, `status`; these are illustrative fixtures, not the final TV3 API contract. Approved/exported fixtures show a view label; destination routes are decided by the parent after the status contract is agreed.
 
 ## Verification and remaining work
+
+### List service checkpoint — 24/10/2026
+
+- [sessions.js](../../services/sessions.js) provides `listSessions({ page = 1, pageSize = 20, signal } = {})` through the shared API client, returning the full `{ items, total, page, page_size }` envelope. Invalid input/response throws; HTTP errors remain available to the caller. The page still needs an adapter because its loader expects an array.
+- TV1 reported the real service call returning the valid empty first page after DB setup. Clone, populated real pages, session ownership A/B and routed UI remain unverified.
+- Agent added 12 cases in [sessions.test.js](../../services/sessions.test.js) using the actual service/client/store with Auth/HTTP fixtures: query/token/envelope, empty/out-of-range pages, invalid data/input, HTTP/network errors without extra retries/logout, cancellation, stale results after logout/account change, and same-account refresh. Frontend **63/63 Node tests**, lint/build and diff-check passed. These are not browser/cloud tests; clone is not implemented in this service yet.
 
 Current documentation checkpoint, updated 23/10/2026:
 
