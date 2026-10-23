@@ -52,3 +52,34 @@ export async function listSessions({
 
     return data;
 }
+
+export async function cloneSession(sessionId, title) {
+    if (typeof sessionId !== 'string' || !sessionId.trim()) {
+        throw new Error('Phiên cần nhân bản không hợp lệ.');
+    }
+
+    const sourceId = sessionId.trim();
+    const newTitle = typeof title === 'string' ? title.trim() : '';
+
+    if (!newTitle || [...newTitle].length > 255) {
+        throw new Error('Tên bản sao phải có từ 1 đến 255 ký tự.');
+    }
+
+    const { data } = await api.post(
+        `/sessions/${encodeURIComponent(sourceId)}/clone`,
+        { new_title: newTitle },
+    );
+
+    if (
+        !isSessionItem(data) ||
+        data.id === sourceId ||
+        data.status !== 'draft'
+    ) {
+        throw new Error(
+            'Phản hồi nhân bản không hợp lệ. '
+            + 'Hãy kiểm tra lại danh sách trước khi thử lại.',
+        );
+    }
+
+    return data;
+}

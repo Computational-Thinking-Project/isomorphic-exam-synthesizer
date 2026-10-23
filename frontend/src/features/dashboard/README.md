@@ -2,7 +2,7 @@
 
 Dashboard is connected to `/dashboard` under `ProtectedRoute`. A Supabase session enters `profile_pending`; the shared hook requests `GET /api/users/me` and opens Dashboard only after accepting a profile for the current account/login version. TV1 reported a real profile 200 response and the correct Dashboard name on 23/10/2026.
 
-Dashboard still uses mock session data and action notices. The list service exists separately but is not wired to the page; real create/open navigation and the Clone Modal are not integrated. The current layout is provisional; TASK-101/103 are not complete.
+Dashboard still uses mock session data and action notices. List and clone services exist separately but are not wired to the page; real create/open navigation and the Clone Modal are not integrated. The current layout is provisional; TASK-101/103 are not complete.
 
 ## Run and check
 
@@ -59,6 +59,12 @@ TV1 owns the page/card and `DashboardRoute.jsx`, which supplies the stable mock 
 
 ## Verification and remaining work
 
+### Clone service checkpoint — 24/10/2026
+
+- [sessions.js](../../services/sessions.js) now also provides `cloneSession(sessionId, title)` through the shared API client: POST `/api/sessions/{id}/clone` with `{ new_title }`, returning the direct session object. It validates the ID/title and requires a new session ID with status `draft`. The shared client supplies the token and handles 401 refresh/retry at most once; the service adds no retries on network errors, timeouts or 5xx, which could create duplicate copies.
+- Agent reviewed TV1's implementation and added 9 clone cases to [sessions.test.js](../../services/sessions.test.js): request/body/token/201, Unicode title limit, invalid input/response, HTTP/network/timeout failures without resubmission, stale responses after account change/logout, and shared 401 retry success/exhaustion. Frontend **72/72 Node tests**, lint/build and diff-check passed. Tests use the actual service/client/store with Auth/HTTP fixtures, without cloud writes or new dependencies.
+- Real clone and its database effects remain unverified because the real account's list is empty. Ignoring a response after logout/account change does not cancel a write already performed by the backend. Dashboard list/pagination, Clone Modal and post-clone refresh are still pending.
+
 ### List service checkpoint — 24/10/2026
 
 - [sessions.js](../../services/sessions.js) provides `listSessions({ page = 1, pageSize = 20, signal } = {})` through the shared API client, returning the full `{ items, total, page, page_size }` envelope. Invalid input/response throws; HTTP errors remain available to the caller. The page still needs an adapter because its loader expects an array.
@@ -83,6 +89,6 @@ Historical Dashboard UI verification on 17/10/2026, before the real auth changes
 
 The last author-provided `npm audit` report on 17/10/2026 contained 15 vulnerabilities (4 low, 5 moderate, 6 high). Audit has not passed; no dependency upgrades or `npm audit fix --force` were applied in this increment. Dependency remediation requires separate compatibility checks and review.
 
-Remaining work: Auth PR #7 review and current-head CI; natural expiry/failed refresh on cloud and the static Nginx build remain unverified. After Auth review/merge to `dev`, integrate TV3/Duy's session APIs and TV2/Bội Anh's Clone Modal on `feat/task-103-dashboard-api`, connect create/open navigation and refresh the list after cloning. Verify application data persistence/errors/ownership with the backend. Repeat Docker checks when integrating those changes; the real Auth/profile SELECT checks do not verify session/clone APIs.
+Remaining work: Auth PR #7 review and current-head CI; natural expiry/failed refresh on cloud and the static Nginx build remain unverified. Per the 24/10 decision, continue TASK-103 on `feat/task-103-dashboard-api` while Auth awaits review: wire list/pagination, integrate TV2/Bội Anh's agreed Clone Modal, connect agreed create/open routes and refresh the list after cloning. Auth must be accepted into `dev` before merging Dashboard there; check ancestry/diff if Auth is squash merged. Verify application data persistence/errors/ownership with the backend. Repeat Docker checks when integrating those changes; the real Auth/profile SELECT checks do not verify session/clone APIs.
 
 The visual layout remains provisional. Apply the agreed design in its own implementation step; this README update does not change or approve the interface.

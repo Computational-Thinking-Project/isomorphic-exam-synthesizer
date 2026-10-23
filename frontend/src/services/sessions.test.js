@@ -7,7 +7,7 @@ import { auth } from './test-support/supabase.stub.js';
 
 // Dùng service/client/store thật; chỉ giả lập Auth và đường truyền HTTP.
 register('./test-support/auth-loader.js', import.meta.url);
-const { listSessions } = await import('./sessions.js');
+const { listSessions, cloneSession } = await import('./sessions.js');
 const { api } = await import('./api.js');
 
 const options = { timeout: 3000 };
@@ -22,6 +22,10 @@ const item = {
 
 function envelope(overrides = {}) {
     return { items: [], total: 0, page: 1, page_size: 20, ...overrides };
+}
+
+function clonedItem(overrides = {}) {
+    return { ...item, id: 'session-copy', title: 'Bản sao', status: 'draft', ...overrides };
 }
 
 function response(config, data) {
@@ -204,3 +208,149 @@ test('refresh cùng tài khoản trong lúc tải không hủy list hợp lệ',
     assert.equal(useAuthStore.getState().sessionVersion, version);
     assert.equal(useAuthStore.getState().status, 'authenticated');
 });
+
+test('clone gửi POST đúng ID/tên và Bearer, trả trực tiếp phiên mới HTTP 201', options, async () => {
+    const data = clonedItem();
+    const initial = useAuthStore.getState();
+    let calls = 0;
+    api.defaults.adapter = async (config) => {
+        calls += 1;
+        assert.equal(config.method, 'post');
+        assert.equal(api.getUri(config), '/api/sessions/session%3Fa%23b/clone');
+        assert.deepEqual(JSON.parse(config.data), { new_title: 'Bản sao' });
+        assert.equal(config.headers.get('Authorization'), 'Bearer test-list-token-a');
+        return { ...response(config, data), status: 201 };
+    };
+    assert.equal(await cloneSession(' session?a#b ', ' Bản sao '), data);
+    assert.equal(calls, 1);
+    assert.equal(useAuthStore.getState(), initial);
+});
+
+test('clone nhận tên 255 ký tự Unicode theo giới hạn backend', options, async () => {
+    const title = '📚'.repeat(255);
+    const data = clonedItem({ title });
+    api.defaults.adapter = async (config) => {
+        assert.deepEqual(JSON.parse(config.data), { new_title: title });
+        return { ...response(config, data), status: 201 };
+    };
+    assert.equal(await cloneSession(item.id, title), data);
+});
+
+test('clone chặn ID/tên không hợp lệ trước Auth và HTTP', options, async () => {
+    let calls = 0;
+    auth.getSession = async () => { calls += 1; throw new Error('Unexpected Auth'); };
+    api.defaults.adapter = async () => { calls += 1; throw new Error('Unexpected HTTP'); };
+    for (const id of [undefined, null, 123, '', ' \n ']) {
+        await assert.rejects(cloneSession(id, 'Bản sao'), /Phiên cần nhân bản không hợp lệ/);
+    }
+    for (const title of [undefined, null, 123, '', ' \n ', 'a'.repeat(256), '📚'.repeat(256)]) {
+        await assert.rejects(cloneSession(item.id, title), /Tên bản sao phải có/);
+    }
+    assert.equal(calls, 0);
+});
+
+test('clone không nhận object lỗi/phiên gốc/sai trạng thái và không tự gửi lại', options, async () => {
+    const initial = useAuthStore.getState();
+    for (const data of [
+        null, [], { data: clonedItem() }, { id: 'session-copy' },
+        clonedItem({ id: ' ' }), clonedItem({ user_id: null }),
+        clonedItem({ id: item.id }), clonedItem({ status: 'approved' }),
+    ]) {
+        let calls = 0;
+        api.defaults.adapter = async (config) => {
+            calls += 1;
+            return { ...response(config, data), status: 201 };
+        };
+        await assert.rejects(cloneSession(item.id, 'Bản sao'), /kiểm tra lại danh sách/);
+        assert.equal(calls, 1);
+        assert.equal(useAuthStore.getState(), initial);
+    }
+});
+
+test('clone lỗi HTTP/mạng/timeout giữ nguyên lỗi, không tự nhân bản lần nữa', options, async () => {
+    const initial = useAuthStore.getState();
+    let refreshCalls = 0;
+    auth.refreshSession = async () => { refreshCalls += 1; throw new Error('Unexpected refresh'); };
+    for (const status of [403, 404, 422, 429, 500, 503, 'network', 'timeout']) {
+        let calls = 0;
+        let expected;
+        api.defaults.adapter = async (config) => {
+            calls += 1;
+            const http = typeof status === 'number';
+            expected = new axios.AxiosError('Lỗi clone thử nghiệm',
+                http ? 'ERR_BAD_RESPONSE' : status === 'timeout' ? 'ECONNABORTED' : 'ERR_NETWORK',
+                config, null, http ? { status, data: {}, headers: {}, config } : undefined);
+            throw expected;
+        };
+        await assert.rejects(cloneSession(item.id, 'Bản sao'), (error) => error === expected);
+        assert.equal(calls, 1);
+        assert.equal(useAuthStore.getState(), initial);
+    }
+    assert.equal(refreshCalls, 0);
+});
+
+for (const nextId of ['account-b', null]) {
+    test(`clone không trả kết quả A sau ${nextId ?? 'logout'}, không gửi lại`, options, async () => {
+        const entered = deferred();
+        const release = deferred();
+        let calls = 0;
+        api.defaults.adapter = async (config) => {
+            calls += 1;
+            entered.resolve();
+            await release.promise;
+            return { ...response(config, clonedItem()), status: 201 };
+        };
+        const request = cloneSession(item.id, 'Bản sao');
+        await entered.promise;
+        useAuthStore.getState().setSession(nextId
+            ? { user: { id: nextId }, access_token: 'test-clone-token-b' }
+            : null);
+        const current = useAuthStore.getState();
+        release.resolve();
+        await assert.rejects(request, axios.isCancel);
+        assert.equal(calls, 1);
+        assert.equal(useAuthStore.getState(), current);
+        // Bỏ kết quả ở frontend không chứng minh backend chưa tạo bản sao.
+    });
+}
+
+for (const retryFails of [false, true]) {
+    test(`clone dùng refresh/retry 401 chung tối đa một lần (retry lỗi: ${retryFails})`, options, async () => {
+        let calls = 0;
+        let refreshCalls = 0;
+        const version = useAuthStore.getState().sessionVersion;
+        const data = clonedItem();
+        auth.refreshSession = async () => {
+            refreshCalls += 1;
+            const session = { user: { id: 'account-a' }, access_token: 'test-clone-fresh-token' };
+            useAuthStore.getState().setSession(session);
+            return { data: { session }, error: null };
+        };
+        api.defaults.adapter = async (config) => {
+            calls += 1;
+            assert.equal(config.method, 'post');
+            assert.equal(api.getUri(config), '/api/sessions/session-a/clone');
+            assert.deepEqual(JSON.parse(config.data), { new_title: 'Bản sao' });
+            assert.equal(config.headers.get('Authorization'), calls === 1
+                ? 'Bearer test-list-token-a' : 'Bearer test-clone-fresh-token');
+            if (calls === 1 || retryFails) {
+                throw new axios.AxiosError('Test unauthorized', 'ERR_BAD_RESPONSE', config, null,
+                    { status: 401, data: {}, headers: {}, config });
+            }
+            return { ...response(config, data), status: 201 };
+        };
+        if (retryFails) {
+            await assert.rejects(cloneSession(item.id, 'Bản sao'),
+                (error) => error.response?.status === 401);
+            assert.equal(useAuthStore.getState().status, 'reauth_required');
+            assert.equal(useAuthStore.getState().user, null);
+            assert.equal(useAuthStore.getState().sessionVersion, version + 1);
+        } else {
+            assert.equal(await cloneSession(item.id, 'Bản sao'), data);
+            assert.equal(useAuthStore.getState().status, 'authenticated');
+            assert.equal(useAuthStore.getState().sessionVersion, version);
+        }
+        assert.equal(calls, 2);
+        assert.equal(refreshCalls, 1);
+    });
+}
