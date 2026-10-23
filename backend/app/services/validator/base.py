@@ -21,7 +21,7 @@ class CheckResult(BaseModel):
     errors: List[str] = Field(default_factory=list, description="List of specific error messages")
     status: Optional[str] = Field(
         default=None,
-        description="Evaluation status (e.g. verified, failed, domain_error, unsupported, timeout)",
+        description="Evaluation status (e.g. verified, failed, domain_error, unsupported, timeout, inconclusive)",
     )
     confidence: Optional[str] = Field(
         default=None,
@@ -33,7 +33,7 @@ class CheckResult(BaseModel):
 
     def to_dict(self) -> dict:
         """Convert to dictionary matching the ValidationReport checks schema."""
-        res = {
+        res: dict = {
             "check": self.check_name,
             "passed": self.passed,
         }
