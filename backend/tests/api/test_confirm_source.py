@@ -73,6 +73,7 @@ def test_confirm_forbidden_wrong_owner(client, mock_auth_user, auth_headers):
     """POST /confirm-source raises 403 Forbidden when assert_ownership rejects."""
     with (
         patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=MagicMock()),
         patch(
             "app.api.routes.sessions.assert_ownership",
             side_effect=HTTPException(status_code=403, detail="Forbidden: Not session owner"),
@@ -91,6 +92,7 @@ def test_confirm_session_not_found(client, mock_auth_user, auth_headers):
     """POST /confirm-source raises 404 Not Found when session does not exist."""
     with (
         patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=MagicMock()),
         patch(
             "app.api.routes.sessions.assert_ownership",
             side_effect=HTTPException(status_code=404, detail="Session not found"),
