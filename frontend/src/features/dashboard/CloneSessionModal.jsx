@@ -45,6 +45,27 @@ export default function CloneSessionModal({
   const triggerElementRef = useRef(null);
   const activeRequestIdRef = useRef(0);
   const isMountedRef = useRef(true);
+  const isSubmittingRef = useRef(false);
+
+  // Theo dõi trạng thái isOpen và session để hủy bỏ request cũ ngay trong chu trình render
+  const isOpenRef = useRef(isOpen);
+  const prevIsOpenRef = useRef(isOpen);
+  const prevSessionIdRef = useRef(session?.id);
+
+  if (prevIsOpenRef.current && !isOpen) {
+    // Modal vừa bị chuyển sang đóng/ẩn (isOpen: true -> false): hủy bỏ mọi request đang chờ
+    activeRequestIdRef.current += 1;
+    isSubmittingRef.current = false;
+  }
+  prevIsOpenRef.current = isOpen;
+  isOpenRef.current = isOpen;
+
+  if (prevSessionIdRef.current !== session?.id) {
+    // Phiên vừa bị thay đổi sang phiên khác: hủy bỏ request của phiên cũ
+    activeRequestIdRef.current += 1;
+    prevSessionIdRef.current = session?.id;
+    isSubmittingRef.current = false;
+  }
 
   // Ghi nhận trạng thái mount và hủy request cũ khi unmount
   useEffect(() => {
@@ -52,12 +73,16 @@ export default function CloneSessionModal({
     return () => {
       isMountedRef.current = false;
       activeRequestIdRef.current += 1;
+      isSubmittingRef.current = false;
     };
   }, []);
 
   // Đóng modal và khôi phục vị trí focus bàn phím về nút đã kích hoạt
   const handleClose = useCallback(() => {
-    if (isSubmitting) return;
+    // Hủy bỏ lượt đang chờ nếu người dùng chủ động đóng hộp thoại
+    activeRequestIdRef.current += 1;
+    isSubmittingRef.current = false;
+    isOpenRef.current = false;
 
     if (triggerElementRef.current && typeof triggerElementRef.current.focus === 'function') {
       try {
@@ -70,7 +95,18 @@ export default function CloneSessionModal({
     if (onClose) {
       onClose();
     }
-  }, [isSubmitting, onClose]);
+  }, [onClose]);
+
+  // Vô hiệu hóa và dọn dẹp state khi modal bị ẩn
+  useEffect(() => {
+    isOpenRef.current = isOpen;
+    if (!isOpen) {
+      activeRequestIdRef.current += 1;
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
+      setErrorMessage('');
+    }
+  }, [isOpen]);
 
   // Khởi tạo tiêu đề gợi ý, reset lỗi và lưu trigger element mỗi khi mở modal
   useEffect(() => {
@@ -83,7 +119,7 @@ export default function CloneSessionModal({
       setTitle(getDefaultTitle(session));
       setErrorMessage('');
       setIsSubmitting(false);
-      // Tăng request ID để hủy hiệu lực mọi response cũ trước đó
+      isSubmittingRef.current = false;
       activeRequestIdRef.current += 1;
 
       // Focus vào ô input sau khi render
@@ -94,7 +130,12 @@ export default function CloneSessionModal({
         }
       }, 50);
 
-      return () => clearTimeout(timer);
+      return () => {
+        clearTimeout(timer);
+        // Hủy bỏ request đang chờ nếu modal bị unmount hoặc đóng giữa chừng
+        activeRequestIdRef.current += 1;
+        isSubmittingRef.current = false;
+      };
     }
   }, [isOpen, session]);
 
@@ -104,7 +145,7 @@ export default function CloneSessionModal({
 
     function handleKeyDown(event) {
       if (event.key === 'Escape') {
-        if (!isSubmitting) {
+        if (!isSubmittingRef.current) {
           event.preventDefault();
           handleClose();
         }
@@ -113,7 +154,7 @@ export default function CloneSessionModal({
 
       if (event.key === 'Tab') {
         // Khi đang submit, khóa toàn bộ di chuyển focus ra ngoài
-        if (isSubmitting) {
+        if (isSubmittingRef.current) {
           event.preventDefault();
           return;
         }
@@ -154,9 +195,11 @@ export default function CloneSessionModal({
       }
     }
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isSubmitting, handleClose]);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [isOpen, handleClose]);
 
   if (!isOpen || !session) {
     return null;
@@ -167,21 +210,30 @@ export default function CloneSessionModal({
   async function handleSubmit(event) {
     event.preventDefault();
 
-    if (!isTitleValid || isSubmitting) {
+    // Chặn gửi nếu tiêu đề không hợp lệ hoặc ĐANG gửi (kiểm tra tức thì qua ref đồng bộ)
+    if (!isTitleValid || isSubmittingRef.current) {
       return;
     }
+
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
+    setErrorMessage('');
 
     const currentRequestId = activeRequestIdRef.current + 1;
     activeRequestIdRef.current = currentRequestId;
 
-    setIsSubmitting(true);
-    setErrorMessage('');
-
     try {
       const clonedSession = await cloneFn(session.id, title.trim());
 
-      // Nếu component đã unmount hoặc có request mới hơn -> bỏ qua kết quả
-      if (!isMountedRef.current || currentRequestId !== activeRequestIdRef.current) {
+      isSubmittingRef.current = false;
+
+      // Nếu modal đã đóng/ẩn (isOpen=false), unmount, hoặc đã có request mới hơn:
+      // BỎ QUA HOÀN TOÀN, không gọi onSuccess, không gọi handleClose!
+      if (
+        !isMountedRef.current ||
+        !isOpenRef.current ||
+        currentRequestId !== activeRequestIdRef.current
+      ) {
         return;
       }
 
@@ -191,8 +243,14 @@ export default function CloneSessionModal({
       }
       handleClose();
     } catch (cause) {
-      // Bỏ qua lỗi nếu request này đã cũ hoặc đã bị hủy
-      if (!isMountedRef.current || currentRequestId !== activeRequestIdRef.current) {
+      isSubmittingRef.current = false;
+
+      // Nếu modal đã đóng/ẩn hoặc request đã cũ: BỎ QUA HOÀN TOÀN
+      if (
+        !isMountedRef.current ||
+        !isOpenRef.current ||
+        currentRequestId !== activeRequestIdRef.current
+      ) {
         return;
       }
 
@@ -206,7 +264,7 @@ export default function CloneSessionModal({
   }
 
   function handleBackdropClick(event) {
-    if (event.target === event.currentTarget && !isSubmitting) {
+    if (event.target === event.currentTarget && !isSubmittingRef.current) {
       handleClose();
     }
   }

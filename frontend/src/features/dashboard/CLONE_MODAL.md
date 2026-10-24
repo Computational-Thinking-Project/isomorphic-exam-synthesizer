@@ -52,8 +52,17 @@ export default function DashboardRoute() {
    - Phím `Tab` và `Shift + Tab` bị khóa vòng lặp bên trong modal, không cho nhảy ra các nút Dashboard phía sau.
    - Khi modal đóng, tự động đưa focus trở lại nút kích hoạt trên Dashboard.
 3. **Chống Double Submission**: Vô hiệu hóa nút và input khi đang gọi API, hiển thị spinner xoay.
-4. **Chống Stale Request / Race Condition**: Mỗi lượt submit và mỗi lượt đổi phiên được đánh dấu bằng `requestId`. Nếu người dùng đổi sang phiên khác hoặc unmount trước khi server phản hồi, kết quả cũ sẽ bị bỏ qua hoàn toàn, không gây đóng nhầm modal mới hoặc báo lỗi chéo.
-5. **Giữ modal khi lỗi**: Khi API thất bại, không đóng modal mà hiển thị thông báo lỗi trong alert màu đỏ để người dùng sửa tiêu đề và bấm thử lại.
+4. **Chống Stale Request / Race Condition & Hủy kết quả khi đóng/ẩn**:
+   - Sử dụng `activeRequestIdRef` và kiểm tra đồng bộ trong render lẫn `useEffect`.
+   - Nếu người dùng chủ động đóng modal (bấm Hủy, ESC, backdrop) hoặc component cha đặt `isOpen=false` / đổi sang phiên khác trong lúc đang chờ máy chủ phản hồi, toàn bộ kết quả thành công hoặc lỗi mạng muộn sẽ bị bỏ qua hoàn toàn: KHÔNG gọi `onSuccess` và KHÔNG gọi `onClose` thừa.
+5. **Giữ modal khi lỗi**: Khi API thất bại trong khi modal vẫn mở, không đóng modal mà hiển thị thông báo lỗi trong alert màu đỏ để người dùng sửa tiêu đề và bấm thử lại.
+
+## Kiểm thử Unit Test
+Toàn bộ 20/20 test vượt qua với `npm test`, bao gồm:
+- 5 test service `cloneMock.test.js`
+- 11 test component `CloneSessionModal.test.js` (render, focus trap, aria, gửi form, double-submit, hủy request khi Hủy, hủy request khi trang cha đặt `isOpen=false`, hủy lỗi máy chủ muộn, race condition phiên A -> B, xử lý lỗi khi mở)
+- 3 test store `authStore.test.js`
+- 1 loader test `test-loader.mjs`
 
 ## Xem thử giao diện (Standalone Preview)
 Chạy `npm run dev` trong `frontend/` và truy cập `/clone-modal-preview.html`.
