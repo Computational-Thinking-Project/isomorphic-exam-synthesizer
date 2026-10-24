@@ -1,0 +1,17 @@
+# Standalone environment; use this file alone, without the application's Compose file.
+services:
+  blueprint:
+    build:
+      context: ./scripts/blueprint
+      dockerfile: Dockerfile
+    working_dir: /workspace
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
+      BLUEPRINT_MODEL: ${BLUEPRINT_MODEL:-gemini-3.5-flash-lite}
+    volumes:
+      - ./scripts/blueprint:/workspace/scripts/blueprint:ro
+      - ./docs/blueprints:/workspace/docs/blueprints:ro
+      - ./outputs/blueprint:/workspace/outputs
+    stdin_open: true
+    tty: false

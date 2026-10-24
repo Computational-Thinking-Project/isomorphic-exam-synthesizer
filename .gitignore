@@ -34,3 +34,4 @@ Thumbs.db
 *.pdf
 scratch/
 .artifacts/
+outputs/blueprint/

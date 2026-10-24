@@ -1,0 +1,7 @@
+[
+  {"subject":"mathematics","illustration":"Với bài đạo hàm đa thức tại một điểm, đẳng cấu giữ thao tác xác định đạo hàm rồi tính tại điểm; miền hệ số phải tránh làm mất bậc hoặc triệt tiêu toàn bộ thao tác đang đánh giá. Đổi biểu diễn có thể hợp lệ nếu không cho sẵn đạo hàm và không thêm kỹ năng biến đổi khác. Không mặc định mọi hệ số đều cần thay."},
+  {"subject":"mathematics","illustration":"Với lý thuyết góc đối đỉnh, đẳng cấu giữ quan hệ hình học và việc nhận diện hệ quả. Đổi tên góc hoặc diễn đạt được phép; đổi đối đỉnh sang kề bù làm đổi quan hệ cần kiểm tra. Biến thiên được mô tả bằng các phép đổi quan hệ/định lượng bị cấm hoặc được phép có điều kiện, không bằng thay chữ đơn thuần."},
+  {"subject":"physics","illustration":"Với định luật II Newton một chiều, phải phân biệt hợp lực và lực thành phần; biến đổi dữ kiện giữ hệ quy chiếu, điều kiện áp dụng, bước đổi đơn vị và số thao tác tương đương. Không đổi đơn vị ngầm khiến xuất hiện kỹ năng mới."},
+  {"subject":"chemistry","illustration":"Bảo toàn khối lượng chỉ suy ra tổng chất phản ứng bằng tổng sản phẩm khi xác định đúng hệ và các chất đi vào/ra. Đổi bối cảnh không được biến hệ kín thành hệ hở hoặc bỏ sản phẩm khí."},
+  {"subject":"biology","illustration":"Câu giải thích cơ chế phải giữ các quan hệ nhân quả, điều kiện sinh học và các mắt xích trong rubric. Thay loại tế bào hoặc điều kiện môi trường có thể làm đổi cơ chế; không coi đổi tên đối tượng là luôn đẳng cấu."}
+]
