@@ -225,10 +225,8 @@ export default function CloneSessionModal({
     try {
       const clonedSession = await cloneFn(session.id, title.trim());
 
-      isSubmittingRef.current = false;
-
       // Nếu modal đã đóng/ẩn (isOpen=false), unmount, hoặc đã có request mới hơn:
-      // BỎ QUA HOÀN TOÀN, không gọi onSuccess, không gọi handleClose!
+      // BỎ QUA HOÀN TOÀN, không gọi onSuccess, không gọi handleClose và KHÔNG mở khóa cờ submit!
       if (
         !isMountedRef.current ||
         !isOpenRef.current ||
@@ -237,14 +235,13 @@ export default function CloneSessionModal({
         return;
       }
 
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
       if (onSuccess) {
         onSuccess(clonedSession);
       }
       handleClose();
     } catch (cause) {
-      isSubmittingRef.current = false;
-
       // Nếu modal đã đóng/ẩn hoặc request đã cũ: BỎ QUA HOÀN TOÀN
       if (
         !isMountedRef.current ||
@@ -254,6 +251,7 @@ export default function CloneSessionModal({
         return;
       }
 
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
       const message =
         cause instanceof Error && cause.message

@@ -35,13 +35,36 @@ function createDeferred() {
   return { promise, resolve, reject };
 }
 
-// Helper mount component có đầy đủ hook state và cho phép re-render theo props mới (giống trang cha React thật)
+// Helper mount component có đầy đủ hook state, window listener và cho phép re-render trên cùng instance
 function mountModal(initialProps) {
   const hooks = [];
   let hookIndex = 0;
   const effects = [];
   const cleanups = [];
   let currentProps = initialProps;
+  let isRendering = false;
+  let latestHandlers = {};
+
+  // Giả lập window event listeners cho môi trường kiểm thử Node
+  const windowListeners = {};
+  const mockWindow = {
+    addEventListener(event, fn) {
+      (windowListeners[event] = windowListeners[event] || []).push(fn);
+    },
+    removeEventListener(event, fn) {
+      if (windowListeners[event]) {
+        windowListeners[event] = windowListeners[event].filter((f) => f !== fn);
+      }
+    },
+    dispatchEvent(event) {
+      if (windowListeners[event.type]) {
+        for (const fn of [...windowListeners[event.type]]) {
+          fn(event);
+        }
+      }
+    },
+  };
+  globalThis.window = mockWindow;
 
   const dispatcher = {
     useState(initialValue) {
@@ -51,6 +74,9 @@ function mountModal(initialProps) {
       }
       const setState = (newValue) => {
         hooks[idx] = typeof newValue === 'function' ? newValue(hooks[idx]) : newValue;
+        if (!isRendering) {
+          render();
+        }
       };
       return [hooks[idx], setState];
     },
@@ -87,20 +113,35 @@ function mountModal(initialProps) {
     let submitDisabled = false;
     let inputTitle = '';
     let inputOnChange = null;
+    let alertMessage = null;
 
     if (el && el.props && el.props.children) {
       const dialogBox = el.props.children;
-      const form = Array.isArray(dialogBox.props.children)
-        ? dialogBox.props.children.find((c) => c && c.type === 'form') || dialogBox.props.children[2]
-        : null;
+      const children = Array.isArray(dialogBox.props.children)
+        ? dialogBox.props.children
+        : [dialogBox.props.children];
 
+      // Tìm thông báo lỗi alert nếu có
+      const alertEl = children.find((c) => c && c.props && c.props.role === 'alert');
+      if (alertEl) {
+        alertMessage = alertEl.props.children;
+      }
+
+      // Tìm form
+      const form = children.find((c) => c && c.type === 'form');
       if (form && form.props) {
         formOnSubmit = form.props.onSubmit;
-        const inputDiv = form.props.children[0];
-        const footer = form.props.children[1];
+        const formChildren = Array.isArray(form.props.children)
+          ? form.props.children
+          : [form.props.children];
+
+        const inputDiv = formChildren[0];
+        const footer = formChildren[1];
 
         if (inputDiv && inputDiv.props && inputDiv.props.children) {
-          const input = inputDiv.props.children[1];
+          const input = Array.isArray(inputDiv.props.children)
+            ? inputDiv.props.children.find((c) => c && c.type === 'input')
+            : inputDiv.props.children;
           if (input && input.props) {
             inputTitle = input.props.value;
             inputOnChange = input.props.onChange;
@@ -108,8 +149,12 @@ function mountModal(initialProps) {
         }
 
         if (footer && footer.props && footer.props.children) {
-          const cancelButton = footer.props.children[0];
-          const submitButton = footer.props.children[1];
+          const buttons = Array.isArray(footer.props.children)
+            ? footer.props.children
+            : [footer.props.children];
+          const cancelButton = buttons.find((b) => b && b.props && b.props.type === 'button');
+          const submitButton = buttons.find((b) => b && b.props && b.props.type === 'submit');
+
           if (cancelButton && cancelButton.props) {
             cancelOnClick = cancelButton.props.onClick;
           }
@@ -120,12 +165,13 @@ function mountModal(initialProps) {
       }
     }
 
-    return { formOnSubmit, cancelOnClick, submitDisabled, inputTitle, inputOnChange };
+    return { el, formOnSubmit, cancelOnClick, submitDisabled, inputTitle, inputOnChange, alertMessage };
   }
 
   function render(newProps) {
     if (newProps !== undefined) currentProps = newProps;
     hookIndex = 0;
+    isRendering = true;
     const prevDispatcher = React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher.current;
     React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher.current = dispatcher;
     let el;
@@ -133,14 +179,20 @@ function mountModal(initialProps) {
       el = CloneSessionModal(currentProps);
     } finally {
       React.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher.current = prevDispatcher;
+      isRendering = false;
     }
     while (effects.length > 0) {
       const { idx, effect } = effects.shift();
       if (typeof cleanups[idx] === 'function') cleanups[idx]();
       cleanups[idx] = effect();
     }
-    const handlers = extractHandlers(el);
-    return { el, ...handlers };
+    latestHandlers = extractHandlers(el);
+    return latestHandlers;
+  }
+
+  function triggerKeyDown(event) {
+    mockWindow.dispatchEvent({ type: 'keydown', ...event });
+    return latestHandlers;
   }
 
   function unmount() {
@@ -149,91 +201,81 @@ function mountModal(initialProps) {
     }
   }
 
-  const initialRender = render();
+  render();
+
   return {
-    ...initialRender,
+    get el() { return latestHandlers.el; },
+    get formOnSubmit() { return latestHandlers.formOnSubmit; },
+    get cancelOnClick() { return latestHandlers.cancelOnClick; },
+    get submitDisabled() { return latestHandlers.submitDisabled; },
+    get inputTitle() { return latestHandlers.inputTitle; },
+    get inputOnChange() { return latestHandlers.inputOnChange; },
+    get alertMessage() { return latestHandlers.alertMessage; },
     render,
+    triggerKeyDown,
     unmount,
   };
 }
 
-// Helper bóc tách static HTML và element tree để kiểm tra giao diện ban đầu
-function inspectModal(props) {
-  let captured = {
-    modalTree: null,
-    formOnSubmit: null,
-    cancelOnClick: null,
-    submitDisabled: false,
-    inputTitle: '',
-    inputOnChange: null,
-  };
-
-  function TestHarness() {
-    const el = CloneSessionModal(props);
-    captured.modalTree = el;
-    if (el && el.props && el.props.children) {
-      const dialogBox = el.props.children;
-      const form = dialogBox.props.children.find((c) => c && c.type === 'form')
-        || dialogBox.props.children[2];
-
-      if (form && form.props) {
-        captured.formOnSubmit = form.props.onSubmit;
-        const inputDiv = form.props.children[0];
-        const footer = form.props.children[1];
-
-        if (inputDiv && inputDiv.props && inputDiv.props.children) {
-          const input = inputDiv.props.children[1];
-          captured.inputTitle = input.props.value;
-          captured.inputOnChange = input.props.onChange;
-        }
-
-        if (footer && footer.props && footer.props.children) {
-          const cancelButton = footer.props.children[0];
-          const submitButton = footer.props.children[1];
-          captured.cancelOnClick = cancelButton.props.onClick;
-          captured.submitDisabled = submitButton.props.disabled;
-        }
-      }
-    }
-    return el || React.createElement('div', null);
-  }
-
-  const html = renderToString(React.createElement(TestHarness));
-  return { ...captured, html };
-}
-
 test('CloneSessionModal không render gì khi isOpen = false', () => {
-  const { html, modalTree } = inspectModal({
+  const { el } = mountModal({
     isOpen: false,
     session: sampleSessionA,
     onClose: () => {},
   });
-  assert.equal(html, '<div></div>', 'Khi isOpen=false modal không xuất hiện');
-  assert.equal(modalTree, null, 'modalTree phải trả về null');
+  assert.equal(el, null, 'Khi isOpen=false modal phải trả về null');
 });
 
 test('CloneSessionModal không render gì khi session = null', () => {
-  const { html, modalTree } = inspectModal({
+  const { el } = mountModal({
     isOpen: true,
     session: null,
     onClose: () => {},
   });
-  assert.equal(html, '<div></div>', 'Khi session=null modal không xuất hiện');
-  assert.equal(modalTree, null, 'modalTree phải trả về null');
+  assert.equal(el, null, 'Khi session=null modal phải trả về null');
 });
 
 test('CloneSessionModal render đầy đủ dialog, aria attributes và tiêu đề gợi ý', () => {
-  const { html, inputTitle } = inspectModal({
-    isOpen: true,
-    session: sampleSessionA,
-    onClose: () => {},
-  });
+  const html = renderToString(
+    React.createElement(CloneSessionModal, {
+      isOpen: true,
+      session: sampleSessionA,
+      onClose: () => {},
+    })
+  );
 
   assert.ok(html.includes('role="dialog"'), 'Phải có role="dialog"');
   assert.ok(html.includes('aria-modal="true"'), 'Phải có aria-modal="true"');
   assert.ok(html.includes('aria-labelledby="clone-modal-title"'), 'Phải liên kết tiêu đề modal');
   assert.ok(html.includes('Nhân bản phiên đề thi'), 'Phải có tiêu đề hộp thoại');
-  assert.equal(inputTitle, '[Bản sao] Đề mẫu — Tích phân', 'Input phải gợi ý tiêu đề mặc định');
+  assert.ok(html.includes('[Bản sao] Đề mẫu — Tích phân'), 'Input phải gợi ý tiêu đề mặc định');
+});
+
+test('Bấm phím ESC đóng modal khi rảnh, nhưng bị chặn khi đang nhân bản', async () => {
+  const deferred = createDeferred();
+  let closeCallCount = 0;
+
+  const modalInstance = mountModal({
+    isOpen: true,
+    session: sampleSessionA,
+    onClose: () => { closeCallCount += 1; },
+    onSuccess: () => {},
+    cloneFn: async () => deferred.promise,
+  });
+
+  // Khi modal mở và chưa gửi: Bấm ESC phải gọi onClose
+  modalInstance.triggerKeyDown({ key: 'Escape', preventDefault: () => {} });
+  assert.equal(closeCallCount, 1, 'Bấm ESC khi chưa gửi phải gọi onClose đóng modal');
+
+  // Bắt đầu gửi:
+  const submitPromise = modalInstance.formOnSubmit({ preventDefault: () => {} });
+
+  // Khi đang gửi: Bấm ESC phải bị chặn hoàn toàn
+  modalInstance.triggerKeyDown({ key: 'Escape', preventDefault: () => {} });
+  assert.equal(closeCallCount, 1, 'Bấm ESC khi đang gửi KHÔNG được gọi onClose thêm');
+
+  deferred.resolve({ id: 'done', title: 'Done' });
+  await submitPromise;
 });
 
 test('Thực hiện gửi form trên modal thật thành công gọi onSuccess và onClose', async () => {
@@ -247,7 +289,7 @@ test('Thực hiện gửi form trên modal thật thành công gọi onSuccess v
     status: 'draft',
   });
 
-  const { formOnSubmit } = inspectModal({
+  const modalInstance = mountModal({
     isOpen: true,
     session: sampleSessionA,
     onClose: () => { closeCalled = true; },
@@ -255,9 +297,9 @@ test('Thực hiện gửi form trên modal thật thành công gọi onSuccess v
     cloneFn: mockClone,
   });
 
-  assert.ok(typeof formOnSubmit === 'function', 'Form phải có handler onSubmit');
+  assert.ok(typeof modalInstance.formOnSubmit === 'function', 'Form phải có handler onSubmit');
 
-  await formOnSubmit({ preventDefault: () => {} });
+  await modalInstance.formOnSubmit({ preventDefault: () => {} });
 
   assert.ok(receivedSession, 'onSuccess phải được gọi với kết quả clone');
   assert.equal(receivedSession.id, 'cloned-001');
@@ -274,7 +316,7 @@ test('Chống gửi liên tiếp (double-submit) khi form đang trong quá trìn
     return deferred.promise;
   };
 
-  const { formOnSubmit } = inspectModal({
+  const modalInstance = mountModal({
     isOpen: true,
     session: sampleSessionA,
     onClose: () => {},
@@ -283,11 +325,11 @@ test('Chống gửi liên tiếp (double-submit) khi form đang trong quá trìn
   });
 
   // Gửi lần 1: cloneFn được gọi, request chuyển sang trạng thái pending
-  const firstPromise = formOnSubmit({ preventDefault: () => {} });
+  const firstPromise = modalInstance.formOnSubmit({ preventDefault: () => {} });
   assert.equal(cloneCallCount, 1, 'Lần submit đầu tiên phải gọi cloneFn');
 
   // Gửi lần 2 ngay lập tức khi lần 1 chưa hoàn tất
-  const secondPromise = formOnSubmit({ preventDefault: () => {} });
+  const secondPromise = modalInstance.formOnSubmit({ preventDefault: () => {} });
   assert.equal(cloneCallCount, 1, 'Lần submit thứ hai khi đang submitting phải bị chặn (callCount vẫn là 1)');
 
   // Giải phóng deferred promise
@@ -300,7 +342,7 @@ test('Bỏ qua kết quả sau khi hộp thoại bị đóng bằng nút Hủy t
   let successCalled = false;
   let closeCallCount = 0;
 
-  const { formOnSubmit, cancelOnClick } = inspectModal({
+  const modalInstance = mountModal({
     isOpen: true,
     session: sampleSessionA,
     onClose: () => { closeCallCount += 1; },
@@ -309,10 +351,10 @@ test('Bỏ qua kết quả sau khi hộp thoại bị đóng bằng nút Hủy t
   });
 
   // 1. Người dùng bấm gửi nhân bản trên modal
-  const submitPromise = formOnSubmit({ preventDefault: () => {} });
+  const submitPromise = modalInstance.formOnSubmit({ preventDefault: () => {} });
 
   // 2. Người dùng chủ động bấm Hủy để đóng modal khi request chưa xong
-  cancelOnClick();
+  modalInstance.cancelOnClick();
   assert.equal(closeCallCount, 1, 'Nút Hủy phải gọi onClose lần 1');
 
   // 3. Kết quả mạng mới trả về sau khi modal đã đóng
@@ -335,7 +377,7 @@ test('Bỏ qua lỗi máy chủ nếu hộp thoại đã bị đóng trong lúc 
   const deferred = createDeferred();
   let closeCallCount = 0;
 
-  const { formOnSubmit, cancelOnClick } = inspectModal({
+  const modalInstance = mountModal({
     isOpen: true,
     session: sampleSessionA,
     onClose: () => { closeCallCount += 1; },
@@ -343,10 +385,10 @@ test('Bỏ qua lỗi máy chủ nếu hộp thoại đã bị đóng trong lúc 
     cloneFn: async () => deferred.promise,
   });
 
-  const submitPromise = formOnSubmit({ preventDefault: () => {} });
+  const submitPromise = modalInstance.formOnSubmit({ preventDefault: () => {} });
 
   // Người dùng đóng modal trước khi lỗi xảy ra
-  cancelOnClick();
+  modalInstance.cancelOnClick();
 
   // Máy chủ trả về lỗi 500 sau khi modal đã đóng
   deferred.reject(new Error('Máy chủ 500'));
@@ -422,7 +464,32 @@ test('Trang cha đặt isOpen=false (ẩn hộp thoại) khi đang chờ nhân b
   );
 });
 
-test('Lỗi nhân bản khi modal vẫn mở: giữ nguyên modal và không gọi onSuccess/onClose', async () => {
+test('Trang cha gỡ bỏ (unmount) component khi đang chờ nhân bản: Bỏ qua kết quả trả về muộn', async () => {
+  const deferred = createDeferred();
+  let successCalled = false;
+  let closeCallCount = 0;
+
+  const modalInstance = mountModal({
+    isOpen: true,
+    session: sampleSessionA,
+    onClose: () => { closeCallCount += 1; },
+    onSuccess: () => { successCalled = true; },
+    cloneFn: async () => deferred.promise,
+  });
+
+  const submitPromise = modalInstance.formOnSubmit({ preventDefault: () => {} });
+
+  // Component bị unmount khỏi DOM
+  modalInstance.unmount();
+
+  deferred.resolve({ id: 'unmounted-clone', title: 'Bản sao' });
+  await submitPromise;
+
+  assert.equal(successCalled, false, 'onSuccess không được gọi khi component đã bị unmount');
+  assert.equal(closeCallCount, 0, 'onClose không được gọi khi component đã bị unmount');
+});
+
+test('Lỗi nhân bản khi modal vẫn mở: giữ nguyên modal, hiện thông báo lỗi và cho thử lại', async () => {
   let successCalled = false;
   let closeCalled = false;
 
@@ -430,7 +497,7 @@ test('Lỗi nhân bản khi modal vẫn mở: giữ nguyên modal và không g�
     throw new Error('Tên phiên bị trùng lặp');
   };
 
-  const { formOnSubmit } = inspectModal({
+  const modalInstance = mountModal({
     isOpen: true,
     session: sampleSessionA,
     onClose: () => { closeCalled = true; },
@@ -438,59 +505,102 @@ test('Lỗi nhân bản khi modal vẫn mở: giữ nguyên modal và không g�
     cloneFn: failingClone,
   });
 
-  await formOnSubmit({ preventDefault: () => {} });
+  await modalInstance.formOnSubmit({ preventDefault: () => {} });
 
   assert.equal(successCalled, false, 'onSuccess không được gọi khi có lỗi');
   assert.equal(closeCalled, false, 'onClose không được gọi khi có lỗi (giữ modal mở để sửa)');
+  assert.equal(modalInstance.alertMessage, 'Tên phiên bị trùng lặp', 'Phải hiển thị thông báo lỗi trên UI');
+  assert.equal(modalInstance.submitDisabled, false, 'Nút nhân bản phải được mở lại để người dùng thử lại');
 });
 
-test('Chống race condition: Bỏ qua kết quả cũ khi chuyển từ phiên A sang phiên B', async () => {
+test('Cùng một modal chuyển A -> B: A trả về THÀNH CÔNG khi B đang gửi không làm mở khóa và không đóng B', async () => {
   const deferredA = createDeferred();
   const deferredB = createDeferred();
 
-  let lastClonedSession = null;
+  let successResult = null;
+  let closeCallCount = 0;
 
-  // Lượt 1: Modal mở cho phiên A
-  const modalA = inspectModal({
+  const baseProps = {
     isOpen: true,
     session: sampleSessionA,
-    onClose: () => {},
-    onSuccess: (res) => { lastClonedSession = res; },
-    cloneFn: async () => deferredA.promise,
-  });
+    onClose: () => { closeCallCount += 1; },
+    onSuccess: (res) => { successResult = res; },
+    cloneFn: async (id) => {
+      if (id === sampleSessionA.id) return deferredA.promise;
+      if (id === sampleSessionB.id) return deferredB.promise;
+      throw new Error('Unknown session');
+    },
+  };
 
-  const promiseA = modalA.formOnSubmit({ preventDefault: () => {} });
+  // 1. Mở modal và gửi nhân bản cho phiên A
+  const modalInstance = mountModal(baseProps);
+  const promiseA = modalInstance.formOnSubmit({ preventDefault: () => {} });
 
-  // Lượt 2: Chuyển sang phiên B
-  modalA.cancelOnClick(); // Đóng A để chuyển sang B
+  // 2. Chuyển sang phiên B trên CÙNG MỘT instance component (trang cha đổi prop session)
+  const updatedB = modalInstance.render({ ...baseProps, session: sampleSessionB });
 
-  const modalB = inspectModal({
-    isOpen: true,
-    session: sampleSessionB,
-    onClose: () => {},
-    onSuccess: (res) => { lastClonedSession = res; },
-    cloneFn: async () => deferredB.promise,
-  });
+  // 3. Người dùng gửi nhân bản cho phiên B
+  const promiseB = updatedB.formOnSubmit({ preventDefault: () => {} });
 
-  const promiseB = modalB.formOnSubmit({ preventDefault: () => {} });
-
-  // Request A hoàn thành trước nhưng đã cũ
+  // 4. Request A hoàn tất thành công trong khi B vẫn đang chờ xử lý
   deferredA.resolve({ id: 'cloned-A', title: 'Bản sao A' });
   await promiseA;
 
-  assert.equal(
-    lastClonedSession,
-    null,
-    'Kết quả của phiên cũ A phải bị hủy bỏ hoàn toàn, không đè lên phiên B',
-  );
+  // 5. Kiểm tra: Bấm ESC không được đóng B (B vẫn đang trong quá trình nhân bản)
+  modalInstance.triggerKeyDown({ key: 'Escape', preventDefault: () => {} });
+  assert.equal(closeCallCount, 0, 'ESC không được phép đóng B vì B vẫn đang submitting');
+  assert.equal(successResult, null, 'Kết quả thành công của A cũ phải bị bỏ qua hoàn toàn');
 
-  // Request B hoàn thành sau:
+  // 6. Request B hoàn tất thành công sau đó
   deferredB.resolve({ id: 'cloned-B', title: 'Bản sao B' });
   await promiseB;
 
-  assert.deepEqual(
-    lastClonedSession,
-    { id: 'cloned-B', title: 'Bản sao B' },
-    'Chỉ kết quả của phiên B được chấp nhận',
-  );
+  assert.deepEqual(successResult, { id: 'cloned-B', title: 'Bản sao B' }, 'Chỉ nhận kết quả của phiên B');
+  assert.equal(closeCallCount, 1, 'onClose được gọi đúng 1 lần sau khi B hoàn tất');
+});
+
+test('Cùng một modal chuyển A -> B: A trả về LỖI khi B đang gửi không làm mở khóa và không hiện lỗi A', async () => {
+  const deferredA = createDeferred();
+  const deferredB = createDeferred();
+
+  let successResult = null;
+  let closeCallCount = 0;
+
+  const baseProps = {
+    isOpen: true,
+    session: sampleSessionA,
+    onClose: () => { closeCallCount += 1; },
+    onSuccess: (res) => { successResult = res; },
+    cloneFn: async (id) => {
+      if (id === sampleSessionA.id) return deferredA.promise;
+      if (id === sampleSessionB.id) return deferredB.promise;
+      throw new Error('Unknown session');
+    },
+  };
+
+  // 1. Mở modal và gửi cho A
+  const modalInstance = mountModal(baseProps);
+  const promiseA = modalInstance.formOnSubmit({ preventDefault: () => {} });
+
+  // 2. Chuyển sang phiên B trên cùng một instance
+  const updatedB = modalInstance.render({ ...baseProps, session: sampleSessionB });
+
+  // 3. Gửi cho B
+  const promiseB = updatedB.formOnSubmit({ preventDefault: () => {} });
+
+  // 4. Request A ném lỗi máy chủ 500 khi B đang chờ
+  deferredA.reject(new Error('Máy chủ A lỗi 500'));
+  await promiseA;
+
+  // 5. Kiểm tra: Bấm ESC không được đóng B và không hiển thị thông báo lỗi của A
+  modalInstance.triggerKeyDown({ key: 'Escape', preventDefault: () => {} });
+  assert.equal(closeCallCount, 0, 'ESC không được đóng B dù A vừa bị lỗi');
+  assert.equal(modalInstance.alertMessage, null, 'Lỗi của A không được hiển thị làm gián đoạn phiên B');
+
+  // 6. B hoàn tất thành công
+  deferredB.resolve({ id: 'cloned-B', title: 'Bản sao B' });
+  await promiseB;
+
+  assert.deepEqual(successResult, { id: 'cloned-B', title: 'Bản sao B' }, 'Phiên B thành công');
+  assert.equal(closeCallCount, 1, 'onClose được gọi đúng 1 lần để đóng sau khi B xong');
 });
