@@ -2,7 +2,7 @@
 
 Dashboard is connected to `/dashboard` under `ProtectedRoute`. A Supabase session enters `profile_pending`; the shared hook requests `GET /api/users/me` and opens Dashboard only after accepting a profile for the current account/login version. TV1 reported a real profile 200 response and the correct Dashboard name on 23/10/2026.
 
-Dashboard still uses mock session data and action notices. List and clone services exist separately but are not wired to the page; real create/open navigation and the Clone Modal are not integrated. The current layout is provisional; TASK-101/103 are not complete.
+The routed Dashboard uses the real list service with server pagination, Previous/Next controls and out-of-range correction. TV1 reported real first-page checks passed; a separate controlled browser suite passed 17/17 scenarios. Populated cloud pages and session ownership across real accounts remain unverified. Create/open/clone still show action notices; real navigation and the Clone Modal are not integrated. The separate preview keeps mock data. The current layout is provisional; TASK-101/103 are not complete.
 
 ## Run and check
 
@@ -30,7 +30,7 @@ Use the address printed by Vite; the configured port is 3000, but Vite may choos
 
 1. Open `/dashboard` without a session: while auth is being checked, expect a waiting message; afterward, expect a redirect to `/login`.
 2. On `/login`, sign in with Google using the existing Supabase configuration. Wait for profile verification; a successful response opens Dashboard with your name. Profile errors keep access blocked and offer retry/sign-out.
-3. Reload: restore the session, verify the profile again and return to Dashboard. The session list itself still uses sample data.
+3. Reload: restore the session, verify the profile again and return to Dashboard. Verify the routed page requests `/api/sessions?page=1&page_size=20`; an empty real account should show the empty state and total 0, without sample cards.
 4. Select **Đăng xuất** on Dashboard (or on Login while profile is pending): expect the session to end. Reload should keep you signed out; opening `/dashboard` should return to `/login`.
 
 The previous mock auth route has been removed. Do not manually set a mock user in the auth store to bypass profile verification. Use the standalone preview to inspect Dashboard UI states without a backend. Its behavior does not verify authentication or protected-route access.
@@ -50,14 +50,25 @@ The HTML entry is `frontend/dashboard-preview.html`; the React entry is `src/fea
 
 | Component | Props |
 |---|---|
-| DashboardPage | `loadSessions(): Promise<Session[]>`, `onCreate()`, `onOpen(session)`, `onClone(session)` |
+| DashboardPage | `loadSessions({ signal }): Promise<Session[]>`, `onCreate()`, `onOpen(session)`, `onClone(session)` |
 | DashboardSessionCard | `session`, `onOpen(session)`, `onClone(session)` |
 
-TV1 owns the page/card and `DashboardRoute.jsx`, which supplies the stable mock loader and callback notices. TV2 receives the selected session through `onClone(session)` and implements the Clone Modal; TV1 will integrate it later. These callback names are the handoff; they do not define the final backend request/response or modal completion contract.
+TV1 owns the page/card and `DashboardRoute.jsx`, which supplies a stable real-list adapter and callback notices. The adapter returns `items` to Page and retains `total/page/page_size`; Page passes an AbortSignal and aborts on cleanup while retaining its active-result guard. Route resets account-specific state with a user ID/session-version key, which stays stable on same-account token refresh. Preview loaders may ignore the optional argument. TV2 receives the selected session through `onClone(session)` and implements the Clone Modal; TV1 will integrate it later.
 
 `dashboardMock.js` supplies `listDashboardSessions({ scenario })`, where scenario is success, empty or error. Session fields are `id`, `title`, `subject`, `created_at`, `status`; these are illustrative fixtures, not the final TV3 API contract. Approved/exported fixtures show a view label; destination routes are decided by the parent after the status contract is agreed.
 
 ## Verification and remaining work
+
+### Pagination code review — 24/10/2026
+
+- Route now requests the selected `page`, computes page count from server metadata, disables Previous/Next until matching metadata is ready and at the boundaries, and redirects an out-of-range page to the last valid page (minimum 1). Page is keyed by page number to clear old cards and abort the prior load; the account wrapper resets pagination on account/login-version changes while preserving it across same-account token refresh.
+- TV1 reported the preceding first-page checks passed and the pagination implementation had no errors. Agent reviewed the source and reran **72/72 Node tests**, lint/build and diff-check successfully. Those tests do not execute the React pagination UI.
+- TV1 manually ran the separate local browser suite after resolving its server-start issue and reported all cases passed. Agent read the generated report and confirmed **17/17 passed**, with no captured runtime errors/unhandled rejections. It imports the actual Route/Page/ProtectedRoute/service/client/store and replaces Auth/HTTP with fixtures: empty state, 41 items across three pages, loading/boundaries, stable loader, 403/429/500/network errors and retry, bad envelope, out-of-range correction to populated/empty page 1, A→B late responses/state reset, same-account refresh and logout while loading. This is separate from the 72 Node tests and does not verify cloud writes, real populated pages, session RLS or clone. The browser automation permission rejection was not bypassed; the author opened the fixture page manually.
+
+### First-page UI code review — 24/10/2026
+
+- Agent checked Page/Route changes at Dashboard baseline `ae79482`: real first-page adapter, stable callback, retained metadata, 403/429/generic messages, account-keyed state reset and cancellation on cleanup. Added `{ cause }` to the wrapped error to satisfy ESLint `preserve-caught-error`; no other source changes by the agent in this review.
+- **72/72 existing Node tests**, lint/build and diff-check passed. These Node tests cover Auth/API/services, not the new React UI behavior. No browser/cloud requests, logout/account-switch interaction or controlled UI race tests were performed in this review. Pagination controls, navigation and modal remain pending.
 
 ### Clone service checkpoint — 24/10/2026
 
@@ -71,7 +82,7 @@ TV1 owns the page/card and `DashboardRoute.jsx`, which supplies the stable mock 
 - TV1 reported the real service call returning the valid empty first page after DB setup. Clone, populated real pages, session ownership A/B and routed UI remain unverified.
 - Agent added 12 cases in [sessions.test.js](../../services/sessions.test.js) using the actual service/client/store with Auth/HTTP fixtures: query/token/envelope, empty/out-of-range pages, invalid data/input, HTTP/network errors without extra retries/logout, cancellation, stale results after logout/account change, and same-account refresh. Frontend **63/63 Node tests**, lint/build and diff-check passed. These are not browser/cloud tests; clone is not implemented in this service yet.
 
-Current documentation checkpoint, updated 23/10/2026:
+Historical Auth documentation checkpoint — 23/10/2026 (Dashboard list status superseded above):
 
 - Profile verification is connected. `ProtectedRoute` requires `authenticated` and an application user; `profile_pending` cannot enter Dashboard. On 23/10 TV1 reported real profile 200/correct Dashboard name, reload restoring the session/profile, sign-out blocking Dashboard even after reload, and successful Google re-login. TV1 also confirmed a previously absent Google B account automatically received a profile matching its Auth ID, reload retained B and switching back displayed A correctly. Unfiltered profile SELECT probes under A's and B's JWT each succeeded and returned exactly the current user's single row. This verifies profile read isolation for these accounts; real expiry and write/session/storage permissions remain unverified.
 - Dashboard's loader and create/open/clone callbacks still use mocks/notices. Its sign-out button now calls Supabase with local scope, handles busy/failure states and relies on App's SIGNED_OUT subscription to clear the store. The navbar displays the backend profile name and an avatar from the matching session's Google metadata, with initials for missing/failed images and a component key covering account, session version and image URL.
@@ -89,6 +100,6 @@ Historical Dashboard UI verification on 17/10/2026, before the real auth changes
 
 The last author-provided `npm audit` report on 17/10/2026 contained 15 vulnerabilities (4 low, 5 moderate, 6 high). Audit has not passed; no dependency upgrades or `npm audit fix --force` were applied in this increment. Dependency remediation requires separate compatibility checks and review.
 
-Remaining work: Auth PR #7 review and current-head CI; natural expiry/failed refresh on cloud and the static Nginx build remain unverified. Per the 24/10 decision, continue TASK-103 on `feat/task-103-dashboard-api` while Auth awaits review: wire list/pagination, integrate TV2/Bội Anh's agreed Clone Modal, connect agreed create/open routes and refresh the list after cloning. Auth must be accepted into `dev` before merging Dashboard there; check ancestry/diff if Auth is squash merged. Verify application data persistence/errors/ownership with the backend. Repeat Docker checks when integrating those changes; the real Auth/profile SELECT checks do not verify session/clone APIs.
+Remaining work: Auth PR #7 review and current-head CI; natural expiry/failed refresh on cloud and the static Nginx build remain unverified. Per the 24/10 decision, continue TASK-103 on `feat/task-103-dashboard-api` while Auth awaits review: integrate TV2/Bội Anh's agreed Clone Modal, connect agreed create/open routes, complete status labels and refresh the list after cloning. Auth must be accepted into `dev` before merging Dashboard there; check ancestry/diff if Auth is squash merged. Verify populated real pages, application data persistence/errors/session ownership and real clone with the backend. Repeat Docker checks when integrating those changes; the real Auth/profile SELECT checks do not verify session/clone APIs.
 
 The visual layout remains provisional. Apply the agreed design in its own implementation step; this README update does not change or approve the interface.

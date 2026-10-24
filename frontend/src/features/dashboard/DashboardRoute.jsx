@@ -1,17 +1,78 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useAuthStore } from '../auth/authStore.js';
 import DashboardPage from './DashboardPage.jsx';
-import { listDashboardSessions } from './dashboardMock.js';
+import { listSessions } from '../../services/sessions.js';
 import { getSupabase } from '../../services/supabase.js';
 import UserAvatar from '../auth/UserAvatar.jsx';
 
 export default function DashboardRoute() {
+  const accountKey = useAuthStore(
+    (state) => `${state.user?.id ?? ''}:${state.sessionVersion}`,
+  );
+
+  return <DashboardContent key={accountKey} />;
+}
+
+function DashboardContent() {
   const [notice, setNotice] = useState('');
   const user = useAuthStore((state) => state.user);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState('');
   const session = useAuthStore((state) => state.session);
   const sessionVersion = useAuthStore((state) => state.sessionVersion);
+  const [pageInfo, setPageInfo] = useState(null);
+  const [page, setPage] = useState(1);
+
+  const totalPages = pageInfo
+    ? Math.max(1, Math.ceil(pageInfo.total / pageInfo.pageSize))
+    : 1;
+
+  const isPageReady = pageInfo?.page === page;
+
+  const loadSessions = useCallback(async ({ signal } = {}) => {
+    setPageInfo(null);
+
+    try {
+      const result = await listSessions({
+        page,
+        pageSize: 20,
+        signal,
+      });
+
+      signal?.throwIfAborted();
+
+      const lastPage = Math.max(
+        1,
+        Math.ceil(result.total / result.page_size),
+      );
+
+      if (page > lastPage) {
+        setPage(lastPage);
+        return [];
+      }
+
+      setPageInfo({
+        total: result.total,
+        page: result.page,
+        pageSize: result.page_size,
+      });
+
+      return result.items;
+    } catch (cause) {
+      if (signal?.aborted) throw cause;
+
+      const messages = {
+        403: 'Bạn không có quyền tải danh sách phiên đề.',
+        429: 'Bạn thao tác quá nhanh. Hãy chờ một chút rồi thử lại.',
+      };
+
+      throw new Error(
+        messages[cause?.response?.status]
+        ?? 'Không tải được danh sách phiên đề. Vui lòng thử lại.',
+        { cause },
+      );
+    }
+  }, [page]);
 
   const displayName = user?.name?.trim() || user?.email || 'Tài khoản';
 
@@ -62,10 +123,6 @@ export default function DashboardRoute() {
             </p>
           </div>
 
-          <p className="text-sm text-amber-300">
-            Dashboard đang dùng dữ liệu mẫu, chưa kết nối API.
-          </p>
-
           <button
             type="button"
             onClick={handleSignOut}
@@ -88,7 +145,8 @@ export default function DashboardRoute() {
       </aside>
 
       <DashboardPage
-        loadSessions={listDashboardSessions}
+        key={page}
+        loadSessions={loadSessions}
         onCreate={() => {
           setNotice('Đã nhận thao tác Tạo đề mới; chưa nối màn nhập nguồn.');
         }}
@@ -99,6 +157,35 @@ export default function DashboardRoute() {
           setNotice(`Đã chọn nhân bản: ${session.title}; đang chờ Clone Modal.`);
         }}
       />
+
+      <nav
+        aria-label="Phân trang phiên đề"
+        className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 pb-6"
+      >
+        <button
+          type="button"
+          disabled={!isPageReady || page <= 1}
+          onClick={() => setPage((value) => value - 1)}
+          className="rounded-lg border border-slate-600 px-4 py-2 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Trước
+        </button>
+
+        <p role="status" className="text-sm text-slate-400">
+          {isPageReady
+            ? `Trang ${page} / ${totalPages} · Tổng ${pageInfo.total} phiên`
+            : `Trang ${page}`}
+        </p>
+
+        <button
+          type="button"
+          disabled={!isPageReady || page >= totalPages}
+          onClick={() => setPage((value) => value + 1)}
+          className="rounded-lg border border-slate-600 px-4 py-2 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Sau
+        </button>
+      </nav>
     </>
   );
 }
