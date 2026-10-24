@@ -4,10 +4,11 @@ Frontend sản phẩm dùng React/Vite và JavaScript/JSX. Đây là hướng d�
 
 ## Checkpoint TASK-103 — 24/10/2026
 
-- Nhánh `feat/task-103-dashboard-api` đã đồng bộ `dev` tại merge commit `ca88c07` (dev `478cc55`). Có service list/clone dùng API client chung; Dashboard tải list thật, phân trang, loading/empty/error/retry, hủy kết quả cũ theo tài khoản và đủ 10 nhãn trạng thái. Clone service chưa ghép modal; tạo/mở phiên vẫn là thông báo.
+- Nhánh `feat/task-103-dashboard-api` đã đồng bộ PR6 tại merge `e7530a4` (dev `2c68b3a`). Dashboard tải list thật, phân trang, đủ10nhãn trạng thái và mở Clone Modal với service thật. Thành công tải lại trang1; adapter riêng chuyển thông báo lỗi nhưng giữ một API/Supabase client/store và xử lý401 chung. Tạo/mở Stage vẫn là thông báo.
 - TV1 báo list thật trả200/rỗng và kiểm UI first-page/reload/logout đạt. Suite Dashboard riêng dùng Auth/HTTP fixtures đạt **17/17**, agent đã đọc report; không cộng vào Node tests hoặc coi là kiểm quyền sessions thật.
 - Sau đồng bộ, TV1 báo frontend host **85 tests** và lint/build đạt; lượt Docker tiếp theo: backend **209 passed, 1 warning trong14.22s**, frontend **85 tests passed**. Warning là `StarletteDeprecationWarning` về `httpx` trong TestClient, không phải test fail; chưa đổi dependency trong phạm vi này. Đây là kết quả TV1 chạy, agent không rerun Docker.
-- Còn thiếu: màn/route và nơi tạo bản ghi phiên được chốt, modal Bội Anh, clone/list có dữ liệu và cách ly phiên A/B trên backend thật. Xem [checkpoint Dashboard](src/features/dashboard/README.md). Chưa đánh dấu TASK-103 Done hoặc đã được reviewer nghiệm thu.
+- Mốc ghép modal: agent kiểm **113/113 Node tests**, lint/build và **18/18 ca ghép riêng** bằng ReactDOM thật với DOM/SDK/HTTP mô phỏng. Bộ18 không nằm trong113 hoặcCI, không phải kiểm trình duyệt/cloud. Chi tiết tại [checkpoint Dashboard](src/features/dashboard/README.md).
+- Còn thiếu: màn/route và nơi tạo bản ghi phiên được chốt, kiểm trình duyệt sau ghép, clone/list có dữ liệu và cách ly phiên A/B trên backend thật. Chưa đánh dấu TASK-103 Done hoặc đã được reviewer nghiệm thu.
 
 ## Chạy bằng Docker của nhóm
 
@@ -144,7 +145,7 @@ Unit tests dùng source thật và Auth/HTTP giả lập, không cần key/env h
 ## Phần đang chờ tích hợp/review
 
 - TASK-101: code Google login/profile/avatar và các ca thật trong bảng trên đã có bằng chứng TV1; chưa được review/nghiệm thu. Token tự hết hạn hoặc refresh thật thất bại chưa kiểm trên cloud; hành vi 401/refresh thất bại có kiểm giả lập.
-- TASK-103: list API và phân trang đã nối trên nhánh Dashboard theo checkpoint24/10 ở đầu file; service clone đã có nhưng Clone Modal và điều hướng Stage chưa ghép. Populated cloud pages, clone thật và quyền truy cập sessions A/B chưa kiểm.
+- TASK-103: list API/phân trang và Clone Modal đã nối theo checkpoint24/10 ở đầu file; điều hướng Stage/nơi tạo phiên chưa chốt. Populated cloud pages, clone thật và quyền truy cập sessions A/B chưa kiểm.
 - Chưa kiểm bản static Nginx và CI của head Auth mới. Quyền ghi/sessions/storage sẽ kiểm cùng phạm vi tích hợp tương ứng; quyền SELECT profile không thay bằng chứng cho các phần đó.
 
-Nhánh đang triển khai: `feat/task-103-dashboard-api`, từ nền Auth `978003a`, được cho tiếp tục trong lúc Auth chờ review. Lần kiểm GitHub gần nhất24/10: PR #7 Auth và PR #6 Clone Modal đều Ready/chưa merge. Trước khi Dashboard vào `dev`, cần nền Auth đã được chấp nhận và diff đúng scope, đặc biệt nếu Auth squash merge. **Chưa đánh dấu TASK-101/103 Done.** Quyết định Auth và SQL được ghi ở [DEC-TV1-002](../docs/change_log.md#dec-tv1-002-tích-hợp-google-oauth-profile-và-bootstrap-auth); checkpoint Auth23/10 phía trên là lịch sử, không ghi đè tiến độ Dashboard24/10.
+Nhánh đang triển khai: `feat/task-103-dashboard-api`, từ nền Auth `978003a`, được cho tiếp tục trong lúc Auth chờ review. PR #6 Clone Modal đã merge vào dev `2c68b3a` và được lấy vào Dashboard; PR #7 Auth Ready/chưa merge ở lần kiểm riêng gần nhất24/10. Trước khi Dashboard vào `dev`, cần nền Auth đã được chấp nhận và diff đúng scope, đặc biệt nếu Auth squash merge. **Chưa đánh dấu TASK-101/103 Done.** Quyết định Auth và SQL được ghi ở [DEC-TV1-002](../docs/change_log.md#dec-tv1-002-tích-hợp-google-oauth-profile-và-bootstrap-auth); checkpoint Auth23/10 phía trên là lịch sử, không ghi đè tiến độ Dashboard24/10.

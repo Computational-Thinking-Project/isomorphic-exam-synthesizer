@@ -2,6 +2,8 @@ import { useCallback, useState } from 'react';
 import { useAuthStore } from '../auth/authStore.js';
 import DashboardPage from './DashboardPage.jsx';
 import { listSessions } from '../../services/sessions.js';
+import CloneSessionModal from './CloneSessionModal.jsx';
+import { cloneSessionForDashboard } from './cloneSessionForDashboard.js';
 import { getSupabase } from '../../services/supabase.js';
 import UserAvatar from '../auth/UserAvatar.jsx';
 
@@ -22,6 +24,8 @@ function DashboardContent() {
   const sessionVersion = useAuthStore((state) => state.sessionVersion);
   const [pageInfo, setPageInfo] = useState(null);
   const [page, setPage] = useState(1);
+  const [cloningSession, setCloningSession] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const totalPages = pageInfo
     ? Math.max(1, Math.ceil(pageInfo.total / pageInfo.pageSize))
@@ -73,6 +77,14 @@ function DashboardContent() {
       );
     }
   }, [page]);
+
+  function handleCloneSuccess(newSession) {
+    setCloningSession(null);
+    setPageInfo(null);
+    setPage(1);
+    setRefreshKey((value) => value + 1);
+    setNotice(`Đã nhân bản thành công: ${newSession.title}.`);
+  }
 
   const displayName = user?.name?.trim() || user?.email || 'Tài khoản';
 
@@ -145,7 +157,7 @@ function DashboardContent() {
       </aside>
 
       <DashboardPage
-        key={page}
+        key={`${page}:${refreshKey}`}
         loadSessions={loadSessions}
         onCreate={() => {
           setNotice('Đã nhận thao tác Tạo đề mới; chưa nối màn nhập nguồn.');
@@ -153,9 +165,18 @@ function DashboardContent() {
         onOpen={(session) => {
           setNotice(`Đã chọn mở: ${session.title} (${session.id}).`);
         }}
-        onClone={(session) => {
-          setNotice(`Đã chọn nhân bản: ${session.title}; đang chờ Clone Modal.`);
+        onClone={(selectedSession) => {
+          setNotice('');
+          setCloningSession(selectedSession);
         }}
+      />
+
+      <CloneSessionModal
+        isOpen={Boolean(cloningSession)}
+        session={cloningSession}
+        onClose={() => setCloningSession(null)}
+        onSuccess={handleCloneSuccess}
+        cloneFn={cloneSessionForDashboard}
       />
 
       <nav

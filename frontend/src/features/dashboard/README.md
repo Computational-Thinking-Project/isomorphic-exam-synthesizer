@@ -2,7 +2,7 @@
 
 Dashboard is connected to `/dashboard` under `ProtectedRoute`. A Supabase session enters `profile_pending`; the shared hook requests `GET /api/users/me` and opens Dashboard only after accepting a profile for the current account/login version. TV1 reported a real profile 200 response and the correct Dashboard name on 23/10/2026.
 
-The routed Dashboard uses the real list service with server pagination, Previous/Next controls and out-of-range correction. TV1 reported real first-page checks passed; a separate controlled browser suite passed 17/17 scenarios. Populated cloud pages and session ownership across real accounts remain unverified. Create/open/clone still show action notices; real navigation and the Clone Modal are not integrated. The separate preview keeps mock data. The current layout is provisional; TASK-101/103 are not complete.
+The routed Dashboard uses the real list service with server pagination and out-of-range correction. The merged Clone Modal is connected through the real clone service; success closes it and reloads page1 even when already on page1. Create/open still show notices pending agreed Stage destinations. Controlled tests passed as recorded below; populated cloud pages, real clone/persistence and real session ownership remain unverified. The separate previews keep mock data. The layout is provisional; TASK-101/103 are not complete.
 
 ## Run and check
 
@@ -53,11 +53,19 @@ The HTML entry is `frontend/dashboard-preview.html`; the React entry is `src/fea
 | DashboardPage | `loadSessions({ signal }): Promise<Session[]>`, `onCreate()`, `onOpen(session)`, `onClone(session)` |
 | DashboardSessionCard | `session`, `onOpen(session)`, `onClone(session)` |
 
-TV1 owns the page/card and `DashboardRoute.jsx`, which supplies a stable real-list adapter and callback notices. The adapter returns `items` to Page and retains `total/page/page_size`; Page passes an AbortSignal and aborts on cleanup while retaining its active-result guard. Route resets account-specific state with a user ID/session-version key, which stays stable on same-account token refresh. Preview loaders may ignore the optional argument. TV2 receives the selected session through `onClone(session)` and implements the Clone Modal; TV1 will integrate it later.
+TV1 owns the page/card and `DashboardRoute.jsx`, which supplies a stable real-list adapter and create/open notices. The adapter returns `items` to Page and retains `total/page/page_size`; Page passes an AbortSignal and aborts on cleanup while retaining its active-result guard. Route resets account-specific state with a user ID/session-version key, which stays stable on same-account token refresh. Preview loaders may ignore the optional argument. TV2 owns the merged Clone Modal; TV1 connects the selected session and real clone function in Route.
+
+The routed `onClone(session)` now opens TV2's merged Modal. Its explicit `cloneFn` is [cloneSessionForDashboard](cloneSessionForDashboard.js), which calls the shared sessions service and returns the direct new-session object. It translates API/Auth errors without reading backend detail into user messages or adding retries. Canceled/stale requests retain cancellation semantics. Timeout/network/5xx messages advise reloading the page to check whether a copy exists before resubmission. Route keys Page by page/refresh counter; the account wrapper also clears modal selection on account/login-version changes. Destination navigation is still pending.
 
 `dashboardMock.js` supplies `listDashboardSessions({ scenario })`, where scenario is success, empty or error. Session fields are `id`, `title`, `subject`, `created_at`, `status`; these are illustrative fixtures, not the final TV3 API contract. Approved/exported fixtures show a view label; destination routes are decided by the parent after the status contract is agreed.
 
 ## Verification and remaining work
+
+### Route–Modal–API checkpoint — 24/10/2026
+
+- Baseline after merging PR6 is `e7530a4`; TV1 reported104 tests passed. Agent reviewed Route wiring, added [the error adapter](cloneSessionForDashboard.js) and [9 adapter tests](cloneSessionForDashboard.test.js). Full frontend **113/113 Node tests**, lint/build and diff-check passed, with no dependency/client/store/backend changes.
+- A separate local **18/18 integration suite** passed using actual ReactDOM lifecycle/StrictMode and the real Route/Page/Card/Modal/ProtectedRoute/service/API/store, with a minimal DOM mock and SDK/HTTP fixtures. Cases cover success/page1 refresh/page2→1, busy/double submit, HTTP/network/timeout errors and retry, successful clone followed by list-load failure, account changes with late success/error, same-account refresh, logout and terminal401. This local review suite is separate from the113 Node count and is not part of CI.
+- These checks do not verify native browser keyboard/focus, real cloud clone/persistence or sessions A/B ownership. No seed data or new Stage routes were created. Older browser17 and Docker209/85 results below belong to earlier checkpoints, not this integration run.
 
 ### After syncing dev — 24/10/2026
 
@@ -106,6 +114,6 @@ Historical Dashboard UI verification on 17/10/2026, before the real auth changes
 
 The last author-provided `npm audit` report on 17/10/2026 contained 15 vulnerabilities (4 low, 5 moderate, 6 high). Audit has not passed; no dependency upgrades or `npm audit fix --force` were applied in this increment. Dependency remediation requires separate compatibility checks and review.
 
-Remaining work: Auth PR #7 review and current-head CI; natural expiry/failed refresh on cloud and the static Nginx build remain unverified. Per the 24/10 decision, continue TASK-103 on `feat/task-103-dashboard-api` while Auth awaits review: integrate TV2/Bội Anh's agreed Clone Modal, connect agreed create/open routes and refresh the list after cloning. Auth must be accepted into `dev` before merging Dashboard there; check ancestry/diff if Auth is squash merged. Verify populated real pages, application data persistence/errors/session ownership and real clone with the backend. Repeat Docker checks when later integration changes justify it; the real Auth/profile SELECT checks do not verify session/clone APIs.
+Remaining work: Auth PR #7 review and current-head CI; natural expiry/failed refresh on cloud and the static Nginx build remain unverified. Connect agreed create/open Stage routes and creation ownership; verify native browser behavior, populated real pages, persistence/session ownership and real clone with the backend. Auth must be accepted into `dev` before merging Dashboard there; check ancestry/diff if Auth is squash merged. Repeat Docker checks when later integration changes justify it; real Auth/profile SELECT checks do not verify session/clone APIs.
 
 The visual layout remains provisional. Apply the agreed design in its own implementation step; this README update does not change or approve the interface.
