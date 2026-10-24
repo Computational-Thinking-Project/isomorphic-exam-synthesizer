@@ -1,7 +1,14 @@
 const statusLabels = {
   draft: 'Đang chuẩn bị',
+  blueprinted: 'Đã xác nhận quy tắc',
+  configured: 'Đã cấu hình sinh đề',
+  generating: 'Đang sinh đề',
+  partial_generated: 'Đã sinh một phần',
+  generated: 'Đã sinh đề',
+  reviewed: 'Đã duyệt các câu',
   approved: 'Đã chốt',
   exported: 'Đã xuất',
+  failed: 'Sinh đề gặp lỗi',
 };
 
 const buttonClass =
@@ -27,6 +34,9 @@ export default function DashboardSessionCard({
   onClone,
 }) {
   const isReadOnly = ['approved', 'exported'].includes(session.status);
+  const statusLabel = Object.hasOwn(statusLabels, session.status)
+    ? statusLabels[session.status]
+    : 'Chưa xác định';
 
   return (
     <article className="rounded-xl border border-slate-700 bg-slate-900 p-6">
@@ -36,7 +46,7 @@ export default function DashboardSessionCard({
         </h2>
 
         <span className="rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-300">
-          {statusLabels[session.status] || 'Chưa xác định'}
+          {statusLabel}
         </span>
       </div>
 
