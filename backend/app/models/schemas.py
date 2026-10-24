@@ -28,7 +28,7 @@ class GeneratedVariant(BaseModel):
 class GenerateRequest(BaseModel):
     """Payload từ người dùng ở Stage 02: Chỉ cần chọn số lượng N đề cần sinh."""
     source_exam_id: str = Field(..., description="Mã đề thi gốc")
-    n_versions: int = Field(default=4, ge=1, le=20, description="Số lượng phiên bản đề cần sinh")
+    n_versions: int = Field(default=4, ge=1, le=4, description="Số lượng phiên bản đề cần sinh")
 
 
 class RegenerateQuestionRequest(BaseModel):

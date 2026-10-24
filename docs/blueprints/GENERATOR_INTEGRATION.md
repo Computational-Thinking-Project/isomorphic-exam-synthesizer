@@ -1,3 +1,5 @@
+> Backend W2 đã tích hợp lõi extractor dùng chung; không spawn CLI từ routes. Dùng [contract AI W2](../ai-w2-integration.md) và chỉ extract sau xác nhận nguồn. Tài liệu bên dưới giữ hợp đồng CLI độc lập.
+
 **Hợp đồng bàn giao script tạo blueprint cho người phụ trách generator**
 
 Giao diện này đã được triển khai tại [create_blueprints.py](../../scripts/blueprint/create_blueprints.py). Đã kiểm thử file/stdin, single/batch, gọi từ working directory khác và API Gemini thật. Hướng dẫn chạy, cấu hình và kết quả kiểm thử tóm tắt nằm trong [README script](../../scripts/blueprint/README.md). Phase tạo blueprint bàn giao qua file JSON; phần tích hợp generator do người phụ trách phase generate thực hiện.

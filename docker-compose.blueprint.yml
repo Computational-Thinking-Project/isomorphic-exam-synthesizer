@@ -2,8 +2,8 @@
 services:
   blueprint:
     build:
-      context: ./scripts/blueprint
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: scripts/blueprint/Dockerfile
     working_dir: /workspace
     environment:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -11,6 +11,7 @@ services:
       BLUEPRINT_MODEL: ${BLUEPRINT_MODEL:-gemini-3.5-flash-lite}
     volumes:
       - ./scripts/blueprint:/workspace/scripts/blueprint:ro
+      - ./backend/app/services/blueprint:/workspace/backend/app/services/blueprint:ro
       - ./docs/blueprints:/workspace/docs/blueprints:ro
       - ./outputs/blueprint:/workspace/outputs
     stdin_open: true
