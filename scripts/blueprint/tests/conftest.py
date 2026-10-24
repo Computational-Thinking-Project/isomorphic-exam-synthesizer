@@ -4,7 +4,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest  # noqa: E402
-
 from blueprint_tool.common import ROOT, load_json  # noqa: E402
 from blueprint_tool.config import Config  # noqa: E402
 from blueprint_tool.extractor import Extractor  # noqa: E402
@@ -15,7 +14,7 @@ from blueprint_tool.schema_adapter import build_api_schema  # noqa: E402
 
 @pytest.fixture
 def science_schema():
-    return load_json(ROOT / "docs/blueprints/science-blueprint.schema.json")
+    return load_json(Config().schema_path)
 
 
 @pytest.fixture
