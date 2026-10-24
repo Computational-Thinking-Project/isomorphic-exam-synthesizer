@@ -21,7 +21,7 @@ async def replace_source_questions_atomically(
 
     Uses PostgreSQL Stored Procedure `replace_source_questions` (Method 2A) to ensure
     100% database ACID atomicity (Zero orphaned data on failure).
-    Provides resilient fallback to sequential client operations if RPC is unavailable.
+    Fails fast without client-side mutations if RPC is unavailable, guaranteeing Zero Cloud Mutation.
     """
     payload: List[Dict[str, Any]] = [
         {
@@ -36,70 +36,52 @@ async def replace_source_questions_atomically(
         for q in questions
     ]
 
-    use_rpc_success = False
-
     try:
-        # Method 2A: Try atomic RPC Stored Procedure
+        # Method 2A: Atomic RPC Stored Procedure execution
         rpc_res = db.rpc(
             "replace_source_questions",
             {"p_session_id": session_id, "p_questions": payload},
         ).execute()
-        if rpc_res.data and isinstance(rpc_res.data, dict) and rpc_res.data.get("success"):
-            use_rpc_success = True
-            logger.info(
-                "Successfully executed atomic RPC replace_source_questions for session %s",
+
+        if not (rpc_res.data and isinstance(rpc_res.data, dict) and rpc_res.data.get("success")):
+            logger.error(
+                "RPC replace_source_questions returned unexpected response for session %s: %s",
                 session_id,
+                rpc_res.data,
             )
-    except Exception as exc:
-        logger.warning(
-            "RPC replace_source_questions not available or failed (%s). Falling back to client-side atomic flow.",
-            exc,
-        )
-
-    if not use_rpc_success:
-        # Fallback for environments where RPC is not migrated
-        try:
-            # 1. Fetch old question IDs to clean blueprints
-            old_sq_res = (
-                db.table("source_questions").select("id").eq("session_id", session_id).execute()
-            )
-            old_sq_rows = cast(List[Dict[str, Any]], old_sq_res.data or [])
-            old_sq_ids = [r["id"] for r in old_sq_rows if "id" in r]
-
-            if old_sq_ids:
-                db.table("question_blueprints").delete().in_(
-                    "source_question_id", old_sq_ids
-                ).execute()
-
-            # 2. Delete old source questions
-            db.table("source_questions").delete().eq("session_id", session_id).execute()
-
-            # 3. Bulk insert new questions
-            insert_rows = [
-                {
-                    "session_id": session_id,
-                    "question_no": q.question_no,
-                    "raw_content": q.raw_content,
-                    "options": q.options,
-                    "correct_key": q.correct_key,
-                    "solution_md": q.solution_md,
-                    "has_missing_answer": q.has_missing_answer,
-                    "has_security_warning": q.has_security_warning,
-                }
-                for q in questions
-            ]
-            db.table("source_questions").insert(cast(Any, insert_rows)).execute()
-
-            # 4. Update session timestamp
-            db.table("exam_sessions").update(cast(Any, {"updated_at": "now()"})).eq(
-                "id", session_id
-            ).execute()
-        except Exception as exc:
-            logger.error("Failed to replace source questions in fallback flow: %s", exc)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Database error during question replacement: {str(exc)}",
+                detail="Database atomic replacement failed: unexpected RPC response",
+            )
+
+        logger.info(
+            "Successfully executed atomic RPC replace_source_questions for session %s",
+            session_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        err_msg = str(exc)
+        logger.error("RPC replace_source_questions failed for session %s: %s", session_id, exc)
+        if "42501" in err_msg or "Access denied" in err_msg or "Unauthorized" in err_msg:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied or session ownership mismatch",
             ) from exc
+        if "22023" in err_msg or "draft" in err_msg:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Cannot ingest questions: session is not in draft status",
+            ) from exc
+        if "P0002" in err_msg or "not found" in err_msg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database atomic replacement failed. Session state was not modified.",
+        ) from exc
 
     # Query and return the newly inserted records
     fetch_res = (
@@ -116,9 +98,12 @@ async def trigger_blueprint_pipeline(
     session_id: str,
     questions: List[Dict[str, Any]],
 ) -> None:
-    """Non-blocking background trigger for AI Blueprint Extraction (TASK-203 hook).
+    """Non-blocking background trigger for AI Blueprint Extraction (TASK-203 integration hook).
 
-    Uses asyncio.Semaphore(3) to rate-limit AI calls without blocking HTTP response.
+    LIMITATION / SCOPE NOTE (TASK-202):
+    This function currently serves as an asynchronous event hook / placeholder logging the
+    ingestion event with bounded concurrency. Actual Gemini AI extraction and blueprint storage
+    are integrated in the subsequent TASK-203 pipeline.
     """
     semaphore = asyncio.Semaphore(3)
 
