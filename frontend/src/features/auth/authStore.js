@@ -2,18 +2,111 @@ import { create } from 'zustand';
 
 export const useAuthStore = create((set) => ({
     status: 'checking',
+    session: null,
     user: null,
+    sessionVersion: 0,
 
     setChecking: () => {
-        set({ status: 'checking', user: null });
+        set((state) => ({
+            status: 'checking',
+            session: null,
+            user: null,
+            sessionVersion: state.sessionVersion + 1,
+        }));
     },
 
-    setUser: (user) => {
-        if (!user || typeof user.id !== 'string' || !user.id.trim()) {
-            set({ status: 'unauthenticated', user: null });
+    requireReauthentication: (expectedVersion) => {
+        set((state) => {
+            if (
+                state.sessionVersion !== expectedVersion ||
+                !state.session ||
+                state.status === 'reauth_required'
+            ) {
+                return state;
+            }
+
+            return {
+                status: 'reauth_required',
+                user: null,
+                sessionVersion: state.sessionVersion + 1,
+            };
+        });
+    },
+
+    setSession: (session) => {
+        const validSession = Boolean(
+            session &&
+            typeof session.access_token === 'string' &&
+            session.access_token.trim() &&
+            typeof session.user?.id === 'string' &&
+            session.user.id.trim(),
+        );
+
+        if (!validSession) {
+            set((state) => ({
+                status: 'unauthenticated',
+                session: null,
+                user: null,
+                sessionVersion: state.sessionVersion + 1,
+            }));
             return;
         }
 
-        set({ status: 'authenticated', user });
+        set((state) => {
+            const sameRejectedSession =
+                state.status === 'reauth_required' &&
+                state.session?.user.id === session.user.id &&
+                state.session.access_token === session.access_token;
+
+            if (sameRejectedSession) return state;
+
+            const keepProfile =
+                state.status === 'authenticated' &&
+                state.session?.user.id === session.user.id &&
+                state.user?.id === session.user.id;
+
+            return {
+                status: keepProfile ? 'authenticated' : 'profile_pending',
+                session,
+                user: keepProfile ? state.user : null,
+                sessionVersion:
+                    state.sessionVersion +
+                    (state.session?.user.id !== session.user.id ? 1 : 0),
+            };
+        });
+    },
+    setProfile: (profile, expectedVersion) => {
+        set((state) => {
+            if (
+                state.status !== 'profile_pending' ||
+                state.sessionVersion !== expectedVersion ||
+                !profile ||
+                profile.id !== state.session?.user.id ||
+                typeof profile.email !== 'string' ||
+                !profile.email.trim()
+            ) {
+                return state;
+            }
+
+            return {
+                status: 'authenticated',
+                user: profile,
+            };
+        });
+    },
+    // Tạm giữ cho code mẫu cũ; chưa dùng để xác nhận profile thật.
+    setUser: (user) => {
+        const validUser = Boolean(
+            user &&
+            typeof user.id === 'string' &&
+            user.id.trim(),
+        );
+
+        set((state) => ({
+            status: validUser ? 'authenticated' : 'unauthenticated',
+            session: null,
+            user: validUser ? user : null,
+            sessionVersion: state.sessionVersion + 1,
+        }));
     },
 }));

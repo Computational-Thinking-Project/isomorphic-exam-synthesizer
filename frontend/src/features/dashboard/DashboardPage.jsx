@@ -22,12 +22,15 @@ export default function DashboardPage({
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
 
     setState({ status: 'loading', items: [], error: '' });
 
     async function load() {
       try {
-        const sessions = await loadSessions();
+        const sessions = await loadSessions({
+          signal: controller.signal,
+        });
 
         if (!Array.isArray(sessions)) {
           throw new Error('Dữ liệu danh sách chưa hợp lệ.');
@@ -58,6 +61,7 @@ export default function DashboardPage({
 
     return () => {
       active = false;
+      controller.abort();
     };
   }, [loadSessions, requestKey]);
 

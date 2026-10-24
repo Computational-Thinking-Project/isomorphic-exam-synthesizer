@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   BrowserRouter,
   Navigate,
@@ -7,43 +7,144 @@ import {
 } from 'react-router-dom';
 import LoginPage from './features/auth/LoginPage.jsx';
 import ProtectedRoute from './features/auth/ProtectedRoute.jsx';
-import AuthPreview from './features/auth/AuthPreview.jsx';
 import { useAuthStore } from './features/auth/authStore.js';
+import { useAuthProfile } from './features/auth/useAuthProfile.js';
 import DashboardRoute from './features/dashboard/DashboardRoute.jsx';
+import { getSupabase } from './services/supabase.js';
+import { classifyAuthError } from './services/authErrors.js';
 
 export default function App() {
-  const setUser = useAuthStore((state) => state.setUser);
+  const [authMessage, setAuthMessage] = useState(null);
+  const [authAttempt, setAuthAttempt] = useState(0);
+  const setChecking = useAuthStore((state) => state.setChecking);
+  const setSession = useAuthStore((state) => state.setSession);
+  const profileState = useAuthProfile();
 
   useEffect(() => {
-    // Tạm khởi động ở trạng thái chưa đăng nhập.
-    // Bước tích hợp Supabase sẽ thay phần này bằng kiểm tra phiên thật.
-    setUser(null);
-  }, [setUser]);
+    let active = true;
+    let subscription;
+    let revision = 0;
+
+    setChecking();
+    setAuthMessage(null);
+
+    const bootstrapVersion = useAuthStore.getState().sessionVersion;
+
+    function canApplyBootstrap() {
+      return (
+        active &&
+        revision === 0 &&
+        useAuthStore.getState().sessionVersion === bootstrapVersion
+      );
+    }
+
+    function handleFailure(cause) {
+      if (!canApplyBootstrap()) return;
+
+      const kind = classifyAuthError(cause);
+
+      if (kind === 'expired') {
+        setSession(null);
+        setAuthMessage({
+          kind: 'error',
+          text: 'Phiên đăng nhập không còn hợp lệ. Vui lòng đăng nhập lại.',
+          retry: false,
+        });
+        return;
+      }
+
+      // Chưa xác minh được phiên: tiếp tục chặn truy cập,
+      // giữ nguyên phiên lưu trong SDK và cho phép thử lại.
+      setAuthMessage({
+        kind: 'error',
+        text: kind === 'temporary'
+          ? 'Không thể kết nối để kiểm tra phiên. Kiểm tra mạng rồi thử lại.'
+          : 'Chưa thể kiểm tra phiên đăng nhập. Vui lòng thử lại.',
+        retry: true,
+      });
+    }
+
+    try {
+      const supabase = getSupabase();
+
+      const { data } = supabase.auth.onAuthStateChange(
+        (event, nextSession) => {
+          if (!active || event === 'INITIAL_SESSION') return;
+
+          revision += 1;
+          setSession(nextSession);
+
+          setAuthMessage(
+            event === 'SIGNED_OUT'
+              ? {
+                  kind: 'info',
+                  text: 'Phiên đăng nhập đã kết thúc. Bạn có thể đăng nhập lại.',
+                  retry: false,
+                }
+              : null,
+          );
+        },
+      );
+
+      subscription = data.subscription;
+
+      supabase.auth.getSession()
+        .then(({ data: sessionData, error }) => {
+          if (!canApplyBootstrap()) return;
+
+          if (error) {
+            handleFailure(error);
+            return;
+          }
+
+          setSession(sessionData.session);
+          setAuthMessage(null);
+        })
+        .catch(handleFailure);
+    } catch (cause) {
+      handleFailure(cause);
+    }
+
+    return () => {
+      active = false;
+      subscription?.unsubscribe();
+    };
+  }, [authAttempt, setChecking, setSession]);
 
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-          <Route element={<ProtectedRoute />}>
-              <Route path="/dashboard" element={<DashboardRoute />} />
-          </Route>
-        {import.meta.env.DEV && (
-          <Route path="/auth-preview" element={<AuthPreview />}>
-            <Route
-              index
-              element={<p>Chọn trạng thái để kiểm tra trang nội bộ.</p>}
-            />
+      {authMessage && (
+        <div
+          role={authMessage.kind === 'error' ? 'alert' : 'status'}
+          className={`p-4 ${
+            authMessage.kind === 'error'
+              ? 'text-rose-300'
+              : 'text-slate-300'
+          }`}
+        >
+          <p>{authMessage.text}</p>
 
-            <Route element={<ProtectedRoute />}>
-              <Route
-                path="private"
-                element={
-                  <p>Đã vào trang nội bộ bằng phiên mẫu.</p>
-                }
-              />
-            </Route>
-          </Route>
-        )}
+          {authMessage.retry && (
+            <button
+              type="button"
+              onClick={() => setAuthAttempt((attempt) => attempt + 1)}
+              className="mt-2 rounded-lg border border-current px-4 py-2"
+            >
+              Thử lại
+            </button>
+          )}
+        </div>
+      )}
+
+      <Routes>
+        <Route
+          path="/login"
+          element={<LoginPage profileState={profileState} />}
+        />
+
+        <Route element={<ProtectedRoute />}>
+          <Route path="/dashboard" element={<DashboardRoute />} />
+        </Route>
 
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
