@@ -1,6 +1,9 @@
 # Environment & Secrets
 .env
 .env.local
+.env.*
+!.env.example
+!**/.env.example
 *.pem
 *.key
 
@@ -30,4 +33,5 @@ Thumbs.db
 *.zip
 *.pdf
 scratch/
+.artifacts/
 outputs/blueprint/
