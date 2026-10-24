@@ -9,15 +9,33 @@ Provides endpoints for:
 - Cloning an existing session (deep copying source questions and blueprints)
 """
 
+import logging
+from datetime import datetime, timezone
 from typing import Any, List, Optional, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from postgrest.types import CountMethod
 from supabase import Client
 
 from app.api.dependencies import assert_ownership, get_current_user, get_user_db
+from app.core.rate_limit import crud_rate_limit
 from app.models.schemas import (
+    ConfirmSourceRequest,
+    ConfirmSourceResponse,
     CurrentUser,
+    IngestSuccessResponse,
+    IngestTextRequest,
     SessionCloneRequest,
     SessionCreate,
     SessionDetailResponse,
@@ -25,6 +43,21 @@ from app.models.schemas import (
     SessionListResponse,
     SessionUpdate,
 )
+from app.services.parser import (
+    assert_zero_mutation_or_raise,
+    ensure_blueprints_for_session,
+    parse_docx,
+    parse_latex,
+    parse_markdown,
+    upload_exam_file_to_storage,
+    validate_file_security,
+)
+from app.services.parser.ingestion_service import (
+    replace_source_questions_atomically,
+    trigger_blueprint_pipeline,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -71,12 +104,18 @@ async def create_session(
 async def list_sessions(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(20, ge=1, le=100, description="Items per page"),
-    status_filter: Optional[str] = Query(None, alias="status", description="Filter by status (e.g., draft, approved)"),
+    status_filter: Optional[str] = Query(
+        None, alias="status", description="Filter by status (e.g., draft, approved)"
+    ),
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
 ) -> SessionListResponse:
     """Retrieve paginated list of sessions owned by the current user, ordered by created_at DESC."""
-    query = db.table("exam_sessions").select("*", count=CountMethod.exact).eq("user_id", current_user.id)
+    query = (
+        db.table("exam_sessions")
+        .select("*", count=CountMethod.exact)
+        .eq("user_id", current_user.id)
+    )
 
     if status_filter:
         query = query.eq("status", status_filter)
@@ -172,7 +211,9 @@ async def update_session(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
         return SessionItem(**rows[0])
 
-    response = db.table("exam_sessions").update(cast(Any, update_data)).eq("id", session_id).execute()
+    response = (
+        db.table("exam_sessions").update(cast(Any, update_data)).eq("id", session_id).execute()
+    )
     rows = cast(List[dict[str, Any]], response.data or [])
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
@@ -215,7 +256,9 @@ async def clone_session(
     orig_res = db.table("exam_sessions").select("*").eq("id", session_id).execute()
     orig_rows = cast(List[dict[str, Any]], orig_res.data or [])
     if not orig_rows:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source session not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Source session not found"
+        )
     orig = orig_rows[0]
 
     # 2. Determine new title
@@ -274,7 +317,12 @@ async def clone_session(
             new_sq_id = str(ins_sq_rows[0]["id"])
 
             # 5. Clone corresponding blueprint if one exists
-            bp_res = db.table("question_blueprints").select("*").eq("source_question_id", old_sq_id).execute()
+            bp_res = (
+                db.table("question_blueprints")
+                .select("*")
+                .eq("source_question_id", old_sq_id)
+                .execute()
+            )
             bp_rows = cast(List[dict[str, Any]], bp_res.data or [])
             if bp_rows:
                 bp = bp_rows[0]
@@ -287,7 +335,9 @@ async def clone_session(
                     "rule_summary": bp.get("rule_summary"),
                     "confirmed_at": bp.get("confirmed_at"),
                 }
-                ins_bp_res = db.table("question_blueprints").insert(cast(Any, new_bp_payload)).execute()
+                ins_bp_res = (
+                    db.table("question_blueprints").insert(cast(Any, new_bp_payload)).execute()
+                )
                 ins_bp_rows = cast(List[dict[str, Any]], ins_bp_res.data or [])
                 if not ins_bp_rows:
                     raise RuntimeError(f"Failed to clone blueprint for question {old_sq_id}")
@@ -304,3 +354,269 @@ async def clone_session(
         ) from exc
 
     return SessionItem(**new_session)
+
+
+@router.post(
+    "/{session_id}/ingest-file",
+    response_model=IngestSuccessResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Ingest exam file (.docx, .tex, .md) with safe in-memory validation",
+)
+@crud_rate_limit
+async def ingest_file(
+    session_id: str,
+    request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_user_db),
+) -> IngestSuccessResponse:
+    """Ingest exam file (.docx, .tex, .md) for a session in draft status.
+
+    Validates ownership, SEC-04 file security, performs 100% in-memory parsing,
+    raises HTTP 422 if incomplete, and executes atomic DB replacement on success.
+    """
+    assert_ownership("exam_sessions", session_id, current_user.id, db=db)
+
+    # State Precondition check: must be in 'draft' status
+    s_res = db.table("exam_sessions").select("status").eq("id", session_id).execute()
+    s_rows = cast(List[dict[str, Any]], s_res.data or [])
+    if not s_rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    session_status = str(s_rows[0].get("status", ""))
+    if session_status != "draft":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot ingest questions: session is in '{session_status}' state (must be 'draft')",
+        )
+
+    # Read uploaded file bytes in-memory
+    file_bytes = await file.read()
+    filename = file.filename or "exam"
+
+    # SEC-04 File Security Validation (extension, size, zip bomb, magic bytes)
+    ext = validate_file_security(filename, file_bytes)
+
+    # In-Memory Parsing
+    if ext == ".docx":
+        parsed_questions, parser_errors = parse_docx(file_bytes)
+    elif ext == ".tex":
+        text_content = file_bytes.decode("utf-8", errors="replace")
+        parsed_questions, parser_errors = parse_latex(text_content)
+    elif ext == ".md":
+        text_content = file_bytes.decode("utf-8", errors="replace")
+        parsed_questions, parser_errors = parse_markdown(text_content)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported file format: {ext}",
+        )
+
+    # Zero Mutation Guard: In-Memory Pre-validation
+    assert_zero_mutation_or_raise(parsed_questions, parser_errors)
+
+    # Upload to Supabase Storage (Method 1C: only after 100% valid)
+    await upload_exam_file_to_storage(
+        db=db,
+        session_id=session_id,
+        filename=filename,
+        file_bytes=file_bytes,
+        content_type=file.content_type,
+    )
+
+    # Atomic Database Replacement (Method 2A RPC with fallback)
+    saved_questions = await replace_source_questions_atomically(
+        db=db,
+        session_id=session_id,
+        questions=parsed_questions,
+    )
+
+    # Trigger background Blueprint extraction pipeline (TASK-203 hook)
+    background_tasks.add_task(trigger_blueprint_pipeline, session_id, saved_questions)
+
+    return IngestSuccessResponse(
+        session_id=session_id,
+        message="Exam file ingested and validated successfully",
+        total_questions=len(saved_questions),
+        questions=saved_questions,
+    )
+
+
+@router.post(
+    "/{session_id}/ingest-text",
+    response_model=IngestSuccessResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Ingest raw exam text with safe in-memory validation",
+)
+@crud_rate_limit
+async def ingest_text(
+    session_id: str,
+    payload: IngestTextRequest,
+    request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_user_db),
+) -> IngestSuccessResponse:
+    """Ingest raw exam text (LaTeX or Markdown) for a session in draft status.
+
+    Validates ownership, performs 100% in-memory parsing, raises HTTP 422 if incomplete,
+    and executes atomic DB replacement on success.
+    """
+    assert_ownership("exam_sessions", session_id, current_user.id, db=db)
+
+    # State Precondition check: must be in 'draft' status
+    s_res = db.table("exam_sessions").select("status").eq("id", session_id).execute()
+    s_rows = cast(List[dict[str, Any]], s_res.data or [])
+    if not s_rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    session_status = str(s_rows[0].get("status", ""))
+    if session_status != "draft":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot ingest questions: session is in '{session_status}' state (must be 'draft')",
+        )
+
+    raw_text = payload.raw_text
+
+    # Parse with markdown parser or latex parser if latex environments are present
+    if "\\begin{enumerate}" in raw_text or "\\item" in raw_text:
+        parsed_questions, parser_errors = parse_latex(raw_text)
+    else:
+        parsed_questions, parser_errors = parse_markdown(raw_text)
+
+    # Zero Mutation Guard: In-Memory Pre-validation
+    assert_zero_mutation_or_raise(parsed_questions, parser_errors)
+
+    # Atomic Database Replacement
+    saved_questions = await replace_source_questions_atomically(
+        db=db,
+        session_id=session_id,
+        questions=parsed_questions,
+    )
+
+    # Trigger background Blueprint extraction pipeline (TASK-203 hook)
+    background_tasks.add_task(trigger_blueprint_pipeline, session_id, saved_questions)
+
+    return IngestSuccessResponse(
+        session_id=session_id,
+        message="Exam text ingested and validated successfully",
+        total_questions=len(saved_questions),
+        questions=saved_questions,
+    )
+
+
+@router.post(
+    "/{session_id}/confirm-source",
+    response_model=ConfirmSourceResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Confirm source exam and activate blueprints (TASK-205)",
+)
+@crud_rate_limit
+async def confirm_source(
+    session_id: str,
+    payload: ConfirmSourceRequest,
+    request: Request,
+    response: Response,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_user_db),
+) -> ConfirmSourceResponse:
+    """Confirm source exam questions, lock blueprints, and transition session to Stage 2.
+
+    Guards:
+    1. Ownership: Current user owns the exam session (Sync call).
+    2. State Precondition: Session must be in 'draft' status (HTTP 409 if not).
+    3. Data Integrity: Session must have source questions and none with missing answers (HTTP 422).
+    4. Security (SEC-02): If any question has security warnings, payload must have acknowledged_security_warnings=True (HTTP 422).
+    5. Blueprint Engine: Ensures all questions have active blueprints.
+    6. Atomic State Transition: Updates blueprints confirmed_at and session status to 'blueprinted'.
+    """
+    # Guard 1: Ownership verification (Sync function)
+    assert_ownership("exam_sessions", session_id, current_user.id, db=db)
+
+    # Guard 2: State Precondition (must be 'draft')
+    s_res = db.table("exam_sessions").select("status").eq("id", session_id).execute()
+    s_rows = cast(List[dict[str, Any]], s_res.data or [])
+    if not s_rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    session_status = str(s_rows[0].get("status", ""))
+    if session_status != "draft":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Session is in '{session_status}' state; cannot confirm source unless in 'draft'",
+        )
+
+    # Guard 3: Fetch & validate source questions
+    q_res = (
+        db.table("source_questions")
+        .select("*")
+        .eq("session_id", session_id)
+        .order("question_no", desc=False)
+        .execute()
+    )
+    questions = cast(List[dict[str, Any]], q_res.data or [])
+    if not questions:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cannot confirm source: Session has no source questions",
+        )
+
+    missing_answer_questions = [
+        q.get("question_no", "?") for q in questions if q.get("has_missing_answer") is True
+    ]
+    if missing_answer_questions:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Cannot confirm source: Questions {missing_answer_questions} have missing answers",
+        )
+
+    # Guard 4: Security warnings acknowledgment (SEC-02)
+    security_warning_questions = [
+        q.get("question_no", "?") for q in questions if q.get("has_security_warning") is True
+    ]
+    if security_warning_questions and not payload.acknowledged_security_warnings:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Questions {security_warning_questions} have security warnings (SEC-02). "
+                "Explicit acknowledgment is required by setting acknowledged_security_warnings=True"
+            ),
+        )
+
+    # Guard 5: Ensure blueprints exist for all source questions
+    total_blueprints = await ensure_blueprints_for_session(db, session_id, questions)
+
+    # Guard 6: Atomic state transition
+    now_iso = datetime.now(timezone.utc).isoformat()
+    sq_ids = [str(q["id"]) for q in questions if "id" in q]
+
+    try:
+        if sq_ids:
+            db.table("question_blueprints").update(
+                cast(Any, {"confirmed_at": now_iso})
+            ).in_("source_question_id", sq_ids).execute()
+
+        db.table("exam_sessions").update(
+            cast(Any, {"status": "blueprinted", "updated_at": now_iso})
+        ).eq("id", session_id).execute()
+    except Exception as exc:
+        logger.error(
+            "Database error during source confirmation for session %s: %s",
+            session_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to confirm source and lock blueprints: {str(exc)}",
+        ) from exc
+
+    return ConfirmSourceResponse(
+        session_id=session_id,
+        status="blueprinted",
+        confirmed_at=now_iso,
+        total_questions=len(questions),
+        total_blueprints=total_blueprints,
+        message="Source confirmed and blueprints locked successfully",
+    )
+

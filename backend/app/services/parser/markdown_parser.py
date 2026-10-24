@@ -1,0 +1,122 @@
+"""Markdown Ingestion Parser (TASK-202).
+
+Handles:
+- Parsing Markdown exam files (.md) and direct text input
+- Markdown headers ("### Câu X:", "**Câu X:**", "Câu X:")
+- 4 options A, B, C, D (list items "- A. ...", "* A. ...", or inline)
+- Inline and block LaTeX math formulas ($...$, $$...$$)
+- Separate answer key mapping
+- Prompt injection detection (SEC-02) and Unicode NFC normalization
+"""
+
+import logging
+import re
+from typing import Any, Dict, List, Tuple
+
+from app.models.schemas import ParsedQuestionItem, ParserErrorItem
+from app.services.parser.utils import (
+    check_prompt_injection,
+    extract_options_from_text,
+    normalize_unicode_nfc,
+    parse_separate_answer_key,
+)
+
+logger = logging.getLogger(__name__)
+
+MD_QUESTION_HEADER = re.compile(
+    r"(?:^|\n)(?:#{1,6}\s*|\*{1,2}|_{1,2})?(?:câu|bài)\s+(?P<num>\d+)\s*[\.:\-](?:\*{1,2}|_{1,2})?\s*",
+    re.IGNORECASE,
+)
+
+
+def parse_markdown(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[ParserErrorItem]]:
+    """Parse raw Markdown exam text and return parsed questions and errors."""
+    text = normalize_unicode_nfc(raw_content)
+
+    # 1. Parse separate answer table at the end
+    answer_map, text_without_keys = parse_separate_answer_key(text)
+
+    # 2. Segment text by question headers
+    matches = list(MD_QUESTION_HEADER.finditer(text_without_keys))
+    questions_raw: List[Dict[str, Any]] = []
+
+    if matches:
+        for idx, m in enumerate(matches):
+            q_no = int(m.group("num"))
+            start_pos = m.end()
+            end_pos = matches[idx + 1].start() if idx + 1 < len(matches) else len(text_without_keys)
+            q_body = text_without_keys[start_pos:end_pos].strip()
+            questions_raw.append({"question_no": q_no, "text": q_body})
+    else:
+        # Fallback: check if numbered like "1.", "2."
+        numbered_matches = list(re.finditer(r"(?:^|\n)(?P<num>\d+)\.\s+", text_without_keys))
+        if numbered_matches:
+            for idx, m in enumerate(numbered_matches):
+                q_no = int(m.group("num"))
+                start_pos = m.end()
+                end_pos = (
+                    numbered_matches[idx + 1].start()
+                    if idx + 1 < len(numbered_matches)
+                    else len(text_without_keys)
+                )
+                q_body = text_without_keys[start_pos:end_pos].strip()
+                questions_raw.append({"question_no": q_no, "text": q_body})
+
+    # 3. Process each question
+    parsed_questions: List[ParsedQuestionItem] = []
+    errors: List[ParserErrorItem] = []
+
+    for q_data in questions_raw:
+        q_no = q_data["question_no"]
+        q_text = q_data["text"]
+
+        stem, options, inline_key = extract_options_from_text(q_text)
+
+        # If options not found by standard extractor, try bullet list formats:
+        # - A. ... or * A. ...
+        if len(options) < 4:
+            bullet_opts = re.findall(
+                r"(?:^|\n)\s*[\-\*]\s*(?P<opt>[A-D])\s*[\.\)]\s*(?P<content>.*?)(?=(?:\n\s*[\-\*]\s*[A-D]\s*[\.\)]|$))",
+                q_text,
+                re.DOTALL,
+            )
+            if len(bullet_opts) == 4:
+                options = {b[0].upper(): b[1].strip() for b in bullet_opts}
+
+        correct_key = answer_map.get(q_no) or inline_key or ""
+        has_missing_answer = False
+        if not correct_key or correct_key.upper() not in {"A", "B", "C", "D"}:
+            has_missing_answer = True
+            errors.append(
+                ParserErrorItem(
+                    question_no=q_no,
+                    error_type="MISSING_ANSWER",
+                    message=f"Question {q_no} has no valid correct answer key identified.",
+                )
+            )
+
+        if len(options) != 4 or not all(k in options for k in ["A", "B", "C", "D"]):
+            errors.append(
+                ParserErrorItem(
+                    question_no=q_no,
+                    error_type="INVALID_FORMAT",
+                    message=f"Question {q_no} does not contain all 4 options A, B, C, D.",
+                )
+            )
+
+        has_sec_warning = check_prompt_injection(q_text)
+
+        parsed_questions.append(
+            ParsedQuestionItem(
+                question_no=q_no,
+                raw_content=stem if stem else q_text,
+                options=options,
+                correct_key=correct_key if not has_missing_answer else "",
+                solution_md=None,
+                has_missing_answer=has_missing_answer,
+                has_unparsed_omml=False,
+                has_security_warning=has_sec_warning,
+            )
+        )
+
+    return parsed_questions, errors
