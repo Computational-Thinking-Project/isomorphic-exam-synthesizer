@@ -59,6 +59,12 @@ TV1 owns the page/card and `DashboardRoute.jsx`, which supplies a stable real-li
 
 ## Verification and remaining work
 
+### After syncing dev — 24/10/2026
+
+- Dashboard branch merged dev `478cc55` at `ca88c07`; session cards now cover all ten schema statuses and use an own-property check for the unknown-status fallback. Auth/API clients and the pending modal/navigation boundaries remain the same.
+- TV1 reported **85 frontend Node tests**, host lint/build passed after the merge. TV1 then ran the shared Docker test helper and reported **209 backend tests passed, one StarletteDeprecationWarning, 14.22s**, and **85 frontend tests passed**. These are author-run results; the documentation agent did not rerun Docker. The warning concerns deprecated `httpx` use in Starlette's TestClient; dependency changes are outside this increment.
+- The separate Dashboard browser suite remains **17/17 passed** with fixture Auth/HTTP, confirmed from its report. It was run before the labels/dev-sync commits and was not rerun here; it is not part of either Node or pytest count. Real empty-list/UI checks are author-reported. Populated cloud pages, real session ownership A/B, real clone, Clone Modal and Stage navigation remain unverified or unintegrated.
+
 ### Pagination code review — 24/10/2026
 
 - Route now requests the selected `page`, computes page count from server metadata, disables Previous/Next until matching metadata is ready and at the boundaries, and redirects an out-of-range page to the last valid page (minimum 1). Page is keyed by page number to clear old cards and abort the prior load; the account wrapper resets pagination on account/login-version changes while preserving it across same-account token refresh.
@@ -100,6 +106,6 @@ Historical Dashboard UI verification on 17/10/2026, before the real auth changes
 
 The last author-provided `npm audit` report on 17/10/2026 contained 15 vulnerabilities (4 low, 5 moderate, 6 high). Audit has not passed; no dependency upgrades or `npm audit fix --force` were applied in this increment. Dependency remediation requires separate compatibility checks and review.
 
-Remaining work: Auth PR #7 review and current-head CI; natural expiry/failed refresh on cloud and the static Nginx build remain unverified. Per the 24/10 decision, continue TASK-103 on `feat/task-103-dashboard-api` while Auth awaits review: integrate TV2/Bội Anh's agreed Clone Modal, connect agreed create/open routes, complete status labels and refresh the list after cloning. Auth must be accepted into `dev` before merging Dashboard there; check ancestry/diff if Auth is squash merged. Verify populated real pages, application data persistence/errors/session ownership and real clone with the backend. Repeat Docker checks when integrating those changes; the real Auth/profile SELECT checks do not verify session/clone APIs.
+Remaining work: Auth PR #7 review and current-head CI; natural expiry/failed refresh on cloud and the static Nginx build remain unverified. Per the 24/10 decision, continue TASK-103 on `feat/task-103-dashboard-api` while Auth awaits review: integrate TV2/Bội Anh's agreed Clone Modal, connect agreed create/open routes and refresh the list after cloning. Auth must be accepted into `dev` before merging Dashboard there; check ancestry/diff if Auth is squash merged. Verify populated real pages, application data persistence/errors/session ownership and real clone with the backend. Repeat Docker checks when later integration changes justify it; the real Auth/profile SELECT checks do not verify session/clone APIs.
 
 The visual layout remains provisional. Apply the agreed design in its own implementation step; this README update does not change or approve the interface.
