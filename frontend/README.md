@@ -5,10 +5,11 @@ Frontend sản phẩm dùng React/Vite và JavaScript/JSX. Đây là hướng d�
 ## Checkpoint TASK-103 — 24/10/2026
 
 - Nhánh `feat/task-103-dashboard-api` đã đồng bộ PR6 tại merge `e7530a4` (dev `2c68b3a`). Dashboard tải list thật, phân trang, đủ10nhãn trạng thái và mở Clone Modal với service thật. Thành công tải lại trang1; adapter riêng chuyển thông báo lỗi nhưng giữ một API/Supabase client/store và xử lý401 chung. Tạo/mở Stage vẫn là thông báo.
-- TV1 báo list thật trả200/rỗng và kiểm UI first-page/reload/logout đạt. Suite Dashboard riêng dùng Auth/HTTP fixtures đạt **17/17**, agent đã đọc report; không cộng vào Node tests hoặc coi là kiểm quyền sessions thật.
+- Tại code `6c16807`, TV1 kiểm trình duyệt/API/Supabase thật: danh sách trống và có dữ liệu; modal mở/đóng, focus/Tab/Esc, chặn tiêu đề trống; clone201, danh sách tự cập nhật và F5 giữ bản sao. Lỗi mạng giữ modal/tiêu đề, không tự đăng xuất/gửi lại; chủ động thử lại sau khôi phục mạng thành công.
+- TV1 kiểm A có4phiên thử; B tải list200 không thấy phiên A và gọi clone ID nguồn A có thật nhận404, không tạo bản ghi. Verifier chỉ đọc do TV1 chạy trả `passed: true`: nguồn/bản sao mỗi bên1câu và1blueprint, nội dung đúng fixture, ID khác và liên kết đúng bản sao. Dữ liệu là fixture kỹ thuật, không phải đề/blueprint đã được AI hoặc giáo viên duyệt. Chi tiết và giới hạn ở [bằng chứng Dashboard](src/features/dashboard/README.md#live-browser-and-cloud-verification--24102026).
 - Sau đồng bộ, TV1 báo frontend host **85 tests** và lint/build đạt; lượt Docker tiếp theo: backend **209 passed, 1 warning trong14.22s**, frontend **85 tests passed**. Warning là `StarletteDeprecationWarning` về `httpx` trong TestClient, không phải test fail; chưa đổi dependency trong phạm vi này. Đây là kết quả TV1 chạy, agent không rerun Docker.
 - Mốc ghép modal: agent kiểm **113/113 Node tests**, lint/build và **18/18 ca ghép riêng** bằng ReactDOM thật với DOM/SDK/HTTP mô phỏng. Bộ18 không nằm trong113 hoặcCI, không phải kiểm trình duyệt/cloud. Chi tiết tại [checkpoint Dashboard](src/features/dashboard/README.md).
-- Còn thiếu: màn/route và nơi tạo bản ghi phiên được chốt, kiểm trình duyệt sau ghép, clone/list có dữ liệu và cách ly phiên A/B trên backend thật. Chưa đánh dấu TASK-103 Done hoặc đã được reviewer nghiệm thu.
+- Còn thiếu: màn/route và nơi tạo bản ghi phiên được nhóm chốt, ghép/kiểm Tạo mới và Mở/Tiếp tục. Phân trang nhiều trang, race và lỗi HTTP khác đã kiểm bằng fixtures; chưa kiểm nhiều trang cloud, mọi chiều/endpoint quyền hoặc cleanup khi cloud clone lỗi. Chưa đánh dấu TASK-103 Done hoặc đã được reviewer nghiệm thu.
 
 ## Chạy bằng Docker của nhóm
 
@@ -87,7 +88,7 @@ Mở `http://localhost:3000/login`. Nếu Vite chuyển sang 3001, dùng đúng 
 - Dùng Supabase project/provider Google hiện có, không tạo lại chỉ để chạy frontend.
 - Nút Google dùng `redirectTo = window.location.origin + '/login'`. Supabase Redirect URLs cần cho phép origin/cổng local tương ứng; checkpoint nhóm đã chuẩn bị `http://localhost:3000/login` và `http://localhost:3001/login`.
 - Callback cấu hình bên Google là `<SUPABASE_PROJECT_URL>/auth/v1/callback`; `/login` là đích quay về frontend sau đó.
-- `/api` được Vite proxy tới `API_PROXY_TARGET`, mặc định `http://localhost:8000` khi chạy trực tiếp và được cấu hình `http://backend:8000` trong Docker. Profile đã nối `GET /api/users/me`; API danh sách/clone phiên vẫn ở bước tích hợp riêng. Chạy được Vite không chứng minh API nghiệp vụ đã tích hợp.
+- `/api` được Vite proxy tới `API_PROXY_TARGET`, mặc định `http://localhost:8000` khi chạy trực tiếp và được cấu hình `http://backend:8000` trong Docker. Profile nối `GET /api/users/me`; Dashboard nối list/clone theo checkpoint24/10. Chạy được Vite hoặc health check không thay việc kiểm các request nghiệp vụ.
 - Cấu hình Docker của Tâm đã được đồng bộ vào nhánh Auth. Compose dev truyền hai biến public vào Vite; bản static dùng build args. Sau đổi env cần chạy lại `up` để áp dụng.
 
 ## Trạng thái Auth hiện tại
@@ -145,7 +146,7 @@ Unit tests dùng source thật và Auth/HTTP giả lập, không cần key/env h
 ## Phần đang chờ tích hợp/review
 
 - TASK-101: code Google login/profile/avatar và các ca thật trong bảng trên đã có bằng chứng TV1; chưa được review/nghiệm thu. Token tự hết hạn hoặc refresh thật thất bại chưa kiểm trên cloud; hành vi 401/refresh thất bại có kiểm giả lập.
-- TASK-103: list API/phân trang và Clone Modal đã nối theo checkpoint24/10 ở đầu file; điều hướng Stage/nơi tạo phiên chưa chốt. Populated cloud pages, clone thật và quyền truy cập sessions A/B chưa kiểm.
-- Chưa kiểm bản static Nginx và CI của head Auth mới. Quyền ghi/sessions/storage sẽ kiểm cùng phạm vi tích hợp tương ứng; quyền SELECT profile không thay bằng chứng cho các phần đó.
+- TASK-103: list API/phân trang và Clone Modal đã nối; browser/cloud list, clone, persistence, copy câu/blueprint và ca B bị chặn clone nguồn A đã đạt theo TV1 ở checkpoint24/10. Điều hướng Stage/nơi tạo phiên chưa chốt; chưa kiểm phân trang nhiều trang cloud hoặc mọi endpoint/chiều quyền.
+- Chưa kiểm bản static Nginx và CI của head Auth mới. Bằng chứng sessions chỉ áp cho các thao tác/fixture đã nêu; không suy ra quyền UPDATE, storage hoặc cleanup khi lỗi cloud. Quyền SELECT profile không thay kiểm các phần đó.
 
 Nhánh đang triển khai: `feat/task-103-dashboard-api`, từ nền Auth `978003a`, được cho tiếp tục trong lúc Auth chờ review. PR #6 Clone Modal đã merge vào dev `2c68b3a` và được lấy vào Dashboard; PR #7 Auth Ready/chưa merge ở lần kiểm riêng gần nhất24/10. Trước khi Dashboard vào `dev`, cần nền Auth đã được chấp nhận và diff đúng scope, đặc biệt nếu Auth squash merge. **Chưa đánh dấu TASK-101/103 Done.** Quyết định Auth và SQL được ghi ở [DEC-TV1-002](../docs/change_log.md#dec-tv1-002-tích-hợp-google-oauth-profile-và-bootstrap-auth); checkpoint Auth23/10 phía trên là lịch sử, không ghi đè tiến độ Dashboard24/10.

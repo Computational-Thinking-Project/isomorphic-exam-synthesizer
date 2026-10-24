@@ -2,7 +2,7 @@
 
 Dashboard is connected to `/dashboard` under `ProtectedRoute`. A Supabase session enters `profile_pending`; the shared hook requests `GET /api/users/me` and opens Dashboard only after accepting a profile for the current account/login version. TV1 reported a real profile 200 response and the correct Dashboard name on 23/10/2026.
 
-The routed Dashboard uses the real list service with server pagination and out-of-range correction. The merged Clone Modal is connected through the real clone service; success closes it and reloads page1 even when already on page1. Create/open still show notices pending agreed Stage destinations. Controlled tests passed as recorded below; populated cloud pages, real clone/persistence and real session ownership remain unverified. The separate previews keep mock data. The layout is provisional; TASK-101/103 are not complete.
+The routed Dashboard uses the real list service with server pagination and out-of-range correction. The merged Clone Modal is connected through the real clone service; success closes it and reloads page1 even when already on page1. TV1 reported successful browser/cloud list, clone, persistence, question/blueprint copying and denial of account B cloning account A's source, as recorded below. Create/open still show notices pending agreed Stage destinations. The separate previews keep mock data. The layout is provisional; TASK-101/103 are not complete.
 
 ## Run and check
 
@@ -10,7 +10,7 @@ The routed Dashboard uses the real list service with server pagination and out-o
 
 On 24/10/2026 TV1 reported `users` exists, but `exam_sessions`, `source_questions`, `question_blueprints`, `session_status` and `question_status` are absent. A real list request returned 500; sanitized backend diagnostics identified PGRST205 for `public.exam_sessions`.
 
-For this exact preflight, [setup_dashboard_sessions.sql](../../../../backend/scripts/setup_dashboard_sessions.sql) creates the three list/clone tables, `session_status`, team ownership policies and explicit authenticated grants. **TV1 reported successful execution on 24/10/2026**, followed by a real authenticated `GET /api/sessions?page=1&page_size=20` returning 200 with `items: []`, `total: 0`, `page: 1`, `page_size: 20`. This confirms the empty-list request works; clone and session ownership across accounts remain unverified. Do not rerun the script or the full team schema over this setup. The script is intended to run once as postgres without recreating Auth or storage, and fails rather than replacing an existing object.
+For this exact preflight, [setup_dashboard_sessions.sql](../../../../backend/scripts/setup_dashboard_sessions.sql) creates the three list/clone tables, `session_status`, team ownership policies and explicit authenticated grants. **TV1 reported successful execution on 24/10/2026**, followed by a real authenticated `GET /api/sessions?page=1&page_size=20` returning 200 with `items: []`, `total: 0`, `page: 1`, `page_size: 20`. Subsequent author-reported live clone and ownership checks are recorded below. Do not rerun the script or the full team schema over this setup. The script is intended to run once as postgres without recreating Auth or storage, and fails rather than replacing an existing object.
 
 The grants cover SELECT/INSERT on the three tables and DELETE on the session parent for clone-error cleanup. UPDATE is not granted here; later Stage/editing migrations must agree their required grants with Duy. `question_status` is not used by these three tables, and session detail additionally reads `exam_versions`; those belong to subsequent schema setup. Metadata checks after the script do not prove real list/clone or account isolation. See [DEC-TV1-003](../../../../docs/change_log.md#dec-tv1-003-bổ-sung-db-cho-dashboard-listclone).
 
@@ -60,6 +60,27 @@ The routed `onClone(session)` now opens TV2's merged Modal. Its explicit `cloneF
 `dashboardMock.js` supplies `listDashboardSessions({ scenario })`, where scenario is success, empty or error. Session fields are `id`, `title`, `subject`, `created_at`, `status`; these are illustrative fixtures, not the final TV3 API contract. Approved/exported fixtures show a view label; destination routes are decided by the parent after the status contract is agreed.
 
 ## Verification and remaining work
+
+### Live browser and cloud verification — 24/10/2026
+
+Code checkpoint: `6c16807` on `feat/task-103-dashboard-api`, including error-adapter commit `67983d9`. The following results were reported by TV1 while using the real application, backend and shared Supabase; they are not additional automated tests or reviewer approval. The agent received the sanitized verifier output but did not operate the real browser/cloud.
+
+| Scope | Author-reported evidence |
+|---|---|
+| Empty/list state | GET list200, empty state and disabled pagination; test sessions subsequently appear with correct totals and survive reload. |
+| Modal in browser | Correct source/default title, input focus, Tab/Shift+Tab containment, Esc/focus return, blank/whitespace rejection, Cancel/reopen reset; these actions create no copies. |
+| Successful clone | One POST201, new session ID/statusdraft, source retained, modal closes and list automatically reloads; F5 preserves the copy. |
+| Network failure and explicit retry | Offline attempt preserves modal/title, unlocks controls and does not log out or auto-resubmit; after restoring connectivity, explicit retry succeeds. |
+| Account separation | B gets list200 without A's sessions. B's direct clone request using A's existing source ID returns404 and creates no session; returning to A preserves its three sessions at that checkpoint. This is a selected B→A ownership check, not every endpoint or direction. |
+| Copy with content | After adding one technical sample question and one unconfirmed blueprint to A's original source, UI clone returns201; list and F5 show four sessions. A read-only verifier returns `passed: true`: each side has one question/blueprint; fixture content, copied content, subject/grade, new IDs, draft status and new foreign-key links all match expectations. |
+
+Only count/boolean results were recorded; no real IDs, tokens or private exam data are included. The fixture is a copy test, not an AI/teacher-approved blueprint or evidence of generation quality. Test preparation used a bounded SQL transaction; that administrator action itself does not prove user permissions. The actual clone and subsequent reads used the logged-in account.
+
+Four test sessions remain for review; the two copies created before adding content remain empty. No cleanup or UPDATE grant was added. A stale Docker frontend initially displayed the old “waiting for Clone Modal” notice; after updating the running build, the browser checks passed. Keep `scripts/dev.ps1 up` watching source, or rebuild before checking new changes.
+
+Remaining: agreed Stage destinations/creation responsibility, create/open integration and its checks, PR review/merge with the correct Auth base. Multi-page cloud data, other ownership directions/endpoints, live clone-error cleanup, timeout/5xx and account-switch-during-request behavior were not tested on cloud; relevant controlled tests below do not replace that coverage.
+
+The following sections are historical checkpoints; the live results above supersede their earlier “unverified” statements for the explicitly tested cases. No tests/lint/build were rerun for this documentation-only update.
 
 ### Route–Modal–API checkpoint — 24/10/2026
 
@@ -114,6 +135,6 @@ Historical Dashboard UI verification on 17/10/2026, before the real auth changes
 
 The last author-provided `npm audit` report on 17/10/2026 contained 15 vulnerabilities (4 low, 5 moderate, 6 high). Audit has not passed; no dependency upgrades or `npm audit fix --force` were applied in this increment. Dependency remediation requires separate compatibility checks and review.
 
-Remaining work: Auth PR #7 review and current-head CI; natural expiry/failed refresh on cloud and the static Nginx build remain unverified. Connect agreed create/open Stage routes and creation ownership; verify native browser behavior, populated real pages, persistence/session ownership and real clone with the backend. Auth must be accepted into `dev` before merging Dashboard there; check ancestry/diff if Auth is squash merged. Repeat Docker checks when later integration changes justify it; real Auth/profile SELECT checks do not verify session/clone APIs.
+Remaining work: confirm Auth PR #7 review/current-head CI (no fresh GitHub status check in this documentation pass); natural expiry/failed refresh on cloud and the static Nginx build remain unverified. Connect agreed create/open Stage routes and creation ownership. Live coverage is limited to the cases in the latest table; multi-page cloud pagination and untested permission/error scenarios remain outside that evidence. Auth must be accepted into `dev` before merging Dashboard there; check ancestry/diff if Auth is squash merged. Repeat checks when later integration changes justify it.
 
 The visual layout remains provisional. Apply the agreed design in its own implementation step; this README update does not change or approve the interface.
