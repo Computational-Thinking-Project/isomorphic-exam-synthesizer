@@ -1,6 +1,8 @@
 # Dashboard UI — TASK-103
 
-Dashboard is connected to `/dashboard` under `ProtectedRoute`, using the shared mock auth store and mock session data. Google/Supabase authentication, backend sessions and the Clone Modal are not integrated yet. The current layout is provisional; this increment does not complete TASK-103.
+Dashboard is connected to `/dashboard` under `ProtectedRoute`. A Supabase session enters `profile_pending`; the shared hook requests `GET /api/users/me` and opens Dashboard only after accepting a profile for the current account/login version. TV1 reported a real profile 200 response and the correct Dashboard name on 23/10/2026.
+
+Dashboard still uses mock session data and action notices. Backend session APIs, real create/open navigation and the Clone Modal are not integrated in this branch. The current layout is provisional; TASK-101/103 are not complete.
 
 ## Run and check
 
@@ -14,18 +16,23 @@ npm.cmd run build
 npm.cmd run dev
 ```
 
-Use the address printed by Vite; the configured port is 3000, but Vite may choose another available port.
+Use the address printed by Vite; the configured port is 3000, but Vite may choose another available port. For Supabase environment variables and Google redirects, follow the [frontend setup guide](../../../README.md). The standalone Dashboard preview below does not require a Supabase connection.
 
-1. Open `/dashboard` without a session: expect a redirect to `/login`.
-2. Open `/auth-preview`, select **Dùng phiên mẫu**, then **Mở Dashboard**: expect loading followed by three session cards.
-3. Click create, continue/view or clone: expect a notice identifying the action/session. These actions do not yet create sessions, navigate to editing screens or open a modal.
-4. Select **Đăng xuất mẫu** or reload Dashboard: expect `/login`. Mock sessions are held only in memory and do not survive reload.
+1. Open `/dashboard` without a session: while auth is being checked, expect a waiting message; afterward, expect a redirect to `/login`.
+2. On `/login`, sign in with Google using the existing Supabase configuration. Wait for profile verification; a successful response opens Dashboard with your name. Profile errors keep access blocked and offer retry/sign-out.
+3. Reload: restore the session, verify the profile again and return to Dashboard. The session list itself still uses sample data.
+4. Select **Đăng xuất** on Dashboard (or on Login while profile is pending): expect the session to end. Reload should keep you signed out; opening `/dashboard` should return to `/login`.
 
-The auth preview and mock sign-out control are development-only. The production build includes Dashboard through App, but real sign-in/session restoration is not implemented, so there is no production login path into Dashboard yet.
+The previous mock auth route has been removed. Do not manually set a mock user in the auth store to bypass profile verification. Use the standalone preview to inspect Dashboard UI states without a backend. Its behavior does not verify authentication or protected-route access.
 
 ## Standalone state preview
 
 From the frontend directory, run `npm.cmd run dev` and open `/dashboard-preview.html` on the address printed by Vite. The selector covers success, empty and error scenarios. Retry in the fixed error scenario returns an error again; selecting success restores the list.
+
+1. Select **Có dữ liệu**: expect loading followed by three sample session cards.
+2. Click **Tạo đề mới**, continue/view or clone: expect a notice identifying the action/session. These actions do not create sessions, navigate to editing screens or open a modal.
+3. Select **Danh sách rỗng**: expect an empty-state message.
+4. Select **Lỗi tải danh sách**: expect an error and **Thử lại** button. Retry stays in the simulated error scenario; switch back to **Có dữ liệu** to restore the list.
 
 The HTML entry is `frontend/dashboard-preview.html`; the React entry is `src/features/dashboard/dashboard-preview.jsx`. This separate preview renders only in development and is not included in the default production build. The routed Dashboard is included in that build.
 
@@ -42,7 +49,16 @@ TV1 owns the page/card and `DashboardRoute.jsx`, which supplies the stable mock 
 
 ## Verification and remaining work
 
-Verified on 17/10/2026 after receiving auth PR #2 and integrating the route:
+Current documentation checkpoint, updated 23/10/2026:
+
+- Profile verification is connected. `ProtectedRoute` requires `authenticated` and an application user; `profile_pending` cannot enter Dashboard. On 23/10 TV1 reported real profile 200/correct Dashboard name, reload restoring the session/profile, sign-out blocking Dashboard even after reload, and successful Google re-login. TV1 also confirmed a previously absent Google B account automatically received a profile matching its Auth ID, reload retained B and switching back displayed A correctly. Unfiltered profile SELECT probes under A's and B's JWT each succeeded and returned exactly the current user's single row. This verifies profile read isolation for these accounts; real expiry and write/session/storage permissions remain unverified.
+- Dashboard's loader and create/open/clone callbacks still use mocks/notices. Its sign-out button now calls Supabase with local scope, handles busy/failure states and relies on App's SIGNED_OUT subscription to clear the store. The navbar displays the backend profile name and an avatar from the matching session's Google metadata, with initials for missing/failed images and a component key covering account, session version and image URL.
+- On 23/10 TV1 reported the avatar flow, broken-image fallback and npm test/lint/build passed. The agent reviewed UserAvatar/DashboardRoute and diff-check; no new automated test count was provided. The separate profile read-isolation result is recorded above.
+- TV1 subsequently reported successful real `refreshSessionOnce()` followed by `getMyProfile()`, matching the session account; Dashboard remained accessible with the correct identity and survived reload. This tests proactive refresh, not natural token expiry or failed refresh on cloud.
+- Agent verification on 22/10 reached 51 Node tests, lint/build and 17 separate controlled browser App checks with Auth/HTTP fixtures; see the [frontend setup guide](../../../README.md) for scope and limits. These are not Dashboard API or Clone Modal tests and were not rerun for this documentation-only change.
+- On 21/10/2026, the author reported Docker setup/startup and manual Google sign-in, session restoration, profile-pending route protection and sign-out checks completed. Container checks passed: backend 70 tests with one Starlette deprecation warning, SymPy parser, and frontend tests/lint/build. See the frontend setup guide for scope; these results do not verify Dashboard APIs, Clone Modal, account isolation or the static Nginx build. The documentation agent did not rerun those checks.
+
+Historical Dashboard UI verification on 17/10/2026, before the real auth changes above:
 
 - `npm.cmd run test`: 3/3 auth-store unit tests passed; these are not automated Dashboard tests.
 - Full `npm.cmd run lint`, `npm.cmd run build` and `git diff --check`: passed.
@@ -51,4 +67,6 @@ Verified on 17/10/2026 after receiving auth PR #2 and integrating the route:
 
 The last author-provided `npm audit` report on 17/10/2026 contained 15 vulnerabilities (4 low, 5 moderate, 6 high). Audit has not passed; no dependency upgrades or `npm audit fix --force` were applied in this increment. Dependency remediation requires separate compatibility checks and review.
 
-Remaining work: real Google/Supabase auth and persistent sessions (TASK-101 integration), TV3's session list/status contract and API, real create/open navigation, and TV2's Clone Modal. Visual layout/style still needs agreement with TV2 against the group's design direction.
+Remaining work: Auth PR #7 review and current-head CI; natural expiry/failed refresh on cloud and the static Nginx build remain unverified. After Auth review/merge to `dev`, integrate TV3/Duy's session APIs and TV2/Bội Anh's Clone Modal on `feat/task-103-dashboard-api`, connect create/open navigation and refresh the list after cloning. Verify application data persistence/errors/ownership with the backend. Repeat Docker checks when integrating those changes; the real Auth/profile SELECT checks do not verify session/clone APIs.
+
+The visual layout remains provisional. Apply the agreed design in its own implementation step; this README update does not change or approve the interface.
