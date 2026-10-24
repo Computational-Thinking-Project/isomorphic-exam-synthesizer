@@ -23,7 +23,11 @@ from app.services.parser.validator import (
 )
 
 
-def create_minimal_docx(paragraphs: list[str], with_omml: bool = False) -> bytes:
+def create_minimal_docx(
+    paragraphs: list[str],
+    with_omml: bool = False,
+    omml_type: str = "fraction",
+) -> bytes:
     """Helper to generate a valid in-memory .docx file bytes."""
     import docx
 
@@ -31,11 +35,16 @@ def create_minimal_docx(paragraphs: list[str], with_omml: bool = False) -> bytes
     for text in paragraphs:
         p = doc.add_paragraph(text)
         if with_omml and "OMML_FLAG" in text:
-            # Inject fake complex OMML XML into paragraph
-            omml_xml = """<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-                             xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
-                            <m:oMath><m:f><m:num><m:r><m:t>1</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f></m:oMath>
-                          </w:p>"""
+            if omml_type == "superscript":
+                omml_xml = """<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                                 xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+                                <m:oMath><m:sSup><m:e><m:r><m:t>x</m:t></m:r></m:e><m:sup><m:r><m:t>2</m:t></m:r></m:sup></m:sSup></m:oMath>
+                              </w:p>"""
+            else:
+                omml_xml = """<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                                 xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+                                <m:oMath><m:f><m:num><m:r><m:t>1</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f></m:oMath>
+                              </w:p>"""
             from docx.oxml import parse_xml
 
             p._p.append(parse_xml(omml_xml))
@@ -182,6 +191,53 @@ D. Không tồn tại
     assert "\\sin(x)" in questions[0].raw_content
 
 
+def test_latex_parser_nested_item_options():
+    """Verify LaTeX question with nested item[A.] options does not split into 5 questions."""
+    latex_content = r"""
+\begin{enumerate}
+\item Cho hàm số $f(x) = \sin(x)$. Đạo hàm của hàm số là:
+\item[A.] $\cos(x)$
+\item[B.] $-\cos(x)$
+\item[C.] $\sin(x)$
+\item[D.] $-\sin(x)$
+\end{enumerate}
+
+ĐÁP ÁN:
+1.A
+"""
+    questions, errors = parse_latex(latex_content)
+    assert len(errors) == 0
+    assert len(questions) == 1
+    assert questions[0].question_no == 1
+    assert questions[0].correct_key == "A"
+    assert questions[0].options["A"] == r"$\cos(x)$"
+    assert questions[0].options["D"] == r"$-\sin(x)$"
+
+
+def test_latex_parser_nested_enumerate_options():
+    """Verify LaTeX question with nested enumerate environment parses correctly."""
+    latex_content = r"""
+\begin{enumerate}
+\item Cho hàm số $y = x^2$. Đạo hàm tại $x=1$ là:
+\begin{enumerate}
+\item 2
+\item 1
+\item 0
+\item -1
+\end{enumerate}
+\end{enumerate}
+
+ĐÁP ÁN: 1.A
+"""
+    questions, errors = parse_latex(latex_content)
+    assert len(errors) == 0
+    assert len(questions) == 1
+    assert questions[0].question_no == 1
+    assert questions[0].correct_key == "A"
+    assert questions[0].options["A"] == "2"
+    assert questions[0].options["D"] == "-1"
+
+
 # ---------------------------------------------------------------------------
 # 5. DOCX Parser
 # ---------------------------------------------------------------------------
@@ -215,6 +271,38 @@ def test_docx_parser_unparsed_omml():
     file_bytes = create_minimal_docx(paragraphs, with_omml=True)
     questions, errors = parse_docx(file_bytes)
     assert any(e.question_no == 1 and e.error_type == "UNPARSED_OMML" for e in errors)
+
+
+def test_docx_parser_omml_superscript():
+    """Verify that OMML superscript (m:sSup, e.g. x^2) flags UNPARSED_OMML error."""
+    paragraphs = [
+        "Câu 1: Cho hàm số y = OMML_FLAG.",
+        "A. 1  B. 2  C. 3  D. 4",
+        "ĐÁP ÁN: 1.A",
+    ]
+    file_bytes = create_minimal_docx(paragraphs, with_omml=True, omml_type="superscript")
+    questions, errors = parse_docx(file_bytes)
+    assert any(e.question_no == 1 and e.error_type == "UNPARSED_OMML" for e in errors)
+
+
+def test_docx_parser_trailing_answer_table_clean_options():
+    """Verify trailing answer table does not get appended to the last option (Option D)."""
+    paragraphs = [
+        "Câu 1: Câu hỏi 1",
+        "A. 1  B. 2  C. 3  D. 4",
+        "Câu 2: Câu hỏi 2",
+        "A. 1  B. 2  C. 3  D. 4",
+        "BẢNG ĐÁP ÁN:",
+        "1.A 2.B",
+    ]
+    file_bytes = create_minimal_docx(paragraphs)
+    questions, errors = parse_docx(file_bytes)
+    assert len(errors) == 0
+    assert len(questions) == 2
+    assert questions[1].question_no == 2
+    assert questions[1].correct_key == "B"
+    assert questions[1].options["D"] == "4"
+    assert "BẢNG ĐÁP ÁN" not in questions[1].options["D"]
 
 
 # ---------------------------------------------------------------------------
