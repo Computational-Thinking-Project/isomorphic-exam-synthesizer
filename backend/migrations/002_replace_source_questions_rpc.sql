@@ -36,10 +36,10 @@ BEGIN
     IF v_session_user_id != auth.uid() THEN
       RAISE EXCEPTION 'Access denied: not session owner' USING ERRCODE = '42501';
     END IF;
-  ELSIF v_role = 'service_role' OR current_user IN ('postgres', 'supabase_admin') THEN
-    NULL; -- Trusted internal backend or database admin
+  ELSIF v_role = 'service_role' OR session_user IN ('postgres', 'supabase_admin') THEN
+    NULL; -- Trusted internal backend service role or direct database administrator
   ELSE
-    RAISE EXCEPTION 'Unauthorized: caller must be authenticated' USING ERRCODE = '42501';
+    RAISE EXCEPTION 'Unauthorized: caller must be authenticated or have service role' USING ERRCODE = '42501';
   END IF;
 
   -- 3. State machine validation
