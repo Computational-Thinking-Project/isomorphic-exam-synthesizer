@@ -15,8 +15,10 @@ Endpoint này phục vụ việc **xác nhận đề thi nguồn** sau khi giả
 2. **Kiểm tra trạng thái phiên (State Precondition):** Phiên bắt buộc phải ở trạng thái `draft`. Nếu ở trạng thái khác (ví dụ `blueprinted` hoặc `generating`), trả về mã `HTTP 409 Conflict`.
 3. **Kiểm tra toàn vẹn câu hỏi nguồn (Data Integrity):** Phiên phải có ít nhất 1 câu hỏi nguồn và **không có câu nào thiếu đáp án** (`has_missing_answer == true`).
 4. **Kiểm soát An ninh (SEC-02):** Nếu có câu hỏi nguồn chứa cảnh báo an ninh (`has_security_warning == true`), yêu cầu người dùng phải xác nhận tường minh thông qua trường `acknowledged_security_warnings: true`. Nếu không, trả về `HTTP 422`.
-5. **Động cơ Blueprint Tự Động (Automatic Black-Box Engine):** Đảm bảo 100% câu hỏi nguồn đều có Blueprint tương ứng trong bảng `question_blueprints` (nếu pipeline background trước đó chưa hoàn thành, endpoint sẽ tự động sinh và lưu blueprint fallback có tính tất định).
-6. **Chuyển Trạng Thái Nguyên Tử (Atomic State Transition):** Khóa thời gian xác nhận (`confirmed_at = now_iso`) trên bảng `question_blueprints` và chuyển trạng thái phiên làm việc sang `status = 'blueprinted'`.
+5. **Động cơ Blueprint Tự Động & Hợp Đồng Với TASK-203 (Automatic Blueprint Engine):** Đảm bảo 100% câu hỏi nguồn đều có Blueprint tương ứng trong bảng `question_blueprints` (có ràng buộc `UNIQUE (source_question_id)`).
+   - **Hợp đồng với TASK-203:** Pipeline AI nền (TASK-203) phụ trách sinh các Blueprint toán học chuẩn xác với điều kiện bất biến (`invariants`), chứng minh tính khả giải và miền biến thiên phức tạp (`extraction_source: "AI_PIPELINE"`).
+   - **Cơ chế Fallback Tất Định (Deterministic Fallback):** Nếu giảng viên bấm xác nhận đề trước khi pipeline nền hoàn tất hoặc trong môi trường offline/test, endpoint tự động kích hoạt `ensure_blueprints_for_session` trích xuất biến số mặc định ($\pm 5$) có đóng dấu `is_fallback: true` và `extraction_source: "FALLBACK_DETERMINISTIC"` qua cơ chế `upsert(..., ignore_duplicates=True)` để chống nhân bản khi chạy song song.
+6. **Chuyển Trạng Thái Nguyên Tử (Atomic State Transition):** Thông qua PostgreSQL Stored Procedure `confirm_exam_source`, hệ thống khóa dòng phiên làm việc (`FOR UPDATE`), đối chiếu số lượng câu hỏi và thực hiện đồng thời việc đóng dấu `confirmed_at = now()` trên các blueprints và chuyển trạng thái phiên làm việc sang `status = 'blueprinted'` trong **1 transaction ACID duy nhất**.
 
 ---
 
@@ -76,7 +78,7 @@ Endpoint này phục vụ việc **xác nhận đề thi nguồn** sau khi giả
 | **401 Unauthorized** | Thiếu token hoặc token JWT không hợp lệ | `{"detail": "Not authenticated"}` |
 | **403 Forbidden** | Phiên thuộc về người dùng khác | `{"detail": "Forbidden: Not resource owner"}` |
 | **404 Not Found** | Phiên không tồn tại trong hệ thống | `{"detail": "Session not found"}` |
-| **409 Conflict** | Trạng thái phiên khác `draft` (đã `blueprinted`, `generating`, ...) | `{"detail": "Session is in 'blueprinted' state; cannot confirm source unless in 'draft'"}` |
+| **409 Conflict** | Trạng thái phiên khác `draft` (đã `blueprinted`, `generating`), hoặc số lượng câu hỏi bị thay đổi đồng thời giữa lúc đọc và chốt | `{"detail": "Cannot confirm source: Session status has changed concurrently or is not in draft status"}` |
 | **422 Unprocessable** | Phiên chưa có câu hỏi nguồn nào | `{"detail": "Cannot confirm source: Session has no source questions"}` |
 | **422 Unprocessable** | Có câu hỏi thiếu đáp án (`has_missing_answer == true`) | `{"detail": "Cannot confirm source: Questions [3] have missing answers"}` |
 | **422 Unprocessable** | Có câu cảnh báo an ninh mà `acknowledged_security_warnings == false` | `{"detail": "Questions [1] have security warnings (SEC-02). Explicit acknowledgment is required by setting acknowledged_security_warnings=True"}` |

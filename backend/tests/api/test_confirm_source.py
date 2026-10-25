@@ -435,5 +435,253 @@ def test_confirm_auto_creates_missing_blueprints(client, mock_auth_user, auth_he
     data = response.json()
     assert data["total_questions"] == 5
     assert data["total_blueprints"] == 5
-    # Verify insert was called for missing blueprints
-    mock_db.table("question_blueprints").insert.assert_called_once()
+    # Verify upsert was called for missing blueprints to prevent duplicate records
+    mock_db.table("question_blueprints").upsert.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# 5. Review Remediation Tests (PR #16 Review / Philip-kkk)
+# ---------------------------------------------------------------------------
+
+
+def test_confirm_source_rpc_primary_success(client, mock_auth_user, auth_headers):
+    """Confirm-source successfully executes via atomic PostgreSQL RPC confirm_exam_source."""
+    mock_db = MagicMock()
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+    mock_questions = MagicMock()
+    mock_questions.data = _create_mock_questions(count=4)
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        mock_status
+    )
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        mock_questions
+    )
+    mock_bps = MagicMock()
+    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
+
+    # Mock RPC success response
+    mock_rpc_res = MagicMock()
+    mock_rpc_res.data = {
+        "success": True,
+        "session_id": MOCK_SESSION_ID,
+        "status": "blueprinted",
+        "confirmed_at": "2026-10-25T12:00:00+00:00",
+        "total_questions": 4,
+        "total_blueprints": 4,
+    }
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+        patch("app.api.routes.sessions.assert_ownership", return_value=None),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
+            json={"acknowledged_security_warnings": False},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "blueprinted"
+    assert data["total_questions"] == 4
+    assert data["total_blueprints"] == 4
+    mock_db.rpc.assert_called_with(
+        "confirm_exam_source",
+        {"p_session_id": MOCK_SESSION_ID, "p_expected_question_count": 4},
+    )
+
+
+def test_confirm_source_rpc_mismatch_or_non_draft_returns_409(client, mock_auth_user, auth_headers):
+    """RPC confirm_exam_source raises 409 Conflict if questions were modified concurrently or state != draft."""
+    mock_db = MagicMock()
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+    mock_questions = MagicMock()
+    mock_questions.data = _create_mock_questions(count=3)
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        mock_status
+    )
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        mock_questions
+    )
+    mock_bps = MagicMock()
+    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
+
+    # Simulate Postgres raising 22023 (question count mismatch or draft violation)
+    mock_db.rpc.return_value.execute.side_effect = Exception("22023: Question count mismatch: expected 3, found 5")
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+        patch("app.api.routes.sessions.assert_ownership", return_value=None),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
+            json={"acknowledged_security_warnings": False},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 409
+    assert "Question count mismatch" in response.json()["detail"]
+
+
+def test_confirm_source_unmatched_update_returns_409(client, mock_auth_user, auth_headers):
+    """In fallback flow, if UPDATE exam_sessions matches 0 rows (status changed or deleted), return 409 not 200."""
+    mock_db = MagicMock()
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+    mock_questions = MagicMock()
+    mock_questions.data = _create_mock_questions(count=3)
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        mock_status
+    )
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        mock_questions
+    )
+    mock_bps = MagicMock()
+    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
+
+    # RPC not migrated / fails with general error
+    mock_db.rpc.return_value.execute.side_effect = Exception("function confirm_exam_source does not exist")
+
+    # update session returns empty list (0 rows matched)
+    mock_empty_update = MagicMock()
+    mock_empty_update.data = []
+    mock_db.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.return_value = (
+        mock_empty_update
+    )
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+        patch("app.api.routes.sessions.assert_ownership", return_value=None),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
+            json={"acknowledged_security_warnings": False},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 409
+    assert "Session status has changed concurrently" in response.json()["detail"]
+
+
+def test_confirm_source_blueprints_update_failure_triggers_rollback(client, mock_auth_user, auth_headers):
+    """In fallback flow, if blueprint update fails after session update, session is rolled back to draft."""
+    mock_db = MagicMock()
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+    mock_questions = MagicMock()
+    mock_questions.data = _create_mock_questions(count=2)
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        mock_status
+    )
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        mock_questions
+    )
+    mock_bps = MagicMock()
+    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
+
+    # RPC fails with unmigrated error
+    mock_db.rpc.return_value.execute.side_effect = Exception("function confirm_exam_source does not exist")
+
+    # Session update succeeds
+    mock_session_update = MagicMock()
+    mock_session_update.data = [{"id": MOCK_SESSION_ID, "status": "blueprinted"}]
+    mock_db.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.return_value = (
+        mock_session_update
+    )
+
+    # Blueprints update throws DB error
+    mock_db.table.return_value.update.return_value.in_.return_value.execute.side_effect = Exception(
+        "DB connection reset on blueprints"
+    )
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+        patch("app.api.routes.sessions.assert_ownership", return_value=None),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
+            json={"acknowledged_security_warnings": False},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 500
+    assert "Failed to confirm blueprints" in response.json()["detail"]
+    # Check that rollback update was triggered to restore status to draft
+    mock_db.table("exam_sessions").update.assert_called_with(
+        {"status": "draft", "updated_at": unittest_mock_any()}
+    )
+
+
+def unittest_mock_any():
+    """Helper to match any argument in mock assert."""
+    class AnyArg:
+        def __eq__(self, other):
+            return True
+    return AnyArg()
+
+
+@pytest.mark.asyncio
+async def test_ensure_blueprints_safe_upsert_deduplication():
+    """ensure_blueprints_for_session uses upsert with ignore_duplicates to prevent duplicate blueprints."""
+    from app.services.parser.blueprint_service import ensure_blueprints_for_session
+
+    mock_db = MagicMock()
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value.data = []
+
+    questions = [
+        {"id": "sq-1", "question_no": 1, "raw_content": "Cho x = 5"},
+        {"id": "sq-2", "question_no": 2, "raw_content": "Cho y = 10"},
+    ]
+
+    total = await ensure_blueprints_for_session(mock_db, MOCK_SESSION_ID, questions)
+
+    assert total == 2
+    mock_db.table("question_blueprints").upsert.assert_called_once()
+    _, kwargs = mock_db.table("question_blueprints").upsert.call_args
+    assert kwargs.get("on_conflict") == "source_question_id"
+    assert kwargs.get("ignore_duplicates") is True
+
+
+@pytest.mark.asyncio
+async def test_ensure_blueprints_preserves_confirmed():
+    """ensure_blueprints_for_session does not re-insert or modify questions that already have blueprints."""
+    from app.services.parser.blueprint_service import ensure_blueprints_for_session
+
+    mock_db = MagicMock()
+    # Question 1 already has a blueprint in DB
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value.data = [
+        {"source_question_id": "sq-1"}
+    ]
+
+    questions = [
+        {"id": "sq-1", "question_no": 1, "raw_content": "Cho x = 5"},
+        {"id": "sq-2", "question_no": 2, "raw_content": "Cho y = 10"},
+    ]
+
+    total = await ensure_blueprints_for_session(mock_db, MOCK_SESSION_ID, questions)
+
+    assert total == 2
+    # Only question 2 should be in the upsert payload
+    mock_db.table("question_blueprints").upsert.assert_called_once()
+    args, _ = mock_db.table("question_blueprints").upsert.call_args
+    inserted_blueprints = args[0]
+    assert len(inserted_blueprints) == 1
+    assert inserted_blueprints[0]["source_question_id"] == "sq-2"
+    assert inserted_blueprints[0]["is_fallback"] is True
+    assert inserted_blueprints[0]["extraction_source"] == "FALLBACK_DETERMINISTIC"
+

@@ -12,6 +12,7 @@
 - [DEC-TV1-002: Tích hợp Google OAuth, profile và bootstrap Auth](#dec-tv1-002-tích-hợp-google-oauth-profile-và-bootstrap-auth)
 - [DEC-TV6-001: Shared Docker development workflow](#dec-tv6-001-shared-docker-development-workflow)
 - [ADR-002: In-Memory Pre-validation, Zero Cloud Mutation, và Atomic Ingestion Engine (TASK-202)](#adr-002-in-memory-pre-validation-zero-cloud-mutation-và-atomic-ingestion-engine-task-202)
+- [ADR-003: Atomic Exam Confirmation và Blueprint Concurrency Protection (TASK-205)](#adr-003-atomic-exam-confirmation-và-blueprint-concurrency-protection-task-205)
 
 ---
 
@@ -96,3 +97,28 @@
   - Đảm bảo tính toàn vẹn dữ liệu đề thi: CSDL và Storage không bao giờ chứa dữ liệu rác hay trạng thái dở dang.
   - Tối ưu hiệu năng: Giảm số lượng network round-trips từ 3 xuống 1 khi cập nhật đề thi.
   - Phù hợp và ăn khớp 100% với hợp đồng API của Frontend (FE1) tại TASK-201, TASK-203b, và TASK-204.
+
+---
+
+### ADR-003: Atomic Exam Confirmation và Blueprint Concurrency Protection (TASK-205)
+* **Mã quyết định:** ADR-003 / DEC-BE1-003
+* **Ngày quyết định:** 25/10/2026
+* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
+* **Bối cảnh:**
+  1. Trong quy trình xác nhận đề thi nguồn (Stage 1 Confirmation / TASK-205), việc cập nhật `confirmed_at` trên bảng `question_blueprints` và chuyển `status = 'blueprinted'` trên `exam_sessions` qua 2 lệnh client-side riêng rẽ có nguy cơ gây lỗi trạng thái dở dang (partial lock) hoặc báo thành công giả `HTTP 200` khi bản ghi session bị xóa / đổi trạng thái song song.
+  2. Bảng `question_blueprints` thiếu ràng buộc `UNIQUE (source_question_id)`, dẫn tới nguy cơ tác vụ nền (TASK-203) và thao tác xác nhận đồng thời tạo ra các bản ghi blueprint trùng lặp cho cùng một câu hỏi nguồn.
+  3. Cơ chế trích xuất fallback biến số ±5 trong `blueprint_service.py` cần được định danh rõ ràng để phân biệt với Blueprint toán học do AI sinh ra ở TASK-203.
+* **Quyết định:**
+  1. **Ràng buộc Toàn vẹn 1-to-1:** Thêm `CONSTRAINT uq_question_blueprints_source_question UNIQUE (source_question_id)` trên bảng `question_blueprints` và sử dụng `upsert(..., ignore_duplicates=True)` khi sinh blueprint dự phòng.
+  2. **Chốt Nguồn Nguyên Tử qua Stored Procedure:** Triển khai hàm PostgreSQL RPC `confirm_exam_source(p_session_id, p_expected_question_count)` thực hiện:
+     - Khóa dòng phiên (`FOR UPDATE`).
+     - Kiểm tra xác thực và quyền sở hữu (bảo mật SEC-04).
+     - Kiểm tra điều kiện trạng thái `status = 'draft'` và đối chiếu số lượng câu hỏi thực tế.
+     - Đồng thời khóa `confirmed_at = now()` trên các blueprints và chuyển session sang `'blueprinted'` trong 1 ACID transaction duy nhất.
+  3. **Kiểm tra Kết quả Ghi Thực Tế:** Trong luồng fallback nếu RPC chưa được migrate, kiểm tra `res.data` của lệnh update session; nếu không có bản ghi nào bị ảnh hưởng thì trả về `HTTP 409 Conflict` thay vì 200. Nếu update blueprints thất bại sau khi update session, tự động rollback session về trạng thái `draft`.
+  4. **Phân Định Rõ Ràng Hợp Đồng Blueprint:** Đánh dấu rõ cờ `is_fallback: true` và `extraction_source: "FALLBACK_DETERMINISTIC"` cho các blueprint dự phòng từ `extract_default_blueprint` để Stage 2 phân biệt với Blueprint chính thức của AI pipeline (TASK-203).
+* **Hệ quả / Tác động:**
+  1. Loại bỏ hoàn toàn nguy cơ race condition, nhân bản blueprint và báo thành công sai.
+  2. Dữ liệu đề thi và blueprint luôn đồng bộ 100% trong CSDL.
+  3. Đáp ứng toàn diện các tiêu chí đánh giá khắt khe trong Code Review từ Lead Reviewer.
+

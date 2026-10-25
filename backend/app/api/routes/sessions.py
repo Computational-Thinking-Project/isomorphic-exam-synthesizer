@@ -587,29 +587,106 @@ async def confirm_source(
     # Guard 5: Ensure blueprints exist for all source questions
     total_blueprints = await ensure_blueprints_for_session(db, session_id, questions)
 
-    # Guard 6: Atomic state transition
+    # Guard 6: Atomic state transition (RPC primary, guarded fallback)
     now_iso = datetime.now(timezone.utc).isoformat()
-    sq_ids = [str(q["id"]) for q in questions if "id" in q]
+    rpc_success = False
 
     try:
-        if sq_ids:
-            db.table("question_blueprints").update(
-                cast(Any, {"confirmed_at": now_iso})
-            ).in_("source_question_id", sq_ids).execute()
+        rpc_res = db.rpc(
+            "confirm_exam_source",
+            {
+                "p_session_id": session_id,
+                "p_expected_question_count": len(questions),
+            },
+        ).execute()
 
-        db.table("exam_sessions").update(
-            cast(Any, {"status": "blueprinted", "updated_at": now_iso})
-        ).eq("id", session_id).execute()
+        if rpc_res.data and isinstance(rpc_res.data, dict) and rpc_res.data.get("success"):
+            rpc_success = True
+            confirmed_at_str = rpc_res.data.get("confirmed_at") or now_iso
+            return ConfirmSourceResponse(
+                session_id=session_id,
+                status="blueprinted",
+                confirmed_at=str(confirmed_at_str),
+                total_questions=len(questions),
+                total_blueprints=total_blueprints,
+                message="Source confirmed and blueprints locked successfully",
+            )
+    except HTTPException:
+        raise
     except Exception as exc:
-        logger.error(
-            "Database error during source confirmation for session %s: %s",
+        err_msg = str(exc)
+        logger.warning(
+            "RPC confirm_exam_source failed or not available for session %s: %s",
             session_id,
             exc,
         )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to confirm source and lock blueprints: {str(exc)}",
-        ) from exc
+        if "42501" in err_msg or "Access denied" in err_msg or "Unauthorized" in err_msg:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied or session ownership mismatch",
+            ) from exc
+        if "22023" in err_msg or "draft" in err_msg or "mismatch" in err_msg or "state" in err_msg:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Cannot confirm source: {err_msg}",
+            ) from exc
+        if "P0002" in err_msg or "Session not found" in err_msg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found",
+            ) from exc
+
+    if not rpc_success:
+        sq_ids = [str(q["id"]) for q in questions if "id" in q]
+        try:
+            # 1. Update session status first with conditional check (status == 'draft')
+            # This ensures if session is not in draft or concurrently updated, it fails immediately.
+            update_session_res = (
+                db.table("exam_sessions")
+                .update(cast(Any, {"status": "blueprinted", "updated_at": now_iso}))
+                .eq("id", session_id)
+                .eq("status", "draft")
+                .execute()
+            )
+            updated_sessions = update_session_res.data or []
+            if not updated_sessions:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Cannot confirm source: Session status has changed concurrently or is not in draft status",
+                )
+
+            # 2. Only if session update succeeded, stamp confirmed_at on blueprints
+            if sq_ids:
+                try:
+                    db.table("question_blueprints").update(
+                        cast(Any, {"confirmed_at": now_iso})
+                    ).in_("source_question_id", sq_ids).execute()
+                except Exception as bp_exc:
+                    # Rollback session status if blueprints update fails to avoid inconsistent state
+                    logger.error(
+                        "Failed to update blueprints after session status update; attempting rollback: %s",
+                        bp_exc,
+                    )
+                    db.table("exam_sessions").update(
+                        cast(Any, {"status": "draft", "updated_at": now_iso})
+                    ).eq("id", session_id).execute()
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=f"Failed to confirm blueprints: {str(bp_exc)}",
+                    ) from bp_exc
+
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error(
+                "Database error during source confirmation for session %s: %s",
+                session_id,
+                exc,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to confirm source and lock blueprints: {str(exc)}",
+            ) from exc
 
     return ConfirmSourceResponse(
         session_id=session_id,

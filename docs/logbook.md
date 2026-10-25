@@ -106,4 +106,34 @@
   - Static type checking: `mypy` passed with 0 errors.
   - Linter & Formatting: `ruff check` and `ruff format --check` passed 100%.
 
+---
+
+## 2026-10-25 — Bá Duy (BE1 / johannguyen015), TASK-205 Review Remediation (PR #16)
+
+- Branch: `feat/be1-task-205-confirm-source`; PR #16; Base: `dev`.
+- Remediation fixes addressing code review comments from Philip (`philip-kkk`):
+  - [P1] Synchronized Base Branch Fixes:
+    - Merged `origin/feat/be1-task-202-ingestion-parsers` (PR #15) into `feat/be1-task-205-confirm-source`.
+    - Inherited security hardening of `replace_source_questions` RPC (SEC-04 least privilege, FOR UPDATE lock, draft guard).
+    - Inherited strict Zero Cloud Mutation in `ingestion_service.py`.
+  - [P1] Atomic Confirm Source RPC (`confirm_exam_source`):
+    - Created `confirm_exam_source` PostgreSQL RPC with row lock (`FOR UPDATE`), owner authorization, draft state check, question count integrity check, and simultaneous update of `confirmed_at` and session `status = 'blueprinted'` in 1 ACID transaction.
+    - Added standalone idempotent migration `backend/migrations/003_confirm_exam_source_rpc.sql` and updated `backend/scripts/schema.sql`.
+    - Enforced least privilege: `REVOKE EXECUTE ... FROM PUBLIC, anon` and `GRANT EXECUTE ... TO authenticated, service_role`.
+  - [P1] Defense-in-Depth & Chống Báo Thành Công Sai (False 200):
+    - In `sessions.py`: Added row match validation on session update. If 0 rows matched (concurrent deletion or state change), returns `HTTP 409 Conflict`.
+    - Added automatic rollback of session state back to `draft` if blueprint confirmation fails during fallback execution.
+  - [P2] Blueprint Deduplication & Concurrency Protection:
+    - Added `CONSTRAINT uq_question_blueprints_source_question UNIQUE (source_question_id)` in `schema.sql` and migration `003`.
+    - Updated `ensure_blueprints_for_session` in `blueprint_service.py` to use `upsert(..., ignore_duplicates=True, on_conflict="source_question_id")`, preserving existing and confirmed blueprints without duplication.
+  - [Q1] Clarified Fallback Heuristic vs AI Contract:
+    - In `extract_default_blueprint`: Added metadata tags `is_fallback: True` and `extraction_source: "FALLBACK_DETERMINISTIC"`.
+    - Documented architectural contract with TASK-203 AI pipeline in `docs/api/confirm-source-endpoint.md` and `docs/change_log.md` (ADR-003).
+- Quality Verification:
+  - 18/18 tests in `backend/tests/api/test_confirm_source.py` passed (including 6 new remediation edge-case tests).
+  - 252/252 tests passed in complete backend test suite (100% pass rate).
+  - `mypy backend/app` passed with 0 errors across 40 source files.
+  - `ruff check` passed on all scoped files.
+
+
 
