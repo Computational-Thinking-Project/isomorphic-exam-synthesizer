@@ -56,6 +56,7 @@
   - Mypy static type checking: 0 errors in 34 source files.
   - Ruff linter & formatter: all checks passed.
 
+<<<<<<< HEAD
 ## 2026-10-22 — Bá Duy (BE1 / johannguyen015), TASK-205 Source Confirmation & Blueprint Activation (BE-03)
 
 - Branch: `feat/be1-task-205-confirm-source`; Base: `dev`.
@@ -78,4 +79,31 @@
   - Ruff linter: All checks passed on scoped files.
 - Documentation:
   - Created API specification in `docs/api/confirm-source-endpoint.md`.
+
+---
+
+## 2026-10-24 — Bá Duy (BE1 / johannguyen015), TASK-202 Review Remediation (PR #15)
+
+- Branch: `feat/be1-task-202-ingestion-parsers`; PR #15; Base: `dev`.
+- Remediation fixes addressing code review comments from Philip (`philip-kkk`):
+  - [P1] Database Security Hardening:
+    - Updated `replace_source_questions` in `backend/scripts/schema.sql` and created standalone migration `backend/migrations/002_replace_source_questions_rpc.sql`.
+    - Added atomic row lock (`FOR UPDATE`), strict caller identity validation (rejecting unauthenticated callers while permitting authenticated owner or `service_role`), and enforced session `status = 'draft'`.
+    - Enforced least privilege: `REVOKE EXECUTE ... FROM PUBLIC, anon` and `GRANT EXECUTE ... TO authenticated, service_role`.
+  - [P1] Strict Zero Cloud Mutation:
+    - Removed non-transactional client-side fallback in `ingestion_service.py`. When RPC fails, operation fails fast with HTTP 500 without deleting or inserting records.
+  - [P2] Complete OMML Equation Detection:
+    - Updated `docx_parser.py` to flag all unconverted OMML math structures (including superscript `m:sSup`, subscript, radicals, etc.) as `is_unparsed_omml = True`.
+  - [P2] Trailing Answer Key Separation in DOCX:
+    - Truncated trailing answer key paragraphs prior to question segmentation in `docx_parser.py`, preventing answer keys from leaking into Option D.
+  - [P2] LaTeX Enumerate & Nested Items Handling:
+    - Replaced naive `re.split` with environment-aware parsing and lookahead in `latex_parser.py`. Distinguishes question `\item` from option `\item[A.]` and nested `enumerate` blocks.
+  - [Q1 & Q2] Architecture Documentation:
+    - Provided standalone idempotent migration `002_replace_source_questions_rpc.sql`.
+    - Clarified that `trigger_blueprint_pipeline` is currently an asynchronous hook / logging placeholder pending full integration in TASK-203.
+- Quality Verification:
+  - Total tests increased from 37 to 42 tests (`pytest tests/test_parsers.py tests/api/test_ingest.py tests/api/test_sessions.py -v` -> 42/42 passed 100%).
+  - Static type checking: `mypy` passed with 0 errors.
+  - Linter & Formatting: `ruff check` and `ruff format --check` passed 100%.
+
 

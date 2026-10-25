@@ -18,6 +18,8 @@ from docx.document import Document as DocumentObject
 
 from app.models.schemas import ParsedQuestionItem, ParserErrorItem
 from app.services.parser.utils import (
+    ANSWER_SECTION_PATTERNS,
+    KEY_PAIR_PATTERN,
     check_prompt_injection,
     extract_options_from_text,
     normalize_unicode_nfc,
@@ -55,12 +57,9 @@ def inspect_paragraph_omml(paragraph) -> Tuple[bool, bool]:
         return True, True
 
     if has_omml:
-        # If OMML is present but paragraph.text does not contain recognizable LaTeX formulas (no $...$)
-        # and has complex math elements like radicals or fractions (<m:f>, <m:rad>)
-        if "<m:f" in xml_str or "<m:rad" in xml_str or "<w:f" in xml_str or "<w:rad" in xml_str:
-            # Contains complex fraction/radical in OMML without LaTeX text conversion
-            return True, True
-        return True, False
+        # All unconverted OMML math structures (<m:oMath>, <m:sSup>, <m:f>, etc.)
+        # drop their math runs (<m:t>) from paragraph.text and must be flagged as incomplete.
+        return True, True
 
     return False, False
 
@@ -104,11 +103,35 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
     # 2. Extract separate answer table at the end
     answer_map, text_without_keys = parse_separate_answer_key(all_text)
 
+    # Cut off trailing answer key paragraphs to prevent contamination of the last question/options
+    cutoff_idx = len(full_paragraphs)
+    if answer_map:
+        for i, p_text in enumerate(full_paragraphs):
+            # Check for explicit answer section heading
+            if any(pat.search(p_text) for pat in ANSWER_SECTION_PATTERNS) or re.search(
+                r"^\s*(?:bảng\s+đáp\s+án|đáp\s+án|hướng\s+dẫn\s+chấm|answer\s+key)\b",
+                p_text,
+                re.IGNORECASE,
+            ):
+                cutoff_idx = i
+                break
+            # Check for compact answer key line (only towards the tail of the document)
+            if i >= max(0, len(full_paragraphs) - 5):
+                _, found_opts, _ = extract_options_from_text(p_text)
+                if len(found_opts) < 4:
+                    pairs_in_p = list(KEY_PAIR_PATTERN.finditer(p_text))
+                    if len(pairs_in_p) >= 2 and not QUESTION_START_PATTERN.match(p_text.strip()):
+                        cutoff_idx = i
+                        break
+
+    content_paragraphs = full_paragraphs[:cutoff_idx]
+    content_omml_flags = paragraph_omml_flags[:cutoff_idx]
+
     # 3. Segment paragraphs into question blocks
     questions_raw: List[Dict[str, Any]] = []
     current_q: Optional[Dict[str, Any]] = None
 
-    for idx, p_text in enumerate(full_paragraphs):
+    for idx, p_text in enumerate(content_paragraphs):
         trimmed = p_text.strip()
         if not trimmed:
             continue
@@ -126,12 +149,12 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
             current_q = {
                 "question_no": q_num,
                 "lines": [body_text] if body_text else [],
-                "has_unparsed_omml": paragraph_omml_flags[idx],
+                "has_unparsed_omml": content_omml_flags[idx],
             }
         else:
             if current_q is not None:
                 current_q["lines"].append(trimmed)
-                if paragraph_omml_flags[idx]:
+                if content_omml_flags[idx]:
                     current_q["has_unparsed_omml"] = True
 
     if current_q:

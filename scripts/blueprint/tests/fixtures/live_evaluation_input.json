@@ -1,0 +1,386 @@
+{
+    "questions":  [
+                      {
+                          "source":  {
+                                         "question_id":  "q_derivative_vi",
+                                         "content":  [
+                                                         {
+                                                             "id":  "SRC_STEM",
+                                                             "type":  "text",
+                                                             "text":  "Tính đạo hàm của f(x) = x^2 + 4x + 4 tại x = 0."
+                                                         }
+                                                     ],
+                                         "options":  [
+
+                                                     ],
+                                         "supplied_answer":  null,
+                                         "supplied_solution":  null,
+                                         "references":  [
+
+                                                        ]
+                                     },
+                          "context":  {
+                                          "subject":  "mathematics",
+                                          "language":  "vi"
+                                      }
+                      },
+                      {
+                          "source":  {
+                                         "question_id":  "q_newton_vi",
+                                         "content":  [
+                                                         {
+                                                             "id":  "SRC_STEM",
+                                                             "type":  "text",
+                                                             "text":  "Trong hệ quy chiếu quán tính, một vật có khối lượng không đổi chịu hợp lực theo cơ học Newton. Các đại lượng được cho trong bảng. Tính độ lớn gia tốc của vật, theo m/s²."
+                                                         },
+                                                         {
+                                                             "id":  "SRC_TABLE",
+                                                             "type":  "table",
+                                                             "columns":  [
+                                                                             "Đại lượng",
+                                                                             "Giá trị",
+                                                                             "Đơn vị"
+                                                                         ],
+                                                             "rows":  [
+                                                                          [
+                                                                              "Khối lượng",
+                                                                              2,
+                                                                              "kg"
+                                                                          ],
+                                                                          [
+                                                                              "Độ lớn hợp lực",
+                                                                              6,
+                                                                              "N"
+                                                                          ]
+                                                                      ]
+                                                         }
+                                                     ],
+                                         "options":  [
+
+                                                     ],
+                                         "supplied_answer":  {
+                                                                 "option_ids":  [
+
+                                                                                ],
+                                                                 "value":  {
+                                                                               "type":  "integer",
+                                                                               "value":  3
+                                                                           },
+                                                                 "explanation":  null
+                                                             },
+                                         "supplied_solution":  null,
+                                         "references":  [
+
+                                                        ]
+                                     },
+                          "context":  {
+                                          "subject":  "physics",
+                                          "language":  "vi"
+                                      }
+                      },
+                      {
+                          "source":  {
+                                         "question_id":  "q_mass_vi",
+                                         "content":  [
+                                                         {
+                                                             "id":  "SRC_STEM",
+                                                             "type":  "text",
+                                                             "text":  "Trong một hệ kín, 4 g khí hiđro phản ứng hoàn toàn với 32 g khí oxi tạo thành nước. Tính khối lượng nước thu được, giả sử không có chất thất thoát."
+                                                         }
+                                                     ],
+                                         "options":  [
+
+                                                     ],
+                                         "supplied_answer":  null,
+                                         "supplied_solution":  null,
+                                         "references":  [
+
+                                                        ]
+                                     },
+                          "context":  {
+                                          "subject":  "chemistry",
+                                          "language":  "vi"
+                                      }
+                      },
+                      {
+                          "source":  {
+                                         "question_id":  "q_osmosis_vi",
+                                         "content":  [
+                                                         {
+                                                             "id":  "SRC_STEM",
+                                                             "type":  "text",
+                                                             "text":  "Một tế bào thực vật còn sống được đặt trong dung dịch ưu trương. Sau một thời gian, khối nguyên sinh co lại và tách khỏi thành tế bào. Hãy giải thích hiện tượng bằng sự di chuyển của nước qua màng sinh chất. Giả sử chất tan không đi qua màng trong thời gian xét."
+                                                         }
+                                                     ],
+                                         "options":  [
+
+                                                     ],
+                                         "supplied_answer":  null,
+                                         "supplied_solution":  null,
+                                         "references":  [
+
+                                                        ]
+                                     },
+                          "context":  {
+                                          "subject":  "biology",
+                                          "language":  "vi"
+                                      }
+                      },
+                      {
+                          "source":  {
+                                         "question_id":  "q_quadratic_vi",
+                                         "content":  [
+                                                         {
+                                                             "id":  "SRC_STEM",
+                                                             "type":  "text",
+                                                             "text":  "Giải phương trình x^2 - 5x + 6 = 0 trên tập số thực."
+                                                         }
+                                                     ],
+                                         "options":  [
+
+                                                     ],
+                                         "supplied_answer":  null,
+                                         "supplied_solution":  null,
+                                         "references":  [
+
+                                                        ]
+                                     },
+                          "context":  {
+                                          "subject":  "mathematics",
+                                          "language":  "vi"
+                                      }
+                      },
+                      {
+                          "source":  {
+                                         "question_id":  "q_integral_vi",
+                                         "content":  [
+                                                         {
+                                                             "id":  "SRC_STEM",
+                                                             "type":  "text",
+                                                             "text":  "Tính tích phân xác định của f(x) = 3x^2 trên đoạn từ 0 đến 1."
+                                                         }
+                                                     ],
+                                         "options":  [
+
+                                                     ],
+                                         "supplied_answer":  null,
+                                         "supplied_solution":  null,
+                                         "references":  [
+
+                                                        ]
+                                     },
+                          "context":  {
+                                          "subject":  "mathematics",
+                                          "language":  "vi"
+                                      }
+                      },
+                      {
+                          "source":  {
+                                         "question_id":  "q_probability_en",
+                                         "content":  [
+                                                         {
+                                                             "id":  "SRC_STEM",
+                                                             "type":  "text",
+                                                             "text":  "A bag contains 3 red and 2 blue balls. One ball is drawn uniformly at random. What is the probability that it is red?"
+                                                         }
+                                                     ],
+                                         "options":  [
+                                                         {
+                                                             "id":  "OPT_A",
+                                                             "content":  [
+                                                                             {
+                                                                                 "id":  "BLOCK_A",
+                                                                                 "type":  "text",
+                                                                                 "text":  "3/5"
+                                                                             }
+                                                                         ]
+                                                         },
+                                                         {
+                                                             "id":  "OPT_B",
+                                                             "content":  [
+                                                                             {
+                                                                                 "id":  "BLOCK_B",
+                                                                                 "type":  "text",
+                                                                                 "text":  "2/5"
+                                                                             }
+                                                                         ]
+                                                         },
+                                                         {
+                                                             "id":  "OPT_C",
+                                                             "content":  [
+                                                                             {
+                                                                                 "id":  "BLOCK_C",
+                                                                                 "type":  "text",
+                                                                                 "text":  "1/2"
+                                                                             }
+                                                                         ]
+                                                         },
+                                                         {
+                                                             "id":  "OPT_D",
+                                                             "content":  [
+                                                                             {
+                                                                                 "id":  "BLOCK_D",
+                                                                                 "type":  "text",
+                                                                                 "text":  "1/5"
+                                                                             }
+                                                                         ]
+                                                         }
+                                                     ],
+                                         "supplied_answer":  {
+                                                                 "option_ids":  [
+                                                                                    "OPT_A"
+                                                                                ],
+                                                                 "value":  null,
+                                                                 "explanation":  null
+                                                             },
+                                         "supplied_solution":  null,
+                                         "references":  [
+
+                                                        ]
+                                     },
+                          "context":  {
+                                          "subject":  "mathematics",
+                                          "language":  "en"
+                                      }
+                      },
+                      {
+                          "source":  {
+                                         "question_id":  "q_ohm_en",
+                                         "content":  [
+                                                         {
+                                                             "id":  "SRC_STEM",
+                                                             "type":  "text",
+                                                             "text":  "An ohmic resistor has resistance 4 ohms. A potential difference of 12 volts is applied across it. Calculate the current in amperes."
+                                                         }
+                                                     ],
+                                         "options":  [
+
+                                                     ],
+                                         "supplied_answer":  null,
+                                         "supplied_solution":  null,
+                                         "references":  [
+
+                                                        ]
+                                     },
+                          "context":  {
+                                          "subject":  "physics",
+                                          "language":  "en"
+                                      }
+                      },
+                      {
+                          "source":  {
+                                         "question_id":  "q_heat_vi",
+                                         "content":  [
+                                                         {
+                                                             "id":  "SRC_STEM",
+                                                             "type":  "text",
+                                                             "text":  "Một khối nước 2 kg tăng nhiệt độ thêm 5 K. Bỏ qua thất thoát nhiệt và sự chuyển thể. Biết nhiệt dung riêng của nước là 4200 J/(kg.K). Tính nhiệt lượng nước thu vào, theo J."
+                                                         }
+                                                     ],
+                                         "options":  [
+
+                                                     ],
+                                         "supplied_answer":  null,
+                                         "supplied_solution":  null,
+                                         "references":  [
+
+                                                        ]
+                                     },
+                          "context":  {
+                                          "subject":  "physics",
+                                          "language":  "vi"
+                                      }
+                      },
+                      {
+                          "source":  {
+                                         "question_id":  "q_moles_vi",
+                                         "content":  [
+                                                         {
+                                                             "id":  "SRC_STEM",
+                                                             "type":  "text",
+                                                             "text":  "Một lượng khí có thể tích 11,2 L ở 0 độ C và 1 atm. Dùng thể tích mol khí ở điều kiện này là 22,4 L/mol. Tính số mol khí."
+                                                         }
+                                                     ],
+                                         "options":  [
+
+                                                     ],
+                                         "supplied_answer":  null,
+                                         "supplied_solution":  null,
+                                         "references":  [
+
+                                                        ]
+                                     },
+                          "context":  {
+                                          "subject":  "chemistry",
+                                          "language":  "vi"
+                                      }
+                      },
+                      {
+                          "source":  {
+                                         "question_id":  "q_mitosis_en",
+                                         "content":  [
+                                                         {
+                                                             "id":  "SRC_STEM",
+                                                             "type":  "text",
+                                                             "text":  "Explain why DNA replication must occur before mitosis for two daughter cells to receive a complete and identical set of chromosomes. Assume normal replication and chromosome segregation."
+                                                         }
+                                                     ],
+                                         "options":  [
+
+                                                     ],
+                                         "supplied_answer":  null,
+                                         "supplied_solution":  null,
+                                         "references":  [
+
+                                                        ]
+                                     },
+                          "context":  {
+                                          "subject":  "biology",
+                                          "language":  "en"
+                                      }
+                      },
+                      {
+                          "source":  {
+                                         "question_id":  "q_precision_en",
+                                         "content":  [
+                                                         {
+                                                             "id":  "SRC_STEM",
+                                                             "type":  "text",
+                                                             "text":  "For the positive class of a binary classifier, the evaluation counts are given in the table. Calculate precision as a number between 0 and 1."
+                                                         },
+                                                         {
+                                                             "id":  "SRC_COUNTS",
+                                                             "type":  "table",
+                                                             "columns":  [
+                                                                             "Count",
+                                                                             "Value"
+                                                                         ],
+                                                             "rows":  [
+                                                                          [
+                                                                              "True positives",
+                                                                              18
+                                                                          ],
+                                                                          [
+                                                                              "False positives",
+                                                                              6
+                                                                          ]
+                                                                      ]
+                                                         }
+                                                     ],
+                                         "options":  [
+
+                                                     ],
+                                         "supplied_answer":  null,
+                                         "supplied_solution":  null,
+                                         "references":  [
+
+                                                        ]
+                                     },
+                          "context":  {
+                                          "subject":  "integrated_science",
+                                          "language":  "en",
+                                          "audience":  "Undergraduate machine learning"
+                                      }
+                      }
+                  ]
+}

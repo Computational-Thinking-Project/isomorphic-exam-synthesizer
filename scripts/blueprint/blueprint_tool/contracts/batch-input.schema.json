@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:blueprint:batch-input:1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["questions"],
+  "properties": {"questions": {"type": "array", "minItems": 1, "items": {"$ref": "urn:blueprint:single-input:1.0.0"}}}
+}

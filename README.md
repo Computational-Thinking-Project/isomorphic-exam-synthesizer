@@ -28,9 +28,11 @@ Ctrl+C stops watching; use the down command to stop the containers.
 .\scripts\dev.ps1 down
 ~~~
 
-Setup preserves an existing .env. Empty cloud keys support local health checks,
-the current mock UI and mock tests; real Gemini/Supabase/Google login requires
-the corresponding credentials and integration work. Never commit real secrets.
+Setup preserves an existing .env. Empty cloud keys support local health checks
+and mock tests. Google login and the profile API require the existing Supabase
+configuration; see the [frontend Auth setup and verification](frontend/README.md).
+Dashboard session data/actions still use mocks. Real Gemini requires backend
+credentials and integration work. Never commit real secrets.
 
 For macOS/Linux use PowerShell 7: pwsh ./scripts/dev.ps1 setup (and the same actions).
 For static Nginx build verification, stop dev and use docker compose up --build --detach --wait.

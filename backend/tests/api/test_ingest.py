@@ -292,3 +292,46 @@ def test_ingest_file_docx_success_200(client, mock_auth_user, auth_headers):
     res_data = response.json()
     assert res_data["total_questions"] == 2
     assert "successfully" in res_data["message"]
+
+
+def test_ingest_file_rpc_failure_returns_500_zero_mutation(client, mock_auth_user, auth_headers):
+    """If RPC fails, ingestion returns 500 without performing client-side mutations or deletions."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    # Mock storage upload
+    mock_db.storage.from_.return_value.upload.return_value = MagicMock()
+
+    # Mock RPC failure (e.g. Postgres exception)
+    mock_db.rpc.return_value.execute.side_effect = RuntimeError("RPC failure or network timeout")
+
+    docx_bytes = create_sample_docx_bytes()
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-file",
+            files={
+                "file": (
+                    "toan12.docx",
+                    docx_bytes,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 500
+    assert "Database atomic replacement failed" in response.json()["detail"]
+    # Ensure NO client-side delete was called on question_blueprints or source_questions
+    assert not mock_db.table.return_value.delete.called
