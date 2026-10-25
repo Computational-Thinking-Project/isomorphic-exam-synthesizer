@@ -44,6 +44,18 @@ def extract_default_blueprint(question: Dict[str, Any]) -> Dict[str, Any]:
             continue
 
     q_no = question.get("question_no", "?")
+    if not variables:
+        return {
+            "source_question_id": str(question["id"]),
+            "variables": {},
+            "domains": {},
+            "invariants": ["PRESERVE_SOLVABILITY", "PRESERVE_CONTENT_VERBATIM"],
+            "variation_modes": ["NONE"],
+            "is_fallback": True,
+            "extraction_source": "FALLBACK_DETERMINISTIC",
+            "rule_summary": f"Question Q{q_no} has no numerical parameters; preserved verbatim without variation",
+        }
+
     return {
         "source_question_id": str(question["id"]),
         "variables": variables,

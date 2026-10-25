@@ -685,3 +685,24 @@ async def test_ensure_blueprints_preserves_confirmed():
     assert inserted_blueprints[0]["is_fallback"] is True
     assert inserted_blueprints[0]["extraction_source"] == "FALLBACK_DETERMINISTIC"
 
+
+def test_extract_default_blueprint_unsupported_non_numerical_question():
+    """Questions without numerical parameters are marked as invariant with variation_modes=['NONE']."""
+    from app.services.parser.blueprint_service import extract_default_blueprint
+
+    q_verbal = {
+        "id": "sq-verbal-1",
+        "question_no": 7,
+        "raw_content": "Đặc điểm nào sau đây là của quá trình giảm phân?",
+    }
+    bp = extract_default_blueprint(q_verbal)
+    assert bp["source_question_id"] == "sq-verbal-1"
+    assert bp["variables"] == {}
+    assert bp["domains"] == {}
+    assert bp["variation_modes"] == ["NONE"]
+    assert "PRESERVE_CONTENT_VERBATIM" in bp["invariants"]
+    assert bp["is_fallback"] is True
+    assert bp["extraction_source"] == "FALLBACK_DETERMINISTIC"
+    assert "no numerical parameters" in bp["rule_summary"]
+
+
