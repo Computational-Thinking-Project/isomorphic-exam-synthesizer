@@ -1,0 +1,77 @@
+{
+    "description":  "Các kỳ vọng do người triển khai chuẩn bị để smoke test; chưa phải tập chuẩn được giáo viên thẩm định. Development có nội dung gần ví dụ prompt; held_out không đưa vào prompt.",
+    "items":  [
+                  {
+                      "question_id":  "q_derivative_vi",
+                      "split":  "development",
+                      "expected_format":  "numeric",
+                      "expected_numeric_answer":  "4"
+                  },
+                  {
+                      "question_id":  "q_newton_vi",
+                      "split":  "development",
+                      "expected_format":  "numeric",
+                      "expected_numeric_answer":  "3"
+                  },
+                  {
+                      "question_id":  "q_mass_vi",
+                      "split":  "development",
+                      "expected_format":  "numeric",
+                      "expected_numeric_answer":  "36"
+                  },
+                  {
+                      "question_id":  "q_osmosis_vi",
+                      "split":  "development",
+                      "expected_format":  "explanation",
+                      "expected_numeric_answer":  null
+                  },
+                  {
+                      "question_id":  "q_quadratic_vi",
+                      "split":  "held_out",
+                      "expected_format":  "short_text",
+                      "expected_numeric_answer":  null
+                  },
+                  {
+                      "question_id":  "q_integral_vi",
+                      "split":  "held_out",
+                      "expected_format":  "numeric",
+                      "expected_numeric_answer":  "1"
+                  },
+                  {
+                      "question_id":  "q_probability_en",
+                      "split":  "held_out",
+                      "expected_format":  "single_choice",
+                      "expected_numeric_answer":  "3/5"
+                  },
+                  {
+                      "question_id":  "q_ohm_en",
+                      "split":  "held_out",
+                      "expected_format":  "numeric",
+                      "expected_numeric_answer":  "3"
+                  },
+                  {
+                      "question_id":  "q_heat_vi",
+                      "split":  "held_out",
+                      "expected_format":  "numeric",
+                      "expected_numeric_answer":  "42000"
+                  },
+                  {
+                      "question_id":  "q_moles_vi",
+                      "split":  "held_out",
+                      "expected_format":  "numeric",
+                      "expected_numeric_answer":  "1/2"
+                  },
+                  {
+                      "question_id":  "q_mitosis_en",
+                      "split":  "held_out",
+                      "expected_format":  "explanation",
+                      "expected_numeric_answer":  null
+                  },
+                  {
+                      "question_id":  "q_precision_en",
+                      "split":  "held_out",
+                      "expected_format":  "numeric",
+                      "expected_numeric_answer":  "3/4"
+                  }
+              ]
+}

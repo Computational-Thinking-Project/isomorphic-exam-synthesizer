@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:blueprint:result:1.0.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "mode", "results", "summary", "error", "run_metadata"],
+  "$defs": {
+    "error": {"type": "object", "additionalProperties": false, "required": ["code", "message", "details"], "properties": {"code": {"type": "string", "minLength": 1}, "message": {"type": "string", "minLength": 1}, "details": {"type": "array", "items": {"type": "object"}}}},
+    "nullable_error": {"anyOf": [{"$ref": "#/$defs/error"}, {"type": "null"}]}
+  },
+  "properties": {
+    "contract_version": {"const": "1.0.0"},
+    "mode": {"enum": ["single", "batch"]},
+    "results": {"type": "array", "items": {
+      "type": "object", "additionalProperties": false,
+      "required": ["index", "question_id", "blueprint", "error"],
+      "properties": {
+        "index": {"type": "integer", "minimum": 0},
+        "question_id": {"anyOf": [{"$ref": "urn:blueprint:science:0.4.0#/$defs/id"}, {"type": "null"}]},
+        "blueprint": {"anyOf": [{"$ref": "urn:blueprint:science:0.4.0"}, {"type": "null"}]},
+        "error": {"$ref": "#/$defs/nullable_error"}
+      },
+      "oneOf": [
+        {"properties": {"blueprint": {"type": "object"}, "error": {"type": "null"}, "question_id": {"type": "string"}}},
+        {"properties": {"blueprint": {"type": "null"}, "error": {"type": "object"}}}
+      ]
+    }},
+    "summary": {"type": "object", "additionalProperties": false, "required": ["total", "succeeded", "failed"], "properties": {"total": {"type": "integer", "minimum": 0}, "succeeded": {"type": "integer", "minimum": 0}, "failed": {"type": "integer", "minimum": 0}}},
+    "error": {"$ref": "#/$defs/nullable_error"},
+    "run_metadata": {"type": "object"}
+  },
+  "allOf": [
+    {"if": {"properties": {"error": {"type": "object"}}}, "then": {"properties": {"results": {"maxItems": 0}, "summary": {"properties": {"total": {"const": 0}, "succeeded": {"const": 0}, "failed": {"const": 0}}}}}, "else": {"properties": {"results": {"minItems": 1}}}},
+    {"if": {"properties": {"mode": {"const": "single"}, "error": {"type": "null"}}}, "then": {"properties": {"results": {"maxItems": 1}}}}
+  ]
+}

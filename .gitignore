@@ -33,4 +33,6 @@ Thumbs.db
 *.zip
 *.pdf
 scratch/
+agents/
 .artifacts/
+outputs/blueprint/

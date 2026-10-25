@@ -1,0 +1,393 @@
+{
+  "requirement": {
+    "blueprint_id": "chemistry_mass_conservation_v2",
+    "schema_version": "0.4.0",
+    "subject": "chemistry",
+    "language": "vi",
+    "language_policy": {
+      "field_names": "en",
+      "descriptive_values": "source_language",
+      "machine_codes": "stable"
+    },
+    "source": {
+      "question_id": "chemistry_mass_conservation_v2_source",
+      "content": [
+        {
+          "id": "SRC_STEM",
+          "type": "text",
+          "text": "Theo mô hình hóa học phổ thông, một phản ứng hóa học diễn ra trong hệ kín, không trao đổi chất với môi trường và không có phản ứng hạt nhân. Đại lượng nào của toàn bộ hệ luôn được bảo toàn?"
+        }
+      ],
+      "options": [
+        {
+          "id": "A",
+          "content": [
+            {
+              "id": "OPT_A",
+              "type": "text",
+              "text": "Tổng khối lượng."
+            }
+          ]
+        },
+        {
+          "id": "B",
+          "content": [
+            {
+              "id": "OPT_B",
+              "type": "text",
+              "text": "Tổng số phân tử."
+            }
+          ]
+        },
+        {
+          "id": "C",
+          "content": [
+            {
+              "id": "OPT_C",
+              "type": "text",
+              "text": "Tổng thể tích các chất khí."
+            }
+          ]
+        },
+        {
+          "id": "D",
+          "content": [
+            {
+              "id": "OPT_D",
+              "type": "text",
+              "text": "Số mol của từng chất."
+            }
+          ]
+        }
+      ],
+      "supplied_answer": {
+        "option_ids": [
+          "A"
+        ],
+        "value": null,
+        "explanation": null
+      },
+      "supplied_solution": null,
+      "references": []
+    },
+    "assessment": {
+      "id": "R_ASSESSMENT",
+      "objective": "Nhận biết đại lượng được bảo toàn trong phản ứng hóa học của hệ kín.",
+      "knowledge": [
+        "Định luật bảo toàn khối lượng trong mô hình hóa học phổ thông."
+      ],
+      "cognitive_operations": [
+        "Nhận biết định luật.",
+        "Phân biệt đại lượng được bảo toàn với đại lượng có thể thay đổi."
+      ],
+      "prerequisites": [
+        "Phân biệt khối lượng, số phân tử, thể tích và số mol."
+      ]
+    },
+    "knowledge_basis": [
+      {
+        "id": "K_MASS",
+        "description": "Trong mô hình hóa học phổ thông, tổng khối lượng của hệ kín được bảo toàn khi xảy ra phản ứng hóa học.",
+        "origin": "inferred",
+        "evidence_refs": []
+      }
+    ],
+    "semantic_model": {
+      "id": "R_MODEL",
+      "entities": [
+        {
+          "id": "E_SYSTEM",
+          "kind": "system",
+          "description": "Hệ kín không trao đổi chất với môi trường."
+        },
+        {
+          "id": "E_REACTION",
+          "kind": "process",
+          "description": "Phản ứng hóa học, không có phản ứng hạt nhân."
+        }
+      ],
+      "quantities": [],
+      "relations": [
+        {
+          "id": "REL_MASS",
+          "description": "Tổng khối lượng trước phản ứng bằng tổng khối lượng sau phản ứng.",
+          "role": "derived",
+          "formalism": "math_expression",
+          "expression": "m_before = m_after",
+          "refs": [
+            "E_SYSTEM",
+            "E_REACTION"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "id": "AS_SCOPE",
+          "description": "Xét hệ kín và mô hình hóa học phổ thông, loại trừ phản ứng hạt nhân.",
+          "origin": "source",
+          "evidence_refs": [
+            "SRC_STEM"
+          ]
+        }
+      ],
+      "target": {
+        "id": "TARGET",
+        "description": "Chọn đại lượng luôn được bảo toàn.",
+        "quantity_ref": null
+      }
+    },
+    "reasoning_model": {
+      "id": "R_REASONING",
+      "steps": [
+        {
+          "id": "STEP1",
+          "description": "Nhận ra phạm vi hệ kín và phản ứng hóa học.",
+          "depends_on": []
+        },
+        {
+          "id": "STEP2",
+          "description": "Áp dụng định luật bảo toàn khối lượng.",
+          "depends_on": [
+            "STEP1"
+          ]
+        },
+        {
+          "id": "STEP3",
+          "description": "Loại các đại lượng không được bảo toàn trong mọi phản ứng.",
+          "depends_on": [
+            "STEP2"
+          ]
+        }
+      ],
+      "accepted_alternatives": [],
+      "forbidden_shortcuts": []
+    },
+    "invariants": [
+      {
+        "id": "I_CLOSED",
+        "category": "context",
+        "description": "Xét toàn bộ hệ kín không trao đổi chất và không có phản ứng hạt nhân."
+      },
+      {
+        "id": "I_CONCEPT",
+        "category": "knowledge",
+        "description": "Kiểm tra nhận biết bảo toàn khối lượng."
+      },
+      {
+        "id": "I_ALWAYS",
+        "category": "relations",
+        "description": "Hỏi tính chất luôn đúng trong phạm vi mô hình, không xét một trường hợp tình cờ."
+      }
+    ],
+    "variation_policy": {
+      "id": "R_VARIATION",
+      "equivalence_level": "strict_structure",
+      "allowed_transformations": [
+        {
+          "id": "V_CONTEXT",
+          "dimension": "context",
+          "description": "Đổi cách mô tả hệ kín thành bình kín.",
+          "target_refs": [
+            "E_SYSTEM"
+          ],
+          "preconditions": [
+            "Nêu rõ không trao đổi chất."
+          ],
+          "limits": []
+        },
+        {
+          "id": "V_WORDING",
+          "dimension": "wording",
+          "description": "Diễn đạt lại tính chất cần chọn.",
+          "target_refs": [
+            "SRC_STEM"
+          ],
+          "preconditions": [
+            "Giữ từ chỉ tính tổng quát như luôn."
+          ],
+          "limits": []
+        },
+        {
+          "id": "V_ORDER",
+          "dimension": "option_order",
+          "description": "Đổi thứ tự phương án.",
+          "target_refs": [
+            "R_RESPONSE"
+          ],
+          "preconditions": [
+            "Cập nhật khóa đáp án theo nội dung."
+          ],
+          "limits": []
+        }
+      ],
+      "parameter_domains": [],
+      "forbidden_changes": [
+        "Đổi hệ kín thành hệ hở.",
+        "Thêm phản ứng cụ thể để tính khối lượng.",
+        "Đổi thành câu hỏi bảo toàn số nguyên tử."
+      ],
+      "workload_limits": [
+        "Nhận biết trực tiếp một định luật; không thêm tính toán."
+      ]
+    },
+    "response_spec": {
+      "id": "R_RESPONSE",
+      "format": "single_choice",
+      "option_count": 4,
+      "correct_option_count": 1,
+      "grading": {
+        "mode": "option_keys",
+        "expected_unit": null,
+        "numeric_tolerance": null,
+        "rounding_rule": null,
+        "rubric": []
+      },
+      "distractor_policy": {
+        "error_models": [
+          "Nhầm bảo toàn khối lượng với bảo toàn số phân tử.",
+          "Cho rằng thể tích hoặc số mol từng chất luôn không đổi."
+        ],
+        "rules": [
+          "Các phương án khác nhau về nội dung và chỉ một phương án đúng theo giả thiết."
+        ]
+      }
+    },
+    "presentation": {
+      "id": "R_PRESENTATION",
+      "allowed_content_types": [
+        "text",
+        "formula",
+        "table"
+      ],
+      "requires_image": false,
+      "instructions": [
+        "Mô tả, đề sinh ra và lời giải dùng cùng ngôn ngữ với đề nguồn.",
+        "Cung cấp đủ dữ kiện bằng văn bản, công thức hoặc bảng; không dẫn tới hình, sơ đồ hoặc đồ thị cần đọc."
+      ]
+    }
+  },
+  "constraint": {
+    "validation_policy": {
+      "outcomes": [
+        "pass",
+        "fail",
+        "unknown"
+      ],
+      "required_unknown_action": "block_automatic_acceptance",
+      "advisory_can_override_required": false
+    },
+    "source_check": {
+      "computed_answer": {
+        "option_ids": [
+          "A"
+        ],
+        "value": null,
+        "explanation": "Theo định luật bảo toàn khối lượng trong phạm vi đề đã nêu, tổng khối lượng không đổi."
+      },
+      "methods": [
+        "domain_rule"
+      ],
+      "evidence": [
+        "Đáp án dự kiến theo định luật; cần người có chuyên môn duyệt tính duy nhất của các phương án."
+      ]
+    },
+    "rules": [
+      {
+        "id": "C_LANGUAGE",
+        "requirement_refs": [
+          "R_PRESENTATION"
+        ],
+        "scope": "blueprint",
+        "severity": "required",
+        "description": "Tuân thủ quy tắc ngôn ngữ và phạm vi không hình ảnh.",
+        "verification_methods": [
+          "schema",
+          "semantic_rubric",
+          "human_review"
+        ],
+        "pass_criteria": "Tên trường và mã máy giữ nguyên; mô tả theo ngôn ngữ đề nguồn; không có hình nhúng, đường dẫn hình hoặc dữ kiện chỉ đọc được từ hình.",
+        "on_failure": "reject"
+      },
+      {
+        "id": "C_CONTENT",
+        "requirement_refs": [
+          "R_PRESENTATION"
+        ],
+        "scope": "candidate",
+        "severity": "required",
+        "description": "Đề và lời giải cuối cùng tự đầy đủ, đúng ngôn ngữ và không cần hình.",
+        "verification_methods": [
+          "semantic_rubric",
+          "human_review"
+        ],
+        "pass_criteria": "Không có lời dẫn tới hình vẽ, dữ kiện bị lược mất hoặc hình được nhúng trong văn bản/công thức.",
+        "on_failure": "reject"
+      },
+      {
+        "id": "C_EQUIVALENCE",
+        "requirement_refs": [
+          "R_ASSESSMENT",
+          "R_REASONING",
+          "R_VARIATION"
+        ],
+        "scope": "source_candidate",
+        "severity": "required",
+        "description": "Giữ kiến thức, thao tác nhận thức và giới hạn biến đổi khi so với câu nguồn.",
+        "verification_methods": [
+          "semantic_rubric",
+          "human_review"
+        ],
+        "pass_criteria": "Mọi biến đổi nằm trong chính sách; không thêm kỹ năng bắt buộc và không cung cấp sẵn bước suy luận đang được đánh giá.",
+        "on_failure": "reject"
+      },
+      {
+        "id": "C_RESPONSE",
+        "requirement_refs": [
+          "R_RESPONSE"
+        ],
+        "scope": "candidate",
+        "severity": "required",
+        "description": "Đáp án và lời giải khớp câu hỏi cuối cùng.",
+        "verification_methods": [
+          "semantic_rubric",
+          "human_review"
+        ],
+        "pass_criteria": "Tính hoặc suy ra lại đáp án từ dữ kiện mới; đáp án, đơn vị, tiêu chí chấm và các phương án phù hợp định dạng đã chọn.",
+        "on_failure": "reject"
+      },
+      {
+        "id": "C_DOMAIN",
+        "requirement_refs": [
+          "I_CLOSED",
+          "I_CONCEPT"
+        ],
+        "scope": "candidate",
+        "severity": "required",
+        "description": "Kiểm tra phạm vi áp dụng định luật.",
+        "verification_methods": [
+          "domain_rule",
+          "reference_check",
+          "human_review"
+        ],
+        "pass_criteria": "Giữ đủ điều kiện hệ kín và mô hình hóa học; mệnh đề đúng theo nguồn kiến thức đã duyệt.",
+        "on_failure": "reject"
+      },
+      {
+        "id": "C_UNIVERSAL",
+        "requirement_refs": [
+          "I_ALWAYS",
+          "R_RESPONSE"
+        ],
+        "scope": "candidate",
+        "severity": "required",
+        "description": "Kiểm tra tính tổng quát và phương án.",
+        "verification_methods": [
+          "domain_rule",
+          "human_review"
+        ],
+        "pass_criteria": "Chỉ một phương án luôn đúng; phương án còn lại không phải tính chất tổng quát trong phạm vi đã nêu.",
+        "on_failure": "reject"
+      }
+    ]
+  }
+}

@@ -1,0 +1,3 @@
+# Resolve the newest stable releases when building/upgrading the environment.
+google-genai
+jsonschema

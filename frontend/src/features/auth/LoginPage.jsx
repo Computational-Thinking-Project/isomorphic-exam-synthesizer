@@ -1,12 +1,81 @@
 import { useState } from 'react';
+import { getSupabase } from '../../services/supabase.js';
+import { useAuthStore } from './authStore.js';
+import { Navigate } from 'react-router-dom';
 
-export default function LoginPage() {
+export default function LoginPage({ profileState }) {
   const [notice, setNotice] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState('');
+  const status = useAuthStore((state) => state.status);
+  const user = useAuthStore((state) => state.user);
 
-  function handleGoogleSignIn() {
-    setNotice(
-      'Đăng nhập Google chưa được kết nối. Đây là bản kiểm tra giao diện.',
-    );
+  const sessionNotice =
+    status === 'checking'
+      ? 'Đang khôi phục phiên đăng nhập…'
+      : status === 'reauth_required'
+        ? 'Phiên hiện tại không thể tiếp tục sử dụng. Hãy đăng xuất rồi đăng nhập lại.'
+        : profileState.isLoading
+          ? 'Đang tải hồ sơ…'
+          : '';
+
+  async function handleGoogleSignIn() {
+    if (isSubmitting || isSigningOut) return;
+
+    setSignOutError('');
+
+    setIsSubmitting(true);
+    setNotice('Đang chuyển đến Google…');
+
+    try {
+      const { error } = await getSupabase().auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/login`,
+        },
+      });
+
+      if (error) throw error;
+    } catch (cause) {
+      setNotice(
+        cause instanceof Error
+          ? cause.message
+          : 'Không thể bắt đầu đăng nhập. Vui lòng thử lại.',
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleSignOut() {
+    if (isSubmitting || isSigningOut) return;
+
+    setIsSigningOut(true);
+    setSignOutError('');
+    setNotice('');
+
+    try {
+      const { error } = await getSupabase().auth.signOut({
+        scope: 'local',
+      });
+
+      if (error) throw error;
+
+      setNotice('Đã đăng xuất.');
+    } catch (cause) {
+      setSignOutError(
+        cause instanceof Error
+          ? cause.message
+          : 'Không thể đăng xuất. Vui lòng thử lại.',
+      );
+    } finally {
+      setIsSigningOut(false);
+    }
+  }
+
+  if (status === 'authenticated' && user) {
+    return <Navigate to="/dashboard" replace />;
   }
 
   return (
@@ -30,18 +99,59 @@ export default function LoginPage() {
         <button
           type="button"
           onClick={handleGoogleSignIn}
-          className="mt-8 w-full rounded-lg bg-sky-400 px-4 py-3 font-semibold text-slate-950 hover:bg-sky-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-sky-400"
+          disabled={
+            isSubmitting ||
+            isSigningOut ||
+            status === 'checking' ||
+            status === 'profile_pending' ||
+            status === 'reauth_required'
+          }
+          className="mt-8 w-full rounded-lg bg-sky-400 px-4 py-3 font-semibold text-slate-950 hover:bg-sky-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-sky-400 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          Đăng nhập bằng Google
+          {isSubmitting
+            ? 'Đang chuyển đến Google…'
+            : 'Đăng nhập bằng Google'}
         </button>
+
+        {(status === 'profile_pending' || status === 'reauth_required') && (
+          <button
+            type="button"
+            onClick={handleSignOut}
+            disabled={isSigningOut || isSubmitting}
+            className="mt-3 w-full rounded-lg border border-slate-600 px-4 py-3 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isSigningOut ? 'Đang đăng xuất…' : 'Đăng xuất'}
+          </button>
+        )}
 
         <p
           role="status"
           aria-live="polite"
           className="mt-4 text-sm text-slate-300"
         >
-          {notice}
+          {sessionNotice || notice}
         </p>
+
+        {profileState.error && (
+          <div role="alert" className="mt-3 text-rose-300">
+            <p>{profileState.error}</p>
+
+            <button
+              type="button"
+              onClick={profileState.retry}
+              disabled={isSubmitting || isSigningOut}
+              className="mt-2 rounded-lg border border-current px-4 py-2 disabled:opacity-60"
+            >
+              Thử lại tải hồ sơ
+            </button>
+          </div>
+        )}
+
+        {signOutError && (
+          <p role="alert" className="mt-3 text-sm text-rose-300">
+            {signOutError}
+          </p>
+        )}
       </section>
     </main>
   );
