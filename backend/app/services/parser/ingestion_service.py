@@ -4,13 +4,9 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional, cast
 
+import httpcore
 import httpx
 from fastapi import HTTPException, status
-
-try:
-    import httpcore
-except ImportError:  # pragma: no cover
-    httpcore = None
 from postgrest.exceptions import APIError
 from supabase import Client
 
@@ -18,32 +14,20 @@ from app.models.schemas import ParsedQuestionItem
 
 logger = logging.getLogger(__name__)
 
-NETWORK_TIMEOUT_EXCEPTIONS = (
+NETWORK_TIMEOUT_EXCEPTIONS: tuple[type[BaseException], ...] = (
     httpx.TimeoutException,
+    httpcore.TimeoutException,
     TimeoutError,
 )
-if httpcore is not None:
-    NETWORK_TIMEOUT_EXCEPTIONS = (
-        httpx.TimeoutException,
-        httpcore.TimeoutException,
-        TimeoutError,
-    )
 
-NETWORK_TRANSPORT_EXCEPTIONS = (
+NETWORK_TRANSPORT_EXCEPTIONS: tuple[type[BaseException], ...] = (
     httpx.TransportError,
     httpx.NetworkError,
     httpx.ProtocolError,
+    httpcore.NetworkError,
+    httpcore.ProtocolError,
     ConnectionError,
 )
-if httpcore is not None:
-    NETWORK_TRANSPORT_EXCEPTIONS = (
-        httpx.TransportError,
-        httpx.NetworkError,
-        httpx.ProtocolError,
-        httpcore.NetworkError,
-        httpcore.ProtocolError,
-        ConnectionError,
-    )
 
 
 def is_network_timeout(exc: BaseException) -> bool:
