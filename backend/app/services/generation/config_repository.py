@@ -8,17 +8,37 @@ lock.
 """
 
 from datetime import datetime
-from typing import cast
+from typing import Protocol, cast
 from uuid import UUID
 
 from supabase import Client
 
+from app.models.generation_config import GenerationConfigRequest
 from app.services.generation.config_service import (
     BlueprintConfigContext,
     GenerationConfigContext,
     GenerationConfigError,
     SourceQuestionConfigContext,
 )
+
+
+class GenerationConfigStore(Protocol):
+    """Internal Python contract; it does not define the pending RPC wire format.
+
+    A future save adapter must revalidate and persist config plus session state
+    in one transaction. The read-only repository below does not implement save.
+    Tests can supply a fake store; product wiring must supply the real adapter.
+    """
+
+    def load_context(self, session_id: UUID) -> GenerationConfigContext | None: ...
+
+    def save_config(self, session_id: UUID, config: GenerationConfigRequest) -> object:
+        """Return saved data matching GenerationConfigResponse or raise a domain error.
+
+        Return data is untrusted until validated at the HTTP boundary. This
+        signature does not imply any particular SQL function or parameter names.
+        """
+        ...
 
 
 def _rows(value: object) -> list[dict[str, object]]:
