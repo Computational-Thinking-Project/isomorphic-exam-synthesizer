@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 POSTGRES_SQLSTATE_PATTERN = re.compile(r"^[0-9A-Z]{5}$")
 GATEWAY_HTTP_STATUS_CODES = {"500", "502", "503", "504"}
+POSTGRES_NON_ROLLBACK_SQLSTATE_PREFIXES = ("08",)
+POSTGRES_NON_ROLLBACK_SQLSTATES = {"40003"}
 
 NETWORK_TIMEOUT_EXCEPTIONS: tuple[type[BaseException], ...] = (
     httpx.TimeoutException,
@@ -73,9 +75,12 @@ def is_database_rollback_evidence(exc: BaseException) -> bool:
     """Check if there is concrete evidence that PostgreSQL engine aborted and rolled back the transaction.
 
     Requires a genuine 5-character PostgreSQL SQLSTATE (e.g. 'P0001', '23505', '42501', '22023').
-    Explicitly excludes intermediate gateway errors (HTTP 500, 502, 503, 504), non-JSON responses
-    (e.g. HTML gateway pages wrapped by postgrest SDK with 'JSON could not be generated'),
-    and unverified runtime exceptions.
+    Explicitly excludes:
+    - Intermediate gateway errors (HTTP 500, 502, 503, 504)
+    - Non-JSON responses (HTML gateway pages wrapped by postgrest SDK with 'JSON could not be generated')
+    - PostgreSQL Class 08 Connection Exceptions (e.g. '08006', '08007' transaction resolution unknown)
+      and '40003' where transaction completion status is uncertain mid-flight
+    - Unverified runtime exceptions.
     """
     seen: set[int] = set()
     cur: Optional[BaseException] = exc
@@ -90,7 +95,7 @@ def is_database_rollback_evidence(exc: BaseException) -> bool:
             if not code:
                 return False
 
-            code_str = str(code).strip()
+            code_str = str(code).strip().upper()
             # Gateway HTTP status codes (3 digits) are NOT PostgreSQL SQLSTATEs
             if code_str in GATEWAY_HTTP_STATUS_CODES:
                 return False
@@ -100,8 +105,22 @@ def is_database_rollback_evidence(exc: BaseException) -> bool:
             if "<html>" in details or "<head>" in details or "<!doctype" in details:
                 return False
 
+            # Normalize 4-digit codes starting with 8 (e.g. integer 8006 or 8007)
+            padded_code = (
+                code_str.zfill(5)
+                if (code_str.isdigit() and len(code_str) == 4 and code_str.startswith("8"))
+                else code_str
+            )
+
+            # PostgreSQL Class 08 (Connection Exceptions, e.g. 08006, 08007) and 40003 indicate
+            # connection loss or unknown transaction resolution mid-flight; client cannot confirm rollback.
+            if any(
+                padded_code.startswith(prefix) for prefix in POSTGRES_NON_ROLLBACK_SQLSTATE_PREFIXES
+            ) or (padded_code in POSTGRES_NON_ROLLBACK_SQLSTATES):
+                return False
+
             # Genuine PostgreSQL SQLSTATE is strictly a 5-character alphanumeric code
-            return bool(POSTGRES_SQLSTATE_PATTERN.match(code_str))
+            return bool(POSTGRES_SQLSTATE_PATTERN.match(padded_code))
 
         cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
 
@@ -162,7 +181,12 @@ async def replace_source_questions_atomically(
         logger.error("RPC replace_source_questions failed for session %s: %s", session_id, exc)
         code = getattr(exc, "code", "") or ""
 
-        if code == "42501" or "42501" in err_msg or "access denied" in err_lower or "unauthorized" in err_lower:
+        if (
+            code == "42501"
+            or "42501" in err_msg
+            or "access denied" in err_lower
+            or "unauthorized" in err_lower
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied or session ownership mismatch",
