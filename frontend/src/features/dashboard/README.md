@@ -1,5 +1,9 @@
 # Dashboard UI — TASK-103
 
+### Accepted W1 boundary — 27/10/2026
+
+TV1 explicitly confirmed authority to decide and accepted W1 scope: real Dashboard/session APIs, creation and opening of drafts/clones, with clear unavailable notices for statuses whose screens arrive in later weeks. Those later screens remain integration backlog; their absence does not block W1 acceptance under this decision. Testing, peer review and merge still require evidence. Clone reuses the whole session's source questions and Blueprints into an independent draft, rather than a selected generated version; TV1 reported a different session ID with the relevant information preserved. W2 starts only after all part1/W1 branches have merged into dev; that gate has not been verified by this documentation update.
+
 ### Current detail before open — 27/10/2026
 
 Tiếp tục/Xem now calls the existing `getSessionDetail` before choosing a destination, including when the list badge is not draft. `sessionDestination.js` connects only the implemented draft entry; nine other known statuses and unknown statuses keep the user on Dashboard with a notice. No readiness/job fields or Stage2/review/export screens are invented. Stage1 still reads detail on arrival for its own direct-URL/reload protection; two sequential detail reads during a successful Dashboard open are expected.
