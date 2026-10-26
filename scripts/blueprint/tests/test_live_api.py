@@ -6,7 +6,6 @@ import subprocess
 import sys
 
 import pytest
-
 from blueprint_tool.common import ROOT
 
 

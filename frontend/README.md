@@ -2,6 +2,12 @@
 
 Frontend sản phẩm dùng React/Vite và JavaScript/JSX. Đây là hướng dẫn cho repo sản phẩm; bộ `ui-draft` trong workspace là tài liệu thiết kế riêng.
 
+## Đồng bộ dev — lượt 1, 27/10/2026
+
+- Nhánh TASK103 nhận dev `0307b1c` (PR18 AI/Blueprint) từ nền Dashboard `c2613c4`; merge không xung đột, giữ nguyên App/Dashboard/Stage1 và client dùng chung. Chưa lấy PR15/16 hoặc triển khai thêm màn/trạng thái.
+- Kiểm cây kết hợp trước commit: frontend146tests/lint/build đạt. Image backend build theo lockfile đạt; snapshot không chứa env thật, container tạm không mạng: backend + standalone Blueprint304tests đạt/1live opt-in skipped/1Starlette deprecation warning; Ruff đạt, Mypy52source files đạt, SymPy LaTeX smoke và pip check đạt.
+- Các kiểm này không gọi AI/cloud và không restart container sản phẩm. UI Stage1 qua Docker/Google thật vẫn là lượt2; full status routing và màn đích còn theo plan, TASK103 chưa hoàn tất. Nhật ký chi tiết ở workspace `tmp/task103-sync-dev-20261027/QA.md`.
+
 ## Checkpoint hiện hành — TASK103 lượt C, 26/10/2026
 
 - Nền dev đã merge tại170b847; create/detail service và SQL prerequisite đã lưu tại a117f0c/51db6be. User đã kiểm API thật: tạo/đọc phiên thành công, B đọc phiên A bị404, exam_versions setup đạt metadata checks. Các checkpoint pending merge bên dưới là lịch sử.
