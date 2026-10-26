@@ -113,3 +113,17 @@
   4. **Phân loại Ngoại lệ Ingestion:** Phân biệt lỗi timeout mạng (HTTP 504 Gateway Timeout với cảnh báo trạng thái chưa xác định, không cam kết dữ liệu chưa đổi) với lỗi SQL đã rollback (HTTP 500).
   5. **Tài liệu & Test:** Bổ sung script kiểm thử SQL 5 kịch bản phân quyền trên DB test; bổ sung unit tests cho OMML đứng riêng, LaTeX clean stem/options, và Timeout 504.
 
+### DEC-BE1-004: Xử lý Triệt Để Ngoại Lệ Mạng và Khẳng Định Trạng Thái Commit CSDL (PR #15 Round 3)
+* **Mã quyết định:** DEC-BE1-004
+* **Ngày quyết định:** 26/10/2026
+* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
+* **Bối cảnh:**
+  1. Exception handler trước đây chỉ nhận diện lỗi mạng dựa trên từ khóa trong `str(exc)` (như "timeout", "connection reset").
+  2. Các ngoại lệ HTTPX thực tế như `httpx.ReadTimeout("")`, `httpx.ReadError("")` có chuỗi thông báo rỗng, hoặc `RemoteProtocolError("Server disconnected without sending a response.")` khi mô phỏng rớt kết nối sau commit, dẫn đến việc lọt xuống nhánh mặc định HTTP 500 và khẳng định sai "was rolled back".
+  3. Khi xảy ra lỗi mạng hoặc mất phản hồi, giao dịch có thể đã commit thành công trên PostgreSQL, việc khẳng định rollback hoặc chưa thay đổi là sai thực tế và nguy hiểm cho tính toàn vẹn dữ liệu.
+* **Quyết định:**
+  1. **Nhận diện theo Kiểu Ngoại lệ:** Sử dụng `isinstance(exc, ...)` để phân loại trực tiếp các lớp ngoại lệ `httpx.TimeoutException`, `httpx.TransportError`, `httpx.NetworkError`, `httpcore.ProtocolError`, `RemoteProtocolError` và các lớp con (kể cả khi chuỗi thông báo rỗng).
+  2. **Trạng thái Chưa Xác Định (HTTP 504):** Mọi lỗi mạng và rớt kết nối trả về HTTP 504 Gateway Timeout với thông điệp rõ ràng: trạng thái chưa xác định, giao dịch có thể đã hoàn tất, và hướng dẫn frontend/người dùng kiểm tra lại phiên trước khi thử lại (`Please verify session state before retrying`).
+  3. **Chỉ Khẳng định Rollback khi có Bằng chứng CSDL (HTTP 500):** Chỉ trả về thông báo "Database atomic replacement failed and was rolled back" khi nhận được ngoại lệ xác nhận từ CSDL (`postgrest.exceptions.APIError`). Các lỗi không xác định khác trả về HTTP 500 yêu cầu kiểm tra phiên và tuyệt đối không khẳng định đã rollback.
+  4. **Kiểm thử Toàn Diện:** Bổ sung unit tests sử dụng trực tiếp các đối tượng ngoại lệ HTTPX thật gồm `httpx.ReadTimeout("")`, `httpx.ReadError("")`, `httpx.RemoteProtocolError("Server disconnected without sending a response.")`, `httpcore.RemoteProtocolError`, `APIError` có bằng chứng DB, và unconfirmed errors không khẳng định rollback.
+

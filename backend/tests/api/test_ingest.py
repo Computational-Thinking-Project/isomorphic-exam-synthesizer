@@ -4,7 +4,10 @@ import io
 from unittest.mock import MagicMock, patch
 
 import docx
+import httpcore
+import httpx
 import pytest
+from postgrest.exceptions import APIError
 
 MOCK_SESSION_ID = "11111111-1111-1111-1111-111111111111"
 
@@ -295,7 +298,7 @@ def test_ingest_file_docx_success_200(client, mock_auth_user, auth_headers):
 
 
 def test_ingest_file_rpc_failure_returns_500_zero_mutation(client, mock_auth_user, auth_headers):
-    """If RPC fails, ingestion returns 500 without performing client-side mutations or deletions."""
+    """If RPC fails with confirmed DB error (APIError), return 500 confirming rollback without client mutations."""
     mock_db = MagicMock()
     mock_ownership = MagicMock()
     mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
@@ -310,8 +313,10 @@ def test_ingest_file_rpc_failure_returns_500_zero_mutation(client, mock_auth_use
     # Mock storage upload
     mock_db.storage.from_.return_value.upload.return_value = MagicMock()
 
-    # Mock RPC failure (e.g. Postgres constraint/transaction exception)
-    mock_db.rpc.return_value.execute.side_effect = RuntimeError("PostgreSQL transaction error: constraint violation")
+    # Mock RPC failure with confirmed DB rollback (APIError from PostgreSQL/PostgREST)
+    mock_db.rpc.return_value.execute.side_effect = APIError(
+        {"code": "P0001", "message": "PostgreSQL transaction error: constraint violation"}
+    )
 
     docx_bytes = create_sample_docx_bytes()
 
@@ -337,8 +342,8 @@ def test_ingest_file_rpc_failure_returns_500_zero_mutation(client, mock_auth_use
     assert not mock_db.table.return_value.delete.called
 
 
-def test_ingest_file_rpc_timeout_returns_504_uncertain_status(client, mock_auth_user, auth_headers):
-    """If RPC times out over network, return 504 warning uncertain status without falsely promising unmodified DB."""
+def test_ingest_file_rpc_read_timeout_empty_message_returns_504(client, mock_auth_user, auth_headers):
+    """Real httpx.ReadTimeout with empty string message must return 504 per docs, without claiming rollback."""
     mock_db = MagicMock()
     mock_ownership = MagicMock()
     mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
@@ -352,8 +357,8 @@ def test_ingest_file_rpc_timeout_returns_504_uncertain_status(client, mock_auth_
 
     mock_db.storage.from_.return_value.upload.return_value = MagicMock()
 
-    # Mock network timeout exception
-    mock_db.rpc.return_value.execute.side_effect = RuntimeError("httpx.ReadTimeout: The read operation timed out")
+    # Real httpx.ReadTimeout exception with empty string message
+    mock_db.rpc.return_value.execute.side_effect = httpx.ReadTimeout("")
 
     docx_bytes = create_sample_docx_bytes()
 
@@ -376,6 +381,222 @@ def test_ingest_file_rpc_timeout_returns_504_uncertain_status(client, mock_auth_
     assert response.status_code == 504
     detail = response.json()["detail"]
     assert "uncertain due to network timeout" in detail
+    assert "was rolled back" not in detail
     assert "Session state was not modified" not in detail
+    assert "Please verify session state" in detail
+
+
+def test_ingest_file_rpc_read_error_empty_message_returns_504(client, mock_auth_user, auth_headers):
+    """Real httpx.ReadError with empty message must return 504 warning uncertain status without claiming rollback."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    mock_db.storage.from_.return_value.upload.return_value = MagicMock()
+
+    # Real httpx.ReadError exception with empty string message
+    mock_db.rpc.return_value.execute.side_effect = httpx.ReadError("")
+
+    docx_bytes = create_sample_docx_bytes()
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-file",
+            files={
+                "file": (
+                    "toan12.docx",
+                    docx_bytes,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 504
+    detail = response.json()["detail"]
+    assert "uncertain due to network communication error" in detail
+    assert "was rolled back" not in detail
+    assert "Please verify session state" in detail
+
+
+def test_ingest_file_rpc_remote_protocol_error_lost_response_returns_504(client, mock_auth_user, auth_headers):
+    """RemoteProtocolError ('Server disconnected without sending a response') must return 504 without claiming rollback."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    mock_db.storage.from_.return_value.upload.return_value = MagicMock()
+
+    # Real httpx.RemoteProtocolError for dropped response after potential commit
+    mock_db.rpc.return_value.execute.side_effect = httpx.RemoteProtocolError(
+        "Server disconnected without sending a response."
+    )
+
+    docx_bytes = create_sample_docx_bytes()
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-file",
+            files={
+                "file": (
+                    "toan12.docx",
+                    docx_bytes,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 504
+    detail = response.json()["detail"]
+    assert "uncertain due to network communication error" in detail
+    assert "was rolled back" not in detail
+    assert "Please verify session state" in detail
+
+
+def test_ingest_file_rpc_httpcore_remote_protocol_error_returns_504(client, mock_auth_user, auth_headers):
+    """httpcore.RemoteProtocolError directly raised must also be recognized as network communication failure."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    mock_db.storage.from_.return_value.upload.return_value = MagicMock()
+
+    # Real httpcore.RemoteProtocolError
+    mock_db.rpc.return_value.execute.side_effect = httpcore.RemoteProtocolError(
+        "Server disconnected without sending a response."
+    )
+
+    docx_bytes = create_sample_docx_bytes()
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-file",
+            files={
+                "file": (
+                    "toan12.docx",
+                    docx_bytes,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 504
+    detail = response.json()["detail"]
+    assert "uncertain due to network communication error" in detail
+    assert "was rolled back" not in detail
+    assert "Please verify session state" in detail
+
+
+def test_ingest_file_rpc_unexpected_failure_without_db_evidence_returns_500_no_rollback_assertion(
+    client, mock_auth_user, auth_headers
+):
+    """Unverified exceptions without DB evidence return 500 without falsely claiming transaction was rolled back."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    mock_db.storage.from_.return_value.upload.return_value = MagicMock()
+
+    # Unexpected Python runtime fault without DB confirmation
+    mock_db.rpc.return_value.execute.side_effect = RuntimeError("Worker process memory allocation fault")
+
+    docx_bytes = create_sample_docx_bytes()
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-file",
+            files={
+                "file": (
+                    "toan12.docx",
+                    docx_bytes,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert "was rolled back" not in detail
+    assert "Please verify session state before retrying." in detail
+
+
+def test_ingest_text_rpc_read_timeout_empty_message_returns_504(client, mock_auth_user, auth_headers):
+    """ingest-text endpoint also returns 504 uncertain status when RPC raises httpx.ReadTimeout("")."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    mock_db.rpc.return_value.execute.side_effect = httpx.ReadTimeout("")
+
+    raw_text = (
+        "Câu 1: Cho $x = 1$. Giá trị của $x$ là:\n"
+        "A. 1  B. 2  C. 3  D. 4\n"
+        "BẢNG ĐÁP ÁN: 1.A"
+    )
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-text",
+            json={"raw_text": raw_text},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 504
+    detail = response.json()["detail"]
+    assert "uncertain due to network timeout" in detail
+    assert "was rolled back" not in detail
     assert "Please verify session state" in detail
 
