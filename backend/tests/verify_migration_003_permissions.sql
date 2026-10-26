@@ -1,12 +1,13 @@
 -- ============================================================================
 -- Verification Test Script: Migration 003 RPC Permissions, Concurrency & State Machine
--- Tests confirm_exam_source(p_session_id, p_expected_question_count, p_acknowledged_security_warnings, p_expected_updated_at)
+-- Tests public.confirm_exam_source(UUID, INT, BOOLEAN, TIMESTAMPTZ)
 --
 -- Scenarios tested:
--- 1. anon caller: rejected (42501)
--- 2. authenticated non-owner caller: rejected (42501)
--- 3. authenticated caller with NULL/empty UID: rejected (42501)
--- 4. valid owner on non-draft session: rejected (22023)
+-- [PostgREST Caller Matrix (simulated via authenticator role switching)]
+-- 1. anon caller: rejected (42501: permission denied for function / Least Privilege SEC-04)
+-- 2. authenticated non-owner caller: rejected (42501: Access denied: not session owner)
+-- 3. authenticated caller with NULL/empty UID: rejected (42501: Unauthorized: caller must be authenticated)
+-- 4. valid owner on non-draft session: rejected (22023: session not in draft status)
 -- 5. valid owner with outdated p_expected_updated_at (concurrent edit): rejected (22023)
 -- 6. valid owner on session with unacknowledged security warnings: rejected (22023)
 -- 7. valid owner on session with missing blueprints: rejected (22023)
@@ -14,8 +15,47 @@
 -- 9. valid owner on valid draft session with all blueprints: SUCCESS (200 equivalent)
 -- 10. service_role caller on valid draft session: SUCCESS
 --
+-- [Direct Database Administrator]
+-- 11. postgres / supabase_admin direct caller: SUCCESS (trusted session_user without JWT claims)
+--
 -- Enclosed in a transaction with ROLLBACK to leave zero dirty test data.
 -- ============================================================================
+
+-- Preflight setup (outside transaction if roles need creation):
+-- In Supabase, anon, authenticated, service_role, authenticator exist by default.
+-- When running in standalone PostgreSQL, ensure roles exist.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    EXECUTE 'CREATE ROLE anon NOLOGIN';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    EXECUTE 'CREATE ROLE authenticated NOLOGIN';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    EXECUTE 'CREATE ROLE service_role NOLOGIN';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticator') THEN
+    EXECUTE 'CREATE ROLE authenticator NOINHERIT';
+  END IF;
+
+  -- Ensure authenticator can impersonate caller roles as in PostgREST
+  GRANT anon TO authenticator;
+  GRANT authenticated TO authenticator;
+  GRANT service_role TO authenticator;
+
+  -- Ensure PL/pgSQL language privilege
+  GRANT USAGE ON LANGUAGE plpgsql TO PUBLIC;
+
+  -- Ensure schema usage
+  GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role, authenticator;
+  IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'auth') THEN
+    GRANT USAGE ON SCHEMA auth TO anon, authenticated, service_role, authenticator;
+    GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO anon, authenticated, service_role, authenticator;
+  END IF;
+EXCEPTION WHEN OTHERS THEN
+  NULL;
+END $$;
 
 BEGIN;
 
@@ -26,7 +66,10 @@ BEGIN
   RAISE NOTICE '============================================================';
 END $$;
 
--- 1. Set up test sessions, questions, and blueprints
+-- ----------------------------------------------------------------------------
+-- 0. Fixtures Setup: Create prerequisite mock users and test sessions
+-- Prevents Foreign Key violation (exam_sessions_user_id_fkey) on empty DB.
+-- ----------------------------------------------------------------------------
 DO $$
 DECLARE
   v_owner_id UUID := '11111111-1111-1111-1111-111111111111';
@@ -40,6 +83,23 @@ DECLARE
   v_sq_w1 UUID := '20000000-0000-0000-0000-000000000001';
   v_sq_mbp1 UUID := '30000000-0000-0000-0000-000000000001';
 BEGIN
+  -- Insert into auth.users if auth schema and table exist (Supabase GoTrue)
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'auth' AND table_name = 'users') THEN
+    INSERT INTO auth.users (id, email)
+    VALUES 
+      (v_owner_id, 'test_owner_003@example.com'),
+      (v_attacker_id, 'test_attacker_003@example.com')
+    ON CONFLICT (id) DO NOTHING;
+  END IF;
+
+  -- Insert into public.users (mirrors auth.users)
+  INSERT INTO public.users (id, email, name)
+  VALUES 
+    (v_owner_id, 'test_owner_003@example.com', 'Test Owner 003'),
+    (v_attacker_id, 'test_attacker_003@example.com', 'Test Attacker 003')
+  ON CONFLICT (id) DO UPDATE 
+    SET email = EXCLUDED.email, name = EXCLUDED.name;
+
   -- Insert dummy sessions
   INSERT INTO public.exam_sessions (id, user_id, title, status, created_at, updated_at)
   VALUES 
@@ -78,28 +138,42 @@ BEGIN
 END $$;
 
 -- ----------------------------------------------------------------------------
--- Scenario 1: Anon caller (rejected with 42501)
+-- Scenario 1: Anon caller (Unauthenticated PostgREST Request)
+-- Must be rejected with 42501 (insufficient_privilege) because EXECUTE privilege
+-- was explicitly revoked from public and anon (SEC-04 Least Privilege).
 -- ----------------------------------------------------------------------------
+SELECT set_config('request.jwt.claim.role', 'anon', true);
+SELECT set_config('request.jwt.claim.sub', '', true);
+SELECT set_config('request.jwt.claims', '{"role": "anon"}'::text, true);
+
+SET SESSION AUTHORIZATION authenticator;
+SET ROLE anon;
+
 DO $$
 DECLARE
   v_draft_session_id UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
   v_test_passed BOOLEAN := FALSE;
   v_err_code TEXT;
   v_err_msg TEXT;
+  v_has_priv BOOLEAN;
 BEGIN
-  BEGIN
-    PERFORM set_config('request.jwt.claim.role', 'anon', true);
-    PERFORM set_config('request.jwt.claim.sub', '', true);
-    PERFORM set_config('request.jwt.claims', '{"role": "anon"}'::text, true);
+  -- Verify Least Privilege metadata
+  SELECT has_function_privilege('anon', 'public.confirm_exam_source(UUID, INT, BOOLEAN, TIMESTAMPTZ)', 'EXECUTE')
+  INTO v_has_priv;
 
+  IF v_has_priv THEN
+    RAISE EXCEPTION 'Scenario 1 Security Violation: anon role has EXECUTE privilege on confirm_exam_source!';
+  END IF;
+
+  BEGIN
     PERFORM public.confirm_exam_source(v_draft_session_id, 2);
   EXCEPTION WHEN OTHERS THEN
     GET STACKED DIAGNOSTICS v_err_code = RETURNED_SQLSTATE, v_err_msg = MESSAGE_TEXT;
     IF v_err_code = '42501' THEN
       v_test_passed := TRUE;
-      RAISE NOTICE '[PASS] Scenario 1 (anon): Correctly rejected with 42501 (%: %)', v_err_code, v_err_msg;
+      RAISE NOTICE '[PASS] Scenario 1 (anon caller): Correctly rejected with 42501 (%: %)', v_err_code, v_err_msg;
     ELSE
-      RAISE WARNING '[FAIL] Scenario 1 (anon): Unexpected error code %: %', v_err_code, v_err_msg;
+      RAISE WARNING '[FAIL] Scenario 1 (anon caller): Unexpected error code %: %', v_err_code, v_err_msg;
     END IF;
   END;
 
@@ -108,22 +182,28 @@ BEGIN
   END IF;
 END $$;
 
+RESET ROLE;
+RESET SESSION AUTHORIZATION;
+
 -- ----------------------------------------------------------------------------
--- Scenario 2: Authenticated non-owner (rejected with 42501)
+-- Scenario 2: Authenticated non-owner caller (Attacker trying to confirm victim's session)
+-- Must be rejected with 42501 ("Access denied: not session owner").
 -- ----------------------------------------------------------------------------
+SELECT set_config('request.jwt.claim.role', 'authenticated', true);
+SELECT set_config('request.jwt.claim.sub', '22222222-2222-2222-2222-222222222222', true);
+SELECT set_config('request.jwt.claims', '{"role": "authenticated", "sub": "22222222-2222-2222-2222-222222222222"}'::text, true);
+
+SET SESSION AUTHORIZATION authenticator;
+SET ROLE authenticated;
+
 DO $$
 DECLARE
   v_draft_session_id UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-  v_attacker_id TEXT := '22222222-2222-2222-2222-222222222222';
   v_test_passed BOOLEAN := FALSE;
   v_err_code TEXT;
   v_err_msg TEXT;
 BEGIN
   BEGIN
-    PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
-    PERFORM set_config('request.jwt.claim.sub', v_attacker_id, true);
-    PERFORM set_config('request.jwt.claims', json_build_object('role', 'authenticated', 'sub', v_attacker_id)::text, true);
-
     PERFORM public.confirm_exam_source(v_draft_session_id, 2);
   EXCEPTION WHEN OTHERS THEN
     GET STACKED DIAGNOSTICS v_err_code = RETURNED_SQLSTATE, v_err_msg = MESSAGE_TEXT;
@@ -140,9 +220,19 @@ BEGIN
   END IF;
 END $$;
 
+RESET ROLE;
+RESET SESSION AUTHORIZATION;
+
 -- ----------------------------------------------------------------------------
 -- Scenario 3: Authenticated with NULL/empty UID claim (rejected with 42501)
 -- ----------------------------------------------------------------------------
+SELECT set_config('request.jwt.claim.role', 'authenticated', true);
+SELECT set_config('request.jwt.claim.sub', '', true);
+SELECT set_config('request.jwt.claims', '{"role": "authenticated"}'::text, true);
+
+SET SESSION AUTHORIZATION authenticator;
+SET ROLE authenticated;
+
 DO $$
 DECLARE
   v_draft_session_id UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
@@ -151,10 +241,6 @@ DECLARE
   v_err_msg TEXT;
 BEGIN
   BEGIN
-    PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
-    PERFORM set_config('request.jwt.claim.sub', '', true);
-    PERFORM set_config('request.jwt.claims', '{"role": "authenticated"}'::text, true);
-
     PERFORM public.confirm_exam_source(v_draft_session_id, 2);
   EXCEPTION WHEN OTHERS THEN
     GET STACKED DIAGNOSTICS v_err_code = RETURNED_SQLSTATE, v_err_msg = MESSAGE_TEXT;
@@ -171,22 +257,27 @@ BEGIN
   END IF;
 END $$;
 
+RESET ROLE;
+RESET SESSION AUTHORIZATION;
+
 -- ----------------------------------------------------------------------------
 -- Scenario 4: Valid owner on non-draft session (rejected with 22023)
 -- ----------------------------------------------------------------------------
+SELECT set_config('request.jwt.claim.role', 'authenticated', true);
+SELECT set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
+SELECT set_config('request.jwt.claims', '{"role": "authenticated", "sub": "11111111-1111-1111-1111-111111111111"}'::text, true);
+
+SET SESSION AUTHORIZATION authenticator;
+SET ROLE authenticated;
+
 DO $$
 DECLARE
   v_locked_session_id UUID := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
-  v_owner_id TEXT := '11111111-1111-1111-1111-111111111111';
   v_test_passed BOOLEAN := FALSE;
   v_err_code TEXT;
   v_err_msg TEXT;
 BEGIN
   BEGIN
-    PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
-    PERFORM set_config('request.jwt.claim.sub', v_owner_id, true);
-    PERFORM set_config('request.jwt.claims', json_build_object('role', 'authenticated', 'sub', v_owner_id)::text, true);
-
     PERFORM public.confirm_exam_source(v_locked_session_id, 1);
   EXCEPTION WHEN OTHERS THEN
     GET STACKED DIAGNOSTICS v_err_code = RETURNED_SQLSTATE, v_err_msg = MESSAGE_TEXT;
@@ -203,23 +294,28 @@ BEGIN
   END IF;
 END $$;
 
+RESET ROLE;
+RESET SESSION AUTHORIZATION;
+
 -- ----------------------------------------------------------------------------
 -- Scenario 5: Valid owner with outdated expected updated_at (concurrent edit)
 -- ----------------------------------------------------------------------------
+SELECT set_config('request.jwt.claim.role', 'authenticated', true);
+SELECT set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
+SELECT set_config('request.jwt.claims', '{"role": "authenticated", "sub": "11111111-1111-1111-1111-111111111111"}'::text, true);
+
+SET SESSION AUTHORIZATION authenticator;
+SET ROLE authenticated;
+
 DO $$
 DECLARE
   v_draft_session_id UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-  v_owner_id TEXT := '11111111-1111-1111-1111-111111111111';
   v_stale_updated_at TIMESTAMPTZ := '2026-10-25 00:00:00+00';
   v_test_passed BOOLEAN := FALSE;
   v_err_code TEXT;
   v_err_msg TEXT;
 BEGIN
   BEGIN
-    PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
-    PERFORM set_config('request.jwt.claim.sub', v_owner_id, true);
-    PERFORM set_config('request.jwt.claims', json_build_object('role', 'authenticated', 'sub', v_owner_id)::text, true);
-
     PERFORM public.confirm_exam_source(
       v_draft_session_id,
       2,
@@ -241,22 +337,27 @@ BEGIN
   END IF;
 END $$;
 
+RESET ROLE;
+RESET SESSION AUTHORIZATION;
+
 -- ----------------------------------------------------------------------------
 -- Scenario 6: Unacknowledged security warnings (rejected with 22023)
 -- ----------------------------------------------------------------------------
+SELECT set_config('request.jwt.claim.role', 'authenticated', true);
+SELECT set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
+SELECT set_config('request.jwt.claims', '{"role": "authenticated", "sub": "11111111-1111-1111-1111-111111111111"}'::text, true);
+
+SET SESSION AUTHORIZATION authenticator;
+SET ROLE authenticated;
+
 DO $$
 DECLARE
   v_warning_session_id UUID := 'cccccccc-cccc-cccc-cccc-cccccccccccc';
-  v_owner_id TEXT := '11111111-1111-1111-1111-111111111111';
   v_test_passed BOOLEAN := FALSE;
   v_err_code TEXT;
   v_err_msg TEXT;
 BEGIN
   BEGIN
-    PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
-    PERFORM set_config('request.jwt.claim.sub', v_owner_id, true);
-    PERFORM set_config('request.jwt.claims', json_build_object('role', 'authenticated', 'sub', v_owner_id)::text, true);
-
     PERFORM public.confirm_exam_source(
       v_warning_session_id,
       1,
@@ -277,23 +378,28 @@ BEGIN
   END IF;
 END $$;
 
+RESET ROLE;
+RESET SESSION AUTHORIZATION;
+
 -- ----------------------------------------------------------------------------
 -- Scenario 7: Question without blueprint (rejected with 22023, session remains draft)
 -- ----------------------------------------------------------------------------
+SELECT set_config('request.jwt.claim.role', 'authenticated', true);
+SELECT set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
+SELECT set_config('request.jwt.claims', '{"role": "authenticated", "sub": "11111111-1111-1111-1111-111111111111"}'::text, true);
+
+SET SESSION AUTHORIZATION authenticator;
+SET ROLE authenticated;
+
 DO $$
 DECLARE
   v_missing_bp_session_id UUID := 'dddddddd-dddd-dddd-dddd-dddddddddddd';
-  v_owner_id TEXT := '11111111-1111-1111-1111-111111111111';
   v_test_passed BOOLEAN := FALSE;
   v_err_code TEXT;
   v_err_msg TEXT;
   v_status public.session_status;
 BEGIN
   BEGIN
-    PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
-    PERFORM set_config('request.jwt.claim.sub', v_owner_id, true);
-    PERFORM set_config('request.jwt.claims', json_build_object('role', 'authenticated', 'sub', v_owner_id)::text, true);
-
     PERFORM public.confirm_exam_source(
       v_missing_bp_session_id,
       1,
@@ -320,22 +426,27 @@ BEGIN
   END IF;
 END $$;
 
+RESET ROLE;
+RESET SESSION AUTHORIZATION;
+
 -- ----------------------------------------------------------------------------
 -- Scenario 8: Question count mismatch (rejected with 22023)
 -- ----------------------------------------------------------------------------
+SELECT set_config('request.jwt.claim.role', 'authenticated', true);
+SELECT set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
+SELECT set_config('request.jwt.claims', '{"role": "authenticated", "sub": "11111111-1111-1111-1111-111111111111"}'::text, true);
+
+SET SESSION AUTHORIZATION authenticator;
+SET ROLE authenticated;
+
 DO $$
 DECLARE
   v_draft_session_id UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-  v_owner_id TEXT := '11111111-1111-1111-1111-111111111111';
   v_test_passed BOOLEAN := FALSE;
   v_err_code TEXT;
   v_err_msg TEXT;
 BEGIN
   BEGIN
-    PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
-    PERFORM set_config('request.jwt.claim.sub', v_owner_id, true);
-    PERFORM set_config('request.jwt.claims', json_build_object('role', 'authenticated', 'sub', v_owner_id)::text, true);
-
     -- Expected count is 99, but session only has 2
     PERFORM public.confirm_exam_source(v_draft_session_id, 99);
   EXCEPTION WHEN OTHERS THEN
@@ -353,21 +464,26 @@ BEGIN
   END IF;
 END $$;
 
+RESET ROLE;
+RESET SESSION AUTHORIZATION;
+
 -- ----------------------------------------------------------------------------
 -- Scenario 9: Valid owner confirmation (SUCCESS)
 -- ----------------------------------------------------------------------------
+SELECT set_config('request.jwt.claim.role', 'authenticated', true);
+SELECT set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
+SELECT set_config('request.jwt.claims', '{"role": "authenticated", "sub": "11111111-1111-1111-1111-111111111111"}'::text, true);
+
+SET SESSION AUTHORIZATION authenticator;
+SET ROLE authenticated;
+
 DO $$
 DECLARE
   v_draft_session_id UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-  v_owner_id TEXT := '11111111-1111-1111-1111-111111111111';
   v_res JSONB;
   v_status public.session_status;
   v_confirmed_count INT;
 BEGIN
-  PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
-  PERFORM set_config('request.jwt.claim.sub', v_owner_id, true);
-  PERFORM set_config('request.jwt.claims', json_build_object('role', 'authenticated', 'sub', v_owner_id)::text, true);
-
   v_res := public.confirm_exam_source(
     v_draft_session_id,
     2,
@@ -399,21 +515,27 @@ BEGIN
   RAISE NOTICE '[PASS] Scenario 9 (valid owner): Successfully confirmed session, stamped 2 blueprints, status=blueprinted.';
 END $$;
 
+RESET ROLE;
+RESET SESSION AUTHORIZATION;
+
 -- ----------------------------------------------------------------------------
 -- Scenario 10: Service role caller (SUCCESS)
 -- ----------------------------------------------------------------------------
+-- Reset session back to draft for service_role test
+UPDATE public.exam_sessions SET status = 'draft', updated_at = '2026-10-26 00:00:00+00' WHERE id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+
+SELECT set_config('request.jwt.claim.role', 'service_role', true);
+SELECT set_config('request.jwt.claim.sub', '', true);
+SELECT set_config('request.jwt.claims', '{"role": "service_role"}'::text, true);
+
+SET SESSION AUTHORIZATION authenticator;
+SET ROLE service_role;
+
 DO $$
 DECLARE
   v_draft_session_id UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
   v_res JSONB;
 BEGIN
-  -- Reset session back to draft for service_role test
-  UPDATE public.exam_sessions SET status = 'draft', updated_at = '2026-10-26 00:00:00+00' WHERE id = v_draft_session_id;
-
-  PERFORM set_config('request.jwt.claim.role', 'service_role', true);
-  PERFORM set_config('request.jwt.claim.sub', '', true);
-  PERFORM set_config('request.jwt.claims', '{"role": "service_role"}'::text, true);
-
   v_res := public.confirm_exam_source(
     v_draft_session_id,
     2,
@@ -428,10 +550,59 @@ BEGIN
   RAISE NOTICE '[PASS] Scenario 10 (service_role): Successfully authorized and confirmed exam source.';
 END $$;
 
+RESET ROLE;
+RESET SESSION AUTHORIZATION;
+
+-- ----------------------------------------------------------------------------
+-- Scenario 11: Direct Database Administrator (postgres / supabase_admin)
+-- RPC explicitly trusts session_user IN ('postgres', 'supabase_admin')
+-- Direct DB administrator maintenance call without any JWT claims must succeed.
+-- ----------------------------------------------------------------------------
+RESET ROLE;
+RESET SESSION AUTHORIZATION;
+
+-- Explicitly clear all JWT claims
+SELECT set_config('request.jwt.claim.role', '', true);
+SELECT set_config('request.jwt.claim.sub', '', true);
+SELECT set_config('request.jwt.claims', '', true);
+
+-- Reset session back to draft for direct admin test
+UPDATE public.exam_sessions SET status = 'draft', updated_at = '2026-10-26 00:00:00+00' WHERE id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+
+DO $$
+DECLARE
+  v_draft_session_id UUID := 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  v_res JSONB;
+  v_current_session_user TEXT := session_user;
+BEGIN
+  -- Validate that current session_user is an administrator
+  IF v_current_session_user NOT IN ('postgres', 'supabase_admin') THEN
+    RAISE WARNING 'Scenario 11 Notice: current session_user is %, expected postgres or supabase_admin', v_current_session_user;
+  END IF;
+
+  v_res := public.confirm_exam_source(
+    v_draft_session_id,
+    2,
+    FALSE,
+    '2026-10-26 00:00:00+00'::timestamptz
+  );
+
+  IF (v_res->>'success')::BOOLEAN != TRUE OR (v_res->>'status') != 'blueprinted' THEN
+    RAISE EXCEPTION 'Scenario 11 FAILED: unexpected admin payload: %', v_res;
+  END IF;
+
+  RAISE NOTICE '[PASS] Scenario 11 (direct db admin): Successfully authorized via session_user trust (%) without JWT claims.', v_current_session_user;
+END $$;
+
+-- ----------------------------------------------------------------------------
+-- Summary Banner
+-- ----------------------------------------------------------------------------
 DO $$
 BEGIN
   RAISE NOTICE '============================================================';
-  RAISE NOTICE 'ALL MIGRATION 003 SCENARIOS PASSED (10/10)!';
+  RAISE NOTICE 'ALL MIGRATION 003 SECURITY SCENARIOS PASSED (11/11)!';
+  RAISE NOTICE '  - Scenarios 1-10: Simulated PostgREST callers (authenticator -> anon/auth/service_role)';
+  RAISE NOTICE '  - Scenario 11: Direct DB Admin caller (session_user = postgres/supabase_admin)';
   RAISE NOTICE '============================================================';
 END $$;
 
