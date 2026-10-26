@@ -310,8 +310,8 @@ def test_ingest_file_rpc_failure_returns_500_zero_mutation(client, mock_auth_use
     # Mock storage upload
     mock_db.storage.from_.return_value.upload.return_value = MagicMock()
 
-    # Mock RPC failure (e.g. Postgres exception)
-    mock_db.rpc.return_value.execute.side_effect = RuntimeError("RPC failure or network timeout")
+    # Mock RPC failure (e.g. Postgres constraint/transaction exception)
+    mock_db.rpc.return_value.execute.side_effect = RuntimeError("PostgreSQL transaction error: constraint violation")
 
     docx_bytes = create_sample_docx_bytes()
 
@@ -332,6 +332,50 @@ def test_ingest_file_rpc_failure_returns_500_zero_mutation(client, mock_auth_use
         )
 
     assert response.status_code == 500
-    assert "Database atomic replacement failed" in response.json()["detail"]
+    assert "Database atomic replacement failed and was rolled back" in response.json()["detail"]
     # Ensure NO client-side delete was called on question_blueprints or source_questions
     assert not mock_db.table.return_value.delete.called
+
+
+def test_ingest_file_rpc_timeout_returns_504_uncertain_status(client, mock_auth_user, auth_headers):
+    """If RPC times out over network, return 504 warning uncertain status without falsely promising unmodified DB."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    mock_db.storage.from_.return_value.upload.return_value = MagicMock()
+
+    # Mock network timeout exception
+    mock_db.rpc.return_value.execute.side_effect = RuntimeError("httpx.ReadTimeout: The read operation timed out")
+
+    docx_bytes = create_sample_docx_bytes()
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-file",
+            files={
+                "file": (
+                    "toan12.docx",
+                    docx_bytes,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 504
+    detail = response.json()["detail"]
+    assert "uncertain due to network timeout" in detail
+    assert "Session state was not modified" not in detail
+    assert "Please verify session state" in detail
+

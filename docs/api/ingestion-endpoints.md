@@ -82,6 +82,16 @@ Module Ingestion cung cấp 2 endpoints nhận và bóc tách đề thi nguồn,
 
 ---
 
+### 2.3. Asynchronous Blueprint Hook (`trigger_blueprint_pipeline`)
+
+> [!NOTE]
+> **Giới hạn kiến trúc (TASK-202):**
+> Hàm `trigger_blueprint_pipeline` hiện tại hoạt động như một asynchronous event hook / placeholder với bounded concurrency (`asyncio.Semaphore(3)`) nhằm phục vụ việc ghi nhận log và kiểm thử an toàn luồng bất đồng bộ ngay sau khi câu hỏi được nạp thành công.
+> 
+> Việc gọi Gemini AI trích xuất Blueprint và ghi dữ liệu phân tích vào bảng `question_blueprints` là phạm vi tích hợp tiếp theo của nhiệm vụ **TASK-203**.
+
+---
+
 ## 3. Mã Lỗi & Hợp Đồng Với Frontend (TASK-203b)
 
 ### 3.1. HTTP 422 Unprocessable Entity (Nội dung không đầy đủ / lỗi cấu trúc)
@@ -109,7 +119,7 @@ Khi phát hiện bất kỳ lỗi nào trong quá trình bóc tách in-memory, b
 
 * **Các mã `error_type`:**
   * `MISSING_ANSWER`: Câu hỏi không tìm thấy đáp án đúng trong bảng đáp án rời hoặc inline.
-  * `UNPARSED_OMML`: File DOCX chứa công thức Equation / MathType không đọc được text dạng LaTeX.
+  * `UNPARSED_OMML`: File DOCX chứa công thức Equation / MathType không đọc được text dạng LaTeX (kể cả công thức đứng riêng 1 đoạn).
   * `INVALID_FORMAT`: Không đủ 4 phương án A/B/C/D hoặc số lượng câu không thuộc $[1, 20]$.
 * **Hành vi an toàn:** Database và Storage hoàn toàn không bị thay đổi khi gặp mã lỗi này.
 
@@ -129,5 +139,22 @@ Chỉ cho phép nạp đề khi phiên ở trạng thái `draft`. Nếu phiên �
 
 ### 3.4. HTTP 401 / 403 / 404
 * `401 Unauthorized`: Thiếu hoặc token JWT không hợp lệ.
-* `403 Forbidden`: Session không thuộc quyền sở hữu của user đăng nhập (`assert_ownership`).
+* `403 Forbidden`: Session không thuộc quyền sở hữu của user đăng nhập (`assert_ownership`) hoặc caller nặc danh gọi RPC.
 * `404 Not Found`: Không tìm thấy session.
+
+### 3.5. HTTP 504 Gateway Timeout (Lỗi mạng / Không xác định trạng thái commit)
+Khi xảy ra lỗi timeout mạng trong quá trình gọi Stored Procedure RPC (PostgreSQL có thể đã commit thành công nhưng HTTP response bị timeout):
+```json
+{
+  "detail": "Database atomic replacement status is uncertain due to network timeout. The transaction may have completed. Please verify session state before retrying."
+}
+```
+* **Hành vi an toàn:** Backend không hứa trước dữ liệu chưa đổi mà yêu cầu người dùng/frontend kiểm tra trạng thái session trước khi thử lại để tránh xung đột.
+
+### 3.6. HTTP 500 Internal Server Error (Lỗi CSDL đã rollback)
+Khi RPC gặp lỗi thực thi trong PostgreSQL và transaction đã được hủy hoàn toàn:
+```json
+{
+  "detail": "Database atomic replacement failed and was rolled back."
+}
+```
