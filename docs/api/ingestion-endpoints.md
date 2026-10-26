@@ -143,18 +143,36 @@ Chỉ cho phép nạp đề khi phiên ở trạng thái `draft`. Nếu phiên �
 * `404 Not Found`: Không tìm thấy session.
 
 ### 3.5. HTTP 504 Gateway Timeout (Lỗi mạng / Không xác định trạng thái commit)
-Khi xảy ra lỗi timeout mạng trong quá trình gọi Stored Procedure RPC (PostgreSQL có thể đã commit thành công nhưng HTTP response bị timeout):
+Khi xảy ra lỗi mạng hoặc timeout trong quá trình gọi Stored Procedure RPC (PostgreSQL có thể đã commit thành công nhưng HTTP response bị timeout hoặc ngắt kết nối trước/trong khi nhận phản hồi):
+
+* **Trường hợp Timeout mạng (`httpx.TimeoutException`, `httpx.ReadTimeout`):**
 ```json
 {
   "detail": "Database atomic replacement status is uncertain due to network timeout. The transaction may have completed. Please verify session state before retrying."
 }
 ```
-* **Hành vi an toàn:** Backend không hứa trước dữ liệu chưa đổi mà yêu cầu người dùng/frontend kiểm tra trạng thái session trước khi thử lại để tránh xung đột.
+
+* **Trường hợp Mất kết nối / Ngắt phản hồi (`httpx.NetworkError`, `httpx.ReadError`, `RemoteProtocolError`):**
+```json
+{
+  "detail": "Database atomic replacement status is uncertain due to network communication error. The transaction may have completed. Please verify session state before retrying."
+}
+```
+
+* **Hành vi an toàn:** Backend nhận diện lỗi mạng theo kiểu exception (`isinstance`), không khẳng định rollback khi chưa xác định kết quả mà hướng dẫn kiểm tra lại phiên (`Please verify session state before retrying`) để tránh xung đột dữ liệu.
 
 ### 3.6. HTTP 500 Internal Server Error (Lỗi CSDL đã rollback)
-Khi RPC gặp lỗi thực thi trong PostgreSQL và transaction đã được hủy hoàn toàn:
+* **Khi có bằng chứng xác nhận rollback từ CSDL (`postgrest.exceptions.APIError`):**
+  PostgreSQL gặp lỗi thực thi bên trong transaction và đã tự động hoàn tác:
 ```json
 {
   "detail": "Database atomic replacement failed and was rolled back."
+}
+```
+* **Khi gặp lỗi nội bộ không xác định hoặc không có bằng chứng từ CSDL:**
+  Không khẳng định hoàn tác khi chưa có xác nhận từ CSDL:
+```json
+{
+  "detail": "Database atomic replacement failed. Please verify session state before retrying."
 }
 ```

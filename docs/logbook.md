@@ -138,7 +138,49 @@
 
 ---
 
-## 2026-10-26 — Bá Duy (BE1 / johannguyen015), TASK-205 Review Remediation Round 3
+## 2026-10-26 — Bá Duy (BE1 / johannguyen015), TASK-202 Review Remediation Round 3 (PR #15)
+
+- Branch: `feat/be1-task-202-ingestion-parsers`; PR #15; Base: `dev`.
+- Remediation fixes addressing code review comments from Philip (`philip-kkk`):
+  - [P2] Markdown Bullet List Option Parsing (DEC-BE1-005):
+    - Upgraded `opt_pattern` regex in `backend/app/services/parser/utils.py` to recognize optional bullet markers (`-` or `*`) preceding option letters `[A-D]`.
+    - Sanitized question stem and option contents to eliminate trailing dashes and asterisks from leaking into rendered KaTeX elements.
+    - Added regression test `test_markdown_parser_bullet_list_options` in `backend/tests/test_parsers.py`.
+  - [P2] Distributed Network Exception Handling (DEC-BE1-004):
+    - Replaced naive string-based error message matching (`"timeout"`, `"connection reset"`) with explicit exception type matching (`httpx.TimeoutException`, `httpx.TransportError`, `httpcore.RemoteProtocolError`, `httpcore.NetworkError`).
+    - Differentiated unconfirmed network dropouts (HTTP 504 Gateway Timeout, transaction state indeterminate, instructing client to verify session state) from verified database rejects with automatic rollback (`postgrest.exceptions.APIError` -> HTTP 500).
+    - Expanded test suite with real exception instances (`ReadTimeout("")`, `ReadError("")`, `RemoteProtocolError(...)`).
+  - [P2] Database Verification Test Script Hardening (`verify_migration_002_permissions.sql`):
+    - Added preflight fixture setup creating prerequisite mock users in `auth.users` and `public.users` prior to session insertion, resolving foreign key violations on empty databases.
+    - Implemented authentic caller context emulation using `SET SESSION AUTHORIZATION authenticator;` followed by `SET ROLE anon / authenticated / service_role;` and matching JWT claims.
+    - Verified Least Privilege (SEC-04): `anon` caller is denied at the PostgreSQL function execute level (SQLSTATE 42501) and metadata privilege check.
+    - Added dedicated Scenario 7 for direct database administrator callers (`session_user IN ('postgres', 'supabase_admin')`) succeeding without JWT claims.
+    - Ensured full test execution wrapped in a transaction with trailing `ROLLBACK;`.
+- Quality Verification:
+  - Scoped TASK-202 tests: **54 tests passed** (23 parser tests + 14 ingest API tests + 17 session tests).
+  - Full backend test suite: **246 passed** (100%).
+  - Linter: `ruff check` passed 100% clean.
+  - Static type checking: `mypy` passed with 0 errors.
+
+---
+
+## 2026-10-26 — Bá Duy (BE1 / johannguyen015), TASK-202 Review Remediation Round 4 (PR #15)
+
+- Branch: `feat/be1-task-202-ingestion-parsers`; PR #15; Base: `dev`.
+- Remediation fixes addressing code review comments from Reviewer:
+  - [P2] Strict PostgreSQL SQLSTATE Verification & Gateway Exception Neutralization (DEC-BE1-006):
+    - Refactored `is_database_rollback_evidence` in `backend/app/services/parser/ingestion_service.py` to validate genuine 5-character PostgreSQL SQLSTATE codes (`^[0-9A-Z]{5}$`).
+    - Explicitly rejected intermediate gateway/reverse proxy HTTP status codes (`500, 502, 503, 504`), non-JSON SDK errors (`message == "JSON could not be generated"`), and HTML body tags from being falsely affirmed as database rollback.
+    - Standardized unconfirmed failures, gateway dropouts, and unknown exceptions to return a neutral HTTP 500 error instructing users to verify session state without asserting rollback.
+    - Preserved 100% of existing network timeout/transport handlers (`HTTP 504 Gateway Timeout`) and zero RPC auto-retry rule.
+  - [Quality & Tests]:
+    - Added 4 realistic unit tests in `backend/tests/api/test_ingest.py` simulating PostgREST SDK `APIError` wrapping Gateway HTML 502, Gateway HTML 504, non-JSON proxy error, and unknown code.
+    - Scoped TASK-202 tests: **58 tests passed** (23 parser tests + 18 ingest API tests + 17 session tests).
+    - Clarified test breakdown: selective suite vs entire backend test suite.
+
+---
+
+## 2026-10-26 — Bá Duy (BE1 / johannguyen015), TASK-205 Review Remediation Round 3 (PR #16)
 
 - Branch: `feat/be1-task-205-confirm-source`; PR #16; Base: `dev`.
 - Remediation fixes addressing Reviewer Philip's (`philip-kkk`) Round 3 feedback:
@@ -160,14 +202,14 @@
     - Bổ sung 6 unit tests với instance ngoại lệ thật trong `backend/tests/api/test_confirm_source.py`: `httpx.ReadTimeout("")`, `httpx.ReadError("")`, `httpx.RemoteProtocolError`, `httpcore.RemoteProtocolError`, `APIError`, unconfirmed runtime error.
 - Quality Verification:
   - 26/26 tests passed trong `backend/tests/api/test_confirm_source.py` (100%).
-  - 266/266 tests passed trong toàn bộ test suite backend (100% pass rate, thời gian chạy ~50s).
+  - 266/266 tests passed trong toàn bộ test suite backend (100% pass rate).
   - `ruff check app/` đạt 0 errors (all checks passed).
   - `mypy app/ --ignore-missing-imports` đạt 0 errors trên 40 source files.
   - SymPy LaTeX smoke test: parse thành công `x**2 + 1`.
 
 ---
 
-## 2026-10-26 — Bá Duy (BE1 / johannguyen015), TASK-205 Review Remediation Round 4
+## 2026-10-26 — Bá Duy (BE1 / johannguyen015), TASK-205 Review Remediation Round 4 (PR #16)
 
 - Branch: `feat/be1-task-205-confirm-source`; PR #16; Base: `dev`.
 - Remediation fixes addressing Reviewer Philip's (`philip-kkk`) Round 4 feedback:
@@ -180,14 +222,23 @@
   - [P2] Mở Rộng Unit Tests (Fault Injection Tầng Gateway):
     - Bổ sung 4 unit tests mới trong `backend/tests/api/test_confirm_source.py`: Gateway 502 HTML, Gateway 504 HTML, APIError mã lạ không phải JSON, APIError với code=None.
     - Đồng bộ 4 unit tests tương ứng trong `backend/tests/api/test_ingest.py` và cập nhật test RPC failure dùng SQLSTATE `P0001` chuẩn.
-  - [Non-blocking] Cập Nhật PR Description:
-    - Chuẩn bị nội dung cập nhật PR #16 description phản ánh chính xác số lượng test (274+ tests pass 100%) và phân tách rõ ràng code TASK-205 so với phần kế thừa PR #15.
 - Quality Verification:
   - 30/30 tests passed trong `backend/tests/api/test_confirm_source.py` (100%).
-  - 13/13 tests passed trong `backend/tests/api/test_ingest.py` (100%).
+  - 18/18 tests passed trong `backend/tests/api/test_ingest.py` (100%).
   - Toàn bộ backend test suite đạt 100% pass rate.
   - `ruff check app/` và `mypy app/ --ignore-missing-imports` đạt 0 errors.
 
+---
 
+## 2026-10-26 — Bá Duy (BE1 / johannguyen015), TASK-202 & TASK-205 Review Remediation Round 5 (PR #15 / PR #16)
 
-
+- Branch: `feat/be1-task-205-confirm-source` / `feat/be1-task-202-ingestion-parsers`.
+- Remediation fixes addressing code review comments from Reviewer Philip (`philip-kkk`):
+  - [P2] Loại Trừ PostgreSQL SQLSTATE Class 08 Khỏi Bằng Chứng Rollback CSDL (DEC-BE1-008):
+    - Bổ sung `POSTGRES_NON_ROLLBACK_SQLSTATE_PREFIXES = ("08",)` và `POSTGRES_NON_ROLLBACK_SQLSTATES = {"40003"}` vào `ingestion_service.py`.
+    - Khi gặp các mã lỗi kết nối Class 08 (như `08007` - *transaction resolution unknown* hoặc `08006` - *connection failure*), hàm `is_database_rollback_evidence()` trả về `False`.
+    - Cả hai endpoint Ingestion (`replace_source_questions`) và Confirm Source (`confirm_exam_source`) đều trả về phản hồi HTTP 500 với thông điệp trung tính yêu cầu đọc lại phiên (`"Database atomic ... failed. Please verify session state before retrying."`), tuyệt đối không khẳng định sai rằng CSDL đã rollback.
+    - Bảo toàn các mã lỗi ràng buộc dữ liệu xác định (`23505`, `P0001`) trả về thông báo xác nhận rollback.
+  - [Unit Tests & Regression]:
+    - Bổ sung unit tests cho SQLSTATE `08007`, `08006` và `23505` trên cả 2 endpoint Ingest và Confirm Source.
+    - Toàn bộ test suite backend đạt 100% pass rate.

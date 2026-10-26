@@ -13,8 +13,12 @@
 - [DEC-TV6-001: Shared Docker development workflow](#dec-tv6-001-shared-docker-development-workflow)
 - [ADR-002: In-Memory Pre-validation, Zero Cloud Mutation, và Atomic Ingestion Engine (TASK-202)](#adr-002-in-memory-pre-validation-zero-cloud-mutation-và-atomic-ingestion-engine-task-202)
 - [ADR-003: Atomic Exam Confirmation và Blueprint Concurrency Protection (TASK-205)](#adr-003-atomic-exam-confirmation-và-blueprint-concurrency-protection-task-205)
-- [DEC-BE1-005: Phân Loại Ngoại Lệ Mạng Phân Tán và Chuẩn Hóa Kiểm Quyền Migration 003 (TASK-205 Round 3)](#dec-be1-005-phân-loại-ngoại-lệ-mạng-phân-tán-và-chuẩn-hóa-kiểm-quyền-migration-003-task-205-round-3)
-- [DEC-BE1-006: Chuẩn Hóa Bằng Chứng Rollback CSDL & Khử Khẳng Định Sai Khi Lỗi Gateway (TASK-205 Round 4)](#dec-be1-006-chuẩn-hóa-bằng-chứng-rollback-csdl--khử-khẳng-định-sai-khi-lỗi-gateway-task-205-round-4)
+- [DEC-BE1-003: Khắc phục Toàn Diện Phản Hồi Review PR #15 (Vòng 2)](#dec-be1-003-khắc-phục-toàn-diện-phản-hồi-review-pr-15-vòng-2)
+- [DEC-BE1-004: Xử lý Triệt Để Ngoại Lệ Mạng và Khẳng Định Trạng Thái Commit CSDL (PR #15 Round 3)](#dec-be1-004-xử-lý-triệt-để-ngoại-lệ-mạng-và-khẳng-định-trạng-thái-commit-csdl-pr-15-round-3)
+- [DEC-BE1-005: Chuẩn Hóa Bóc Tách Phương Án Bullet List Trong Parser Markdown & Text (PR #15)](#dec-be1-005-chuẩn-hóa-bóc-tách-phương-án-bullet-list-trong-parser-markdown--text-pr-15)
+- [DEC-BE1-006: Khắc Phục Triệt Để Suy Luận Rollback CSDL & Ngoại Lệ Gateway (PR #15 / PR #16 Round 4)](#dec-be1-006-khắc-phục-triệt-để-suy-luận-rollback-csdl--ngoại-lệ-gateway-pr-15--pr-16-round-4)
+- [DEC-BE1-007: Phân Loại Ngoại Lệ Mạng Phân Tán và Chuẩn Hóa Kiểm Quyền Migration 003 (TASK-205 Round 3)](#dec-be1-007-phân-loại-ngoại-lệ-mạng-phân-tán-và-chuẩn-hóa-kiểm-quyền-migration-003-task-205-round-3)
+- [DEC-BE1-008: Loại Trừ PostgreSQL SQLSTATE Class 08 Khỏi Bằng Chứng Rollback CSDL (TASK-202 / TASK-205 Round 5)](#dec-be1-008-loại-trừ-postgresql-sqlstate-class-08-khỏi-bằng-chứng-rollback-csdl-task-202--task-205-round-5)
 
 ---
 
@@ -102,24 +106,6 @@
 
 ---
 
-### DEC-BE1-003: Khắc phục Toàn Diện Phản Hồi Review PR #15 (Vòng 2)
-* **Mã quyết định:** DEC-BE1-003
-* **Ngày quyết định:** 26/10/2026
-* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
-* **Bối cảnh:**
-  1. Parser DOCX bỏ qua các đoạn có text rỗng trước khi kiểm tra cờ OMML, khiến công thức hiển thị đứng riêng 1 dòng bị mất khỏi thân câu hoặc phương án mà không báo lỗi.
-  2. Parser LaTeX trích xuất `\item[A.]` nhưng để sót môi trường bao ngoài danh sách (`\begin{enumerate}`, `\begin{tasks}`) ở cuối thân câu và phương án D.
-  3. Stored Procedure `replace_source_questions` khai báo `SECURITY DEFINER` nhưng dùng `current_user` để nhận diện admin, khiến điều kiện luôn đúng vì `current_user` trong hàm này luôn là `postgres`.
-  4. Ingestion Service trả về thông báo "Session state was not modified" cho mọi ngoại lệ còn lại, gây ngộ nhận khi gặp timeout mạng (máy chủ có thể đã commit thành công nhưng HTTP response bị timeout).
-* **Quyết định:**
-  1. **DOCX Parser:** Kiểm tra `content_omml_flags` ngay cả khi text đoạn rỗng; bật cờ `has_unparsed_omml = True` và chèn placeholder nhận diện, kích hoạt HTTP 422 `UNPARSED_OMML` từ chối đề thi thiếu nội dung công thức.
-  2. **LaTeX Parser:** Xây dựng `clean_latex_list_wrappers` bóc tách sạch sẽ các thẻ mở/đóng môi trường danh sách (`enumerate`, `tasks`, `itemize`, `multicols`) khỏi thân câu và phương án, đồng thời bảo toàn 100% các môi trường toán học (`pmatrix`, `cases`, `aligned`).
-  3. **SQL RPC:** Thay thế `current_user` bằng `session_user IN ('postgres', 'supabase_admin')` kết hợp `v_role = 'service_role'`, bảo đảm chỉ caller tin cậy mới được phân quyền quản trị.
-  4. **Phân loại Ngoại lệ Ingestion:** Phân biệt lỗi timeout mạng (HTTP 504 Gateway Timeout với cảnh báo trạng thái chưa xác định, không cam kết dữ liệu chưa đổi) với lỗi SQL đã rollback (HTTP 500).
-  5. **Tài liệu & Test:** Bổ sung script kiểm thử SQL 5 kịch bản phân quyền trên DB test; bổ sung unit tests cho OMML đứng riêng, LaTeX clean stem/options, và Timeout 504.
-
----
-
 ### ADR-003: Atomic Exam Confirmation và Blueprint Concurrency Protection (TASK-205)
 * **Mã quyết định:** ADR-003 / DEC-BE1-004
 * **Ngày quyết định:** 25/10/2026
@@ -144,8 +130,73 @@
 
 ---
 
-### DEC-BE1-005: Phân Loại Ngoại Lệ Mạng Phân Tán và Chuẩn Hóa Kiểm Quyền Migration 003 (TASK-205 Round 3)
+### DEC-BE1-003: Khắc phục Toàn Diện Phản Hồi Review PR #15 (Vòng 2)
+* **Mã quyết định:** DEC-BE1-003
+* **Ngày quyết định:** 26/10/2026
+* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
+* **Bối cảnh:**
+  1. Parser DOCX bỏ qua các đoạn có text rỗng trước khi kiểm tra cờ OMML, khiến công thức hiển thị đứng riêng 1 dòng bị mất khỏi thân câu hoặc phương án mà không báo lỗi.
+  2. Parser LaTeX trích xuất `\item[A.]` nhưng để sót môi trường bao ngoài danh sách (`\begin{enumerate}`, `\begin{tasks}`) ở cuối thân câu và phương án D.
+  3. Stored Procedure `replace_source_questions` khai báo `SECURITY DEFINER` nhưng dùng `current_user` để nhận diện admin, khiến điều kiện luôn đúng vì `current_user` trong hàm này luôn là `postgres`.
+  4. Ingestion Service trả về thông báo "Session state was not modified" cho mọi ngoại lệ còn lại, gây ngộ nhận khi gặp timeout mạng (máy chủ có thể đã commit thành công nhưng HTTP response bị timeout).
+* **Quyết định:**
+  1. **DOCX Parser:** Kiểm tra `content_omml_flags` ngay cả khi text đoạn rỗng; bật cờ `has_unparsed_omml = True` và chèn placeholder nhận diện, kích hoạt HTTP 422 `UNPARSED_OMML` từ chối đề thi thiếu nội dung công thức.
+  2. **LaTeX Parser:** Xây dựng `clean_latex_list_wrappers` bóc tách sạch sẽ các thẻ mở/đóng môi trường danh sách (`enumerate`, `tasks`, `itemize`, `multicols`) khỏi thân câu và phương án, đồng thời bảo toàn 100% các môi trường toán học (`pmatrix`, `cases`, `aligned`).
+  3. **SQL RPC:** Thay thế `current_user` bằng `session_user IN ('postgres', 'supabase_admin')` kết hợp `v_role = 'service_role'`, bảo đảm chỉ caller tin cậy mới được phân quyền quản trị.
+  4. **Phân loại Ngoại lệ Ingestion:** Phân biệt lỗi timeout mạng (HTTP 504 Gateway Timeout với cảnh báo trạng thái chưa xác định, không cam kết dữ liệu chưa đổi) với lỗi SQL đã rollback (HTTP 500).
+  5. **Tài liệu & Test:** Bổ sung script kiểm thử SQL 5 kịch bản phân quyền trên DB test; bổ sung unit tests cho OMML đứng riêng, LaTeX clean stem/options, và Timeout 504.
+
+---
+
+### DEC-BE1-004: Xử lý Triệt Để Ngoại Lệ Mạng và Khẳng Định Trạng Thái Commit CSDL (PR #15 Round 3)
+* **Mã quyết định:** DEC-BE1-004
+* **Ngày quyết định:** 26/10/2026
+* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
+* **Bối cảnh:**
+  1. Exception handler trước đây chỉ nhận diện lỗi mạng dựa trên từ khóa trong `str(exc)` (như "timeout", "connection reset").
+  2. Các ngoại lệ HTTPX thực tế như `httpx.ReadTimeout("")`, `httpx.ReadError("")` có chuỗi thông báo rỗng, hoặc `RemoteProtocolError("Server disconnected without sending a response.")` khi mô phỏng rớt kết nối sau commit, dẫn đến việc lọt xuống nhánh mặc định HTTP 500 và khẳng định sai "was rolled back".
+  3. Khi xảy ra lỗi mạng hoặc mất phản hồi, giao dịch có thể đã commit thành công trên PostgreSQL, việc khẳng định rollback hoặc chưa thay đổi là sai thực tế và nguy hiểm cho tính toàn vẹn dữ liệu.
+* **Quyết định:**
+  1. **Nhận diện theo Kiểu Ngoại lệ:** Sử dụng `isinstance(exc, ...)` để phân loại trực tiếp các lớp ngoại lệ `httpx.TimeoutException`, `httpx.TransportError`, `httpx.NetworkError`, `httpcore.ProtocolError`, `RemoteProtocolError` và các lớp con (kể cả khi chuỗi thông báo rỗng).
+  2. **Trạng thái Chưa Xác Định (HTTP 504):** Mọi lỗi mạng và rớt kết nối trả về HTTP 504 Gateway Timeout với thông điệp rõ ràng: trạng thái chưa xác định, giao dịch có thể đã hoàn tất, và hướng dẫn frontend/người dùng kiểm tra lại phiên trước khi thử lại (`Please verify session state before retrying`).
+  3. **Chỉ Khẳng định Rollback khi có Bằng chứng CSDL (HTTP 500):** Chỉ trả về thông báo "Database atomic replacement failed and was rolled back" khi nhận được ngoại lệ xác nhận từ CSDL (`postgrest.exceptions.APIError`). Các lỗi không xác định khác trả về HTTP 500 yêu cầu kiểm tra phiên và tuyệt đối không khẳng định đã rollback.
+  4. **Kiểm thử Toàn Diện:** Bổ sung unit tests sử dụng trực tiếp các đối tượng ngoại lệ HTTPX thật gồm `httpx.ReadTimeout("")`, `httpx.ReadError("")`, `httpx.RemoteProtocolError("Server disconnected without sending a response.")`, `httpcore.RemoteProtocolError`, `APIError` có bằng chứng DB, và unconfirmed errors không khẳng định rollback.
+
+---
+
+### DEC-BE1-005: Chuẩn Hóa Bóc Tách Phương Án Bullet List Trong Parser Markdown & Text (PR #15)
 * **Mã quyết định:** DEC-BE1-005
+* **Ngày quyết định:** 26/10/2026
+* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
+* **Bối cảnh:**
+  1. Đề thi Markdown hoặc raw text từ giảng viên thường sử dụng danh sách gạch đầu dòng (`- A. ...`, `- B. ...`) hoặc dấu sao (`* A. ...`).
+  2. Biểu thức chính quy `opt_pattern` trong `utils.py` trước đây chỉ nhận diện tiền tố phương án `[A-D][\.\)]`, khiến ký tự bullet đứng trước bị nuốt vào cuối thân câu hỏi (`stem`), đồng thời bullet của phương án kế tiếp bị dính vào đuôi nội dung phương án trước (ví dụ: `stem: 'Cho x = 1\n-'`, `options: {'A': '1\n-'}`).
+  3. Tầng `markdown_parser.py` có khối fallback tìm bullet nhưng bị che khuất do `extract_options_from_text` vẫn nhận diện được 4 phương án dù bị dính ký tự bullet rác.
+* **Quyết định:**
+  1. **Nâng cấp `opt_pattern` tại nguồn `utils.py`:** Mở rộng pattern hỗ trợ `(?:[\-\*]\s*)?` trước nhãn phương án ở cả đoạn so khớp chính và lookahead kết thúc, bảo đảm điểm bắt đầu `first_opt_pos` bao gồm cả bullet của phương án A.
+  2. **Làm sạch Thân câu và Phương án:** Cắt gọt triệt để ký tự bullet thừa, bảo đảm `stem` chỉ chứa nội dung câu hỏi và các giá trị trong `options` thuần khiết, không rò rỉ gạch đầu dòng hoặc dấu sao.
+  3. **Bổ sung Unit Test Hồi quy:** Thêm test `test_markdown_parser_bullet_list_options` trong `test_parsers.py` kiểm chứng cho cả hai dạng bullet `-` và `*`.
+
+---
+
+### DEC-BE1-006: Khắc Phục Triệt Để Suy Luận Rollback CSDL & Ngoại Lệ Gateway (PR #15 / PR #16 Round 4)
+* **Mã quyết định:** DEC-BE1-006
+* **Ngày quyết định:** 26/10/2026
+* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
+* **Bối cảnh:**
+  1. `is_database_rollback_evidence()` trước đây coi mọi instance của `postgrest.exceptions.APIError` hoặc exception có thuộc tính `code` là bằng chứng khẳng định PostgreSQL đã rollback transaction (`was rolled back`).
+  2. Khi các reverse proxy / API Gateway trung gian (Cloudflare, Kong, Nginx) gặp sự cố, chúng trả về phản hồi HTML `502 Bad Gateway`, `503 Service Unavailable`, hoặc `504 Gateway Timeout`. PostgREST Python SDK khi nhận response HTML không parse được JSON sẽ đóng gói thành `APIError` với `code=502/504` và `message="JSON could not be generated"`.
+  3. Lỗi gateway chỉ là sự cố lớp mạng chuyển tiếp; server CSDL phía sau có thể đã commit thành công transaction trước khi mất phản hồi. Việc khẳng định "was rolled back" là False Rollback Assertion nguy hiểm cho toàn vẹn dữ liệu.
+* **Quyết định:**
+  1. **Nhận diện chính xác SQLSTATE:** Chỉ coi là bằng chứng rollback từ CSDL khi `code` là mã PostgreSQL SQLSTATE hợp lệ gồm đúng 5 ký tự alnum (`^[0-9A-Z]{5}$`), đồng thời loại trừ triệt để các mã HTTP gateway (`500, 502, 503, 504`), loại trừ phản hồi không phải JSON (`message == "JSON could not be generated"`), và loại trừ nội dung HTML.
+  2. **Thông điệp trung tính cho mọi trường hợp chưa xác định:** Mọi lỗi gateway, phản hồi không phải JSON, `APIError` có code không xác định, hoặc lỗi runtime chưa được chứng minh rollback đều trả về thông báo trung tính yêu cầu kiểm tra phiên (`"Database atomic replacement failed. Please verify session state before retrying."`) và tuyệt đối không khẳng định đã rollback hay dữ liệu chưa đổi.
+  3. **Bảo toàn các ca timeout 504:** Giữ nguyên 100% hai hàm `is_network_timeout` và `is_network_transport`, không tự động gửi lại RPC mù quáng ở backend.
+  4. **Kiểm thử mô phỏng Gateway chân thực:** Bổ sung unit tests trong `test_ingest.py` và `test_confirm_source.py` kiểm chứng các ca Gateway HTML 502, Gateway HTML 504, non-JSON proxy error, và unknown code.
+
+---
+
+### DEC-BE1-007: Phân Loại Ngoại Lệ Mạng Phân Tán và Chuẩn Hóa Kiểm Quyền Migration 003 (TASK-205 Round 3)
+* **Mã quyết định:** DEC-BE1-007
 * **Ngày quyết định:** 26/10/2026
 * **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
 * **Bối cảnh:**
@@ -160,27 +211,20 @@
      - Xác thực role `anon` bị từ chối `EXECUTE` ở tầng PostgreSQL Engine (SQLSTATE 42501 / Least Privilege SEC-04).
      - Thêm Scenario 11 kiểm chứng trực tiếp Quản trị viên CSDL (`session_user IN ('postgres', 'supabase_admin')`) thực thi bảo trì thành công không cần JWT claims.
      - Đóng gói toàn bộ script trong transaction kết thúc bằng `ROLLBACK;`.
-  3. **Kiểm thử tự động:** Bổ sung 6 failure mode unit tests với instance ngoại lệ thật trong `test_confirm_source.py`.
-* **Hệ quả / Tác động:**
-  - 100% các kịch bản ngoại lệ mạng phân tán được phân loại chuẩn xác theo mã HTTP 504.
-  - Script SQL kiểm quyền chạy độc lập, an toàn trên database trắng.
-  - Vượt qua 100% 4 bước CI Pre-push Pipeline cục bộ (266/266 tests pass, 0 linter/type errors).
+  3. **Kiểm thử tự động:** Bổ sung failure mode unit tests với instance ngoại lệ thật trong `test_confirm_source.py`.
 
-### DEC-BE1-006: Chuẩn Hóa Bằng Chứng Rollback CSDL & Khử Khẳng Định Sai Khi Lỗi Gateway (TASK-205 Round 4)
-* **Mã quyết định:** DEC-BE1-006
+---
+
+### DEC-BE1-008: Loại Trừ PostgreSQL SQLSTATE Class 08 Khỏi Bằng Chứng Rollback CSDL (TASK-202 / TASK-205 Round 5)
+* **Mã quyết định:** DEC-BE1-008
 * **Ngày quyết định:** 26/10/2026
 * **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
 * **Bối cảnh:**
-  1. Trong hệ thống phân tán, khi Gateway trung gian (Reverse Proxy / Cloudflare / Kong) trả về lỗi HTTP 502/503/504 bằng HTML hoặc text không định dạng JSON, SDK `postgrest-py` ném `APIError({"code": 502, "message": "JSON could not be generated", "details": "<html>..."})`.
-  2. Helper `is_database_rollback_evidence()` cũ coi mọi `APIError` hoặc exception có thuộc tính `code` là bằng chứng PostgreSQL đã rollback, dẫn đến việc endpoint `confirm-source` và `replace_source_questions` trả về HTTP 500 kèm khẳng định sai lệch *"was rolled back"*. Trong thực tế, server PostgreSQL có thể đã thực thi xong và commit giao dịch thành công trước khi kết nối gateway bị gián đoạn.
+  1. Regex `^[0-9A-Z]{5}$` chỉ kiểm tra hình thức độ dài 5 ký tự của mã SQLSTATE, chưa phân biệt ngữ nghĩa nghiệp vụ của các nhóm lỗi trong PostgreSQL.
+  2. Khi PostgREST SDK nhận mã lỗi kết nối thuộc SQLSTATE Class 08 (như `08007` - *transaction resolution unknown* hoặc `08006` - *connection failure*), hàm `is_database_rollback_evidence()` vẫn trả về `True`.
+  3. Khi gặp lỗi kết nối `08007` / `08006`, máy chủ CSDL có thể đã commit thành công giao dịch trước khi kết nối bị ngắt. Việc khẳng định *"was rolled back"* là sai thực tế.
 * **Quyết định:**
-  1. **Chỉ công nhận bằng chứng rollback khi có mã SQLSTATE của PostgreSQL:** Sử dụng regex `POSTGRES_SQLSTATE_PATTERN = re.compile(r"^[0-9A-Z]{5}$")` để xác thực mã lỗi 5 ký tự alnum chuẩn của PostgreSQL (như `P0001`, `23505`, `40P01`).
-  2. **Loại trừ triệt để mã Gateway và nội dung HTML:** Bỏ qua các mã HTTP 3 chữ số (`500, 502, 503, 504`), bỏ qua `message == "JSON could not be generated"` và các chuỗi HTML trong `details`.
-  3. **Trả về thông điệp trung tính an toàn:** Mọi trường hợp lỗi Gateway hoặc lỗi không xác định đều trả về HTTP 500 với thông điệp: *"Database atomic confirmation failed. Please verify session state before retrying."* (tuyệt đối không khẳng định đã rollback).
-  4. **Bổ sung kiểm thử hồi quy:** Thêm 4 failure mode unit tests trong `test_confirm_source.py` và đồng bộ các test tương ứng trong `test_ingest.py`.
-* **Hệ quả / Tác động:**
-  - Loại bỏ hoàn toàn rủi ro sai lệch trạng thái giao dịch trong môi trường mạng phân tán.
-  - Đảm bảo tính nhất quán giữa PR #15 và PR #16, 100% test suites đạt chuẩn.
-
-
-
+  1. **Loại trừ Class 08 và 40003:** Bổ sung `POSTGRES_NON_ROLLBACK_SQLSTATE_PREFIXES = ("08",)` và `POSTGRES_NON_ROLLBACK_SQLSTATES = {"40003"}` vào `ingestion_service.py`. Mọi mã lỗi bắt đầu bằng `08` hoặc `40003` đều bị loại khỏi bằng chứng rollback CSDL.
+  2. **Thông báo Trung tính Cho Trạng thái Chưa Xác Định:** Khi gặp lỗi kết nối Class 08, service trả về HTTP 500 trung tính yêu cầu kiểm tra lại phiên (`"Database atomic replacement/confirmation failed. Please verify session state before retrying."`), tuyệt đối không khẳng định đã rollback.
+  3. **Bảo toàn Khẳng định Rollback cho Lỗi Dữ liệu Xác định:** Các mã lỗi ràng buộc toàn vẹn thực tế (`23505`, `23503`), lỗi PL/pgSQL (`P0001`) vẫn được khẳng định rollback chính xác.
+  4. **Kiểm thử Hồi quy Toàn diện:** Bổ sung các unit tests cho mã `08007`, `08006` và `23505` trên cả 2 endpoint Ingestion và Confirm Source.

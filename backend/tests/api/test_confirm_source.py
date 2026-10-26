@@ -1041,6 +1041,100 @@ def test_confirm_source_rpc_apierror_none_code_returns_500_neutral_message(
     assert "Database atomic confirmation failed. Please verify session state before retrying." in detail
 
 
+def test_confirm_source_rpc_sqlstate_08007_transaction_resolution_unknown_returns_500_neutral_message(
+    client, mock_auth_user, auth_headers
+):
+    """PostgreSQL SQLSTATE 08007 (transaction resolution unknown) must return 500 neutral message without claiming rollback."""
+    mock_db = MagicMock()
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
+    mock_questions = MagicMock()
+    mock_questions.data = _create_mock_questions(count=2)
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        mock_status
+    )
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        mock_questions
+    )
+    mock_bps = MagicMock()
+    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
+
+    # SQLSTATE 08007: Transaction resolution unknown (PostgreSQL Class 08 Connection Exception)
+    mock_db.rpc.return_value.execute.side_effect = APIError(
+        {
+            "code": "08007",
+            "message": "transaction resolution unknown",
+            "hint": None,
+            "details": "Connection dropped after query submission; commit status uncertain",
+        }
+    )
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+        patch("app.api.routes.sessions.assert_ownership", return_value=None),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
+            json={"acknowledged_security_warnings": False},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert "was rolled back" not in detail
+    assert "Database atomic confirmation failed. Please verify session state before retrying." in detail
+
+
+def test_confirm_source_rpc_sqlstate_08006_connection_failure_returns_500_neutral_message(
+    client, mock_auth_user, auth_headers
+):
+    """PostgreSQL SQLSTATE 08006 (connection failure) must return 500 neutral message without claiming rollback."""
+    mock_db = MagicMock()
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
+    mock_questions = MagicMock()
+    mock_questions.data = _create_mock_questions(count=2)
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        mock_status
+    )
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        mock_questions
+    )
+    mock_bps = MagicMock()
+    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
+
+    # SQLSTATE 08006: Connection failure (PostgreSQL Class 08 Connection Exception)
+    mock_db.rpc.return_value.execute.side_effect = APIError(
+        {
+            "code": "08006",
+            "message": "connection failure",
+            "hint": None,
+            "details": "Connection to PostgreSQL server lost",
+        }
+    )
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+        patch("app.api.routes.sessions.assert_ownership", return_value=None),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
+            json={"acknowledged_security_warnings": False},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert "was rolled back" not in detail
+    assert "Database atomic confirmation failed. Please verify session state before retrying." in detail
+
+
 def test_confirm_source_returns_real_db_counts(client, mock_auth_user, auth_headers):
     """API returns total_blueprints directly from the RPC response rather than python client estimates."""
     mock_db = MagicMock()
