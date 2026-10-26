@@ -2,7 +2,13 @@
 
 Dashboard is connected to `/dashboard` under `ProtectedRoute`. A Supabase session enters `profile_pending`; the shared hook requests `GET /api/users/me` and opens Dashboard only after accepting a profile for the current account/login version. TV1 reported a real profile 200 response and the correct Dashboard name on 23/10/2026.
 
-The routed Dashboard uses the real list service with server pagination and out-of-range correction. The merged Clone Modal is connected through the real clone service; success closes it and reloads page1 even when already on page1. TV1 reported successful browser/cloud list, clone, persistence, question/blueprint copying and denial of account B cloning account A's source, as recorded below. Create/open still show notices pending agreed Stage destinations. The separate previews keep mock data. Auth PR #7 has landed in dev; the layout is provisional and TASK-103 remains incomplete.
+The routed Dashboard uses the real list service with server pagination and out-of-range correction. The merged Clone Modal is connected through the real clone service; success closes it and reloads page1 even when already on page1. TV1 reported successful browser/cloud list, clone, persistence, question/blueprint copying and denial of account B cloning account A's source, as recorded below. Create opens the protected metadata entry at `/session/new/stage1`; opening a listed draft navigates to its ID route and reads fresh detail. The separate previews keep mock data. Auth PR #7 has landed in dev; the layout is provisional and TASK-103 remains incomplete.
+
+### Stage1 entry increment C — 26/10/2026
+
+The [entry implementation](../stage1-ingestion/README.md) creates a session only on explicit form submission, then replaces the new-entry URL with `/session/{id}/stage1`. Opening an existing or cloned draft only reads detail. If its latest API status is no longer draft, the entry shows a notice without starting work. Other listed statuses retain a notice pending destination integration; this increment does not implement full status routing, upload/extraction/confirmation or Stage2.
+
+Agent checks:146 frontend tests, lint and build passed. Local browser fixtures verified Dashboard create navigation, one create and replace, direct detail/F5 without another create,404/retry, status changed since list, signed-out redirect, account reset,375px layout, clone/list refresh and opening the copied ID. The browser fixture uses the real React components/services/client with simulated Auth/HTTP, not a real cloud login or Docker/Nginx check. Increment B's author-reported live API checks below remain separate evidence.
 
 ### dev integration checkpoint — 26/10/2026
 
@@ -63,7 +69,7 @@ The HTML entry is `frontend/dashboard-preview.html`; the React entry is `src/fea
 | DashboardPage | `loadSessions({ signal }): Promise<Session[]>`, `onCreate()`, `onOpen(session)`, `onClone(session)` |
 | DashboardSessionCard | `session`, `onOpen(session)`, `onClone(session)` |
 
-TV1 owns the page/card and `DashboardRoute.jsx`, which supplies a stable real-list adapter and create/open notices. The adapter returns `items` to Page and retains `total/page/page_size`; Page passes an AbortSignal and aborts on cleanup while retaining its active-result guard. Route resets account-specific state with a user ID/session-version key, which stays stable on same-account token refresh. Preview loaders may ignore the optional argument. TV2 owns the merged Clone Modal; TV1 connects the selected session and real clone function in Route.
+TV1 owns the page/card and `DashboardRoute.jsx`, which supplies a stable real-list adapter and create/draft navigation. The adapter returns `items` to Page and retains `total/page/page_size`; Page passes an AbortSignal and aborts on cleanup while retaining its active-result guard. Route resets account-specific state with a user ID/session-version key, which stays stable on same-account token refresh. Preview loaders may ignore the optional argument. TV2 owns the merged Clone Modal; TV1 connects the selected session and real clone function in Route.
 
 The routed `onClone(session)` now opens TV2's merged Modal. Its explicit `cloneFn` is [cloneSessionForDashboard](cloneSessionForDashboard.js), which calls the shared sessions service and returns the direct new-session object. It translates API/Auth errors without reading backend detail into user messages or adding retries. Canceled/stale requests retain cancellation semantics. Timeout/network/5xx messages advise reloading the page to check whether a copy exists before resubmission. Route keys Page by page/refresh counter; the account wrapper also clears modal selection on account/login-version changes. Destination navigation is still pending.
 

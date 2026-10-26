@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../auth/authStore.js';
 import DashboardPage from './DashboardPage.jsx';
 import { listSessions } from '../../services/sessions.js';
@@ -16,6 +17,7 @@ export default function DashboardRoute() {
 }
 
 function DashboardContent() {
+  const navigate = useNavigate();
   const [notice, setNotice] = useState('');
   const user = useAuthStore((state) => state.user);
   const [isSigningOut, setIsSigningOut] = useState(false);
@@ -160,10 +162,14 @@ function DashboardContent() {
         key={`${page}:${refreshKey}`}
         loadSessions={loadSessions}
         onCreate={() => {
-          setNotice('Đã nhận thao tác Tạo đề mới; chưa nối màn nhập nguồn.');
+          navigate('/session/new/stage1');
         }}
         onOpen={(session) => {
-          setNotice(`Đã chọn mở: ${session.title} (${session.id}).`);
+          if (session.status === 'draft') {
+            navigate(`/session/${encodeURIComponent(session.id)}/stage1`);
+            return;
+          }
+          setNotice('Màn tiếp tục cho trạng thái này chưa được kết nối. Bạn có thể nhân bản để bắt đầu một phiên nháp mới.');
         }}
         onClone={(selectedSession) => {
           setNotice('');

@@ -2,6 +2,13 @@
 
 Frontend sản phẩm dùng React/Vite và JavaScript/JSX. Đây là hướng dẫn cho repo sản phẩm; bộ `ui-draft` trong workspace là tài liệu thiết kế riêng.
 
+## Checkpoint hiện hành — TASK103 lượt C, 26/10/2026
+
+- Nền dev đã merge tại170b847; create/detail service và SQL prerequisite đã lưu tại a117f0c/51db6be. User đã kiểm API thật: tạo/đọc phiên thành công, B đọc phiên A bị404, exam_versions setup đạt metadata checks. Các checkpoint pending merge bên dưới là lịch sử.
+- Tạo đề mới mở `/session/new/stage1`, form thông tin chỉ POST khi xác nhận; thành công replace sang ID thật. Tiếp tục draft (kể cả bản clone) mở đúng ID và đọc lại detail. Không tự tạo khi mount/F5. Nếu trạng thái mới không còn draft thì hiện thông báo; các màn trạng thái khác còn chưa nối.
+- Agent146 tests/lint/build đạt; kiểm trình duyệt local bằng Auth/API mô phỏng đạt create/replace/F5/retry/protected/account reset/mobile và Dashboard/clone/mở bản sao. Chưa kiểm màn entry mới bằng Docker/OAuth/cloud thật hoặc Nginx; không lấy kiểm API lượt B thay cho kiểm UI mới.
+- Đây là entry/metadata của103, chưa có nhập/trích xuất/xác nhận nguồn W2 hoặc Stage2. TASK103 chưa Done. Chi tiết: [Stage1 entry](src/features/stage1-ingestion/README.md).
+
 ## Đồng bộ nền dev — 26/10/2026
 
 - Đang ghép `origin/dev` tại `bbb7c5e` vào `feat/task-103-dashboard-api` bằng merge dừng trước commit. Auth PR #7 đã squash merge vào dev; không còn chờ review Auth để tiếp tục Dashboard.
