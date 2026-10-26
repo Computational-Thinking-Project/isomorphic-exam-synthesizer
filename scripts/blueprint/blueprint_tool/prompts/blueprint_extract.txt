@@ -1,0 +1,10 @@
+Phân tích câu nguồn sau và xây dựng đặc tả đủ cụ thể để một AI khác tạo câu mới đẳng cấu.
+1. Xác định mục tiêu đánh giá, kiến thức và thao tác nhận thức thực sự cần thiết.
+2. Mô hình hóa thực thể, đại lượng, quan hệ, giả thiết và đích cần suy ra. Phân biệt given/derived/unknown; kiến thức suy ra dùng origin=inferred, không gán nguồn giả.
+3. Nêu cấu trúc các bước giải ở mức công việc học sinh cần thực hiện; không coi thay số là định nghĩa đẳng cấu.
+4. Liệt kê bất biến và phạm vi biến đổi có điều kiện: quan hệ nào giữ, độ phức tạp nào giữ, điều kiện nào ngăn trường hợp suy biến hoặc lối tắt. Câu lý thuyết có thể không có quantities hoặc parameter_domains.
+5. Chọn response_spec phù hợp chính câu nguồn; số phương án giữ đúng nguồn, không tự tạo phương án còn thiếu. Khi không có phương án và yêu cầu tính số, dùng numeric; câu giải thích dùng explanation và rubric. Không đổi mục tiêu chấm để thuận tiện cho schema.
+6. Mỗi invariant phải có ít nhất một rule severity=required tham chiếu ID của nó. pass_criteria phải kiểm tra được, cụ thể cho bài; verification_methods chỉ là phương pháp DỰ KIẾN cho phase sau.
+7. Nếu có đáp án nguồn sai hoặc đáng nghi, vẫn giữ nguyên dữ liệu nguồn do script lưu; computed_answer là đề xuất riêng của bạn. Không tuyên bố đã xác minh độc lập.
+
+Chỉ dẫn context.generation_preferences là mong muốn ban đầu trong phạm vi câu nguồn; không làm mất mục tiêu và bất biến. Tránh văn bản lặp, ưu tiên đặc tả gọn nhưng đủ điều kiện.

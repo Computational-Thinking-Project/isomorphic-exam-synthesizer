@@ -2,7 +2,11 @@
 
 Dashboard is connected to `/dashboard` under `ProtectedRoute`. A Supabase session enters `profile_pending`; the shared hook requests `GET /api/users/me` and opens Dashboard only after accepting a profile for the current account/login version. TV1 reported a real profile 200 response and the correct Dashboard name on 23/10/2026.
 
-The routed Dashboard uses the real list service with server pagination and out-of-range correction. The merged Clone Modal is connected through the real clone service; success closes it and reloads page1 even when already on page1. TV1 reported successful browser/cloud list, clone, persistence, question/blueprint copying and denial of account B cloning account A's source, as recorded below. Create/open still show notices pending agreed Stage destinations. The separate previews keep mock data. The layout is provisional; TASK-101/103 are not complete.
+The routed Dashboard uses the real list service with server pagination and out-of-range correction. The merged Clone Modal is connected through the real clone service; success closes it and reloads page1 even when already on page1. TV1 reported successful browser/cloud list, clone, persistence, question/blueprint copying and denial of account B cloning account A's source, as recorded below. Create/open still show notices pending agreed Stage destinations. The separate previews keep mock data. Auth PR #7 has landed in dev; the layout is provisional and TASK-103 remains incomplete.
+
+### dev integration checkpoint — 26/10/2026
+
+The working tree is integrating dev `bbb7c5e` into `feat/task-103-dashboard-api`, stopping before the merge commit. Conflict resolution preserves the existing real Dashboard route and its list/pagination/account guards/Clone Modal; the resolved route matches its pre-merge contents. Upstream Blueprint tools, configuration and health changes are retained. Agent checks after resolution: **113/113 Node tests, lint and build passed**. The staged candidate differs from dev only in11 Dashboard/setup/docs files; Auth/App/shared-client code matches dev. Browser/cloud checks below remain the author-reported24/10 evidence; no new browser/cloud/Docker run is claimed. No create/detail service or Stage route is added in this integration step.
 
 ## Run and check
 
@@ -135,6 +139,6 @@ Historical Dashboard UI verification on 17/10/2026, before the real auth changes
 
 The last author-provided `npm audit` report on 17/10/2026 contained 15 vulnerabilities (4 low, 5 moderate, 6 high). Audit has not passed; no dependency upgrades or `npm audit fix --force` were applied in this increment. Dependency remediation requires separate compatibility checks and review.
 
-Remaining work: confirm Auth PR #7 review/current-head CI (no fresh GitHub status check in this documentation pass); natural expiry/failed refresh on cloud and the static Nginx build remain unverified. Connect agreed create/open Stage routes and creation ownership. Live coverage is limited to the cases in the latest table; multi-page cloud pagination and untested permission/error scenarios remain outside that evidence. Auth must be accepted into `dev` before merging Dashboard there; check ancestry/diff if Auth is squash merged. Repeat checks when later integration changes justify it.
+Remaining work: save the resolved dev merge, check its Dashboard-only diff and CI, then connect agreed create/open Stage routes and creation ownership. Auth PR #7 is already squash merged into dev; natural expiry/failed refresh on cloud and the static Nginx build remain unverified. Live coverage is limited to the cases in the latest table; multi-page cloud pagination and untested permission/error scenarios remain outside that evidence. Repeat checks when later integration changes justify it.
 
 The visual layout remains provisional. Apply the agreed design in its own implementation step; this README update does not change or approve the interface.

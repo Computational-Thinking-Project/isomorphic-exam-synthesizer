@@ -22,5 +22,5 @@ async def metrics_check():
     """Basic health metrics check for backend service."""
     return {
         "status": "operational",
-        "gemini_model": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+        "gemini_model": os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite"),
     }

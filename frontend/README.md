@@ -2,6 +2,12 @@
 
 Frontend sản phẩm dùng React/Vite và JavaScript/JSX. Đây là hướng dẫn cho repo sản phẩm; bộ `ui-draft` trong workspace là tài liệu thiết kế riêng.
 
+## Đồng bộ nền dev — 26/10/2026
+
+- Đang ghép `origin/dev` tại `bbb7c5e` vào `feat/task-103-dashboard-api` bằng merge dừng trước commit. Auth PR #7 đã squash merge vào dev; không còn chờ review Auth để tiếp tục Dashboard.
+- Giữ nguyên Dashboard API/list/phân trang/Clone Modal và account guard; nhận các file Blueprint/config/health từ dev. Không đưa mock vào route sản phẩm, không nhận các PR backend W2 đang chờ merge.
+- Kiểm tự động sau ghép: agent chạy **113/113 Node tests**, lint và build đều đạt ngày26/10. DashboardRoute giữ nguyên nội dung so với mốc đã kiểm trước merge; diff cây chuẩn bị commit với dev chỉ còn11file Dashboard/setup DB/docs. Chưa kiểm browser/cloud/Docker mới; checkpoint24/10 bên dưới vẫn là bằng chứng lịch sử. Tạo mới/Mở Stage chưa được triển khai trong lượt đồng bộ này.
+
 ## Checkpoint TASK-103 — 24/10/2026
 
 - Nhánh `feat/task-103-dashboard-api` đã đồng bộ PR6 tại merge `e7530a4` (dev `2c68b3a`). Dashboard tải list thật, phân trang, đủ10nhãn trạng thái và mở Clone Modal với service thật. Thành công tải lại trang1; adapter riêng chuyển thông báo lỗi nhưng giữ một API/Supabase client/store và xử lý401 chung. Tạo/mở Stage vẫn là thông báo.
@@ -145,8 +151,8 @@ Unit tests dùng source thật và Auth/HTTP giả lập, không cần key/env h
 
 ## Phần đang chờ tích hợp/review
 
-- TASK-101: code Google login/profile/avatar và các ca thật trong bảng trên đã có bằng chứng TV1; chưa được review/nghiệm thu. Token tự hết hạn hoặc refresh thật thất bại chưa kiểm trên cloud; hành vi 401/refresh thất bại có kiểm giả lập.
+- TASK-101: code Google login/profile/avatar đã được squash merge qua PR #7 vào dev tại `bbb7c5e`. Token tự hết hạn hoặc refresh thật thất bại chưa kiểm trên cloud; hành vi 401/refresh thất bại có kiểm giả lập. Việc merge không thay bằng chứng cho các ca chưa kiểm.
 - TASK-103: list API/phân trang và Clone Modal đã nối; browser/cloud list, clone, persistence, copy câu/blueprint và ca B bị chặn clone nguồn A đã đạt theo TV1 ở checkpoint24/10. Điều hướng Stage/nơi tạo phiên chưa chốt; chưa kiểm phân trang nhiều trang cloud hoặc mọi endpoint/chiều quyền.
-- Chưa kiểm bản static Nginx và CI của head Auth mới. Bằng chứng sessions chỉ áp cho các thao tác/fixture đã nêu; không suy ra quyền UPDATE, storage hoặc cleanup khi lỗi cloud. Quyền SELECT profile không thay kiểm các phần đó.
+- Chưa kiểm lại bản static Nginx hoặc CI của commit merge Dashboard sắp lưu. Bằng chứng sessions chỉ áp cho các thao tác/fixture đã nêu; không suy ra quyền UPDATE, storage hoặc cleanup khi lỗi cloud. Quyền SELECT profile không thay kiểm các phần đó.
 
-Nhánh đang triển khai: `feat/task-103-dashboard-api`, từ nền Auth `978003a`, được cho tiếp tục trong lúc Auth chờ review. PR #6 Clone Modal đã merge vào dev `2c68b3a` và được lấy vào Dashboard; PR #7 Auth Ready/chưa merge ở lần kiểm riêng gần nhất24/10. Trước khi Dashboard vào `dev`, cần nền Auth đã được chấp nhận và diff đúng scope, đặc biệt nếu Auth squash merge. **Chưa đánh dấu TASK-101/103 Done.** Quyết định Auth và SQL được ghi ở [DEC-TV1-002](../docs/change_log.md#dec-tv1-002-tích-hợp-google-oauth-profile-và-bootstrap-auth); checkpoint Auth23/10 phía trên là lịch sử, không ghi đè tiến độ Dashboard24/10.
+Nhánh đang triển khai: `feat/task-103-dashboard-api`, ban đầu từ nền Auth `978003a`; đang đồng bộ dev sau khi Auth squash merge. PR #6 Clone Modal đã merge tại `2c68b3a` và đã ghép vào Dashboard. Trước khi PR #17 vào dev, cần lưu merge, kiểm diff chỉ còn phạm vi TASK-103 và hoàn tất các tiêu chí tạo/mở còn thiếu. **TASK-103 chưa hoàn tất.** Quyết định Auth và SQL được ghi ở [DEC-TV1-002](../docs/change_log.md#dec-tv1-002-tích-hợp-google-oauth-profile-và-bootstrap-auth); các checkpoint23–24/10 phía trên là lịch sử theo phạm vi đã nêu.

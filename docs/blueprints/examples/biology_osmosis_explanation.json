@@ -1,0 +1,362 @@
+{
+  "requirement": {
+    "blueprint_id": "biology_osmosis_explanation_v2",
+    "schema_version": "0.4.0",
+    "subject": "biology",
+    "language": "vi",
+    "language_policy": {
+      "field_names": "en",
+      "descriptive_values": "source_language",
+      "machine_codes": "stable"
+    },
+    "source": {
+      "question_id": "biology_osmosis_explanation_v2_source",
+      "content": [
+        {
+          "id": "SRC_STEM",
+          "type": "text",
+          "text": "Một tế bào thực vật còn sống được đặt trong dung dịch ưu trương. Sau một thời gian, khối nguyên sinh co lại và tách khỏi thành tế bào. Hãy giải thích hiện tượng bằng sự di chuyển của nước qua màng sinh chất. Giả sử chất tan không đi qua màng trong thời gian xét."
+        }
+      ],
+      "options": [],
+      "supplied_answer": null,
+      "supplied_solution": null,
+      "references": []
+    },
+    "assessment": {
+      "id": "R_ASSESSMENT",
+      "objective": "Giải thích co nguyên sinh bằng chiều di chuyển ròng của nước và hệ quả đối với tế bào.",
+      "knowledge": [
+        "Thẩm thấu qua màng sinh chất.",
+        "Vai trò của thành tế bào trong hiện tượng co nguyên sinh."
+      ],
+      "cognitive_operations": [
+        "Xác định chiều di chuyển ròng của nước.",
+        "Liên kết nguyên nhân với hiện tượng được mô tả."
+      ],
+      "prerequisites": [
+        "Dung dịch ưu trương.",
+        "Phân biệt màng sinh chất và thành tế bào."
+      ]
+    },
+    "knowledge_basis": [
+      {
+        "id": "K_OSMOSIS",
+        "description": "Trong điều kiện đề nêu, nước di chuyển ròng từ tế bào ra dung dịch ưu trương qua màng sinh chất.",
+        "origin": "inferred",
+        "evidence_refs": []
+      }
+    ],
+    "semantic_model": {
+      "id": "R_MODEL",
+      "entities": [
+        {
+          "id": "E_CELL",
+          "kind": "system",
+          "description": "Tế bào thực vật còn sống, có màng sinh chất và thành tế bào."
+        },
+        {
+          "id": "E_SOLUTION",
+          "kind": "substance",
+          "description": "Dung dịch bên ngoài ưu trương so với tế bào."
+        },
+        {
+          "id": "E_WATER",
+          "kind": "substance",
+          "description": "Nước có thể đi qua màng sinh chất."
+        }
+      ],
+      "quantities": [],
+      "relations": [
+        {
+          "id": "REL_FLOW",
+          "description": "Nước di chuyển ròng từ tế bào ra ngoài.",
+          "role": "derived",
+          "formalism": "none",
+          "expression": null,
+          "refs": [
+            "E_CELL",
+            "E_SOLUTION",
+            "E_WATER"
+          ]
+        },
+        {
+          "id": "REL_EFFECT",
+          "description": "Mất nước làm khối nguyên sinh giảm thể tích và tách khỏi thành tế bào.",
+          "role": "derived",
+          "formalism": "none",
+          "expression": null,
+          "refs": [
+            "E_CELL",
+            "E_WATER"
+          ]
+        }
+      ],
+      "assumptions": [
+        {
+          "id": "AS_SOLUTE",
+          "description": "Chất tan không đi qua màng trong thời gian xét.",
+          "origin": "source",
+          "evidence_refs": [
+            "SRC_STEM"
+          ]
+        }
+      ],
+      "target": {
+        "id": "TARGET",
+        "description": "Giải thích quan hệ nhân quả giữa thẩm thấu và co nguyên sinh.",
+        "quantity_ref": null
+      }
+    },
+    "reasoning_model": {
+      "id": "R_REASONING",
+      "steps": [
+        {
+          "id": "STEP1",
+          "description": "Xác định dung dịch bên ngoài ưu trương trong điều kiện màng đã nêu.",
+          "depends_on": []
+        },
+        {
+          "id": "STEP2",
+          "description": "Suy ra nước di chuyển ròng ra khỏi tế bào.",
+          "depends_on": [
+            "STEP1"
+          ]
+        },
+        {
+          "id": "STEP3",
+          "description": "Liên hệ sự mất nước với việc khối nguyên sinh co lại và tách khỏi thành.",
+          "depends_on": [
+            "STEP2"
+          ]
+        }
+      ],
+      "accepted_alternatives": [
+        "Chấp nhận diễn đạt bằng thế nước nếu giải thích đúng chiều di chuyển và hệ quả."
+      ],
+      "forbidden_shortcuts": []
+    },
+    "invariants": [
+      {
+        "id": "I_MEMBRANE",
+        "category": "context",
+        "description": "Tế bào thực vật còn sống trong dung dịch ưu trương; chất tan không qua màng trong thời gian xét."
+      },
+      {
+        "id": "I_CAUSAL",
+        "category": "reasoning",
+        "description": "Phải giải thích chiều di chuyển ròng của nước và hệ quả co nguyên sinh."
+      },
+      {
+        "id": "I_RESPONSE",
+        "category": "response",
+        "description": "Yêu cầu lời giải thích ngắn, không chỉ gọi tên hiện tượng."
+      }
+    ],
+    "variation_policy": {
+      "id": "R_VARIATION",
+      "equivalence_level": "strict_structure",
+      "allowed_transformations": [
+        {
+          "id": "V_CELL",
+          "dimension": "context",
+          "description": "Đổi thành tế bào biểu bì hành còn sống.",
+          "target_refs": [
+            "E_CELL"
+          ],
+          "preconditions": [
+            "Giữ các điều kiện về màng và dung dịch."
+          ],
+          "limits": []
+        },
+        {
+          "id": "V_WORDING",
+          "dimension": "wording",
+          "description": "Diễn đạt lại phần mô tả hiện tượng.",
+          "target_refs": [
+            "SRC_STEM"
+          ],
+          "preconditions": [
+            "Giữ đủ dữ kiện và yêu cầu giải thích."
+          ],
+          "limits": []
+        }
+      ],
+      "parameter_domains": [],
+      "forbidden_changes": [
+        "Đổi ưu trương thành nhược trương.",
+        "Đổi thành tế bào động vật.",
+        "Chỉ hỏi tên hiện tượng.",
+        "Yêu cầu đọc ảnh hiển vi."
+      ],
+      "workload_limits": [
+        "Hai liên hệ chính: ưu trương dẫn đến nước đi ra; mất nước dẫn đến co nguyên sinh.",
+        "Không bắt buộc công thức thế nước."
+      ]
+    },
+    "response_spec": {
+      "id": "R_RESPONSE",
+      "format": "explanation",
+      "option_count": null,
+      "correct_option_count": null,
+      "grading": {
+        "mode": "rubric",
+        "expected_unit": null,
+        "numeric_tolerance": null,
+        "rounding_rule": null,
+        "rubric": [
+          {
+            "id": "SCORE_FLOW",
+            "description": "Nêu đúng nước di chuyển ròng ra khỏi tế bào qua màng và liên hệ với môi trường ưu trương.",
+            "max_score": 1
+          },
+          {
+            "id": "SCORE_EFFECT",
+            "description": "Giải thích mất nước làm khối nguyên sinh giảm thể tích, co lại và tách khỏi thành tế bào.",
+            "max_score": 1
+          }
+        ]
+      },
+      "distractor_policy": null
+    },
+    "presentation": {
+      "id": "R_PRESENTATION",
+      "allowed_content_types": [
+        "text",
+        "formula",
+        "table"
+      ],
+      "requires_image": false,
+      "instructions": [
+        "Mô tả, đề sinh ra và lời giải dùng cùng ngôn ngữ với đề nguồn.",
+        "Cung cấp đủ dữ kiện bằng văn bản, công thức hoặc bảng; không dẫn tới hình, sơ đồ hoặc đồ thị cần đọc."
+      ]
+    }
+  },
+  "constraint": {
+    "validation_policy": {
+      "outcomes": [
+        "pass",
+        "fail",
+        "unknown"
+      ],
+      "required_unknown_action": "block_automatic_acceptance",
+      "advisory_can_override_required": false
+    },
+    "source_check": {
+      "computed_answer": {
+        "option_ids": [],
+        "value": {
+          "type": "text",
+          "value": "Nước di chuyển ròng ra khỏi tế bào vào dung dịch ưu trương. Sự mất nước làm khối nguyên sinh giảm thể tích, co lại và tách khỏi thành tế bào."
+        },
+        "explanation": null
+      },
+      "methods": [
+        "domain_rule",
+        "semantic_rubric"
+      ],
+      "evidence": [
+        "Có lời giải dự kiến và hai tiêu chí chấm; cần giáo viên duyệt phạm vi kiến thức và cách chấm."
+      ]
+    },
+    "rules": [
+      {
+        "id": "C_LANGUAGE",
+        "requirement_refs": [
+          "R_PRESENTATION"
+        ],
+        "scope": "blueprint",
+        "severity": "required",
+        "description": "Tuân thủ quy tắc ngôn ngữ và phạm vi không hình ảnh.",
+        "verification_methods": [
+          "schema",
+          "semantic_rubric",
+          "human_review"
+        ],
+        "pass_criteria": "Tên trường và mã máy giữ nguyên; mô tả theo ngôn ngữ đề nguồn; không có hình nhúng, đường dẫn hình hoặc dữ kiện chỉ đọc được từ hình.",
+        "on_failure": "reject"
+      },
+      {
+        "id": "C_CONTENT",
+        "requirement_refs": [
+          "R_PRESENTATION"
+        ],
+        "scope": "candidate",
+        "severity": "required",
+        "description": "Đề và lời giải cuối cùng tự đầy đủ, đúng ngôn ngữ và không cần hình.",
+        "verification_methods": [
+          "semantic_rubric",
+          "human_review"
+        ],
+        "pass_criteria": "Không có lời dẫn tới hình vẽ, dữ kiện bị lược mất hoặc hình được nhúng trong văn bản/công thức.",
+        "on_failure": "reject"
+      },
+      {
+        "id": "C_EQUIVALENCE",
+        "requirement_refs": [
+          "R_ASSESSMENT",
+          "R_REASONING",
+          "R_VARIATION"
+        ],
+        "scope": "source_candidate",
+        "severity": "required",
+        "description": "Giữ kiến thức, thao tác nhận thức và giới hạn biến đổi khi so với câu nguồn.",
+        "verification_methods": [
+          "semantic_rubric",
+          "human_review"
+        ],
+        "pass_criteria": "Mọi biến đổi nằm trong chính sách; không thêm kỹ năng bắt buộc và không cung cấp sẵn bước suy luận đang được đánh giá.",
+        "on_failure": "reject"
+      },
+      {
+        "id": "C_RESPONSE",
+        "requirement_refs": [
+          "R_RESPONSE"
+        ],
+        "scope": "candidate",
+        "severity": "required",
+        "description": "Đáp án và lời giải khớp câu hỏi cuối cùng.",
+        "verification_methods": [
+          "semantic_rubric",
+          "human_review"
+        ],
+        "pass_criteria": "Tính hoặc suy ra lại đáp án từ dữ kiện mới; đáp án, đơn vị, tiêu chí chấm và các phương án phù hợp định dạng đã chọn.",
+        "on_failure": "reject"
+      },
+      {
+        "id": "C_OSMOSIS",
+        "requirement_refs": [
+          "I_MEMBRANE",
+          "I_CAUSAL"
+        ],
+        "scope": "candidate",
+        "severity": "required",
+        "description": "Kiểm tra cơ chế và điều kiện sinh học.",
+        "verification_methods": [
+          "domain_rule",
+          "reference_check",
+          "human_review"
+        ],
+        "pass_criteria": "Chiều di chuyển ròng của nước và hệ quả phù hợp các giả thiết; không có mệnh đề sinh học mâu thuẫn.",
+        "on_failure": "reject"
+      },
+      {
+        "id": "C_RUBRIC",
+        "requirement_refs": [
+          "I_RESPONSE",
+          "R_RESPONSE"
+        ],
+        "scope": "candidate",
+        "severity": "required",
+        "description": "Kiểm tra tiêu chí chấm.",
+        "verification_methods": [
+          "semantic_rubric",
+          "human_review"
+        ],
+        "pass_criteria": "Tiêu chí thưởng cho đúng quan hệ nhân quả, chấp nhận diễn đạt tương đương và không đòi kiến thức ngoài mục tiêu.",
+        "on_failure": "reject"
+      }
+    ]
+  }
+}
