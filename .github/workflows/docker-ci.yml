@@ -30,6 +30,11 @@ jobs:
       - name: Unit tests, frontend lint/build and SymPy parser in containers
         shell: pwsh
         run: ./scripts/dev.ps1 test
+      - name: Build and test standalone Blueprint using shared backend core
+        run: |
+          docker compose -f docker-compose.blueprint.yml build blueprint
+          docker compose -f docker-compose.blueprint.yml run --rm -T blueprint python -m pytest /workspace/scripts/blueprint/tests -q -p no:cacheprovider
+          docker compose -f docker-compose.blueprint.yml run --rm -T blueprint ruff check --no-cache /workspace/scripts/blueprint
       - name: Save development logs
         if: always()
         run: |

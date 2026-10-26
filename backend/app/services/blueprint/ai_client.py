@@ -78,30 +78,35 @@ class GeminiClient:
             raise ProviderError(
                 "API_CLIENT", "SDK không hoàn tất request; kiểm tra cấu hình SDK."
             ) from None
-        candidates = response.candidates or []
-        if not candidates:
-            raise ProviderError("AI_BLOCKED", "Gemini không trả nội dung để trích xuất blueprint.")
-        reason = getattr(candidates[0].finish_reason, "value", candidates[0].finish_reason)
-        if reason == "MAX_TOKENS":
-            raise ProviderError("AI_TRUNCATED", "Output bị cắt ở giới hạn token.", retryable=True)
-        if reason not in {None, "STOP"}:
-            raise ProviderError("AI_BLOCKED", "Gemini dừng sinh trước khi hoàn tất JSON.")
-        usage = response.usage_metadata
-        tokens = (
-            {
-                name: getattr(usage, name, None)
-                for name in (
-                    "prompt_token_count",
-                    "candidates_token_count",
-                    "thoughts_token_count",
-                    "total_token_count",
-                )
-            }
-            if usage
-            else {}
-        )
-        return Reply(response.text or "", getattr(response, "model_version", None), tokens)
+        return reply_from_response(response)
 
     async def close(self):
         await self.client.aio.aclose()
         self.client.close()
+
+
+def reply_from_response(response):
+    """Interpret SDK output identically in the CLI and shared backend gateway."""
+    candidates = response.candidates or []
+    if not candidates:
+        raise ProviderError("AI_BLOCKED", "Gemini không trả nội dung để trích xuất blueprint.")
+    reason = getattr(candidates[0].finish_reason, "value", candidates[0].finish_reason)
+    if reason == "MAX_TOKENS":
+        raise ProviderError("AI_TRUNCATED", "Output bị cắt ở giới hạn token.", retryable=True)
+    if reason not in {None, "STOP"}:
+        raise ProviderError("AI_BLOCKED", "Gemini dừng sinh trước khi hoàn tất JSON.")
+    usage = response.usage_metadata
+    tokens = (
+        {
+            name: getattr(usage, name, None)
+            for name in (
+                "prompt_token_count",
+                "candidates_token_count",
+                "thoughts_token_count",
+                "total_token_count",
+            )
+        }
+        if usage
+        else {}
+    )
+    return Reply(response.text or "", getattr(response, "model_version", None), tokens)

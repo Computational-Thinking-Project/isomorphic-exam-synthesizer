@@ -28,29 +28,23 @@ jobs:
 
       - name: Backend Linting (Ruff)
         run: |
-          ruff check backend/app
+          ruff check backend/app scripts/blueprint
 
       - name: Backend Type Check (Mypy)
         run: |
           mypy backend/app --ignore-missing-imports
 
-      - name: Backend Unit and Security Tests
-        run: python -m pytest backend/tests -q
-
-      - name: SymPy LaTeX Parser Smoke Test (ANTLR Runtime Verification)
-        run: |
-          python -c "import sympy; from sympy.parsing.latex import parse_latex; res = parse_latex('x^2 + 1'); assert res is not None; print('SymPy LaTeX parser verified:', res)"
-
-      - name: Backend Unit & Integration Tests (Pytest)
-        working-directory: ./backend
-        run: |
-          pytest tests -v
+      - name: Backend Unit, Integration, Security and Blueprint Tests
+        run: python -m pytest backend/tests scripts/blueprint/tests -q
         env:
           ENVIRONMENT: test
           SUPABASE_URL: https://mock.supabase.co
           SUPABASE_ANON_KEY: mock-anon-key
           SUPABASE_SERVICE_ROLE_KEY: mock-service-role-key
 
+      - name: SymPy LaTeX Parser Smoke Test (ANTLR Runtime Verification)
+        run: |
+          python -c "import sympy; from sympy.parsing.latex import parse_latex; res = parse_latex('x^2 + 1'); assert res is not None; print('SymPy LaTeX parser verified:', res)"
 
   frontend-test:
     name: Frontend Lint & Build

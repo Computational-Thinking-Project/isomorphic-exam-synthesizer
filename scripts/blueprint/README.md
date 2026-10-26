@@ -1,3 +1,5 @@
+> Lõi triển khai hiện ở `backend/app/services/blueprint`; script chỉ là entry point dùng chung. Build context Docker là gốc repo. Schema canonical nằm trong backend package, schema trong docs là reference tương thích. Xem `docs/ai-w2-halfway.md`.
+
 # Script tạo blueprint — TASK-203
 
 Nhận JSON một hoặc nhiều câu mẫu, gọi Gemini và ghi **một file JSON kết quả**. Điểm bàn giao cho generator là file này. Xem [hợp đồng input/output](../../docs/blueprints/GENERATOR_INTEGRATION.md) và [thiết kế blueprint](../../docs/blueprints/README.md).
@@ -64,7 +66,7 @@ Mặc định provider `gemini`, model `gemini-3.5-flash-lite`. Ưu tiên: CLI �
 | Budget request/câu | `--max-requests-per-item` | `BLUEPRINT_MAX_REQUESTS_PER_ITEM` | 3; số nguyên 1–3, gồm retry và repair. |
 | Output token/request | `--max-output-tokens` | `BLUEPRINT_MAX_OUTPUT_TOKENS` | 16384; số nguyên 1–65536. |
 | Schema | `--schema` | `BLUEPRINT_SCHEMA_PATH` | Schema `0.4.0` trong repo. |
-| Prompts | `--prompt-directory` | `BLUEPRINT_PROMPT_DIRECTORY` | `blueprint_tool/prompts`. |
+| Prompts | `--prompt-directory` | `BLUEPRINT_PROMPT_DIRECTORY` | `backend/app/services/blueprint/prompts` (package dùng chung). |
 
 Dùng [TOML mẫu](../../docs/blueprints/blueprint.config.example.toml) bằng `--config /workspace/docs/blueprints/blueprint.config.example.toml` trong Docker. Đường dẫn tài nguyên tương đối trong TOML resolve từ gốc repo/tool, không từ cwd của caller. Các trường `[output]` cố định: UTF-8, atomic write và `log_level="INFO"`; trường log hiện chỉ được loader kiểm tra, không bật progress log. Chưa có override sampling/thinking.
 

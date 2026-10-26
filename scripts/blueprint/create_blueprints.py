@@ -1,4 +1,4 @@
-"""Standalone file interface for TASK-203. Does not import the application."""
+"""File interface for TASK-203, reusing the backend core without starting the app."""
 
 from blueprint_tool.cli import main
 

@@ -1,4 +1,4 @@
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,7 +8,25 @@ class Settings(BaseSettings):
 
     # AI Service
     GEMINI_API_KEY: SecretStr = SecretStr("")
+    GEMINI_API_KEY_1: SecretStr = SecretStr("")
+    GEMINI_API_KEY_2: SecretStr = SecretStr("")
+    GEMINI_API_KEY_3: SecretStr = SecretStr("")
     GEMINI_MODEL: str = "gemini-3.5-flash-lite"
+    GEMINI_MAX_CONCURRENCY: int = Field(default=3, ge=1, le=3)
+    GEMINI_REQUEST_TIMEOUT_SECONDS: float = Field(default=120, gt=0, allow_inf_nan=False)
+    GEMINI_KEY_COOLDOWN_SECONDS: float = Field(default=30, gt=0, allow_inf_nan=False)
+
+    def get_gemini_api_keys(self) -> list[str]:
+        """Return distinct configured keys without exposing them in settings repr."""
+        secrets = (
+            self.GEMINI_API_KEY,
+            self.GEMINI_API_KEY_1,
+            self.GEMINI_API_KEY_2,
+            self.GEMINI_API_KEY_3,
+        )
+        return list(dict.fromkeys(
+            value for secret in secrets if (value := secret.get_secret_value().strip())
+        ))
 
     # Supabase Credentials
     SUPABASE_URL: str = ""
