@@ -105,10 +105,21 @@ class SafeNumericEvaluator(ast.NodeVisitor):
     Maintains exact Decimal precision to prevent IEEE 754 precision loss.
     """
 
+    def __init__(self, source: Optional[str] = None) -> None:
+        self.source = source
+
     def visit_Expression(self, node: ast.Expression) -> Decimal:
         return self.visit(node.body)
 
     def visit_Constant(self, node: ast.Constant) -> Decimal:
+        if self.source is not None:
+            raw = ast.get_source_segment(self.source, node)
+            if raw is not None:
+                cleaned_raw = raw.strip().strip("()").replace("_", "")
+                try:
+                    return Decimal(cleaned_raw)
+                except InvalidOperation:
+                    pass
         if isinstance(node.value, int):
             return Decimal(node.value)
         if isinstance(node.value, float):
@@ -183,7 +194,7 @@ def safe_eval_numeric_expr(expr_str: str) -> Optional[Decimal]:
 
     try:
         tree = ast.parse(cleaned, mode="eval")
-        evaluator = SafeNumericEvaluator()
+        evaluator = SafeNumericEvaluator(source=cleaned)
         return evaluator.visit(tree)
     except (SyntaxError, ValueError, ZeroDivisionError, OverflowError, InvalidOperation):
         return None

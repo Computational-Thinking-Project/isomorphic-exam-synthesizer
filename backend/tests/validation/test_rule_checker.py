@@ -3,6 +3,7 @@ Unit tests for Rule-Based Fallback Checker (VAL-04 / TASK-107c).
 """
 
 import json
+from decimal import Decimal
 from pathlib import Path
 
 from app.models.schemas import GeneratedVariant, SourceQuestion
@@ -930,3 +931,34 @@ class TestRuleCheckerReviewRegressionFixes:
         # Log base 1.0000000000000001 is != 1: must NOT be falsely flagged as base == 1
         res_log_base_high_prec = check_mathematical_invariants(r"Tính \log_{1.0000000000000001}(5)")
         assert res_log_base_high_prec.passed is True
+
+    def test_exact_token_precision_in_expressions_and_domain_invariants(self):
+        # 1. Direct arithmetic precision: 1.0000000000000001 - 1 evaluates to 1e-16, not 0
+        diff_pos = safe_eval_numeric_expr("1.0000000000000001 - 1")
+        assert diff_pos == Decimal("0.0000000000000001")
+        assert diff_pos != 0
+
+        diff_neg = safe_eval_numeric_expr("1 - 1.0000000000000001")
+        assert diff_neg == Decimal("-0.0000000000000001")
+        assert diff_neg < 0
+
+        # 2. \sqrt{1-1.0000000000000001}: radicand is negative (-1e-16), must be rejected
+        res_sqrt = check_mathematical_invariants(r"Tính giá trị của \sqrt{1-1.0000000000000001}")
+        assert res_sqrt.passed is False
+        assert any("Negative radicand in even root" in err for err in res_sqrt.errors)
+
+        # 3. \ln(1.0000000000000001-1): argument is positive (1e-16), must NOT be rejected as 0
+        res_ln = check_mathematical_invariants(r"Tính giá trị của \ln(1.0000000000000001-1)")
+        assert res_ln.passed is True
+        assert len(res_ln.errors) == 0
+
+        # 4. Fraction with denominator 1.0000000000000001-1: denominator is non-zero (1e-16), must NOT be rejected as zero
+        res_frac = check_mathematical_invariants(r"Tính giá trị của \frac{1}{1.0000000000000001-1}")
+        assert res_frac.passed is True
+        assert len(res_frac.errors) == 0
+
+        # 5. Log base from expression: 2 - 1.0000000000000001 is 0.9999999999999999 != 1, must pass
+        res_log = check_mathematical_invariants(
+            r"Tính giá trị của \log_{2 - 1.0000000000000001}(5)"
+        )
+        assert res_log.passed is True
