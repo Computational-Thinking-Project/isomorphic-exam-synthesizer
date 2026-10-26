@@ -58,7 +58,8 @@ async def main():
         raise RuntimeError(drafts.model_dump_json())
     previous = drafts.results[0].candidate
     regenerated = await service.regenerate_question(source, blueprints[0]["blueprint"], previous,
-        confirmed_source_hash=confirmed, context=context)
+        confirmed_source_hash=confirmed, context=context,
+        current_candidates=[result.candidate for result in drafts.results[1:]])
     if regenerated.candidate is None:
         raise RuntimeError(regenerated.model_dump_json())
     output = {

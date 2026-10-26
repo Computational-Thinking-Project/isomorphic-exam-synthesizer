@@ -167,6 +167,41 @@ async def test_regenerate_keeps_blueprint_and_old_candidate_and_has_no_teacher_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("exhausted", [False, True])
+async def test_regeneration_rejects_other_version_even_with_shuffled_options(pipeline, exhausted):
+    p = pipeline
+    previous = (await generate(p)).candidate
+    peer = (await generate(p)).candidate
+    snapshot = peer.model_dump()
+    duplicate = copy.deepcopy(p.candidates[1])
+    duplicate["options"] = duplicate["options"][1:] + duplicate["options"][:1]
+    duplicate["correct_key"] = duplicate["solution"]["correct_key"] = "D"
+    p.responses[:] = [duplicate] * 4 if exhausted else [duplicate, p.candidates[2]]
+    result = await p.service.regenerate_question(p.source, p.blueprint, previous,
+        confirmed_source_hash=p.confirmed, context=p.context, current_candidates=[peer])
+    assert peer.model_dump() == snapshot
+    if exhausted:
+        assert result.candidate is None and result.error_code == "DUPLICATE_CANDIDATE"
+        assert result.attempts == 4
+    else:
+        assert result.candidate.question_text == p.candidates[2]["question_text"]
+        assert result.attempts == 2
+        assert "duplicate_candidate" in p.calls[-1]["contents"]
+
+
+@pytest.mark.asyncio
+async def test_regeneration_rejects_foreign_peer_before_calling_api(pipeline):
+    p = pipeline
+    previous = (await generate(p)).candidate
+    peer = previous.model_copy(update={"source_question_id": "foreign"})
+    with pytest.raises(ToolError) as caught:
+        await p.service.regenerate_question(p.source, p.blueprint, previous,
+            confirmed_source_hash=p.confirmed, context=p.context, current_candidates=[peer])
+    assert caught.value.code == "PREVIOUS_VARIANT_MISMATCH"
+    assert p.budget.used == 1
+
+
+@pytest.mark.asyncio
 async def test_deadline_and_nonretryable_error_are_bounded(pipeline):
     p = pipeline
     p.responses[:] = [GatewayError("REQUEST_BUDGET_EXHAUSTED", retryable=False)]
