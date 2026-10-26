@@ -143,7 +143,7 @@ export default function App() {
           element={<LoginPage profileState={profileState} />}
         />
 
-        <Route element={<ProtectedRoute />}>
+        <Route element={<ProtectedRoute profileState={profileState} />}>
           <Route path="/dashboard" element={<DashboardRoute />} />
           <Route path="/session/:sessionId/stage1" element={<Stage1Route />} />
         </Route>
