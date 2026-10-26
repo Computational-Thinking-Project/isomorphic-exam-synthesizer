@@ -158,6 +158,35 @@ BẢNG ĐÁP ÁN:
     assert questions[1].correct_key == "A"
 
 
+def test_markdown_parser_bullet_list_options():
+    """Parse markdown questions where options use bullet lists (- A. or * A.)."""
+    md_content = """
+### Câu 1: Cho biểu thức $A = x + 1$.
+- A. 1
+- B. 2
+- C. 3
+- D. 4
+
+### Câu 2: Cho biểu thức $B = y - 2$.
+* A. 10
+* B. 20
+* C. 30
+* D. 40
+
+BẢNG ĐÁP ÁN:
+1.A 2.B
+"""
+    questions, errors = parse_markdown(md_content)
+    assert len(errors) == 0
+    assert len(questions) == 2
+    assert questions[0].raw_content == "Cho biểu thức $A = x + 1$."
+    assert questions[0].options == {"A": "1", "B": "2", "C": "3", "D": "4"}
+    assert questions[0].correct_key == "A"
+    assert questions[1].raw_content == "Cho biểu thức $B = y - 2$."
+    assert questions[1].options == {"A": "10", "B": "20", "C": "30", "D": "40"}
+    assert questions[1].correct_key == "B"
+
+
 def test_markdown_parser_missing_answer():
     """Parse markdown where question 2 has no answer key."""
     md_content = """
