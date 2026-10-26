@@ -715,7 +715,7 @@ class TestRuleCheckerReviewRegressionFixes:
         bp_min0 = {"bounds": {"min": 0, "max": 10}}
         res_fail1 = check_parameter_bounds("Giá trị tham số k = -1", blueprint=bp_min0)
         assert res_fail1.passed is False
-        assert any("below minimum 0.0" in err for err in res_fail1.errors)
+        assert any("below minimum 0" in err for err in res_fail1.errors)
 
         res_pass1 = check_parameter_bounds("Giá trị tham số k = 0", blueprint=bp_min0)
         assert res_pass1.passed is True
@@ -724,7 +724,7 @@ class TestRuleCheckerReviewRegressionFixes:
         bp_max0 = {"bounds": {"min": -10, "max": 0}}
         res_fail2 = check_parameter_bounds("Giá trị tham số k = 1", blueprint=bp_max0)
         assert res_fail2.passed is False
-        assert any("exceeds maximum 0.0" in err for err in res_fail2.errors)
+        assert any("exceeds maximum 0" in err for err in res_fail2.errors)
 
         # nested parameter_domains with minimum 0
         bp_nested0 = {"parameter_domains": [{"name": "p", "minimum": 0, "maximum": 5}]}
@@ -863,3 +863,70 @@ class TestRuleCheckerReviewRegressionFixes:
         assert res_domain.passed is False
         assert res_domain.status == "domain_error"
         assert any("causes denominator" in err for err in res_domain.errors)
+
+    def test_strict_division_by_zero_and_negative_arguments_in_sqrt_ln(self):
+        # 1/0.0000000000001 is positive, non-zero: valid denominator
+        res_valid = check_mathematical_invariants(r"Tính \frac{1}{0.0000000000001}")
+        assert res_valid.passed is True
+
+        # \sqrt{-1/0.0000000000001} evaluates to -1e13 < 0: must fail with negative radicand
+        res_sqrt_neg = check_mathematical_invariants(r"Tính \sqrt{-1/0.0000000000001}")
+        assert res_sqrt_neg.passed is False
+        assert any("Negative radicand" in err for err in res_sqrt_neg.errors)
+
+        # \ln(-1/0.0000000000001) evaluates to -1e13 <= 0: must fail with non-positive log argument
+        res_ln_neg = check_mathematical_invariants(r"Tính \ln(-1/0.0000000000001)")
+        assert res_ln_neg.passed is False
+        assert any(
+            "Logarithm argument must be strictly positive" in err for err in res_ln_neg.errors
+        )
+
+        # \sqrt{1/0} has division by zero: must fail with uncomputable/invalid expression
+        res_sqrt_zero_div = check_mathematical_invariants(r"Tính \sqrt{1/0}")
+        assert res_sqrt_zero_div.passed is False
+
+    def test_exact_precision_large_integer_and_high_precision_decimal_bounds(self):
+        # 2^53 = 9007199254740992; 9007199254740993 must NOT be conflated by float rounding
+        bp_large_int = {
+            "parameter_domains": [
+                {
+                    "name": "N",
+                    "allowed_values": [9007199254740992],
+                }
+            ]
+        }
+        res_exact_match = check_parameter_bounds(
+            "Cho N = 9007199254740992",
+            blueprint=bp_large_int,
+            parameters={"N": 9007199254740992},
+        )
+        assert res_exact_match.passed is True
+
+        res_diff_reject = check_parameter_bounds(
+            "Cho N = 9007199254740993",
+            blueprint=bp_large_int,
+            parameters={"N": 9007199254740993},
+        )
+        assert res_diff_reject.passed is False
+        assert any("not in allowed values" in err for err in res_diff_reject.errors)
+
+        # Minimum decimal "1.0000000000000001": value "1" is strictly below minimum
+        bp_high_prec_min = {
+            "parameter_domains": [
+                {
+                    "name": "k",
+                    "minimum": "1.0000000000000001",
+                }
+            ]
+        }
+        res_min_reject = check_parameter_bounds(
+            "Cho tham số k = 1",
+            blueprint=bp_high_prec_min,
+            parameters={"k": 1},
+        )
+        assert res_min_reject.passed is False
+        assert any("below minimum" in err for err in res_min_reject.errors)
+
+        # Log base 1.0000000000000001 is != 1: must NOT be falsely flagged as base == 1
+        res_log_base_high_prec = check_mathematical_invariants(r"Tính \log_{1.0000000000000001}(5)")
+        assert res_log_base_high_prec.passed is True

@@ -260,60 +260,75 @@ def validate_question(
                         continue
                     if not opt or not str(opt).strip():
                         continue
-                    dist_res = verify_question_math(
-                        question_text=question_text or "",
-                        correct_answer=str(opt).strip(),
-                        timeout=timeout,
-                    )
-                    if dist_res.passed and dist_res.status == EvaluationStatus.VERIFIED:
-                        opt_label = chr(ord("A") + i) if i < 26 else str(i + 1)
-                        multiple_solutions_found.append((opt_label, str(opt).strip()))
-                    elif dist_res.status in (
-                        EvaluationStatus.TIMEOUT,
-                        EvaluationStatus.UNSUPPORTED,
-                    ):
+                    try:
+                        dist_res = verify_question_math(
+                            question_text=question_text or "",
+                            correct_answer=str(opt).strip(),
+                            timeout=timeout,
+                        )
+                        if dist_res.passed and dist_res.status == EvaluationStatus.VERIFIED:
+                            opt_label = chr(ord("A") + i) if i < 26 else str(i + 1)
+                            multiple_solutions_found.append((opt_label, str(opt).strip()))
+                            # Record definitive failure immediately so subsequent worker errors cannot erase it
+                            des_label = (
+                                f"Option {chr(ord('A') + designated_idx)}"
+                                if 0 <= designated_idx < 26
+                                else f"designated answer '{resolved_answer}'"
+                            )
+                            err_msg = (
+                                f"Multiple options satisfy the equation: both {des_label} ('{resolved_answer}') "
+                                f"and Option {opt_label} ('{str(opt).strip()}') are valid solutions."
+                            )
+                            errors.append(f"SymPy CAS verification failed: {err_msg}")
+                            sympy_res.passed = False
+                            sympy_res.status = EvaluationStatus.FAILED
+                            sympy_res.detail = err_msg
+                            sympy_check.passed = False
+                            sympy_check.status = "failed"
+                            sympy_check.detail = err_msg
+                            sympy_check.errors.append(err_msg)
+                        elif dist_res.status in (
+                            EvaluationStatus.TIMEOUT,
+                            EvaluationStatus.UNSUPPORTED,
+                        ):
+                            uniqueness_inconclusive = True
+                            warnings.append(
+                                f"Option {chr(ord('A') + i)} ('{str(opt).strip()}') uniqueness could not be definitively verified by CAS ({dist_res.status.value})."
+                            )
+                    except Exception as dist_exc:
+                        logger.warning(
+                            "Worker error during distractor evaluation for option %s: %s",
+                            i,
+                            dist_exc,
+                        )
                         uniqueness_inconclusive = True
                         warnings.append(
-                            f"Option {chr(ord('A') + i)} ('{str(opt).strip()}') uniqueness could not be definitively verified by CAS ({dist_res.status.value})."
+                            f"Option {chr(ord('A') + i)} ('{str(opt).strip()}') uniqueness check encountered worker error: {dist_exc}"
                         )
 
-                if multiple_solutions_found:
-                    des_label = (
-                        f"Option {chr(ord('A') + designated_idx)}"
-                        if 0 <= designated_idx < 26
-                        else f"designated answer '{resolved_answer}'"
-                    )
-                    mult_strs = [f"Option {lbl} ('{val}')" for lbl, val in multiple_solutions_found]
-                    err_msg = (
-                        f"Multiple options satisfy the equation: both {des_label} ('{resolved_answer}') "
-                        f"and {', '.join(mult_strs)} are valid solutions."
-                    )
-                    errors.append(f"SymPy CAS verification failed: {err_msg}")
-                    sympy_res.passed = False
-                    sympy_res.status = EvaluationStatus.FAILED
-                    sympy_res.detail = err_msg
-                    sympy_check.passed = False
-                    sympy_check.status = "failed"
-                    sympy_check.detail = err_msg
-                    sympy_check.errors = [err_msg]
         except Exception as exc:
             logger.warning("Unexpected error during SymPy evaluation: %s", exc)
-            sympy_res = EvaluationResult(
-                status=EvaluationStatus.UNSUPPORTED,
-                passed=False,
-                confidence="rule_only",
-                detail=f"SymPy evaluation exception: {exc}",
-            )
             warnings.append(f"SymPy execution encountered an error: {exc}")
-            checks.append(
-                CheckResult(
-                    check_name="sympy_evaluator",
+            # If sympy_res was already decisively failed (e.g. multiple correct answers found), never erase the failure!
+            if sympy_res is None or sympy_res.status not in (
+                EvaluationStatus.FAILED,
+                EvaluationStatus.DOMAIN_ERROR,
+            ):
+                sympy_res = EvaluationResult(
+                    status=EvaluationStatus.UNSUPPORTED,
                     passed=False,
-                    status="unsupported",
                     confidence="rule_only",
-                    detail=str(exc),
+                    detail=f"SymPy evaluation exception: {exc}",
                 )
-            )
+                checks.append(
+                    CheckResult(
+                        check_name="sympy_evaluator",
+                        passed=False,
+                        status="unsupported",
+                        confidence="rule_only",
+                        detail=str(exc),
+                    )
+                )
 
     # -------------------------------------------------------------------------
     # STAGE 4: Deterministic Rule-Based Fallback & Invariants (VAL-04)

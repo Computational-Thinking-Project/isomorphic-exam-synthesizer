@@ -410,7 +410,7 @@ class TestAggregatorReviewRegressionFixes:
         )
         assert report.passed is False
         assert report.status == "failed"
-        assert any("below minimum 0.0" in err for err in report.errors)
+        assert any("below minimum 0" in err for err in report.errors)
 
     def test_mathematically_equivalent_answer_passes(self):
         # Option A is 1/2, correct answer is 0.5
@@ -423,3 +423,49 @@ class TestAggregatorReviewRegressionFixes:
         assert report.status == "passed"
         assert report.confidence == "sympy_verified"
         assert len(report.errors) == 0
+
+    def test_worker_oserror_does_not_erase_multiple_correct_solutions_failure(self):
+        # A=1 and B=-1 both satisfy x^2 - 1 = 0.
+        # If testing distractor C=2 triggers an OSError (worker process error),
+        # the multiple solutions failure MUST NOT be overwritten or erased into passed!
+        call_count = 0
+
+        def mock_verify(question_text: str, correct_answer: str, timeout: float):
+            nonlocal call_count
+            call_count += 1
+            if correct_answer == "1":
+                return EvaluationResult(
+                    status=EvaluationStatus.VERIFIED,
+                    passed=True,
+                    confidence="sympy_verified",
+                    detail="Verified candidate answer '1'",
+                )
+            if correct_answer == "-1":
+                return EvaluationResult(
+                    status=EvaluationStatus.VERIFIED,
+                    passed=True,
+                    confidence="sympy_verified",
+                    detail="Verified candidate answer '-1'",
+                )
+            if correct_answer == "2":
+                raise OSError("Cannot allocate worker process in pool")
+            return EvaluationResult(
+                status=EvaluationStatus.FAILED,
+                passed=False,
+                confidence="sympy_verified",
+                detail="Not a root",
+            )
+
+        with patch(
+            "app.services.validator.aggregator.verify_question_math", side_effect=mock_verify
+        ):
+            report = validate_question(
+                question_text="Phương trình $x^2 - 1 = 0$ có nghiệm là",
+                options=["1", "-1", "2", "3"],
+                correct_answer="A",
+            )
+
+        assert report.passed is False
+        assert report.status == "failed"
+        assert any("Multiple options satisfy the equation" in err for err in report.errors)
+        assert any("worker error" in w.lower() or "oserror" in w.lower() for w in report.warnings)
