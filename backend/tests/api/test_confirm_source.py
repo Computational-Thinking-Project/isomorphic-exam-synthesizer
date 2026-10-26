@@ -17,8 +17,11 @@ Validates all 12 test cases:
 
 from unittest.mock import MagicMock, patch
 
+import httpcore
+import httpx
 import pytest
 from fastapi import HTTPException
+from postgrest.exceptions import APIError
 
 MOCK_SESSION_ID = "11111111-1111-1111-1111-111111111111"
 
@@ -309,15 +312,17 @@ def test_confirm_success_no_warnings(client, mock_auth_user, auth_headers):
     mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
     mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
 
-    # Update calls
-    mock_update = MagicMock()
-    mock_update.data = [{}]
-    mock_db.table.return_value.update.return_value.in_.return_value.execute.return_value = (
-        mock_update
-    )
-    mock_db.table.return_value.update.return_value.eq.return_value.execute.return_value = (
-        mock_update
-    )
+    # RPC returns success
+    mock_rpc_res = MagicMock()
+    mock_rpc_res.data = {
+        "success": True,
+        "session_id": MOCK_SESSION_ID,
+        "status": "blueprinted",
+        "confirmed_at": "2026-10-26T01:00:00+00:00",
+        "total_questions": 5,
+        "total_blueprints": 5,
+    }
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
 
     with (
         patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
@@ -359,14 +364,17 @@ def test_confirm_success_security_acknowledged(client, mock_auth_user, auth_head
     mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
     mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
 
-    mock_update = MagicMock()
-    mock_update.data = [{}]
-    mock_db.table.return_value.update.return_value.in_.return_value.execute.return_value = (
-        mock_update
-    )
-    mock_db.table.return_value.update.return_value.eq.return_value.execute.return_value = (
-        mock_update
-    )
+    # RPC returns success
+    mock_rpc_res = MagicMock()
+    mock_rpc_res.data = {
+        "success": True,
+        "session_id": MOCK_SESSION_ID,
+        "status": "blueprinted",
+        "confirmed_at": "2026-10-26T01:00:00+00:00",
+        "total_questions": 3,
+        "total_blueprints": 3,
+    }
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
 
     with (
         patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
@@ -405,20 +413,17 @@ def test_confirm_auto_creates_missing_blueprints(client, mock_auth_user, auth_he
     mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data[:3]]
     mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
 
-    # Mock insert for missing blueprints
-    mock_insert = MagicMock()
-    mock_insert.data = [{}]
-    mock_db.table.return_value.insert.return_value.execute.return_value = mock_insert
-
-    # Update calls
-    mock_update = MagicMock()
-    mock_update.data = [{}]
-    mock_db.table.return_value.update.return_value.in_.return_value.execute.return_value = (
-        mock_update
-    )
-    mock_db.table.return_value.update.return_value.eq.return_value.execute.return_value = (
-        mock_update
-    )
+    # RPC returns success
+    mock_rpc_res = MagicMock()
+    mock_rpc_res.data = {
+        "success": True,
+        "session_id": MOCK_SESSION_ID,
+        "status": "blueprinted",
+        "confirmed_at": "2026-10-26T01:00:00+00:00",
+        "total_questions": 5,
+        "total_blueprints": 5,
+    }
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
 
     with (
         patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
@@ -613,8 +618,8 @@ def test_confirm_source_rpc_concurrent_modification_returns_409(client, mock_aut
     assert "modified concurrently" in response.json()["detail"]
 
 
-def test_confirm_source_rpc_network_timeout_returns_504(client, mock_auth_user, auth_headers):
-    """Network timeout during RPC raises HTTP 504 Gateway Timeout without claiming DB state was unchanged."""
+def test_confirm_source_rpc_read_timeout_empty_message_returns_504(client, mock_auth_user, auth_headers):
+    """Real httpx.ReadTimeout with empty message raises HTTP 504 Gateway Timeout without claiming DB was rolled back."""
     mock_db = MagicMock()
     mock_status = MagicMock()
     mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
@@ -631,8 +636,8 @@ def test_confirm_source_rpc_network_timeout_returns_504(client, mock_auth_user, 
     mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
     mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
 
-    # RPC encounters network timeout
-    mock_db.rpc.return_value.execute.side_effect = Exception("The read operation timed out")
+    # Real httpx.ReadTimeout with empty string message
+    mock_db.rpc.return_value.execute.side_effect = httpx.ReadTimeout("")
 
     with (
         patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
@@ -646,11 +651,14 @@ def test_confirm_source_rpc_network_timeout_returns_504(client, mock_auth_user, 
         )
 
     assert response.status_code == 504
-    assert "uncertain due to network timeout" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert "uncertain due to network timeout" in detail
+    assert "was rolled back" not in detail
+    assert "Please verify session state" in detail
 
 
-def test_confirm_source_rpc_db_error_returns_500_rollback(client, mock_auth_user, auth_headers):
-    """Database execution error during RPC raises HTTP 500 stating transaction was rolled back."""
+def test_confirm_source_rpc_read_error_empty_message_returns_504(client, mock_auth_user, auth_headers):
+    """Real httpx.ReadError with empty message raises HTTP 504 warning uncertain status without claiming rollback."""
     mock_db = MagicMock()
     mock_status = MagicMock()
     mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
@@ -667,8 +675,129 @@ def test_confirm_source_rpc_db_error_returns_500_rollback(client, mock_auth_user
     mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
     mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
 
-    # RPC fails with unhandled database connection error
-    mock_db.rpc.return_value.execute.side_effect = Exception("Deadlock detected in postgres")
+    # Real httpx.ReadError with empty message
+    mock_db.rpc.return_value.execute.side_effect = httpx.ReadError("")
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+        patch("app.api.routes.sessions.assert_ownership", return_value=None),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
+            json={"acknowledged_security_warnings": False},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 504
+    detail = response.json()["detail"]
+    assert "uncertain due to network communication error" in detail
+    assert "was rolled back" not in detail
+    assert "Please verify session state" in detail
+
+
+def test_confirm_source_rpc_remote_protocol_error_lost_response_returns_504(client, mock_auth_user, auth_headers):
+    """httpx.RemoteProtocolError for dropped connection returns HTTP 504 without claiming rollback."""
+    mock_db = MagicMock()
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
+    mock_questions = MagicMock()
+    mock_questions.data = _create_mock_questions(count=2)
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        mock_status
+    )
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        mock_questions
+    )
+    mock_bps = MagicMock()
+    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
+
+    mock_db.rpc.return_value.execute.side_effect = httpx.RemoteProtocolError(
+        "Server disconnected without sending a response."
+    )
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+        patch("app.api.routes.sessions.assert_ownership", return_value=None),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
+            json={"acknowledged_security_warnings": False},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 504
+    detail = response.json()["detail"]
+    assert "uncertain due to network communication error" in detail
+    assert "was rolled back" not in detail
+    assert "Please verify session state" in detail
+
+
+def test_confirm_source_rpc_httpcore_remote_protocol_error_returns_504(client, mock_auth_user, auth_headers):
+    """httpcore.RemoteProtocolError directly raised is recognized as network transport error (504)."""
+    mock_db = MagicMock()
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
+    mock_questions = MagicMock()
+    mock_questions.data = _create_mock_questions(count=2)
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        mock_status
+    )
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        mock_questions
+    )
+    mock_bps = MagicMock()
+    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
+
+    mock_db.rpc.return_value.execute.side_effect = httpcore.RemoteProtocolError(
+        "Server disconnected without sending a response."
+    )
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+        patch("app.api.routes.sessions.assert_ownership", return_value=None),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
+            json={"acknowledged_security_warnings": False},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 504
+    detail = response.json()["detail"]
+    assert "uncertain due to network communication error" in detail
+    assert "was rolled back" not in detail
+    assert "Please verify session state" in detail
+
+
+def test_confirm_source_rpc_db_error_with_apierror_returns_500_rollback(client, mock_auth_user, auth_headers):
+    """Database execution error with APIError raises HTTP 500 confirming transaction was rolled back."""
+    mock_db = MagicMock()
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
+    mock_questions = MagicMock()
+    mock_questions.data = _create_mock_questions(count=2)
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        mock_status
+    )
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        mock_questions
+    )
+    mock_bps = MagicMock()
+    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
+
+    # Real postgrest APIError representing confirmed Postgres failure
+    mock_db.rpc.return_value.execute.side_effect = APIError(
+        {"message": "Deadlock detected in postgres", "code": "40P01"}
+    )
 
     with (
         patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
@@ -682,7 +811,47 @@ def test_confirm_source_rpc_db_error_returns_500_rollback(client, mock_auth_user
         )
 
     assert response.status_code == 500
-    assert "rolled back" in response.json()["detail"]
+    assert "Database atomic confirmation failed and was rolled back" in response.json()["detail"]
+
+
+def test_confirm_source_rpc_unexpected_runtime_error_returns_500_without_claiming_rollback(
+    client, mock_auth_user, auth_headers
+):
+    """Unexpected runtime error without DB evidence returns HTTP 500 without falsely claiming rollback."""
+    mock_db = MagicMock()
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
+    mock_questions = MagicMock()
+    mock_questions.data = _create_mock_questions(count=2)
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        mock_status
+    )
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        mock_questions
+    )
+    mock_bps = MagicMock()
+    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
+
+    # Unexpected internal runtime error without DB rollback evidence
+    mock_db.rpc.return_value.execute.side_effect = RuntimeError("Internal memory allocation failure")
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+        patch("app.api.routes.sessions.assert_ownership", return_value=None),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
+            json={"acknowledged_security_warnings": False},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert "was rolled back" not in detail
+    assert "Database atomic confirmation failed. Please verify session state before retrying." in detail
 
 
 def test_confirm_source_returns_real_db_counts(client, mock_auth_user, auth_headers):
