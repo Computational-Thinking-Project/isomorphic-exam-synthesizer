@@ -1,0 +1,9 @@
+# Session entry — TASK-103 increment C
+
+Protected route: `/session/:sessionId/stage1`. Literal `new` shows a metadata form; it never calls detail or creates a session on mount/reload. Explicit submit uses the existing create service, then replaces the entry history item with the returned ID route. Defaults Toán/12 are editable; subject and grade follow the backend contract.
+
+Existing IDs are read through the shared detail service with loading, safe errors, retry and a Dashboard link. A draft displays its saved metadata and source/version counts. A session whose latest status is no longer draft displays a notice and does not start processing or redirect to an unimplemented Stage. Upload, extraction, source preview/confirmation and Stage2 are not implemented by this increment. This entry does not complete TASK201 or TASK103.
+
+`sessionEntry.js` owns transient request state. It prevents concurrent create submissions, aborts on route/account cleanup and ignores late results. Account/login-version and route-ID changes remount the entry, clearing private form/detail data. Uncertain create failures block another submission in that entry and ask the user to check Dashboard first; this is not server idempotency. Existing shared client 401 handling remains unchanged.
+
+Checks on26/10/2026 before the first entry commit:146 frontend tests passed (13 new controller tests), lint and build passed. Browser fixture checks exercise the real React route, ProtectedRoute, services and API client with a local Auth substitute and intercepted HTTP responses: new/F5 causes no POST, invalid input, one explicit create, replace navigation, detail/F5,404/retry, changed status, signed-out redirect, account reset and375px layout. No real OAuth/cloud or Docker/Nginx route acceptance is claimed for this new entry. Live create/detail and A/B ownership checks from increment B remain separate evidence.

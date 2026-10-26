@@ -10,6 +10,7 @@ import ProtectedRoute from './features/auth/ProtectedRoute.jsx';
 import { useAuthStore } from './features/auth/authStore.js';
 import { useAuthProfile } from './features/auth/useAuthProfile.js';
 import DashboardRoute from './features/dashboard/DashboardRoute.jsx';
+import Stage1Route from './features/stage1-ingestion/Stage1Route.jsx';
 import { getSupabase } from './services/supabase.js';
 import { classifyAuthError } from './services/authErrors.js';
 
@@ -144,6 +145,7 @@ export default function App() {
 
         <Route element={<ProtectedRoute />}>
           <Route path="/dashboard" element={<DashboardRoute />} />
+          <Route path="/session/:sessionId/stage1" element={<Stage1Route />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/login" replace />} />
