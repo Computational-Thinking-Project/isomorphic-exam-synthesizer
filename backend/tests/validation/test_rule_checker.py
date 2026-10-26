@@ -962,3 +962,24 @@ class TestRuleCheckerReviewRegressionFixes:
             r"Tính giá trị của \log_{2 - 1.0000000000000001}(5)"
         )
         assert res_log.passed is True
+
+    def test_exact_rational_arithmetic_prevents_rounding_to_domain_errors(self):
+        # 1. Direct rational evaluation: 1/3 * 3 - 1 must be exact 0, NOT -1E-28
+        val = safe_eval_numeric_expr("1/3*3-1")
+        assert val == 0
+        assert val is not None
+
+        # 2. \sqrt{1/3*3-1} is sqrt(0), which is mathematically valid (radicand >= 0)
+        res_sqrt = check_mathematical_invariants(r"Tính giá trị của \sqrt{1/3*3-1}")
+        assert res_sqrt.passed is True
+        assert len(res_sqrt.errors) == 0
+
+        # 3. \frac{1}{1/3*3-1} has denominator = 0, must be detected as zero denominator and FAIL
+        res_frac = check_mathematical_invariants(r"Tính giá trị của \frac{1}{1/3*3-1}")
+        assert res_frac.passed is False
+        assert any("Zero denominator detected" in err for err in res_frac.errors)
+
+        # 4. \ln(1/3*3-1) has argument = 0 <= 0, must FAIL
+        res_ln = check_mathematical_invariants(r"Tính giá trị của \ln(1/3*3-1)")
+        assert res_ln.passed is False
+        assert any("Logarithm argument must be strictly positive" in err for err in res_ln.errors)

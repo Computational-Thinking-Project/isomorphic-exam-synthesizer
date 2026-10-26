@@ -32,8 +32,10 @@ Key Capabilities:
 
 import ast
 import logging
+import math
 import re
 from decimal import Decimal, InvalidOperation
+from fractions import Fraction
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.services.validator.base import CheckResult
@@ -97,48 +99,63 @@ QUADRATIC_EQ_REGEX = re.compile(
 )
 
 
+def _format_fraction(val: Fraction) -> str:
+    """Format Fraction into exact decimal string if terminating, otherwise fraction or integer."""
+    if val.denominator == 1:
+        return str(val.numerator)
+    temp_den = val.denominator
+    while temp_den % 2 == 0:
+        temp_den //= 2
+    while temp_den % 5 == 0:
+        temp_den //= 5
+    if temp_den == 1:
+        return str(Decimal(val.numerator) / Decimal(val.denominator))
+    return str(val)
+
+
 class SafeNumericEvaluator(ast.NodeVisitor):
     """
     Strict, deterministic AST visitor that safely evaluates basic numeric
     arithmetic expressions (+, -, *, /, **, %) and safe functions (sqrt, abs)
     without using eval() or arbitrary code execution.
-    Maintains exact Decimal precision to prevent IEEE 754 precision loss.
+    Maintains exact rational Fraction precision to prevent IEEE 754 precision loss
+    and recurring decimal division rounding errors.
     """
 
     def __init__(self, source: Optional[str] = None) -> None:
         self.source = source
 
-    def visit_Expression(self, node: ast.Expression) -> Decimal:
+    def visit_Expression(self, node: ast.Expression) -> Fraction:
         return self.visit(node.body)
 
-    def visit_Constant(self, node: ast.Constant) -> Decimal:
+    def visit_Constant(self, node: ast.Constant) -> Fraction:
         if self.source is not None:
             raw = ast.get_source_segment(self.source, node)
             if raw is not None:
                 cleaned_raw = raw.strip().strip("()").replace("_", "")
                 try:
-                    return Decimal(cleaned_raw)
-                except InvalidOperation:
+                    return Fraction(cleaned_raw)
+                except ValueError:
                     pass
         if isinstance(node.value, int):
-            return Decimal(node.value)
+            return Fraction(node.value)
         if isinstance(node.value, float):
-            return Decimal(str(node.value))
+            return Fraction(str(node.value))
         if isinstance(node.value, str):
-            return Decimal(node.value)
+            return Fraction(node.value)
         raise ValueError(f"Unsupported constant type: {type(node.value)}")
 
-    def visit_UnaryOp(self, node: ast.UnaryOp) -> Decimal:
-        operand: Decimal = self.visit(node.operand)
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> Fraction:
+        operand: Fraction = self.visit(node.operand)
         if isinstance(node.op, ast.UAdd):
             return +operand
         if isinstance(node.op, ast.USub):
             return -operand
         raise ValueError(f"Unsupported unary operator: {type(node.op)}")
 
-    def visit_BinOp(self, node: ast.BinOp) -> Decimal:
-        left: Decimal = self.visit(node.left)
-        right: Decimal = self.visit(node.right)
+    def visit_BinOp(self, node: ast.BinOp) -> Fraction:
+        left: Fraction = self.visit(node.left)
+        right: Fraction = self.visit(node.right)
         if isinstance(node.op, ast.Add):
             return left + right
         if isinstance(node.op, ast.Sub):
@@ -152,32 +169,42 @@ class SafeNumericEvaluator(ast.NodeVisitor):
         if isinstance(node.op, ast.Pow):
             if abs(left) > 1000 or abs(right) > 20:
                 raise ValueError("Exponentiation out of safe bounds")
-            return left**right
+            if right.denominator != 1:
+                flt_res = float(left) ** float(right)
+                return Fraction(str(round(flt_res, 12))).limit_denominator(1000000)
+            return left ** int(right)
         if isinstance(node.op, ast.Mod):
             if right == 0:
                 raise ZeroDivisionError("Modulo by zero in AST evaluation")
             return left % right
         raise ValueError(f"Unsupported binary operator: {type(node.op)}")
 
-    def visit_Call(self, node: ast.Call) -> Decimal:
+    def visit_Call(self, node: ast.Call) -> Fraction:
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
             if func_name == "abs" and len(node.args) == 1:
                 return abs(self.visit(node.args[0]))
             if func_name == "sqrt" and len(node.args) == 1:
-                val: Decimal = self.visit(node.args[0])
+                val: Fraction = self.visit(node.args[0])
                 if val < 0:
                     raise ValueError(f"Square root of negative number: {val}")
-                return val.sqrt()
+                if val == 0:
+                    return Fraction(0)
+                num_sqrt = math.isqrt(val.numerator)
+                den_sqrt = math.isqrt(val.denominator)
+                if num_sqrt * num_sqrt == val.numerator and den_sqrt * den_sqrt == val.denominator:
+                    return Fraction(num_sqrt, den_sqrt)
+                dec = Decimal(val.numerator) / Decimal(val.denominator)
+                return Fraction(str(dec.sqrt()))
         raise ValueError("Unsupported function call in AST evaluator")
 
-    def generic_visit(self, node: ast.AST) -> Decimal:
+    def generic_visit(self, node: ast.AST) -> Fraction:
         raise ValueError(f"Disallowed AST node: {type(node).__name__}")
 
 
-def safe_eval_numeric_expr(expr_str: str) -> Optional[Decimal]:
+def safe_eval_numeric_expr(expr_str: str) -> Optional[Fraction]:
     """
-    Safely evaluate a basic numeric expression string to a Decimal using AST.
+    Safely evaluate a basic numeric expression string to an exact Fraction using AST.
     Returns None if the expression contains variables, unsupported syntax,
     or evaluation fails.
     """
@@ -276,21 +303,23 @@ def extract_parameter_domains(blueprint: Optional[Dict[str, Any]]) -> List[Dict[
     return []
 
 
-def _parse_bound_value(val_obj: Any) -> Optional[Decimal]:
+def _parse_bound_value(val_obj: Any) -> Optional[Fraction]:
     """
     Parse numerical bound value from int, float, str (decimal or rational),
     or typed schema dict (e.g. {"type": "integer", "value": 2},
     {"type": "decimal", "value": "0.5"}, {"type": "rational", "numerator": 1, "denominator": 2}).
-    Returns exact Decimal object, or None if val_obj is missing or unparseable.
+    Returns exact Fraction object, or None if val_obj is missing or unparseable.
     """
     if val_obj is None:
         return None
-    if isinstance(val_obj, Decimal):
+    if isinstance(val_obj, Fraction):
         return val_obj
+    if isinstance(val_obj, Decimal):
+        return Fraction(val_obj)
     if isinstance(val_obj, int):
-        return Decimal(val_obj)
+        return Fraction(val_obj)
     if isinstance(val_obj, float):
-        return Decimal(str(val_obj))
+        return Fraction(str(val_obj))
     if isinstance(val_obj, dict):
         if "numerator" in val_obj and "denominator" in val_obj:
             den = _parse_bound_value(val_obj["denominator"])
@@ -302,8 +331,8 @@ def _parse_bound_value(val_obj: Any) -> Optional[Decimal]:
     if isinstance(val_obj, str):
         cleaned = val_obj.strip()
         try:
-            return Decimal(cleaned)
-        except InvalidOperation:
+            return Fraction(cleaned)
+        except (ValueError, InvalidOperation):
             parsed = safe_eval_numeric_expr(cleaned)
             if parsed is not None:
                 return parsed
@@ -350,7 +379,7 @@ def check_parameter_bounds(
         allowed_values = domain.get("allowed_values")
         step = _parse_bound_value(_first_not_none(domain.get("step")))
 
-        values_to_test: List[Tuple[str, Decimal]] = []
+        values_to_test: List[Tuple[str, Fraction]] = []
 
         # 1. Direct parameter lookup if provided in parameters dict
         if parameters:
@@ -403,15 +432,19 @@ def check_parameter_bounds(
         for p_name, val in values_to_test:
             checked_count += 1
             if min_val is not None and val < min_val:
-                errors.append(f"Parameter '{p_name}' value {val} is below minimum {min_val}.")
+                errors.append(
+                    f"Parameter '{p_name}' value {_format_fraction(val)} is below minimum {_format_fraction(min_val)}."
+                )
             if max_val is not None and val > max_val:
-                errors.append(f"Parameter '{p_name}' value {val} exceeds maximum {max_val}.")
+                errors.append(
+                    f"Parameter '{p_name}' value {_format_fraction(val)} exceeds maximum {_format_fraction(max_val)}."
+                )
             if allowed_values is not None and isinstance(allowed_values, list):
-                allowed_decimals = [_parse_bound_value(x) for x in allowed_values]
-                valid_allowed = [a for a in allowed_decimals if a is not None]
+                allowed_fractions = [_parse_bound_value(x) for x in allowed_values]
+                valid_allowed = [a for a in allowed_fractions if a is not None]
                 if valid_allowed and not any(val == a for a in valid_allowed):
                     errors.append(
-                        f"Parameter '{p_name}' value {val} is not in allowed values: {allowed_values}."
+                        f"Parameter '{p_name}' value {_format_fraction(val)} is not in allowed values: {allowed_values}."
                     )
                 elif not valid_allowed and len(allowed_values) > 0:
                     errors.append(
@@ -422,7 +455,7 @@ def check_parameter_bounds(
                 rem = diff % step
                 if rem != 0:
                     errors.append(
-                        f"Parameter '{p_name}' value {val} does not satisfy step {step} from minimum {min_val}."
+                        f"Parameter '{p_name}' value {_format_fraction(val)} does not satisfy step {_format_fraction(step)} from minimum {_format_fraction(min_val)}."
                     )
 
     if errors:
@@ -504,7 +537,7 @@ def check_mathematical_invariants(
                     if rad_val < 0:
                         errors.append(
                             f"Negative radicand in even root (index {degree}): radicand '{radicand_str}' "
-                            f"evaluates to {rad_val} < 0."
+                            f"evaluates to {_format_fraction(rad_val)} < 0."
                         )
                 elif not re.search(r"[a-zA-Z]", radicand_str):
                     errors.append(
@@ -522,7 +555,7 @@ def check_mathematical_invariants(
                 if arg_val is not None:
                     if arg_val <= 0:
                         errors.append(
-                            f"Logarithm argument must be strictly positive: argument '{arg_str}' evaluates to {arg_val} <= 0."
+                            f"Logarithm argument must be strictly positive: argument '{arg_str}' evaluates to {_format_fraction(arg_val)} <= 0."
                         )
                 elif not re.search(r"[a-zA-Z]", arg_str):
                     errors.append(
@@ -533,7 +566,7 @@ def check_mathematical_invariants(
                 if base_val is not None:
                     if base_val <= 0:
                         errors.append(
-                            f"Logarithm base must be strictly positive: base '{base_str}' evaluates to {base_val} <= 0."
+                            f"Logarithm base must be strictly positive: base '{base_str}' evaluates to {_format_fraction(base_val)} <= 0."
                         )
                     elif base_val == 1:
                         errors.append(
@@ -550,7 +583,7 @@ def check_mathematical_invariants(
                 if arg_val is not None:
                     if arg_val <= 0:
                         errors.append(
-                            f"Logarithm argument must be strictly positive: argument '{arg_str}' evaluates to {arg_val} <= 0."
+                            f"Logarithm argument must be strictly positive: argument '{arg_str}' evaluates to {_format_fraction(arg_val)} <= 0."
                         )
                 elif not re.search(r"[a-zA-Z]", arg_str):
                     errors.append(
