@@ -334,7 +334,7 @@ def test_latex_parser_preserves_math_environments():
     # Check that cases environment in option A is completely preserved
     assert r"\begin{cases} x + 2y = 0 \\ 3x + 4y = 0 \end{cases}" in questions[0].options["A"]
     # Check clean option D
-    assert questions[0].options["D"] == r"\det(A) = -2"
+    assert questions[0].options["D"] == r"$\det(A) = -2$"
     assert r"\end{enumerate}" not in questions[0].options["D"]
 
 
