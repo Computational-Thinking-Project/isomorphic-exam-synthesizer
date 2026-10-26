@@ -37,7 +37,10 @@ import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.services.validator.base import CheckResult
-from app.services.validator.logic_checker import normalize_latex_string
+from app.services.validator.logic_checker import (
+    are_expressions_equivalent,
+    normalize_latex_string,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +186,14 @@ def safe_eval_numeric_expr(expr_str: str) -> Optional[float]:
         return None
 
 
+def _first_not_none(*args: Any) -> Any:
+    """Return the first argument that is not None, preserving falsy 0/0.0 values."""
+    for a in args:
+        if a is not None:
+            return a
+    return None
+
+
 def extract_parameter_domains(blueprint: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Extract a normalized list of parameter domain specifications from various
@@ -220,10 +231,10 @@ def extract_parameter_domains(blueprint: Optional[Dict[str, Any]]) -> List[Dict[
             return [
                 {
                     "name": "*",
-                    "min": bounds.get("min"),
-                    "max": bounds.get("max"),
+                    "min": _first_not_none(bounds.get("min"), bounds.get("minimum")),
+                    "max": _first_not_none(bounds.get("max"), bounds.get("maximum")),
                     "allowed_values": bounds.get("allowed_values"),
-                    "step": bounds.get("step"),
+                    "step": _first_not_none(bounds.get("step")),
                 }
             ]
         # Per-parameter bounds dict
@@ -233,10 +244,10 @@ def extract_parameter_domains(blueprint: Optional[Dict[str, Any]]) -> List[Dict[
                 norm_domains.append(
                     {
                         "name": param_name,
-                        "min": param_cfg.get("min") or param_cfg.get("minimum"),
-                        "max": param_cfg.get("max") or param_cfg.get("maximum"),
+                        "min": _first_not_none(param_cfg.get("min"), param_cfg.get("minimum")),
+                        "max": _first_not_none(param_cfg.get("max"), param_cfg.get("maximum")),
                         "allowed_values": param_cfg.get("allowed_values"),
-                        "step": param_cfg.get("step"),
+                        "step": _first_not_none(param_cfg.get("step")),
                     }
                 )
         return norm_domains
@@ -250,15 +261,32 @@ def extract_parameter_domains(blueprint: Optional[Dict[str, Any]]) -> List[Dict[
 
 
 def _parse_bound_value(val_obj: Any) -> Optional[float]:
-    """Parse bound value from integer, float, or {"type": ..., "value": ...} dict."""
+    """
+    Parse numerical bound value from int, float, str (decimal or rational),
+    or typed schema dict (e.g. {"type": "integer", "value": 2},
+    {"type": "decimal", "value": "0.5"}, {"type": "rational", "numerator": 1, "denominator": 2}).
+    Returns None if val_obj is missing or unparseable.
+    """
     if val_obj is None:
         return None
     if isinstance(val_obj, (int, float)):
         return float(val_obj)
-    if isinstance(val_obj, dict) and "value" in val_obj:
-        v = val_obj["value"]
-        if isinstance(v, (int, float)):
-            return float(v)
+    if isinstance(val_obj, dict):
+        if "numerator" in val_obj and "denominator" in val_obj:
+            den = _parse_bound_value(val_obj["denominator"])
+            num = _parse_bound_value(val_obj["numerator"])
+            if den is not None and num is not None and den != 0.0:
+                return num / den
+        if "value" in val_obj and val_obj["value"] is not None:
+            return _parse_bound_value(val_obj["value"])
+    if isinstance(val_obj, str):
+        cleaned = val_obj.strip()
+        try:
+            return float(cleaned)
+        except ValueError:
+            parsed = safe_eval_numeric_expr(cleaned)
+            if parsed is not None:
+                return parsed
     return None
 
 
@@ -297,10 +325,10 @@ def check_parameter_bounds(
             or "*"
         )
 
-        min_val = _parse_bound_value(domain.get("minimum") or domain.get("min"))
-        max_val = _parse_bound_value(domain.get("maximum") or domain.get("max"))
+        min_val = _parse_bound_value(_first_not_none(domain.get("minimum"), domain.get("min")))
+        max_val = _parse_bound_value(_first_not_none(domain.get("maximum"), domain.get("max")))
         allowed_values = domain.get("allowed_values")
-        step = _parse_bound_value(domain.get("step"))
+        step = _parse_bound_value(_first_not_none(domain.get("step")))
 
         values_to_test: List[Tuple[str, float]] = []
 
@@ -361,10 +389,15 @@ def check_parameter_bounds(
             if max_val is not None and val > max_val:
                 errors.append(f"Parameter '{p_name}' value {val} exceeds maximum {max_val}.")
             if allowed_values is not None and isinstance(allowed_values, list):
-                allowed_floats = [float(x) for x in allowed_values if isinstance(x, (int, float))]
-                if allowed_floats and not any(abs(val - a) < 1e-9 for a in allowed_floats):
+                allowed_floats = [_parse_bound_value(x) for x in allowed_values]
+                valid_allowed = [a for a in allowed_floats if a is not None]
+                if valid_allowed and not any(abs(val - a) < 1e-9 for a in valid_allowed):
                     errors.append(
                         f"Parameter '{p_name}' value {val} is not in allowed values: {allowed_values}."
+                    )
+                elif not valid_allowed and len(allowed_values) > 0:
+                    errors.append(
+                        f"Parameter '{p_name}' allowed_values contains unsupported non-numeric specifications: {allowed_values}."
                     )
             if step is not None and min_val is not None and step > 0:
                 diff = val - min_val
@@ -419,7 +452,7 @@ def check_mathematical_invariants(
                 )
                 continue
             denom_val = safe_eval_numeric_expr(denom_str)
-            if denom_val is not None and abs(denom_val) < 1e-12:
+            if denom_val is not None and denom_val == 0.0:
                 errors.append(
                     f"Zero denominator detected: denominator '{denom_str}' evaluates to 0 in '\\frac{{{num_str}}}{{{denom_str}}}'"
                 )
@@ -429,7 +462,7 @@ def check_mathematical_invariants(
             num_str, denom_str = match.group(1).strip(), match.group(2).strip()
             try:
                 denom_val = float(denom_str)
-                if abs(denom_val) < 1e-12:
+                if denom_val == 0.0:
                     errors.append(
                         f"Zero denominator detected in numerical fraction: '{num_str}/{denom_str}'"
                     )
@@ -444,7 +477,7 @@ def check_mathematical_invariants(
             # Even root requires radicand >= 0 in real domain
             if degree % 2 == 0:
                 rad_val = safe_eval_numeric_expr(radicand_str)
-                if rad_val is not None and rad_val < -1e-12:
+                if rad_val is not None and rad_val < 0.0:
                     errors.append(
                         f"Negative radicand in even root (index {degree}): radicand '{radicand_str}' "
                         f"evaluates to {rad_val} < 0."
@@ -458,18 +491,18 @@ def check_mathematical_invariants(
             arg_str = match.group(3) or match.group(4)
             if arg_str:
                 arg_val = safe_eval_numeric_expr(arg_str.strip())
-                if arg_val is not None and arg_val <= 1e-12:
+                if arg_val is not None and arg_val <= 0.0:
                     errors.append(
                         f"Logarithm argument must be strictly positive: argument '{arg_str}' evaluates to {arg_val} <= 0."
                     )
             if base_str:
                 base_val = safe_eval_numeric_expr(base_str.strip())
                 if base_val is not None:
-                    if base_val <= 1e-12:
+                    if base_val <= 0.0:
                         errors.append(
                             f"Logarithm base must be strictly positive: base '{base_str}' evaluates to {base_val} <= 0."
                         )
-                    elif abs(base_val - 1.0) < 1e-12:
+                    elif base_val == 1.0:
                         errors.append(
                             f"Logarithm base cannot be equal to 1: base '{base_str}' evaluates to 1.0."
                         )
@@ -479,7 +512,7 @@ def check_mathematical_invariants(
             arg_str = match.group(1) or match.group(2)
             if arg_str:
                 arg_val = safe_eval_numeric_expr(arg_str.strip())
-                if arg_val is not None and arg_val <= 1e-12:
+                if arg_val is not None and arg_val <= 0.0:
                     errors.append(
                         f"Logarithm argument must be strictly positive: argument '{arg_str}' evaluates to {arg_val} <= 0."
                     )
@@ -646,10 +679,11 @@ def check_distractor_reasonableness(
     # Verify correct_answer is present among options
     if correct_answer:
         norm_ans = normalize_latex_string(correct_answer.strip())
-        # Check either label ("A", "B", "C", "D") or matching option content
+        # Check either label ("A", "B", "C", "D") or matching option content (including mathematical equivalence)
         label_match = correct_answer.strip().upper() in ("A", "B", "C", "D")
         content_match = any(
             norm_ans == normalize_latex_string(opt.strip())
+            or are_expressions_equivalent(correct_answer.strip(), opt.strip())
             for opt in options
             if opt and str(opt).strip()
         )
@@ -720,7 +754,7 @@ def evaluate_rule_fallback(
 
     is_out_of_scope, out_of_scope_cat = detect_out_of_scope_math(question_text)
 
-    # 2. Case A: SymPy evaluation succeeded
+    # 2. Case A: SymPy evaluation returned decisive results
     sympy_status_str = ""
     sympy_passed = False
     if sympy_result is not None:
@@ -728,6 +762,22 @@ def evaluate_rule_fallback(
         if raw_status is not None:
             sympy_status_str = raw_status.value if hasattr(raw_status, "value") else str(raw_status)
         sympy_passed = bool(getattr(sympy_result, "passed", False))
+
+    # If CAS decisively failed or encountered domain error, preserve rejection (never fallback to pass)
+    if sympy_status_str in ("failed", "domain_error"):
+        cas_detail = (
+            getattr(sympy_result, "detail", None)
+            or f"SymPy CAS evaluation rejected solution ({sympy_status_str})."
+        )
+        combined_errors = [cas_detail] + all_errors
+        return CheckResult(
+            check_name="rule_fallback",
+            passed=False,
+            status=sympy_status_str,
+            confidence="sympy_verified",
+            errors=combined_errors,
+            detail=f"SymPy CAS rejected candidate answer ({sympy_status_str}): {cas_detail}",
+        )
 
     if sympy_passed and sympy_status_str == "verified":
         if all_errors:
@@ -747,7 +797,7 @@ def evaluate_rule_fallback(
             detail="SymPy CAS verified equation solution; parameter bounds and invariants satisfied.",
         )
 
-    # 3. Case B: Fallback triggered (SymPy unsupported, timeout, inconclusive, failed, or None)
+    # 3. Case B: Fallback triggered (SymPy unsupported, timeout, inconclusive, or None)
     if all_errors:
         return CheckResult(
             check_name="rule_fallback",

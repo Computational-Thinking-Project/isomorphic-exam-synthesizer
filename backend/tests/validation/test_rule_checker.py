@@ -707,3 +707,159 @@ class TestValidateRuleVariant:
         assert res.status == "passed_rule_fallback"
         assert res.confidence == "rule_only"
         assert "out-of-scope math detected" in res.detail
+
+
+class TestRuleCheckerReviewRegressionFixes:
+    def test_zero_bounds_not_dropped(self):
+        # min=0, max=10
+        bp_min0 = {"bounds": {"min": 0, "max": 10}}
+        res_fail1 = check_parameter_bounds("Giá trị tham số k = -1", blueprint=bp_min0)
+        assert res_fail1.passed is False
+        assert any("below minimum 0.0" in err for err in res_fail1.errors)
+
+        res_pass1 = check_parameter_bounds("Giá trị tham số k = 0", blueprint=bp_min0)
+        assert res_pass1.passed is True
+
+        # min=-10, max=0
+        bp_max0 = {"bounds": {"min": -10, "max": 0}}
+        res_fail2 = check_parameter_bounds("Giá trị tham số k = 1", blueprint=bp_max0)
+        assert res_fail2.passed is False
+        assert any("exceeds maximum 0.0" in err for err in res_fail2.errors)
+
+        # nested parameter_domains with minimum 0
+        bp_nested0 = {"parameter_domains": [{"name": "p", "minimum": 0, "maximum": 5}]}
+        res_nested_fail = check_parameter_bounds("Cho p = -2", blueprint=bp_nested0)
+        assert res_nested_fail.passed is False
+
+    def test_typed_allowed_values_in_physics_blueprint(self):
+        candidates = [
+            Path(__file__).parents[3]
+            / "docs"
+            / "blueprints"
+            / "examples"
+            / "physics_newton_acceleration.json",
+            Path.cwd() / "docs" / "blueprints" / "examples" / "physics_newton_acceleration.json",
+            Path.cwd().parent
+            / "docs"
+            / "blueprints"
+            / "examples"
+            / "physics_newton_acceleration.json",
+        ]
+        fixture_path = next((p for p in candidates if p.exists()), None)
+        if fixture_path is not None:
+            with open(fixture_path, "r", encoding="utf-8") as f:
+                bp = json.load(f)
+        else:
+            bp = {
+                "variation_policy": {
+                    "parameter_domains": [
+                        {
+                            "quantity_ref": "Q_M",
+                            "allowed_values": [
+                                {"type": "integer", "value": 2},
+                                {"type": "integer", "value": 3},
+                                {"type": "integer", "value": 4},
+                            ],
+                        }
+                    ]
+                }
+            }
+
+        # Q_M = 100 must fail
+        res_fail = check_parameter_bounds(
+            question_text="Một vật có khối lượng m = 100 kg chịu lực kéo...",
+            blueprint=bp,
+            parameters={"Q_M": 100},
+        )
+        assert res_fail.passed is False
+        assert any("not in allowed values" in err for err in res_fail.errors)
+
+        # Q_M = 2 must pass
+        res_pass = check_parameter_bounds(
+            question_text="Một vật có khối lượng m = 2 kg chịu lực kéo...",
+            blueprint=bp,
+            parameters={"Q_M": 2},
+        )
+        assert res_pass.passed is True
+
+    def test_decimal_and_rational_allowed_values(self):
+        bp = {
+            "bounds": {
+                "ratio": {
+                    "allowed_values": [
+                        "0.5",
+                        {"type": "rational", "numerator": 1, "denominator": 4},
+                    ]
+                }
+            }
+        }
+        res_pass1 = check_parameter_bounds("Cho ratio = 0.5", blueprint=bp)
+        assert res_pass1.passed is True
+
+        res_pass2 = check_parameter_bounds("Cho ratio = 0.25", blueprint=bp)
+        assert res_pass2.passed is True
+
+        res_fail = check_parameter_bounds("Cho ratio = 0.75", blueprint=bp)
+        assert res_fail.passed is False
+
+    def test_exact_mathematical_domain_boundaries(self):
+        # 1e-13 is strictly positive and non-zero: must NOT trigger zero denominator
+        res_denom = check_mathematical_invariants(r"Tính \frac{1}{0.0000000000001}")
+        assert res_denom.passed is True
+
+        # -1e-13 is strictly negative: MUST trigger negative radicand in real domain
+        res_sqrt = check_mathematical_invariants(r"Tính \sqrt{-0.0000000000001}")
+        assert res_sqrt.passed is False
+        assert any("Negative radicand" in err for err in res_sqrt.errors)
+
+        # ln(1e-13) has argument > 0: MUST be valid
+        res_ln = check_mathematical_invariants(r"Tính \ln(0.0000000000001)")
+        assert res_ln.passed is True
+
+        # log base 1.0000000000001 is != 1: MUST be valid
+        res_log_base = check_mathematical_invariants(r"Tính \log_{1.0000000000001}(5)")
+        assert res_log_base.passed is True
+
+    def test_mathematically_equivalent_answers_not_rejected(self):
+        # 0.5 is mathematically equivalent to 1/2
+        res = check_distractor_reasonableness(
+            options=["1/2", "1", "2", "3"],
+            correct_answer="0.5",
+        )
+        assert res.passed is True
+        assert res.status == "verified"
+
+    def test_cas_decisive_failure_not_passed_to_fallback(self):
+        # FAILED from CAS
+        failed_cas = EvaluationResult(
+            status=EvaluationStatus.FAILED,
+            passed=False,
+            confidence="sympy_verified",
+            detail="Candidate value 2 is not a root of x - 1 = 0",
+        )
+        res_fail = evaluate_rule_fallback(
+            question_text="Giải phương trình $x - 1 = 0$",
+            options=["1", "2", "3", "4"],
+            correct_answer="2",
+            sympy_result=failed_cas,
+        )
+        assert res_fail.passed is False
+        assert res_fail.status == "failed"
+        assert any("Candidate value 2 is not a root" in err for err in res_fail.errors)
+
+        # DOMAIN_ERROR from CAS
+        domain_err_cas = EvaluationResult(
+            status=EvaluationStatus.DOMAIN_ERROR,
+            passed=False,
+            confidence="sympy_verified",
+            detail="Solution x = 1 causes denominator x - 1 to evaluate to zero",
+        )
+        res_domain = evaluate_rule_fallback(
+            question_text=r"Giải phương trình $\frac{1}{x-1} = 0$",
+            options=["1", "2", "3", "4"],
+            correct_answer="1",
+            sympy_result=domain_err_cas,
+        )
+        assert res_domain.passed is False
+        assert res_domain.status == "domain_error"
+        assert any("causes denominator" in err for err in res_domain.errors)
