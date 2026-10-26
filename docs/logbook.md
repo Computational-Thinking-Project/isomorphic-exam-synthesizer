@@ -56,7 +56,8 @@
   - Mypy static type checking: 0 errors in 34 source files.
   - Ruff linter & formatter: all checks passed.
 
-<<<<<<< HEAD
+---
+
 ## 2026-10-22 — Bá Duy (BE1 / johannguyen015), TASK-205 Source Confirmation & Blueprint Activation (BE-03)
 
 - Branch: `feat/be1-task-205-confirm-source`; Base: `dev`.
@@ -134,6 +135,36 @@
   - 252/252 tests passed in complete backend test suite (100% pass rate).
   - `mypy backend/app` passed with 0 errors across 40 source files.
   - `ruff check` passed on all scoped files.
+
+---
+
+## 2026-10-26 — Bá Duy (BE1 / johannguyen015), TASK-205 Review Remediation Round 3
+
+- Branch: `feat/be1-task-205-confirm-source`; PR #16; Base: `dev`.
+- Remediation fixes addressing Reviewer Philip's (`philip-kkk`) Round 3 feedback:
+  - [P1] Phân Loại Ngoại Lệ Mạng Phân Tán Bằng `isinstance`:
+    - Loại bỏ hoàn toàn chuỗi so khớp `"timeout" in err_lower` trong `backend/app/api/routes/sessions.py` và `backend/app/services/parser/ingestion_service.py`.
+    - Định nghĩa các hàm kiểm tra ngoại lệ `is_network_timeout`, `is_network_transport`, và `is_database_rollback_evidence` duyệt toàn bộ chuỗi cây nguyên nhân (`__cause__` / `__context__`).
+    - Phân biệt minh bạch: ngoại lệ mạng chưa rõ trạng thái commit (`httpx.TimeoutException`, `httpx.TransportError`, `httpcore.RemoteProtocolError`) trả về **HTTP 504 Gateway Timeout** kèm khuyến nghị kiểm tra trạng thái phiên trước khi thử lại, tuyệt đối không khẳng định đã rollback.
+    - Chỉ trả về **HTTP 500 kèm khẳng định rollback** khi có bằng chứng từ chối từ `postgrest.exceptions.APIError`. Lỗi runtime không rõ nguyên nhân trả về HTTP 500 trung lập.
+  - [P1] Chuẩn Hóa Script Kiểm Quyền SQL (`backend/tests/verify_migration_003_permissions.sql`):
+    - Khởi tạo preflight user fixture trong `auth.users` và `public.users` (`v_owner_id`, `v_attacker_id`), loại bỏ triệt để lỗi khóa ngoại `exam_sessions_user_id_fkey` trên DB trắng.
+    - Giả lập đúng cơ chế caller PostgREST thông qua `SET SESSION AUTHORIZATION authenticator; SET ROLE anon / authenticated / service_role;` cho 10 kịch bản PostgREST.
+    - Kiểm tra `anon` bị từ chối `EXECUTE` ở tầng PostgreSQL Engine với SQLSTATE `42501` và `has_function_privilege` trả về `FALSE` (SEC-04 Least Privilege).
+    - Bổ sung Scenario 11 kiểm chứng trực tiếp Quản trị viên CSDL (`session_user IN ('postgres', 'supabase_admin')`) thực thi bảo trì thành công không cần JWT claims.
+    - Toàn bộ script nằm trong một transaction kết thúc bằng `ROLLBACK;` (zero dirty test data).
+  - [P1] Đồng Bộ Các Cải Tiến Từ TASK-202:
+    - Kế thừa script `backend/tests/verify_migration_002_permissions.sql` đã nghiệm thu từ nhánh TASK-202.
+    - Đồng bộ `ingestion_service.py` với chuẩn type annotation `tuple[type[BaseException], ...]`.
+  - [P2] Mở Rộng Bộ Kiểm Thử Ngoại Lệ Mạng:
+    - Bổ sung 6 unit tests với instance ngoại lệ thật trong `backend/tests/api/test_confirm_source.py`: `httpx.ReadTimeout("")`, `httpx.ReadError("")`, `httpx.RemoteProtocolError`, `httpcore.RemoteProtocolError`, `APIError`, unconfirmed runtime error.
+- Quality Verification:
+  - 26/26 tests passed trong `backend/tests/api/test_confirm_source.py` (100%).
+  - 266/266 tests passed trong toàn bộ test suite backend (100% pass rate, thời gian chạy ~50s).
+  - `ruff check app/` đạt 0 errors (all checks passed).
+  - `mypy app/ --ignore-missing-imports` đạt 0 errors trên 40 source files.
+  - SymPy LaTeX smoke test: parse thành công `x**2 + 1`.
+
 
 
 
