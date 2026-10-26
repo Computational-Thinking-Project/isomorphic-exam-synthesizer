@@ -30,9 +30,26 @@ def create_minimal_docx(
 ) -> bytes:
     """Helper to generate a valid in-memory .docx file bytes."""
     import docx
+    from docx.oxml import parse_xml
 
     doc = docx.Document()
     for text in paragraphs:
+        if text == "STANDALONE_OMML":
+            # True standalone OMML equation paragraph: p.text is empty, but XML contains <m:oMath>
+            p = doc.add_paragraph("")
+            if omml_type == "superscript":
+                omml_xml = """<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                                 xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+                                <m:oMath><m:sSup><m:e><m:r><m:t>x</m:t></m:r></m:e><m:sup><m:r><m:t>2</m:t></m:r></m:sup></m:sSup></m:oMath>
+                              </w:p>"""
+            else:
+                omml_xml = """<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                                 xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
+                                <m:oMath><m:f><m:num><m:r><m:t>1</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f></m:oMath>
+                              </w:p>"""
+            p._p.append(parse_xml(omml_xml))
+            continue
+
         p = doc.add_paragraph(text)
         if with_omml and "OMML_FLAG" in text:
             if omml_type == "superscript":
@@ -45,8 +62,6 @@ def create_minimal_docx(
                                  xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">
                                 <m:oMath><m:f><m:num><m:r><m:t>1</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f></m:oMath>
                               </w:p>"""
-            from docx.oxml import parse_xml
-
             p._p.append(parse_xml(omml_xml))
 
     buf = io.BytesIO()
@@ -238,6 +253,92 @@ def test_latex_parser_nested_enumerate_options():
     assert questions[0].options["D"] == "-1"
 
 
+def test_latex_parser_nested_enumerate_clean_stem_and_all_options():
+    """Verify nested enumerate strips list wrappers from stem and all 4 options, including option D."""
+    latex_content = r"""
+\begin{enumerate}
+\item Tính $1+1$.
+\begin{enumerate}
+\item[A.] $2$
+\item[B.] $3$
+\item[C.] $4$
+\item[D.] $5$
+\end{enumerate}
+\end{enumerate}
+
+ĐÁP ÁN: 1.A
+"""
+    questions, errors = parse_latex(latex_content)
+    assert len(errors) == 0
+    assert len(questions) == 1
+    # Check exact clean stem (must not contain \begin{enumerate})
+    assert questions[0].raw_content == r"Tính $1+1$."
+    assert r"\begin{enumerate}" not in questions[0].raw_content
+    # Check exact clean 4 options (must not contain \end{enumerate})
+    assert questions[0].options["A"] == "$2$"
+    assert questions[0].options["B"] == "$3$"
+    assert questions[0].options["C"] == "$4$"
+    assert questions[0].options["D"] == "$5$"
+    assert r"\end{enumerate}" not in questions[0].options["D"]
+
+
+def test_latex_parser_tasks_environment_clean():
+    """Verify tasks environment strips \\begin{tasks} from stem and \\end{tasks} from option D."""
+    latex_content = r"""
+\begin{enumerate}
+\item Giải phương trình bậc nhất $2x - 4 = 0$:
+\begin{tasks}(2)
+\task $x = 1$
+\task $x = 2$
+\task $x = 3$
+\task $x = 4$
+\end{tasks}
+\end{enumerate}
+
+ĐÁP ÁN: 1.B
+"""
+    questions, errors = parse_latex(latex_content)
+    assert len(errors) == 0
+    assert len(questions) == 1
+    assert questions[0].correct_key == "B"
+    assert questions[0].raw_content == r"Giải phương trình bậc nhất $2x - 4 = 0$:"
+    assert r"\begin{tasks}" not in questions[0].raw_content
+    assert questions[0].options["A"] == "$x = 1$"
+    assert questions[0].options["B"] == "$x = 2$"
+    assert questions[0].options["C"] == "$x = 3$"
+    assert questions[0].options["D"] == "$x = 4$"
+    assert r"\end{tasks}" not in questions[0].options["D"]
+
+
+def test_latex_parser_preserves_math_environments():
+    """Verify that actual math environments (matrix, cases, aligned) are 100% preserved."""
+    latex_content = r"""
+\begin{enumerate}
+\item Cho ma trận $A = \begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix}$. Hệ phương trình tương ứng là:
+\begin{enumerate}
+\item[A.] $\begin{cases} x + 2y = 0 \\ 3x + 4y = 0 \end{cases}$
+\item[B.] $x = 1$
+\item[C.] $y = 2$
+\item[D.] $\det(A) = -2$
+\end{enumerate}
+\end{enumerate}
+
+ĐÁP ÁN: 1.A
+"""
+    questions, errors = parse_latex(latex_content)
+    assert len(errors) == 0
+    assert len(questions) == 1
+    # Check that pmatrix environment in stem is completely preserved
+    assert r"\begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix}" in questions[0].raw_content
+    assert r"\begin{enumerate}" not in questions[0].raw_content
+    # Check that cases environment in option A is completely preserved
+    assert r"\begin{cases} x + 2y = 0 \\ 3x + 4y = 0 \end{cases}" in questions[0].options["A"]
+    # Check clean option D
+    assert questions[0].options["D"] == r"$\det(A) = -2$"
+    assert r"\end{enumerate}" not in questions[0].options["D"]
+
+
+
 # ---------------------------------------------------------------------------
 # 5. DOCX Parser
 # ---------------------------------------------------------------------------
@@ -303,6 +404,44 @@ def test_docx_parser_trailing_answer_table_clean_options():
     assert questions[1].correct_key == "B"
     assert questions[1].options["D"] == "4"
     assert "BẢNG ĐÁP ÁN" not in questions[1].options["D"]
+
+
+def test_docx_parser_standalone_omml_in_stem():
+    """Verify that a standalone OMML equation paragraph in question body flags UNPARSED_OMML error and raises 422."""
+    from fastapi import HTTPException
+    paragraphs = [
+        "Câu 1: Cho hàm số sau:",
+        "STANDALONE_OMML",  # paragraph.text is empty, but contains OMML equation XML
+        "A. 1  B. 2  C. 3  D. 4",
+        "ĐÁP ÁN: 1.A",
+    ]
+    file_bytes = create_minimal_docx(paragraphs, with_omml=True)
+    questions, errors = parse_docx(file_bytes)
+    assert any(e.question_no == 1 and e.error_type == "UNPARSED_OMML" for e in errors)
+    # Confirm Zero Mutation Guard raises 422
+    with pytest.raises(HTTPException) as exc_info:
+        assert_zero_mutation_or_raise(questions, errors)
+    assert exc_info.value.status_code == 422
+
+
+def test_docx_parser_standalone_omml_in_options():
+    """Verify that a standalone OMML equation paragraph in options flags UNPARSED_OMML error and raises 422."""
+    from fastapi import HTTPException
+    paragraphs = [
+        "Câu 1: Tìm nghiệm của phương trình:",
+        "A.",
+        "STANDALONE_OMML",  # Option A value is a standalone formula paragraph
+        "B. 2  C. 3  D. 4",
+        "ĐÁP ÁN: 1.A",
+    ]
+    file_bytes = create_minimal_docx(paragraphs, with_omml=True)
+    questions, errors = parse_docx(file_bytes)
+    assert any(e.question_no == 1 and e.error_type == "UNPARSED_OMML" for e in errors)
+    # Confirm Zero Mutation Guard raises 422
+    with pytest.raises(HTTPException) as exc_info:
+        assert_zero_mutation_or_raise(questions, errors)
+    assert exc_info.value.status_code == 422
+
 
 
 # ---------------------------------------------------------------------------

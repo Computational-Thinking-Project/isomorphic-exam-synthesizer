@@ -61,25 +61,44 @@ async def replace_source_questions_atomically(
         raise
     except Exception as exc:
         err_msg = str(exc)
+        err_lower = err_msg.lower()
         logger.error("RPC replace_source_questions failed for session %s: %s", session_id, exc)
         if "42501" in err_msg or "Access denied" in err_msg or "Unauthorized" in err_msg:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied or session ownership mismatch",
             ) from exc
-        if "22023" in err_msg or "draft" in err_msg:
+        if "22023" in err_msg or "draft" in err_lower:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Cannot ingest questions: session is not in draft status",
             ) from exc
-        if "P0002" in err_msg or "not found" in err_msg:
+        if "P0002" in err_msg or "not found" in err_lower:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Session not found",
             ) from exc
+
+        # Differentiate network timeout (uncertain commit status) from confirmed database rollback
+        is_timeout = (
+            "timeout" in err_lower
+            or "timed out" in err_lower
+            or "connection closed" in err_lower
+            or "connection reset" in err_lower
+            or "transport error" in err_lower
+        )
+        if is_timeout:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=(
+                    "Database atomic replacement status is uncertain due to network timeout. "
+                    "The transaction may have completed. Please verify session state before retrying."
+                ),
+            ) from exc
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database atomic replacement failed. Session state was not modified.",
+            detail="Database atomic replacement failed and was rolled back.",
         ) from exc
 
     # Query and return the newly inserted records

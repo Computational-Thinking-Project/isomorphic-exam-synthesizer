@@ -100,8 +100,26 @@
 
 ---
 
+### DEC-BE1-003: Khắc phục Toàn Diện Phản Hồi Review PR #15 (Vòng 2)
+* **Mã quyết định:** DEC-BE1-003
+* **Ngày quyết định:** 26/10/2026
+* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
+* **Bối cảnh:**
+  1. Parser DOCX bỏ qua các đoạn có text rỗng trước khi kiểm tra cờ OMML, khiến công thức hiển thị đứng riêng 1 dòng bị mất khỏi thân câu hoặc phương án mà không báo lỗi.
+  2. Parser LaTeX trích xuất `\item[A.]` nhưng để sót môi trường bao ngoài danh sách (`\begin{enumerate}`, `\begin{tasks}`) ở cuối thân câu và phương án D.
+  3. Stored Procedure `replace_source_questions` khai báo `SECURITY DEFINER` nhưng dùng `current_user` để nhận diện admin, khiến điều kiện luôn đúng vì `current_user` trong hàm này luôn là `postgres`.
+  4. Ingestion Service trả về thông báo "Session state was not modified" cho mọi ngoại lệ còn lại, gây ngộ nhận khi gặp timeout mạng (máy chủ có thể đã commit thành công nhưng HTTP response bị timeout).
+* **Quyết định:**
+  1. **DOCX Parser:** Kiểm tra `content_omml_flags` ngay cả khi text đoạn rỗng; bật cờ `has_unparsed_omml = True` và chèn placeholder nhận diện, kích hoạt HTTP 422 `UNPARSED_OMML` từ chối đề thi thiếu nội dung công thức.
+  2. **LaTeX Parser:** Xây dựng `clean_latex_list_wrappers` bóc tách sạch sẽ các thẻ mở/đóng môi trường danh sách (`enumerate`, `tasks`, `itemize`, `multicols`) khỏi thân câu và phương án, đồng thời bảo toàn 100% các môi trường toán học (`pmatrix`, `cases`, `aligned`).
+  3. **SQL RPC:** Thay thế `current_user` bằng `session_user IN ('postgres', 'supabase_admin')` kết hợp `v_role = 'service_role'`, bảo đảm chỉ caller tin cậy mới được phân quyền quản trị.
+  4. **Phân loại Ngoại lệ Ingestion:** Phân biệt lỗi timeout mạng (HTTP 504 Gateway Timeout với cảnh báo trạng thái chưa xác định, không cam kết dữ liệu chưa đổi) với lỗi SQL đã rollback (HTTP 500).
+  5. **Tài liệu & Test:** Bổ sung script kiểm thử SQL 5 kịch bản phân quyền trên DB test; bổ sung unit tests cho OMML đứng riêng, LaTeX clean stem/options, và Timeout 504.
+
+---
+
 ### ADR-003: Atomic Exam Confirmation và Blueprint Concurrency Protection (TASK-205)
-* **Mã quyết định:** ADR-003 / DEC-BE1-003
+* **Mã quyết định:** ADR-003 / DEC-BE1-004
 * **Ngày quyết định:** 25/10/2026
 * **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
 * **Bối cảnh:**
@@ -115,10 +133,11 @@
      - Kiểm tra xác thực và quyền sở hữu (bảo mật SEC-04).
      - Kiểm tra điều kiện trạng thái `status = 'draft'` và đối chiếu số lượng câu hỏi thực tế.
      - Đồng thời khóa `confirmed_at = now()` trên các blueprints và chuyển session sang `'blueprinted'` trong 1 ACID transaction duy nhất.
-  3. **Kiểm tra Kết quả Ghi Thực Tế:** Trong luồng fallback nếu RPC chưa được migrate, kiểm tra `res.data` của lệnh update session; nếu không có bản ghi nào bị ảnh hưởng thì trả về `HTTP 409 Conflict` thay vì 200. Nếu update blueprints thất bại sau khi update session, tự động rollback session về trạng thái `draft`.
+  3. **Kiểm tra Kết quả Ghi Thực Tế:** Loại bỏ hoàn toàn fallback cập nhật rời; chỉ chốt bằng transaction/RPC. Nếu RPC gặp timeout mạng, trả về HTTP 504 Gateway Timeout không cam kết trạng thái chưa đổi.
   4. **Phân Định Rõ Ràng Hợp Đồng Blueprint:** Đánh dấu rõ cờ `is_fallback: true` và `extraction_source: "FALLBACK_DETERMINISTIC"` cho các blueprint dự phòng từ `extract_default_blueprint` để Stage 2 phân biệt với Blueprint chính thức của AI pipeline (TASK-203).
 * **Hệ quả / Tác động:**
   1. Loại bỏ hoàn toàn nguy cơ race condition, nhân bản blueprint và báo thành công sai.
   2. Dữ liệu đề thi và blueprint luôn đồng bộ 100% trong CSDL.
   3. Đáp ứng toàn diện các tiêu chí đánh giá khắt khe trong Code Review từ Lead Reviewer.
+
 

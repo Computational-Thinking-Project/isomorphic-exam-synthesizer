@@ -130,10 +130,24 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
     # 3. Segment paragraphs into question blocks
     questions_raw: List[Dict[str, Any]] = []
     current_q: Optional[Dict[str, Any]] = None
+    errors: List[ParserErrorItem] = []
 
     for idx, p_text in enumerate(content_paragraphs):
         trimmed = p_text.strip()
         if not trimmed:
+            # Handle standalone OMML equation paragraphs (python-docx p.text is empty for OMML)
+            if content_omml_flags[idx]:
+                if current_q is not None:
+                    current_q["has_unparsed_omml"] = True
+                    current_q["lines"].append("[CÔNG THỨC OMML CHƯA ĐỌC ĐƯỢC]")
+                else:
+                    errors.append(
+                        ParserErrorItem(
+                            question_no=0,
+                            error_type="UNPARSED_OMML",
+                            message="Tệp DOCX chứa công thức OMML đứng trước câu hỏi đầu tiên không thể đọc được nội dung.",
+                        )
+                    )
             continue
 
         match = QUESTION_START_PATTERN.match(trimmed)
@@ -162,7 +176,6 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
 
     # 4. Process each question block into ParsedQuestionItem and collect errors
     parsed_questions: List[ParsedQuestionItem] = []
-    errors: List[ParserErrorItem] = []
 
     for q_data in questions_raw:
         q_no = q_data["question_no"]

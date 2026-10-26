@@ -30,6 +30,49 @@ LATEX_QUESTION_HEADER = re.compile(
     re.IGNORECASE,
 )
 
+STEM_LIST_START_PATTERN = re.compile(
+    r"\\begin\{(?:enumerate|tasks|itemize|multicols)\}(?:\[[^\]]*\]|\([^\)]*\)|\{[^\}]*\})*\s*$",
+    re.IGNORECASE,
+)
+OPT_LIST_END_PATTERN = re.compile(
+    r"\\end\{(?:enumerate|tasks|itemize|multicols)\}\s*$",
+    re.IGNORECASE,
+)
+OPT_LIST_START_PATTERN = re.compile(
+    r"^\s*\\begin\{(?:enumerate|tasks|itemize|multicols)\}(?:\[[^\]]*\]|\([^\)]*\)|\{[^\}]*\})*",
+    re.IGNORECASE,
+)
+
+
+def clean_latex_list_wrappers(stem: str, options: Dict[str, str]) -> Tuple[str, Dict[str, str]]:
+    """Clean list layout environments (enumerate, tasks, itemize, multicols) from question stem and options.
+
+    Guarantees 100% preservation of actual LaTeX math environments (matrix, pmatrix, cases, aligned, etc.).
+    """
+    cleaned_stem = stem.strip()
+    while True:
+        subbed = STEM_LIST_START_PATTERN.sub("", cleaned_stem).strip()
+        if subbed == cleaned_stem:
+            break
+        cleaned_stem = subbed
+
+    cleaned_options: Dict[str, str] = {}
+    for key, val in options.items():
+        opt_str = val.strip()
+        while True:
+            subbed = OPT_LIST_END_PATTERN.sub("", opt_str).strip()
+            if subbed == opt_str:
+                break
+            opt_str = subbed
+        while True:
+            subbed = OPT_LIST_START_PATTERN.sub("", opt_str).strip()
+            if subbed == opt_str:
+                break
+            opt_str = subbed
+        cleaned_options[key] = opt_str
+
+    return cleaned_stem, cleaned_options
+
 
 def find_outer_latex_environments(text: str, env_name: str = "enumerate") -> List[str]:
     """Find top-level LaTeX environment bodies by balancing \\begin and \\end tags."""
@@ -204,6 +247,10 @@ def parse_latex(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Parser
                 stem = extracted_stem
                 options = extracted_opts
                 inline_key = detected_inline_key
+
+        # Clean list layout wrappers (\begin{enumerate}, \end{enumerate}, \begin{tasks}, etc.)
+        # while 100% preserving actual math environments (matrix, cases, aligned)
+        stem, options = clean_latex_list_wrappers(stem, options)
 
         correct_key = answer_map.get(q_no) or inline_key or ""
         has_missing_answer = False
