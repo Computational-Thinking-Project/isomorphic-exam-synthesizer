@@ -1,5 +1,11 @@
 # Frontend — thiết lập local và checkpoint TASK-101/103
 
+## Dashboard mở theo detail mới — 27/10/2026
+
+- Lượt2 entry metadata đã user kiểm UI thật trên Docker development và báo đạt: tạo/replace/list, F5new/draft/clone, lỗi detail do browser chặn và thử lại sau bỏ chặn, signed-out, B không mở phiênA, reset form khi logouttabkhác/loginA. Không nhận Nginx/static, naturalexpiry hoặc ingestionW2 đã kiểm.
+- Dashboard nay GET detail mới trước Tiếp tục/Xem, có pending/hủy/error/thử lại, chặn click lặp và bỏ phản hồi cũ khi rời trang/đổi tài khoản. Chỉ nối đích draft đã có; các trạng thái khác thông báo chưa kết nối/chưa hỗ trợ. Không POST khi mở, không thêm màn hoặc readiness/job contract.
+- Agent154tests/lint/build và browser Auth/API mô phỏng đạt (0POST/0pageerrors); chưa có user kiểm UI thật cho chính hành vi mở mới này. Xem [Dashboard README](src/features/dashboard/README.md). Chưa TASK103Done hoặc bắt đầu201/203b/204.
+
 Frontend sản phẩm dùng React/Vite và JavaScript/JSX. Đây là hướng dẫn cho repo sản phẩm; bộ `ui-draft` trong workspace là tài liệu thiết kế riêng.
 
 ## Đồng bộ dev — lượt 1, 27/10/2026

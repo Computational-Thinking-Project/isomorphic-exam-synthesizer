@@ -12,6 +12,7 @@ export default function DashboardPage({
   onCreate,
   onOpen,
   onClone,
+  openingSessionId = null,
 }) {
   const [requestKey, setRequestKey] = useState(0);
   const [{ status, items, error }, setState] = useState({
@@ -130,6 +131,7 @@ export default function DashboardPage({
                   session={session}
                   onOpen={onOpen}
                   onClone={onClone}
+                  openingSessionId={openingSessionId}
                 />
               </li>
             ))}

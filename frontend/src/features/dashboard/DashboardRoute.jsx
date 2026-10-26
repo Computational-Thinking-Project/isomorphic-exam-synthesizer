@@ -1,8 +1,9 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../auth/authStore.js';
 import DashboardPage from './DashboardPage.jsx';
-import { listSessions } from '../../services/sessions.js';
+import { getSessionDetail, listSessions } from '../../services/sessions.js';
+import { createSessionOpener } from './sessionDestination.js';
 import CloneSessionModal from './CloneSessionModal.jsx';
 import { cloneSessionForDashboard } from './cloneSessionForDashboard.js';
 import { getSupabase } from '../../services/supabase.js';
@@ -13,10 +14,10 @@ export default function DashboardRoute() {
     (state) => `${state.user?.id ?? ''}:${state.sessionVersion}`,
   );
 
-  return <DashboardContent key={accountKey} />;
+  return <DashboardContent key={accountKey} accountKey={accountKey} />;
 }
 
-function DashboardContent() {
+function DashboardContent({ accountKey }) {
   const navigate = useNavigate();
   const [notice, setNotice] = useState('');
   const user = useAuthStore((state) => state.user);
@@ -28,6 +29,17 @@ function DashboardContent() {
   const [page, setPage] = useState(1);
   const [cloningSession, setCloningSession] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [opener] = useState(() => createSessionOpener({
+    load: getSessionDetail,
+    navigate,
+    isCurrent: () => {
+      const auth = useAuthStore.getState();
+      return auth.status === 'authenticated'
+        && `${auth.user?.id ?? ''}:${auth.sessionVersion}` === accountKey;
+    },
+  }));
+  const opening = useSyncExternalStore(opener.subscribe, opener.getSnapshot, opener.getSnapshot);
+  useEffect(() => () => opener.cancel(), [opener]);
 
   const totalPages = pageInfo
     ? Math.max(1, Math.ceil(pageInfo.total / pageInfo.pageSize))
@@ -104,6 +116,7 @@ function DashboardContent() {
   async function handleSignOut() {
     if (isSigningOut) return;
 
+    opener.cancel();
     setIsSigningOut(true);
     setSignOutError('');
     setNotice('');
@@ -156,22 +169,40 @@ function DashboardContent() {
         <p role="status" className="mt-3 break-words text-sm text-slate-300">
           {notice}
         </p>
+        {opening.phase === 'loading' && (
+          <div className="mt-3 flex items-center gap-3">
+            <p role="status">Đang mở phiên…</p>
+            <button type="button" onClick={opener.cancel} className="text-sky-300 underline">
+              Hủy mở phiên
+            </button>
+          </div>
+        )}
+        {opening.notice && <p role="status" className="mt-3 text-slate-300">{opening.notice}</p>}
+        {opening.error && (
+          <div className="mt-3">
+            <p role="alert" className="text-rose-300">{opening.error}</p>
+            <button type="button" onClick={() => void opener.open(opening.sessionId)}
+              className="mt-2 text-sky-300 underline">
+              Thử mở lại
+            </button>
+          </div>
+        )}
       </aside>
 
       <DashboardPage
         key={`${page}:${refreshKey}`}
         loadSessions={loadSessions}
+        openingSessionId={opening.phase === 'loading' ? opening.sessionId : null}
         onCreate={() => {
+          opener.cancel();
           navigate('/session/new/stage1');
         }}
         onOpen={(session) => {
-          if (session.status === 'draft') {
-            navigate(`/session/${encodeURIComponent(session.id)}/stage1`);
-            return;
-          }
-          setNotice('Màn tiếp tục cho trạng thái này chưa được kết nối. Bạn có thể nhân bản để bắt đầu một phiên nháp mới.');
+          setNotice('');
+          void opener.open(session.id);
         }}
         onClone={(selectedSession) => {
+          opener.cancel();
           setNotice('');
           setCloningSession(selectedSession);
         }}
@@ -192,7 +223,7 @@ function DashboardContent() {
         <button
           type="button"
           disabled={!isPageReady || page <= 1}
-          onClick={() => setPage((value) => value - 1)}
+          onClick={() => { opener.cancel(); setPage((value) => value - 1); }}
           className="rounded-lg border border-slate-600 px-4 py-2 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Trước
@@ -207,7 +238,7 @@ function DashboardContent() {
         <button
           type="button"
           disabled={!isPageReady || page >= totalPages}
-          onClick={() => setPage((value) => value + 1)}
+          onClick={() => { opener.cancel(); setPage((value) => value + 1); }}
           className="rounded-lg border border-slate-600 px-4 py-2 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Sau

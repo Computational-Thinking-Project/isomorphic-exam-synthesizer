@@ -1,5 +1,15 @@
 # Dashboard UI — TASK-103
 
+### Current detail before open — 27/10/2026
+
+Tiếp tục/Xem now calls the existing `getSessionDetail` before choosing a destination, including when the list badge is not draft. `sessionDestination.js` connects only the implemented draft entry; nine other known statuses and unknown statuses keep the user on Dashboard with a notice. No readiness/job fields or Stage2/review/export screens are invented. Stage1 still reads detail on arrival for its own direct-URL/reload protection; two sequential detail reads during a successful Dashboard open are expected.
+
+While opening, open buttons are disabled and the selected card shows Đang mở. Hủy mở phiên aborts the request; errors keep the list and offer explicit Thử mở lại. Create/clone/page changes, sign-out, route cleanup and account changes cancel or invalidate old results. No create/generate/confirm request is sent by opening. Layout, Auth/store/client and backend contracts are unchanged.
+
+Agent checks:154 frontend tests (eight new opener/resolver tests), lint and build passed. A separate browser runner uses the real App/bootstrap/components/client with substitute Auth and intercepted HTTP: changed list/detail status in both directions, safe404/retry, pending/duplicate/cancel, create/clone navigation, account switch/logout during pending, unknown status and375px layout passed;0POST and0page errors. This is fixture evidence, not CI or a real account/API check of the new open behavior. Owner handoff and acceptance of non-draft destinations remain open; TASK103 is not Done.
+
+Stage1 entry's prior live increment2 is complete as reported by TV1: create/replace/list, new/F5 without creation, draft/clone reload after the profile fix, browser-blocked detail failure and explicit retry after unblocking, signed-out detail/new/F5, B denied A's detail and cross-tab logout/account form reset. This does not cover Nginx/static serving, natural expiry, backend500/timeouts or ingestion/confirmation W2.
+
 Dashboard is connected to `/dashboard` under `ProtectedRoute`. A Supabase session enters `profile_pending`; the shared hook requests `GET /api/users/me` and opens Dashboard only after accepting a profile for the current account/login version. TV1 reported a real profile 200 response and the correct Dashboard name on 23/10/2026.
 
 The routed Dashboard uses the real list service with server pagination and out-of-range correction. The merged Clone Modal is connected through the real clone service; success closes it and reloads page1 even when already on page1. TV1 reported successful browser/cloud list, clone, persistence, question/blueprint copying and denial of account B cloning account A's source, as recorded below. Create opens the protected metadata entry at `/session/new/stage1`; opening a listed draft navigates to its ID route and reads fresh detail. The separate previews keep mock data. Auth PR #7 has landed in dev; the layout is provisional and TASK-103 remains incomplete.

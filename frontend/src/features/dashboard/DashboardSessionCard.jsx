@@ -32,6 +32,7 @@ export default function DashboardSessionCard({
   session,
   onOpen,
   onClone,
+  openingSessionId = null,
 }) {
   const isReadOnly = ['approved', 'exported'].includes(session.status);
   const statusLabel = Object.hasOwn(statusLabels, session.status)
@@ -66,10 +67,10 @@ export default function DashboardSessionCard({
         <button
           type="button"
           className={buttonClass}
-          disabled={!onOpen}
+          disabled={!onOpen || openingSessionId !== null}
           onClick={() => onOpen(session)}
         >
-          {isReadOnly ? 'Xem đề' : 'Tiếp tục'}
+          {openingSessionId === session.id ? 'Đang mở…' : isReadOnly ? 'Xem đề' : 'Tiếp tục'}
         </button>
 
         <button
