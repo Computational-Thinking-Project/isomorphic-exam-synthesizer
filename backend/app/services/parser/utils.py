@@ -125,9 +125,9 @@ def extract_options_from_text(text: str) -> Tuple[str, Dict[str, str], Optional[
     if marker_match:
         detected_key = marker_match.group(1).upper()
 
-    # Regex to split on option prefixes A., B., C., D. or A), B), C), D)
+    # Regex to split on option prefixes A., B., C., D. or A), B), C), D) (with optional bullet markers like - or *)
     opt_pattern = re.compile(
-        r"(?:\n|\s{2,}|\b)(?P<opt>[A-D])\s*[\.\)]\s*(?P<content>.*?)(?=(?:\n|\s{2,}|\b)[A-D]\s*[\.\)]|$)",
+        r"(?:\n|\s{2,}|\b)(?:[\-\*]\s*)?(?P<opt>[A-D])\s*[\.\)]\s*(?P<content>.*?)(?=(?:\n|\s{2,}|\b)(?:[\-\*]\s*)?[A-D]\s*[\.\)]|$)",
         re.DOTALL,
     )
 

@@ -84,6 +84,10 @@
 
 - Branch: `feat/be1-task-202-ingestion-parsers`; PR #15; Base: `dev`.
 - Remediation fixes addressing code review comments from Philip (`philip-kkk`):
+  - [P2] Markdown Bullet List Option Parsing (DEC-BE1-005):
+    - Upgraded `opt_pattern` regex in `backend/app/services/parser/utils.py` to recognize optional bullet markers (`-` or `*`) preceding option letters `[A-D]`.
+    - Sanitized question stem and option contents to eliminate trailing dashes and asterisks from leaking into rendered KaTeX elements.
+    - Added regression test `test_markdown_parser_bullet_list_options` in `backend/tests/test_parsers.py`.
   - [P2] Distributed Network Exception Handling (DEC-BE1-004):
     - Replaced naive string-based error message matching (`"timeout"`, `"connection reset"`) with explicit exception type matching (`httpx.TimeoutException`, `httpx.TransportError`, `httpcore.RemoteProtocolError`, `httpcore.NetworkError`).
     - Differentiated unconfirmed network dropouts (HTTP 504 Gateway Timeout, transaction state indeterminate, instructing client to verify session state) from verified database rejects with automatic rollback (`postgrest.exceptions.APIError` -> HTTP 500).
@@ -95,9 +99,10 @@
     - Added dedicated Scenario 7 for direct database administrator callers (`session_user IN ('postgres', 'supabase_admin')`) succeeding without JWT claims.
     - Ensured full test execution wrapped in a transaction with trailing `ROLLBACK;`.
 - Quality Verification:
-  - Scoped TASK-202 tests: **53 tests passed** (22 parser tests + 14 ingest API tests + 17 session tests).
-  - Full backend test suite: **245 passed** (100%).
+  - Scoped TASK-202 tests: **54 tests passed** (23 parser tests + 14 ingest API tests + 17 session tests).
+  - Full backend test suite: **246 passed** (100%).
   - Linter: `ruff check` passed 100% clean.
   - Static type checking: `mypy` passed with 0 errors.
+
 
 

@@ -82,6 +82,9 @@ def parse_markdown(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Par
             )
             if len(bullet_opts) == 4:
                 options = {b[0].upper(): b[1].strip() for b in bullet_opts}
+                first_bullet = re.search(r"(?:^|\n)\s*[\-\*]\s*[A-D]\s*[\.\)]", q_text)
+                if first_bullet:
+                    stem = q_text[: first_bullet.start()].strip()
 
         correct_key = answer_map.get(q_no) or inline_key or ""
         has_missing_answer = False
