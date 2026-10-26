@@ -360,3 +360,66 @@ class TestValidateVariantConvenienceWrapper:
         assert report.status == "passed"
         assert report.confidence == "rule_only"
         assert any("geometry" in w or "out-of-scope" in w for w in report.warnings)
+
+
+class TestAggregatorReviewRegressionFixes:
+    def test_domain_error_from_cas_fails(self):
+        # Solution x = 1 causes denominator x - 1 = 0
+        report = validate_question(
+            question_text=r"Phương trình $\frac{1}{x-1} = 0$ có nghiệm là",
+            options=["1", "2", "3", "4"],
+            correct_answer="A",
+        )
+        assert report.passed is False
+        assert report.status == "failed"
+        assert any(
+            "zero" in err.lower() or "domain" in err.lower() or "denominator" in err.lower()
+            for err in report.errors
+        )
+
+    def test_multiple_options_satisfying_equation_fails(self):
+        # x^2 - 1 = 0 has roots x = 1 and x = -1; both A and B are roots
+        report = validate_question(
+            question_text="Phương trình $x^2 - 1 = 0$ có nghiệm là",
+            options=["1", "-1", "2", "3"],
+            correct_answer="A",
+        )
+        assert report.passed is False
+        assert report.status == "failed"
+        assert any("Multiple options satisfy the equation" in err for err in report.errors)
+
+    def test_unique_option_satisfying_equation_passes(self):
+        # x^2 - 1 = 0 with only x = 1 in options
+        report = validate_question(
+            question_text="Phương trình $x^2 - 1 = 0$ có nghiệm là",
+            options=["1", "2", "3", "4"],
+            correct_answer="A",
+        )
+        assert report.passed is True
+        assert report.status == "passed"
+        assert report.confidence == "sympy_verified"
+        assert len(report.errors) == 0
+
+    def test_zero_bounds_not_dropped_in_aggregator(self):
+        # k = -1 is below minimum 0
+        report = validate_question(
+            question_text="Cho giá trị tham số k = -1",
+            options=["1", "2", "3", "4"],
+            correct_answer="1",
+            blueprint={"bounds": {"min": 0, "max": 10}},
+        )
+        assert report.passed is False
+        assert report.status == "failed"
+        assert any("below minimum 0.0" in err for err in report.errors)
+
+    def test_mathematically_equivalent_answer_passes(self):
+        # Option A is 1/2, correct answer is 0.5
+        report = validate_question(
+            question_text="Phương trình $2x - 1 = 0$ có nghiệm là",
+            options=["1/2", "1", "2", "3"],
+            correct_answer="0.5",
+        )
+        assert report.passed is True
+        assert report.status == "passed"
+        assert report.confidence == "sympy_verified"
+        assert len(report.errors) == 0

@@ -11,12 +11,14 @@ ValidationReport:
 
 import logging
 import time
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.services.validator.base import CheckResult, ValidationReport
 from app.services.validator.logic_checker import (
+    are_expressions_equivalent,
     check_designated_answer,
     check_duplicate_options,
+    normalize_latex_string,
 )
 from app.services.validator.rule_checker import (
     check_distractor_reasonableness,
@@ -147,6 +149,7 @@ def validate_question(
     # -------------------------------------------------------------------------
     is_oos, oos_category = detect_out_of_scope_math(question_text or "")
     sympy_res: Optional[EvaluationResult] = None
+    uniqueness_inconclusive: bool = False
 
     # Resolve correct answer text content if designated by label letter A, B, C, D
     resolved_answer = correct_answer
@@ -206,13 +209,22 @@ def validate_question(
                 if sympy_res.passed
                 else (
                     [sympy_res.detail]
-                    if (sympy_res.status == EvaluationStatus.FAILED and sympy_res.detail)
+                    if (
+                        sympy_res.status in (EvaluationStatus.FAILED, EvaluationStatus.DOMAIN_ERROR)
+                        and sympy_res.detail
+                    )
                     else []
                 ),
             )
             checks.append(sympy_check)
-            if not sympy_res.passed and sympy_res.status == EvaluationStatus.FAILED:
-                detail_err = sympy_res.detail or "Candidate answer is mathematically incorrect."
+            if not sympy_res.passed and sympy_res.status in (
+                EvaluationStatus.FAILED,
+                EvaluationStatus.DOMAIN_ERROR,
+            ):
+                detail_err = (
+                    sympy_res.detail
+                    or f"SymPy CAS evaluation rejected candidate answer ({raw_status_val})."
+                )
                 errors.append(f"SymPy CAS verification failed: {detail_err}")
 
             if sympy_res.status == EvaluationStatus.TIMEOUT:
@@ -223,6 +235,67 @@ def validate_question(
                 warnings.append(
                     "SymPy evaluator unsupported question structure; routed to rule-based fallback."
                 )
+
+            # Uniqueness verification: If the candidate answer is verified by CAS, ensure
+            # that no other option in the multiple-choice set also satisfies the equation.
+            if sympy_res.passed and sympy_res.status == EvaluationStatus.VERIFIED and options:
+                designated_idx = -1
+                if correct_answer and str(correct_answer).strip().upper() in ("A", "B", "C", "D"):
+                    letter_idx = ord(str(correct_answer).strip().upper()) - ord("A")
+                    if 0 <= letter_idx < len(options):
+                        designated_idx = letter_idx
+                if designated_idx == -1 and resolved_answer:
+                    for i, opt in enumerate(options):
+                        if opt is not None and (
+                            normalize_latex_string(str(opt).strip())
+                            == normalize_latex_string(resolved_answer.strip())
+                            or are_expressions_equivalent(str(opt).strip(), resolved_answer.strip())
+                        ):
+                            designated_idx = i
+                            break
+
+                multiple_solutions_found: List[Tuple[str, str]] = []
+                for i, opt in enumerate(options):
+                    if i == designated_idx:
+                        continue
+                    if not opt or not str(opt).strip():
+                        continue
+                    dist_res = verify_question_math(
+                        question_text=question_text or "",
+                        correct_answer=str(opt).strip(),
+                        timeout=timeout,
+                    )
+                    if dist_res.passed and dist_res.status == EvaluationStatus.VERIFIED:
+                        opt_label = chr(ord("A") + i) if i < 26 else str(i + 1)
+                        multiple_solutions_found.append((opt_label, str(opt).strip()))
+                    elif dist_res.status in (
+                        EvaluationStatus.TIMEOUT,
+                        EvaluationStatus.UNSUPPORTED,
+                    ):
+                        uniqueness_inconclusive = True
+                        warnings.append(
+                            f"Option {chr(ord('A') + i)} ('{str(opt).strip()}') uniqueness could not be definitively verified by CAS ({dist_res.status.value})."
+                        )
+
+                if multiple_solutions_found:
+                    des_label = (
+                        f"Option {chr(ord('A') + designated_idx)}"
+                        if 0 <= designated_idx < 26
+                        else f"designated answer '{resolved_answer}'"
+                    )
+                    mult_strs = [f"Option {lbl} ('{val}')" for lbl, val in multiple_solutions_found]
+                    err_msg = (
+                        f"Multiple options satisfy the equation: both {des_label} ('{resolved_answer}') "
+                        f"and {', '.join(mult_strs)} are valid solutions."
+                    )
+                    errors.append(f"SymPy CAS verification failed: {err_msg}")
+                    sympy_res.passed = False
+                    sympy_res.status = EvaluationStatus.FAILED
+                    sympy_res.detail = err_msg
+                    sympy_check.passed = False
+                    sympy_check.status = "failed"
+                    sympy_check.detail = err_msg
+                    sympy_check.errors = [err_msg]
         except Exception as exc:
             logger.warning("Unexpected error during SymPy evaluation: %s", exc)
             sympy_res = EvaluationResult(
@@ -290,9 +363,17 @@ def validate_question(
     dedup_errors = _dedup_list(errors)
     dedup_warnings = _dedup_list(warnings)
 
-    overall_passed = len(dedup_errors) == 0
+    overall_passed = (len(dedup_errors) == 0) and not (
+        sympy_res is not None
+        and sympy_res.status in (EvaluationStatus.FAILED, EvaluationStatus.DOMAIN_ERROR)
+    )
 
-    if sympy_res is not None and sympy_res.passed and sympy_res.status == EvaluationStatus.VERIFIED:
+    if (
+        sympy_res is not None
+        and sympy_res.passed
+        and sympy_res.status == EvaluationStatus.VERIFIED
+        and not uniqueness_inconclusive
+    ):
         confidence = "sympy_verified"
     else:
         confidence = "rule_only"
