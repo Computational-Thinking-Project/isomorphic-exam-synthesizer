@@ -32,8 +32,8 @@ Key Capabilities:
 
 import ast
 import logging
-import math
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.services.validator.base import CheckResult
@@ -102,27 +102,32 @@ class SafeNumericEvaluator(ast.NodeVisitor):
     Strict, deterministic AST visitor that safely evaluates basic numeric
     arithmetic expressions (+, -, *, /, **, %) and safe functions (sqrt, abs)
     without using eval() or arbitrary code execution.
+    Maintains exact Decimal precision to prevent IEEE 754 precision loss.
     """
 
-    def visit_Expression(self, node: ast.Expression) -> float:
-        return float(self.visit(node.body))
+    def visit_Expression(self, node: ast.Expression) -> Decimal:
+        return self.visit(node.body)
 
-    def visit_Constant(self, node: ast.Constant) -> float:
-        if isinstance(node.value, (int, float)):
-            return float(node.value)
+    def visit_Constant(self, node: ast.Constant) -> Decimal:
+        if isinstance(node.value, int):
+            return Decimal(node.value)
+        if isinstance(node.value, float):
+            return Decimal(str(node.value))
+        if isinstance(node.value, str):
+            return Decimal(node.value)
         raise ValueError(f"Unsupported constant type: {type(node.value)}")
 
-    def visit_UnaryOp(self, node: ast.UnaryOp) -> float:
-        operand = float(self.visit(node.operand))
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> Decimal:
+        operand: Decimal = self.visit(node.operand)
         if isinstance(node.op, ast.UAdd):
             return +operand
         if isinstance(node.op, ast.USub):
             return -operand
         raise ValueError(f"Unsupported unary operator: {type(node.op)}")
 
-    def visit_BinOp(self, node: ast.BinOp) -> float:
-        left = float(self.visit(node.left))
-        right = float(self.visit(node.right))
+    def visit_BinOp(self, node: ast.BinOp) -> Decimal:
+        left: Decimal = self.visit(node.left)
+        right: Decimal = self.visit(node.right)
         if isinstance(node.op, ast.Add):
             return left + right
         if isinstance(node.op, ast.Sub):
@@ -130,38 +135,38 @@ class SafeNumericEvaluator(ast.NodeVisitor):
         if isinstance(node.op, ast.Mult):
             return left * right
         if isinstance(node.op, ast.Div):
-            if abs(right) < 1e-12:
+            if right == 0:
                 raise ZeroDivisionError("Division by zero in AST evaluation")
             return left / right
         if isinstance(node.op, ast.Pow):
             if abs(left) > 1000 or abs(right) > 20:
                 raise ValueError("Exponentiation out of safe bounds")
-            return float(left**right)
+            return left**right
         if isinstance(node.op, ast.Mod):
-            if abs(right) < 1e-12:
+            if right == 0:
                 raise ZeroDivisionError("Modulo by zero in AST evaluation")
             return left % right
         raise ValueError(f"Unsupported binary operator: {type(node.op)}")
 
-    def visit_Call(self, node: ast.Call) -> float:
+    def visit_Call(self, node: ast.Call) -> Decimal:
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
             if func_name == "abs" and len(node.args) == 1:
-                return abs(float(self.visit(node.args[0])))
+                return abs(self.visit(node.args[0]))
             if func_name == "sqrt" and len(node.args) == 1:
-                val = float(self.visit(node.args[0]))
+                val: Decimal = self.visit(node.args[0])
                 if val < 0:
                     raise ValueError(f"Square root of negative number: {val}")
-                return math.sqrt(val)
+                return val.sqrt()
         raise ValueError("Unsupported function call in AST evaluator")
 
-    def generic_visit(self, node: ast.AST) -> float:
+    def generic_visit(self, node: ast.AST) -> Decimal:
         raise ValueError(f"Disallowed AST node: {type(node).__name__}")
 
 
-def safe_eval_numeric_expr(expr_str: str) -> Optional[float]:
+def safe_eval_numeric_expr(expr_str: str) -> Optional[Decimal]:
     """
-    Safely evaluate a basic numeric expression string to a float using AST.
+    Safely evaluate a basic numeric expression string to a Decimal using AST.
     Returns None if the expression contains variables, unsupported syntax,
     or evaluation fails.
     """
@@ -180,7 +185,7 @@ def safe_eval_numeric_expr(expr_str: str) -> Optional[float]:
         tree = ast.parse(cleaned, mode="eval")
         evaluator = SafeNumericEvaluator()
         return evaluator.visit(tree)
-    except (SyntaxError, ValueError, ZeroDivisionError, OverflowError):
+    except (SyntaxError, ValueError, ZeroDivisionError, OverflowError, InvalidOperation):
         return None
     except Exception:
         return None
@@ -260,30 +265,34 @@ def extract_parameter_domains(blueprint: Optional[Dict[str, Any]]) -> List[Dict[
     return []
 
 
-def _parse_bound_value(val_obj: Any) -> Optional[float]:
+def _parse_bound_value(val_obj: Any) -> Optional[Decimal]:
     """
     Parse numerical bound value from int, float, str (decimal or rational),
     or typed schema dict (e.g. {"type": "integer", "value": 2},
     {"type": "decimal", "value": "0.5"}, {"type": "rational", "numerator": 1, "denominator": 2}).
-    Returns None if val_obj is missing or unparseable.
+    Returns exact Decimal object, or None if val_obj is missing or unparseable.
     """
     if val_obj is None:
         return None
-    if isinstance(val_obj, (int, float)):
-        return float(val_obj)
+    if isinstance(val_obj, Decimal):
+        return val_obj
+    if isinstance(val_obj, int):
+        return Decimal(val_obj)
+    if isinstance(val_obj, float):
+        return Decimal(str(val_obj))
     if isinstance(val_obj, dict):
         if "numerator" in val_obj and "denominator" in val_obj:
             den = _parse_bound_value(val_obj["denominator"])
             num = _parse_bound_value(val_obj["numerator"])
-            if den is not None and num is not None and den != 0.0:
+            if den is not None and num is not None and den != 0:
                 return num / den
         if "value" in val_obj and val_obj["value"] is not None:
             return _parse_bound_value(val_obj["value"])
     if isinstance(val_obj, str):
         cleaned = val_obj.strip()
         try:
-            return float(cleaned)
-        except ValueError:
+            return Decimal(cleaned)
+        except InvalidOperation:
             parsed = safe_eval_numeric_expr(cleaned)
             if parsed is not None:
                 return parsed
@@ -330,7 +339,7 @@ def check_parameter_bounds(
         allowed_values = domain.get("allowed_values")
         step = _parse_bound_value(_first_not_none(domain.get("step")))
 
-        values_to_test: List[Tuple[str, float]] = []
+        values_to_test: List[Tuple[str, Decimal]] = []
 
         # 1. Direct parameter lookup if provided in parameters dict
         if parameters:
@@ -356,10 +365,9 @@ def check_parameter_bounds(
                     r"(?<![a-zA-Z0-9_.])-?\d+(?:\.\d+)?(?![a-zA-Z0-9_.])", combined_text
                 )
                 for num_str in all_nums:
-                    try:
-                        values_to_test.append(("*", float(num_str)))
-                    except ValueError:
-                        continue
+                    parsed_n = _parse_bound_value(num_str)
+                    if parsed_n is not None:
+                        values_to_test.append(("*", parsed_n))
             else:
                 # Match parameter name in text e.g. "k = 55", "k=55", "3190P" (multiplier before P)
                 clean_target = (
@@ -376,10 +384,9 @@ def check_parameter_bounds(
                 for pat in patterns:
                     matches = re.findall(pat, combined_text, re.IGNORECASE)
                     for m in matches:
-                        try:
-                            values_to_test.append((target_name, float(m)))
-                        except ValueError:
-                            continue
+                        parsed_m = _parse_bound_value(m)
+                        if parsed_m is not None:
+                            values_to_test.append((target_name, parsed_m))
 
         # 3. Perform bound checks
         for p_name, val in values_to_test:
@@ -389,9 +396,9 @@ def check_parameter_bounds(
             if max_val is not None and val > max_val:
                 errors.append(f"Parameter '{p_name}' value {val} exceeds maximum {max_val}.")
             if allowed_values is not None and isinstance(allowed_values, list):
-                allowed_floats = [_parse_bound_value(x) for x in allowed_values]
-                valid_allowed = [a for a in allowed_floats if a is not None]
-                if valid_allowed and not any(abs(val - a) < 1e-9 for a in valid_allowed):
+                allowed_decimals = [_parse_bound_value(x) for x in allowed_values]
+                valid_allowed = [a for a in allowed_decimals if a is not None]
+                if valid_allowed and not any(val == a for a in valid_allowed):
                     errors.append(
                         f"Parameter '{p_name}' value {val} is not in allowed values: {allowed_values}."
                     )
@@ -402,7 +409,7 @@ def check_parameter_bounds(
             if step is not None and min_val is not None and step > 0:
                 diff = val - min_val
                 rem = diff % step
-                if abs(rem) > 1e-9 and abs(step - rem) > 1e-9:
+                if rem != 0:
                     errors.append(
                         f"Parameter '{p_name}' value {val} does not satisfy step {step} from minimum {min_val}."
                     )
@@ -452,22 +459,27 @@ def check_mathematical_invariants(
                 )
                 continue
             denom_val = safe_eval_numeric_expr(denom_str)
-            if denom_val is not None and denom_val == 0.0:
+            if denom_val is not None and denom_val == 0:
                 errors.append(
                     f"Zero denominator detected: denominator '{denom_str}' evaluates to 0 in '\\frac{{{num_str}}}{{{denom_str}}}'"
+                )
+            elif denom_val is None and not re.search(r"[a-zA-Z]", denom_str):
+                errors.append(
+                    f"Zero or uncomputable denominator detected: '{denom_str}' cannot be evaluated in '\\frac{{{num_str}}}{{{denom_str}}}'"
                 )
 
         # Check plain fractions: A / B
         for match in PLAIN_FRACTION_REGEX.finditer(text_segment):
             num_str, denom_str = match.group(1).strip(), match.group(2).strip()
-            try:
-                denom_val = float(denom_str)
-                if denom_val == 0.0:
-                    errors.append(
-                        f"Zero denominator detected in numerical fraction: '{num_str}/{denom_str}'"
-                    )
-            except ValueError:
-                pass
+            denom_val = _parse_bound_value(denom_str)
+            if denom_val is not None and denom_val == 0:
+                errors.append(
+                    f"Zero denominator detected in numerical fraction: '{num_str}/{denom_str}'"
+                )
+            elif denom_val is None and not re.search(r"[a-zA-Z]", denom_str):
+                errors.append(
+                    f"Zero or uncomputable denominator detected in numerical fraction: '{num_str}/{denom_str}'"
+                )
 
     # 2. Non-Negative Radicand (Even Roots) Check
     for text_segment in combined_texts:
@@ -477,10 +489,15 @@ def check_mathematical_invariants(
             # Even root requires radicand >= 0 in real domain
             if degree % 2 == 0:
                 rad_val = safe_eval_numeric_expr(radicand_str)
-                if rad_val is not None and rad_val < 0.0:
+                if rad_val is not None:
+                    if rad_val < 0:
+                        errors.append(
+                            f"Negative radicand in even root (index {degree}): radicand '{radicand_str}' "
+                            f"evaluates to {rad_val} < 0."
+                        )
+                elif not re.search(r"[a-zA-Z]", radicand_str):
                     errors.append(
-                        f"Negative radicand in even root (index {degree}): radicand '{radicand_str}' "
-                        f"evaluates to {rad_val} < 0."
+                        f"Uncomputable radicand in even root (index {degree}): '{radicand_str}' cannot be evaluated."
                     )
 
     # 3. Logarithm Domain Check
@@ -491,30 +508,42 @@ def check_mathematical_invariants(
             arg_str = match.group(3) or match.group(4)
             if arg_str:
                 arg_val = safe_eval_numeric_expr(arg_str.strip())
-                if arg_val is not None and arg_val <= 0.0:
+                if arg_val is not None:
+                    if arg_val <= 0:
+                        errors.append(
+                            f"Logarithm argument must be strictly positive: argument '{arg_str}' evaluates to {arg_val} <= 0."
+                        )
+                elif not re.search(r"[a-zA-Z]", arg_str):
                     errors.append(
-                        f"Logarithm argument must be strictly positive: argument '{arg_str}' evaluates to {arg_val} <= 0."
+                        f"Uncomputable logarithm argument: '{arg_str}' cannot be evaluated."
                     )
             if base_str:
-                base_val = safe_eval_numeric_expr(base_str.strip())
+                base_val = _parse_bound_value(base_str.strip())
                 if base_val is not None:
-                    if base_val <= 0.0:
+                    if base_val <= 0:
                         errors.append(
                             f"Logarithm base must be strictly positive: base '{base_str}' evaluates to {base_val} <= 0."
                         )
-                    elif base_val == 1.0:
+                    elif base_val == 1:
                         errors.append(
-                            f"Logarithm base cannot be equal to 1: base '{base_str}' evaluates to 1.0."
+                            f"Logarithm base cannot be equal to 1: base '{base_str}' evaluates to 1."
                         )
+                elif not re.search(r"[a-zA-Z]", base_str):
+                    errors.append(f"Uncomputable logarithm base: '{base_str}' cannot be evaluated.")
 
         # \ln(A)
         for match in LATEX_LN_REGEX.finditer(text_segment):
             arg_str = match.group(1) or match.group(2)
             if arg_str:
                 arg_val = safe_eval_numeric_expr(arg_str.strip())
-                if arg_val is not None and arg_val <= 0.0:
+                if arg_val is not None:
+                    if arg_val <= 0:
+                        errors.append(
+                            f"Logarithm argument must be strictly positive: argument '{arg_str}' evaluates to {arg_val} <= 0."
+                        )
+                elif not re.search(r"[a-zA-Z]", arg_str):
                     errors.append(
-                        f"Logarithm argument must be strictly positive: argument '{arg_str}' evaluates to {arg_val} <= 0."
+                        f"Uncomputable logarithm argument: '{arg_str}' cannot be evaluated."
                     )
 
     # 4. Quadratic Discriminant Invariant Check
