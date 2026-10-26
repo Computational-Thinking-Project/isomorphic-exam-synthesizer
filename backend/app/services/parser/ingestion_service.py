@@ -1,14 +1,93 @@
-"""Ingestion Service for Atomic Database Replacement and Blueprint Trigger (TASK-202)."""
+"""Ingestion Service for Atomic Database Replacement and Blueprint Trigger (TASK-202 / TASK-205)."""
 
 import logging
 from typing import Any, Dict, List, Optional, cast
 
+import httpcore
+import httpx
 from fastapi import HTTPException, status
+from postgrest.exceptions import APIError
 from supabase import Client
 
 from app.models.schemas import ParsedQuestionItem
 
 logger = logging.getLogger(__name__)
+
+NETWORK_TIMEOUT_EXCEPTIONS: tuple[type[BaseException], ...] = (
+    httpx.TimeoutException,
+    httpcore.TimeoutException,
+    TimeoutError,
+)
+
+NETWORK_TRANSPORT_EXCEPTIONS: tuple[type[BaseException], ...] = (
+    httpx.TransportError,
+    httpx.NetworkError,
+    httpx.ProtocolError,
+    httpcore.NetworkError,
+    httpcore.ProtocolError,
+    ConnectionError,
+)
+
+
+def is_network_timeout(exc: BaseException) -> bool:
+    """Check if exception or any nested cause/context represents a network timeout."""
+    cur: Optional[BaseException] = exc
+    while cur is not None:
+        if isinstance(cur, NETWORK_TIMEOUT_EXCEPTIONS):
+            return True
+        cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
+    err_lower = str(exc).lower()
+    return "timeout" in err_lower or "timed out" in err_lower
+
+
+def is_network_transport(exc: BaseException) -> bool:
+    """Check if exception or any nested cause/context represents a network transport or disconnection error."""
+    cur: Optional[BaseException] = exc
+    while cur is not None:
+        if isinstance(cur, NETWORK_TRANSPORT_EXCEPTIONS):
+            return True
+        cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
+    err_lower = str(exc).lower()
+    transport_indicators = (
+        "disconnected",
+        "connection reset",
+        "connection closed",
+        "connection error",
+        "transport error",
+        "remote protocol",
+        "remoteprotocolerror",
+        "read error",
+        "readerror",
+        "network error",
+        "broken pipe",
+    )
+    return any(ind in err_lower for ind in transport_indicators)
+
+
+def is_database_rollback_evidence(exc: BaseException) -> bool:
+    """Check if there is concrete evidence from PostgreSQL that the transaction failed and rolled back."""
+    cur: Optional[BaseException] = exc
+    while cur is not None:
+        if isinstance(cur, APIError):
+            return True
+        if hasattr(cur, "code") and getattr(cur, "code", None):
+            return True
+        cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
+    err_lower = str(exc).lower()
+    return any(
+        k in err_lower
+        for k in (
+            "p0001",
+            "p0002",
+            "23505",
+            "22023",
+            "42501",
+            "sqlstate",
+            "transaction error",
+            "postgresql",
+            "violates",
+        )
+    )
 
 
 async def replace_source_questions_atomically(
@@ -63,31 +142,26 @@ async def replace_source_questions_atomically(
         err_msg = str(exc)
         err_lower = err_msg.lower()
         logger.error("RPC replace_source_questions failed for session %s: %s", session_id, exc)
-        if "42501" in err_msg or "Access denied" in err_msg or "Unauthorized" in err_msg:
+        code = getattr(exc, "code", "") or ""
+
+        if code == "42501" or "42501" in err_msg or "access denied" in err_lower or "unauthorized" in err_lower:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied or session ownership mismatch",
             ) from exc
-        if "22023" in err_msg or "draft" in err_lower:
+        if code == "22023" or "22023" in err_msg or "draft" in err_lower:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Cannot ingest questions: session is not in draft status",
             ) from exc
-        if "P0002" in err_msg or "not found" in err_lower:
+        if code == "P0002" or "p0002" in err_lower or "not found" in err_lower:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Session not found",
             ) from exc
 
-        # Differentiate network timeout (uncertain commit status) from confirmed database rollback
-        is_timeout = (
-            "timeout" in err_lower
-            or "timed out" in err_lower
-            or "connection closed" in err_lower
-            or "connection reset" in err_lower
-            or "transport error" in err_lower
-        )
-        if is_timeout:
+        # 4. Network Timeout (504): Commit status is uncertain
+        if is_network_timeout(exc):
             raise HTTPException(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                 detail=(
@@ -96,9 +170,28 @@ async def replace_source_questions_atomically(
                 ),
             ) from exc
 
+        # 5. Network Disconnection / Lost Response / Transport Error (504): Commit status is uncertain
+        if is_network_transport(exc):
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=(
+                    "Database atomic replacement status is uncertain due to network communication error. "
+                    "The transaction may have completed. Please verify session state before retrying."
+                ),
+            ) from exc
+
+        # 6. Confirmed Database Execution Failure with Rollback Evidence (500)
+        if is_database_rollback_evidence(exc):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database atomic replacement failed and was rolled back.",
+            ) from exc
+
+        # 7. Unverified / Unexpected Failure without DB Evidence (500):
+        # Do not falsely affirm that the transaction was rolled back.
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database atomic replacement failed and was rolled back.",
+            detail="Database atomic replacement failed. Please verify session state before retrying.",
         ) from exc
 
     # Query and return the newly inserted records
@@ -147,4 +240,3 @@ async def trigger_blueprint_pipeline(
             )
     except Exception as exc:
         logger.error("Error in background blueprint pipeline for session %s: %s", session_id, exc)
-
