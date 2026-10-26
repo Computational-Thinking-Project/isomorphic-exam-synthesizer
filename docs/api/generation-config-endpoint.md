@@ -3,9 +3,13 @@
 ## Implementation status
 
 This document defines the agreed contract. This branch implements request and
-response models and pure validation, covered by unit tests. The HTTP endpoint
-and persistence are not available until the repository, router and database RPC
-are integrated and tested.
+response models, pure validation, a read-only context repository, an internal
+store interface and a router factory, covered by unit and API tests.
+
+The router factory requires an explicit store factory. It is currently registered
+only in isolated test apps with fixture-only persistence. Product `main.py` does
+not register this endpoint. The real save adapter and database RPC integration
+remain pending; the tests do not prove database atomicity, concurrency or RLS.
 
 ## HTTP request
 
