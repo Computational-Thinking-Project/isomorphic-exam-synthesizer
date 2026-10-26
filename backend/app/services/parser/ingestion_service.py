@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from typing import Any, Dict, List, Optional, cast
 
 import httpcore
@@ -13,6 +14,9 @@ from supabase import Client
 from app.models.schemas import ParsedQuestionItem
 
 logger = logging.getLogger(__name__)
+
+POSTGRES_SQLSTATE_PATTERN = re.compile(r"^[0-9A-Z]{5}$")
+GATEWAY_HTTP_STATUS_CODES = {"500", "502", "503", "504"}
 
 NETWORK_TIMEOUT_EXCEPTIONS: tuple[type[BaseException], ...] = (
     httpx.TimeoutException,
@@ -66,29 +70,42 @@ def is_network_transport(exc: BaseException) -> bool:
 
 
 def is_database_rollback_evidence(exc: BaseException) -> bool:
-    """Check if there is concrete evidence from PostgreSQL that the transaction failed and rolled back."""
+    """Check if there is concrete evidence that PostgreSQL engine aborted and rolled back the transaction.
+
+    Requires a genuine 5-character PostgreSQL SQLSTATE (e.g. 'P0001', '23505', '42501', '22023').
+    Explicitly excludes intermediate gateway errors (HTTP 500, 502, 503, 504), non-JSON responses
+    (e.g. HTML gateway pages wrapped by postgrest SDK with 'JSON could not be generated'),
+    and unverified runtime exceptions.
+    """
+    seen: set[int] = set()
     cur: Optional[BaseException] = exc
-    while cur is not None:
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
         if isinstance(cur, APIError):
-            return True
-        if hasattr(cur, "code") and getattr(cur, "code", None):
-            return True
+            msg = getattr(cur, "message", None)
+            if msg == "JSON could not be generated":
+                return False
+
+            code = getattr(cur, "code", None)
+            if not code:
+                return False
+
+            code_str = str(code).strip()
+            # Gateway HTTP status codes (3 digits) are NOT PostgreSQL SQLSTATEs
+            if code_str in GATEWAY_HTTP_STATUS_CODES:
+                return False
+
+            # HTML content in details indicates an intermediate reverse proxy / gateway error response
+            details = str(getattr(cur, "details", "") or "").lower()
+            if "<html>" in details or "<head>" in details or "<!doctype" in details:
+                return False
+
+            # Genuine PostgreSQL SQLSTATE is strictly a 5-character alphanumeric code
+            return bool(POSTGRES_SQLSTATE_PATTERN.match(code_str))
+
         cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
-    err_lower = str(exc).lower()
-    return any(
-        k in err_lower
-        for k in (
-            "p0001",
-            "p0002",
-            "23505",
-            "22023",
-            "42501",
-            "sqlstate",
-            "transaction error",
-            "postgresql",
-            "violates",
-        )
-    )
+
+    return False
 
 
 async def replace_source_questions_atomically(

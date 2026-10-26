@@ -15,6 +15,7 @@
 - [DEC-BE1-003: Khắc phục Toàn Diện Phản Hồi Review PR #15 (Vòng 2)](#dec-be1-003-khắc-phục-toàn-diện-phản-hồi-review-pr-15-vòng-2)
 - [DEC-BE1-004: Xử lý Triệt Để Ngoại Lệ Mạng và Khẳng Định Trạng Thái Commit CSDL (PR #15 Round 3)](#dec-be1-004-xử-lý-triệt-để-ngoại-lệ-mạng-và-khẳng-định-trạng-thái-commit-csdl-pr-15-round-3)
 - [DEC-BE1-005: Chuẩn Hóa Bóc Tách Phương Án Bullet List Trong Parser Markdown & Text (PR #15)](#dec-be1-005-chuẩn-hóa-bóc-tách-phương-án-bullet-list-trong-parser-markdown--text-pr-15)
+- [DEC-BE1-006: Khắc Phục Triệt Để Suy Luận Rollback CSDL & Ngoại Lệ Gateway (PR #15 Round 4)](#dec-be1-006-khắc-phục-triệt-để-suy-luận-rollback-csdl--ngoại-lệ-gateway-pr-15-round-4)
 
 ---
 
@@ -142,5 +143,20 @@
   1. **Nâng cấp `opt_pattern` tại nguồn `utils.py`:** Mở rộng pattern hỗ trợ `(?:[\-\*]\s*)?` trước nhãn phương án ở cả đoạn so khớp chính và lookahead kết thúc, bảo đảm điểm bắt đầu `first_opt_pos` bao gồm cả bullet của phương án A.
   2. **Làm sạch Thân câu và Phương án:** Cắt gọt triệt để ký tự bullet thừa, bảo đảm `stem` chỉ chứa nội dung câu hỏi và các giá trị trong `options` thuần khiết, không rò rỉ gạch đầu dòng hoặc dấu sao.
   3. **Bổ sung Unit Test Hồi quy:** Thêm test `test_markdown_parser_bullet_list_options` trong `test_parsers.py` kiểm chứng cho cả hai dạng bullet `-` và `*`.
+
+### DEC-BE1-006: Khắc Phục Triệt Để Suy Luận Rollback CSDL & Ngoại Lệ Gateway (PR #15 Round 4)
+* **Mã quyết định:** DEC-BE1-006
+* **Ngày quyết định:** 26/10/2026
+* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
+* **Bối cảnh:**
+  1. `is_database_rollback_evidence()` trước đây coi mọi instance của `postgrest.exceptions.APIError` hoặc exception có thuộc tính `code` là bằng chứng khẳng định PostgreSQL đã rollback transaction (`was rolled back`).
+  2. Khi các reverse proxy / API Gateway trung gian (Cloudflare, Kong, Nginx) gặp sự cố, chúng trả về phản hồi HTML `502 Bad Gateway`, `503 Service Unavailable`, hoặc `504 Gateway Timeout`. PostgREST Python SDK khi nhận response HTML không parse được JSON sẽ đóng gói thành `APIError` với `code=502/504` và `message="JSON could not be generated"`.
+  3. Lỗi gateway chỉ là sự cố lớp mạng chuyển tiếp; server CSDL phía sau có thể đã commit thành công transaction trước khi mất phản hồi. Việc khẳng định "was rolled back" là False Rollback Assertion nguy hiểm cho toàn vẹn dữ liệu.
+* **Quyết định:**
+  1. **Nhận diện chính xác SQLSTATE:** Chỉ coi là bằng chứng rollback từ CSDL khi `code` là mã PostgreSQL SQLSTATE hợp lệ gồm đúng 5 ký tự alnum (`^[0-9A-Z]{5}$`), đồng thời loại trừ triệt để các mã HTTP gateway (`500, 502, 503, 504`), loại trừ phản hồi không phải JSON (`message == "JSON could not be generated"`), và loại trừ nội dung HTML.
+  2. **Thông điệp trung tính cho mọi trường hợp chưa xác định:** Mọi lỗi gateway, phản hồi không phải JSON, `APIError` có code không xác định, hoặc lỗi runtime chưa được chứng minh rollback đều trả về thông báo trung tính yêu cầu kiểm tra phiên (`"Database atomic replacement failed. Please verify session state before retrying."`) và tuyệt đối không khẳng định đã rollback hay dữ liệu chưa đổi.
+  3. **Bảo toàn các ca timeout 504:** Giữ nguyên 100% hai hàm `is_network_timeout` và `is_network_transport`, không tự động gửi lại RPC mù quáng ở backend.
+  4. **Kiểm thử mô phỏng Gateway chân thực:** Bổ sung 4 unit tests mới trong `test_ingest.py` kiểm chứng các ca Gateway HTML 502, Gateway HTML 504, non-JSON body và unknown code.
+
 
 

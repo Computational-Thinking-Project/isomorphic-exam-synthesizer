@@ -104,5 +104,20 @@
   - Linter: `ruff check` passed 100% clean.
   - Static type checking: `mypy` passed with 0 errors.
 
+## 2026-10-26 — Bá Duy (BE1 / johannguyen015), TASK-202 Review Remediation Round 4 (PR #15)
+
+- Branch: `feat/be1-task-202-ingestion-parsers`; PR #15; Base: `dev`.
+- Remediation fixes addressing code review comments from Reviewer:
+  - [P2] Strict PostgreSQL SQLSTATE Verification & Gateway Exception Neutralization (DEC-BE1-006):
+    - Refactored `is_database_rollback_evidence` in `backend/app/services/parser/ingestion_service.py` to validate genuine 5-character PostgreSQL SQLSTATE codes (`^[0-9A-Z]{5}$`).
+    - Explicitly rejected intermediate gateway/reverse proxy HTTP status codes (`500, 502, 503, 504`), non-JSON SDK errors (`message == "JSON could not be generated"`), and HTML body tags from being falsely affirmed as database rollback.
+    - Standardized unconfirmed failures, gateway dropouts, and unknown exceptions to return a neutral HTTP 500 error instructing users to verify session state without asserting rollback.
+    - Preserved 100% of existing network timeout/transport handlers (`HTTP 504 Gateway Timeout`) and zero RPC auto-retry rule.
+  - [Quality & Tests]:
+    - Added 4 realistic unit tests in `backend/tests/api/test_ingest.py` simulating PostgREST SDK `APIError` wrapping Gateway HTML 502, Gateway HTML 504, non-JSON proxy error, and unknown code.
+    - Scoped TASK-202 tests: **58 tests passed** (23 parser tests + 18 ingest API tests + 17 session tests).
+    - Clarified test breakdown: selective suite vs entire backend test suite.
+
+
 
 
