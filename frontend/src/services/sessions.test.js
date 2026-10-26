@@ -7,10 +7,11 @@ import { auth } from './test-support/supabase.stub.js';
 
 // Dùng service/client/store thật; chỉ giả lập Auth và đường truyền HTTP.
 register('./test-support/auth-loader.js', import.meta.url);
-const { listSessions, cloneSession } = await import('./sessions.js');
+const { listSessions, cloneSession, createSession, getSessionDetail } = await import('./sessions.js');
 const { api } = await import('./api.js');
 
 const options = { timeout: 3000 };
+
 const item = {
     id: 'session-a',
     user_id: 'account-a',
@@ -26,6 +27,17 @@ function envelope(overrides = {}) {
 
 function clonedItem(overrides = {}) {
     return { ...item, id: 'session-copy', title: 'Bản sao', status: 'draft', ...overrides };
+}
+
+function createdItem(overrides = {}) {
+    return {
+        ...clonedItem({ title: 'Phiên mới' }), grade: 12,
+        updated_at: '2026-10-26T08:00:00Z', ...overrides,
+    };
+}
+
+function detailItem(overrides = {}) {
+    return { ...createdItem({ id: item.id }), source_questions: [], exam_versions: [], ...overrides };
 }
 
 function response(config, data) {
@@ -353,4 +365,211 @@ for (const retryFails of [false, true]) {
         assert.equal(calls, 2);
         assert.equal(refreshCalls, 1);
     });
+}
+
+test('create gửi metadata chuẩn, bỏ trường owner/status từ caller và trả phiên 201 trực tiếp', options, async () => {
+    const data = createdItem();
+    let calls = 0;
+    api.defaults.adapter = async (config) => {
+        calls += 1;
+        assert.equal(config.method, 'post');
+        assert.equal(api.getUri(config), '/api/sessions');
+        assert.equal(config.headers.get('Authorization'), 'Bearer test-list-token-a');
+        assert.deepEqual(JSON.parse(config.data), { title: 'Phiên mới', subject: 'Toán', grade: 12 });
+        return { ...response(config, data), status: 201 };
+    };
+    assert.equal(await createSession({ title: ' Phiên mới ', user_id: 'account-b', status: 'approved' }), data);
+    assert.equal(calls, 1);
+});
+
+test('create giữ môn/lớp đã chọn và giới hạn Unicode theo backend', options, async () => {
+    const title = '📚'.repeat(255);
+    const subject = '🧪'.repeat(100);
+    const data = createdItem({ title, subject, grade: 1 });
+    api.defaults.adapter = async (config) => {
+        assert.deepEqual(JSON.parse(config.data), { title, subject, grade: 1 });
+        return { ...response(config, data), status: 201 };
+    };
+    assert.equal(await createSession({ title: ` ${title} `, subject: ` ${subject} `, grade: 1 }), data);
+});
+
+test('create chặn metadata sai trước Auth/HTTP', options, async () => {
+    let calls = 0;
+    auth.getSession = async () => { calls += 1; throw new Error('Unexpected Auth'); };
+    api.defaults.adapter = async () => { calls += 1; throw new Error('Unexpected HTTP'); };
+    for (const metadata of [
+        undefined, null, [], '', {}, { title: 5 }, { title: ' \n ' },
+        { title: '📚'.repeat(256) }, { title: 'A', subject: null },
+        { title: 'A', subject: 'a'.repeat(101) },
+        ...[0, 13, 1.5, '12', null].map((grade) => ({ title: 'A', grade })),
+    ]) {
+        await assert.rejects(createSession(metadata), /Thông tin tạo phiên|Tiêu đề phiên|Môn học|Khối lớp/);
+    }
+    assert.equal(calls, 0);
+});
+
+test('create response sai không được gửi lại vì server có thể đã tạo phiên', options, async () => {
+    for (const data of [null, [], { data: createdItem() }, createdItem({ grade: '12' }),
+        createdItem({ status: 'blueprinted' }), createdItem({ updated_at: '' })]) {
+        let calls = 0;
+        api.defaults.adapter = async (config) => {
+            calls += 1;
+            return { ...response(config, data), status: 201 };
+        };
+        await assert.rejects(createSession({ title: 'Phiên mới' }), /kiểm tra lại danh sách/);
+        assert.equal(calls, 1);
+    }
+});
+
+test('detail chỉ GET đúng ID đã mã hóa, giữ metadata/nguồn/mã đề và không sửa store', options, async () => {
+    const id = 'session?a#b';
+    const data = detailItem({ id, status: 'future_status',
+        source_questions: [{ id: 'question-a', session_id: id, raw_content: '$x+3=7$' }],
+        exam_versions: [{ id: 'version-a', session_id: id, version_code: '101' }],
+    });
+    const initial = useAuthStore.getState();
+    api.defaults.adapter = async (config) => {
+        assert.equal(config.method, 'get');
+        assert.equal(api.getUri(config), '/api/sessions/session%3Fa%23b');
+        assert.equal(config.headers.get('Authorization'), 'Bearer test-list-token-a');
+        return response(config, data);
+    };
+    assert.equal(await getSessionDetail(` ${id} `), data);
+    assert.equal(useAuthStore.getState(), initial);
+});
+
+test('detail chấp nhận phiên rỗng và UUID khác kiểu viết hoa', options, async () => {
+    const id = 'abcdefab-1234-1234-1234-123456789abc';
+    const data = detailItem({ id });
+    api.defaults.adapter = async (config) => response(config, data);
+    assert.equal(await getSessionDetail(id.toUpperCase()), data);
+});
+
+test('detail chặn ID trống hoặc literal new trước Auth/HTTP', options, async () => {
+    let calls = 0;
+    auth.getSession = async () => { calls += 1; throw new Error('Unexpected Auth'); };
+    api.defaults.adapter = async () => { calls += 1; throw new Error('Unexpected HTTP'); };
+    for (const id of [undefined, null, 5, '', ' \n ', 'new', ' NEW ']) {
+        await assert.rejects(getSessionDetail(id), /Phiên cần đọc không hợp lệ/);
+    }
+    assert.equal(calls, 0);
+});
+
+test('detail không biến response thiếu nguồn/mã đề hoặc sai liên kết thành nguồn trống', options, async () => {
+    for (const data of [null, { data: detailItem() }, detailItem({ id: 'other-session' }),
+        detailItem({ grade: null }), detailItem({ source_questions: undefined }),
+        detailItem({ exam_versions: null }), detailItem({ source_questions: [null] }),
+        detailItem({ source_questions: [{ id: 'question-a', session_id: 'other-session' }] }),
+        detailItem({ exam_versions: [{ id: 'version-a', session_id: 'other-session' }] }),
+    ]) {
+        api.defaults.adapter = async (config) => response(config, data);
+        await assert.rejects(getSessionDetail(item.id), /Phản hồi chi tiết phiên không hợp lệ/);
+    }
+});
+
+const createDetailCases = [
+    { name: 'create', call: (config) => createSession({ title: 'Phiên mới' }, config), data: createdItem },
+    { name: 'detail', call: (config) => getSessionDetail(item.id, config), data: detailItem },
+];
+
+for (const operation of createDetailCases) {
+    test(`${operation.name}: lỗi HTTP/mạng/timeout không tự retry hoặc logout`, options, async () => {
+        const initial = useAuthStore.getState();
+        for (const status of [403, 404, 409, 422, 429, 500, 503, 'network', 'timeout']) {
+            let calls = 0;
+            let expected;
+            api.defaults.adapter = async (config) => {
+                calls += 1;
+                const http = typeof status === 'number';
+                expected = new axios.AxiosError('Fixture error',
+                    http ? 'ERR_BAD_RESPONSE' : status === 'timeout' ? 'ECONNABORTED' : 'ERR_NETWORK',
+                    config, null, http ? { status, data: {}, headers: {}, config } : undefined);
+                throw expected;
+            };
+            await assert.rejects(operation.call(), (error) => error === expected);
+            assert.equal(calls, 1);
+            assert.equal(useAuthStore.getState(), initial);
+        }
+    });
+
+    test(`${operation.name}: signal chặn trước gửi và bỏ phản hồi sau khi hủy`, options, async () => {
+        const before = new AbortController();
+        before.abort();
+        let calls = 0;
+        api.defaults.adapter = async (config) => { calls += 1; return response(config, operation.data()); };
+        await assert.rejects(operation.call({ signal: before.signal }), axios.isCancel);
+        assert.equal(calls, 0);
+
+        const entered = deferred();
+        const release = deferred();
+        const during = new AbortController();
+        api.defaults.adapter = async (config) => {
+            calls += 1;
+            assert.equal(config.signal, during.signal);
+            entered.resolve();
+            await release.promise;
+            return response(config, operation.data());
+        };
+        const request = operation.call({ signal: during.signal });
+        await entered.promise;
+        during.abort();
+        release.resolve();
+        await assert.rejects(request, axios.isCancel);
+        assert.equal(calls, 1);
+    });
+
+    for (const nextId of ['account-b', null]) {
+        test(`${operation.name}: bỏ kết quả cũ sau ${nextId ?? 'logout'}`, options, async () => {
+            const entered = deferred();
+            const release = deferred();
+            let calls = 0;
+            api.defaults.adapter = async (config) => {
+                calls += 1;
+                entered.resolve();
+                await release.promise;
+                return response(config, operation.data());
+            };
+            const request = operation.call();
+            await entered.promise;
+            useAuthStore.getState().setSession(nextId
+                ? { user: { id: nextId }, access_token: 'fixture-account-b-token' } : null);
+            const current = useAuthStore.getState();
+            release.resolve();
+            await assert.rejects(request, axios.isCancel);
+            assert.equal(calls, 1);
+            assert.equal(useAuthStore.getState(), current);
+        });
+    }
+
+    for (const retryFails of [false, true]) {
+        test(`${operation.name}: 401 chỉ dùng refresh/retry chung một lần (${retryFails})`, options, async () => {
+            let calls = 0;
+            let refreshCalls = 0;
+            const data = operation.data();
+            auth.refreshSession = async () => {
+                refreshCalls += 1;
+                const session = { user: { id: 'account-a' }, access_token: 'fixture-refreshed-token' };
+                useAuthStore.getState().setSession(session);
+                return { data: { session }, error: null };
+            };
+            api.defaults.adapter = async (config) => {
+                calls += 1;
+                if (calls === 1 || retryFails) {
+                    throw new axios.AxiosError('Unauthorized fixture', 'ERR_BAD_RESPONSE', config, null,
+                        { status: 401, data: {}, headers: {}, config });
+                }
+                assert.equal(config.headers.get('Authorization'), 'Bearer fixture-refreshed-token');
+                return response(config, data);
+            };
+            if (retryFails) {
+                await assert.rejects(operation.call(), (error) => error.response?.status === 401);
+                assert.equal(useAuthStore.getState().status, 'reauth_required');
+            } else {
+                assert.equal(await operation.call(), data);
+                assert.equal(useAuthStore.getState().status, 'authenticated');
+            }
+            assert.equal(calls, 2);
+            assert.equal(refreshCalls, 1);
+        });
+    }
 }
