@@ -448,7 +448,7 @@ def test_confirm_source_rpc_primary_success(client, mock_auth_user, auth_headers
     """Confirm-source successfully executes via atomic PostgreSQL RPC confirm_exam_source."""
     mock_db = MagicMock()
     mock_status = MagicMock()
-    mock_status.data = [{"status": "draft"}]
+    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
     mock_questions = MagicMock()
     mock_questions.data = _create_mock_questions(count=4)
 
@@ -492,7 +492,12 @@ def test_confirm_source_rpc_primary_success(client, mock_auth_user, auth_headers
     assert data["total_blueprints"] == 4
     mock_db.rpc.assert_called_with(
         "confirm_exam_source",
-        {"p_session_id": MOCK_SESSION_ID, "p_expected_question_count": 4},
+        {
+            "p_session_id": MOCK_SESSION_ID,
+            "p_expected_question_count": 4,
+            "p_acknowledged_security_warnings": False,
+            "p_expected_updated_at": "2026-10-26T00:00:00+00:00",
+        },
     )
 
 
@@ -532,11 +537,11 @@ def test_confirm_source_rpc_mismatch_or_non_draft_returns_409(client, mock_auth_
     assert "Question count mismatch" in response.json()["detail"]
 
 
-def test_confirm_source_unmatched_update_returns_409(client, mock_auth_user, auth_headers):
-    """In fallback flow, if UPDATE exam_sessions matches 0 rows (status changed or deleted), return 409 not 200."""
+def test_confirm_source_rpc_missing_blueprints_returns_409(client, mock_auth_user, auth_headers):
+    """RPC confirm_exam_source raises 409 Conflict if questions lack active blueprints."""
     mock_db = MagicMock()
     mock_status = MagicMock()
-    mock_status.data = [{"status": "draft"}]
+    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
     mock_questions = MagicMock()
     mock_questions.data = _create_mock_questions(count=3)
 
@@ -550,14 +555,9 @@ def test_confirm_source_unmatched_update_returns_409(client, mock_auth_user, aut
     mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
     mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
 
-    # RPC not migrated / fails with general error
-    mock_db.rpc.return_value.execute.side_effect = Exception("function confirm_exam_source does not exist")
-
-    # update session returns empty list (0 rows matched)
-    mock_empty_update = MagicMock()
-    mock_empty_update.data = []
-    mock_db.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.return_value = (
-        mock_empty_update
+    # Simulate Postgres raising 22023 for missing blueprints
+    mock_db.rpc.return_value.execute.side_effect = Exception(
+        "22023: Cannot confirm source: missing blueprints for session questions (expected 3, confirmed 0)"
     )
 
     with (
@@ -572,16 +572,16 @@ def test_confirm_source_unmatched_update_returns_409(client, mock_auth_user, aut
         )
 
     assert response.status_code == 409
-    assert "Session status has changed concurrently" in response.json()["detail"]
+    assert "missing blueprints" in response.json()["detail"]
 
 
-def test_confirm_source_blueprints_update_failure_triggers_rollback(client, mock_auth_user, auth_headers):
-    """In fallback flow, if blueprint update fails after session update, session is rolled back to draft."""
+def test_confirm_source_rpc_concurrent_modification_returns_409(client, mock_auth_user, auth_headers):
+    """RPC confirm_exam_source raises 409 Conflict if session updated_at changed concurrently."""
     mock_db = MagicMock()
     mock_status = MagicMock()
-    mock_status.data = [{"status": "draft"}]
+    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
     mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=2)
+    mock_questions.data = _create_mock_questions(count=3)
 
     mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
         mock_status
@@ -593,19 +593,9 @@ def test_confirm_source_blueprints_update_failure_triggers_rollback(client, mock
     mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
     mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
 
-    # RPC fails with unmigrated error
-    mock_db.rpc.return_value.execute.side_effect = Exception("function confirm_exam_source does not exist")
-
-    # Session update succeeds
-    mock_session_update = MagicMock()
-    mock_session_update.data = [{"id": MOCK_SESSION_ID, "status": "blueprinted"}]
-    mock_db.table.return_value.update.return_value.eq.return_value.eq.return_value.execute.return_value = (
-        mock_session_update
-    )
-
-    # Blueprints update throws DB error
-    mock_db.table.return_value.update.return_value.in_.return_value.execute.side_effect = Exception(
-        "DB connection reset on blueprints"
+    # Simulate Postgres raising 22023 for concurrent modification
+    mock_db.rpc.return_value.execute.side_effect = Exception(
+        "22023: Cannot confirm source: Session or source questions were modified concurrently"
     )
 
     with (
@@ -619,20 +609,129 @@ def test_confirm_source_blueprints_update_failure_triggers_rollback(client, mock
             headers=auth_headers,
         )
 
-    assert response.status_code == 500
-    assert "Failed to confirm blueprints" in response.json()["detail"]
-    # Check that rollback update was triggered to restore status to draft
-    mock_db.table("exam_sessions").update.assert_called_with(
-        {"status": "draft", "updated_at": unittest_mock_any()}
+    assert response.status_code == 409
+    assert "modified concurrently" in response.json()["detail"]
+
+
+def test_confirm_source_rpc_network_timeout_returns_504(client, mock_auth_user, auth_headers):
+    """Network timeout during RPC raises HTTP 504 Gateway Timeout without claiming DB state was unchanged."""
+    mock_db = MagicMock()
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
+    mock_questions = MagicMock()
+    mock_questions.data = _create_mock_questions(count=2)
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        mock_status
     )
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        mock_questions
+    )
+    mock_bps = MagicMock()
+    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
+
+    # RPC encounters network timeout
+    mock_db.rpc.return_value.execute.side_effect = Exception("The read operation timed out")
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+        patch("app.api.routes.sessions.assert_ownership", return_value=None),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
+            json={"acknowledged_security_warnings": False},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 504
+    assert "uncertain due to network timeout" in response.json()["detail"]
 
 
-def unittest_mock_any():
-    """Helper to match any argument in mock assert."""
-    class AnyArg:
-        def __eq__(self, other):
-            return True
-    return AnyArg()
+def test_confirm_source_rpc_db_error_returns_500_rollback(client, mock_auth_user, auth_headers):
+    """Database execution error during RPC raises HTTP 500 stating transaction was rolled back."""
+    mock_db = MagicMock()
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
+    mock_questions = MagicMock()
+    mock_questions.data = _create_mock_questions(count=2)
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        mock_status
+    )
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        mock_questions
+    )
+    mock_bps = MagicMock()
+    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
+
+    # RPC fails with unhandled database connection error
+    mock_db.rpc.return_value.execute.side_effect = Exception("Deadlock detected in postgres")
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+        patch("app.api.routes.sessions.assert_ownership", return_value=None),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
+            json={"acknowledged_security_warnings": False},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 500
+    assert "rolled back" in response.json()["detail"]
+
+
+def test_confirm_source_returns_real_db_counts(client, mock_auth_user, auth_headers):
+    """API returns total_blueprints directly from the RPC response rather than python client estimates."""
+    mock_db = MagicMock()
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
+    mock_questions = MagicMock()
+    mock_questions.data = _create_mock_questions(count=5)
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        mock_status
+    )
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        mock_questions
+    )
+    mock_bps = MagicMock()
+    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
+
+    # RPC returns verified actual count from DB
+    mock_rpc_res = MagicMock()
+    mock_rpc_res.data = {
+        "success": True,
+        "session_id": MOCK_SESSION_ID,
+        "status": "blueprinted",
+        "confirmed_at": "2026-10-26T01:00:00+00:00",
+        "total_questions": 5,
+        "total_blueprints": 5,
+    }
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+        patch("app.api.routes.sessions.assert_ownership", return_value=None),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
+            json={"acknowledged_security_warnings": False},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200
+    res_data = response.json()
+    assert res_data["total_blueprints"] == 5
+    assert res_data["total_questions"] == 5
+    assert res_data["confirmed_at"] == "2026-10-26T01:00:00+00:00"
+
 
 
 @pytest.mark.asyncio

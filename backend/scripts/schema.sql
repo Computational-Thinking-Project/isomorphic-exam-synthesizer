@@ -99,6 +99,8 @@ CREATE TABLE IF NOT EXISTS public.question_blueprints (
   invariants JSONB NOT NULL DEFAULT '[]'::jsonb,
   variation_modes JSONB NOT NULL DEFAULT '[]'::jsonb,
   rule_summary TEXT,
+  is_fallback BOOLEAN NOT NULL DEFAULT FALSE,
+  extraction_source TEXT NOT NULL DEFAULT 'AI_PIPELINE',
   confirmed_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -454,10 +456,14 @@ GRANT EXECUTE ON FUNCTION public.replace_source_questions(UUID, JSONB) TO authen
 GRANT EXECUTE ON FUNCTION public.replace_source_questions(UUID, JSONB) TO service_role;
 
 -- Procedure: confirm_exam_source (TASK-205 Fix)
--- Purpose: Atomically lock exam session in draft state, verify questions count, lock blueprints with confirmed_at, and transition session to 'blueprinted'.
+-- Purpose: Atomically lock exam session in draft state, verify questions count, verify concurrency/updated_at,
+-- require SEC-02 security warnings acknowledgment, verify 100% of questions have active blueprints, 
+-- lock blueprints with confirmed_at, and transition session to 'blueprinted'.
 CREATE OR REPLACE FUNCTION public.confirm_exam_source(
   p_session_id UUID,
-  p_expected_question_count INT
+  p_expected_question_count INT,
+  p_acknowledged_security_warnings BOOLEAN DEFAULT FALSE,
+  p_expected_updated_at TIMESTAMPTZ DEFAULT NULL
 )
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -467,17 +473,19 @@ AS $$
 DECLARE
   v_session_user_id UUID;
   v_session_status public.session_status;
+  v_session_updated_at TIMESTAMPTZ;
   v_role TEXT := COALESCE(
     current_setting('request.jwt.claim.role', true),
     (current_setting('request.jwt.claims', true)::jsonb ->> 'role')
   );
   v_current_count INT;
   v_missing_count INT;
+  v_security_warning_count INT;
   v_now TIMESTAMPTZ := now();
   v_bp_count INT := 0;
 BEGIN
   -- 1. Row lock session to prevent race conditions (e.g. concurrent confirm or re-ingest)
-  SELECT user_id, status INTO v_session_user_id, v_session_status
+  SELECT user_id, status, updated_at INTO v_session_user_id, v_session_status, v_session_updated_at
   FROM public.exam_sessions
   WHERE id = p_session_id
   FOR UPDATE;
@@ -486,15 +494,16 @@ BEGIN
     RAISE EXCEPTION 'Session not found: %', p_session_id USING ERRCODE = 'P0002';
   END IF;
 
-  -- 2. Strict caller authorization (session owner, service_role, or superadmin)
+  -- 2. Strict caller authorization (session owner, service_role, or direct DBA)
+  -- Uses session_user to prevent UID-less callers bypassing auth in SECURITY DEFINER
   IF auth.uid() IS NOT NULL THEN
     IF v_session_user_id != auth.uid() THEN
       RAISE EXCEPTION 'Access denied: not session owner' USING ERRCODE = '42501';
     END IF;
-  ELSIF v_role = 'service_role' OR current_user IN ('postgres', 'supabase_admin') THEN
-    NULL;
+  ELSIF v_role = 'service_role' OR session_user IN ('postgres', 'supabase_admin') THEN
+    NULL; -- Trusted internal backend service role or direct database administrator
   ELSE
-    RAISE EXCEPTION 'Unauthorized: caller must be authenticated' USING ERRCODE = '42501';
+    RAISE EXCEPTION 'Unauthorized: caller must be authenticated or have service role' USING ERRCODE = '42501';
   END IF;
 
   -- 3. State machine precondition: session must be in 'draft' status
@@ -502,9 +511,18 @@ BEGIN
     RAISE EXCEPTION 'Cannot confirm source: session is not in draft status (current: %)', v_session_status USING ERRCODE = '22023';
   END IF;
 
-  -- 4. Check question count and integrity
-  SELECT COUNT(*), COUNT(*) FILTER (WHERE has_missing_answer = TRUE)
-  INTO v_current_count, v_missing_count
+  -- 4. Concurrency check: session must not have been modified since read
+  IF p_expected_updated_at IS NOT NULL AND v_session_updated_at != p_expected_updated_at THEN
+    RAISE EXCEPTION 'Cannot confirm source: Session or source questions were modified concurrently (expected updated_at %, got %)', 
+      p_expected_updated_at, v_session_updated_at USING ERRCODE = '22023';
+  END IF;
+
+  -- 5. Check question count, missing answers, and security warnings
+  SELECT 
+    COUNT(*), 
+    COUNT(*) FILTER (WHERE has_missing_answer = TRUE),
+    COUNT(*) FILTER (WHERE has_security_warning = TRUE)
+  INTO v_current_count, v_missing_count, v_security_warning_count
   FROM public.source_questions
   WHERE session_id = p_session_id;
 
@@ -520,7 +538,12 @@ BEGIN
     RAISE EXCEPTION 'Cannot confirm source: session has % questions with missing answers', v_missing_count USING ERRCODE = '22023';
   END IF;
 
-  -- 5. Lock blueprints: stamp confirmed_at
+  IF v_security_warning_count > 0 AND NOT COALESCE(p_acknowledged_security_warnings, FALSE) THEN
+    RAISE EXCEPTION 'Cannot confirm source: session has % question(s) with security warnings (SEC-02) that must be explicitly acknowledged', 
+      v_security_warning_count USING ERRCODE = '22023';
+  END IF;
+
+  -- 6. Lock blueprints: stamp confirmed_at and verify 100% of questions have an active blueprint
   WITH updated_bp AS (
     UPDATE public.question_blueprints
     SET confirmed_at = v_now, updated_at = v_now
@@ -531,7 +554,12 @@ BEGIN
   )
   SELECT COUNT(*) INTO v_bp_count FROM updated_bp;
 
-  -- 6. Transition session status to 'blueprinted'
+  IF v_bp_count < v_current_count THEN
+    RAISE EXCEPTION 'Cannot confirm source: missing blueprints for session questions (expected %, confirmed %)', 
+      v_current_count, v_bp_count USING ERRCODE = '22023';
+  END IF;
+
+  -- 7. Transition session status to 'blueprinted'
   UPDATE public.exam_sessions
   SET status = 'blueprinted', updated_at = v_now
   WHERE id = p_session_id;
@@ -548,10 +576,11 @@ END;
 $$;
 
 -- Enforce Least Privilege (SEC-04)
-REVOKE EXECUTE ON FUNCTION public.confirm_exam_source(UUID, INT) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.confirm_exam_source(UUID, INT) FROM anon;
-GRANT EXECUTE ON FUNCTION public.confirm_exam_source(UUID, INT) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.confirm_exam_source(UUID, INT) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.confirm_exam_source(UUID, INT, BOOLEAN, TIMESTAMPTZ) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.confirm_exam_source(UUID, INT, BOOLEAN, TIMESTAMPTZ) FROM anon;
+GRANT EXECUTE ON FUNCTION public.confirm_exam_source(UUID, INT, BOOLEAN, TIMESTAMPTZ) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.confirm_exam_source(UUID, INT, BOOLEAN, TIMESTAMPTZ) TO service_role;
+
 
 
 

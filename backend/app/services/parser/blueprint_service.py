@@ -122,6 +122,28 @@ async def ensure_blueprints_for_session(
                 ).execute()
             except (TypeError, AttributeError):
                 table_bp.insert(cast(Any, new_blueprints)).execute()
+            except Exception as bp_exc:
+                err_str = str(bp_exc).lower()
+                if "is_fallback" in err_str or "extraction_source" in err_str:
+                    logger.warning(
+                        "question_blueprints missing metadata columns (is_fallback/extraction_source); "
+                        "retrying insert with sanitized payload: %s",
+                        bp_exc,
+                    )
+                    sanitized = [
+                        {k: v for k, v in bp.items() if k not in ("is_fallback", "extraction_source")}
+                        for bp in new_blueprints
+                    ]
+                    try:
+                        table_bp.upsert(
+                            cast(Any, sanitized),
+                            on_conflict="source_question_id",
+                            ignore_duplicates=True,
+                        ).execute()
+                    except (TypeError, AttributeError):
+                        table_bp.insert(cast(Any, sanitized)).execute()
+                else:
+                    raise
 
         # 4. Trả về tổng số blueprints của session
         return len(q_ids)

@@ -163,6 +163,63 @@ sequenceDiagram
 ---
 
 ### Giai đoạn 6: Cập Nhật Tài Liệu Kỹ Thuật & PR Checklist
-- [ ] **Mục 6.1:** Cập nhật `docs/api/confirm-source-endpoint.md` (làm rõ hợp đồng TASK-203/TASK-205).
-- [ ] **Mục 6.2:** Cập nhật `docs/change_log.md` (ghi nhận `ADR-003`).
-- [ ] **Mục 6.3:** Cập nhật checklist trên PR #16.
+- [x] **Mục 6.1:** Cập nhật `docs/api/confirm-source-endpoint.md` (làm rõ hợp đồng TASK-203/TASK-205).
+- [x] **Mục 6.2:** Cập nhật `docs/change_log.md` (ghi nhận `ADR-003`).
+- [x] **Mục 6.3:** Cập nhật checklist trên PR #16.
+
+---
+
+## 3. Khắc Phục Phản Hồi Code Review Vòng 2 (26/10/2026)
+
+### 3.1. Trả Lời Câu Hỏi Kiến Trúc (Question)
+* **Vấn đề:** Stage 2 xử lý blueprint `FALLBACK_DETERMINISTIC` và `variation_modes=["NONE"]` thế nào: cho sinh, yêu cầu giáo viên duyệt hay chặn?
+* **Quy chuẩn chốt:**
+  1. **Với `variation_modes = ["NONE"]`:**
+     - Cho phép sinh đề bình thường, nhưng **bảo tồn nguyên văn nội dung câu hỏi (`PRESERVE_CONTENT_VERBATIM`)**.
+     - Hệ thống chỉ áp dụng các tùy chọn trật tự (`ordering_preferences`): xáo trộn thứ tự câu (`shuffle_questions`) và xáo trộn vị trí đáp án ABCD (`shuffle_options`).
+     - Không chặn đề thi vì bài thi thực tế có thể chứa câu hỏi lý thuyết / khái niệm không chứa tham số số học.
+  2. **Với `extraction_source = "FALLBACK_DETERMINISTIC"` (heuristic $\pm 5$):**
+     - Tại **Stage 1 (Preview & Confirm):** UI hiển thị cảnh báo/badge rõ ràng: `Blueprint dự phòng (Heuristic ±5)`. Thao tác bấm "Xác nhận đề nguồn" chính là bước giáo viên duyệt đề gốc.
+     - Tại **Stage 2 (Generator / TASK-207b):** Các câu hỏi sinh từ `FALLBACK_DETERMINISTIC` **bắt buộc chạy qua SymPy Evaluator & Validator (TASK-207b / VAL)**. Nếu biến thể vi phạm tính giải được (chia 0, căn âm, vô nghiệm), validator reject và retry; nếu vượt quá retry thì **fallback về giữ nguyên câu hỏi gốc (verbatim)** để bảo toàn tính toàn vẹn đề thi mà không làm sập background job.
+
+### 3.2. Đồng Bộ Schema & Migration với Payload Blueprint Service (P1)
+* **Lỗi:** Schema thiếu 2 cột `is_fallback` và `extraction_source`, gây lỗi `column is_fallback does not exist` trên DB thật.
+* **Khắc phục:**
+  - Bổ sung 2 cột `is_fallback BOOLEAN NOT NULL DEFAULT FALSE` và `extraction_source TEXT NOT NULL DEFAULT 'AI_PIPELINE'` vào bảng `question_blueprints` trong `backend/scripts/schema.sql`.
+  - Bổ sung DDL idempotent trong `backend/migrations/003_confirm_exam_source_rpc.sql`.
+  - Gia cố `ensure_blueprints_for_session` trong `blueprint_service.py` tự động sanitize nếu chạy trên DB cũ chưa chạy migration.
+
+### 3.3. Loại Bỏ Hoàn Toàn Client-Side Non-Transactional Update Fallback (P1)
+* **Lỗi:** Khi RPC lỗi, fallback cập nhật rời từng bảng có nguy cơ gây partial lock hoặc trả 200 giả khi không khớp dòng nào.
+* **Khắc phục:**
+  - Loại bỏ hoàn toàn khối `if not rpc_success:` cập nhật client-side trong `backend/app/api/routes/sessions.py`.
+  - Mọi thao tác xác nhận phải đi qua transaction nguyên tử trong PostgreSQL RPC `confirm_exam_source`.
+  - Phân loại lỗi mạng/timeout: trả về `HTTP 504 Gateway Timeout` thông báo trạng thái chưa chắc chắn thay vì tự ý ghi tiếp.
+
+### 3.4. Kiểm Tra Toàn Vẹn Đề Nguồn & Blueprint Ngay Trong RPC (P1)
+* **Lỗi:** So sánh số câu chưa đủ để phát hiện thay đổi đề nguồn song song; RPC không kiểm tra cờ an ninh SEC-02 và không bảo đảm 100% câu có blueprint trước khi chuyển `blueprinted`.
+* **Khắc phục:**
+  - Bổ sung tham số `p_expected_updated_at` và `p_acknowledged_security_warnings` vào RPC `confirm_exam_source`.
+  - Trong transaction khóa `FOR UPDATE`:
+    1. Kiểm tra `updated_at == p_expected_updated_at`.
+    2. Kiểm tra `v_security_warning_count > 0` yêu cầu `p_acknowledged_security_warnings = TRUE`.
+    3. Kiểm tra số lượng blueprint được update `v_bp_count >= v_current_count`; nếu thiếu thì `ROLLBACK` ngay lập tức với lỗi `22023`.
+    4. Trả về số lượng blueprint thực tế từ DB (`total_blueprints: v_bp_count`).
+
+### 3.5. Phân Biệt Người Gọi (session_user) Với Chủ Hàm (current_user) trong SECURITY DEFINER (P2)
+* **Lỗi:** Trong hàm `SECURITY DEFINER`, `current_user` luôn là chủ hàm (`postgres`), khiến caller `authenticated` với UID rỗng vượt qua xác thực.
+* **Khắc phục:**
+  - Thay `current_user` bằng `session_user IN ('postgres', 'supabase_admin')` kết hợp `v_role = 'service_role'` trong cả `002_replace_source_questions_rpc.sql`, `003_confirm_exam_source_rpc.sql` và `schema.sql`.
+  - Viết script kiểm thử SQL 10 kịch bản: `backend/tests/verify_migration_003_permissions.sql`.
+
+### 3.6. Ma Trận Kiểm Thử Nghiệm Thu Vòng 2
+
+| # | Test Case | File | Kịch Bản & Kết Quả Kỳ Vọng |
+|---|---|---|---|
+| 1 | `test_confirm_source_rpc_missing_blueprints_returns_409` | `test_confirm_source.py` | RPC từ chối nếu có câu chưa có blueprint (HTTP 409). |
+| 2 | `test_confirm_source_rpc_concurrent_modification_returns_409` | `test_confirm_source.py` | RPC từ chối nếu `updated_at` phiên bị thay đổi song song (HTTP 409). |
+| 3 | `test_confirm_source_rpc_network_timeout_returns_504` | `test_confirm_source.py` | Lỗi timeout mạng trả về HTTP 504 Gateway Timeout với thông báo trung thực. |
+| 4 | `test_confirm_source_rpc_db_error_returns_500_rollback` | `test_confirm_source.py` | Lỗi CSDL nội bộ trả về HTTP 500 kèm khẳng định rollback. |
+| 5 | `test_confirm_source_returns_real_db_counts` | `test_confirm_source.py` | API trả về đúng số lượng blueprint và câu hỏi thực tế từ CSDL. |
+| 6 | `verify_migration_003_permissions.sql` (10 scenarios) | PostgreSQL Script | Kiểm thử toàn diện ma trận phân quyền: `anon`, attacker non-owner, UID rỗng, non-draft, concurrent, warning, missing BP, count mismatch, valid owner, và service_role. |
+
