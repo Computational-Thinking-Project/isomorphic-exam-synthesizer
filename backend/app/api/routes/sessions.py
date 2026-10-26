@@ -682,7 +682,7 @@ async def confirm_source(
         if is_database_rollback_evidence(exc):
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Database atomic confirmation failed and was rolled back: {err_msg}",
+                detail="Database atomic confirmation failed and was rolled back.",
             ) from exc
 
         # 7. Unverified / Unexpected Failure without DB Evidence (500):

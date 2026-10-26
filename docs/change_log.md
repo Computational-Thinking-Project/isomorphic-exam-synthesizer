@@ -14,6 +14,7 @@
 - [ADR-002: In-Memory Pre-validation, Zero Cloud Mutation, và Atomic Ingestion Engine (TASK-202)](#adr-002-in-memory-pre-validation-zero-cloud-mutation-và-atomic-ingestion-engine-task-202)
 - [ADR-003: Atomic Exam Confirmation và Blueprint Concurrency Protection (TASK-205)](#adr-003-atomic-exam-confirmation-và-blueprint-concurrency-protection-task-205)
 - [DEC-BE1-005: Phân Loại Ngoại Lệ Mạng Phân Tán và Chuẩn Hóa Kiểm Quyền Migration 003 (TASK-205 Round 3)](#dec-be1-005-phân-loại-ngoại-lệ-mạng-phân-tán-và-chuẩn-hóa-kiểm-quyền-migration-003-task-205-round-3)
+- [DEC-BE1-006: Chuẩn Hóa Bằng Chứng Rollback CSDL & Khử Khẳng Định Sai Khi Lỗi Gateway (TASK-205 Round 4)](#dec-be1-006-chuẩn-hóa-bằng-chứng-rollback-csdl--khử-khẳng-định-sai-khi-lỗi-gateway-task-205-round-4)
 
 ---
 
@@ -164,6 +165,22 @@
   - 100% các kịch bản ngoại lệ mạng phân tán được phân loại chuẩn xác theo mã HTTP 504.
   - Script SQL kiểm quyền chạy độc lập, an toàn trên database trắng.
   - Vượt qua 100% 4 bước CI Pre-push Pipeline cục bộ (266/266 tests pass, 0 linter/type errors).
+
+### DEC-BE1-006: Chuẩn Hóa Bằng Chứng Rollback CSDL & Khử Khẳng Định Sai Khi Lỗi Gateway (TASK-205 Round 4)
+* **Mã quyết định:** DEC-BE1-006
+* **Ngày quyết định:** 26/10/2026
+* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
+* **Bối cảnh:**
+  1. Trong hệ thống phân tán, khi Gateway trung gian (Reverse Proxy / Cloudflare / Kong) trả về lỗi HTTP 502/503/504 bằng HTML hoặc text không định dạng JSON, SDK `postgrest-py` ném `APIError({"code": 502, "message": "JSON could not be generated", "details": "<html>..."})`.
+  2. Helper `is_database_rollback_evidence()` cũ coi mọi `APIError` hoặc exception có thuộc tính `code` là bằng chứng PostgreSQL đã rollback, dẫn đến việc endpoint `confirm-source` và `replace_source_questions` trả về HTTP 500 kèm khẳng định sai lệch *"was rolled back"*. Trong thực tế, server PostgreSQL có thể đã thực thi xong và commit giao dịch thành công trước khi kết nối gateway bị gián đoạn.
+* **Quyết định:**
+  1. **Chỉ công nhận bằng chứng rollback khi có mã SQLSTATE của PostgreSQL:** Sử dụng regex `POSTGRES_SQLSTATE_PATTERN = re.compile(r"^[0-9A-Z]{5}$")` để xác thực mã lỗi 5 ký tự alnum chuẩn của PostgreSQL (như `P0001`, `23505`, `40P01`).
+  2. **Loại trừ triệt để mã Gateway và nội dung HTML:** Bỏ qua các mã HTTP 3 chữ số (`500, 502, 503, 504`), bỏ qua `message == "JSON could not be generated"` và các chuỗi HTML trong `details`.
+  3. **Trả về thông điệp trung tính an toàn:** Mọi trường hợp lỗi Gateway hoặc lỗi không xác định đều trả về HTTP 500 với thông điệp: *"Database atomic confirmation failed. Please verify session state before retrying."* (tuyệt đối không khẳng định đã rollback).
+  4. **Bổ sung kiểm thử hồi quy:** Thêm 4 failure mode unit tests trong `test_confirm_source.py` và đồng bộ các test tương ứng trong `test_ingest.py`.
+* **Hệ quả / Tác động:**
+  - Loại bỏ hoàn toàn rủi ro sai lệch trạng thái giao dịch trong môi trường mạng phân tán.
+  - Đảm bảo tính nhất quán giữa PR #15 và PR #16, 100% test suites đạt chuẩn.
 
 
 

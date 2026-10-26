@@ -165,6 +165,29 @@
   - `mypy app/ --ignore-missing-imports` đạt 0 errors trên 40 source files.
   - SymPy LaTeX smoke test: parse thành công `x**2 + 1`.
 
+---
+
+## 2026-10-26 — Bá Duy (BE1 / johannguyen015), TASK-205 Review Remediation Round 4
+
+- Branch: `feat/be1-task-205-confirm-source`; PR #16; Base: `dev`.
+- Remediation fixes addressing Reviewer Philip's (`philip-kkk`) Round 4 feedback:
+  - [P2] Chuẩn Hóa Bằng Chứng Rollback CSDL & Loại Bỏ Suy Luận Rollback Sai Khi Nhận Lỗi Gateway:
+    - Đồng bộ `is_database_rollback_evidence()` từ commit `4f227be` của PR #15 vào `backend/app/services/parser/ingestion_service.py`.
+    - Dùng regex `POSTGRES_SQLSTATE_PATTERN = re.compile(r"^[0-9A-Z]{5}$")` để chỉ công nhận mã SQLSTATE chuẩn 5 ký tự alnum của PostgreSQL (ví dụ `P0001`, `23505`, `40P01`).
+    - Loại trừ hoàn toàn các mã HTTP Gateway (`500, 502, 503, 504`), thông báo non-JSON (`message == "JSON could not be generated"` do SDK PostgREST sinh ra khi gặp HTML/text từ reverse proxy), và nội dung chứa HTML trong `details`.
+    - Cập nhật endpoint `confirm_source` tại `backend/app/api/routes/sessions.py`: Mọi lỗi Gateway 502/503/504 hoặc ngoại lệ chưa xác minh đều trả về thông điệp trung tính an toàn: `"Database atomic confirmation failed. Please verify session state before retrying."` (HTTP 500, không khẳng định rollback).
+    - Giữ nguyên các nhánh xử lý `is_network_timeout` và `is_network_transport` (`HTTP 504 Gateway Timeout`) và tuân thủ nghiêm ngặt nguyên tắc Zero RPC Auto-Retry.
+  - [P2] Mở Rộng Unit Tests (Fault Injection Tầng Gateway):
+    - Bổ sung 4 unit tests mới trong `backend/tests/api/test_confirm_source.py`: Gateway 502 HTML, Gateway 504 HTML, APIError mã lạ không phải JSON, APIError với code=None.
+    - Đồng bộ 4 unit tests tương ứng trong `backend/tests/api/test_ingest.py` và cập nhật test RPC failure dùng SQLSTATE `P0001` chuẩn.
+  - [Non-blocking] Cập Nhật PR Description:
+    - Chuẩn bị nội dung cập nhật PR #16 description phản ánh chính xác số lượng test (274+ tests pass 100%) và phân tách rõ ràng code TASK-205 so với phần kế thừa PR #15.
+- Quality Verification:
+  - 30/30 tests passed trong `backend/tests/api/test_confirm_source.py` (100%).
+  - 13/13 tests passed trong `backend/tests/api/test_ingest.py` (100%).
+  - Toàn bộ backend test suite đạt 100% pass rate.
+  - `ruff check app/` và `mypy app/ --ignore-missing-imports` đạt 0 errors.
+
 
 
 
