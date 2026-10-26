@@ -53,6 +53,9 @@ from app.services.parser import (
     validate_file_security,
 )
 from app.services.parser.ingestion_service import (
+    is_database_rollback_evidence,
+    is_network_timeout,
+    is_network_transport,
     replace_source_questions_atomically,
     trigger_blueprint_pipeline,
 )
@@ -628,13 +631,16 @@ async def confirm_source(
             session_id,
             exc,
         )
-        if "42501" in err_msg or "Access denied" in err_msg or "Unauthorized" in err_msg:
+        code = getattr(exc, "code", "") or ""
+
+        if code == "42501" or "42501" in err_msg or "access denied" in err_lower or "unauthorized" in err_lower:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied or session ownership mismatch",
             ) from exc
         if (
-            "22023" in err_msg
+            code == "22023"
+            or "22023" in err_msg
             or "draft" in err_lower
             or "mismatch" in err_lower
             or "state" in err_lower
@@ -646,21 +652,14 @@ async def confirm_source(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Cannot confirm source: {err_msg}",
             ) from exc
-        if "P0002" in err_msg or "not found" in err_lower:
+        if code == "P0002" or "p0002" in err_lower or "not found" in err_lower:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Session not found",
             ) from exc
 
-        # Differentiate network timeout (uncertain commit status) from confirmed database rollback
-        is_timeout = (
-            "timeout" in err_lower
-            or "timed out" in err_lower
-            or "connection closed" in err_lower
-            or "connection reset" in err_lower
-            or "transport error" in err_lower
-        )
-        if is_timeout:
+        # 4. Network Timeout (504): Commit status is uncertain
+        if is_network_timeout(exc):
             raise HTTPException(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT,
                 detail=(
@@ -669,9 +668,28 @@ async def confirm_source(
                 ),
             ) from exc
 
+        # 5. Network Disconnection / Lost Response / Transport Error (504): Commit status is uncertain
+        if is_network_transport(exc):
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=(
+                    "Database atomic confirmation status is uncertain due to network communication error. "
+                    "The transaction may have completed. Please verify session state before retrying."
+                ),
+            ) from exc
+
+        # 6. Confirmed Database Execution Failure with Rollback Evidence (500)
+        if is_database_rollback_evidence(exc):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Database atomic confirmation failed and was rolled back: {err_msg}",
+            ) from exc
+
+        # 7. Unverified / Unexpected Failure without DB Evidence (500):
+        # Do not falsely affirm that the transaction was rolled back.
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database atomic confirmation failed and was rolled back: {err_msg}",
+            detail="Database atomic confirmation failed. Please verify session state before retrying.",
         ) from exc
 
 
