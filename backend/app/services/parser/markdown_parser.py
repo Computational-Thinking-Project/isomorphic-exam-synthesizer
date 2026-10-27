@@ -62,7 +62,8 @@ def parse_markdown(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Par
             start_pos = m.end()
             end_pos = matches[idx + 1].start() if idx + 1 < len(matches) else len(text_without_keys)
             q_body = text_without_keys[start_pos:end_pos].strip()
-            questions_raw.append({"question_no": q_no, "text": q_body})
+            masked_q_body = masked_without_keys[start_pos:end_pos].strip()
+            questions_raw.append({"question_no": q_no, "text": q_body, "masked_text": masked_q_body})
     else:
         # Fallback: check if numbered like "1.", "2."
         numbered_matches = list(re.finditer(r"(?:^|\n)(?P<num>\d+)\.\s+", masked_without_keys))
@@ -76,7 +77,8 @@ def parse_markdown(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Par
                     else len(text_without_keys)
                 )
                 q_body = text_without_keys[start_pos:end_pos].strip()
-                questions_raw.append({"question_no": q_no, "text": q_body})
+                masked_q_body = masked_without_keys[start_pos:end_pos].strip()
+                questions_raw.append({"question_no": q_no, "text": q_body, "masked_text": masked_q_body})
 
     # 4. Process each question
     parsed_questions: List[ParsedQuestionItem] = []
@@ -95,22 +97,35 @@ def parse_markdown(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Par
     for q_data in questions_raw:
         q_no = q_data["question_no"]
         q_text = q_data["text"]
+        masked_q_text = q_data.get("masked_text", q_text)
 
-        stem, options, inline_key = extract_options_from_text(q_text)
+        opt_res = extract_options_from_text(q_text)
+        stem = opt_res.stem
+        options = opt_res.options
+        inline_key = opt_res.detected_key
 
-        # If options not found by standard extractor, try bullet list formats:
-        # - A. ... or * A. ...
-        if len(options) < 4:
-            bullet_opts = re.findall(
+        if opt_res.error_type == "AMBIGUOUS_FORMAT":
+            errors.append(
+                ParserErrorItem(
+                    question_no=q_no,
+                    error_type="AMBIGUOUS_FORMAT",
+                    message=f"Question {q_no} has ambiguous option structure or multiple marked answers.",
+                )
+            )
+        elif len(options) < 4:
+            # Bullet list fallback: run regex on masked_q_text to ensure code blocks are not matched
+            bullet_pattern = re.compile(
                 r"(?:^|\n)\s*[\-\*]\s*(?P<opt>[A-D])\s*[\.\)]\s*(?P<content>.*?)(?=(?:\n\s*[\-\*]\s*[A-D]\s*[\.\)]|$))",
-                q_text,
                 re.DOTALL,
             )
-            if len(bullet_opts) == 4:
-                options = {b[0].upper(): b[1].strip() for b in bullet_opts}
-                first_bullet = re.search(r"(?:^|\n)\s*[\-\*]\s*[A-D]\s*[\.\)]", q_text)
-                if first_bullet:
-                    stem = q_text[: first_bullet.start()].strip()
+            bullet_matches = list(bullet_pattern.finditer(masked_q_text))
+            if len(bullet_matches) == 4:
+                # Use offsets from masked_q_text to slice original q_text
+                options = {
+                    bm.group("opt").upper(): q_text[bm.start("content"):bm.end("content")].strip()
+                    for bm in bullet_matches
+                }
+                stem = q_text[:bullet_matches[0].start()].strip()
 
         # Check for empty stem
         is_empty_stem = not bool(stem.strip())
@@ -123,7 +138,18 @@ def parse_markdown(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Par
                 )
             )
 
-        correct_key = answer_map.get(q_no) or inline_key or ""
+        # Check conflicting answer: separate answer map vs inline marker
+        table_key = answer_map.get(q_no)
+        if inline_key and table_key and inline_key.upper() != table_key.upper():
+            errors.append(
+                ParserErrorItem(
+                    question_no=q_no,
+                    error_type="CONFLICTING_ANSWER_KEY",
+                    message=f"Question {q_no} has conflicting answers: inline marker indicates '{inline_key}' but answer section indicates '{table_key}'.",
+                )
+            )
+
+        correct_key = table_key or inline_key or ""
         has_missing_answer = False
         if not correct_key or correct_key.upper() not in {"A", "B", "C", "D"}:
             has_missing_answer = True
@@ -140,13 +166,14 @@ def parse_markdown(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Par
             or not all(k in options for k in ["A", "B", "C", "D"])
             or any(not (options.get(k) or "").strip() for k in ["A", "B", "C", "D"])
         ):
-            errors.append(
-                ParserErrorItem(
-                    question_no=q_no,
-                    error_type="INVALID_FORMAT",
-                    message=f"Question {q_no} is missing one or more options or contains empty option content (A, B, C, D required).",
+            if opt_res.error_type != "AMBIGUOUS_FORMAT":
+                errors.append(
+                    ParserErrorItem(
+                        question_no=q_no,
+                        error_type="INVALID_FORMAT",
+                        message=f"Question {q_no} is missing one or more options or contains empty option content (A, B, C, D required).",
+                    )
                 )
-            )
 
         has_sec_warning = check_prompt_injection(q_text)
 

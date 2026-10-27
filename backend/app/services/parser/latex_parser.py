@@ -46,24 +46,56 @@ OPT_LIST_START_PATTERN = re.compile(
 
 
 def mask_latex_verbatim_spans(text: str) -> Tuple[str, List[Tuple[int, int, str]]]:
-    """Mask verbatim, lstlisting, and \\verb environments preserving exact length and newlines.
+    """Mask verbatim, verbatim*, lstlisting, and \\verb environments preserving exact length and newlines.
 
-    Ensures that any % characters inside verbatim code blocks are protected
-    from LaTeX comment stripping.
+    Uses an exact-matching environment scanner so mismatched environments (e.g. \\begin{verbatim}...\\end{lstlisting})
+    are never cross-paired. Supports custom delimiters for \\verb.
     """
     spans: List[Tuple[int, int, str]] = []
-    pat = re.compile(
-        r"(\\begin\{(?:verbatim|lstlisting)\}[\s\S]*?\\end\{(?:verbatim|lstlisting)\}|\\verb\|[^|\n]*\|)",
-        re.IGNORECASE,
-    )
-    for m in pat.finditer(text):
-        spans.append((m.start(), m.end(), m.group(0)))
+    i = 0
+    n = len(text)
+    ENV_NAMES = {"verbatim", "verbatim*", "lstlisting"}
+
+    while i < n:
+        if text.startswith(r"\begin", i):
+            m = re.match(r"^\\begin\{([a-zA-Z*]+)\}", text[i:])
+            if m:
+                env_name = m.group(1).lower()
+                if env_name in ENV_NAMES:
+                    start_pos = i
+                    end_tag = f"\\end{{{m.group(1)}}}"
+                    end_idx = text.lower().find(end_tag.lower(), i + len(m.group(0)))
+                    if end_idx != -1:
+                        end_pos = end_idx + len(end_tag)
+                        spans.append((start_pos, end_pos, text[start_pos:end_pos]))
+                        i = end_pos
+                        continue
+                    else:
+                        # Unclosed verbatim environment: mask to EOF
+                        spans.append((start_pos, n, text[start_pos:n]))
+                        break
+        elif text.startswith(r"\verb", i):
+            verb_prefix = r"\verb*" if text.startswith(r"\verb*", i) else r"\verb"
+            delim_pos = i + len(verb_prefix)
+            if delim_pos < n:
+                delim = text[delim_pos]
+                if delim not in ("\n", "\r", " ", "\t") and not delim.isalpha():
+                    newline_pos = text.find("\n", delim_pos + 1)
+                    if newline_pos == -1:
+                        newline_pos = n
+                    closing_delim_pos = text.find(delim, delim_pos + 1, newline_pos)
+                    if closing_delim_pos != -1:
+                        end_pos = closing_delim_pos + 1
+                        spans.append((i, end_pos, text[i:end_pos]))
+                        i = end_pos
+                        continue
+        i += 1
 
     chars = list(text)
     for start, end, _ in spans:
-        for i in range(start, end):
-            if chars[i] != "\n":
-                chars[i] = "~"
+        for k in range(start, end):
+            if chars[k] != "\n":
+                chars[k] = "~"
     return "".join(chars), spans
 
 
@@ -169,17 +201,20 @@ def find_outer_latex_environments(text: str, env_name: str = "enumerate") -> Lis
     return [body for _, _, body in find_outer_latex_environment_spans(text, env_name)]
 
 
-def split_latex_items(enum_body: str) -> List[str]:
+def split_latex_items(enum_body: str, source_body: Optional[str] = None) -> List[str]:
     """Split LaTeX enumerate body into top-level question items.
 
     Ignores \\item inside nested environments and \\item with option labels like \\item[A.].
+    If source_body is provided, structural boundary detection runs on enum_body (masked)
+    while slices are extracted from source_body.
     """
     items: List[str] = []
     token_pattern = re.compile(r"(\\begin\{[a-zA-Z*]+\}|\\end\{[a-zA-Z*]+\}|\\item(?![a-zA-Z]))")
 
     tokens = list(token_pattern.finditer(enum_body))
+    src = source_body if source_body is not None else enum_body
     if not tokens:
-        trimmed = enum_body.strip()
+        trimmed = src.strip()
         return [trimmed] if trimmed else []
 
     depth = 0
@@ -201,12 +236,12 @@ def split_latex_items(enum_body: str) -> List[str]:
                 pass
             else:
                 # Top-level question \item boundary
-                prev_chunk = enum_body[last_end:start].strip()
+                prev_chunk = src[last_end:start].strip()
                 if prev_chunk:
                     items.append(prev_chunk)
                 last_end = match.end()
 
-    final_chunk = enum_body[last_end:].strip()
+    final_chunk = src[last_end:].strip()
     if final_chunk:
         items.append(final_chunk)
 
@@ -220,25 +255,28 @@ def parse_latex(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Parser
     # 1. Mask verbatim/lstlisting first to protect code % characters
     masked_verbatim, verbatim_spans = mask_latex_verbatim_spans(text)
 
-    # 2. Strip comments preserving length and newlines with backslash parity check
-    stripped_text = strip_latex_comments_preserve_len(masked_verbatim)
+    # 2. Strip comments preserving length and newlines with backslash parity check on masked text
+    stripped_structure = strip_latex_comments_preserve_len(masked_verbatim)
 
-    # 3. Restore verbatim content into stripped_text
-    chars = list(stripped_text)
-    for start, end, orig in verbatim_spans:
-        chars[start:end] = list(orig)
-    cleaned_text = "".join(chars)
+    # 3. Create clean source_text: strip comments outside verbatim from original text
+    source_chars = list(text)
+    for k in range(len(text)):
+        if stripped_structure[k] == " " and masked_verbatim[k] != "~" and text[k] != " ":
+            source_chars[k] = " "
+    source_text = "".join(source_chars)
 
-    # 4. Parse separate answer table
-    answer_map, text_without_keys, key_info = parse_separate_answer_key(
-        cleaned_text, return_info=True
+    # 4. Parse separate answer table on structure text
+    answer_map, struct_without_keys, key_info = parse_separate_answer_key(
+        stripped_structure, return_info=True
     )
+    cutoff_len = len(struct_without_keys)
+    text_without_keys = source_text[:cutoff_len]
 
     # 5. Segment questions: distinguish between top-level question enumerate and option enumerate
     questions_raw: List[Dict[str, Any]] = []
 
-    enum_spans = find_outer_latex_environment_spans(text_without_keys, "enumerate")
-    header_matches = list(LATEX_QUESTION_HEADER.finditer(text_without_keys))
+    enum_spans = find_outer_latex_environment_spans(struct_without_keys, "enumerate")
+    header_matches = list(LATEX_QUESTION_HEADER.finditer(struct_without_keys))
 
     # Detect if question headers exist outside of any top-level enumerate environment
     headers_outside_enumerate = [
@@ -263,8 +301,15 @@ def parse_latex(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Parser
     elif enum_spans:
         # Strategy A: Document is organized as top-level enumerate question list
         q_counter = 1
-        for _, _, enum_body in enum_spans:
-            items = split_latex_items(enum_body)
+        for start, end, _ in enum_spans:
+            begin_tag = r"\begin{enumerate}"
+            end_tag = r"\end{enumerate}"
+            inner_start = start + len(begin_tag)
+            inner_end = end - len(end_tag)
+            enum_body_struct = struct_without_keys[inner_start:inner_end]
+            enum_body_source = text_without_keys[inner_start:inner_end]
+
+            items = split_latex_items(enum_body_struct, source_body=enum_body_source)
             for item in items:
                 item_text = item.strip()
                 if not item_text:
@@ -371,12 +416,20 @@ def parse_latex(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Parser
                     break
 
         # 3. If still not found, try standard text extractor (A. ... B. ...)
-        if len(options) < 4:
-            extracted_stem, extracted_opts, detected_inline_key = extract_options_from_text(q_text)
-            if len(extracted_opts) == 4:
-                stem = extracted_stem
-                options = extracted_opts
-                inline_key = detected_inline_key
+        opt_res = extract_options_from_text(q_text)
+        if opt_res.error_type == "AMBIGUOUS_FORMAT":
+            errors.append(
+                ParserErrorItem(
+                    question_no=q_no,
+                    error_type="AMBIGUOUS_FORMAT",
+                    message=f"Question {q_no} has ambiguous option structure or multiple marked answers.",
+                )
+            )
+        elif len(options) < 4:
+            if len(opt_res.options) == 4:
+                stem = opt_res.stem
+                options = opt_res.options
+                inline_key = opt_res.detected_key
 
         # Clean list layout wrappers (\begin{enumerate}, \end{enumerate}, \begin{tasks}, etc.)
         stem, options = clean_latex_list_wrappers(stem, options)
@@ -392,7 +445,18 @@ def parse_latex(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Parser
                 )
             )
 
-        correct_key = answer_map.get(q_no) or inline_key or ""
+        # Check conflicting answer: separate answer map vs inline marker
+        table_key = answer_map.get(q_no)
+        if inline_key and table_key and inline_key.upper() != table_key.upper():
+            errors.append(
+                ParserErrorItem(
+                    question_no=q_no,
+                    error_type="CONFLICTING_ANSWER_KEY",
+                    message=f"Question {q_no} has conflicting answers: inline marker indicates '{inline_key}' but answer section indicates '{table_key}'.",
+                )
+            )
+
+        correct_key = table_key or inline_key or ""
         has_missing_answer = False
         if not correct_key or correct_key.upper() not in {"A", "B", "C", "D"}:
             has_missing_answer = True

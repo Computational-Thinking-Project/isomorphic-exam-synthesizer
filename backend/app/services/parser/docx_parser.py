@@ -58,7 +58,7 @@ def inspect_paragraph_visuals(paragraph) -> Tuple[bool, bool, bool]:
     has_image = any(tag in xml_str for tag in WORD_IMAGE_DRAWING_TAGS)
 
     is_unparsed_omml = has_omml or has_ole
-    return is_unparsed_omml, is_unparsed_omml, has_image
+    return has_omml, is_unparsed_omml, has_image
 
 
 def inspect_paragraph_omml(paragraph) -> Tuple[bool, bool]:
@@ -79,7 +79,7 @@ def inspect_cell_visuals(cell) -> Tuple[bool, bool, bool]:
     has_image = any(tag in xml_str for tag in WORD_IMAGE_DRAWING_TAGS)
 
     is_unparsed_omml = has_omml or has_ole
-    return is_unparsed_omml, is_unparsed_omml, has_image
+    return has_omml, is_unparsed_omml, has_image
 
 
 def inspect_cell_omml(cell) -> Tuple[bool, bool]:
@@ -94,29 +94,28 @@ def extract_cell_elements(
     """Recursively extract text lines and (unparsed_omml, unparsed_image) flags from a cell.
 
     Traverses child paragraphs and child tables in document order, deduplicating merged cells.
+    Inspects each paragraph individually to prevent visual flags from leaking to unrelated questions.
 
     Returns:
         List of (subline_text, is_unparsed_omml, has_unparsed_image)
     """
     results: List[Tuple[str, bool, bool]] = []
-    _, cell_unparsed_omml, cell_unparsed_img = inspect_cell_visuals(cell)
-
     seen_sub_tc: set = set()
+
     for child in cell._tc:
         if child.tag.endswith("p"):
             cp = Paragraph(child, doc)
             text = normalize_unicode_nfc(cp.text)
             _, cp_omml, cp_img = inspect_paragraph_visuals(cp)
-            u_omml = cp_omml or cell_unparsed_omml
-            u_img = cp_img or cell_unparsed_img
             for subline in text.split("\n"):
-                results.append((subline, u_omml, u_img))
+                results.append((subline, cp_omml, cp_img))
         elif child.tag.endswith("tbl"):
             sub_tbl = Table(child, doc)
             for sub_row in sub_tbl.rows:
                 for sub_cell in sub_row.cells:
-                    if sub_cell._tc not in seen_sub_tc:
-                        seen_sub_tc.add(sub_cell._tc)
+                    tc_id = id(sub_cell._tc)
+                    if tc_id not in seen_sub_tc:
+                        seen_sub_tc.add(tc_id)
                         results.extend(extract_cell_elements(sub_cell, doc))
     return results
 
@@ -145,8 +144,9 @@ def try_parse_table_as_answer_key(tbl: Table) -> Optional[List[str]]:
         seen_tc = set()
         row_cells = []
         for cell in row.cells:
-            if cell._tc not in seen_tc:
-                seen_tc.add(cell._tc)
+            tc_id = id(cell._tc)
+            if tc_id not in seen_tc:
+                seen_tc.add(tc_id)
                 row_cells.append(cell.text.strip())
         if any(c for c in row_cells):
             grid.append(row_cells)
@@ -305,8 +305,9 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
                 seen_tc = set()
                 unique_cells = []
                 for cell in row.cells:
-                    if cell._tc not in seen_tc:
-                        seen_tc.add(cell._tc)
+                    tc_id = id(cell._tc)
+                    if tc_id not in seen_tc:
+                        seen_tc.add(tc_id)
                         unique_cells.append(cell)
 
                 for cell in unique_cells:
@@ -433,7 +434,19 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
         joined_text = "\n".join(q_data["lines"]).strip()
 
         # Extract options
-        stem, options, inline_key = extract_options_from_text(joined_text)
+        opt_res = extract_options_from_text(joined_text)
+        stem = opt_res.stem
+        options = opt_res.options
+        inline_key = opt_res.detected_key
+
+        if opt_res.error_type == "AMBIGUOUS_FORMAT":
+            errors.append(
+                ParserErrorItem(
+                    question_no=q_no,
+                    error_type="AMBIGUOUS_FORMAT",
+                    message=f"Question {q_no} has ambiguous option structure or multiple marked answers.",
+                )
+            )
 
         # Check for empty stem
         is_empty_stem = not bool(stem.strip())
@@ -446,8 +459,19 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
                 )
             )
 
+        # Check conflicting answer: separate answer map vs inline marker
+        table_key = answer_map.get(q_no)
+        if inline_key and table_key and inline_key.upper() != table_key.upper():
+            errors.append(
+                ParserErrorItem(
+                    question_no=q_no,
+                    error_type="CONFLICTING_ANSWER_KEY",
+                    message=f"Question {q_no} has conflicting answers: inline marker indicates '{inline_key}' but answer section indicates '{table_key}'.",
+                )
+            )
+
         # Determine correct key: precedence (1) separate answer map, (2) inline marker
-        correct_key = answer_map.get(q_no) or inline_key or ""
+        correct_key = table_key or inline_key or ""
 
         has_missing_answer = False
         if not correct_key or correct_key.upper() not in {"A", "B", "C", "D"}:

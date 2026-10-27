@@ -111,10 +111,13 @@ def validate_file_security(filename: str, file_bytes: bytes) -> str:
                 detail="Corrupted or malformed DOCX archive.",
             ) from exc
 
-    # 4. For text-based formats (.md, .tex): validate strict UTF-8 decoding
+    # 4. For text-based formats (.md, .tex): validate strict UTF-8 decoding (supports UTF-8 BOM)
     if ext in (".md", ".tex"):
         try:
-            file_bytes.decode("utf-8")
+            if file_bytes.startswith(b"\xef\xbb\xbf"):
+                file_bytes.decode("utf-8-sig")
+            else:
+                file_bytes.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -163,7 +166,22 @@ async def upload_exam_file_to_storage(
             )
         except Exception as primary_exc:
             err_msg = str(primary_exc).lower()
-            if "not found" in err_msg or "nosuchbucket" in err_msg or "404" in err_msg:
+            status_code = getattr(primary_exc, "status_code", getattr(primary_exc, "code", None))
+            is_404 = (
+                status_code == 404
+                or "404" in err_msg
+                or "nosuchbucket" in err_msg
+                or "bucket not found" in err_msg
+            )
+            is_forbidden_or_timeout = (
+                status_code in (401, 403)
+                or "403" in err_msg
+                or "401" in err_msg
+                or "timeout" in err_msg
+                or "permission" in err_msg
+                or "unauthorized" in err_msg
+            )
+            if is_404 and not is_forbidden_or_timeout:
                 # Try fallback bucket only when primary bucket is missing
                 db.storage.from_("exam-raw-files").upload(
                     path=storage_path,

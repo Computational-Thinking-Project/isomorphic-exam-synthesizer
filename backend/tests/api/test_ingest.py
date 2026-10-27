@@ -1471,3 +1471,153 @@ BẢNG ĐÁP ÁN:
     assert rpc_payload[0]["options"]["D"] == "P(D)=0.4"
 
 
+def test_rpc_success_readback_failure_is_not_reported_as_write_failure(
+    client, mock_auth_user, auth_headers
+):
+    """Verify that when RPC succeeds but subsequent read-back query fails, it returns 200 with fallback payload."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    # RPC succeeds
+    mock_rpc_exec = MagicMock()
+    mock_rpc_exec.data = {"success": True, "count": 1}
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_exec
+
+    # Read-back fails with exception
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.side_effect = (
+        Exception("Post-RPC query read timeout")
+    )
+
+    raw_text = """### Câu 1: Giải phương trình $x + 1 = 2$
+A. $x = 1$
+B. $x = 2$
+C. $x = 3$
+D. $x = 4$
+
+BẢNG ĐÁP ÁN:
+1.A
+"""
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-text",
+            json={"raw_text": raw_text},
+            headers=auth_headers,
+        )
+
+    # Must NOT fail with 500 error since RPC transaction succeeded
+    assert response.status_code == 200
+    res_data = response.json()
+    assert res_data["total_questions"] == 1
+    assert res_data["questions"][0]["correct_key"] == "A"
+
+
+def test_sync_supabase_execute_does_not_block_event_loop():
+    """Verify replace_source_questions_atomically runs sync db calls in asyncio.to_thread."""
+    import asyncio
+    from app.models.schemas import ParsedQuestionItem
+    from app.services.parser.ingestion_service import replace_source_questions_atomically
+
+    mock_db = MagicMock()
+    mock_rpc = MagicMock()
+    mock_rpc.data = {"success": True, "count": 1}
+    mock_db.rpc.return_value.execute.return_value = mock_rpc
+
+    mock_q_res = MagicMock()
+    mock_q_res.data = [{"question_no": 1, "raw_content": "Stem", "options": {}, "correct_key": "A"}]
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = mock_q_res
+
+    q = ParsedQuestionItem(question_no=1, raw_content="Stem", options={"A": "1", "B": "2", "C": "3", "D": "4"}, correct_key="A")
+
+    with patch("asyncio.to_thread", wraps=asyncio.to_thread) as spy_to_thread:
+        res = asyncio.run(replace_source_questions_atomically(mock_db, "session-1", [q]))
+        assert res is not None
+        assert spy_to_thread.called
+
+
+def test_uncertain_commit_is_not_reported_as_confirmed_rollback(
+    client, mock_auth_user, auth_headers
+):
+    """Verify that network timeout during RPC raises 504 GATEWAY_TIMEOUT with uncertain commit message."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    # RPC fails with network timeout
+    mock_db.rpc.return_value.execute.side_effect = TimeoutError("Connection to Supabase timed out")
+
+    raw_text = """### Câu 1: Tìm x
+A. 1
+B. 2
+C. 3
+D. 4
+BẢNG ĐÁP ÁN: 1.A"""
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-text",
+            json={"raw_text": raw_text},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 504
+    assert "uncertain" in response.json()["detail"].lower()
+
+
+def test_parser_or_validator_error_prevents_database_rpc(
+    client, mock_auth_user, auth_headers
+):
+    """Verify that any validation error prevents database RPC mutation."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    # Missing answer in text
+    raw_text = """### Câu 1: Không có đáp án
+A. 1
+B. 2
+C. 3
+D. 4"""
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-text",
+            json={"raw_text": raw_text},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 422
+    assert not mock_db.rpc.called
+
+
+

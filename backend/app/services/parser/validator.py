@@ -164,7 +164,19 @@ def validate_exam_integrity(
                 )
 
         for pair_q, _ in answer_key_info.raw_pairs:
-            if pair_q not in seen_q_nums and pair_q > 0:
+            if pair_q <= 0:
+                if not any(
+                    e.question_no == pair_q and e.error_type == "INVALID_QUESTION_NO"
+                    for e in all_errors
+                ):
+                    all_errors.append(
+                        ParserErrorItem(
+                            question_no=pair_q,
+                            error_type="INVALID_QUESTION_NO",
+                            message=f"Answer key contains invalid question number {pair_q} (question numbers must be positive integers).",
+                        )
+                    )
+            elif pair_q not in seen_q_nums:
                 if not any(
                     e.question_no == pair_q and e.error_type == "SURPLUS_ANSWER_KEY"
                     for e in all_errors

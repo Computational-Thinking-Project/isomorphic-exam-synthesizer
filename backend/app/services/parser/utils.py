@@ -132,9 +132,9 @@ def parse_separate_answer_key(
             else:
                 seen_map[q_num] = key
 
-        # Mapped keys only include non-conflicting keys
+        # Mapped keys only include non-conflicting valid positive question numbers
         for q_num, key in seen_map.items():
-            if q_num not in conflicts:
+            if q_num not in conflicts and q_num > 0:
                 mapped_keys[q_num] = key
 
     # 1. Search for answer section heading near the end
@@ -217,33 +217,61 @@ def parse_separate_answer_key(
     return mapped_keys, remaining_text
 
 
+MAX_OPTION_CANDIDATES: int = 120
+
+
 def mask_markdown_code_blocks(text: str) -> str:
-    """Mask multi-line code fences (```...```) and inline code (`...`) with '~'
+    """Mask multi-line code fences (```...``` and ~~~...~~~) and inline code (`...`) with '~'
     preserving EXACT character length and newline positions.
-    Guarantees that question headers, answer keys, or option labels inside
-    code blocks are never misidentified as exam structure.
+
+    Supports:
+    - Code fences with 3 or more backticks (```) or tildes (~~~).
+    - Closing fence matching the same delimiter character and length >= opening delimiter length.
+    - Unclosed code fences are masked all the way to EOF.
+    - Inline code runs of 1 or more backticks.
+    - Guarantees len(masked) == len(text) and exact newline offsets.
     """
-    def _repl_fence(m: re.Match) -> str:
-        s = m.group(0)
-        lines = s.split("\n")
-        masked_lines = [lines[0]]
-        for line in lines[1:-1]:
-            masked_lines.append("~" * len(line))
-        if len(lines) > 1:
-            masked_lines.append(lines[-1])
-        return "\n".join(masked_lines)
+    if not text:
+        return ""
 
-    def _repl_inline(m: re.Match) -> str:
-        s = m.group(0)
-        if len(s) <= 2:
-            return s
-        return "`" + ("~" * (len(s) - 2)) + "`"
+    lines = text.split("\n")
+    masked_lines: List[str] = []
+    in_fence = False
+    fence_char = ""
+    fence_len = 0
 
-    # Multi-line code fence
-    masked = re.sub(r"```[\s\S]*?```", _repl_fence, text)
-    # Inline code (not spanning lines)
-    masked = re.sub(r"`[^`\n]+`", _repl_inline, masked)
-    return masked
+    fence_open_pattern = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})(.*)$")
+
+    for line in lines:
+        if not in_fence:
+            m = fence_open_pattern.match(line)
+            if m:
+                in_fence = True
+                fence_delim = m.group(1)
+                fence_char = fence_delim[0]
+                fence_len = len(fence_delim)
+                masked_lines.append("~" * len(line))
+            else:
+                # Mask inline code: runs of backticks `...` or ``...``
+                masked_line = re.sub(
+                    r"(`+)(.+?)\1",
+                    lambda im: "~" * len(im.group(0)),
+                    line,
+                )
+                masked_lines.append(masked_line)
+        else:
+            # Check for closing fence matching character and length >= fence_len
+            close_pattern = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})\s*$")
+            cm = close_pattern.match(line)
+            if cm and cm.group(1)[0] == fence_char and len(cm.group(1)) >= fence_len:
+                in_fence = False
+                fence_char = ""
+                fence_len = 0
+                masked_lines.append("~" * len(line))
+            else:
+                masked_lines.append("~" * len(line))
+
+    return "\n".join(masked_lines)
 
 
 def mask_math_blocks(text: str) -> str:
@@ -275,10 +303,12 @@ def extract_options_from_text(text: str) -> OptionExtractionResult:
 
     Guarantees:
     - Linear complexity O(n) preventing CPU exhaustion (ReDoS/Combinatorial explosion).
+    - Streaming candidate limit MAX_OPTION_CANDIDATES: terminates early on pathological inputs.
+    - Pure structural scoring without favoring late quads (eliminates a.start bias).
+    - Rejects ambiguous quads and multiple marked options with AMBIGUOUS_FORMAT.
     - Protects mathematical formulas such as P(A), P(B), f(A), coordinates A(x; y), and LaTeX delimiters
       from being misidentified as option labels.
     - Scoped marker detection: only identifies bold/asterisk markers directly attached to true option prefixes.
-    - Fails safely with AMBIGUOUS_FORMAT error_type when option structure is unresolvable or conflicting.
     """
     masked = mask_math_blocks(text)
 
@@ -298,17 +328,20 @@ def extract_options_from_text(text: str) -> OptionExtractionResult:
     )
 
     matches: list[OptionMatch] = []
-    for m in pattern.finditer(masked):
-        opt = m.group("p_opt") or m.group("b_opt") or m.group("l_opt")
-        raw_slice = text[m.start():m.end()]
-        is_newline = ("\n" in raw_slice or "\r" in raw_slice or m.start() == 0)
-        has_bullet = bool(m.group("bullet"))
-        fmt = "p" if m.group("p_opt") else ("b" if m.group("b_opt") else "l")
+    for cand_match in pattern.finditer(masked):
+        if len(matches) >= MAX_OPTION_CANDIDATES:
+            return OptionExtractionResult(text, {}, None, error_type="AMBIGUOUS_FORMAT")
+
+        opt = cand_match.group("p_opt") or cand_match.group("b_opt") or cand_match.group("l_opt")
+        raw_slice = text[cand_match.start():cand_match.end()]
+        is_newline = ("\n" in raw_slice or "\r" in raw_slice or cand_match.start() == 0)
+        has_bullet = bool(cand_match.group("bullet"))
+        fmt = "p" if cand_match.group("p_opt") else ("b" if cand_match.group("b_opt") else "l")
         matches.append(
             OptionMatch(
                 opt=opt,
-                start=m.start(),
-                end=m.end(),
+                start=cand_match.start(),
+                end=cand_match.end(),
                 is_newline=is_newline,
                 has_bullet=has_bullet,
                 fmt=fmt,
@@ -317,11 +350,6 @@ def extract_options_from_text(text: str) -> OptionExtractionResult:
 
     if not matches:
         return OptionExtractionResult(text, {}, None)
-
-    # Protection against hostile / pathological inputs with excessive candidate markers
-    MAX_CANDIDATES = 120
-    if len(matches) > MAX_CANDIDATES:
-        return OptionExtractionResult(text, {}, None, error_type="AMBIGUOUS_FORMAT")
 
     # Linear scan state machine to find candidate quadruplets:
     # A quadruplet is an ordered sequence of 4 options A -> B -> C -> D
@@ -375,7 +403,7 @@ def extract_options_from_text(text: str) -> OptionExtractionResult:
     if not candidate_quads:
         return OptionExtractionResult(text, {}, None)
 
-    # Score candidate quadruplets
+    # Score candidate quadruplets structurally
     scored_candidates: list[Tuple[float, Tuple[OptionMatch, OptionMatch, OptionMatch, OptionMatch]]] = []
     for quad in candidate_quads:
         a, b, c, d = quad
@@ -387,13 +415,21 @@ def extract_options_from_text(text: str) -> OptionExtractionResult:
             continue
 
         score = 0.0
+        # Consistent label format (all paren, all bracket, or all letter)
         if a.fmt == b.fmt == c.fmt == d.fmt:
             score += 20.0
+        # Consistent newline boundary across all options
         if a.is_newline == b.is_newline == c.is_newline == d.is_newline:
             score += 10.0
+        # High-confidence layout: each option starts on a new line
+        if a.is_newline and b.is_newline and c.is_newline and d.is_newline:
+            score += 15.0
+        # Consistent bullet styling
         if a.has_bullet == b.has_bullet == c.has_bullet == d.has_bullet:
             score += 5.0
-        score += a.start * 0.001
+        # Structural length sanity: options having substantial content
+        if min(len(span_a), len(span_b), len(span_c)) > 0:
+            score += 5.0
         scored_candidates.append((score, quad))
 
     if not scored_candidates:
@@ -402,10 +438,10 @@ def extract_options_from_text(text: str) -> OptionExtractionResult:
     scored_candidates.sort(key=lambda x: x[0], reverse=True)
     best_score, best_quad = scored_candidates[0]
 
-    # Check for ambiguity: multiple top candidates with identical high scores but different spans
+    # Check for ambiguity: multiple top candidates with equal top scores but different spans
     if len(scored_candidates) > 1:
-        second_score, second_quad = scored_candidates[1]
-        if abs(best_score - second_score) < 0.0001 and best_quad != second_quad:
+        top_tier = [q for s, q in scored_candidates if abs(s - best_score) < 0.0001]
+        if len(top_tier) > 1 and any(q != best_quad for q in top_tier):
             return OptionExtractionResult(text, {}, None, error_type="AMBIGUOUS_FORMAT")
 
     a, b, c, d = best_quad
@@ -420,6 +456,15 @@ def extract_options_from_text(text: str) -> OptionExtractionResult:
         item = quad_items[i]
         next_start = quad_items[i + 1].start if i < 3 else len(text)
         content = text[item.end:next_start].strip()
+        if i == 3:
+            # If trailing explanation / solution section exists after option D, cut before it
+            expl_match = re.search(
+                r"(?:\n\s*)+(?:giải\s+thích|hướng\s+dẫn\s+giải|lời\s+giải|solution|explanation)\b.*$",
+                content,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if expl_match:
+                content = content[:expl_match.start()].strip()
         content = re.sub(r"^[\*\_]+|[\*\_]+$", "", content).strip()
         content = re.sub(r"[\(\[\s]+$", "", content).strip()
         opts[item.opt] = content
@@ -429,6 +474,12 @@ def extract_options_from_text(text: str) -> OptionExtractionResult:
         if re.search(r"[\*\_]{1,2}[A-D][\*\_]{0,2}[\.\:\)]|[\(\[][\*\_]{1,2}[A-D][\*\_]{0,2}[\)\]]", raw_label):
             marked_keys.append(item.opt)
 
-    detected_key = marked_keys[0] if marked_keys else None
-    return OptionExtractionResult(stem, opts, detected_key)
+    if len(marked_keys) == 1:
+        detected_key = marked_keys[0]
+        return OptionExtractionResult(stem, opts, detected_key)
+    elif len(marked_keys) > 1:
+        # Multiple marked options -> ambiguous answer key!
+        return OptionExtractionResult(stem, opts, None, error_type="AMBIGUOUS_FORMAT")
+    else:
+        return OptionExtractionResult(stem, opts, None)
 
