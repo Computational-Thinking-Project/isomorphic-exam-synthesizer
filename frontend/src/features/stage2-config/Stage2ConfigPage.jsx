@@ -31,7 +31,8 @@ export default function Stage2ConfigPage({
   startGen = startGeneration,
   useSSEHook = useSSE,
 }) {
-  const { id: sessionId } = useParams();
+  const params = useParams();
+  const sessionId = params.sessionId || params.id;
   const navigate = useNavigate();
 
   const [session, setSession] = useState(null);
