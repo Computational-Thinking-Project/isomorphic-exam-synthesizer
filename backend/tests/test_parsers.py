@@ -2319,4 +2319,237 @@ def test_file_security_docx_corrupted_zip():
     assert exc_info.value.status_code == 400
 
 
+# ---------------------------------------------------------------------------
+# Section 11: Regression tests for P1-1, P1-2, P1-3 (DANH_GIA_SAU_SUA_LOI)
+# ---------------------------------------------------------------------------
 
+
+class TestP11DocxDataTableFalsePositive:
+    """P1-1: DOCX data tables at end of document must NOT be misidentified as answer keys.
+
+    A table with sequential numeric rows (e.g. 1|A, 2|B) placed after questions should
+    remain as content and NOT silently assign correct_key to the questions.
+    """
+
+    def test_data_table_no_header_not_assigned_as_answer_key(self):
+        """A content table '1|A','2|B' without any explicit label must NOT be accepted."""
+        from app.services.parser.docx_parser import try_parse_table_as_answer_key
+        from unittest.mock import MagicMock
+
+        def _make_table(rows_data):
+            tbl = MagicMock()
+            row_objs = []
+            for row_data in rows_data:
+                row = MagicMock()
+                cells = []
+                for text in row_data:
+                    cell = MagicMock()
+                    cell.text = text
+                    cell._tc = MagicMock()
+                    cells.append(cell)
+                row.cells = cells
+                row_objs.append(row)
+            tbl.rows = row_objs
+            return tbl
+
+        # P1-1 reproducer: looks like answer key but has no header or explicit labels
+        tbl = _make_table([["1", "A"], ["2", "B"]])
+        assert try_parse_table_as_answer_key(tbl, is_tail=True) is None, (
+            "Data table with no header should be rejected even at document tail"
+        )
+        assert try_parse_table_as_answer_key(tbl, is_tail=False) is None
+
+    def test_answer_table_with_header_still_accepted(self):
+        """A table with 'BẢNG ĐÁP ÁN' header MUST still be accepted after P1-1 fix."""
+        from app.services.parser.docx_parser import try_parse_table_as_answer_key
+        from unittest.mock import MagicMock
+
+        def _make_table(rows_data):
+            tbl = MagicMock()
+            row_objs = []
+            for row_data in rows_data:
+                row = MagicMock()
+                cells = []
+                for text in row_data:
+                    cell = MagicMock()
+                    cell.text = text
+                    cell._tc = MagicMock()
+                    cells.append(cell)
+                row.cells = cells
+                row_objs.append(row)
+            tbl.rows = row_objs
+            return tbl
+
+        tbl = _make_table([["BẢNG ĐÁP ÁN"], ["1", "A"], ["2", "B"]])
+        result = try_parse_table_as_answer_key(tbl, is_tail=True)
+        assert result is not None, "Table with explicit 'BẢNG ĐÁP ÁN' header must be accepted"
+        combined = " ".join(result)
+        assert "1.A" in combined and "2.B" in combined
+
+    def test_explicit_cau_label_table_accepted(self):
+        """A table with 'Câu N' explicit labels should still be accepted."""
+        from app.services.parser.docx_parser import try_parse_table_as_answer_key
+        from unittest.mock import MagicMock
+
+        def _make_table(rows_data):
+            tbl = MagicMock()
+            row_objs = []
+            for row_data in rows_data:
+                row = MagicMock()
+                cells = []
+                for text in row_data:
+                    cell = MagicMock()
+                    cell.text = text
+                    cell._tc = MagicMock()
+                    cells.append(cell)
+                row.cells = cells
+                row_objs.append(row)
+            tbl.rows = row_objs
+            return tbl
+
+        tbl = _make_table([["Câu 1", "A"], ["Câu 2", "B"]])
+        result = try_parse_table_as_answer_key(tbl, is_tail=True)
+        assert result is not None, "Table with explicit 'Câu N' labels must be accepted"
+
+
+class TestP12MarkdownBoldHeading:
+    """P1-2: Markdown heading combined with bold '## **BẢNG ĐÁP ÁN**' must be recognized."""
+
+    def _make_q1_md(self, heading: str, key: str = "A") -> str:
+        return (
+            "Câu 1: Chọn đáp án đúng.\n"
+            "A. Một\n"
+            "B. Hai\n"
+            "C. Ba\n"
+            "D. Bốn\n"
+            f"\n{heading}\n"
+            f"1.{key}\n"
+        )
+
+    def test_double_hash_bold_heading_recognized(self):
+        """'## **BẢNG ĐÁP ÁN**' must strip the section and map the key."""
+        questions, errors = parse_markdown(self._make_q1_md("## **BẢNG ĐÁP ÁN**", "A"))
+        assert len(questions) == 1
+        q = questions[0]
+        assert q.correct_key == "A", f"Expected 'A', got '{q.correct_key}'"
+        opt_d = (q.options or {}).get("D", "")
+        assert "BẢNG ĐÁP ÁN" not in opt_d, f"Heading must not bleed into option D: {opt_d!r}"
+        assert not any(e.error_type == "MISSING_ANSWER" for e in errors)
+
+    def test_bold_only_heading_recognized(self):
+        """'**BẢNG ĐÁP ÁN**' (bold without # heading) must also be recognized."""
+        questions, errors = parse_markdown(self._make_q1_md("**BẢNG ĐÁP ÁN**", "B"))
+        assert len(questions) == 1
+        assert questions[0].correct_key == "B"
+
+    def test_plain_hash_heading_still_works(self):
+        """'## BẢNG ĐÁP ÁN:' (plain hash, no bold) must still be recognized."""
+        questions, errors = parse_markdown(self._make_q1_md("## BẢNG ĐÁP ÁN:", "C"))
+        assert len(questions) == 1
+        assert questions[0].correct_key == "C"
+
+    def test_triple_hash_bold_heading(self):
+        """'### **BẢNG ĐÁP ÁN**' (3-level heading + bold) must also match."""
+        questions, errors = parse_markdown(self._make_q1_md("### **BẢNG ĐÁP ÁN**", "D"))
+        assert len(questions) == 1
+        assert questions[0].correct_key == "D"
+
+
+class TestP12UtilsAnswerSectionPatterns:
+    """Unit-level tests for parse_separate_answer_key with combined heading formats."""
+
+    def test_double_hash_bold_section_extracted(self):
+        """parse_separate_answer_key must find keys under '## **BẢNG ĐÁP ÁN**'."""
+        text = "Some content.\n\n## **BẢNG ĐÁP ÁN**\n1.A  2.B\n"
+        answer_map, remaining, info = parse_separate_answer_key(text, return_info=True)
+        assert answer_map.get(1) == "A", f"Expected 1->A, got {answer_map}"
+        assert answer_map.get(2) == "B", f"Expected 2->B, got {answer_map}"
+        assert "BẢNG ĐÁP ÁN" not in remaining
+
+    def test_bold_star_heading_extracted(self):
+        """parse_separate_answer_key must find keys under '**BẢNG ĐÁP ÁN**:'."""
+        text = "Content.\n\n**BẢNG ĐÁP ÁN**:\n1.C\n"
+        answer_map, remaining, info = parse_separate_answer_key(text, return_info=True)
+        assert answer_map.get(1) == "C"
+
+
+class TestP13DocxMidDocumentAnswerSection:
+    """P1-3: Answer section mid-document must not contaminate option D or drop question N+1."""
+
+    def test_mid_doc_answer_heading_not_in_option_d(self):
+        """Answer heading/key lines mid-document must not appear in Q1 option D."""
+        paragraphs = [
+            "Câu 1: Câu hỏi thứ nhất.",
+            "A. Một",
+            "B. Hai",
+            "C. Ba",
+            "D. Bốn",
+            "BẢNG ĐÁP ÁN",
+            "1.A 2.B",
+            "Câu 2: Câu hỏi thứ hai.",
+            "A. Alpha",
+            "B. Beta",
+            "C. Gamma",
+            "D. Delta",
+        ]
+        docx_bytes = create_minimal_docx(paragraphs)
+        questions, errors = parse_docx(docx_bytes)
+
+        assert len(questions) == 2, f"Expected 2 questions, got {len(questions)}"
+
+        q1 = next((q for q in questions if q.question_no == 1), None)
+        assert q1 is not None
+        opt_d_q1 = (q1.options or {}).get("D", "")
+        assert "BẢNG ĐÁP ÁN" not in opt_d_q1, (
+            f"Answer heading must not appear in option D of Q1: {opt_d_q1!r}"
+        )
+        assert "1.A" not in opt_d_q1, (
+            f"Key pair must not appear in option D of Q1: {opt_d_q1!r}"
+        )
+
+    def test_mid_doc_answer_section_emits_ambiguous_format(self):
+        """Parser must emit AMBIGUOUS_FORMAT error when answer section is mid-document."""
+        paragraphs = [
+            "Câu 1: Test.",
+            "A. Một",
+            "B. Hai",
+            "C. Ba",
+            "D. Bốn",
+            "BẢNG ĐÁP ÁN:",
+            "1.A",
+            "Câu 2: Câu sau.",
+            "A. A opt",
+            "B. B opt",
+            "C. C opt",
+            "D. D opt",
+        ]
+        docx_bytes = create_minimal_docx(paragraphs)
+        questions, errors = parse_docx(docx_bytes)
+        ambig = [e for e in errors if e.error_type == "AMBIGUOUS_FORMAT"]
+        assert ambig, "AMBIGUOUS_FORMAT error must be emitted for mid-document answer section"
+
+    def test_mid_doc_q2_not_lost(self):
+        """Question after mid-document answer section must still be parsed."""
+        paragraphs = [
+            "Câu 1: Câu hỏi thứ nhất.",
+            "A. Một",
+            "B. Hai",
+            "C. Ba",
+            "D. Bốn",
+            "BẢNG ĐÁP ÁN:",
+            "1.A",
+            "Câu 2: Câu hỏi thứ hai.",
+            "A. Alpha",
+            "B. Beta",
+            "C. Gamma",
+            "D. Delta",
+        ]
+        docx_bytes = create_minimal_docx(paragraphs)
+        questions, errors = parse_docx(docx_bytes)
+
+        q2 = next((q for q in questions if q.question_no == 2), None)
+        assert q2 is not None, "Q2 must still be parsed after mid-document answer section"
+        assert (q2.options or {}).get("A", "") != "", "Q2 option A must not be empty"
+        for opt_text in (q2.options or {}).values():
+            assert "BẢNG" not in opt_text, "Q2 options must not contain answer section data"
+            assert "1.A" not in opt_text

@@ -3,7 +3,7 @@
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple, Union
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 # Patterns for prompt injection detection (SEC-02)
 SUSPICIOUS_PATTERNS: list[re.Pattern] = [
@@ -17,10 +17,12 @@ SUSPICIOUS_PATTERNS: list[re.Pattern] = [
     re.compile(r"jailbreak", re.IGNORECASE),
 ]
 
-# Patterns for separate answer key section detection
+# Patterns for separate answer key section detection.
+# Supports plain, Markdown-heading, bold, italic, and combinations like '## **BẢNG ĐÁP ÁN**'.
+_ANSWER_SECTION_KEYWORD = r"(?:bảng\s+đáp\s+án|đáp\s+án|hướng\s+dẫn\s+chấm|answer\s+key|answers)"
 ANSWER_SECTION_PATTERNS: list[re.Pattern] = [
     re.compile(
-        r"(?:#{1,6}\s*|\*{1,2}|_{1,2})?(?:bảng\s+đáp\s+án|đáp\s+án|hướng\s+dẫn\s+chấm|answer\s+key|answers)(?:\*{1,2}|_{1,2})?(?:\s*:|\s*\n)",
+        r"(?:#{1,6}\s*)?(?:\*{1,2}|_{1,2})?" + _ANSWER_SECTION_KEYWORD + r"(?:\*{1,2}|_{1,2})?(?:\s*:|\s*(?:\n|$))",
         re.IGNORECASE,
     ),
 ]
@@ -137,9 +139,15 @@ def parse_separate_answer_key(
             if q_num not in conflicts and q_num > 0:
                 mapped_keys[q_num] = key
 
-    # 1. Search for answer section heading near the end
+    # 1. Search for answer section heading near the end.
+    # Handles combinations: plain, ## heading, **bold**, ## **bold**, \textbf{...}, etc.
     section_heading_pattern = re.compile(
-        r"(?:^|\n)\s*(?:#{1,6}\s*|\*{1,2}|_{1,2}|\\(?:textbf|textit|underline|section\*?)\s*\{)?(?P<header>(?:bảng\s+đáp\s+án|đáp\s+án|hướng\s+dẫn\s+chấm|answer\s+key|answers))(?:\*{1,2}|_{1,2}|\})?\s*[:\n\}]",
+        r"(?:^|\n)\s*"
+        r"(?:#{1,6}\s*)?"                                                              # optional Markdown heading ##
+        r"(?:\*{1,2}|_{1,2}|\\(?:textbf|textit|underline|section\*?)\s*\{)?"         # optional bold/italic/LaTeX cmd
+        r"(?P<header>(?:bảng\s+đáp\s+án|đáp\s+án|hướng\s+dẫn\s+chấm|answer\s+key|answers))"
+        r"(?:\*{1,2}|_{1,2}|\})?"                                                      # optional closing marker
+        r"(?:\s*:|\s*(?:\n|\}|$))",
         re.IGNORECASE,
     )
 
@@ -422,7 +430,6 @@ def extract_options_from_text(text: str) -> OptionExtractionResult:
         span_a = text[a.end:b.start].strip()
         span_b = text[b.end:c.start].strip()
         span_c = text[c.end:d.start].strip()
-        span_d = text[d.end:].strip()
         if not (span_a and span_b and span_c):
             continue
 

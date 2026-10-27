@@ -15,7 +15,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.models.schemas import ParsedQuestionItem, ParserErrorItem
 from app.services.parser.utils import (
-    RawAnswerKeyInfo,
     check_prompt_injection,
     extract_options_from_text,
     normalize_unicode_nfc,

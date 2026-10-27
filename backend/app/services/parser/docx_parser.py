@@ -22,7 +22,6 @@ from app.models.schemas import ParsedQuestionItem, ParserErrorItem
 from app.services.parser.utils import (
     ANSWER_SECTION_PATTERNS,
     KEY_PAIR_PATTERN,
-    RawAnswerKeyInfo,
     check_prompt_injection,
     extract_key_pair,
     extract_options_from_text,
@@ -120,7 +119,11 @@ def extract_cell_elements(
     return results
 
 
-def try_parse_table_as_answer_key(tbl: Table, is_tail: bool = False) -> Optional[List[str]]:
+def try_parse_table_as_answer_key(
+    tbl: Table,
+    is_tail: bool = False,
+    preceding_text: Optional[str] = None,
+) -> Optional[List[str]]:
     """Detect if a table is an answer key table and normalize its entries into key pairs.
 
     Recognizes:
@@ -164,13 +167,16 @@ def try_parse_table_as_answer_key(tbl: Table, is_tail: bool = False) -> Optional
 
     extracted_pairs: List[Tuple[int, str]] = []
 
-    # Check for header row (e.g. 'BẢNG ĐÁP ÁN')
+    # Check for header row (e.g. 'BẢNG ĐÁP ÁN') in table or preceding paragraph
     start_r = 0
     header_found = False
     first_text = " ".join(grid[0]).lower()
-    if any(w in first_text for w in ["bảng đáp án", "đáp án", "answer key", "hướng dẫn chấm"]):
+    answer_keywords = ["bảng đáp án", "đáp án", "answer key", "hướng dẫn chấm"]
+    if any(w in first_text for w in answer_keywords):
         header_found = True
         start_r = 1
+    elif preceding_text and any(w in preceding_text.lower() for w in answer_keywords):
+        header_found = True
 
     content_rows = grid[start_r:]
     if not content_rows:
@@ -257,15 +263,22 @@ def try_parse_table_as_answer_key(tbl: Table, is_tail: bool = False) -> Optional
     if not extracted_pairs:
         return None
 
-    # Validation against false-positive content tables (FIX-01):
-    # A table without header and without explicit "Câu X" / "1.A" labels is ONLY accepted
-    # if is_tail=True (at the end of the document) and numbers form a sequential 1..N sequence.
-    if not header_found and not has_explicit_labels:
-        if not is_tail:
-            return None
-        nums = sorted(p[0] for p in extracted_pairs)
-        if nums != list(range(1, len(nums) + 1)):
-            return None
+    # Validation against false-positive content tables (FIX-01 / P1-1):
+    # A table is accepted as an answer key when there is EXPLICIT semantic evidence:
+    #   (a) a header row or preceding paragraph containing 'BẢNG ĐÁP ÁN', 'Đáp án', etc.
+    #   (b) explicit 'Câu N' labels or '1.A'-style key-pair cells in the data
+    #   (c) column-header format detected (row0='Câu', row1='Đ/A')
+    # Or (d) at document tail (is_tail=True), a single-row grid table with multiple question-answer
+    #        pairs across columns (e.g. 4+ cells: 1 | A | 2 | B), unlike standard 2-column data tables
+    #        (which have rows=[['1', 'A'], ['2', 'B']] where each row is a 2-element tuple).
+    is_multi_pair_row = (
+        is_tail
+        and len(content_rows) == 1
+        and len(content_rows[0]) >= 4
+        and len(extracted_pairs) >= 2
+    )
+    if not header_found and not has_explicit_labels and not is_multi_pair_row:
+        return None
 
     sorted_pairs = sorted(extracted_pairs, key=lambda p: p[0])
     lines = ["BẢNG ĐÁP ÁN:"]
@@ -318,7 +331,19 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
                     if QUESTION_START_PATTERN.match(p_rem.text.strip()):
                         has_subsequent_q = True
                         break
-            ans_lines = try_parse_table_as_answer_key(tbl, is_tail=not has_subsequent_q)
+
+            # Find text of the nearest preceding non-empty paragraph
+            preceding_p_text = None
+            for prev_el in reversed(body_elements[:idx_el]):
+                if prev_el.tag.endswith("p"):
+                    prev_txt = Paragraph(prev_el, doc).text.strip()
+                    if prev_txt:
+                        preceding_p_text = prev_txt
+                        break
+
+            ans_lines = try_parse_table_as_answer_key(
+                tbl, is_tail=not has_subsequent_q, preceding_text=preceding_p_text
+            )
             if ans_lines:
                 tbl_has_unparsed_omml = any(
                     inspect_cell_visuals(c)[1] for row in tbl.rows for c in row.cells
@@ -358,32 +383,59 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
         all_text, return_info=True
     )
 
-    # Cut off trailing answer key paragraphs to prevent contamination of the last question/options
-    has_answer_section = bool(answer_map or key_info.conflicts or key_info.raw_pairs)
+    # Cut off trailing answer key paragraphs to prevent contamination of the last question/options.
+    # Also detect answer-section headers located mid-document (P1-3).
     cutoff_idx = len(full_paragraphs)
-    if has_answer_section:
-        for i, p_text in enumerate(full_paragraphs):
-            is_header = any(pat.search(p_text) for pat in ANSWER_SECTION_PATTERNS) or bool(
-                re.search(
-                    r"^\s*(?:#{1,6}\s*)?(?:bảng\s+đáp\s+án|đáp\s+án|hướng\s+dẫn\s+chấm|answer\s+key)\b",
-                    p_text,
-                    re.IGNORECASE,
-                )
+    # Set of paragraph indices that belong to an answer-section appearing mid-document
+    mid_answer_poison_indices: set = set()
+
+    def _is_answer_heading(text: str) -> bool:
+        """Return True if the paragraph looks like an answer-section heading."""
+        return bool(
+            any(pat.search(text) for pat in ANSWER_SECTION_PATTERNS)
+            or re.search(
+                r"^\s*(?:#{1,6}\s*)?(?:\*{1,2}|_{1,2})?(?:bảng\s+đáp\s+án|đáp\s+án|hướng\s+dẫn\s+chấm|answer\s+key)\b",
+                text,
+                re.IGNORECASE,
             )
-            has_subsequent_q = any(
-                QUESTION_START_PATTERN.match(full_paragraphs[j].strip())
-                for j in range(i + 1, len(full_paragraphs))
-            )
-            if is_header and not has_subsequent_q:
-                cutoff_idx = i
-                break
-            if i >= max(0, len(full_paragraphs) - 10) and not has_subsequent_q:
-                pairs_in_p = list(KEY_PAIR_PATTERN.finditer(p_text))
-                if len(pairs_in_p) >= 2 and not QUESTION_START_PATTERN.match(p_text.strip()):
-                    residual = KEY_PAIR_PATTERN.sub("", p_text)
-                    if not re.search(r"[a-zA-Zà-ỹÀ-Ỹ]{3,}", residual):
-                        cutoff_idx = i
-                        break
+        )
+
+    i = 0
+    while i < len(full_paragraphs):
+        p_text = full_paragraphs[i]
+        is_header = _is_answer_heading(p_text)
+        has_subsequent_q = any(
+            QUESTION_START_PATTERN.match(full_paragraphs[j].strip())
+            for j in range(i + 1, len(full_paragraphs))
+        )
+        if is_header and not has_subsequent_q:
+            # Tail answer section — cut here
+            cutoff_idx = i
+            break
+        if is_header and has_subsequent_q:
+            # Mid-document answer section (P1-3): mark heading + following key lines as poison
+            mid_answer_poison_indices.add(i)
+            j = i + 1
+            while j < len(full_paragraphs):
+                nxt = full_paragraphs[j].strip()
+                if QUESTION_START_PATTERN.match(nxt):
+                    break
+                if nxt and not KEY_PAIR_PATTERN.search(nxt):
+                    # Non-key line that is not empty and not a question: stop poison
+                    break
+                mid_answer_poison_indices.add(j)
+                j += 1
+            i = j
+            continue
+        # Trailing raw key-pair lines (no heading)
+        if i >= max(0, len(full_paragraphs) - 10) and not has_subsequent_q:
+            pairs_in_p = list(KEY_PAIR_PATTERN.finditer(p_text))
+            if len(pairs_in_p) >= 2 and not QUESTION_START_PATTERN.match(p_text.strip()):
+                residual = KEY_PAIR_PATTERN.sub("", p_text)
+                if not re.search(r"[a-zA-Zà-ỹÀ-Ỹ]{3,}", residual):
+                    cutoff_idx = i
+                    break
+        i += 1
 
     content_paragraphs = full_paragraphs[:cutoff_idx]
     content_omml_flags = paragraph_omml_flags[:cutoff_idx]
@@ -404,7 +456,29 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
             )
         )
 
+    # Track which questions have already had an AMBIGUOUS_FORMAT error emitted for mid-doc answer sections
+    ambiguous_format_emitted: set = set()
+
     for idx, p_text in enumerate(content_paragraphs):
+        # P1-3: skip lines that belong to a mid-document answer section
+        if idx in mid_answer_poison_indices:
+            if current_q is not None:
+                q_no = current_q["question_no"]
+                if q_no not in ambiguous_format_emitted:
+                    ambiguous_format_emitted.add(q_no)
+                    errors.append(
+                        ParserErrorItem(
+                            question_no=q_no,
+                            error_type="AMBIGUOUS_FORMAT",
+                            message=(
+                                f"Question {q_no}: an answer section heading or key data was found "
+                                "mid-document (between questions). The answer section could not be "
+                                "safely mapped. Please move the answer section to the end of the document."
+                            ),
+                        )
+                    )
+            continue
+
         trimmed = p_text.strip()
         if not trimmed:
             # Handle standalone OMML equation paragraphs (python-docx p.text is empty for OMML)
