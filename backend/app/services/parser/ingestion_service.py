@@ -38,8 +38,10 @@ NETWORK_TRANSPORT_EXCEPTIONS: tuple[type[BaseException], ...] = (
 
 def is_network_timeout(exc: BaseException) -> bool:
     """Check if exception or any nested cause/context represents a network timeout."""
+    seen: set[int] = set()
     cur: Optional[BaseException] = exc
-    while cur is not None:
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
         if isinstance(cur, NETWORK_TIMEOUT_EXCEPTIONS):
             return True
         cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
@@ -49,8 +51,10 @@ def is_network_timeout(exc: BaseException) -> bool:
 
 def is_network_transport(exc: BaseException) -> bool:
     """Check if exception or any nested cause/context represents a network transport or disconnection error."""
+    seen: set[int] = set()
     cur: Optional[BaseException] = exc
-    while cur is not None:
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
         if isinstance(cur, NETWORK_TRANSPORT_EXCEPTIONS):
             return True
         cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
@@ -179,7 +183,7 @@ async def replace_source_questions_atomically(
         err_msg = str(exc)
         err_lower = err_msg.lower()
         logger.error("RPC replace_source_questions failed for session %s: %s", session_id, exc)
-        code = getattr(exc, "code", "") or ""
+        code = str(getattr(exc, "code", "") or "").strip().upper()
 
         if (
             code == "42501"
