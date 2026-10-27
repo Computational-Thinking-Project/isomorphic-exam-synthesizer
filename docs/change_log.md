@@ -1,4 +1,10 @@
+## 24/10/2026 — AI W2 (thay đổi cục bộ, chưa merge)
+
+Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical core dùng chung CLI/backend, generator theo Blueprint kèm lời giải, bounded validation/retry, resume/callback và lifecycle. [Chi tiết và giới hạn nghiệm thu](ai-w2-integration.md). Chưa tích hợp routes/DB/SSE/UI W2; chưa nghiệm thu Docker/live API.
+
 # Nhật Ký Quyết Định Công Nghệ & Thay Đổi Kiến Trúc (Architecture & Tech Change Log)
+
+> Checkpoint tích hợp 26/10/2026: Auth PR #7 đã squash merge vào dev tại `bbb7c5e`. Nhánh TASK-103 đang ghép nền dev và giữ list/phân trang/Clone Modal thật; chưa lưu merge commit. Các mục DEC-TV1 bên dưới ghi đúng phạm vi lịch sử ở ngày thực hiện, không ghi đè bằng chứng hoặc nhận TASK-103 đã hoàn tất.
 
 > **Mục đích:** Tài liệu này dùng để lưu trữ các **quyết định kỹ thuật (Architecture Decision Records - ADR)**, các thay đổi công nghệ hoặc điều chỉnh quy trình phát triển phát sinh trong quá trình triển khai dự án so với tài liệu thiết kế ban đầu.  
 > Khi dự án triển khai, mọi thay đổi về stack, quy ước code, cấu trúc thư mục hoặc luồng phối hợp giữa các thành viên đều cần được ghi chép tại đây để đảm bảo tính minh bạch và thống nhất cho toàn đội.
@@ -10,12 +16,14 @@
 - [ADR-001: Chuẩn hóa Model AI `gemini-3.5-flash-lite`, Schema Repair Pass và Kiến Trúc Black-Box Generator](#adr-001-chuẩn-hóa-model-ai-gemini-35-flash-lite-schema-repair-pass-và-kiến-trúc-black-box-generator)
 - [DEC-TV1-001: Chuẩn bị Login UI và kiểm tra frontend](#dec-tv1-001-chuẩn-bị-login-ui-và-kiểm-tra-frontend)
 - [DEC-TV1-002: Tích hợp Google OAuth, profile và bootstrap Auth](#dec-tv1-002-tích-hợp-google-oauth-profile-và-bootstrap-auth)
+- [DEC-TV1-003: Bổ sung DB cho Dashboard list/clone](#dec-tv1-003-bổ-sung-db-cho-dashboard-listclone)
 - [DEC-TV6-001: Shared Docker development workflow](#dec-tv6-001-shared-docker-development-workflow)
 - [ADR-002: In-Memory Pre-validation, Zero Cloud Mutation, và Atomic Ingestion Engine (TASK-202)](#adr-002-in-memory-pre-validation-zero-cloud-mutation-và-atomic-ingestion-engine-task-202)
 - [DEC-BE1-003: Khắc phục Toàn Diện Phản Hồi Review PR #15 (Vòng 2)](#dec-be1-003-khắc-phục-toàn-diện-phản-hồi-review-pr-15-vòng-2)
 - [DEC-BE1-004: Xử lý Triệt Để Ngoại Lệ Mạng và Khẳng Định Trạng Thái Commit CSDL (PR #15 Round 3)](#dec-be1-004-xử-lý-triệt-để-ngoại-lệ-mạng-và-khẳng-định-trạng-thái-commit-csdl-pr-15-round-3)
 - [DEC-BE1-005: Chuẩn Hóa Bóc Tách Phương Án Bullet List Trong Parser Markdown & Text (PR #15)](#dec-be1-005-chuẩn-hóa-bóc-tách-phương-án-bullet-list-trong-parser-markdown--text-pr-15)
 - [DEC-BE1-006: Khắc Phục Triệt Để Suy Luận Rollback CSDL & Ngoại Lệ Gateway (PR #15 Round 4)](#dec-be1-006-khắc-phục-triệt-để-suy-luận-rollback-csdl--ngoại-lệ-gateway-pr-15-round-4)
+- [DEC-BE1-007: Bảo Toàn Ranh Giới Câu Hỏi Bảng Nhiều Cột và Nhận Diện Bảng Đáp Án Ô Riêng Biệt (PR #15 Round 5)](#dec-be1-007-bảo-toàn-ranh-giới-câu-hỏi-bảng-nhiều-cột-và-nhận-diện-bảng-đáp-án-ô-riêng-biệt-pr-15-round-5)
 
 ---
 
@@ -63,6 +71,16 @@
 - Cấu hình: host Vite đọc `frontend/.env.local`, Docker đọc `.env` gốc; backend dùng `SUPABASE_URL/SUPABASE_ANON_KEY`, frontend dùng `VITE_SUPABASE_URL/VITE_SUPABASE_PUBLISHABLE_KEY`. Không đổi stack, dependency hoặc đưa secret vào Git.
 - Kiểm: TV1 báo login/profile200, reload, logout/route guard, avatar fallback, user B mới tự tạo profile đúng ID, đổi lại A, SELECT profile A/B chỉ trả dòng chính mình và refresh chủ động/profile/reload đều đạt. Agent ngày 22/10 kiểm 51 Node tests/lint/build và 17 browser cases riêng với fixtures; TV1 báo npm checks đạt sau avatar. Chi tiết/giới hạn tại [frontend README](../frontend/README.md#kiểm-tra).
 - Giới hạn: expiry/refresh thất bại thật chưa kiểm trên cloud; 401/lỗi phiên đã có kiểm giả lập. Chưa CI head mới, static Nginx hoặc review/nghiệm thu. Dashboard list/clone/create/open vẫn mock, sẽ ghép TASK-103 ở nhánh riêng sau Auth review/merge; không suy SELECT profile chứng minh quyền ghi/sessions/storage.
+
+### DEC-TV1-003: Bổ sung DB cho Dashboard list/clone
+
+- Ngày/người chuẩn bị và áp dụng: 24/10/2026 — Trung Anh/TV1 với hỗ trợ Codex; TV1 xác nhận đã chạy script trên Supabase chung. Nhánh `feat/task-103-dashboard-api` từ nền Auth `978003a`, được user cho tiếp tục trong lúc Auth chờ review. Sửa Auth vẫn ở nhánh Auth; trước merge Dashboard vào dev cần đối chiếu nền Auth đã được chấp nhận, đặc biệt khi squash.
+- Bối cảnh: request list thật trả500/PGRST205 cho public.exam_sessions. TV1 kiểm SQL metadata: users có, ba bảng exam_sessions/source_questions/question_blueprints và hai enum session_status/question_status chưa có. Không chạy lại nguyên schema.sql vì Auth đã áp riêng.
+- Quyết định: chuẩn bị `backend/scripts/setup_dashboard_sessions.sql` cho đúng trạng thái trên; lấy nguyên định nghĩa ba bảng/FK, session_status và ba policy sở hữu từ schema nhóm. Một transaction, chỉ tạo đối tượng chưa có, không thay thế users/Auth trigger/policy hoặc storage; xung đột đối tượng khiến transaction rollback.
+- Quyền: đặt lại grants trên ba bảng mới rồi cấp authenticated SELECT/INSERT, thêm DELETE exam_sessions để backend dọn phiên clone lỗi; RLS vẫn kiểm sở hữu cha/con. Không cấp UPDATE, không cấp quyền bảng cho anon/PUBLIC. Các luồng Stage/editing cần thống nhất grants bổ sung với Duy; không đổi key hoặc dùng service-role để vòng qua quyền.
+- Kiểm thật theo TV1: sau khi chạy SQL, request GET /api/sessions?page=1&page_size=20 bằng API client/phiên đăng nhập hiện hành trả200, items là mảng rỗng, total0/page1/page_size20. Chưa chạy clone thật hoặc kiểm RLS A/B cho sessions; list rỗng không chứng minh cách ly dữ liệu giữa hai tài khoản.
+- Giới hạn: question_status không được ba bảng này dùng; API detail còn cần exam_versions, các bảng nghiệp vụ khác và storage chưa thiết lập bằng script này. Metadata kiểm cuối không thay kiểm bằng JWT user. Agent đối chiếu định nghĩa với schema, không trực tiếp chạy SQL hoặc gọi cloud thay TV1.
+- Phạm vi code: chỉ setup SQL và tài liệu, chưa sessions service/UI/modal/navigation; chưa nghiệm thu TASK-103. Script không tạo dữ liệu thử. Khi Duy áp schema còn lại, tránh tạo lại các đối tượng/policy Auth và Dashboard đã có sau khi script được chạy.
 
 ### DEC-TV6-001: Shared Docker development workflow
 
@@ -157,6 +175,24 @@
   2. **Thông điệp trung tính cho mọi trường hợp chưa xác định:** Mọi lỗi gateway, phản hồi không phải JSON, `APIError` có code không xác định, hoặc lỗi runtime chưa được chứng minh rollback đều trả về thông báo trung tính yêu cầu kiểm tra phiên (`"Database atomic replacement failed. Please verify session state before retrying."`) và tuyệt đối không khẳng định đã rollback hay dữ liệu chưa đổi.
   3. **Bảo toàn các ca timeout 504:** Giữ nguyên 100% hai hàm `is_network_timeout` và `is_network_transport`, không tự động gửi lại RPC mù quáng ở backend.
   4. **Kiểm thử mô phỏng Gateway chân thực:** Bổ sung 4 unit tests mới trong `test_ingest.py` kiểm chứng các ca Gateway HTML 502, Gateway HTML 504, non-JSON body và unknown code.
+
+### DEC-BE1-007: Bảo Toàn Ranh Giới Câu Hỏi Bảng Nhiều Cột và Nhận Diện Bảng Đáp Án Ô Riêng Biệt (PR #15 Round 5)
+* **Mã quyết định:** DEC-BE1-007
+* **Ngày quyết định:** 27/10/2026
+* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
+* **Bối cảnh:**
+  1. Khi đề thi DOCX sử dụng bảng nhiều cột để bố cục câu hỏi (ví dụ 1 hàng 2 ô, mỗi ô là một câu hỏi trọn vẹn), parser trước đây ghép các ô trên cùng hàng thành chuỗi duy nhất bằng `"  ".join()`. Việc này làm gộp các câu hỏi vào nhau, khiến câu đứng trước nuốt nhầm các phương án A, B, C, D của câu đứng sau và làm mất câu đứng sau trong khi API vẫn trả về 200.
+  2. Bảng đáp án trong tệp DOCX thường được tách riêng biệt giữa ô số thứ tự và ô phương án chọn (ví dụ: ô 1 là "1", ô 2 là "A", ô 3 là "2", ô 4 là "B", hoặc bảng lưới 2 hàng). Khi ghép nối theo hàng, văn bản trở thành "1 A 2 B", không khớp với regex `KEY_PAIR_PATTERN` vốn yêu cầu dấu phân tách (như "1.A", "1: A"), dẫn đến lỗi từ chối sai 422 `MISSING_ANSWER`.
+* **Quyết định:**
+  1. **Bảo toàn ranh giới câu hỏi trong bảng nội dung:** Duyệt bảng câu hỏi theo từng ô riêng biệt (`cell-by-cell`) theo đúng thứ tự tài liệu thay vì gộp các ô trong hàng. Mọi đoạn văn và dòng ngắt (`\n`) trong từng ô được giữ nguyên thứ tự, bảo toàn tuyệt đối số lượng câu hỏi, thân câu và 4 phương án độc lập. Nếu bố cục ô bị sai lệch hoặc thiếu phương án, hệ thống từ chối ngay với HTTP 422 `INVALID_FORMAT`.
+  2. **Chuẩn hóa nhận diện bảng đáp án dạng bảng ô riêng biệt:** Bổ sung hàm `try_parse_table_as_answer_key(tbl)` nhận diện tự động các kiểu bảng đáp án DOCX:
+     - Dạng các cặp ô xen kẽ trong hàng (`1 | A | 2 | B` hoặc `Câu 1 | A`).
+     - Dạng lưới 2 hàng (`Hàng 0: 1 2 3`, `Hàng 1: A B C`) có hoặc không có ô tiêu đề.
+     - Dạng ô chứa sẵn cặp khóa (`1.A | 2.B`).
+     - Bảng có tiêu đề "BẢNG ĐÁP ÁN" / "ĐÁP ÁN".
+     Chuẩn hóa các cặp này thành chuỗi đáp án chuẩn `BẢNG ĐÁP ÁN: 1.A  2.B ...` ở cuối tài liệu để `parse_separate_answer_key` bóc tách đồng bộ và cô lập hoàn toàn khỏi thân câu hỏi.
+  3. **Kiểm thử Toàn Diện:** Bổ sung 4 unit tests trong `test_parsers.py` và 2 API integration tests trong `test_ingest.py`, kiểm chứng chính xác số câu, thân câu, phương án và quy tắc Zero Cloud Mutation. Toàn bộ 270 backend tests đều đạt 100%.
+
 
 
 

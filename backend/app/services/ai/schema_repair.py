@@ -89,11 +89,14 @@ YÊU CẦU:
                     response_mime_type="application/json",
                     response_schema=target_schema,
                 )
-                response = ai_client.client.models.generate_content(
-                    model=ai_client.model_name,
-                    contents=repair_prompt,
-                    config=config,
-                )
+                if callable(getattr(ai_client, "generate_content", None)):
+                    response = ai_client.generate_content(contents=repair_prompt, config=config)
+                else:
+                    response = ai_client.client.models.generate_content(
+                        model=ai_client.model_name,
+                        contents=repair_prompt,
+                        config=config,
+                    )
                 repaired_raw = extract_json_str(response.text or "")
                 data = json.loads(repaired_raw)
                 repaired_obj = target_schema(**data)

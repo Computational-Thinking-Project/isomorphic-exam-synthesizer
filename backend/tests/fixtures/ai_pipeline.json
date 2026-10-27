@@ -1,0 +1,788 @@
+{
+  "source": {
+    "id": "123e4567-e89b-12d3-a456-426614174000",
+    "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Dũng có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Dũng lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
+    "options": [
+      "1856",
+      "1334",
+      "928",
+      "2552"
+    ],
+    "correct_answer": "A",
+    "solution": "",
+    "topic": null,
+    "has_security_warning": false
+  },
+  "blueprint": {
+    "requirement": {
+      "blueprint_id": "math_partition_probability_v2",
+      "schema_version": "0.4.0",
+      "subject": "mathematics",
+      "language": "vi",
+      "language_policy": {
+        "field_names": "en",
+        "descriptive_values": "source_language",
+        "machine_codes": "stable"
+      },
+      "source": {
+        "question_id": "q_986c0dc956dc822b5d8f6986",
+        "content": [
+          {
+            "id": "q_986c0dc956dc822b5d8f6986.stem",
+            "type": "text",
+            "text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Dũng có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Dũng lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?"
+          }
+        ],
+        "options": [
+          {
+            "id": "q_986c0dc956dc822b5d8f6986.A",
+            "content": [
+              {
+                "id": "q_986c0dc956dc822b5d8f6986.A.text",
+                "type": "text",
+                "text": "1856"
+              }
+            ]
+          },
+          {
+            "id": "q_986c0dc956dc822b5d8f6986.B",
+            "content": [
+              {
+                "id": "q_986c0dc956dc822b5d8f6986.B.text",
+                "type": "text",
+                "text": "1334"
+              }
+            ]
+          },
+          {
+            "id": "q_986c0dc956dc822b5d8f6986.C",
+            "content": [
+              {
+                "id": "q_986c0dc956dc822b5d8f6986.C.text",
+                "type": "text",
+                "text": "928"
+              }
+            ]
+          },
+          {
+            "id": "q_986c0dc956dc822b5d8f6986.D",
+            "content": [
+              {
+                "id": "q_986c0dc956dc822b5d8f6986.D.text",
+                "type": "text",
+                "text": "2552"
+              }
+            ]
+          }
+        ],
+        "supplied_answer": {
+          "option_ids": [
+            "q_986c0dc956dc822b5d8f6986.A"
+          ],
+          "value": null,
+          "explanation": null
+        },
+        "supplied_solution": null,
+        "references": []
+      },
+      "assessment": {
+        "id": "R_ASSESSMENT",
+        "objective": "Nhận diện phân hoạch từ hình học rồi tính xác suất phủ đủ các nhóm.",
+        "knowledge": [
+          "Hình vuông nội tiếp đường tròn.",
+          "Tổ hợp và xác suất đồng khả năng."
+        ],
+        "cognitive_operations": [
+          "Nhận diện cấu trúc hình học.",
+          "Mô hình hóa.",
+          "Đếm tổ hợp.",
+          "Tính xác suất."
+        ],
+        "prerequisites": [
+          "Góc ở tâm.",
+          "Nguyên lý nhân.",
+          "Tổ hợp chọn tập con."
+        ]
+      },
+      "knowledge_basis": [
+        {
+          "id": "K_SQUARE",
+          "description": "Bốn đỉnh liên tiếp của hình vuông nội tiếp cách nhau 90 độ ở tâm.",
+          "origin": "inferred",
+          "evidence_refs": []
+        }
+      ],
+      "semantic_model": {
+        "id": "R_MODEL",
+        "entities": [
+          {
+            "id": "E_POLYGON",
+            "kind": "abstract_object",
+            "description": "Đa giác đều 12 cạnh có các đỉnh đánh số từ 0 đến 11."
+          },
+          {
+            "id": "E_LAMPS",
+            "kind": "set",
+            "description": "12 bóng đèn phân biệt được, gồm bốn bóng đỏ và tám bóng xanh."
+          },
+          {
+            "id": "E_GROUPS",
+            "kind": "set",
+            "description": "Ba tập đỉnh của các hình vuông: {0,3,6,9}, {1,4,7,10}, {2,5,8,11}."
+          }
+        ],
+        "quantities": [
+          {
+            "id": "Q_N",
+            "symbol": "n",
+            "description": "Số đỉnh.",
+            "role": "given",
+            "value": {
+              "type": "integer",
+              "value": 12
+            },
+            "unit": null
+          },
+          {
+            "id": "Q_RED",
+            "symbol": "r",
+            "description": "Số bóng đỏ.",
+            "role": "given",
+            "value": {
+              "type": "integer",
+              "value": 4
+            },
+            "unit": null
+          },
+          {
+            "id": "Q_K",
+            "symbol": "k",
+            "description": "Hệ số nhân với xác suất.",
+            "role": "given",
+            "value": {
+              "type": "integer",
+              "value": 3190
+            },
+            "unit": null
+          },
+          {
+            "id": "Q_P",
+            "symbol": "P",
+            "description": "Xác suất mỗi hình vuông đều có bóng đỏ.",
+            "role": "unknown",
+            "value": null,
+            "unit": null
+          },
+          {
+            "id": "Q_RESULT",
+            "symbol": "T",
+            "description": "Giá trị cần tìm.",
+            "role": "unknown",
+            "value": null,
+            "unit": null
+          }
+        ],
+        "relations": [
+          {
+            "id": "REL_PARTITION",
+            "description": "Ba tập đỉnh hình vuông rời nhau và phủ hết các đỉnh.",
+            "role": "derived",
+            "formalism": "none",
+            "expression": null,
+            "refs": [
+              "E_POLYGON",
+              "E_GROUPS"
+            ]
+          },
+          {
+            "id": "REL_EVENT",
+            "description": "Mỗi nhóm có ít nhất một bóng đỏ; tổng số bóng đỏ là bốn.",
+            "role": "derived",
+            "formalism": "none",
+            "expression": null,
+            "refs": [
+              "E_GROUPS",
+              "Q_RED"
+            ]
+          },
+          {
+            "id": "REL_RESULT",
+            "description": "Đại lượng cần tìm bằng k nhân P.",
+            "role": "given",
+            "formalism": "math_expression",
+            "expression": "T = k * P",
+            "refs": [
+              "Q_K",
+              "Q_P",
+              "Q_RESULT"
+            ]
+          }
+        ],
+        "assumptions": [
+          {
+            "id": "AS_UNIFORM",
+            "description": "Mọi cách gắn các bóng phân biệt vào các đỉnh đều có xác suất như nhau.",
+            "origin": "inferred",
+            "evidence_refs": [
+              "q_986c0dc956dc822b5d8f6986.stem"
+            ]
+          }
+        ],
+        "target": {
+          "id": "TARGET",
+          "description": "Tính kP.",
+          "quantity_ref": "Q_RESULT"
+        }
+      },
+      "reasoning_model": {
+        "id": "R_REASONING",
+        "steps": [
+          {
+            "id": "STEP1",
+            "description": "Nhận ra đúng ba hình vuông và các tập đỉnh của chúng tạo thành phân hoạch.",
+            "depends_on": []
+          },
+          {
+            "id": "STEP2",
+            "description": "Giải thích mỗi tập bốn vị trí bóng đỏ tương ứng với cùng 4! × 8! cách lắp các bóng.",
+            "depends_on": [
+              "STEP1"
+            ]
+          },
+          {
+            "id": "STEP3",
+            "description": "Suy ra phân bố bóng đỏ là một hoán vị của (2,1,1).",
+            "depends_on": [
+              "STEP2"
+            ]
+          },
+          {
+            "id": "STEP4",
+            "description": "Đếm 3 × C(4,2) × C(4,1)^2 trường hợp thuận lợi trên C(12,4) tập vị trí.",
+            "depends_on": [
+              "STEP3"
+            ]
+          },
+          {
+            "id": "STEP5",
+            "description": "Nhân xác suất với k.",
+            "depends_on": [
+              "STEP4"
+            ]
+          }
+        ],
+        "accepted_alternatives": [
+          "Đếm bằng nguyên lý bù trừ.",
+          "Đếm trực tiếp các cách lắp bóng phân biệt."
+        ],
+        "forbidden_shortcuts": [
+          "Đề cho sẵn ba nhóm đỉnh hoặc phân bố (2,1,1)."
+        ]
+      },
+      "invariants": [
+        {
+          "id": "I_GEOMETRY",
+          "category": "relations",
+          "description": "Đa giác đều 12 cạnh tạo đúng ba hình vuông với các tập đỉnh rời nhau, mỗi tập bốn đỉnh."
+        },
+        {
+          "id": "I_SAMPLE",
+          "category": "distribution",
+          "description": "Chọn đều bốn vị trí bóng đỏ trong 12 vị trí."
+        },
+        {
+          "id": "I_EVENT",
+          "category": "relations",
+          "description": "Mỗi hình vuông có ít nhất một bóng đỏ."
+        },
+        {
+          "id": "I_REASONING",
+          "category": "reasoning",
+          "description": "Học sinh tự nhận diện phân hoạch hình học và cách đếm."
+        }
+      ],
+      "variation_policy": {
+        "id": "R_VARIATION",
+        "equivalence_level": "strict_structure",
+        "allowed_transformations": [
+          {
+            "id": "V_CONTEXT",
+            "dimension": "context",
+            "description": "Đổi tên nhân vật, màu hoặc vật trang trí.",
+            "target_refs": [
+              "E_LAMPS"
+            ],
+            "preconditions": [
+              "Giữ tính phân biệt của các vật và phép lắp đồng khả năng."
+            ],
+            "limits": []
+          },
+          {
+            "id": "V_K",
+            "dimension": "values",
+            "description": "Đổi hệ số k.",
+            "target_refs": [
+              "Q_K"
+            ],
+            "preconditions": [
+              "Tính lại đáp án và mọi phương án nhiễu."
+            ],
+            "limits": []
+          },
+          {
+            "id": "V_WORDING",
+            "dimension": "wording",
+            "description": "Diễn đạt lại câu hỏi bằng văn bản.",
+            "target_refs": [
+              "q_986c0dc956dc822b5d8f6986.stem"
+            ],
+            "preconditions": [
+              "Giữ nguyên các lượng từ và điều kiện."
+            ],
+            "limits": []
+          }
+        ],
+        "parameter_domains": [
+          {
+            "quantity_ref": "Q_K",
+            "description": "Bội nguyên dương của 55.",
+            "allowed_values": null,
+            "minimum": {
+              "type": "integer",
+              "value": 55
+            },
+            "maximum": null,
+            "conditions": [
+              "k là số nguyên.",
+              "k chia hết cho 55."
+            ]
+          }
+        ],
+        "forbidden_changes": [
+          "Đổi số cạnh hoặc số bóng đỏ.",
+          "Đổi mọi hình vuông thành tồn tại một hình vuông.",
+          "Cung cấp hình minh họa."
+        ],
+        "workload_limits": [
+          "Giữ bước suy ra phân bố (2,1,1).",
+          "Không thêm kiến thức ngoài hình học đường tròn và tổ hợp cơ bản."
+        ]
+      },
+      "response_spec": {
+        "id": "R_RESPONSE",
+        "format": "single_choice",
+        "option_count": 4,
+        "correct_option_count": 1,
+        "grading": {
+          "mode": "option_keys",
+          "expected_unit": null,
+          "numeric_tolerance": null,
+          "rounding_rule": null,
+          "rubric": []
+        },
+        "distractor_policy": {
+          "error_models": [
+            "Chỉ kiểm tra một hình vuông thay vì tất cả hình vuông.",
+            "Quên chọn nhóm nhận hai vật thuộc loại mục tiêu.",
+            "Coi các biến cố trên ba nhóm là độc lập dù số vật mục tiêu đã cố định.",
+            "Nhầm xác suất cần tìm với xác suất biến cố đối."
+          ],
+          "rules": [
+            "Các phương án khác nhau về nội dung và chỉ một phương án đúng theo giả thiết."
+          ]
+        }
+      },
+      "presentation": {
+        "id": "R_PRESENTATION",
+        "allowed_content_types": [
+          "text",
+          "formula",
+          "table"
+        ],
+        "requires_image": false,
+        "instructions": [
+          "Mô tả, đề sinh ra và lời giải dùng cùng ngôn ngữ với đề nguồn.",
+          "Cung cấp đủ dữ kiện bằng văn bản, công thức hoặc bảng; không dẫn tới hình, sơ đồ hoặc đồ thị cần đọc."
+        ]
+      }
+    },
+    "constraint": {
+      "validation_policy": {
+        "outcomes": [
+          "pass",
+          "fail",
+          "unknown"
+        ],
+        "required_unknown_action": "block_automatic_acceptance",
+        "advisory_can_override_required": false
+      },
+      "source_check": {
+        "computed_answer": {
+          "option_ids": [
+            "q_986c0dc956dc822b5d8f6986.A"
+          ],
+          "value": {
+            "type": "integer",
+            "value": 1856
+          },
+          "explanation": "P = 288/495 = 32/55; 3190P = 1856."
+        },
+        "methods": [],
+        "evidence": []
+      },
+      "rules": [
+        {
+          "id": "C_LANGUAGE",
+          "requirement_refs": [
+            "R_PRESENTATION"
+          ],
+          "scope": "blueprint",
+          "severity": "required",
+          "description": "Tuân thủ quy tắc ngôn ngữ và phạm vi không hình ảnh.",
+          "verification_methods": [
+            "schema",
+            "semantic_rubric",
+            "human_review"
+          ],
+          "pass_criteria": "Tên trường và mã máy giữ nguyên; mô tả theo ngôn ngữ đề nguồn; không có hình nhúng, đường dẫn hình hoặc dữ kiện chỉ đọc được từ hình.",
+          "on_failure": "reject"
+        },
+        {
+          "id": "C_CONTENT",
+          "requirement_refs": [
+            "R_PRESENTATION"
+          ],
+          "scope": "candidate",
+          "severity": "required",
+          "description": "Đề và lời giải cuối cùng tự đầy đủ, đúng ngôn ngữ và không cần hình.",
+          "verification_methods": [
+            "semantic_rubric",
+            "human_review"
+          ],
+          "pass_criteria": "Không có lời dẫn tới hình vẽ, dữ kiện bị lược mất hoặc hình được nhúng trong văn bản/công thức.",
+          "on_failure": "reject"
+        },
+        {
+          "id": "C_EQUIVALENCE",
+          "requirement_refs": [
+            "R_ASSESSMENT",
+            "R_REASONING",
+            "R_VARIATION"
+          ],
+          "scope": "source_candidate",
+          "severity": "required",
+          "description": "Giữ kiến thức, thao tác nhận thức và giới hạn biến đổi khi so với câu nguồn.",
+          "verification_methods": [
+            "semantic_rubric",
+            "human_review"
+          ],
+          "pass_criteria": "Mọi biến đổi nằm trong chính sách; không thêm kỹ năng bắt buộc và không cung cấp sẵn bước suy luận đang được đánh giá.",
+          "on_failure": "reject"
+        },
+        {
+          "id": "C_RESPONSE",
+          "requirement_refs": [
+            "R_RESPONSE"
+          ],
+          "scope": "candidate",
+          "severity": "required",
+          "description": "Đáp án và lời giải khớp câu hỏi cuối cùng.",
+          "verification_methods": [
+            "semantic_rubric",
+            "human_review"
+          ],
+          "pass_criteria": "Tính hoặc suy ra lại đáp án từ dữ kiện mới; đáp án, đơn vị, tiêu chí chấm và các phương án phù hợp định dạng đã chọn.",
+          "on_failure": "reject"
+        },
+        {
+          "id": "C_PARTITION",
+          "requirement_refs": [
+            "I_GEOMETRY"
+          ],
+          "scope": "candidate",
+          "severity": "required",
+          "description": "Kiểm tra cấu trúc hình học.",
+          "verification_methods": [
+            "exact_math",
+            "enumeration"
+          ],
+          "pass_criteria": "Có đúng ba tập đỉnh hình vuông rời nhau và phủ hết 12 đỉnh.",
+          "on_failure": "reject"
+        },
+        {
+          "id": "C_PROBABILITY",
+          "requirement_refs": [
+            "I_SAMPLE",
+            "I_EVENT"
+          ],
+          "scope": "candidate",
+          "severity": "required",
+          "description": "Kiểm tra mô hình và phép đếm.",
+          "verification_methods": [
+            "exact_math",
+            "enumeration",
+            "semantic_rubric"
+          ],
+          "pass_criteria": "Tập bốn vị trí đồng khả năng; có 288 tập thuận lợi trên 495 tập.",
+          "on_failure": "reject"
+        },
+        {
+          "id": "C_NO_LEAK",
+          "requirement_refs": [
+            "I_REASONING"
+          ],
+          "scope": "candidate",
+          "severity": "required",
+          "description": "Giữ bước nhận diện cần đánh giá.",
+          "verification_methods": [
+            "semantic_rubric",
+            "human_review"
+          ],
+          "pass_criteria": "Đề không cho sẵn ba nhóm hoặc phân bố (2,1,1).",
+          "on_failure": "reject"
+        },
+        {
+          "id": "C_SCALED",
+          "requirement_refs": [
+            "R_RESPONSE",
+            "Q_K"
+          ],
+          "scope": "candidate",
+          "severity": "required",
+          "description": "Kiểm tra đáp án được tính lại.",
+          "verification_methods": [
+            "exact_math"
+          ],
+          "pass_criteria": "Đáp án bằng k × 32/55 và chỉ một phương án có giá trị đó.",
+          "on_failure": "reject"
+        }
+      ]
+    }
+  },
+  "candidates": [
+    {
+      "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Lan có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Lan lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
+      "options": [
+        "1856",
+        "1334",
+        "928",
+        "2552"
+      ],
+      "correct_key": "A",
+      "solution": {
+        "correct_key": "A",
+        "final_answer": "1856",
+        "steps": [
+          {
+            "explanation": "Ba hình vuông tạo thành từ các đỉnh chia mười hai đỉnh thành ba nhóm rời nhau, mỗi nhóm bốn đỉnh. Bốn vị trí đỏ phải phân bố theo dạng 2,1,1.",
+            "latex": null
+          },
+          {
+            "explanation": "Chọn nhóm có hai vị trí đỏ, hai vị trí trong nhóm đó và một vị trí trong mỗi nhóm còn lại. Có 288 cách thuận lợi trên 495 cách chọn bốn vị trí đỏ.",
+            "latex": "P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}"
+          },
+          {
+            "explanation": "Nhân xác suất với hệ số của đề.",
+            "latex": "3190P=1856"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Mai có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Mai lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
+      "options": [
+        "1856",
+        "1334",
+        "928",
+        "2552"
+      ],
+      "correct_key": "A",
+      "solution": {
+        "correct_key": "A",
+        "final_answer": "1856",
+        "steps": [
+          {
+            "explanation": "Ba hình vuông tạo thành từ các đỉnh chia mười hai đỉnh thành ba nhóm rời nhau, mỗi nhóm bốn đỉnh. Bốn vị trí đỏ phải phân bố theo dạng 2,1,1.",
+            "latex": null
+          },
+          {
+            "explanation": "Chọn nhóm có hai vị trí đỏ, hai vị trí trong nhóm đó và một vị trí trong mỗi nhóm còn lại. Có 288 cách thuận lợi trên 495 cách chọn bốn vị trí đỏ.",
+            "latex": "P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}"
+          },
+          {
+            "explanation": "Nhân xác suất với hệ số của đề.",
+            "latex": "3190P=1856"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Lâm có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Lâm lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
+      "options": [
+        "1856",
+        "1334",
+        "928",
+        "2552"
+      ],
+      "correct_key": "A",
+      "solution": {
+        "correct_key": "A",
+        "final_answer": "1856",
+        "steps": [
+          {
+            "explanation": "Ba hình vuông tạo thành từ các đỉnh chia mười hai đỉnh thành ba nhóm rời nhau, mỗi nhóm bốn đỉnh. Bốn vị trí đỏ phải phân bố theo dạng 2,1,1.",
+            "latex": null
+          },
+          {
+            "explanation": "Chọn nhóm có hai vị trí đỏ, hai vị trí trong nhóm đó và một vị trí trong mỗi nhóm còn lại. Có 288 cách thuận lợi trên 495 cách chọn bốn vị trí đỏ.",
+            "latex": "P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}"
+          },
+          {
+            "explanation": "Nhân xác suất với hệ số của đề.",
+            "latex": "3190P=1856"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Hoa có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Hoa lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
+      "options": [
+        "1856",
+        "1334",
+        "928",
+        "2552"
+      ],
+      "correct_key": "A",
+      "solution": {
+        "correct_key": "A",
+        "final_answer": "1856",
+        "steps": [
+          {
+            "explanation": "Ba hình vuông tạo thành từ các đỉnh chia mười hai đỉnh thành ba nhóm rời nhau, mỗi nhóm bốn đỉnh. Bốn vị trí đỏ phải phân bố theo dạng 2,1,1.",
+            "latex": null
+          },
+          {
+            "explanation": "Chọn nhóm có hai vị trí đỏ, hai vị trí trong nhóm đó và một vị trí trong mỗi nhóm còn lại. Có 288 cách thuận lợi trên 495 cách chọn bốn vị trí đỏ.",
+            "latex": "P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}"
+          },
+          {
+            "explanation": "Nhân xác suất với hệ số của đề.",
+            "latex": "3190P=1856"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Hải có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Hải lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
+      "options": [
+        "1856",
+        "1334",
+        "928",
+        "2552"
+      ],
+      "correct_key": "A",
+      "solution": {
+        "correct_key": "A",
+        "final_answer": "1856",
+        "steps": [
+          {
+            "explanation": "Ba hình vuông tạo thành từ các đỉnh chia mười hai đỉnh thành ba nhóm rời nhau, mỗi nhóm bốn đỉnh. Bốn vị trí đỏ phải phân bố theo dạng 2,1,1.",
+            "latex": null
+          },
+          {
+            "explanation": "Chọn nhóm có hai vị trí đỏ, hai vị trí trong nhóm đó và một vị trí trong mỗi nhóm còn lại. Có 288 cách thuận lợi trên 495 cách chọn bốn vị trí đỏ.",
+            "latex": "P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}"
+          },
+          {
+            "explanation": "Nhân xác suất với hệ số của đề.",
+            "latex": "3190P=1856"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn An có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn An lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
+      "options": [
+        "1856",
+        "1334",
+        "928",
+        "2552"
+      ],
+      "correct_key": "A",
+      "solution": {
+        "correct_key": "A",
+        "final_answer": "1856",
+        "steps": [
+          {
+            "explanation": "Ba hình vuông tạo thành từ các đỉnh chia mười hai đỉnh thành ba nhóm rời nhau, mỗi nhóm bốn đỉnh. Bốn vị trí đỏ phải phân bố theo dạng 2,1,1.",
+            "latex": null
+          },
+          {
+            "explanation": "Chọn nhóm có hai vị trí đỏ, hai vị trí trong nhóm đó và một vị trí trong mỗi nhóm còn lại. Có 288 cách thuận lợi trên 495 cách chọn bốn vị trí đỏ.",
+            "latex": "P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}"
+          },
+          {
+            "explanation": "Nhân xác suất với hệ số của đề.",
+            "latex": "3190P=1856"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Bình có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Bình lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
+      "options": [
+        "1856",
+        "1334",
+        "928",
+        "2552"
+      ],
+      "correct_key": "A",
+      "solution": {
+        "correct_key": "A",
+        "final_answer": "1856",
+        "steps": [
+          {
+            "explanation": "Ba hình vuông tạo thành từ các đỉnh chia mười hai đỉnh thành ba nhóm rời nhau, mỗi nhóm bốn đỉnh. Bốn vị trí đỏ phải phân bố theo dạng 2,1,1.",
+            "latex": null
+          },
+          {
+            "explanation": "Chọn nhóm có hai vị trí đỏ, hai vị trí trong nhóm đó và một vị trí trong mỗi nhóm còn lại. Có 288 cách thuận lợi trên 495 cách chọn bốn vị trí đỏ.",
+            "latex": "P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}"
+          },
+          {
+            "explanation": "Nhân xác suất với hệ số của đề.",
+            "latex": "3190P=1856"
+          }
+        ]
+      }
+    },
+    {
+      "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Khôi có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Khôi lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
+      "options": [
+        "1856",
+        "1334",
+        "928",
+        "2552"
+      ],
+      "correct_key": "A",
+      "solution": {
+        "correct_key": "A",
+        "final_answer": "1856",
+        "steps": [
+          {
+            "explanation": "Ba hình vuông tạo thành từ các đỉnh chia mười hai đỉnh thành ba nhóm rời nhau, mỗi nhóm bốn đỉnh. Bốn vị trí đỏ phải phân bố theo dạng 2,1,1.",
+            "latex": null
+          },
+          {
+            "explanation": "Chọn nhóm có hai vị trí đỏ, hai vị trí trong nhóm đó và một vị trí trong mỗi nhóm còn lại. Có 288 cách thuận lợi trên 495 cách chọn bốn vị trí đỏ.",
+            "latex": "P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}"
+          },
+          {
+            "explanation": "Nhân xác suất với hệ số của đề.",
+            "latex": "3190P=1856"
+          }
+        ]
+      }
+    }
+  ]
+}

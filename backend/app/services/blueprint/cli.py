@@ -232,12 +232,12 @@ def main(argv=None):
                     "error": "OUTPUT_IO",
                     "message": "Không ghi được file kết quả mới; không dùng file cũ.",
                 },
-                ensure_ascii=False,
+                ensure_ascii=True,
             ),
             file=sys.stderr,
         )
         return 1 if exit_code != 2 else 2
     if envelope["error"]:
-        print(json.dumps(envelope["error"], ensure_ascii=False), file=sys.stderr)
-    print(json.dumps({"output": str(output), "summary": envelope["summary"]}, ensure_ascii=False))
+        print(json.dumps(envelope["error"], ensure_ascii=True), file=sys.stderr)
+    print(json.dumps({"output": str(output), "summary": envelope["summary"]}, ensure_ascii=True))
     return exit_code
