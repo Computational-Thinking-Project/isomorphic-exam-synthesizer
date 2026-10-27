@@ -98,12 +98,16 @@ def parse_markdown(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Par
                 )
             )
 
-        if len(options) != 4 or not all(k in options for k in ["A", "B", "C", "D"]):
+        if (
+            len(options) != 4
+            or not all(k in options for k in ["A", "B", "C", "D"])
+            or any(not (options.get(k) or "").strip() for k in ["A", "B", "C", "D"])
+        ):
             errors.append(
                 ParserErrorItem(
                     question_no=q_no,
                     error_type="INVALID_FORMAT",
-                    message=f"Question {q_no} does not contain all 4 options A, B, C, D.",
+                    message=f"Question {q_no} is missing one or more options or contains empty option content (A, B, C, D required).",
                 )
             )
 

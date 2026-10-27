@@ -70,8 +70,13 @@ def validate_exam_integrity(
                     )
                 )
 
-        # Check options
-        if len(q.options) != 4 or not all(k in q.options for k in ["A", "B", "C", "D"]):
+        # Check options: all 4 keys A, B, C, D must exist and each option's text must not be empty after strip()
+        has_invalid_options = (
+            len(q.options) != 4
+            or not all(k in q.options for k in ["A", "B", "C", "D"])
+            or any(not (q.options.get(k) or "").strip() for k in ["A", "B", "C", "D"])
+        )
+        if has_invalid_options:
             if not any(
                 e.question_no == q.question_no and e.error_type == "INVALID_FORMAT"
                 for e in all_errors
@@ -80,7 +85,7 @@ def validate_exam_integrity(
                     ParserErrorItem(
                         question_no=q.question_no,
                         error_type="INVALID_FORMAT",
-                        message=f"Question {q.question_no} is missing one or more options (A, B, C, D required).",
+                        message=f"Question {q.question_no} is missing one or more options or contains empty option content (A, B, C, D required).",
                     )
                 )
 
