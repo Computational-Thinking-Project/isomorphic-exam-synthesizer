@@ -105,9 +105,9 @@ sequenceDiagram
 ## 2. Kế Hoạch Triển Khai Chi Tiết Từng Hạng Mục
 
 ### Giai đoạn 1: Đồng Bộ PR #15 & Giải Quyết Xung Đột Nhánh Cơ Sở
-- [ ] **Mục 1.1:** Fetch nhánh remote mới nhất: `git fetch origin`
-- [ ] **Mục 1.2:** Merge nhánh `origin/feat/be1-task-202-ingestion-parsers` vào nhánh hiện tại `feat/be1-task-205-confirm-source`
-- [ ] **Mục 1.3:** Kiểm tra và nghiệm thu các phần đã được PR #15 sửa:
+- [x] **Mục 1.1:** Fetch nhánh remote mới nhất: `git fetch origin`
+- [x] **Mục 1.2:** Merge nhánh `origin/feat/be1-task-202-ingestion-parsers` vào nhánh hiện tại `feat/be1-task-205-confirm-source`
+- [x] **Mục 1.3:** Kiểm tra và nghiệm thu các phần đã được PR #15 sửa:
   - Hàm `replace_source_questions` trong `backend/scripts/schema.sql` đã có bảo mật SEC-04 đầy đủ.
   - Hàm `replace_source_questions_atomically` trong `backend/app/services/parser/ingestion_service.py` đã loại bỏ hoàn toàn fallback xóa-chèn client-side.
   - Các bài test regression của parser và ingestion pass 100%.
@@ -115,12 +115,12 @@ sequenceDiagram
 ---
 
 ### Giai đoạn 2: Gia Cố CSDL (`backend/scripts/schema.sql`)
-- [ ] **Mục 2.1:** Thêm ràng buộc toàn vẹn duy nhất cho bảng `question_blueprints`:
+- [x] **Mục 2.1:** Thêm ràng buộc toàn vẹn duy nhất cho bảng `question_blueprints`:
   ```sql
   ALTER TABLE public.question_blueprints 
     ADD CONSTRAINT uq_question_blueprints_source_question UNIQUE (source_question_id);
   ```
-- [ ] **Mục 2.2:** Xây dựng Stored Procedure `confirm_exam_source` thực hiện chốt đề nguyên tử:
+- [x] **Mục 2.2:** Xây dựng Stored Procedure `confirm_exam_source` thực hiện chốt đề nguyên tử:
   - Khóa phiên với `FOR UPDATE`.
   - Kiểm tra quyền sở hữu (`user_id == auth.uid()`).
   - Kiểm tra trạng thái phiên `status == 'draft'`.
@@ -131,10 +131,10 @@ sequenceDiagram
 ---
 
 ### Giai đoạn 3: Tái Cấu Trúc Blueprint Engine Service (`blueprint_service.py`)
-- [ ] **Mục 3.1:** Bổ sung metadata phân định xuất xứ blueprint trong `extract_default_blueprint`:
+- [x] **Mục 3.1:** Bổ sung metadata phân định xuất xứ blueprint trong `extract_default_blueprint`:
   - Đánh dấu `extraction_source: "FALLBACK_DETERMINISTIC"`
   - Thêm cờ `is_fallback: True`
-- [ ] **Mục 3.2:** Tái cấu trúc hàm `ensure_blueprints_for_session`:
+- [x] **Mục 3.2:** Tái cấu trúc hàm `ensure_blueprints_for_session`:
   - Dùng `upsert(..., on_conflict="source_question_id")` hoặc kiểm tra chặt chẽ, không bao giờ tạo 2 blueprint cho 1 câu hỏi.
   - Giữ nguyên các blueprint đã có và đã được đóng dấu `confirmed_at`.
   - Trả về số lượng blueprint thực tế từ DB.
@@ -142,23 +142,19 @@ sequenceDiagram
 ---
 
 ### Giai đoạn 4: Gia Cố Endpoint Chốt Nguồn (`backend/app/api/routes/sessions.py`)
-- [ ] **Mục 4.1:** Tích hợp gọi RPC `confirm_exam_source` làm luồng chính.
-- [ ] **Mục 4.2:** Triển khai cơ chế phòng vệ hai lớp (Defense-in-Depth Fallback):
-  - Kiểm tra kết quả ghi thực tế (`res_session.data`).
-  - Nếu không có bản ghi nào được update (do trạng thái phiên đã bị đổi song song) $\rightarrow$ trả về `HTTP 409 Conflict`.
+- [x] **Mục 4.1:** Tích hợp gọi RPC `confirm_exam_source` làm luồng chính.
+- [x] **Mục 4.2:** Triển khai cơ chế phòng vệ hai lớp (sau đó nâng cấp loại bỏ hoàn toàn client-side fallback ở Vòng 2 theo nguyên tắc 100% RPC ACID):
+  - Bắt lỗi mạng / timeout trả về `HTTP 504 Gateway Timeout` trung thực.
   - Không bao giờ để blueprints bị đóng dấu `confirmed_at` mồ côi nếu cập nhật session thất bại.
 
 ---
 
-### Giai đoạn 5: Mở Rộng Bộ Kiểm Thử Tự Động (`test_confirm_source.py`)
-
-| # | Tên Test Case | Kịch Bản & Mock Setup | Kết Quả Kỳ Vọng | Mục Tiêu Reviewer |
-|---|---|---|---|---|
-| **13** | `test_confirm_source_step2_failure_prevents_partial_lock` | Mock cập nhật `question_blueprints` thành công nhưng cập nhật `exam_sessions` ném lỗi DB. | Báo lỗi `HTTP 500`, blueprints không bị khóa dở dang (Zero Partial Mutation). | P1 — Tính nguyên tử |
-| **14** | `test_confirm_source_unmatched_update_returns_409` | Mock lệnh update `exam_sessions` trả về `data: []` (do phiên đã chuyển trạng thái hoặc bị xóa). | Trả về `HTTP 409 Conflict`, không bao giờ trả về 200 giả mạo. | P1 — Chống báo thành công sai |
-| **15** | `test_confirm_source_concurrent_reingestion_conflict` | Giả lập câu hỏi nguồn bị thay đổi/re-ingest ngay trước bước xác nhận (số câu hỏi không khớp). | Bị từ chối với `HTTP 409 Conflict`. | P1 — Race condition chốt nguồn |
-| **16** | `test_ensure_blueprints_concurrent_execution_deduplication` | Chạy 2 lệnh `ensure_blueprints_for_session` đồng thời trên cùng 1 danh sách câu hỏi. | Kết thúc với đúng 1 blueprint cho mỗi câu, không sinh trùng lặp. | P2 — Tránh trùng blueprint |
-| **17** | `test_confirm_source_preserves_confirmed_blueprints` | Blueprint đã có `confirmed_at` từ trước không bị ghi đè hay reset thời gian khi gọi lại. | Blueprint cũ giữ nguyên dữ liệu gốc. | P2 — Bảo toàn blueprint |
+### Giai đoạn 5: Mở Rộng Bộ Kiểm Thử Tự Động (`test_confirm_source.py` & SQL Permissions)
+- [x] **Mục 5.1:** Triển khai đầy đủ ma trận test cases kiểm thử tự động (mở rộng lên 30 unit tests trong `test_confirm_source.py` và 11 scenarios trong `verify_migration_003_permissions.sql`):
+  - Tính nguyên tử và chống partial mutation (HTTP 500 kèm khẳng định rollback khi có bằng chứng DB).
+  - Chống báo thành công giả và race condition sửa đổi đồng thời (HTTP 409).
+  - Loại trừ ngoại lệ mạng timeout (HTTP 504) và phân loại lỗi kết nối Class 08 (HTTP 500 trung tính).
+  - Tránh trùng lặp blueprint và bảo tồn blueprint đã có `confirmed_at`.
 
 ---
 

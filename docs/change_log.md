@@ -19,6 +19,7 @@
 - [DEC-BE1-006: Khắc Phục Triệt Để Suy Luận Rollback CSDL & Ngoại Lệ Gateway (PR #15 / PR #16 Round 4)](#dec-be1-006-khắc-phục-triệt-để-suy-luận-rollback-csdl--ngoại-lệ-gateway-pr-15--pr-16-round-4)
 - [DEC-BE1-007: Phân Loại Ngoại Lệ Mạng Phân Tán và Chuẩn Hóa Kiểm Quyền Migration 003 (TASK-205 Round 3)](#dec-be1-007-phân-loại-ngoại-lệ-mạng-phân-tán-và-chuẩn-hóa-kiểm-quyền-migration-003-task-205-round-3)
 - [DEC-BE1-008: Loại Trừ PostgreSQL SQLSTATE Class 08 Khỏi Bằng Chứng Rollback CSDL (TASK-202 / TASK-205 Round 5)](#dec-be1-008-loại-trừ-postgresql-sqlstate-class-08-khỏi-bằng-chứng-rollback-csdl-task-202--task-205-round-5)
+- [ADR-004: Tinh Giản Toàn Diện Stage 1 & Stage 2 Sang Kiến Trúc Black-Box, Silent Security Audit, và Chốt Nguồn Nguyên Tử Đơn Điểm](#adr-004-tinh-giản-toàn-diện-stage-1--stage-2-sang-kiến-trúc-black-box-silent-security-audit-và-chốt-nguồn-nguyên-tử-đơn-điểm)
 
 ---
 
@@ -228,3 +229,34 @@
   2. **Thông báo Trung tính Cho Trạng thái Chưa Xác Định:** Khi gặp lỗi kết nối Class 08, service trả về HTTP 500 trung tính yêu cầu kiểm tra lại phiên (`"Database atomic replacement/confirmation failed. Please verify session state before retrying."`), tuyệt đối không khẳng định đã rollback.
   3. **Bảo toàn Khẳng định Rollback cho Lỗi Dữ liệu Xác định:** Các mã lỗi ràng buộc toàn vẹn thực tế (`23505`, `23503`), lỗi PL/pgSQL (`P0001`) vẫn được khẳng định rollback chính xác.
   4. **Kiểm thử Hồi quy Toàn diện:** Bổ sung các unit tests cho mã `08007`, `08006` và `23505` trên cả 2 endpoint Ingestion và Confirm Source.
+
+---
+
+### ADR-004: Tinh Giản Toàn Diện Stage 1 & Stage 2 Sang Kiến Trúc Black-Box, Silent Security Audit, và Chốt Nguồn Nguyên Tử Đơn Điểm
+* **Mã quyết định:** ADR-004 / DEC-ALL-001
+* **Ngày quyết định:** 27/10/2026
+* **Người đề xuất:** Toàn đội kỹ thuật (Lead Bá Duy, Frontend Philip, AI & Math Validator)
+* **Bối cảnh:**
+  1. **Quá tải giao diện & Phức tạp hóa luồng người dùng ở Stage 1:** Thiết kế ban đầu yêu cầu xây dựng trình chỉnh sửa câu nguồn (`PUT /api/source-questions/{id}`), trình sửa tham số Blueprint (`PATCH /api/blueprints/{id}`), và hộp kiểm cam kết an ninh người dùng. Tuy nhiên, qua khảo sát sư phạm, giảng viên chỉ có nhu cầu xem trước đề nguồn để kiểm tra bóc tách đúng hay sai, không có nhu cầu can thiệp sâu vào cấu trúc toán học của Blueprint. Việc cho phép sửa tay trực tiếp dễ gây rủi ro phá vỡ tính giải được của đề thi hoặc tiêm nhiễm mã độc (XSS/SQLi).
+  2. **Trải nghiệm người dùng bị ngắt quãng bởi cảnh báo an ninh:** Việc hiển thị huy hiệu đỏ cảnh báo prompt injection và bắt buộc giảng viên tick vào checkbox xác nhận an ninh gây hoang mang, vì người dùng không có chuyên môn bảo mật và không thể xử lý các vấn đề này.
+  3. **Rời rạc hóa API chuyển trạng thái:** Các endpoint `/extract-all`, `/confirm`, `/confirm-all` riêng rẽ dễ gây race condition và trạng thái dở dang nếu gọi không đúng thứ tự.
+  4. **Cấu hình Stage 2 quá phức tạp:** Việc bắt giảng viên chọn các hộp kiểm chế độ biến thể (`variation_modes`) dễ gây xung đột (Config Conflict) với các câu hỏi lý thuyết không có tham số số học.
+* **Quyết định:**
+  1. **Stage 1 Read-Only & Black-Box Blueprint Engine:**
+     - Chuyển giao diện Stage 1 sang chế độ thẩm định thuần túy (Read-only Previewer bằng KaTeX). Bãi bỏ hoàn toàn các API sửa tay `PUT /api/source-questions/{id}` và `PATCH /api/blueprints/{id}`.
+     - Toàn bộ cơ chế bóc tách Blueprint vận hành ngầm tự động (Black-Box AI Pipeline ở TASK-203), không phơi bày endpoint thủ công `/extract-all`.
+  2. **Ghi vết an ninh âm thầm (Silent Security Audit Logging - SEC-02):**
+     - Khi hệ thống phát hiện chuỗi khả nghi (prompt injection), backend ghi log âm thầm vào bảng `public.security_events` phục vụ kiểm toán nội bộ của quản trị viên.
+     - **Tuyệt đối KHÔNG hiển thị cảnh báo an ninh hay bắt người dùng tick cam kết an ninh trên giao diện.** Giao diện chỉ hiển thị các cảnh báo nghiệp vụ: thiếu đáp án (`has_missing_answer`), công thức chưa đọc được (`has_unparsed_omml`).
+  3. **Chốt đề nguồn nguyên tử đơn điểm (Single Atomic Confirm-source Endpoint):**
+     - Gom toàn bộ quy trình chốt đề vào 1 endpoint duy nhất: `POST /api/sessions/{session_id}/confirm-source`.
+     - Thực thi thông qua PostgreSQL Stored Procedure `confirm_exam_source` khóa dòng `FOR UPDATE`, kiểm tra 100% câu hỏi có blueprint, và chuyển `exam_sessions.status = 'blueprinted'` trong 1 ACID transaction.
+  4. **Stage 2 Black-box Variation:**
+     - Loại bỏ các hộp kiểm chọn `variation_modes` từ Frontend. Backend và AI tự động quyết định chiến lược biến thể đẳng cấu tối ưu cho từng câu hỏi (thay số, đổi ngữ cảnh, hoặc giữ nguyên nguyên văn nếu là câu lý thuyết).
+     - Giảng viên chỉ cần chọn số lượng mã đề $N \in \{1, 2, 3, 4\}$ (mặc định $N=4$) và tùy chọn xáo trộn (`shuffle_questions`, `shuffle_options`).
+  5. **Thẩm định Stage 3 thuần túy:**
+     - Bảng cảnh báo Warning Badge chỉ hiển thị lỗi thẩm định toán học/sư phạm (SymPy không giải được, vi phạm nghiệm). Tuyệt đối không hiển thị cảnh báo hệ thống hoặc kỹ thuật.
+* **Hệ quả / Tác động:**
+  - Giảm thiểu triệt để số lượng endpoint và form UI cần phát triển/bảo trì, tiết kiệm ít nhất 4 ngày công cho FE và BE.
+  - Giao diện đạt chuẩn Zero-Friction: Giảng viên chỉ cần nạp đề $\rightarrow$ xem trước KaTeX $\rightarrow$ bấm 1 nút "Xác nhận đề gốc và tiếp tục" để chuyển sang sinh đề.
+  - Bảo đảm an toàn tuyệt đối cho CSDL và hệ thống.
