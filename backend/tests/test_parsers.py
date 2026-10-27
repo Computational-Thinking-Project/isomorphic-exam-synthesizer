@@ -870,3 +870,56 @@ def test_docx_parser_unsupported_table_layout_triggers_422():
     assert exc_info.value.status_code == 422
 
 
+def test_markdown_parser_bold_outside_colon():
+    """Verify markdown parser parses **Câu 1**: with colon outside bold markers."""
+    text = """**Câu 1**: Giải phương trình $x^2 - 1 = 0$.
+A. $x = 1$  B. $x = -1$  C. $x = 2$  D. $x = 0$
+ĐÁP ÁN: 1.A
+"""
+    questions, errors = parse_markdown(text)
+    assert len(errors) == 0
+    assert len(questions) == 1
+    assert questions[0].question_no == 1
+    assert "Giải phương trình" in questions[0].raw_content
+    assert questions[0].correct_key == "A"
+
+
+def test_extract_options_parentheses_and_brackets():
+    """Verify options format (A), (B), (C), (D) and [A], [B], [C], [D] do not leak delimiters."""
+    from app.services.parser.utils import extract_options_from_text
+
+    text_paren = """Tính đạo hàm:
+(A) 1
+(B) 2
+(C) 3
+(D) 4"""
+    stem, opts, key = extract_options_from_text(text_paren)
+    assert stem == "Tính đạo hàm:"
+    assert opts == {"A": "1", "B": "2", "C": "3", "D": "4"}
+
+    text_bracket = """Tính nguyên hàm:
+[A] x
+[B] 2x
+[C] 3x
+[D] 4x"""
+    stem_b, opts_b, _ = extract_options_from_text(text_bracket)
+    assert stem_b == "Tính nguyên hàm:"
+    assert opts_b == {"A": "x", "B": "2x", "C": "3x", "D": "4x"}
+
+
+def test_extract_options_bold_option_a_stem_clean():
+    """Verify bolded option **A.** does not contaminate question stem with asterisks."""
+    from app.services.parser.utils import extract_options_from_text
+
+    text = """Tính giá trị của biểu thức:
+**A.** 1
+B. 2
+C. 3
+**D.** 4"""
+    stem, opts, key = extract_options_from_text(text)
+    assert stem == "Tính giá trị của biểu thức:"
+    assert opts == {"A": "1", "B": "2", "C": "3", "D": "4"}
+    assert key == "A"
+
+
+

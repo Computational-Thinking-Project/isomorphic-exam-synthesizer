@@ -473,11 +473,18 @@ async def ingest_text(
 
     raw_text = payload.raw_text
 
-    # Parse with markdown parser or latex parser if latex environments are present
-    if "\\begin{enumerate}" in raw_text or "\\item" in raw_text:
+    # Parse with markdown parser or latex parser with intelligent detection and dual fallback
+    is_latex = any(
+        k in raw_text for k in ["\\begin{", "\\item", "\\textbf{", "\\documentclass", "\\section{"]
+    )
+    if is_latex:
         parsed_questions, parser_errors = parse_latex(raw_text)
+        if not parsed_questions and not parser_errors:
+            parsed_questions, parser_errors = parse_markdown(raw_text)
     else:
         parsed_questions, parser_errors = parse_markdown(raw_text)
+        if not parsed_questions and not parser_errors:
+            parsed_questions, parser_errors = parse_latex(raw_text)
 
     # Zero Mutation Guard: In-Memory Pre-validation
     assert_zero_mutation_or_raise(parsed_questions, parser_errors)

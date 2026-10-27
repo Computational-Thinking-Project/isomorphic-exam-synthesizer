@@ -175,9 +175,9 @@ def extract_options_from_text(text: str) -> Tuple[str, Dict[str, str], Optional[
     if marker_match:
         detected_key = marker_match.group(1).upper()
 
-    # Regex to split on option prefixes A., B., C., D. or A), B), C), D) (with optional bullet markers like - or *)
+    # Regex to split on option prefixes A., B., C., D., A), B), C), D), (A), [A] (with optional bullet markers like - or * or bold **)
     opt_pattern = re.compile(
-        r"(?:\n|\s{2,}|\b)(?:[\-\*]\s*)?(?P<opt>[A-D])\s*[\.\)]\s*(?P<content>.*?)(?=(?:\n|\s{2,}|\b)(?:[\-\*]\s*)?[A-D]\s*[\.\)]|$)",
+        r"(?:\n|\s{2,}|\b)(?:(?:[\-\+]|[\*\_]{1,2})\s*)?\(?\[?(?P<opt>[A-D])[\)\]\.\:]\s*(?:\*{1,2}|_{1,2})?\s*(?P<content>.*?)(?=(?:\n|\s{2,}|\b)(?:(?:[\-\+]|[\*\_]{1,2})\s*)?\(?\[?[A-D][\)\]\.\:]|$)",
         re.DOTALL,
     )
 
@@ -192,11 +192,12 @@ def extract_options_from_text(text: str) -> Tuple[str, Dict[str, str], Optional[
         for m in matches:
             label = m.group("opt").upper()
             content = m.group("content").strip()
-            # Clean up trailing asterisks or underscores from markdown
+            # Clean up trailing asterisks, underscores, or stray prefix characters
             content = re.sub(r"^[\*\_]+|[\*\_]+$", "", content).strip()
             found_opts[label] = content
 
         if all(k in found_opts for k in ["A", "B", "C", "D"]):
             stem = text[:first_opt_pos].strip()
+            stem = re.sub(r"[\*\_]+$", "", stem).strip()
 
     return stem, found_opts, detected_key

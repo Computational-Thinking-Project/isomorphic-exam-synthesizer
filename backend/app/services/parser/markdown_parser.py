@@ -24,7 +24,7 @@ from app.services.parser.utils import (
 logger = logging.getLogger(__name__)
 
 MD_QUESTION_HEADER = re.compile(
-    r"(?:^|\n)(?:#{1,6}\s*|\*{1,2}|_{1,2})?(?:câu|bài)\s+(?P<num>\d+)\s*[\.:\-](?:\*{1,2}|_{1,2})?\s*",
+    r"(?:^|\n)(?:#{1,6}\s*|\*{1,2}|_{1,2})?(?:câu|bài)\s+(?P<num>\d+)(?:\*{1,2}|_{1,2})?\s*[\.:\-](?:\*{1,2}|_{1,2})?\s*",
     re.IGNORECASE,
 )
 
