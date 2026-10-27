@@ -96,6 +96,13 @@ export default function GenerationProgressView({
     }
   }, [isDone, onComplete]);
 
+  // Đảm bảo tab mã đề luôn hợp lệ nếu số lượng mã đề thay đổi
+  useEffect(() => {
+    if (effectiveNumVersions && activeVersionTab > effectiveNumVersions) {
+      setActiveVersionTab(1);
+    }
+  }, [effectiveNumVersions, activeVersionTab]);
+
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       {/* Khối Header trạng thái kết nối & tiến độ tổng quát */}
