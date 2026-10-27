@@ -726,3 +726,147 @@ BẢNG ĐÁP ÁN:
     assert questions[1].options["C"] == "$y' = 0$"
     assert questions[1].options["D"] == "$y' = -2$"
 
+
+def test_docx_parser_multi_column_table_preserves_question_boundaries():
+    """Review Round 2 [P2]: Multi-column table preserves question boundaries, stems, and options."""
+    import docx
+    doc = docx.Document()
+    tbl = doc.add_table(rows=1, cols=2)
+    row = tbl.rows[0]
+
+    # Cell 0: Câu 1 Tính 1+1?
+    c0 = row.cells[0]
+    c0.paragraphs[0].text = "Câu 1: Tính 1+1?"
+    c0.add_paragraph("A. 2")
+    c0.add_paragraph("B. 3")
+    c0.add_paragraph("C. 4")
+    c0.add_paragraph("D. 5")
+
+    # Cell 1: Câu 2 Tính 2+2?
+    c1 = row.cells[1]
+    c1.paragraphs[0].text = "Câu 2: Tính 2+2?"
+    c1.add_paragraph("A. 3")
+    c1.add_paragraph("B. 4")
+    c1.add_paragraph("C. 5")
+    c1.add_paragraph("D. 6")
+
+    # Separated answer key table (1 | A | 2 | B)
+    tbl_ans = doc.add_table(rows=1, cols=4)
+    r_ans = tbl_ans.rows[0]
+    r_ans.cells[0].text = "1"
+    r_ans.cells[1].text = "A"
+    r_ans.cells[2].text = "2"
+    r_ans.cells[3].text = "B"
+
+    buf = io.BytesIO()
+    doc.save(buf)
+
+    questions, errors = parse_docx(buf.getvalue())
+    assert len(errors) == 0
+    assert len(questions) == 2
+
+    # Verify Question 1 stem & options: option B must be '3', NOT '4' from Question 2
+    assert questions[0].question_no == 1
+    assert "Tính 1+1?" in questions[0].raw_content
+    assert questions[0].options == {"A": "2", "B": "3", "C": "4", "D": "5"}
+    assert questions[0].correct_key == "A"
+
+    # Verify Question 2 stem & options
+    assert questions[1].question_no == 2
+    assert "Tính 2+2?" in questions[1].raw_content
+    assert questions[1].options == {"A": "3", "B": "4", "C": "5", "D": "6"}
+    assert questions[1].correct_key == "B"
+
+
+def test_docx_parser_answer_key_grid_table_alternating_cells():
+    """Review Round 2 [P2]: DOCX answer key table with alternating number/letter cells."""
+    import docx
+    doc = docx.Document()
+
+    # Paragraphs for 2 questions
+    doc.add_paragraph("Câu 1: Thủ đô của Việt Nam là gì?")
+    doc.add_paragraph("A. Hà Nội\nB. TP.HCM\nC. Đà Nẵng\nD. Huế")
+    doc.add_paragraph("Câu 2: 5 + 5 bằng bao nhiêu?")
+    doc.add_paragraph("A. 8\nB. 9\nC. 10\nD. 11")
+
+    # Answer key table: Row 0 has 1 | A | 2 | C
+    tbl_ans = doc.add_table(rows=1, cols=4)
+    r_ans = tbl_ans.rows[0]
+    r_ans.cells[0].text = "1"
+    r_ans.cells[1].text = "A"
+    r_ans.cells[2].text = "2"
+    r_ans.cells[3].text = "C"
+
+    buf = io.BytesIO()
+    doc.save(buf)
+
+    questions, errors = parse_docx(buf.getvalue())
+    assert len(errors) == 0
+    assert len(questions) == 2
+    assert questions[0].correct_key == "A"
+    assert questions[1].correct_key == "C"
+
+
+def test_docx_parser_answer_key_grid_table_two_rows():
+    """Review Round 2 [P2]: DOCX answer key table with 2-row grid (Row 0: numbers, Row 1: keys)."""
+    import docx
+    doc = docx.Document()
+
+    doc.add_paragraph("Câu 1: Câu hỏi thứ nhất.")
+    doc.add_paragraph("A. 1\nB. 2\nC. 3\nD. 4")
+    doc.add_paragraph("Câu 2: Câu hỏi thứ hai.")
+    doc.add_paragraph("A. 1\nB. 2\nC. 3\nD. 4")
+
+    # Answer key grid: Row 0: Câu | 1 | 2; Row 1: Đ/A | B | D
+    tbl_ans = doc.add_table(rows=2, cols=3)
+    tbl_ans.rows[0].cells[0].text = "Câu"
+    tbl_ans.rows[0].cells[1].text = "1"
+    tbl_ans.rows[0].cells[2].text = "2"
+    tbl_ans.rows[1].cells[0].text = "Đ/A"
+    tbl_ans.rows[1].cells[1].text = "B"
+    tbl_ans.rows[1].cells[2].text = "D"
+
+    buf = io.BytesIO()
+    doc.save(buf)
+
+    questions, errors = parse_docx(buf.getvalue())
+    assert len(errors) == 0
+    assert len(questions) == 2
+    assert questions[0].correct_key == "B"
+    assert questions[1].correct_key == "D"
+
+
+def test_docx_parser_unsupported_table_layout_triggers_422():
+    """Review Round 2 [P2]: Unsupported or malformed table layout triggers 422 with zero cloud mutation."""
+    from fastapi import HTTPException
+    import docx
+
+    doc = docx.Document()
+    tbl = doc.add_table(rows=1, cols=2)
+    # Cell 0 has valid question
+    c0 = tbl.rows[0].cells[0]
+    c0.paragraphs[0].text = "Câu 1: Tính 1+1?"
+    c0.add_paragraph("A. 2\nB. 3\nC. 4\nD. 5")
+
+    # Cell 1 has broken layout (missing options C, D)
+    c1 = tbl.rows[0].cells[1]
+    c1.paragraphs[0].text = "Câu 2: Tính 2+2?"
+    c1.add_paragraph("A. 3\nB. 4")
+
+    # Answer table
+    tbl_ans = doc.add_table(rows=1, cols=4)
+    tbl_ans.rows[0].cells[0].text = "1"
+    tbl_ans.rows[0].cells[1].text = "A"
+    tbl_ans.rows[0].cells[2].text = "2"
+    tbl_ans.rows[0].cells[3].text = "B"
+
+    buf = io.BytesIO()
+    doc.save(buf)
+
+    questions, errors = parse_docx(buf.getvalue())
+    assert any(e.question_no == 2 and e.error_type == "INVALID_FORMAT" for e in errors)
+    with pytest.raises(HTTPException) as exc_info:
+        assert_zero_mutation_or_raise(questions, errors)
+    assert exc_info.value.status_code == 422
+
+

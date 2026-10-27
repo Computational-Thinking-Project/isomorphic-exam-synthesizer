@@ -582,6 +582,154 @@ def test_ingest_file_docx_success_200(client, mock_auth_user, auth_headers):
     assert "successfully" in res_data["message"]
 
 
+def test_ingest_file_docx_multi_column_questions_success_200(client, mock_auth_user, auth_headers):
+    """Review Round 2 [P2]: Multi-column question table DOCX uploaded via API succeeds (200) with 2 questions."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    mock_db.storage.from_.return_value.upload.return_value = MagicMock()
+
+    mock_rpc_exec = MagicMock()
+    mock_rpc_exec.data = {"success": True, "count": 2}
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_exec
+
+    mock_q_res = MagicMock()
+    mock_q_res.data = [
+        {"id": "q-1", "question_no": 1, "correct_key": "A"},
+        {"id": "q-2", "question_no": 2, "correct_key": "B"},
+    ]
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = mock_q_res
+
+    # Build docx with 1-row, 2-cell table containing Câu 1 and Câu 2
+    doc = docx.Document()
+    tbl = doc.add_table(rows=1, cols=2)
+    c0 = tbl.rows[0].cells[0]
+    c0.paragraphs[0].text = "Câu 1: Tính 1+1?"
+    c0.add_paragraph("A. 2\nB. 3\nC. 4\nD. 5")
+
+    c1 = tbl.rows[0].cells[1]
+    c1.paragraphs[0].text = "Câu 2: Tính 2+2?"
+    c1.add_paragraph("A. 3\nB. 4\nC. 5\nD. 6")
+
+    # Separated answer table (1 | A | 2 | B)
+    tbl_ans = doc.add_table(rows=1, cols=4)
+    tbl_ans.rows[0].cells[0].text = "1"
+    tbl_ans.rows[0].cells[1].text = "A"
+    tbl_ans.rows[0].cells[2].text = "2"
+    tbl_ans.rows[0].cells[3].text = "B"
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    docx_bytes = buf.getvalue()
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-file",
+            files={
+                "file": (
+                    "multicolumn.docx",
+                    docx_bytes,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200
+    res_data = response.json()
+    assert res_data["total_questions"] == 2
+
+    # Verify RPC payload preserved individual questions and correct option assignments
+    rpc_call_args = mock_db.rpc.call_args[0][1]["p_questions"]
+    assert len(rpc_call_args) == 2
+    assert rpc_call_args[0]["question_no"] == 1
+    assert "Tính 1+1?" in rpc_call_args[0]["raw_content"]
+    assert rpc_call_args[0]["options"]["B"] == "3"
+    assert rpc_call_args[0]["correct_key"] == "A"
+
+    assert rpc_call_args[1]["question_no"] == 2
+    assert "Tính 2+2?" in rpc_call_args[1]["raw_content"]
+    assert rpc_call_args[1]["options"]["B"] == "4"
+    assert rpc_call_args[1]["correct_key"] == "B"
+
+
+def test_ingest_file_docx_grid_answer_table_success_200(client, mock_auth_user, auth_headers):
+    """Review Round 2 [P2]: DOCX with 2-row grid answer table succeeds (200) without 422 MISSING_ANSWER."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    mock_db.storage.from_.return_value.upload.return_value = MagicMock()
+
+    mock_rpc_exec = MagicMock()
+    mock_rpc_exec.data = {"success": True, "count": 2}
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_exec
+
+    mock_q_res = MagicMock()
+    mock_q_res.data = [
+        {"id": "q-1", "question_no": 1, "correct_key": "C"},
+        {"id": "q-2", "question_no": 2, "correct_key": "D"},
+    ]
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = mock_q_res
+
+    doc = docx.Document()
+    doc.add_paragraph("Câu 1: Câu hỏi toán số một.")
+    doc.add_paragraph("A. 1\nB. 2\nC. 3\nD. 4")
+    doc.add_paragraph("Câu 2: Câu hỏi toán số hai.")
+    doc.add_paragraph("A. 1\nB. 2\nC. 3\nD. 4")
+
+    # 2-row answer grid table
+    tbl_ans = doc.add_table(rows=2, cols=3)
+    tbl_ans.rows[0].cells[0].text = "Câu"
+    tbl_ans.rows[0].cells[1].text = "1"
+    tbl_ans.rows[0].cells[2].text = "2"
+    tbl_ans.rows[1].cells[0].text = "Đ/A"
+    tbl_ans.rows[1].cells[1].text = "C"
+    tbl_ans.rows[1].cells[2].text = "D"
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    docx_bytes = buf.getvalue()
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-file",
+            files={
+                "file": (
+                    "exam_grid_ans.docx",
+                    docx_bytes,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200
+    res_data = response.json()
+    assert res_data["total_questions"] == 2
+
+
 def test_ingest_file_rpc_failure_returns_500_zero_mutation(client, mock_auth_user, auth_headers):
     """If RPC fails with confirmed DB error (APIError), return 500 confirming rollback without client mutations."""
     mock_db = MagicMock()

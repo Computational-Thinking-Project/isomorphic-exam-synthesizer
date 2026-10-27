@@ -82,6 +82,138 @@ def inspect_cell_omml(cell) -> Tuple[bool, bool]:
     return False, False
 
 
+def try_parse_table_as_answer_key(tbl: Table) -> Optional[List[str]]:
+    """Detect if a table is an answer key table and normalize its entries into key pairs.
+
+    Recognizes:
+    - Alternating cells in a row (e.g. ['1', 'A', '2', 'B'] or ['Câu 1', 'A'])
+    - 2-row grid (Row 2k: question numbers, Row 2k+1: answer letters, e.g. ['1', '2'] / ['A', 'B'])
+    - Direct key pairs in cells (e.g. ['1.A', '2.B'])
+    - Tables with 'BẢNG ĐÁP ÁN' headers
+
+    Returns normalized lines (e.g. ['BẢNG ĐÁP ÁN:', '1.A  2.B']) or None if not an answer key table.
+    """
+    def _is_num_cell(text: str) -> Optional[int]:
+        m = re.match(r"^(?:câu\s*)?(\d+)\.?$", text.strip(), re.IGNORECASE)
+        return int(m.group(1)) if m else None
+
+    def _is_ans_cell(text: str) -> Optional[str]:
+        m = re.match(r"^\[?([A-D])\]?\.?$", text.strip(), re.IGNORECASE)
+        return m.group(1).upper() if m else None
+
+    grid: List[List[str]] = []
+    for row in tbl.rows:
+        seen_tc = set()
+        row_cells = []
+        for cell in row.cells:
+            if cell._tc not in seen_tc:
+                seen_tc.add(cell._tc)
+                row_cells.append(cell.text.strip())
+        if any(c for c in row_cells):
+            grid.append(row_cells)
+
+    if not grid:
+        return None
+
+    # Filter out question/content tables: answer key cells are short and contain no option markers with stems
+    for r in grid:
+        for c in r:
+            if len(c) > 60:
+                return None
+            if re.search(r"\b[A-D]\.\s+[^\s]+", c):
+                return None
+
+    extracted_pairs: List[Tuple[int, str]] = []
+
+    # Check for header row (e.g. 'BẢNG ĐÁP ÁN')
+    start_r = 0
+    header_found = False
+    first_text = " ".join(grid[0]).lower()
+    if any(w in first_text for w in ["bảng đáp án", "đáp án", "answer key", "hướng dẫn chấm"]):
+        header_found = True
+        start_r = 1
+
+    content_rows = grid[start_r:]
+    if not content_rows:
+        return None
+
+    # Pattern A: Alternating cells in rows (e.g. 1 | A | 2 | B or Câu 1 | A)
+    alt_pairs: List[Tuple[int, str]] = []
+    for r in content_rows:
+        # Skip header rows like ['Câu', 'Đáp án', 'Câu', 'Đáp án']
+        if all(re.search(r"^(?:câu|đáp án|đ/a|stt|no|ans)$", c, re.IGNORECASE) for c in r):
+            continue
+        if len(r) >= 2:
+            row_pairs = []
+            for i in range(0, len(r) - 1, 2):
+                n = _is_num_cell(r[i])
+                a = _is_ans_cell(r[i + 1])
+                if n is not None and a is not None:
+                    row_pairs.append((n, a))
+            if len(row_pairs) * 2 == len(r):
+                alt_pairs.extend(row_pairs)
+
+    if len(alt_pairs) >= 2 or (header_found and len(alt_pairs) >= 1):
+        extracted_pairs = alt_pairs
+
+    # Pattern B: 2-row grid (Row 2k numbers, Row 2k+1 answers)
+    if not extracted_pairs and len(content_rows) >= 2:
+        grid_pairs: List[Tuple[int, str]] = []
+        r_idx = 0
+        while r_idx < len(content_rows) - 1:
+            r_num = content_rows[r_idx]
+            r_ans = content_rows[r_idx + 1]
+            c_nums = [_is_num_cell(c) for c in r_num]
+            c_ans = [_is_ans_cell(c) for c in r_ans]
+
+            # If leading column is a label ('Câu' / 'Đáp án'), strip it
+            if c_nums and c_nums[0] is None and len(c_nums) == len(c_ans):
+                c_nums = c_nums[1:]
+                c_ans = c_ans[1:]
+
+            if (
+                len(c_nums) >= 2
+                and len(c_nums) == len(c_ans)
+                and all(n is not None for n in c_nums)
+                and all(a is not None for a in c_ans)
+            ):
+                for n, a in zip(c_nums, c_ans):
+                    grid_pairs.append((n, a))
+                r_idx += 2
+            else:
+                r_idx += 1
+        if len(grid_pairs) >= 2 or (header_found and len(grid_pairs) >= 1):
+            extracted_pairs = grid_pairs
+
+    # Pattern C: Direct key pair in cells (e.g. '1.A', '2.B')
+    if not extracted_pairs:
+        direct_pairs: List[Tuple[int, str]] = []
+        for r in content_rows:
+            for c in r:
+                m = KEY_PAIR_PATTERN.match(c)
+                if m:
+                    num = int(m.group("num1") or m.group("num2"))
+                    key = (m.group("key1") or m.group("key2")).upper()
+                    direct_pairs.append((num, key))
+        if len(direct_pairs) >= 2 or (header_found and len(direct_pairs) >= 1):
+            extracted_pairs = direct_pairs
+
+    if not extracted_pairs:
+        return None
+
+    sorted_pairs = sorted(extracted_pairs, key=lambda p: p[0])
+    lines = ["BẢNG ĐÁP ÁN:"]
+    chunk: List[str] = []
+    for num, key in sorted_pairs:
+        chunk.append(f"{num}.{key}")
+        if len(chunk) == 10:
+            lines.append("  ".join(chunk))
+            chunk = []
+    if chunk:
+        lines.append("  ".join(chunk))
+    return lines
+
+
 def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[ParserErrorItem]]:
     """Parse a DOCX file in-memory and return extracted questions and validation errors."""
     try:
@@ -109,6 +241,19 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
             paragraph_omml_flags.append(is_unparsed_omml)
         elif child.tag.endswith("tbl"):
             tbl = Table(child, doc)
+            # First, check if this table is an answer key table
+            ans_lines = try_parse_table_as_answer_key(tbl)
+            if ans_lines:
+                tbl_has_unparsed_omml = any(
+                    inspect_cell_omml(c)[1] for row in tbl.rows for c in row.cells
+                )
+                for line in ans_lines:
+                    full_paragraphs.append(line)
+                    paragraph_omml_flags.append(tbl_has_unparsed_omml)
+                continue
+
+            # Otherwise, it's a content/question table: iterate cell-by-cell in document order
+            # preserving question boundaries and individual paragraphs inside cells
             for row in tbl.rows:
                 seen_tc = set()
                 unique_cells = []
@@ -117,34 +262,14 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
                         seen_tc.add(cell._tc)
                         unique_cells.append(cell)
 
-                row_has_unparsed_omml = any(
-                    inspect_cell_omml(cell)[1] for cell in unique_cells
-                ) or any(
-                    inspect_paragraph_omml(p)[1]
-                    for cell in unique_cells
-                    for p in cell.paragraphs
-                )
-
-                if len(unique_cells) == 1:
-                    # Single-cell row: preserve individual paragraphs
-                    cell = unique_cells[0]
+                for cell in unique_cells:
                     _, cell_unparsed = inspect_cell_omml(cell)
                     for cp in cell.paragraphs:
                         text = normalize_unicode_nfc(cp.text)
                         _, cp_unparsed = inspect_paragraph_omml(cp)
-                        full_paragraphs.append(text)
-                        paragraph_omml_flags.append(cp_unparsed or cell_unparsed)
-                else:
-                    # Multi-cell row (e.g. question columns, option grid, or answer key row)
-                    row_parts = []
-                    for cell in unique_cells:
-                        c_text = normalize_unicode_nfc(cell.text.strip())
-                        if c_text:
-                            row_parts.append(c_text)
-                    row_text = "  ".join(row_parts)
-                    if row_text or row_has_unparsed_omml:
-                        full_paragraphs.append(row_text)
-                        paragraph_omml_flags.append(row_has_unparsed_omml)
+                        for subline in text.split("\n"):
+                            full_paragraphs.append(subline)
+                            paragraph_omml_flags.append(cp_unparsed or cell_unparsed)
 
     # Combine full text for separate answer key parsing
     all_text = "\n".join(full_paragraphs)
