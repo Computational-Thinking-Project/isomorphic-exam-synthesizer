@@ -10,7 +10,7 @@
 
 | Ký hiệu | Vai trò | Trọng tâm phụ trách chính | Danh sách task phụ trách |
 | :--- | :--- | :--- | :--- |
-| **FE1** | Frontend Core 1 | Setup FE, Auth UI, Dashboard, KaTeX, Stage 1 Ingestion, Blueprint Editor, Thống kê | TASK-003, 101, 103, 105, 201, 203b, 204, 401 |
+| **FE1** | Frontend Core 1 | Setup FE, Auth UI, Dashboard, KaTeX, Stage 1 Ingestion, Blueprint Viewer & Confirmer, Thống kê | TASK-003, 101, 103, 105, 201, 203b, 204, 401 |
 | **FE2** | Frontend Core 2 | CloneModal, Stage 2 Config, SSE Progress, Review 1-1, Action Bar, Final Approval, Export Center | TASK-103b, 206, 208, 301, 302, 305, 307 |
 | **BE1** | Backend Core & Lead | Setup BE, Auth JWT, Sessions CRUD, Parsers (DOCX/LaTeX/MD), Blueprint APIs, Review API, Final Approval API | TASK-004, 102, 104, 202, 205, 303, 305b |
 | **BE2** | Backend Engine | Rate Limit, Config Validator, Orchestrator SSE, Health Metrics, Shuffler, Typst PDF Compiler | TASK-005, 207a, 207b, 207c, 304, 306a |
@@ -116,9 +116,10 @@
   - `retry_count`: `INTEGER NOT NULL DEFAULT 0` (bộ đếm số lần thử lại Validation).
   - `gemini_review_calls`: `INTEGER NOT NULL DEFAULT 0` (bộ đếm số lần gọi AI sinh lại trong pha Review).
   - `approved_at`: `TIMESTAMPTZ NULL` (lưu thời điểm duyệt cuối cùng của TASK-305b).
-- [ ] **Bổ sung các trường Cảnh báo trong `source_questions`:**
-  - `has_missing_answer`: `BOOLEAN NOT NULL DEFAULT FALSE` (phục vụ Stage 1 Incomplete Loop trong TASK-203b khi thiếu đáp án).
-  - `has_security_warning`: `BOOLEAN NOT NULL DEFAULT FALSE` (cảnh báo chuỗi khả nghi/prompt injection trong TASK-106).
+- [ ] **Bổ sung các trường Cảnh báo trong `source_questions` (Chỉ phục vụ cảnh báo chất lượng bóc tách đề):**
+  - `has_missing_answer`: `BOOLEAN NOT NULL DEFAULT FALSE` (cảnh báo khi không tìm thấy đáp án đúng trong đề nguồn để kích hoạt Stage 1 Incomplete Loop trong TASK-203b).
+  - `has_unparsed_omml`: `BOOLEAN NOT NULL DEFAULT FALSE` (cảnh báo câu có công thức OMML Word cũ hoặc ảnh không trích xuất được text).
+  - *(Lưu ý quan trọng: Các sự kiện an ninh/chuỗi khả nghi như prompt injection được backend ghi âm thầm vào bảng riêng `public.security_events` phục vụ kiểm toán nội bộ của quản trị viên; tuyệt đối không phơi bày cờ cảnh báo an ninh lên giao diện người dùng)*.
 - [ ] **Đồng bộ Mô Hình Dữ Liệu Chuẩn Bất Biến trong `version_questions` (Canonical Data Model - TASK-304):**
   - `canonical_question_no`: `INTEGER NOT NULL` (thứ tự câu chuẩn từ đề nguồn).
   - `canonical_options`: `JSONB NOT NULL` (mảng 4 phương án gốc chuẩn A, B, C, D).
@@ -419,7 +420,7 @@
 - [ ] **Phòng chống Prompt Injection & Bảo toàn dữ liệu nguồn (SEC-02, Safe Escaping):**
   - **Nguyên tắc bảo toàn dữ liệu gốc:** Giữ nguyên 100% nguyên văn văn bản câu hỏi trong Database (`source_questions`), **tuyệt đối không âm thầm cắt bỏ hay thay thế chuỗi ký tự** của người dùng trong dữ liệu gốc.
   - **Tách biệt ngữ cảnh qua SDK:** Hướng dẫn hệ thống luôn nằm trong `system_instruction` của Gemini Client, hoàn toàn độc lập với User Input.
-  - **Giám sát & Ghi vết chuỗi khả nghi:** Dùng Regex quét phát hiện các mẫu chỉ thị độc hại (`ignore previous instructions`, `disregard above`, các chuỗi điều khiển LLM). Nếu phát hiện chuỗi khả nghi $\rightarrow$ **không âm thầm sửa nội dung**, mà ghi log vào `public.security_events` (kèm `session_id`, `user_id`, `event_type = 'PROMPT_INJECTION_DETECTED'`) và gắn cờ cảnh báo `has_security_warning = true` trên câu hỏi để người dùng xác nhận ở giao diện.
+  - **Giám sát & Ghi vết chuỗi khả nghi (Silent Audit Logging):** Dùng Regex quét phát hiện các mẫu chỉ thị độc hại (`ignore previous instructions`, `disregard above`, các chuỗi điều khiển LLM). Nếu phát hiện chuỗi khả nghi $\rightarrow$ **không âm thầm sửa nội dung**, mà ghi log âm thầm vào `public.security_events` (kèm `session_id`, `user_id`, `event_type = 'PROMPT_INJECTION_DETECTED'`) phục vụ quản trị viên kiểm toán an ninh. **Tuyệt đối KHÔNG hiển thị cảnh báo an ninh này lên giao diện người dùng**, vì người dùng không có chuyên môn an ninh và không thể xử lý các vấn đề này. Giao diện người dùng chỉ hiển thị các cảnh báo nghiệp vụ khi khâu parse gặp lỗi, không nhận diện đúng đề, thiếu thông tin hoặc công thức toán không chắc chắn.
   - **Đóng gói an toàn khi đưa vào AI Prompt (Safe Delimitation & XML Escaping):**
     - Chuẩn hóa Unicode NFC và giới hạn độ dài $\le 2000$ ký tự / câu hỏi.
     - Escape các ký tự đặc biệt XML (`<` $\rightarrow$ `&lt;`, `>` $\rightarrow$ `&gt;`, `&` $\rightarrow$ `&amp;`) trong nội dung câu hỏi trước khi đưa vào prompt template để triệt tiêu nguy cơ thoát thẻ XML (XML Tag Escape Injection).
@@ -627,40 +628,44 @@
 
 ---
 
-### TASK-204 · Giao diện xem, chỉnh sửa Blueprint và Xác nhận (FE-05)
+### TASK-204 · Giao diện xem trước câu hỏi nguồn và Xác nhận — Source Question Previewer & Confirmer (FE-05)
 - **Người làm:** FE1 (Owner)
-- **Phụ thuộc:** TASK-201 *(Mock UI)*; Phụ thuộc tích hợp: TASK-203 *(Dữ liệu Blueprint thật)*
+- **Phụ thuộc:** TASK-201 *(Mock UI)*; Phụ thuộc tích hợp: TASK-202 *(Dữ liệu câu nguồn đã bóc tách)*
 - **Trạng thái:** ⬜
 
-**Mô tả:** Giao diện cho phép giảng viên duyệt, tinh chỉnh câu nguồn và các tham số biến thể Blueprint trước khi tiến hành sinh đề.
+**Mô tả:** Giao diện hiển thị chỉ đọc (Read-only) cho phép giảng viên thẩm định câu hỏi nguồn và đáp án gốc đã bóc tách bằng KaTeX, kiểm tra tính đầy đủ trước khi xác nhận chuyển sang Stage 2. Toàn bộ cơ chế Blueprint được chuyển thành hộp đen ngầm (black box), không hiển thị trên giao diện người dùng và không có thao tác can thiệp thủ công.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] Hiển thị danh sách câu hỏi gốc bằng `MathRenderer`.
-- [ ] **Chỉnh sửa toàn diện câu nguồn (Source Question Editing):** Cho phép giảng viên bấm vào từng câu hỏi để sửa nội dung thân câu (`stem_latex`), sửa 4 phương án lựa chọn, chọn lại đáp án đúng (`correct_option`), và bổ sung lời giải mẫu tùy chọn. Gọi `PUT /api/source-questions/{id}`.
-- [ ] **Badge cảnh báo OMML & Thiếu đáp án:**
-  - Nếu câu có `has_unparsed_omml = true` $\rightarrow$ hiển thị huy hiệu màu vàng *"Công thức chưa đọc được (OMML/Ảnh)"*.
-  - Nếu câu có `has_missing_answer = true` $\rightarrow$ hiển thị huy hiệu màu cam *"Chưa xác định đáp án đúng"*, bắt buộc chọn trước khi xác nhận.
-- [ ] Hiển thị thẻ Blueprint bên cạnh: danh sách tham số (có thể sửa khoảng giá trị `min`/`max`), các điều kiện bất biến, và tóm tắt quy tắc tiếng Việt.
-- [ ] Khi câu nguồn bị sửa $\rightarrow$ cung cấp nút bấm "Trích xuất lại bằng AI" (`POST /api/blueprints/{id}/re-extract`) hoặc cho phép sửa trực tiếp thông số Blueprint.
-- [ ] Nút "Xác nhận tất cả và tiếp tục" gọi `POST /api/sessions/{session_id}/blueprints/confirm-all` để khóa cấu trúc và chuyển sang Stage 2.
-- [ ] Cơ chế tự động lưu nháp (Auto-save debounce 1s) khi giảng viên sửa thông số.
+- [ ] Hiển thị danh sách câu hỏi gốc và 4 phương án A/B/C/D bằng `MathRenderer` (KaTeX) ở chế độ chỉ đọc (Read-only, tuyệt đối không bố trí ô nhập văn bản sửa đề theo nguyên tắc Zero-Editing Stage 1).
+- [ ] Hiển thị rõ ràng đáp án đúng đã nhận diện cho từng câu hỏi nguồn.
+- [ ] **Ẩn hoàn toàn Blueprint:** Tuyệt đối không hiển thị thẻ JSON, khoảng giá trị min/max hay quy tắc biến thể. Giảng viên không cần và không thể can thiệp vào tham số Blueprint.
+- [ ] **Cảnh báo chất lượng bóc tách câu hỏi (Data Quality Warnings):**
+  - **Chỉ hiển thị cảnh báo khi khâu parse gặp lỗi, bóc tách không nhận diện đúng cấu trúc, hoặc dữ liệu không đầy đủ, không chắc chắn:**
+    - Cảnh báo thiếu đáp án: Huy hiệu màu cam *"Chưa xác định đáp án đúng"* (`has_missing_answer == true`) nếu câu hỏi thiếu đáp án.
+    - Cảnh báo công thức chưa nhận diện: Huy hiệu màu vàng *"Công thức chưa đọc được"* (`has_unparsed_omml == true` do công thức OMML Word cũ hoặc ảnh không trích xuất được text).
+    - Cảnh báo cấu trúc không chắc chắn: Huy hiệu màu vàng *"Thiếu phương án lựa chọn"* nếu parser không nhận diện đủ 4 đáp án A/B/C/D.
+  - **Tuyệt đối KHÔNG hiển thị cảnh báo hệ thống hoặc an ninh cho người dùng:** Các sự kiện kỹ thuật/an ninh (như phát hiện ký tự lạ, chuỗi nghi vấn prompt injection, lỗi hạ tầng) được backend tự động xử lý và ghi nhận âm thầm (silent audit log) vào bảng `public.security_events` dành riêng cho quản trị viên; người dùng không cần và không thể can thiệp các vấn đề hệ thống.
+  - **Không yêu cầu người dùng tick cam kết an ninh:** Loại bỏ hoàn toàn hộp kiểm cam kết an ninh. Nút "Xác nhận đề gốc và tiếp tục" luôn khả dụng khi danh sách câu hỏi đã được tải đầy đủ.
+- [ ] Nút **"Xác nhận đề gốc và tiếp tục"**: Gọi `POST /api/sessions/{session_id}/confirm-source` để khóa toàn bộ đề nguồn và chuyển thẳng sang Stage 2 (`/session/:id/stage2`).
 
 ---
 
-### TASK-205 · API quản lý câu nguồn và xác nhận Blueprint (BE-01)
+### TASK-205 · API xác nhận đề nguồn & Kích hoạt Blueprint nội bộ (BE-03)
 - **Người làm:** BE1 (Owner)
 - **Phụ thuộc:** TASK-202; Phụ thuộc tích hợp: TASK-203
 - **Trạng thái:** ⬜
 
-**Mô tả:** Các endpoints quản lý, cập nhật câu hỏi nguồn và khóa dữ liệu Blueprint của phiên làm việc.
+**Mô tả:** Động cơ vận hành Blueprint như một hộp đen tự động ở backend và cung cấp API xác nhận đề nguồn chuyển trạng thái phiên sang Stage 2, loại bỏ các API can thiệp/tái trích xuất Blueprint thủ công từ phía người dùng.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] `POST /api/sessions/{session_id}/blueprints/extract-all`: Trích xuất Blueprint hàng loạt lần đầu cho toàn bộ câu nguồn trong phiên.
-- [ ] `PUT /api/source-questions/{question_id}` — gọi `assert_ownership` $\rightarrow$ cập nhật nội dung câu nguồn, các phương án, đáp án đúng và lời giải mẫu.
-- [ ] `PATCH /api/blueprints/{blueprint_id}` — gọi `assert_ownership` $\rightarrow$ cập nhật khoảng giá trị và điều kiện bất biến của blueprint.
-- [ ] `POST /api/blueprints/{blueprint_id}/confirm` — gọi `assert_ownership` $\rightarrow$ đánh dấu xác nhận câu hỏi (`confirmed_at = now()`).
-- [ ] `POST /api/blueprints/{blueprint_id}/re-extract` — gọi AI trích xuất lại quy tắc cho câu hỏi nguồn đó.
-- [ ] `POST /api/sessions/{session_id}/blueprints/confirm-all` — kiểm tra toàn bộ câu hỏi đã có quy tắc hợp lệ $\rightarrow$ cập nhật trạng thái session sang `blueprinted`.
+- [ ] **Quy trình Blueprint Hộp Đen (Automatic Black-Box Engine):**
+  - Khi `POST /api/sessions/{session_id}/ingest-file` hoặc `ingest-text` thành công ở `TASK-202`, backend tự động gọi `AI-02` (`TASK-203`) trích xuất cấu trúc quy tắc biến thể ngầm và lưu trực tiếp vào bảng `question_blueprints` dưới dạng JSONB.
+  - Quá trình này diễn ra hoàn toàn tự động ở backend, không phơi bày ra UI và không cần endpoint công khai riêng cho người dùng tương tác hay sửa đổi.
+- [ ] `POST /api/sessions/{session_id}/confirm-source`:
+  - Gọi `assert_ownership` kiểm tra quyền sở hữu phiên.
+  - **Ràng buộc trạng thái (Precondition):** Chỉ cho phép thực hiện khi phiên làm việc đang ở trạng thái `draft`. Nếu phiên đã được xác nhận (`blueprinted` hoặc các trạng thái sau) $\rightarrow$ từ chối và trả về HTTP `409 Conflict`.
+  - **Kiểm tra tính toàn vẹn 100% (Strict Validation):** Kiểm tra toàn bộ câu hỏi nguồn trong phiên hợp lệ (`has_missing_answer == false`, `has_unparsed_omml == false`) và các bản ghi Blueprint nội bộ tương ứng đã được thiết lập. Nếu còn bất kỳ câu nào không hợp lệ $\rightarrow$ trả về HTTP `422 Unprocessable Entity`.
+  - Khi 100% hợp lệ $\rightarrow$ cập nhật trạng thái session sang `blueprinted` (sẵn sàng cho cấu hình Stage 2), đóng băng dữ liệu câu nguồn.
 
 ---
 
@@ -669,16 +674,16 @@
 - **Phụ thuộc:** TASK-003 *(Mock UI)*; Phụ thuộc tích hợp: TASK-204, TASK-205
 - **Trạng thái:** ⬜
 
-**Mô tả:** Màn hình cấu hình số lượng mã đề, chế độ biến thể và tùy chọn xáo trộn ban đầu trước khi bấm sinh đề.
+**Mô tả:** Màn hình cấu hình số lượng mã đề và tùy chọn xáo trộn ban đầu. Toàn bộ cơ chế biến thể (variation strategy) là hộp đen do Backend & AI quyết định tự động, người dùng không can thiệp.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] Trang `/session/:id/stage2`.
-- [ ] Bộ chọn số lượng mã đề $N \in [1, 4]$ (slider hoặc nút bấm số).
-- [ ] Danh sách chọn các chế độ biến thể (`variation_modes`: thay số, đổi ngữ cảnh, hoán đổi ẩn số) — chỉ cho chọn các chế độ mà Blueprint đã hỗ trợ.
+- [ ] Tạo trang `/session/:id/stage2`.
+- [ ] **Bộ chọn số lượng mã đề:** Cho phép chọn linh hoạt đầy đủ các số lượng mã đề từ 1 đến 4 ($N \in \{1, 2, 3, 4\}$: gồm 1 mã đề, 2 mã đề, 3 mã đề, 4 mã đề), mặc định là 4 mã đề.
+- [ ] **Cơ chế biến thể Black-box:** Không hiển thị danh sách các hộp kiểm chọn chế độ biến thể (thay số, đổi ngữ cảnh, hoán đổi ẩn); Backend và AI tự động quyết định chiến lược sinh đẳng cấu tối ưu.
 - [ ] **Tùy chọn xáo trộn ban đầu (`ordering_preferences`):**
   - Checkbox `shuffle_questions`: Xáo trộn thứ tự câu hỏi giữa các mã đề (mặc định: bật).
   - Checkbox `shuffle_options`: Xáo trộn thứ tự 4 đáp án A/B/C/D trong từng câu (mặc định: bật).
-- [ ] Thẻ tóm tắt thông số: *"Hệ thống sẽ sinh N mã đề, mỗi mã gồm X câu hỏi tương đương"*.
+- [ ] Thẻ tóm tắt thông số: *"Hệ thống sẽ sinh N mã đề, mỗi mã gồm X câu hỏi tương đương đẳng cấu"*.
 - [ ] Nút "Bắt đầu sinh đề" gửi cấu hình và chuyển hướng sang màn hình theo dõi tiến trình SSE.
 
 ---
@@ -692,9 +697,10 @@
 
 **Yêu cầu cụ thể phải làm được:**
 - [ ] `POST /api/sessions/{session_id}/config` nhận cấu hình từ Frontend. Gọi `assert_ownership`.
-- [ ] Kiểm tra ràng buộc server-side: $N \in [1, 4]$, `active_variation_modes` phải là tập con của các chế độ mà Blueprint cho phép.
-- [ ] Phát hiện xung đột (Config Conflict): Nếu cấu hình yêu cầu chế độ biến thể mà Blueprint không hỗ trợ $\rightarrow$ trả về mã lỗi HTTP 400 kèm `code: "ERR_CONFIG_CONFLICT"` và chi tiết xung đột.
-- [ ] Lưu vào bảng `generation_configs` và cập nhật `session.status = "configured"`.
+- [ ] Kiểm tra ràng buộc server-side: $N \in \{1, 2, 3, 4\}$.
+- [ ] Lưu cấu hình xáo trộn (`ordering_preferences`) và cập nhật `session.status = "configured"`.
+- [ ] Không yêu cầu chọn `variation_modes` từ client (Backend và AI tự động áp dụng chiến lược đẳng cấu).
+- [ ] Lưu vào bảng `generation_configs`.
 
 ---
 
@@ -809,7 +815,7 @@
 - [ ] **Cơ chế cập nhật trạng thái tự động:** Lắng nghe sự kiện `done` từ hook `useSSE` (kết hợp polling kiểm tra `GET /api/sessions/:id` mỗi 3s nếu mất kết nối) để tự động mở khóa Action Bar ngay khi quá trình sinh đề nền hoàn tất (`status = "generated"`).
 - [ ] Bộ chọn chuyển đổi giữa các mã đề (101, 102, 103, 104).
 - [ ] Render đầy đủ thân câu, 4 phương án lựa chọn và đáp án đúng bằng `MathRenderer`.
-- [ ] **Warning Badge:** Hiển thị huy hiệu cảnh báo màu đỏ/vàng trên câu có `validation_report.status !== "passed"`. Click vào badge mở panel chi tiết lỗi thẩm định toán học.
+- [ ] **Warning Badge:** Hiển thị huy hiệu cảnh báo màu đỏ/vàng trên câu có `validation_report.status !== "passed"` (chỉ cảnh báo lỗi thẩm định toán học/sư phạm, ví dụ SymPy không giải được hoặc nghi ngờ mâu thuẫn). **Tuyệt đối KHÔNG hiển thị bất kỳ cảnh báo kỹ thuật/hệ thống hay an ninh nào** lên giao diện người dùng. Click vào badge mở panel chi tiết sư phạm.
 - [ ] **TUYỆT ĐỐI KHÔNG** bố trí bất kỳ ô nhập văn bản (`input`, `textarea`, `contenteditable`) nào đối với nội dung câu biến thể — tuân thủ nghiêm ngặt nguyên tắc chỉ thẩm định (read-only review).
 
 ---
@@ -1301,9 +1307,9 @@ Trước khi nghiệm thu toàn bộ dự án, OPS và cả nhóm đối chiếu
 - [ ] **Tái sử dụng phiên:** Thử tính năng **Reuse Session** $\rightarrow$ tạo được bản sao phiên cũ thành công qua modal độc lập `CloneSessionModal`.
 - [ ] **Chặn PDF đầu vào:** Kéo file PDF vào Stage 1 $\rightarrow$ hệ thống chặn ngay và báo lỗi đỏ rõ ràng.
 - [ ] **Bao phủ 4 phương thức nạp đề:** Kiểm tra nạp thành công đề từ cả 4 nguồn: `.docx`, `.tex`, `.md`, và Tab "Nhập trực tiếp".
-- [ ] **Bảo vệ DOCX & Xử lý OMML:** Nạp file DOCX chứa Equation Editor cũ $\rightarrow$ parser bỏ qua OMML và hiển thị badge màu vàng cảnh báo, kích hoạt đúng hộp thoại `Content Incomplete` để sửa tay.
-- [ ] **Trích xuất & Xác nhận Blueprint:** AI-02 trích xuất được Blueprint kèm tóm tắt tiếng Việt $\rightarrow$ xác nhận thành công $\rightarrow$ chuyển trạng thái sang `blueprinted`.
-- [ ] **Cấu hình & Xung đột:** Thử chọn variation mode không có trong Blueprint $\rightarrow$ hệ thống chặn và giải thích xung đột rõ ràng; chọn mode hợp lệ $\rightarrow$ chuyển trạng thái sang `configured`.
+- [ ] **Bảo vệ DOCX & Xử lý OMML:** Nạp file DOCX chứa Equation Editor cũ không đọc được text $\rightarrow$ parser gắn cờ `has_unparsed_omml = true`, kích hoạt mã lỗi HTTP 422 và hộp thoại `Content Incomplete Warning` hướng dẫn người dùng chuẩn hóa file tải lại hoặc dán LaTeX vào tab Nhập trực tiếp.
+- [ ] **Trích xuất ngầm & Xác nhận đề nguồn:** Backend tự động trích xuất Blueprint ngầm (hộp đen) $\rightarrow$ người dùng xem trước đề gốc KaTeX và bấm "Xác nhận đề gốc và tiếp tục" $\rightarrow$ chuyển trạng thái sang `blueprinted`.
+- [ ] **Cấu hình Stage 2 Black-box:** Chọn số lượng mã đề $N \in \{1, 2, 3, 4\}$ và cấu hình xáo trộn (`shuffle_questions`, `shuffle_options`) $\rightarrow$ chuyển trạng thái sang `configured`.
 - [ ] **Tiến trình sinh đề SSE:** Bấm sinh $N=4$ mã đề $\rightarrow$ thanh tiến trình SSE hiển thị phần trăm thời gian thực mượt mà $\rightarrow$ hoàn tất chuyển sang `generated`.
 - [ ] **Kiểm tra Chốt chặn Review đồng thời:** Thử gọi API Review khi phiên đang ở trạng thái `generating` $\rightarrow$ Backend chặn với mã lỗi `409 Conflict`, giao diện Frontend hiển thị banner cảnh báo và disable Action Bar.
 - [ ] **Thẩm định 1-1 & Vòng đời câu hỏi:**

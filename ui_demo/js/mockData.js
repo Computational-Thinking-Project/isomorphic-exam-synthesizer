@@ -59,7 +59,7 @@ window.MOCK_DATA = {
         { key: "D", text: "$x = \\frac{5}{2}$" }
       ],
       correct_key: "A",
-      has_security_warning: true, // Mock security warning to demonstrate Amber Security Badge
+      has_unparsed_omml: true, // Mock cảnh báo bóc tách: công thức toán OMML/ảnh chưa trích xuất trọn vẹn
       solution: "Phương trình tương đương $2^{2x-1} = 2^3 \\Leftrightarrow 2x - 1 = 3 \\Leftrightarrow 2x = 4 \\Leftrightarrow x = 2$."
     },
     {

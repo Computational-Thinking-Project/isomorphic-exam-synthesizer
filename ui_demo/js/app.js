@@ -114,12 +114,20 @@ function renderSourcePreview() {
 
   var html = "";
   window.MOCK_DATA.source_questions.forEach(function (q, idx) {
-    var hasSec = q.has_security_warning;
+    var hasWarn = q.has_unparsed_omml || q.has_missing_answer;
+    var badgeHtml = '<span class="badge" style="background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0;">✓ Hợp lệ</span>';
+    
+    if (q.has_missing_answer) {
+      badgeHtml = '<span class="badge" style="background: #ffedd5; color: #c2410c; border: 1px solid #fed7aa;">⚠️ Chưa có đáp án</span>';
+    } else if (q.has_unparsed_omml) {
+      badgeHtml = '<span class="badge" style="background: #fef3c7; color: #92400e; border: 1px solid #fde68a;">⚠️ Công thức chưa nhận diện đủ</span>';
+    }
+
     html += `
-      <div class="card" style="margin-bottom: 1.25rem; border-left: 4px solid ${hasSec ? 'var(--warning)' : 'var(--slate-300)'};">
+      <div class="card" style="margin-bottom: 1.25rem; border-left: 4px solid ${hasWarn ? 'var(--warning)' : 'var(--slate-300)'};">
         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
           <span style="font-weight: 700; color: var(--slate-900);">Câu ${q.question_no}</span>
-          ${hasSec ? '<span class="badge badge-security">⚠️ Cảnh báo an ninh</span>' : '<span class="badge" style="background: var(--slate-100);">Hợp lệ</span>'}
+          ${badgeHtml}
         </div>
         <div class="math-content">${q.stem}</div>
         <div class="options-grid">
@@ -138,12 +146,6 @@ function renderSourcePreview() {
   });
   container.innerHTML = html;
 }
-
-// Stage 1 Confirm Checkbox logic
-window.toggleSecurityAck = function (cb) {
-  var btn = document.getElementById("btn-confirm-source");
-  btn.disabled = !cb.checked;
-};
 
 // Stage 2 Fake SSE Generation Runner
 window.startGenerationJob = function () {

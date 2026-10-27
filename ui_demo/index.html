@@ -199,20 +199,10 @@
           <!-- Rendered dynamically by app.js -->
         </div>
 
-        <!-- Security Guard Checkbox -->
-        <div class="card" style="background: #fffbeb; border-color: #fde68a; margin: 1.5rem 0;">
-          <label style="display: flex; align-items: flex-start; gap: 0.75rem; cursor: pointer;">
-            <input type="checkbox" id="security-ack-checkbox" style="margin-top: 0.25rem; width: 18px; height: 18px;" onchange="toggleSecurityAck(this)">
-            <span style="font-size: 0.9rem; color: #92400e; font-weight: 500;">
-              Tôi đã kiểm tra danh sách câu hỏi nguồn (bao gồm câu có cảnh báo chuỗi khả nghi), xác nhận nội dung toán học an toàn và đồng ý kích hoạt quy trình sinh biến thể.
-            </span>
-          </label>
-        </div>
-
         <!-- Bottom Action -->
-        <div style="display: flex; justify-content: flex-end; gap: 1rem;">
+        <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1.5rem;">
           <button class="btn btn-secondary" onclick="navigateTo('view-dashboard')">Hủy bỏ</button>
-          <button class="btn btn-primary" id="btn-confirm-source" disabled onclick="navigateTo('view-stage2')">
+          <button class="btn btn-primary" id="btn-confirm-source" onclick="navigateTo('view-stage2')">
             <span>Xác nhận đề gốc và tiếp tục →</span>
           </button>
         </div>
@@ -230,36 +220,17 @@
           <div style="display: flex; gap: 1rem;">
             <button class="btn btn-secondary" style="flex: 1; padding: 1rem;">1 Mã đề</button>
             <button class="btn btn-secondary" style="flex: 1; padding: 1rem;">2 Mã đề</button>
+            <button class="btn btn-secondary" style="flex: 1; padding: 1rem;">3 Mã đề</button>
             <button class="btn btn-primary" style="flex: 1; padding: 1rem; border: 2px solid var(--primary);">4 Mã đề (Khuyên dùng)</button>
           </div>
-          <p style="font-size: 0.8rem; color: var(--slate-500); margin-top: 0.5rem;">Hệ thống sẽ tổng hợp 4 mã đề: 101, 102, 103, 104 với cùng phương pháp giải.</p>
+          <p style="font-size: 0.8rem; color: var(--slate-500); margin-top: 0.5rem;">Hệ thống sẽ tổng hợp $N$ mã đề biến thể với cùng phương pháp giải và độ khó sư phạm tương đương.</p>
         </div>
 
-        <div class="card" style="margin-bottom: 1.5rem;">
-          <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 1rem;">2. Chế độ biến thể (Variation Modes)</h3>
-          <div style="display: flex; flex-direction: column; gap: 0.75rem;">
-            <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer;">
-              <input type="checkbox" checked style="width: 18px; height: 18px;">
-              <div>
-                <strong>Thay đổi số liệu tham số (Parameter Variation)</strong>
-                <p style="font-size: 0.8rem; color: var(--slate-500);">Đổi hệ số nghiệm đẹp, bảo toàn tuyệt đối bảng biến thiên và phương pháp giải.</p>
-              </div>
-            </label>
-            <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer;">
-              <input type="checkbox" checked style="width: 18px; height: 18px;">
-              <div>
-                <strong>Thay đổi ngữ cảnh bài toán (Context Variation)</strong>
-                <p style="font-size: 0.8rem; color: var(--slate-500);">Làm mới câu chữ thực tế nhưng giữ nguyên công thức toán học.</p>
-              </div>
-            </label>
-            <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer;">
-              <input type="checkbox" checked style="width: 18px; height: 18px;">
-              <div>
-                <strong>Hoán đổi ẩn số (Variable Swap)</strong>
-                <p style="font-size: 0.8rem; color: var(--slate-500);">Đổi vai trò giữa các biến số và hàm số phụ.</p>
-              </div>
-            </label>
-          </div>
+        <div class="card" style="margin-bottom: 1.5rem; background: #f8fafc; border-left: 4px solid var(--primary);">
+          <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.5rem;">2. Chiến lược tạo biến thể đẳng cấu (Black-box)</h3>
+          <p style="font-size: 0.85rem; color: var(--slate-600); margin-bottom: 0;">
+            🤖 <strong>Cơ chế tự động:</strong> Backend và AI sẽ tự động phân tích quy tắc toán học, điều chỉnh hệ số nghiệm đẹp và bảo toàn tuyệt đối phương pháp giải cùng độ khó sư phạm. Người dùng không cần can thiệp thủ công.
+          </p>
         </div>
 
         <div class="card" style="margin-bottom: 2rem;">
