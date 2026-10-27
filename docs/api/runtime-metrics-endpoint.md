@@ -2,10 +2,18 @@
 
 ## Status and scope
 
-This document specifies the full W2 metrics scope. It does not implement the
-collector, access guard, memory reader or protected endpoint. The current
-product handler still returns only `status` and `gemini_model`, without auth.
-Do not describe this specification as completed runtime instrumentation.
+This branch implements response models, the runtime registry, Linux current RSS
+reader and a fresh-snapshot collector, with isolated tests. The new TASK-207b
+Python broker/runner also accept this same registry for their lifecycle hooks.
+They are not registered in the product app. The current product handler still
+returns only `status` and `gemini_model`, without auth. Access guard, real AI
+instrumentation and protected endpoint integration remain pending.
+
+`RuntimeMetricsCollector.collect()` combines registry activity, configured model
+and a new RSS sample, validates all eight response fields and raises a safe
+`RuntimeMetricsUnavailableError` on any failure. It never returns partial data
+or substitutes zero for a missing observation. The later HTTP adapter must map
+this error to the specified 503 body.
 
 The endpoint reports the current backend worker's runtime activity. It is
 separate from pedagogical statistics (TASK-401), persistent per-session Gemini
