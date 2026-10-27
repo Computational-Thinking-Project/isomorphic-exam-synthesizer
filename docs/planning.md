@@ -10,7 +10,7 @@
 
 | Ký hiệu | Vai trò | Trọng tâm phụ trách chính | Danh sách task phụ trách |
 | :--- | :--- | :--- | :--- |
-| **FE1** | Frontend Core 1 | Setup FE, Auth UI, Dashboard, KaTeX, Stage 1 Ingestion, Blueprint Viewer & Confirmer, Thống kê | TASK-003, 101, 103, 105, 201, 203b, 204, 401 |
+| **FE1** | Frontend Core 1 | Setup FE, Auth UI, Dashboard, KaTeX, Stage 1 Ingestion, Blueprint Editor, Thống kê | TASK-003, 101, 103, 105, 201, 203b, 204, 401 |
 | **FE2** | Frontend Core 2 | CloneModal, Stage 2 Config, SSE Progress, Review 1-1, Action Bar, Final Approval, Export Center | TASK-103b, 206, 208, 301, 302, 305, 307 |
 | **BE1** | Backend Core & Lead | Setup BE, Auth JWT, Sessions CRUD, Parsers (DOCX/LaTeX/MD), Blueprint APIs, Review API, Final Approval API | TASK-004, 102, 104, 202, 205, 303, 305b |
 | **BE2** | Backend Engine | Rate Limit, Config Validator, Orchestrator SSE, Health Metrics, Shuffler, Typst PDF Compiler | TASK-005, 207a, 207b, 207c, 304, 306a |
@@ -78,7 +78,7 @@
 - [ ] Tạo file `README.md` hướng dẫn cách chạy dự án (cài Docker Desktop, clone, `docker compose up`).
 - [ ] Tạo file `CONTRIBUTING.md` quy định: Conventional Commits (`feat(module): ...`, `fix(module): ...`), Branch naming (`feat/task-XXX-desc`), quy trình Pull Request và ma trận Code Review.
 - [ ] Tạo file `.gitignore` cho cả Node.js và Python (chặn `node_modules/`, `.env`, `__pycache__/`, `*.pyc`, `.pytest_cache/`).
-- [ ] Tạo file `.env.example` liệt kê đầy đủ các biến kèm giải thích: `GEMINI_API_KEY`, `GEMINI_MODEL=gemini-3.5-flash-lite` (mô hình thế hệ mới mặc định hỗ trợ Structured Outputs, tối ưu độ trễ và chi phí; cấu hình linh hoạt qua `.env`, chạy smoke test xác minh schema JSON, quota và chi phí), `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CORS_ORIGINS`, `MAX_UPLOAD_SIZE_MB=10`.
+- [ ] Tạo file `.env.example` liệt kê đầy đủ các biến kèm giải thích: `GEMINI_API_KEY`, `GEMINI_MODEL=gemini-2.5-flash` (mô hình ổn định hiện hành hỗ trợ Structured Outputs; cấu hình linh hoạt qua `.env`, chạy smoke test xác minh schema JSON, quota và chi phí), `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CORS_ORIGINS`, `MAX_UPLOAD_SIZE_MB=10`.
 - [ ] Thiết lập Branch Protection Rule: yêu cầu Pull Request + ít nhất 1 người review trước khi merge vào `dev`.
 
 ---
@@ -92,7 +92,7 @@
 **Yêu cầu cụ thể phải làm được:**
 - [ ] Tạo `frontend/Dockerfile` — multi-stage: Node 20 build Vite, Nginx alpine serve static files.
 - [ ] Tạo `frontend/nginx.conf` — reverse proxy `/api/*` $\rightarrow$ `http://backend:8000`, serve SPA với `try_files $uri /index.html`.
-- [ ] Tạo `backend/Dockerfile` — base image Python 3.11-slim, cài dependencies, tải và cài binary **Typst** từ GitHub Release (`/usr/local/bin/typst`). *(Lưu ý: Typst là công cụ biên dịch PDF in ấn duy nhất trong container; tuyệt đối không cài đặt bộ TeX Live 3–5GB trong Docker để giữ dung lượng nhẹ và tối ưu CI/CD)*.
+- [ ] Tạo `backend/Dockerfile` — base image Python 3.11-slim, cài dependencies, tải và cài binary **Typst** từ GitHub Release (`/usr/local/bin/typst`).
 - [ ] Tạo `docker-compose.yml` gồm 2 services: `frontend` (port 3000) và `backend` (port 8000), cấu hình volume mount `./backend:/app` để hot-reload khi dev.
 - [ ] Thêm health check endpoint cho backend trong docker-compose: `curl -f http://localhost:8000/health`.
 - [ ] Kiểm tra: chạy `docker compose up --build` $\rightarrow$ cả 2 container lên bình thường, truy cập được `http://localhost:3000` và `http://localhost:8000/docs`.
@@ -118,18 +118,12 @@
   - `approved_at`: `TIMESTAMPTZ NULL` (lưu thời điểm duyệt cuối cùng của TASK-305b).
 - [ ] **Bổ sung các trường Cảnh báo trong `source_questions`:**
   - `has_missing_answer`: `BOOLEAN NOT NULL DEFAULT FALSE` (phục vụ Stage 1 Incomplete Loop trong TASK-203b khi thiếu đáp án).
-  - `has_unparsed_omml`: `BOOLEAN NOT NULL DEFAULT FALSE` (đánh dấu câu có công thức OMML không parse được sang LaTeX trong TASK-403b).
   - `has_security_warning`: `BOOLEAN NOT NULL DEFAULT FALSE` (cảnh báo chuỗi khả nghi/prompt injection trong TASK-106).
 - [ ] **Đồng bộ Mô Hình Dữ Liệu Chuẩn Bất Biến trong `version_questions` (Canonical Data Model - TASK-304):**
-  - `canonical_question_no`: `INTEGER NOT NULL` (thứ tự câu chuẩn 1..M từ đề gốc, bất biến, dùng xuyên suốt Stage 2 & Stage 3 Review để hiển thị đối chiếu 1-1).
-  - `question_no`: `INTEGER NOT NULL` (thứ tự câu hiển thị trên đề thi; trước shuffle = `canonical_question_no`; sau shuffle được cập nhật theo `permutations.question_order`).
-  - `canonical_options`: `JSONB NOT NULL` (mảng chuẩn 4 phương án gốc `[{"key": "A", "text": "..."}, {"key": "B", "text": "..."}, ...]`).
-  - `canonical_correct_key`: `TEXT NOT NULL` (chữ cái đáp án đúng gốc "A", "B", "C", "D").
-  - `canonical_solution_md`: `TEXT NULL` (lời giải chi tiết chuẩn, bất biến, viết theo đáp án gốc).
-  - `stem_latex`: `TEXT NOT NULL` (nội dung câu hỏi).
-  - `options`: `JSONB NOT NULL` (mảng 4 phương án hiển thị sau hoán vị `[{"key": "A", "text": "..."}, ...]`).
-  - `correct_option`: `TEXT NOT NULL` (chữ cái đáp án đúng hiển thị sau hoán vị).
-  - `solution_md`: `TEXT NULL` (lời giải hiển thị sau hoán vị, lưu bền vững trong DB, đồng bộ theo hoán vị đáp án).
+  - `canonical_question_no`: `INTEGER NOT NULL` (thứ tự câu chuẩn từ đề nguồn).
+  - `canonical_options`: `JSONB NOT NULL` (mảng 4 phương án gốc chuẩn A, B, C, D).
+  - `canonical_correct_key`: `TEXT NOT NULL` (chữ cái đáp án đúng chuẩn).
+  - `canonical_solution_md`: `TEXT NULL` (lời giải chi tiết chuẩn).
   - `has_warning`: `BOOLEAN NOT NULL DEFAULT FALSE` (đánh dấu câu có cảnh báo validation để render warning badge trong TASK-207b & TASK-301).
   - `updated_at`: `TIMESTAMPTZ NOT NULL DEFAULT now()` (phục vụ Stale Regeneration Guard tự động giải phóng câu bị kẹt `regenerating` trong TASK-303).
   - `is_current`: `BOOLEAN NOT NULL DEFAULT TRUE` (đánh dấu bản ghi đang có hiệu lực trong phiên review).
@@ -139,12 +133,6 @@
   - `shuffle_seed`: `TEXT NULL` (seed ngẫu nhiên xác định).
   - `permutations`: `JSONB NULL` (ma trận hoán vị thứ tự câu hỏi và thứ tự phương án).
   - `is_finalized`: `BOOLEAN NOT NULL DEFAULT FALSE` (cờ đánh dấu đề thi đã shuffle xong và sẵn sàng phê duyệt).
-- [ ] **Đặc tả cấu trúc bảng `answer_keys` (phục vụ xuất bảng đáp án 4 mã đề - TASK-305):**
-  - `id`: `UUID PRIMARY KEY DEFAULT gen_random_uuid()`
-  - `version_id`: `UUID NOT NULL REFERENCES exam_versions(id) ON DELETE CASCADE`
-  - `display_no`: `INTEGER NOT NULL` (thứ tự câu sau shuffle 1..N)
-  - `display_correct_key`: `CHAR(1) NOT NULL` (chữ cái đáp án đúng sau hoán vị A, B, C, D)
-  - `canonical_question_no`: `INTEGER NOT NULL` (thứ tự câu gốc đối chiếu)
 - [ ] **Ràng buộc toàn vẹn Database Invariant (SEC-P0.4 Partial Unique Index):**
   - Khóa chặt quy tắc "Mỗi câu tại một thời điểm chỉ có duy nhất 1 bản ghi hiện hành" ngay tại tầng CSDL PostgreSQL:
     ```sql
@@ -163,13 +151,12 @@
       user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
       event_type TEXT NOT NULL, -- 'PROMPT_INJECTION_DETECTED', 'RATE_LIMIT_EXCEEDED'
       severity TEXT NOT NULL DEFAULT 'WARN', -- 'INFO', 'WARN', 'CRITICAL'
-      sanitized_details JSONB NOT NULL DEFAULT '{}'::jsonb, -- Chi tiết đã lọc, tuyệt đối không lưu raw str(e) hay payload độc hại
-      ip_address TEXT NULL, -- Địa chỉ IP client nếu có
+      sanitized_detail JSONB NOT NULL, -- Chi tiết đã lọc, tuyệt đối không lưu raw str(e)
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
     ```
 - [ ] **Đồng bộ tự động Supabase Auth $\rightarrow$ Bảng `public.users` (SEC-09 Hardened Trigger):**
-  - Viết PostgreSQL Trigger Function `public.handle_new_user()` có khóa cứng `SET search_path = ''` và schema-qualified đầy đủ với các cột `full_name`, `avatar_url`:
+  - Viết PostgreSQL Trigger Function `public.handle_new_user()` có khóa cứng `SET search_path = ''` và schema-qualified đầy đủ:
     ```sql
     CREATE OR REPLACE FUNCTION public.handle_new_user()
     RETURNS trigger
@@ -178,17 +165,9 @@
     SET search_path = ''
     AS $$
     BEGIN
-      INSERT INTO public.users (id, email, full_name, avatar_url)
-      VALUES (
-        new.id, 
-        new.email, 
-        COALESCE(new.raw_user_meta_data->>'full_name', new.raw_user_meta_data->>'name', new.email),
-        new.raw_user_meta_data->>'avatar_url'
-      )
-      ON CONFLICT (id) DO UPDATE SET 
-        email = EXCLUDED.email, 
-        full_name = EXCLUDED.full_name,
-        avatar_url = EXCLUDED.avatar_url;
+      INSERT INTO public.users (id, email, name)
+      VALUES (new.id, new.email, COALESCE(new.raw_user_meta_data->>'full_name', new.email))
+      ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, name = EXCLUDED.name;
       RETURN new;
     END;
     $$;
@@ -196,81 +175,6 @@
     CREATE TRIGGER on_auth_user_created
       AFTER INSERT ON auth.users
       FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
-    ```
-  - Verify `SET search_path = ''` trên trigger function để chống Search Path Hijacking.
-  - Đảm bảo khi người dùng đăng nhập bằng Google OAuth, bản ghi `users` luôn sẵn sàng để khóa ngoại `exam_sessions.user_id` không bao giờ vi phạm.
-- [ ] **Tạo PostgreSQL Stored Function tính toán Analytics `public.get_user_analytics` (BE-10, TASK-401):**
-  - Đóng gói toàn bộ truy vấn KPI vào hàm RPC với `SECURITY DEFINER` và kiểm tra quyền sở hữu `auth.uid()`:
-    ```sql
-    CREATE OR REPLACE FUNCTION public.get_user_analytics(
-      p_user_id UUID,
-      p_session_id UUID DEFAULT NULL
-    )
-    RETURNS JSONB
-    LANGUAGE plpgsql
-    SECURITY DEFINER
-    SET search_path = ''
-    AS $$
-    DECLARE
-      v_result JSONB;
-    BEGIN
-      -- Chỉ cho phép user tự truy vấn dữ liệu của mình (hoặc backend service_role)
-      IF auth.uid() IS NOT NULL AND auth.uid() <> p_user_id THEN
-        RAISE EXCEPTION 'Access denied';
-      END IF;
-
-      WITH target_sessions AS (
-        SELECT id FROM public.exam_sessions 
-        WHERE user_id = p_user_id 
-          AND (p_session_id IS NULL OR id = p_session_id)
-      ),
-      initial_questions AS (
-        SELECT vq.id, vq.validation_report, vq.is_reverted
-        FROM public.version_questions vq
-        JOIN public.exam_versions ev ON vq.version_id = ev.id
-        JOIN target_sessions ts ON ev.session_id = ts.id
-        WHERE vq.regenerated_from_id IS NULL
-      ),
-      first_actions AS (
-        SELECT DISTINCT ON (rl.version_question_id)
-          rl.version_question_id,
-          rl.action_type
-        FROM public.review_logs rl
-        JOIN initial_questions iq ON rl.version_question_id = iq.id
-        ORDER BY rl.version_question_id, rl.created_at ASC
-      ),
-      all_rejections AS (
-        SELECT rl.version_question_id
-        FROM public.review_logs rl
-        JOIN public.version_questions vq ON rl.version_question_id = vq.id
-        JOIN public.exam_versions ev ON vq.version_id = ev.id
-        JOIN target_sessions ts ON ev.session_id = ts.id
-        WHERE rl.action_type = 'REJECT'
-      ),
-      recovered_questions AS (
-        SELECT DISTINCT vq.regenerated_from_id
-        FROM public.version_questions vq
-        JOIN public.exam_versions ev ON vq.version_id = ev.id
-        JOIN target_sessions ts ON ev.session_id = ts.id
-        WHERE vq.status = 'approved' AND vq.regenerated_from_id IS NOT NULL
-      )
-      SELECT jsonb_build_object(
-        'first_pass_rate', ROUND((COUNT(CASE WHEN fa.action_type = 'ACCEPT' THEN 1 END)::numeric / NULLIF(COUNT(iq.id), 0) * 100.0), 1),
-        'recovery_rate', ROUND((COUNT(DISTINCT rq.regenerated_from_id)::numeric / NULLIF(COUNT(DISTINCT ar.version_question_id), 0) * 100.0), 1),
-        'validation_confidence_ratio', ROUND((COUNT(CASE WHEN iq.validation_report->>'confidence' = 'sympy_verified' THEN 1 END)::numeric / NULLIF(COUNT(iq.id), 0) * 100.0), 1),
-        'avg_latency_ms', ROUND(COALESCE(AVG(rl.latency_ms), 0)),
-        'total_questions_reviewed', COUNT(iq.id),
-        'revert_rate', ROUND((COUNT(CASE WHEN iq.is_reverted THEN 1 END)::numeric / NULLIF(COUNT(iq.id), 0) * 100.0), 1)
-      ) INTO v_result
-      FROM initial_questions iq
-      LEFT JOIN first_actions fa ON iq.id = fa.version_question_id
-      LEFT JOIN all_rejections ar ON true
-      LEFT JOIN recovered_questions rq ON true
-      LEFT JOIN public.review_logs rl ON iq.id = rl.version_question_id;
-
-      RETURN COALESCE(v_result, '{}'::jsonb);
-    END;
-    $$;
     ```
   - Verify `SET search_path = ''` trên trigger function để chống Search Path Hijacking.
   - Đảm bảo khi người dùng đăng nhập bằng Google OAuth, bản ghi `users` luôn sẵn sàng để khóa ngoại `exam_sessions.user_id` không bao giờ vi phạm.
@@ -344,7 +248,7 @@
 - [ ] Tạo `backend/app/main.py` với health check `GET /health`.
 - [ ] Tạo `backend/app/core/config.py` dùng `pydantic-settings` đọc biến môi trường:
   - Khai báo kiểu `SecretStr` cho `SUPABASE_SERVICE_ROLE_KEY` và `GEMINI_API_KEY` để tự động che giấu (masking) khi log.
-  - Cấu hình biến môi trường `GEMINI_MODEL` (mặc định: `gemini-3.5-flash-lite`), tuyệt đối không hard-code tên model trong code logic.
+  - Cấu hình biến môi trường `GEMINI_MODEL` (mặc định: `gemini-3.8-flash`), tuyệt đối không hard-code tên model trong code logic.
 - [ ] Cấu hình `logging` module dạng JSON structured log: log method, path, status, latency, `user_id`, tuyệt đối **không log request body chứa PII hay token**.
 - [ ] Tạo `backend/app/models/schemas.py` chứa toàn bộ Pydantic models khớp 1-1 với types của Frontend (bao gồm `is_current`, `regenerated_from_id`, enum `question_status` đủ 4 trạng thái, và `security_events`).
 - [ ] **Tài liệu Hợp đồng API Chi tiết (`docs/api-contract.md`) (ALIGN-01, ALIGN-04):**
@@ -416,7 +320,6 @@
 **Yêu cầu cụ thể phải làm được:**
 - [ ] Trang `/login` với nút "Đăng nhập bằng Google" gọi `supabase.auth.signInWithOAuth({ provider: 'google' })`.
 - [ ] Lắng nghe `supabase.auth.onAuthStateChange`: Khi nhận sự kiện `SIGNED_IN`, kiểm tra và xác nhận bản ghi hồ sơ đã tồn tại trong `public.users` (thông qua Database Trigger của TASK-002) trước khi cập nhật Zustand store và chuyển hướng.
-- [ ] **Kiểm thử Đăng nhập Google Lần đầu (First-time Login Smoke Test):** Kiểm tra tài khoản Google mới chưa từng tồn tại trong hệ thống đăng nhập $\rightarrow$ trigger `handle_new_user` tự động tạo bản ghi `users` với đầy đủ `id`, `email`, `full_name`, `avatar_url` $\rightarrow$ frontend nhận diện thông tin và render dashboard mượt mà, không gặp lỗi `user_id` không tồn tại khi tạo session.
 - [ ] Cấu hình Axios Interceptor trong `src/services/api.ts`: tự động gắn header `Authorization: Bearer <jwt>`. Nếu nhận lỗi 401 $\rightarrow$ gọi `supabase.auth.refreshSession()` 1 lần; nếu vẫn lỗi $\rightarrow$ tự động đăng xuất và chuyển về `/login`.
 - [ ] Tạo component `ProtectedRoute` bảo vệ các route nội bộ.
 - [ ] Tạo thanh điều hướng (Navbar) hiển thị avatar, tên người dùng và nút Đăng xuất (`signOut`).
@@ -512,10 +415,7 @@
 **Mô tả:** Kết nối Google Gemini API với biến cấu hình động `GEMINI_MODEL`, cơ chế ép kiểu JSON nghiêm ngặt, làm sạch đầu vào và phòng vệ Prompt Injection nhiều tầng.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] Tạo `backend/app/services/ai/client.py` khởi tạo `google.genai.Client` với model lấy từ biến môi trường `settings.gemini_model` (mặc định: `gemini-3.5-flash-lite`), tuyệt đối không hardcode tên model.
-- [ ] **Chính sách Ghi nhận Quota Gọi Gemini Thực tế (Precise Quota Tracking - Issue 8):**
-  - Mọi request HTTP thực tế phát sinh gửi tới Google Gemini API (kể cả request thành công, thất bại mã lỗi 4xx/5xx, retry exponential backoff, schema repair pass hay prompt giải chi tiết) đều là 1 API call tiêu tốn ngân sách.
-  - Tầng Client Wrapper (`generate_structured`) bắt buộc nhận `session_id` và thực hiện tăng bộ đếm CSDL tương ứng (`gemini_call_count` trong Stage 1/2 hoặc `gemini_review_calls` trong Stage 3) ngay trước khi gửi request tới API, đảm bảo bộ đếm phản ánh chính xác 100% chi phí và hạn ngạch, không bỏ sót bất kỳ request nào.
+- [ ] Tạo `backend/app/services/ai/client.py` khởi tạo `google.genai.Client` với model lấy từ biến môi trường `settings.gemini_model` (mặc định: `gemini-2.5-flash`), tuyệt đối không hardcode tên model.
 - [ ] **Phòng chống Prompt Injection & Bảo toàn dữ liệu nguồn (SEC-02, Safe Escaping):**
   - **Nguyên tắc bảo toàn dữ liệu gốc:** Giữ nguyên 100% nguyên văn văn bản câu hỏi trong Database (`source_questions`), **tuyệt đối không âm thầm cắt bỏ hay thay thế chuỗi ký tự** của người dùng trong dữ liệu gốc.
   - **Tách biệt ngữ cảnh qua SDK:** Hướng dẫn hệ thống luôn nằm trong `system_instruction` của Gemini Client, hoàn toàn độc lập với User Input.
@@ -556,15 +456,11 @@
 - [ ] Thiết kế Prompt sinh biến thể đẳng cấu chuyên sâu:
   - Đầu vào: Câu hỏi gốc, `QuestionBlueprint` đã xác nhận (parameters, invariants), và danh sách `active_variation_modes` được chọn (thay số, đổi ngữ cảnh, hoán đổi ẩn số).
   - Ràng buộc sư phạm: Giữ nguyên tuyệt đối phương pháp giải toán (bất biến), thay đổi số liệu trong khoảng `min`–`max` cho phép, tạo 3 phương án nhiễu (distractors) hợp lý dựa trên các sai lầm toán học phổ biến của học sinh THPT.
-- [ ] Định nghĩa Pydantic Schema `IsomorphicVariant` (đồng bộ 100% với JSONB của Database và Frontend Data Contract):
+- [ ] Định nghĩa Pydantic Schema `IsomorphicVariant`:
   ```python
-  class OptionItem(BaseModel):
-      key: Literal["A", "B", "C", "D"]
-      text: str
-
   class IsomorphicVariant(BaseModel):
       stem_latex: str
-      options: list[OptionItem]  # Đúng 4 phần tử có key "A", "B", "C", "D"
+      options: dict[str, str]  # Exactly keys "A", "B", "C", "D"
       correct_option: Literal["A", "B", "C", "D"]
       solution_outline: str
       variation_rationale: str  # Giải thích cách thức biến thể
@@ -681,19 +577,10 @@
   - `markdown_parser.py`: Bóc tách cú pháp Markdown chuẩn và công thức LaTeX `$...$`.
 - [ ] **Nhận diện Bảng đáp án riêng biệt (Separate Answer Key Parsing):**
   - Quét tìm bảng đáp án ở cuối đề thi (dạng `1.A 2.B...` hoặc `1-A, 2-B...`) để tự động map vào `correct_option` của từng câu.
-  - Nếu câu hỏi không tìm thấy đáp án hoặc không thể xác định $\rightarrow$ gắn cờ `has_missing_answer = true` và kích hoạt luồng HTTP 422 (`TASK-203b`).
-- [ ] **Xử lý OMML / Equation Editor cũ:** Nếu DOCX chứa công thức dạng ảnh hoặc OMML mà không trích xuất được text $\rightarrow$ đánh dấu câu đó là `incomplete` (cờ `has_unparsed_omml = true`). Do Stage 1 tuân thủ triệt để Zero-Editing (không sửa tay trên web), câu có cờ này cũng được kích hoạt luồng HTTP 422 (`TASK-203b`) yêu cầu người dùng chuẩn hóa lại công thức trong file gốc trước khi nạp lại.
+  - Nếu câu hỏi không tìm thấy đáp án hoặc không thể xác định $\rightarrow$ gắn cờ `has_missing_answer = true` và đưa vào danh sách câu chưa hoàn chỉnh để người dùng điền tay ở `Stage 1 Incomplete Loop` (`TASK-203b`).
+- [ ] **Xử lý OMML / Equation Editor cũ:** Nếu DOCX chứa công thức dạng ảnh hoặc OMML mà không trích xuất được text $\rightarrow$ đánh dấu câu đó là `incomplete` (cờ `has_unparsed_omml = true`) để kích hoạt vòng lặp `TASK-203b`.
 - [ ] Chuẩn hóa bảng mã tiếng Việt sang **Unicode NFC** để tránh lỗi font chữ.
-- [ ] **Cơ chế Tiền kiểm tra In-Memory & Ghi đè An toàn (Atomic Ingestion & Idempotent Replace - Issue 2):**
-  - **Tiền kiểm tra 100% In-Memory:** Toàn bộ quá trình bóc tách tệp, trích xuất văn bản, nhận diện bảng đáp án và phát hiện công thức OMML được thực hiện hoàn toàn trong bộ nhớ (In-Memory).
-  - **Khi phát hiện lỗi dữ liệu / cấu trúc:** Nếu phát hiện bất kỳ câu nào thiếu đáp án, lỗi công thức OMML không trích xuất được text, hoặc số câu không thuộc $[1, 20]$:
-    - Backend **tuyệt đối không can thiệp vào CSDL (Database is untouched)**: Giữ nguyên vẹn dữ liệu đề nguồn hợp lệ cũ của phiên (nếu có); nếu là phiên mới thì giữ nguyên 0 câu hỏi.
-    - Không lưu bất kỳ bản ghi lỗi nào vào DB. Các cờ lỗi (`has_missing_answer`, `has_unparsed_omml`) chỉ được sử dụng làm trường dữ liệu trong response payload của mã lỗi **HTTP 422 `UNPROCESSABLE_ENTITY`** kèm danh sách chi tiết các câu lỗi để Frontend hiển thị hướng dẫn.
-  - **Khi 100% câu hỏi bóc tách hợp lệ:** Backend mở một PostgreSQL Transaction duy nhất:
-    1. Xóa sạch dữ liệu `source_questions` và `question_blueprints` cũ (nếu có) của `session_id` này để chống trùng lặp dữ liệu.
-    2. Chèn toàn bộ danh sách câu hỏi mới vào bảng `source_questions` (tất cả đều có `has_missing_answer = false, has_unparsed_omml = false`).
-    3. Commit transaction nguyên tử.
-    4. Trả về HTTP 200/201 kèm danh sách câu hỏi và tự động kích hoạt pipeline trích xuất Blueprint ban đầu (`AI-02`).
+- [ ] Lưu danh sách câu hỏi vào bảng `source_questions`.
 
 ---
 
@@ -707,7 +594,7 @@
 **Yêu cầu cụ thể phải làm được:**
 - [ ] Định nghĩa Pydantic model `QuestionBlueprint`: danh sách `parameters` (tên biến, giá trị hiện tại, khoảng giá trị `min`–`max`), danh sách `invariants` (điều kiện giữ nguyên phương pháp giải), các `variation_modes` cho phép, và `readable_summary` tiếng Việt.
 - [ ] Xây dựng prompt Few-shot hướng dẫn AI nhận diện đúng các tham số có thể biến thiên mà không làm thay đổi phương pháp giải bài toán.
-- [ ] **Quy trình Trích xuất Blueprint Ban đầu (Initial Pipeline):** Ngay sau khi bóc tách hợp lệ toàn bộ đề nguồn từ `TASK-202`, backend tự động gọi pipeline trích xuất hàng loạt (kết hợp `asyncio.Semaphore(3)`) để tạo trước Blueprint nội bộ cho toàn bộ câu nguồn và lưu vào bảng `question_blueprints`.
+- [ ] **Quy trình Trích xuất Blueprint Ban đầu (Initial Pipeline):** Ngay sau khi bóc tách xong đề nguồn từ `TASK-202` (hoặc sau khi giảng viên xác nhận sửa các câu incomplete ở `TASK-203b`), backend tự động gọi pipeline trích xuất hàng loạt (kết hợp `asyncio.Semaphore(3)`) hoặc qua endpoint `POST /api/sessions/{session_id}/blueprints/extract-all` để tạo trước Blueprint cho toàn bộ câu nguồn và lưu vào bảng `question_blueprints`.
 - [ ] Kiểm thử prompt với 3 chuyên đề toán: Phương trình bậc 2, Khảo sát hàm số, Tích phân.
 
 ---
@@ -731,55 +618,49 @@
 - **Phụ thuộc:** TASK-201, TASK-202
 - **Trạng thái:** ⬜
 
-**Mô tả:** Xử lý trường hợp file đề thi bị thiếu cấu trúc, thiếu đáp án hoặc parser gặp công thức OMML không đọc được text (`S1_Warn`).
+**Mô tả:** Xử lý trường hợp file đề thi bị thiếu cấu trúc hoặc parser không bóc tách được câu hỏi (`S1_Warn`).
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] Phía Backend: Tiền kiểm tra tính toàn vẹn câu hỏi hoàn toàn in-memory:
-  - Nếu parser nhận diện ít hơn 1 câu, vượt quá 20 câu, thiếu phương án A/B/C/D, thiếu đáp án đúng, hoặc chứa công thức OMML không trích xuất được text $\rightarrow$ không thực hiện bất kỳ thao tác ghi DB nào (giữ nguyên DB cũ) và trả về mã HTTP 422 Unprocessable Entity.
-  - Payload lỗi chi tiết gồm: mã lỗi (`ERR_MISSING_ANSWER`, `ERR_UNPARSED_OMML`, `ERR_STRUCTURE_INVALID`) kèm danh sách số thứ tự câu hỏi và nguyên nhân cụ thể (`errors: [{"question_no": 3, "error_type": "MISSING_ANSWER"}]`).
-- [ ] Phía Frontend: Bắt mã lỗi HTTP 422 và hiển thị hộp thoại cảnh báo `Content Incomplete Warning`:
-  - Liệt kê chi tiết danh sách câu lỗi kèm hướng dẫn hành động (ví dụ: bổ sung đáp án vào bảng đáp án cuối file, hoặc chuyển đổi công thức Equation Word sang chuẩn tương thích).
-  - Cung cấp nút bấm "Tải lại file khác" để giảng viên chọn file đã sửa từ máy tính hoặc chuyển sang Tab "Nhập trực tiếp" để dán mã LaTeX thô (loại bỏ hoàn toàn cơ chế sửa tay trực tiếp trên giao diện để bảo toàn tính toàn vẹn của tệp nguồn theo ADR-002).
+- [ ] Phía Backend: Nếu parser nhận diện được ít hơn 1 câu, thiếu phương án hoặc thiếu đáp án (`has_missing_answer = true`) $\rightarrow$ trả về HTTP 422 kèm danh sách các dòng bị lỗi cấu trúc.
+- [ ] Phía Frontend: Hiển thị hộp thoại cảnh báo `Content Incomplete Warning` chỉ rõ các câu không parse được hoặc thiếu đáp án đúng.
+- [ ] Cung cấp 2 lựa chọn xử lý tức thì cho giảng viên: (1) Bấm "Tải lại file khác", hoặc (2) Chuyển sang tab "Nhập trực tiếp" với nội dung văn bản đã được đổ sẵn vào ô soạn thảo để sửa tay.
 
 ---
 
-### TASK-204 · Giao diện xem trước câu hỏi nguồn và Xác nhận — Source Question Previewer & Confirmer (FE-05)
+### TASK-204 · Giao diện xem, chỉnh sửa Blueprint và Xác nhận (FE-05)
 - **Người làm:** FE1 (Owner)
-- **Phụ thuộc:** TASK-201 *(Mock UI)*; Phụ thuộc tích hợp: TASK-202 *(Dữ liệu câu nguồn đã bóc tách)*
+- **Phụ thuộc:** TASK-201 *(Mock UI)*; Phụ thuộc tích hợp: TASK-203 *(Dữ liệu Blueprint thật)*
 - **Trạng thái:** ⬜
 
-**Mô tả:** Giao diện hiển thị chỉ đọc (Read-only) cho phép giảng viên thẩm định câu hỏi nguồn và đáp án gốc đã bóc tách bằng KaTeX, kiểm tra tính đầy đủ trước khi xác nhận chuyển sang Stage 2. Toàn bộ cơ chế Blueprint được chuyển thành hộp đen ngầm (black box), không hiển thị trên giao diện người dùng và không cung cấp thao tác trích xuất lại Blueprint thủ công.
+**Mô tả:** Giao diện cho phép giảng viên duyệt, tinh chỉnh câu nguồn và các tham số biến thể Blueprint trước khi tiến hành sinh đề.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] Hiển thị danh sách câu hỏi gốc và 4 phương án A/B/C/D bằng `MathRenderer` (KaTeX) ở chế độ chỉ đọc (Read-only, tuyệt đối không bố trí ô nhập văn bản sửa đề theo nguyên tắc Zero-Editing Stage 1).
-- [ ] Hiển thị rõ ràng đáp án đúng đã nhận diện cho từng câu hỏi nguồn.
-- [ ] **Loại bỏ thẻ hiển thị Blueprint & Nút trích xuất lại Blueprint:** Blueprint hoàn toàn là hộp đen (Black Box) chạy ngầm ở backend phục vụ sinh đề ở Stage 2/3. Giảng viên không cần và không thể can thiệp vào tham số, điều kiện bất biến hay quy tắc biến thể Blueprint.
-- [ ] **Nút "Xác nhận đề gốc và tiếp tục":** Gọi `POST /api/sessions/{session_id}/confirm-source` để khóa toàn bộ đề nguồn và chuyển thẳng sang Stage 2 (tự động disable nếu danh sách câu nguồn rỗng hoặc chưa tải xong).
-- [ ] **Tiêu chí hiển thị Cảnh báo An ninh & Chốt chặn xác nhận (SEC-02, P1.9):**
-  - Nếu câu nguồn mang cờ `has_security_warning == true` (do phát hiện nguy cơ Prompt Injection / ký tự điều khiển bất thường từ `TASK-202`):
-    - Hiển thị **Amber Security Badge** ("⚠️ Cảnh báo an ninh") nổi bật trên đầu thẻ câu hỏi kèm tooltip/popover giải thích chi tiết cảnh báo an ninh.
-    - **Hộp kiểm xác nhận an toàn bắt buộc:** Nếu phiên có ít nhất 1 câu mang cờ `has_security_warning == true`, nút *"Xác nhận đề gốc và tiếp tục"* bị vô hiệu hóa (disabled) cho đến khi giảng viên tích chọn hộp kiểm: `[ ] Tôi đã đọc và kiểm tra các câu hỏi có cảnh báo an ninh, xác nhận nội dung an toàn để tiếp tục sinh đề.` Khi đó, request `POST /api/sessions/{session_id}/confirm-source` sẽ gửi kèm `{ "acknowledged_security_warnings": true }` để backend xác thực.
-- [ ] Loại bỏ hoàn toàn cơ chế sửa tay đề gốc, sửa tay khoảng giá trị min/max và cơ chế Auto-save debounce (tuân thủ ADR-002: Zero-Editing Stage 1).
+- [ ] Hiển thị danh sách câu hỏi gốc bằng `MathRenderer`.
+- [ ] **Chỉnh sửa toàn diện câu nguồn (Source Question Editing):** Cho phép giảng viên bấm vào từng câu hỏi để sửa nội dung thân câu (`stem_latex`), sửa 4 phương án lựa chọn, chọn lại đáp án đúng (`correct_option`), và bổ sung lời giải mẫu tùy chọn. Gọi `PUT /api/source-questions/{id}`.
+- [ ] **Badge cảnh báo OMML & Thiếu đáp án:**
+  - Nếu câu có `has_unparsed_omml = true` $\rightarrow$ hiển thị huy hiệu màu vàng *"Công thức chưa đọc được (OMML/Ảnh)"*.
+  - Nếu câu có `has_missing_answer = true` $\rightarrow$ hiển thị huy hiệu màu cam *"Chưa xác định đáp án đúng"*, bắt buộc chọn trước khi xác nhận.
+- [ ] Hiển thị thẻ Blueprint bên cạnh: danh sách tham số (có thể sửa khoảng giá trị `min`/`max`), các điều kiện bất biến, và tóm tắt quy tắc tiếng Việt.
+- [ ] Khi câu nguồn bị sửa $\rightarrow$ cung cấp nút bấm "Trích xuất lại bằng AI" (`POST /api/blueprints/{id}/re-extract`) hoặc cho phép sửa trực tiếp thông số Blueprint.
+- [ ] Nút "Xác nhận tất cả và tiếp tục" gọi `POST /api/sessions/{session_id}/blueprints/confirm-all` để khóa cấu trúc và chuyển sang Stage 2.
+- [ ] Cơ chế tự động lưu nháp (Auto-save debounce 1s) khi giảng viên sửa thông số.
 
 ---
 
-### TASK-205 · API xác nhận đề nguồn & Kích hoạt Blueprint nội bộ (BE-03)
+### TASK-205 · API quản lý câu nguồn và xác nhận Blueprint (BE-01)
 - **Người làm:** BE1 (Owner)
 - **Phụ thuộc:** TASK-202; Phụ thuộc tích hợp: TASK-203
 - **Trạng thái:** ⬜
 
-**Mô tả:** Động cơ vận hành Blueprint như một hộp đen tự động ở backend và cung cấp API xác nhận đề nguồn chuyển trạng thái phiên sang Stage 2, loại bỏ các API can thiệp/tái trích xuất Blueprint thủ công từ phía người dùng.
+**Mô tả:** Các endpoints quản lý, cập nhật câu hỏi nguồn và khóa dữ liệu Blueprint của phiên làm việc.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] **Quy trình Blueprint Hộp Đen (Automatic Black-Box Engine):**
-  - Khi `POST /api/sessions/{session_id}/ingest-file` hoặc `ingest-text` thành công ở `TASK-202`, backend tự động gọi `AI-02` (TASK-203) trích xuất cấu trúc quy tắc biến thể ngầm và lưu trực tiếp vào bảng `question_blueprints` dưới dạng JSONB.
-  - Quá trình này diễn ra hoàn toàn tự động ở backend, không phơi bày ra UI và không cần endpoint công khai riêng cho người dùng tương tác hay sửa đổi.
-- [ ] `POST /api/sessions/{session_id}/confirm-source`:
-  - Gọi `assert_ownership` kiểm tra quyền sở hữu phiên.
-  - **Ràng buộc trạng thái (Precondition):** Chỉ cho phép thực hiện khi phiên làm việc đang ở trạng thái `draft`. Nếu phiên đã được xác nhận (`blueprinted` hoặc các trạng thái sau) $\rightarrow$ từ chối và trả về HTTP `409 Conflict`.
-  - **Kiểm tra tính toàn vẹn 100% (Strict Validation):** Kiểm tra toàn bộ câu hỏi nguồn trong phiên hợp lệ (`has_missing_answer == false`, `has_unparsed_omml == false`) và các bản ghi Blueprint nội bộ tương ứng đã được thiết lập. Nếu còn bất kỳ câu nào không hợp lệ $\rightarrow$ trả về HTTP `422 Unprocessable Entity`.
-  - **Kiểm tra xác nhận an ninh (Security Guard - SEC-02, P1.9):** Nếu có câu mang `has_security_warning == true`, bắt buộc request body phải có `{ "acknowledged_security_warnings": true }`. Nếu không có hoặc `false` $\rightarrow$ trả về HTTP `422 Unprocessable Entity` yêu cầu người dùng xác nhận đã kiểm tra an toàn trước khi tiếp tục.
-  - Khi 100% hợp lệ $\rightarrow$ cập nhật trạng thái session sang `blueprinted` (sẵn sàng cho cấu hình Stage 2), đóng băng dữ liệu câu nguồn.
+- [ ] `POST /api/sessions/{session_id}/blueprints/extract-all`: Trích xuất Blueprint hàng loạt lần đầu cho toàn bộ câu nguồn trong phiên.
+- [ ] `PUT /api/source-questions/{question_id}` — gọi `assert_ownership` $\rightarrow$ cập nhật nội dung câu nguồn, các phương án, đáp án đúng và lời giải mẫu.
+- [ ] `PATCH /api/blueprints/{blueprint_id}` — gọi `assert_ownership` $\rightarrow$ cập nhật khoảng giá trị và điều kiện bất biến của blueprint.
+- [ ] `POST /api/blueprints/{blueprint_id}/confirm` — gọi `assert_ownership` $\rightarrow$ đánh dấu xác nhận câu hỏi (`confirmed_at = now()`).
+- [ ] `POST /api/blueprints/{blueprint_id}/re-extract` — gọi AI trích xuất lại quy tắc cho câu hỏi nguồn đó.
+- [ ] `POST /api/sessions/{session_id}/blueprints/confirm-all` — kiểm tra toàn bộ câu hỏi đã có quy tắc hợp lệ $\rightarrow$ cập nhật trạng thái session sang `blueprinted`.
 
 ---
 
@@ -829,17 +710,15 @@
   - Kiểm tra trạng thái: Nếu session đang ở `generating` $\rightarrow$ trả về `409 Conflict` (chống chạy trùng lặp).
   - Cập nhật trạng thái session sang `generating`, kích hoạt FastAPI `BackgroundTasks` chạy `run_generation_job(session_id)`.
 - [ ] **Cơ chế Xác thực SSE & Tự động kết nối lại (SEC-05, SEC-13, Reconnect Support):**
-  - Do `EventSource` của trình duyệt không hỗ trợ custom header `Authorization`, tạo endpoint Session-Nested `POST /api/sessions/{session_id}/events/ticket` nhận JWT Bearer token, trả về ticket có thời hạn sống ngắn (**TTL: 60 giây**) gắn chặt với cặp `(session_id, user_id)`.
+  - Do `EventSource` của trình duyệt không hỗ trợ custom header `Authorization`, tạo endpoint `POST /api/sse/ticket` nhận JWT Bearer token và `session_id`, trả về ticket có thời hạn sống ngắn (**TTL: 60 giây**) gắn chặt với cặp `(session_id, user_id)`.
   - **Cấu trúc & Xác thực Ticket (SEC-13):**
     - Cấu trúc: `{ ticket_id: UUID, session_id: UUID, user_id: UUID, expires_at: ISO8601 }`.
     - Lưu in-memory dictionary với `asyncio.Lock()` (đảm bảo an toàn luồng trong Single Worker).
-    - Endpoint `GET /api/sessions/{session_id}/events?ticket={ticket}&last_event_id={id}` xác thực: ticket tồn tại + chưa hết hạn + đúng `user_id` sở hữu + đúng `session_id` của phiên. Ticket bị hủy ngay sau khi thiết lập kết nối (one-time handshake).
+    - Endpoint `GET /api/sessions/{session_id}/generate/progress?ticket={ticket}` xác thực: ticket tồn tại + chưa hết hạn + đúng `user_id` sở hữu + đúng `session_id` của phiên. Ticket bị hủy ngay sau khi thiết lập kết nối (one-time handshake).
   - **Quy trình Tái cấp Ticket & Reconnect chuẩn xác (Robust Reconnection Flow):**
     - Nếu mạng chập chờn, đóng tab, reload hoặc rớt kết nối SSE giữa chừng: Trình duyệt không thể reconnect tự động bằng URL cũ vì ticket cũ đã hết hạn hoặc đã bị tiêu thụ.
-    - **Frontend Reconnection Handler (FE2):** Bắt sự kiện `EventSource.onerror` $\rightarrow$ đóng kết nối cũ $\rightarrow$ dùng Axios mang JWT Bearer token hợp lệ gọi lại `POST /api/sessions/{session_id}/events/ticket` để lấy `ticket_id` mới $\rightarrow$ khởi tạo `EventSource` mới kèm URL `/api/sessions/{session_id}/events?ticket={new_ticket}&last_event_id={last_received_id}`.
-    - Backend duy trì in-memory ring-buffer 50 events gần nhất của phiên: Khi nhận `last_event_id` (qua query parameter hoặc HTTP header `Last-Event-ID`), backend tự động phát lại các sự kiện có `id > last_event_id` bị bỏ lỡ trong cửa sổ rớt mạng ngắn trước khi tiếp tục truyền stream mới, đảm bảo giao diện không mất đồng bộ.
-- [ ] **Chính sách Đếm Quota Gemini Tuyệt Đối (Comprehensive Quota Accounting - P1.8):**
-  - Mọi request thực tế gửi tới Gemini API (bao gồm request sinh variant, sinh solution, request gặp lỗi/timeout từ Google, và các lượt gọi bổ sung của Schema Repair Pass AI-05) đều bắt buộc phải tăng bộ đếm `exam_sessions.gemini_call_count += 1` ngay trước khi thực thi hoặc ngay khi nhận phản hồi. Tuyệt đối không chỉ đếm các request thành công để ngăn chặn việc vượt trần quota 250 calls của phiên.
+    - **Frontend Reconnection Handler (FE2):** Bắt sự kiện `EventSource.onerror` $\rightarrow$ đóng kết nối cũ $\rightarrow$ dùng Axios mang JWT Bearer token hợp lệ gọi lại `POST /api/sse/ticket` để lấy `ticket_id` mới $\rightarrow$ khởi tạo `EventSource` mới kèm URL `progress?ticket={new_ticket}&last_event_id={id}`.
+    - Backend duy trì in-memory ring-buffer 50 events gần nhất của phiên: Khi nhận `Last-Event-ID`, backend tự động phát lại các sự kiện bị bỏ lỡ trong cửa sổ rớt mạng ngắn, đảm bảo giao diện không mất đồng bộ.
 - [ ] **Lưu trữ Tiến độ Bền vững & Phục hồi khi Crash (Durable DB Progress & Crash Recovery):**
   - Background Job cập nhật bền vững (Durable Persistence) vào PostgreSQL: Mỗi khi hoàn thành sinh và thẩm định 1 câu hỏi $\rightarrow$ commit ngay bản ghi vào bảng `version_questions` và cập nhật `exam_sessions.updated_at = now()`.
   - **Xử lý sự cố khi Server sập/khởi động lại (Process Restart):** Vì `BackgroundTasks` chạy in-memory, nếu tiến trình bị kill, in-memory event buffer sẽ mất. Hệ thống không giả định tự động khôi phục luồng in-memory kỳ diệu, mà xử lý thực tế:
@@ -848,7 +727,6 @@
 - [ ] **Định dạng SSE Event Schema chuẩn (thống nhất với FE2):**
   ```json
   {
-    "id": 14,
     "event": "progress" | "question_done" | "warning" | "error" | "done",
     "data": {
       "timestamp": "2026-10-14T10:30:00Z",
@@ -861,18 +739,15 @@
     }
   }
   ```
-- [ ] **Hành vi an toàn khi chạm trần Quota Batch (250 calls) & Phân cấp trạng thái phiên:**
-  - **Cơ sở hạn mức Quota Batch (250 calls):** Tính toán dựa trên phiên tối đa 20 câu nguồn $\times$ 4 mã đề: 20 blueprint calls + 80 variant calls + 80 solution calls = 180 calls cơ sở; dự phòng tối đa 70 calls cho validation retry & schema repair $\rightarrow$ trần cứng toàn phiên: **250 calls**.
-  - **Phân định rõ 2 nhánh kết quả:**
-    1. **Nhánh 1 (`generated`):** Sinh đủ 100% số lượng câu hỏi của $N$ mã đề, kể cả khi có câu mang cờ cảnh báo `has_warning = true` (do retry validation $\ge 3$ lần thất bại) hoặc `has_security_warning = true`. Cho phép chuyển sang Stage 3 Review, Approve, và Export bình thường; các câu có vấn đề được gắn thẻ warning badge để giảng viên lưu ý thẩm định.
-    2. **Nhánh 2 (`partial_generated`):** Thiếu câu hỏi so với yêu cầu do chạm trần quota 250 calls (`exam_sessions.gemini_call_count >= 250`) hoặc timeout tiến trình nền khi đang sinh dở. Trạng thái phiên chuyển sang `partial_generated`. Giao diện hiển thị các câu đã sinh xong kèm placeholder các câu bị thiếu và nút "Sinh bù variant thiếu" gọi endpoint `POST /api/sessions/{session_id}/retry-generation`. Hệ thống chặn xuất bản file (`/export`), chặn xáo trộn (`/finalize/shuffle`) và chặn phê duyệt cuối (`/finalize/approve`) cho đến khi đủ 100% câu hợp lệ.
+- [ ] **Hành vi an toàn khi chạm trần Quota Batch (250 calls) & Phân cấp lỗi SSE:**
+  - **Chạm trần Quota 250 calls (Stage 2 Batch Ceiling):** Nếu bộ đếm gọi API chạm trần 250 calls (`exam_sessions.gemini_call_count >= 250`) $\rightarrow$ Background job dừng sinh các câu còn lại, lưu bền vững toàn bộ các câu đã hoàn thành vào DB, đánh dấu các câu chưa xong là `has_warning = true`, chuyển session sang trạng thái `partial_generated`, phát SSE `warning` (thông báo "Đạt giới hạn trần quota sinh hàng loạt 250 calls") và kết thúc job an toàn. Giảng viên được phép xem/thẩm định các câu đã hoàn tất ở Stage 3, nhưng hệ thống chặn xuất bản file (`/export`) và chặn phê duyệt cuối (`/finalize/approve`) cho đến khi đủ câu hợp lệ.
   - **Sự kiện `warning` (Lỗi cục bộ từng câu):** Nếu một câu hỏi sinh thất bại sau 3 lần retry validation $\rightarrow$ lưu bản nháp kèm `has_warning = true` để giảng viên thẩm định ở Stage 3; Background job vẫn tiếp tục sinh các câu còn lại mà không làm dừng cả job.
-  - **Sự kiện `error` (Lỗi nghiêm trọng không thể hồi phục):** Khi gặp sự cố hạ tầng nghiêm trọng (Database disconnect không thể tái lập, hoặc chạm trần Timeout 10 phút toàn phiên mà 0 câu nào được tạo) $\rightarrow$ cập nhật session `status = "failed"`, phát sự kiện `error` kèm `error_message` và đóng stream an toàn. Nếu đã sinh được một phần câu $\rightarrow$ chuyển sang `partial_generated` để bảo toàn dữ liệu và cho phép sinh bù.
+  - **Sự kiện `error` (Lỗi nghiêm trọng không thể hồi phục):** Khi gặp sự cố hạ tầng nghiêm trọng (Database disconnect không thể tái lập, hoặc chạm trần Timeout 10 phút toàn phiên mà không lưu được tiến độ) $\rightarrow$ cập nhật session `status = "failed"`, phát sự kiện `error` kèm `error_message` và đóng stream an toàn.
 - [ ] **Bảo vệ kết nối:** Gửi heartbeat comment `: heartbeat\n\n` mỗi 15 giây một lần để ngăn proxy hoặc browser ngắt kết nối.
 - [ ] **Kiểm soát đồng thời:** Dùng `asyncio.Semaphore(3)` giới hạn tối đa 3 request gọi Gemini đồng thời, tránh cạn kiệt hạn ngạch API.
 - [ ] **Xử lý Timeout tổng:**
-  - Tổng timeout của Background Job: tối đa **10 phút**. Nếu quá thời gian mà chưa sinh xong $\rightarrow$ lưu toàn bộ tiến độ đã đạt và chuyển session sang `partial_generated` (hoặc `failed` nếu 0 câu nào được ghi nhận).
-  - Khi hoàn tất trọn vẹn 100% câu hỏi cho toàn bộ $N$ mã đề $\rightarrow$ cập nhật session `status = "generated"`, phát sự kiện `done`.
+  - Tổng timeout của Background Job: tối đa **10 phút**. Nếu quá thời gian mà không sinh xong $\rightarrow$ chuyển session `status = "failed"`.
+  - Khi hoàn tất trọn vẹn toàn bộ $N$ mã đề $\rightarrow$ cập nhật session `status = "generated"`, phát sự kiện `done`.
 
 ---
 
@@ -902,10 +777,8 @@
 **Mô tả:** Màn hình hiển thị tiến trình sinh đề thời gian thực qua kết nối Server-Sent Events, xử lý kết nối lại an toàn.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] Xây dựng custom hook `useSSE(sessionId)`:
-  - **Khởi tạo kết nối tức thì (Per-connection Ticket):** Gọi `POST /api/sessions/{session_id}/events/ticket` mang JWT Bearer token để lấy ticket xác thực ngắn hạn (**TTL: 60s**) ngay trước khi mở kết nối. Tuyệt đối không lưu ticket vào `localStorage` hay state dùng chung lâu dài (tránh hết hạn ticket).
-  - Khởi tạo `EventSource` trỏ đến `GET /api/sessions/{session_id}/events?ticket={ticket}&last_event_id={lastId}`. Ticket là loại one-time handshake (backend tiêu thụ ngay khi kết nối thành công).
-  - **Tự động kết nối lại thông minh (P1.6 Reconnection):** Khi kết nối bị gián đoạn hoặc lỗi (`onerror`), hook đóng kết nối cũ, tự động gọi lại endpoint xin một ticket mới và khởi tạo `EventSource` mới kèm `last_event_id` của event cuối cùng đã nhận để nhận replay các sự kiện bị gián đoạn từ ring-buffer 50 events của backend.
+- [ ] Xây dựng custom hook `useSSE(url)`: Sử dụng `EventSource` (hoặc `fetch` streaming) với cơ chế tự động kết nối lại (reconnect backoff 3s, 6s).
+- [ ] Quản lý xác thực an toàn: Truyền ticket xác thực ngắn hạn qua query parameter `?ticket=...` (hoặc auth header nếu dùng `fetch-event-source`), tránh đưa JWT dài hạn lên URL.
 - [ ] Parse payload chuẩn theo cấu trúc đã thống nhất ở TASK-207b.
 - [ ] Hiển thị thanh tiến trình tổng thể (% hoàn thành) kèm ước lượng thời gian còn lại.
 - [ ] Danh sách thẻ câu hỏi với icon trạng thái thời gian thực: Đang sinh ⏳, Đang kiểm tra 🔍, Đạt chuẩn ✅, Cảnh báo ⚠️, Thử lại 🔄.
@@ -936,9 +809,7 @@
 - [ ] **Cơ chế cập nhật trạng thái tự động:** Lắng nghe sự kiện `done` từ hook `useSSE` (kết hợp polling kiểm tra `GET /api/sessions/:id` mỗi 3s nếu mất kết nối) để tự động mở khóa Action Bar ngay khi quá trình sinh đề nền hoàn tất (`status = "generated"`).
 - [ ] Bộ chọn chuyển đổi giữa các mã đề (101, 102, 103, 104).
 - [ ] Render đầy đủ thân câu, 4 phương án lựa chọn và đáp án đúng bằng `MathRenderer`.
-- [ ] **Warning Badge & Security Badge (P1.9):**
-  - Hiển thị huy hiệu cảnh báo toán học màu đỏ/vàng trên câu có `validation_report.status !== "passed"`. Click vào badge mở panel chi tiết lỗi thẩm định toán học.
-  - Hiển thị **Amber Security Badge** ("⚠️ Cảnh báo an ninh") trên câu biến thể mang cờ `has_security_warning == true`. Click vào badge hiển thị tooltip/popover giải thích chi tiết cảnh báo an ninh.
+- [ ] **Warning Badge:** Hiển thị huy hiệu cảnh báo màu đỏ/vàng trên câu có `validation_report.status !== "passed"`. Click vào badge mở panel chi tiết lỗi thẩm định toán học.
 - [ ] **TUYỆT ĐỐI KHÔNG** bố trí bất kỳ ô nhập văn bản (`input`, `textarea`, `contenteditable`) nào đối với nội dung câu biến thể — tuân thủ nghiêm ngặt nguyên tắc chỉ thẩm định (read-only review).
 
 ---
@@ -951,7 +822,7 @@
 **Mô tả:** Thanh công cụ hành động thẩm định cho từng câu hỏi trong phiên review.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] Nút **"✓ Chấp nhận"** (màu xanh lá) $\rightarrow$ nếu câu có `has_security_warning == true`, mở popup hộp thoại xác nhận: *"Câu hỏi này có cảnh báo an ninh. Bạn xác nhận đã kiểm tra an toàn?"* $\rightarrow$ sau khi xác nhận, gọi API accept $\rightarrow$ câu chuyển thành `approved`, tự động nhảy sang câu tiếp theo.
+- [ ] Nút **"✓ Chấp nhận"** (màu xanh lá) $\rightarrow$ gọi API accept $\rightarrow$ câu chuyển thành `approved`, tự động nhảy sang câu tiếp theo.
 - [ ] Nút **"✗ Từ chối và sinh lại"** (màu đỏ) $\rightarrow$ gọi API reject $\rightarrow$ hiển thị loading spinner tại chỗ. Câu mới sinh ra được đưa vào danh sách với trạng thái `pending_review` và bắt buộc phải duyệt lại từ đầu.
 - [ ] **Xử lý sự cố khi Sinh lại thất bại (V3-05 Guard):** Nếu API trả về lỗi hoặc `REJECT_FAILED` (do mạng hoặc Gemini timeout) $\rightarrow$ hiển thị Toast đỏ *"Hệ thống AI đang bận hoặc sinh lại thất bại, vui lòng thử lại"*, reset trạng thái câu hỏi về `pending_review` (không để câu bị kẹt ở `regenerating`), và khôi phục nút bấm để người dùng thao tác lại, tránh hoàn toàn lỗi treo giao diện khi demo.
 - [ ] Nút **"↺ Dùng lại câu gốc"** (màu cam) $\rightarrow$ mở modal xác nhận hoàn nguyên $\rightarrow$ gọi API revert thay thế câu biến thể bằng đúng nguyên bản câu gốc.
@@ -969,12 +840,12 @@
 **Yêu cầu cụ thể phải làm được:**
 - [ ] **Chốt chặn Review đồng thời (Backend Guard):** Kiểm tra `session.status`. Nếu `session.status === "generating"` $\rightarrow$ trả về `HTTP 409 Conflict`. Nếu `session.status in ["approved", "exported"]` $\rightarrow$ trả về `HTTP 423 Locked` (nội dung đã bị khóa sau phê duyệt).
 - [ ] Gọi `assert_ownership` kiểm tra quyền sở hữu câu hỏi trước khi xử lý.
-- [ ] `POST /api/sessions/{session_id}/questions/{version_question_id}/accept` (alias: `POST /api/review/{version_question_id}/accept`): Cập nhật `status = "approved"`, ghi `review_logs` (`action_type = "ACCEPT"`).
+- [ ] `POST /api/review/{version_question_id}/accept`: Cập nhật `status = "approved"`, ghi `review_logs` (`action_type = "ACCEPT"`).
 - [ ] **Cơ chế Vòng đời Rejection & Sinh lại (`is_current` lifecycle):**
   - **Kiểm soát đồng thời (Concurrency Guard):** Endpoint Reject sử dụng Semaphore riêng (`asyncio.Semaphore(1)` theo phiên) độc lập với background job, giới hạn tối đa 1 thao tác sinh lại đồng thời trên mỗi phiên để tránh nghẽn tài nguyên và loại trừ xung đột dữ liệu.
-  - `POST /api/sessions/{session_id}/questions/{version_question_id}/reject` (alias: `POST /api/review/{version_question_id}/reject`):
-    - **Kiểm soát Ngân sách Stage 3 Toàn diện (Dedicated Review Quota Ceiling - P1.8):** Trước khi gọi AI sinh lại, kiểm tra `exam_sessions.gemini_review_calls < 30`. Mọi request thực tế gửi tới Gemini API (kể cả request lỗi, timeout, hay retry của Schema Repair Pass AI-05 và sinh lời giải AI-04) đều phải tăng bộ đếm `exam_sessions.gemini_review_calls += 1`. Nếu đã đạt 30 calls $\rightarrow$ trả về mã `ERR_REVIEW_QUOTA_EXHAUSTED` (HTTP 429) kèm hướng dẫn giảng viên bấm Hoàn nguyên (Revert) câu gốc hoặc chấp nhận phiên bản sinh hiện tại để bảo vệ ngân sách quota (tuyệt đối không hỗ trợ chỉnh sửa trực tiếp nội dung trên giao diện web theo ADR-002).
-    - **Bước 1 (Short DB Transaction 1):** Kiểm tra câu hỏi đang có `is_current = true`, cập nhật câu cũ sang `status = "regenerating"` và bắt buộc cập nhật `updated_at = now()` để khóa tạm thời (ngăn chặn thao tác duyệt/từ chối trùng lặp từ giao diện và cấp mốc thời gian cho Stale Guard).
+  - `POST /api/review/{version_question_id}/reject`:
+    - **Kiểm soát Ngân sách Stage 3 (Dedicated Review Quota Ceiling):** Trước khi gọi AI sinh lại, kiểm tra `exam_sessions.gemini_review_calls < 30`. Nếu đã đạt 30 calls $\rightarrow$ trả về mã `ERR_REVIEW_QUOTA_EXHAUSTED` (HTTP 429) kèm hướng dẫn giảng viên chỉnh sửa trực tiếp nội dung hoặc bấm Hoàn nguyên (Revert) câu gốc để bảo vệ ngân sách quota. Khi sinh lại thành công $\rightarrow$ tăng `exam_sessions.gemini_review_calls += 1`.
+    - **Bước 1 (Short DB Transaction 1):** Kiểm tra câu hỏi đang có `is_current = true`, cập nhật câu cũ sang `status = "regenerating"` để khóa tạm thời (ngăn chặn thao tác duyệt/từ chối trùng lặp từ giao diện).
     - **Bước 2 (Outside DB Transaction — Xử lý AI 10–30s):** Gọi pipeline sinh biến thể AI-03 (`TASK-106c`) kèm ngữ cảnh lý do từ chối $\rightarrow$ chạy 4 tầng validation (`TASK-107d`) $\rightarrow$ tạo lời giải chi tiết (`TASK-402`). Tuyệt đối không mở/giữ DB transaction hay connection pool trong suốt thời gian chờ API Gemini hoặc SymPy nhằm chống cạn kiệt kết nối Supabase.
     - **Bước 3 (Short DB Transaction 2):**
       - Cập nhật câu cũ: `is_current = false`, `status = "rejected"`.
@@ -984,7 +855,7 @@
       - Nếu Gemini hoặc Validator gặp lỗi runtime/timeout $\rightarrow$ rollback câu cũ về `status = "pending_review"` và ghi `review_logs` (`action_type = "REJECT_FAILED"`, `reason = str(e)`) để giảng viên thử lại ngay.
       - **Tự động phục hồi khi Server Crash giữa chừng (Orphan Regeneration Recovery):** Nếu process bị tắt/restart đột ngột sau Bước 1 (khi câu đang mang `status = "regenerating"` nhưng chưa sang Bước 3), câu hỏi có nguy cơ bị kẹt khóa. Endpoint `GET /api/sessions/{session_id}/review/progress` và API nạp danh sách câu hỏi review được tích hợp Stale Regeneration Guard: Tự động quét và phát hiện mọi câu có `status = "regenerating"` mà `updated_at < now() - interval '3 minutes'` $\rightarrow$ tự động rollback trạng thái về `status = "pending_review"` và ghi `review_logs` (`action_type = "REJECT_FAILED"`, `reason = "Process crashed or timed out during regeneration - Auto-unlocked"`). Đảm bảo giao diện không bao giờ bị tê liệt do câu hỏi kẹt khóa.
 - [ ] **Quy trình Hoàn nguyên Nguyên tử (Atomic Revert Flow):**
-  - `POST /api/sessions/{session_id}/questions/{version_question_id}/revert` (alias: `POST /api/review/{version_question_id}/revert`):
+  - `POST /api/review/{version_question_id}/revert`:
     - Thực thi nguyên tử trong 1 Transaction duy nhất:
       1. Kiểm tra bản ghi câu biến thể hiện tại có `is_current = true`.
       2. Đánh dấu bản ghi biến thể hiện tại: `is_current = false`.
@@ -993,16 +864,7 @@
     - Cam kết tuân thủ tuyệt đối Invariant: Không bao giờ xảy ra tình trạng tồn tại 2 bản ghi `is_current = true` cho cùng một câu trong mã đề.
 - [ ] **Cơ chế Tự động Vô hiệu hóa khi Sửa đổi (Reviewed & Shuffle Invalidation):**
   - Nếu giảng viên thực hiện Reject hoặc Revert một câu khi phiên đang ở trạng thái `reviewed` (hoặc sau khi đã từng bấm shuffle `exam_versions.is_finalized = true`) $\rightarrow$ tự động hạ trạng thái session về lại `generated`, đồng thời reset `exam_versions.is_finalized = false`. Bắt buộc giảng viên phải bấm Shuffle lại (`TASK-304`) trước khi thực hiện Phê duyệt cuối cùng (`TASK-305b`), đảm bảo đề thi và đáp án luôn khớp 100%.
-- [ ] `GET /api/sessions/{session_id}/review/progress`:
-  - Tính tổng số câu yêu cầu: `required_count = source_question_count * n_versions`.
-  - Đếm số lượng câu hiện hành: `current_count = COUNT(*) FROM version_questions WHERE session_id = :id AND is_current = true`.
-  - Đếm số lượng câu đã duyệt: `approved_count = COUNT(*) FROM version_questions WHERE session_id = :id AND is_current = true AND status = 'approved'`.
-  - **Chốt chặn Chuyển trạng thái Reviewed Nghiêm ngặt (P0.3 Guard):**
-    - Trạng thái phiên CHỈ ĐƯỢC CẬP NHẬT thành `reviewed` khi thỏa mãn **đồng thời cả 3 điều kiện**:
-      1. Phiên đang ở trạng thái `generated` (tuyệt đối **CẤM** chuyển từ `partial_generated` hoặc `generating`).
-      2. Số lượng câu hiện hành đủ 100%: `current_count == required_count`.
-      3. 100% câu hiện hành đã được duyệt: `approved_count == required_count`.
-    - **Trường hợp phiên thiếu câu (`partial_generated`):** Dù `approved_count == current_count`, phiên **vẫn giữ nguyên trạng thái `partial_generated`**, trả về payload `{ is_complete: false, missing_count: required_count - current_count }` và hướng dẫn người dùng bấm nút *"Sinh bù variant thiếu"* (`POST /api/sessions/{session_id}/retry-generation`) trước khi có thể kết thúc thẩm định. Tuyệt đối không cho phép chuyển nhầm sang `reviewed`.
+- [ ] `GET /api/sessions/{session_id}/review/progress`: Đếm số lượng câu `status = "approved"` trên tổng số câu có `is_current = true`. Nếu 100% câu của toàn bộ $N$ mã đề đã duyệt $\rightarrow$ tự động cập nhật `session.status = "reviewed"`.
 
 ---
 
@@ -1122,9 +984,6 @@
 - [ ] Tạo module `bundle_builder.py` chuyển đổi dữ liệu đề thi đã xáo trộn sang:
   - File mã nguồn LaTeX sạch chuẩn mực (`exam_{code}.tex`) có thể biên dịch lại độc lập bằng XeLaTeX.
   - File Markdown chuẩn (`exam_{code}.md`) phục vụ lưu trữ số.
-- [ ] **Phân định Môi trường Kiểm thử LaTeX (P1.11 Scope Guard):**
-  - **Trong Docker Backend Container:** Chạy kiểm tra tính hợp lệ cú pháp (syntax check / template rendering test), đảm bảo file `.tex` sinh ra đầy đủ cấu trúc preamble, fontspec và không có lỗi ký tự escaping. Tuyệt đối không cài bộ TeX Live 3–5GB vào Docker.
-  - **Ngoài Docker (Host Machine / Dedicated CI Job):** Chạy kiểm thử biên dịch thực tế bằng lệnh `xelatex -interaction=nonstopmode exam_{code}.tex` trên máy có TeX Live để xác minh tài liệu in ra PDF sắc nét và khớp 100% nội dung.
 - [ ] Tạo file nén `.zip` chứa toàn bộ: các file PDF (từ TASK-306a), file mã nguồn `.tex`, `.md`, bảng đáp án và file `README.txt` hướng dẫn sử dụng.
 - [ ] Tải file ZIP lên Supabase Storage bucket `exam-export-bundles` và sinh Signed URL có hiệu lực tải trong **1 giờ** (SEC-15: TTL 3600 giây nhằm thu hẹp cửa sổ rủi ro rò rỉ URL).
 
@@ -1167,11 +1026,11 @@
 **Mô tả:** Thu thập và trực quan hóa các chỉ số tương tác của giảng viên từ nhật ký `review_logs` và chuỗi phiên bản câu hỏi, áp dụng công thức First-pass Rate chuẩn xác dựa trên hành động thẩm định đầu tiên, đồng bộ 4 thẻ KPI bắt buộc cho MVP.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] Phía BE1: Xây dựng endpoint `GET /api/users/me/analytics` (hoặc `GET /api/stats`) gọi PostgreSQL Stored Function `get_user_analytics(p_user_id)`:
+- [ ] Phía BE1: Xây dựng endpoint `GET /api/stats` thực thi query SQL:
   - `first_pass_rate`: **Tỷ lệ chấp nhận lần đầu chuẩn xác (Dựa trên Hành động Thẩm định Đầu Tiên):**
     $$\text{First-pass acceptance rate} = \frac{\text{Số câu sinh ban đầu có hành động review đầu tiên là ACCEPT}}{\text{Tổng số câu sinh ra ban đầu ở Pass 1}} \times 100\%$$
     Quy tắc nghiệp vụ: Một câu sinh ban đầu (`regenerated_from_id IS NULL`) chỉ được công nhận là "First-Pass" nếu hành động thẩm định đầu tiên trong `review_logs` theo thứ tự thời gian (`created_at ASC`) **chính xác là `ACCEPT`**. Bất kỳ hành động đầu tiên nào là `REJECT`, `REJECT_FAILED`, hay `REVERT` đều loại câu đó khỏi diện first-pass.
-    Thực thi query SQL chính xác sử dụng `DISTINCT ON` bên trong Stored Function:
+    Thực thi query SQL chính xác sử dụng `DISTINCT ON`:
     ```sql
     WITH initial_questions AS (
       SELECT vq.id
@@ -1203,10 +1062,10 @@
     - `revert_rate`: Tỷ lệ câu hỏi có cờ `is_reverted = true` trên tổng số câu đã duyệt.
     - `total_versions_count`: Số lượng mã đề $N$ đã tạo.
     - *Vị trí hiển thị:* Đặt tại **Thanh Tóm tắt Phiên (Session Summary Overview Bar)** ngay phía dưới 4 thẻ KPI chính hoặc trong dialog "Chi tiết thống kê phiên", giữ giao diện 4 thẻ KPI chính gọn gàng, trực quan.
-- [ ] **Đóng gói truy vấn vào PostgreSQL Stored Function & Bảo mật (SEC-12, RPC Integration):**
-  - Đóng gói toàn bộ logic truy vấn CTE phức tạp vào Postgres Stored Function `public.get_user_analytics(p_user_id UUID)` (đã tạo tại TASK-002 / BE-10).
-  - Phía backend FastAPI: Endpoint `GET /api/users/me/analytics` (hoặc `GET /api/stats`) xác thực `current_user.id` và gọi trực tiếp `supabase.rpc('get_user_analytics', {'p_user_id': str(current_user.id)})`.
-  - Triệt tiêu 100% rủi ro SQL Injection do không ghép chuỗi SQL ở tầng backend server, giảm băng thông mạng và tận dụng tối đa chỉ mục PostgreSQL.
+- [ ] **Bảo mật truy vấn SQL (SEC-12 Parameterized Queries):**
+  - Bắt buộc thực thi query SQL bằng parameterized queries (`bind parameters` qua `asyncpg` / `supabase-py`, ví dụ `WHERE ev.session_id = $1`).
+  - **TUYỆT ĐỐI KHÔNG** dùng f-string hoặc `.format()` nối chuỗi để tạo câu lệnh SQL, triệt tiêu 100% rủi ro SQL Injection.
+  - Kiểm tra và xác thực `session_id` tuân thủ đúng định dạng UUID v4 trước khi đưa vào truy vấn.
 - [ ] Phía FE1: Hiển thị đúng 4 thẻ số liệu thống kê (Metric Cards) cốt lõi kèm thanh tóm tắt chỉ số thứ cấp.
 - [ ] Lưu ý: Không hiển thị chỉ số "Comparative time savings" (đã loại khỏi MVP theo description §4 UC04).
 
@@ -1228,7 +1087,7 @@
     - *Ngưỡng màu:* $\ge 60\%$ (Xanh - Độ tin cậy toán học cao từ SymPy CAS), $30\%\text{--}60\%$ (Vàng - Đáng kể câu rơi vào Heuristic Fallback), $< 30\%$ (Đỏ - Cảnh báo SymPy parser cần tinh chỉnh).
     - *Xử lý biên:* Nếu SymPy verify = 0 $\rightarrow$ hiển thị `0%` kèm nhãn cảnh báo vàng/đỏ.
 - [ ] **Đồng bộ với BE1 (Sync Point):** Tổ chức họp ngắn 30 phút giữa VAL và BE1 để chốt cấu trúc SQL query, đối chiếu công thức và bàn giao test data giả định trước khi BE1 implement query trên DB.
-- [ ] Bàn giao công thức, ngưỡng màu và bộ kiểm thử cho BE1 tích hợp vào hàm RPC `get_user_analytics` của endpoint `GET /api/users/me/analytics` và FE1 trực quan hóa thẻ KPI.
+- [ ] Bàn giao công thức, ngưỡng màu và bộ kiểm thử cho BE1 tích hợp vào query SQL của endpoint `GET /api/stats` và FE1 trực quan hóa thẻ KPI.
 - [ ] Lập bảng số liệu thống kê đưa vào báo cáo nghiệm thu.
 
 ---
@@ -1263,13 +1122,13 @@
   - Mỗi bộ đề giới hạn cố định **20 câu trắc nghiệm**, cấu hình sinh **$N = 4$ mã đề** (tổng cộng 80 câu/bộ đề).
   - 5 chuyên đề Toán THPT: (1) Hàm số, (2) Mũ & Logarit, (3) Tích phân, (4) Hình học không gian Oxyz, (5) Số phức.
 - [ ] **Chiến lược kiểm thử phân tầng (Tiered E2E Testing Strategy):**
-  - **Bộ đề 1 (Golden Test Set - Full-Lifecycle Manual E2E):** Trải nghiệm đầy đủ 100% các bước của giảng viên qua giao diện web: Nạp file `.docx` $\rightarrow$ thẩm định danh sách Blueprint và bấm Xác nhận tất cả (tuân thủ Zero-Editing Stage 1) $\rightarrow$ theo dõi SSE tiến độ $\rightarrow$ thực hiện đầy đủ các thao tác Review 1-1 (Accept, Reject sinh lại, Revert) $\rightarrow$ Shuffle $\rightarrow$ Final Approval $\rightarrow$ Tải Dual Export ZIP $\rightarrow$ kiểm tra đối chiếu in ấn (Chạy Live 100% qua Gemini API thực tế; tiêu tốn ~180–220 API calls [20 blueprint + 80 variant + 80 solution = 180 calls cơ sở, cộng thêm retry/repair], nằm an toàn dưới trần cứng 250 calls của Stage 2).
+  - **Bộ đề 1 (Golden Test Set - Full-Lifecycle Manual E2E):** Trải nghiệm đầy đủ 100% các bước của giảng viên qua giao diện web: Nạp file `.docx` $\rightarrow$ duyệt và sửa Blueprint $\rightarrow$ theo dõi SSE tiến độ $\rightarrow$ thực hiện đầy đủ các thao tác Review 1-1 (Accept, Reject sinh lại, Revert) $\rightarrow$ Shuffle $\rightarrow$ Final Approval $\rightarrow$ Tải Dual Export ZIP $\rightarrow$ kiểm tra đối chiếu in ấn (Chạy Live 100% qua Gemini API thực tế; tiêu tốn ~80–100 API calls, nằm an toàn dưới trần cứng 250 calls của Stage 2).
   - **Bộ đề 2, 3, 4, 5 (Automated Pipeline & Format Regression):** Kiểm thử tự động qua test script sử dụng Fixture/Mock data ghi nhận trước (Offline Mocking/Recorded AI Responses) nhằm kiểm tra toàn diện 4 định dạng nạp đề mà không làm cạn kiệt API Quota:
     - Bộ đề 2: File `.docx` chứa cấu trúc phức tạp.
     - Bộ đề 3: File mã nguồn LaTeX `.tex`.
     - Bộ đề 4: File Markdown `.md`.
     - Bộ đề 5: Nhập trực tiếp văn bản qua Tab "Nhập trực tiếp".
-    - Xác nhận: 100% parser trích xuất đủ 20 câu, AI-03 sinh thành công biến thể, 4 tầng validator chấm điểm không crash, Typst biên dịch PDF thành công trong Docker, và mã nguồn LaTeX `.tex` sinh sạch vượt qua kiểm tra cú pháp (xác minh biên dịch XeLaTeX thực tế chạy trên host/CI riêng có TeX Live).
+    - Xác nhận: 100% parser trích xuất đủ 20 câu, AI-03 sinh thành công biến thể, 4 tầng validator chấm điểm không crash, Typst và XeLaTeX xuất bản bundle thành công.
 - [ ] **Bộ tiêu chí đo lường định lượng & Ngưỡng nghiệm thu (Acceptance Thresholds):**
   - [ ] **First-pass acceptance rate:** Ngưỡng nghiệm thu $\ge 60\%$ $\rightarrow$ PASS (Đạt mục tiêu tự động hóa sư phạm; nếu thấp hơn, phân tích nguyên nhân do prompt để đưa vào báo cáo).
   - [ ] **SymPy verify rate:** Ngưỡng nghiệm thu $\ge 50\%$ $\rightarrow$ PASS (Chứng minh năng lực CAS giải quyết đa số câu đại số/giải tích THPT).
@@ -1288,7 +1147,7 @@
 **Mô tả:** Kiểm thử độ bền vững của hệ thống trước các tình huống dữ liệu bất thường, lỗi mạng và cô lập bảo mật.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] Kiểm thử file DOCX chứa Equation Editor cũ / OMML không thể parse thành LaTeX $\rightarrow$ xác nhận hệ thống từ chối toàn bộ với HTTP 422 `UNPROCESSABLE_ENTITY`, gắn cờ `has_unparsed_omml = true`, trả danh sách câu lỗi kèm thông báo hướng dẫn chuyển sang Tab 'Nhập trực tiếp' (paste mã LaTeX thô) hoặc sửa file DOCX trên máy rồi nạp lại, không bị crash server.
+- [ ] Kiểm thử file DOCX chứa Equation Editor cũ / OMML dạng ảnh $\rightarrow$ xác nhận hệ thống báo lỗi rõ ràng, chuyển sang luồng nhập tay, không bị crash server.
 - [ ] Giả lập lỗi Gemini API trả về mã 429 / 503 $\rightarrow$ kiểm tra cơ chế Exponential Backoff và thông báo thân thiện cho người dùng.
 - [ ] Kiểm thử timeout SymPy: đưa biểu thức giải tích cực kỳ phức tạp $\rightarrow$ xác nhận ProcessPool ngắt sau 5s và kích hoạt Rule Fallback mượt mà.
 - [ ] **Kiểm thử tích hợp bảo mật Relational RLS:** Đăng nhập User B kiểm tra tuyệt đối không đọc/sửa/xóa được đề thi, câu hỏi, hoặc file storage của User A.
@@ -1350,16 +1209,16 @@ Bảng nguồn chân lý duy nhất (Single Source of Truth) định nghĩa vòn
 
 | Trạng thái (`status`) | Ý nghĩa nghiệp vụ | Điều kiện chuyển vào (Trigger) | Thao tác được phép | Thao tác bị chặn |
 | :--- | :--- | :--- | :--- | :--- |
-| **`draft`** | Đang tải lên và bóc tách đề nguồn | Tạo session mới (`POST /api/sessions`) | Upload file (`POST /api/sessions/{id}/ingest-file`), nhập text (`POST /api/sessions/{id}/ingest-text`) | Sửa nội dung đề gốc bằng tay, Cấu hình sinh đề, Review |
-| **`blueprinted`** | Đề nguồn đã xác nhận, Blueprint nội bộ đã sẵn sàng (100% không lỗi) | Bấm "Xác nhận đề gốc và tiếp tục" (`POST /api/sessions/{id}/confirm-source`) | Chuyển sang Stage 2, thiết lập cấu hình (`POST /api/sessions/{id}/config`) | Sửa tay đề gốc và Blueprint, Bấm Generate khi chưa lưu config |
-| **`configured`** | Đã lưu cấu hình sinh đề hợp lệ | Gửi cấu hình thành công (`POST /api/sessions/{id}/config`) | Xem tóm tắt cấu hình, bấm "Bắt đầu sinh đề" (`POST /api/sessions/{id}/generate`) | Sửa đề nguồn Stage 1 |
-| **`generating`** | Background job đang sinh đề & validate | Bấm "Generate" (`POST /api/sessions/{id}/generate`) | Xem thanh tiến trình SSE real-time (`GET /api/sessions/{id}/events?ticket=...`) | Bấm Generate lần 2, gọi API Review (chặn 409) |
-| **`partial_generated`** | Sinh thiếu số lượng câu hỏi yêu cầu (do chạm trần quota 250 calls hoặc timeout tiến trình nền) | Background job kết thúc nhưng còn slot câu chưa sinh xong | Xem các câu đã sinh, thẩm định/duyệt (Accept, Reject, Revert) câu hiện có, bấm nút "Sinh bù variant thiếu" (`POST /api/sessions/{id}/retry-generation`) | Sửa tay câu hỏi, Shuffle mã đề (`/finalize/shuffle`), Phê duyệt toàn bộ (`/finalize/approve`), Xuất bản file (`/export`) (chặn 409 Locked/Conflict cho đến khi đủ câu) |
-| **`generated`** | Đã sinh đủ 100% số lượng câu hỏi của $N$ mã đề (có thể có câu gắn cờ warning), sẵn sàng review | Background job hoàn tất sinh đủ câu cho tất cả các mã đề, phát SSE `done` | Duyệt từng câu (Accept, Reject, Revert), xem so sánh 1-1, xem chi tiết cảnh báo validation/security | Shuffle mã đề (chỉ cho phép sau khi 100% câu đã duyệt), Xuất bản file |
-| **`reviewed`** | 100% câu hiện hành của $N$ mã đề đã duyệt (`status = 'approved'`) | Đang ở `generated`, đủ `source_question_count × n_versions` câu VÀ 100% câu đều `approved` | Xem trước bản đề, bấm "Xáo trộn mã đề" (`POST /api/sessions/{id}/finalize/shuffle`), bấm "Phê duyệt toàn bộ" (`POST /api/sessions/{id}/finalize/approve`) | Sửa Blueprint. Nếu có câu bị Reject/Revert lại $\rightarrow$ tự động hạ về `generated` và reset shuffle để bảo toàn tính toàn vẹn |
-| **`approved`** | Giảng viên đã duyệt gói cuối (Khóa nội dung) | Bấm "Phê duyệt toàn bộ" (`POST /api/sessions/{id}/finalize/approve`) | Xem trước bản in, khởi tạo xuất bản (`POST /api/sessions/{id}/export`) | **Khóa cứng:** Cấm mọi sửa đổi câu, reject, shuffle (chặn 423) |
-| **`exported`** | Gói xuất bản ZIP đã tạo và sẵn sàng tải | Khởi tạo xuất bản thành công (`POST /api/sessions/{id}/export`) | Tải file ZIP qua Signed URL (`GET /api/sessions/{id}/export/download`), xem Dashboard thống kê (`GET /api/users/me/analytics`) | Sửa đổi nội dung |
-| **`failed`** | Job sinh đề gặp sự cố hạ tầng hoặc timeout quá 10 phút mà 0 câu nào được tạo | Quá 10 phút hoặc lỗi hệ thống không thể hồi phục | Bấm nút "Thử sinh lại" (`POST /api/sessions/{id}/retry-generation`) $\rightarrow$ reset về `configured`, xóa câu lỗi để sinh bù | Chuyển sang Review, Xuất bản file |
+| **`draft`** | Đang tải lên và bóc tách đề nguồn | Tạo session mới (`POST /api/sessions`) | Upload file, sửa câu gốc, nhập text trực tiếp | Cấu hình sinh đề, Review |
+| **`blueprinted`** | Tất cả Blueprint câu nguồn đã xác nhận | Bấm "Xác nhận tất cả" (`/confirm-all`) | Chỉnh sửa khoảng giá trị Blueprint, chuyển sang Stage 2 | Bấm Generate khi chưa lưu config |
+| **`configured`** | Đã lưu cấu hình sinh đề hợp lệ | Gửi cấu hình thành công (`POST /config`) | Xem tóm tắt cấu hình, bấm "Bắt đầu sinh đề" | Sửa đề nguồn Stage 1 |
+| **`generating`** | Background job đang sinh đề & validate | Bấm "Generate" (`POST /generate`) | Xem thanh tiến trình SSE real-time (hỗ trợ auto-reconnect) | Bấm Generate lần 2, gọi API Review (chặn 409) |
+| **`partial_generated`** | Sinh được một phần (chạm trần quota 250 calls hoặc lỗi cục bộ một số câu) | Background job dừng do đạt quota ceiling hoặc lỗi biến thể lẻ | Xem danh sách câu đã hoàn tất, thẩm định/duyệt/sửa tay câu hiện có | Shuffle mã đề, Xuất bản file (`/export`), Phê duyệt toàn bộ (`/finalize/approve`) (chặn 400/409 cho đến khi đủ câu) |
+| **`generated`** | Đã sinh xong $N$ mã đề, sẵn sàng review | Background job hoàn tất, phát SSE `done` | Duyệt từng câu (Accept, Reject, Revert), xem so sánh 1-1 | Shuffle mã đề, Xuất bản file |
+| **`reviewed`** | 100% câu hiện hành của $N$ mã đề đã duyệt | Câu cuối cùng chuyển sang `approved` | Xem trước bản đề, bấm "Xáo trộn mã đề" (`/shuffle`) | Sửa Blueprint. Nếu có câu bị Reject/Revert lại $\rightarrow$ tự động hạ về `generated` và reset shuffle để bảo toàn tính toàn vẹn |
+| **`approved`** | Giảng viên đã duyệt gói cuối (Khóa nội dung) | Bấm "Phê duyệt toàn bộ" (`/finalize/approve`) | Xem trước bản in, chuyển sang màn hình Export | **Khóa cứng:** Cấm mọi sửa đổi câu, reject, shuffle (chặn 423) |
+| **`exported`** | Gói xuất bản ZIP đã tạo và sẵn sàng tải | Khởi tạo xuất bản (`POST /export`) | Tải file ZIP qua Signed URL (tự động cấp lại link 1h nếu hết hạn), xem thống kê | Sửa đổi nội dung |
+| **`failed`** | Job sinh đề gặp sự cố hoặc timeout quá 10m | Quá 10 phút hoặc lỗi hệ thống không thể hồi phục | Bấm nút "Thử sinh lại" (`POST /api/sessions/{id}/retry-generation`) $\rightarrow$ reset về `configured`, xóa câu lỗi để sinh bù | Chuyển sang Review, Xuất bản file |
 
 ---
 
@@ -1400,15 +1259,15 @@ gantt
     TASK-203 Prompt Blueprint AI-02 (AI)         :t203, 2026-10-25, 2d
     TASK-402 Prompt Lời giải AI-04 (AI)          :t402, 2026-10-25, 2d
     TASK-203b Stage 1 Incomplete Loop (FE1)      :t203b, after t201 t202, 1d
-    TASK-204 UI Source Preview & Confirm (FE1)   :t204, after t201 t203, 2d
-    TASK-205 API Source Confirm & Auto-BP (BE1)  :t205, after t202 t203, 2d
+    TASK-204 UI Blueprint Editor (FE1)           :t204, after t201 t203, 2d
+    TASK-205 API Blueprint CRUD (BE1)            :t205, after t202 t203, 2d
     TASK-206 UI Stage 2 Config (FE2 - Mock)      :t206, 2026-10-25, 2d
     TASK-207a API Config Validator (BE2)         :t207a, after t205, 1d
     TASK-207b Background Job & SSE (BE2)         :t207b, after t106c t107d t207a t402, 2d
     TASK-207c Endpoint Health Metrics (BE2)      :t207c, after t207b, 1d
     TASK-208 UI SSE Progress (FE2)               :t208, after t206 t207b, 1d
 
-    section Tuần 3: Review 1-1 & Dual Export (01/11 - 04/11)
+    section Tuần 3: Review 1-1 & Dual Export (01/11 - 05/11)
     TASK-301 UI Side-by-Side Review (FE2)        :t301, 2026-11-01, 2d
     TASK-302 UI Action Bar Review (FE2)          :t302, after t301, 1d
     TASK-303 API Review & is_current Lifecycle(BE1):t303, 2026-11-01, 2d
@@ -1421,7 +1280,7 @@ gantt
 
     section Tuần 4: Testing, Thẩm Định & Bàn Giao (05/11 - 10/11)
     TASK-401 Dashboard Thống kê (FE1 + BE1)      :t401, 2026-11-05, 2d
-    TASK-401b Định nghĩa Metrics toán (VAL)      :t401b, 2026-11-05, 2d
+    TASK-401b Định nghĩa Metrics toán (VAL)      :t401b, 2026-11-03, 2d
     TASK-403 Kiểm thử E2E 5 bộ đề & 4 Format(OPS):t403, after t307, 2d
     TASK-402b Thẩm định Lời giải mẫu (VAL)       :t402b, after t403, 2d
     TASK-403b Test Biên & Degraded Mode (OPS)    :t403b, after t403, 2d
@@ -1442,7 +1301,7 @@ Trước khi nghiệm thu toàn bộ dự án, OPS và cả nhóm đối chiếu
 - [ ] **Tái sử dụng phiên:** Thử tính năng **Reuse Session** $\rightarrow$ tạo được bản sao phiên cũ thành công qua modal độc lập `CloneSessionModal`.
 - [ ] **Chặn PDF đầu vào:** Kéo file PDF vào Stage 1 $\rightarrow$ hệ thống chặn ngay và báo lỗi đỏ rõ ràng.
 - [ ] **Bao phủ 4 phương thức nạp đề:** Kiểm tra nạp thành công đề từ cả 4 nguồn: `.docx`, `.tex`, `.md`, và Tab "Nhập trực tiếp".
-- [ ] **Bảo vệ DOCX & Xử lý OMML:** Nạp file DOCX chứa Equation Editor cũ không đọc được text $\rightarrow$ parser phát hiện cờ `has_unparsed_omml = true`, kích hoạt mã lỗi HTTP 422 và hộp thoại `Content Incomplete Warning` hướng dẫn người dùng chuẩn hóa file và tải lại.
+- [ ] **Bảo vệ DOCX & Xử lý OMML:** Nạp file DOCX chứa Equation Editor cũ $\rightarrow$ parser bỏ qua OMML và hiển thị badge màu vàng cảnh báo, kích hoạt đúng hộp thoại `Content Incomplete` để sửa tay.
 - [ ] **Trích xuất & Xác nhận Blueprint:** AI-02 trích xuất được Blueprint kèm tóm tắt tiếng Việt $\rightarrow$ xác nhận thành công $\rightarrow$ chuyển trạng thái sang `blueprinted`.
 - [ ] **Cấu hình & Xung đột:** Thử chọn variation mode không có trong Blueprint $\rightarrow$ hệ thống chặn và giải thích xung đột rõ ràng; chọn mode hợp lệ $\rightarrow$ chuyển trạng thái sang `configured`.
 - [ ] **Tiến trình sinh đề SSE:** Bấm sinh $N=4$ mã đề $\rightarrow$ thanh tiến trình SSE hiển thị phần trăm thời gian thực mượt mà $\rightarrow$ hoàn tất chuyển sang `generated`.
@@ -1478,7 +1337,7 @@ Trước khi nghiệm thu toàn bộ dự án, OPS và cả nhóm đối chiếu
 | **JavaScript Functions / Hooks** | `camelCase` | `useAuth()`, `fetchSessions()` |
 | **Database Tables** | `snake_case` (số nhiều) | `exam_sessions`, `version_questions` |
 | **Database Columns / Foreign Keys** | `snake_case` | `created_at`, `source_question_id`, `is_current` |
-| **RESTful API Routes** | Session-Nested `kebab-case` | `/api/sessions`, `/api/sessions/{session_id}/blueprints` |
+| **RESTful API Routes** | `kebab-case` (danh từ số nhiều) | `/api/sessions`, `/api/blueprints` |
 | **Environment Variables** | `SCREAMING_SNAKE_CASE` | `SUPABASE_URL`, `GEMINI_API_KEY`, `GEMINI_MODEL` |
 | **Timestamp Format** | **ISO 8601 UTC** | `2026-10-15T10:30:00Z` |
 | **ID Format** | **UUID v4 (String)** | `3fa85f64-5717-4562-b3fc-2c963f66afa6` |
@@ -1553,7 +1412,7 @@ Trước khi nghiệm thu toàn bộ dự án, OPS và cả nhóm đối chiếu
 | Mức độ ưu tiên | Tính năng / Module | Phương án dự phòng (Fallback Plan) | Tác động đến nghiệm thu |
 | :--- | :--- | :--- | :--- |
 | **P0: Cốt lõi cấm cắt (Non-negotiable)** | • Xác thực Google Auth & RLS bảo mật 10 bảng (kèm bảng `security_events` bất biến, audit log không thể sửa/xóa)<br>• Bóc tách đề nguồn (DOCX / LaTeX / Markdown / Nhập tay)<br>• Blueprint & Sinh biến thể $N \le 4$ mã đề (tối đa 20 câu nguồn / 250 API calls)<br>• Giao diện Thẩm định 1-1 (Accept/Reject/Revert)<br>• Xuất bản PDF in ấn (Typst) & Bảng đáp án | **Tuyệt đối không cắt.** Bắt buộc hoàn thành 100% để đáp ứng yêu cầu môn học CSC10014. | Không ảnh hưởng; là linh hồn của đồ án. |
-| **P1: Hạ cấp kỹ thuật (Graceful Downgrade)** | • **SymPy ProcessPool (`TASK-107b`):** Nếu môi trường cục bộ gặp trục trặc IPC/multiprocessing $\rightarrow$ ngắt gọi SymPy an toàn và chuyển thẳng sang **Rule Fallback Checker (`TASK-107c`)** với cờ cảnh báo `validation_status = 'passed_rule_fallback'`, tuyệt đối không chạy timeout in-process gây nghẽn GIL/CPU.<br>• **Parser OMML phức tạp (`TASK-202`):** Không cố parse 100% biểu thức lạ; nếu không đọc được text thì gắn cờ `has_unparsed_omml = true` và kích hoạt lỗi HTTP 422 để hướng dẫn người dùng chuẩn hóa lại file Word hoặc chuyển sang LaTeX/Markdown.<br>• **Dual Export XeLaTeX (`TASK-306b`):** Trọng tâm hoàn thiện xuất sắc file PDF in ấn chuẩn đẹp qua Typst (`TASK-306a`) + file `.tex` chuẩn cú pháp UTF-8 sạch sẽ kèm template chuẩn; nếu môi trường máy phát triển thiếu TeXLive/XeLaTeX compiler, cho phép hoãn bước tự động compile XeLaTeX tại local và kiểm tra tính toàn vẹn cú pháp qua script parser. | Chấp nhận được; hệ thống vẫn vận hành an toàn và mượt mà. |
+| **P1: Hạ cấp kỹ thuật (Graceful Downgrade)** | • **SymPy ProcessPool (`TASK-107b`):** Nếu môi trường cục bộ gặp trục trặc IPC/multiprocessing $\rightarrow$ ngắt gọi SymPy an toàn và chuyển thẳng sang **Rule Fallback Checker (`TASK-107c`)** với cờ cảnh báo `validation_status = 'passed_rule_fallback'`, tuyệt đối không chạy timeout in-process gây nghẽn GIL/CPU.<br>• **Parser OMML phức tạp (`TASK-202`):** Không cố parse 100% biểu thức lạ; gắn cờ `has_unparsed_omml = true` và hướng dẫn người dùng sửa qua `Content Incomplete Dialog`.<br>• **Dual Export XeLaTeX (`TASK-306b`):** Trọng tâm hoàn thiện xuất sắc file PDF in ấn chuẩn đẹp qua Typst (`TASK-306a`) + file `.tex` chuẩn cú pháp UTF-8 sạch sẽ kèm template chuẩn; nếu môi trường máy phát triển thiếu TeXLive/XeLaTeX compiler, cho phép hoãn bước tự động compile XeLaTeX tại local và kiểm tra tính toàn vẹn cú pháp qua script parser. | Chấp nhận được; hệ thống vẫn vận hành an toàn và mượt mà. |
 | **P2: Cắt giảm an toàn nếu quá tải (Safe Cuts)** | • **Tùy chọn Shuffle riêng biệt (`TASK-206`, `TASK-304`):** Mặc định bật cả đảo câu và đảo phương án, tạm ẩn giao diện toggle tùy biến nâng cao.<br>• **Biểu đồ thống kê nâng cao (`TASK-401`):** Giữ lại các thẻ KPI số liệu cơ bản (First-pass rate, Recovery rate), hoãn biểu đồ Chart.js phân bố phức tạp.<br>• **Metrics Observability (`TASK-207c`):** Trả về JSON trạng thái tối giản, hoãn các metric đo lường uptime/call_rate chi tiết. | Hoàn toàn không ảnh hưởng đến kịch bản demo và tiêu chí chấm điểm của giảng viên. |
 
 ---
@@ -1571,7 +1430,7 @@ Trước khi nghiệm thu toàn bộ dự án, OPS và cả nhóm đối chiếu
 | `SUPABASE_ANON_KEY` | Private (Server) | OPS | ❌ | ✅ | Khóa xác thực token người dùng. |
 | `SUPABASE_SERVICE_ROLE_KEY` | **Secret (Admin)** | OPS | ❌ (**CẤM**) | ✅ | **Tuyệt mật:** Khóa Admin bypass RLS, chỉ dùng cho worker nền. |
 | `GEMINI_API_KEY` | **Secret (AI)** | OPS | ❌ (**CẤM**) | ✅ | **Tuyệt mật:** API Key Google Gemini, chỉ gọi từ backend. |
-| `GEMINI_MODEL` | Server Config | OPS | ❌ | ✅ | Tên model Gemini (`gemini-3.5-flash-lite`). |
+| `GEMINI_MODEL` | Server Config | OPS | ❌ | ✅ | Tên model Gemini (`gemini-3.8-flash`). |
 | `CORS_ORIGINS` | Server Config | OPS | ❌ | ✅ | Danh sách origin FE được phép gọi (`http://localhost:3000`). |
 | `MAX_UPLOAD_SIZE_MB` | Server Config | OPS | ❌ | ✅ | Giới hạn dung lượng file nạp (`10`). |
 

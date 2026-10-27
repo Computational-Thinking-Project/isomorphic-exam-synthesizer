@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Isomorphic Exam Synthesizer — UI Prototype</title>
+  
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- KaTeX for High Quality Math Rendering -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
+
+  <!-- Prototype Styles -->
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+
+  <!-- 1. App Header -->
+  <header class="app-header">
+    <div class="header-container">
+      <div class="logo-group" onclick="navigateTo('view-dashboard')">
+        <div class="logo-icon">Σ</div>
+        <div class="logo-text">
+          <h1>Isomorphic Exam Synthesizer</h1>
+          <p>Hệ thống tổng hợp đề thi tương đương đẳng cấu</p>
+        </div>
+      </div>
+      
+      <div class="user-profile">
+        <div class="user-avatar">GV</div>
+        <div class="user-info">
+          <span class="user-name">ThS. Nguyễn Văn A</span>
+          <span class="user-role">Giảng viên Toán THPT</span>
+        </div>
+        <button class="btn btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="navigateTo('view-dashboard')">Đăng xuất</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 2. Sticky Stepper Bar (Giúp giáo viên luôn làm chủ lộ trình 3 bước) -->
+  <nav class="stepper-bar" id="main-stepper" style="display: none;">
+    <div class="stepper-container">
+      <div class="stepper-line"></div>
+      
+      <div class="step-item active" id="step-1" onclick="navigateTo('view-stage1')">
+        <div class="step-circle">1</div>
+        <div class="step-label">Nạp & Thẩm định đề gốc</div>
+      </div>
+
+      <div class="step-item" id="step-2" onclick="navigateTo('view-stage2')">
+        <div class="step-circle">2</div>
+        <div class="step-label">Cấu hình & Sinh đề</div>
+      </div>
+
+      <div class="step-item" id="step-3" onclick="navigateTo('view-stage3')">
+        <div class="step-circle">3</div>
+        <div class="step-label">Thẩm định 1-1 & Xuất bản</div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- 3. Main Views Container -->
+  <main class="app-main">
+
+    <!-- ==================== VIEW 0: LOGIN ==================== -->
+    <section id="view-login" class="view-section">
+      <div style="min-height: 70vh; display: flex; align-items: center; justify-content: center;">
+        <div class="card" style="max-width: 440px; width: 100%; text-align: center; padding: 2.5rem 2rem;">
+          <div class="logo-icon" style="width: 54px; height: 54px; font-size: 1.6rem; margin: 0 auto 1.25rem;">Σ</div>
+          <h2 style="font-size: 1.4rem; font-weight: 700; color: var(--slate-900); margin-bottom: 0.5rem;">Đăng nhập hệ thống</h2>
+          <p style="font-size: 0.85rem; color: var(--slate-500); margin-bottom: 2rem;">
+            Dành riêng cho giảng viên và tác giả biên soạn đề thi Toán THPT
+          </p>
+          <button class="btn btn-secondary" style="width: 100%; padding: 0.8rem; font-size: 0.95rem; border-color: var(--slate-300); display: flex; align-items: center; justify-content: center; gap: 0.75rem;" onclick="loginMockUser()">
+            <svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
+            <span>Đăng nhập với Google</span>
+          </button>
+          <p style="font-size: 0.75rem; color: var(--slate-400); margin-top: 1.5rem;">
+            Bảo mật phân quyền dữ liệu đề thi với Supabase Row-Level Security (RLS)
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== VIEW 1: DASHBOARD ==================== -->
+    <section id="view-dashboard" class="view-section active">
+      <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1.5rem;">
+        <div>
+          <h2 class="page-title">Bảng điều khiển kỳ thi</h2>
+          <p class="page-subtitle" style="margin-bottom: 0;">Quản lý các đề thi nguồn, tạo mã đề biến thể và tải về gói tài liệu</p>
+        </div>
+        <div style="display: flex; gap: 0.75rem;">
+          <button class="btn btn-secondary" onclick="navigateTo('view-analytics')">
+            <span>📊 Thống kê KPI</span>
+          </button>
+          <button class="btn btn-primary" onclick="navigateTo('view-stage1')">
+            <span>+ Tạo kỳ thi mới</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="dashboard-grid">
+        <!-- Session Card 1 -->
+        <div class="card session-card">
+          <div>
+            <div class="session-card-header">
+              <span class="badge badge-generating">Stage 1: Bản nháp</span>
+              <span class="session-card-meta">27/10/2026</span>
+            </div>
+            <div class="session-card-title">Đề Kiểm Tra Định Kỳ Giải Tích 12</div>
+            <div class="session-card-meta">Môn: Toán học · 5 câu hỏi nguồn · Dự kiến 4 mã đề</div>
+          </div>
+          <div class="session-card-footer">
+            <button class="btn btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="openCloneModal()">
+              <span>📋 Nhân bản</span>
+            </button>
+            <button class="btn btn-primary" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="navigateTo('view-stage1')">
+              <span>Tiếp tục nạp đề →</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Session Card 2 -->
+        <div class="card session-card" style="border-left-color: var(--warning);">
+          <div>
+            <div class="session-card-header">
+              <span class="badge badge-generated">Stage 3: Chờ thẩm định</span>
+              <span class="session-card-meta">25/10/2026</span>
+            </div>
+            <div class="session-card-title">Khảo Sát Chất Lượng Học Kỳ 1</div>
+            <div class="session-card-meta">Môn: Toán học · 20 câu hỏi · 4 mã đề đã sinh</div>
+          </div>
+          <div class="session-card-footer">
+            <button class="btn btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="openCloneModal()">
+              <span>📋 Nhân bản</span>
+            </button>
+            <button class="btn btn-warning" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="navigateTo('view-stage3')">
+              <span>Thẩm định 1-1 →</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Session Card 3 -->
+        <div class="card session-card" style="border-left-color: var(--success);">
+          <div>
+            <div class="session-card-header">
+              <span class="badge badge-approved">Đã phê duyệt</span>
+              <span class="session-card-meta">20/10/2026</span>
+            </div>
+            <div class="session-card-title">Thi Thử THPT Quốc Gia Lần 1</div>
+            <div class="session-card-meta">Môn: Toán học · 4 mã đề · Đã xuất file PDF & LaTeX</div>
+          </div>
+          <div class="session-card-footer">
+            <button class="btn btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="openCloneModal()">
+              <span>📋 Nhân bản</span>
+            </button>
+            <button class="btn btn-success" style="padding: 0.4rem 0.8rem; font-size: 0.8rem;" onclick="navigateTo('view-export')">
+              <span>Tải file ZIP ↓</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== VIEW 2: STAGE 1 (INGESTION & SOURCE PREVIEW) ==================== -->
+    <section id="view-stage1" class="view-section">
+      <h2 class="page-title">Giai đoạn 1: Nạp đề thi & Thẩm định đề nguồn</h2>
+      <p class="page-subtitle">Bóc tách câu hỏi, kiểm tra công thức Toán học KaTeX và xác nhận nội dung đề gốc trước khi sinh mã đề.</p>
+
+      <!-- Tabs Navigation -->
+      <div class="tabs-nav">
+        <button class="tab-btn active" onclick="alert('Đang ở Tab Tải file lên')">📁 Tải file lên (.docx, .tex, .md)</button>
+        <button class="tab-btn" onclick="alert('Chuyển sang Tab Nhập trực tiếp')">✍️ Nhập văn bản trực tiếp</button>
+      </div>
+
+      <!-- Drag & Drop Area -->
+      <div class="ingest-box" id="drop-area" onclick="document.getElementById('file-input').click()">
+        <input type="file" id="file-input" style="display: none;" accept=".docx,.tex,.md" onchange="alert('Đã nhận file: ' + this.files[0].name)">
+        <div class="ingest-icon">📤</div>
+        <h3 style="font-size: 1.1rem; color: var(--slate-800); margin-bottom: 0.35rem;">Kéo thả đề thi vào đây hoặc bấm để chọn tệp</h3>
+        <p style="font-size: 0.85rem; color: var(--slate-500);">Hỗ trợ định dạng Microsoft Word (.docx), LaTeX (.tex) và Markdown (.md) · Tối đa 10MB</p>
+        <p style="font-size: 0.8rem; color: var(--danger); margin-top: 0.5rem; font-weight: 500;">⚠️ Chú ý: Hệ thống chỉ xuất PDF in ấn, không nhận đầu vào tệp PDF.</p>
+      </div>
+
+      <!-- Source Question Previewer (Read-Only) -->
+      <div style="margin-top: 2rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+          <h3 style="font-size: 1.2rem; font-weight: 700; color: var(--slate-800);">Danh sách câu hỏi nguồn đã bóc tách (5 câu)</h3>
+          <span class="badge badge-approved">Đã trích xuất Blueprint ngầm</span>
+        </div>
+
+        <div id="source-questions-container">
+          <!-- Rendered dynamically by app.js -->
+        </div>
+
+        <!-- Security Guard Checkbox -->
+        <div class="card" style="background: #fffbeb; border-color: #fde68a; margin: 1.5rem 0;">
+          <label style="display: flex; align-items: flex-start; gap: 0.75rem; cursor: pointer;">
+            <input type="checkbox" id="security-ack-checkbox" style="margin-top: 0.25rem; width: 18px; height: 18px;" onchange="toggleSecurityAck(this)">
+            <span style="font-size: 0.9rem; color: #92400e; font-weight: 500;">
+              Tôi đã kiểm tra danh sách câu hỏi nguồn (bao gồm câu có cảnh báo chuỗi khả nghi), xác nhận nội dung toán học an toàn và đồng ý kích hoạt quy trình sinh biến thể.
+            </span>
+          </label>
+        </div>
+
+        <!-- Bottom Action -->
+        <div style="display: flex; justify-content: flex-end; gap: 1rem;">
+          <button class="btn btn-secondary" onclick="navigateTo('view-dashboard')">Hủy bỏ</button>
+          <button class="btn btn-primary" id="btn-confirm-source" disabled onclick="navigateTo('view-stage2')">
+            <span>Xác nhận đề gốc và tiếp tục →</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== VIEW 3: STAGE 2 (CONFIG & PROGRESS) ==================== -->
+    <section id="view-stage2" class="view-section">
+      <h2 class="page-title">Giai đoạn 2: Cấu hình tham số sinh đề thi</h2>
+      <p class="page-subtitle">Thiết lập số lượng mã đề tương đương và các tùy chọn xáo trộn theo ma trận chuẩn.</p>
+
+      <div style="max-width: 800px; margin: 0 auto;">
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 1.25rem;">1. Số lượng mã đề cần sinh</h3>
+          <div style="display: flex; gap: 1rem;">
+            <button class="btn btn-secondary" style="flex: 1; padding: 1rem;">1 Mã đề</button>
+            <button class="btn btn-secondary" style="flex: 1; padding: 1rem;">2 Mã đề</button>
+            <button class="btn btn-primary" style="flex: 1; padding: 1rem; border: 2px solid var(--primary);">4 Mã đề (Khuyên dùng)</button>
+          </div>
+          <p style="font-size: 0.8rem; color: var(--slate-500); margin-top: 0.5rem;">Hệ thống sẽ tổng hợp 4 mã đề: 101, 102, 103, 104 với cùng phương pháp giải.</p>
+        </div>
+
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 1rem;">2. Chế độ biến thể (Variation Modes)</h3>
+          <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer;">
+              <input type="checkbox" checked style="width: 18px; height: 18px;">
+              <div>
+                <strong>Thay đổi số liệu tham số (Parameter Variation)</strong>
+                <p style="font-size: 0.8rem; color: var(--slate-500);">Đổi hệ số nghiệm đẹp, bảo toàn tuyệt đối bảng biến thiên và phương pháp giải.</p>
+              </div>
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer;">
+              <input type="checkbox" checked style="width: 18px; height: 18px;">
+              <div>
+                <strong>Thay đổi ngữ cảnh bài toán (Context Variation)</strong>
+                <p style="font-size: 0.8rem; color: var(--slate-500);">Làm mới câu chữ thực tế nhưng giữ nguyên công thức toán học.</p>
+              </div>
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer;">
+              <input type="checkbox" checked style="width: 18px; height: 18px;">
+              <div>
+                <strong>Hoán đổi ẩn số (Variable Swap)</strong>
+                <p style="font-size: 0.8rem; color: var(--slate-500);">Đổi vai trò giữa các biến số và hàm số phụ.</p>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom: 2rem;">
+          <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 1rem;">3. Tùy chọn xáo trộn ban đầu (Ordering Preferences)</h3>
+          <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <label style="display: flex; align-items: center; gap: 0.75rem;">
+              <input type="checkbox" checked style="width: 18px; height: 18px;">
+              <span>Xáo trộn thứ tự các câu hỏi giữa các mã đề (Shuffle Questions)</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 0.75rem;">
+              <input type="checkbox" checked style="width: 18px; height: 18px;">
+              <span>Xáo trộn ngẫu nhiên vị trí 4 phương án A, B, C, D (Shuffle Options)</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- SSE Progress Box (Hidden initially) -->
+        <div id="sse-progress-box" class="card" style="display: none; background: #f8fafc; border: 2px solid var(--primary-border); margin-bottom: 1.5rem;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <span style="font-weight: 700; color: var(--slate-900);">Tiến trình tổng hợp đề thi (SSE Stream)</span>
+            <span class="badge badge-generating" id="sse-percent-text">Đang chạy...</span>
+          </div>
+          <div class="progress-bar-track" style="width: 100%; height: 10px; margin-bottom: 0.75rem;">
+            <div id="sse-bar-fill" class="progress-bar-fill" style="width: 0%; background: var(--primary);"></div>
+          </div>
+          <p id="sse-status-text" style="font-size: 0.85rem; color: var(--slate-600); font-family: monospace;">Khởi động background worker...</p>
+        </div>
+
+        <div style="display: flex; justify-content: space-between;">
+          <button class="btn btn-secondary" onclick="navigateTo('view-stage1')">← Quay lại</button>
+          <button class="btn btn-primary" id="btn-generate-start" onclick="startGenerationJob()">
+            <span>🚀 Bắt đầu sinh 4 mã đề tương đương</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== VIEW 4: STAGE 3 (REVIEW 1-1 & STICKY DOCK) ==================== -->
+    <section id="view-stage3" class="view-section">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <div>
+          <h2 class="page-title" style="font-size: 1.3rem;">Giai đoạn 3: Thẩm định song song 1-1 (Side-by-Side Review)</h2>
+          <p class="page-subtitle" style="margin-bottom: 0;">Đối chiếu từng câu hỏi gốc với câu biến thể của từng mã đề. Duyệt nhị phân Accept hoặc Reject.</p>
+        </div>
+
+        <!-- Exam Code Tabs -->
+        <div style="display: flex; gap: 0.5rem;">
+          <button class="btn btn-primary code-tab-btn active" onclick="switchExamCode('101', this)">Đề 101</button>
+          <button class="btn btn-secondary code-tab-btn" onclick="switchExamCode('102', this)">Đề 102</button>
+          <button class="btn btn-secondary code-tab-btn" onclick="switchExamCode('103', this)">Đề 103</button>
+          <button class="btn btn-secondary code-tab-btn" onclick="switchExamCode('104', this)">Đề 104</button>
+        </div>
+      </div>
+
+      <!-- Side-by-Side Grid Wrapper -->
+      <div class="side-by-side-grid" id="side-by-side-wrapper">
+        <!-- Left: Source Column -->
+        <div class="column-card" id="review-source-col">
+          <!-- Rendered dynamically -->
+        </div>
+
+        <!-- Right: Variant Column -->
+        <div class="column-card" id="review-variant-col" style="border-left: 4px solid var(--primary);">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
+
+      <!-- Sticky Action Bar at Bottom (UX Cốt lõi) -->
+      <div class="sticky-action-bar">
+        <div class="action-bar-container">
+          <div class="review-progress">
+            <span class="progress-text" id="review-progress-counter">Đã duyệt 0/5 câu</span>
+            <div class="progress-bar-track">
+              <div class="progress-bar-fill" id="review-progress-bar" style="width: 20%;"></div>
+            </div>
+          </div>
+
+          <div class="action-buttons-group">
+            <button class="btn btn-danger" onclick="handleReviewAction('reject')" title="Phím tắt: R">
+              <span>✗ Từ chối & Sinh lại</span>
+              <span class="key-hint">R</span>
+            </button>
+            <button class="btn btn-warning" onclick="handleReviewAction('revert')" title="Phím tắt: Z">
+              <span>↺ Dùng lại câu gốc</span>
+              <span class="key-hint">Z</span>
+            </button>
+            <button class="btn btn-success" onclick="handleReviewAction('accept')" title="Phím tắt: A">
+              <span>✓ Chấp nhận (Duyệt)</span>
+              <span class="key-hint">A</span>
+            </button>
+            <button class="btn btn-primary" style="margin-left: 1rem;" onclick="navigateTo('view-approval')">
+              <span>Chuyển sang Phê duyệt →</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== VIEW 5: APPROVAL & MATRIX TABLE ==================== -->
+    <section id="view-approval" class="view-section">
+      <h2 class="page-title">Phê duyệt cuối cùng & Bảng ma trận đáp án</h2>
+      <p class="page-subtitle">Kiểm tra ma trận đáp án 4 mã đề đã được xáo trộn và kích hoạt khóa đề thi để xuất bản.</p>
+
+      <div class="card" style="margin-bottom: 2rem;">
+        <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.75rem;">Bảng ma trận đáp án đối chiếu (Matrix Answer Table)</h3>
+        <p style="font-size: 0.85rem; color: var(--slate-500);">Đáp án đã được đồng bộ chuẩn xác với từng vị trí phương án sau khi xáo trộn Fisher-Yates.</p>
+
+        <table class="matrix-table">
+          <thead>
+            <tr>
+              <th>Thứ tự câu</th>
+              <th>Mã đề 101</th>
+              <th>Mã đề 102</th>
+              <th>Mã đề 103</th>
+              <th>Mã đề 104</th>
+            </tr>
+          </thead>
+          <tbody id="matrix-table-body">
+            <!-- Rendered dynamically -->
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card" style="background: var(--slate-50); border: 2px dashed var(--slate-300); text-align: center; padding: 2rem; margin-bottom: 2rem;">
+        <h4 style="font-size: 1.1rem; font-weight: 700; color: var(--slate-800); margin-bottom: 0.5rem;">Sẵn sàng xuất bản 4 mã đề</h4>
+        <p style="font-size: 0.85rem; color: var(--slate-500); max-width: 600px; margin: 0 auto 1.25rem;">
+          Sau khi bấm phê duyệt, nội dung gói đề thi sẽ được khóa cứng vĩnh viễn (Content Immutability Lock) và hệ thống Typst sẽ biên dịch các tệp PDF in ấn chuẩn A4.
+        </p>
+        <button class="btn btn-success" style="padding: 0.8rem 1.8rem; font-size: 1rem;" onclick="navigateTo('view-export')">
+          <span>🔒 Phê duyệt toàn bộ & Chuyển sang Tải file</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- ==================== VIEW 6: EXPORT CENTER ==================== -->
+    <section id="view-export" class="view-section">
+      <div style="text-align: center; max-width: 700px; margin: 2rem auto;">
+        <div style="font-size: 3rem; margin-bottom: 1rem;">🎉</div>
+        <h2 class="page-title">Gói đề thi đã xuất bản thành công!</h2>
+        <p class="page-subtitle">Toàn bộ 4 mã đề thi, bảng ma trận đáp án và lời giải chi tiết đã được biên dịch và đóng gói hoàn tất.</p>
+
+        <div class="card" style="text-align: left; margin: 2rem 0;">
+          <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 1rem;">Chi tiết gói tải về (.ZIP):</h3>
+          <ul style="list-style: none; display: flex; flex-direction: column; gap: 0.6rem; font-size: 0.9rem;">
+            <li>📄 <code>exam_101.pdf</code>, <code>exam_102.pdf</code>, <code>exam_103.pdf</code>, <code>exam_104.pdf</code> (Bản in đề thi PDF Typst)</li>
+            <li>📊 <code>answers_matrix.pdf</code> (Bảng ma trận đáp án 4 mã đề)</li>
+            <li>💡 <code>solutions_detailed.pdf</code> (Lời giải chi tiết từng bước)</li>
+            <li>📦 <code>latex_source_clean.zip</code> (Mã nguồn XeLaTeX sạch kèm fontspec UTF-8)</li>
+            <li>📝 <code>markdown_bundle.zip</code> (Bản lưu trữ số chuẩn Markdown)</li>
+          </ul>
+        </div>
+
+        <div style="display: flex; justify-content: center; gap: 1rem;">
+          <button class="btn btn-secondary" onclick="navigateTo('view-dashboard')">Về Bảng điều khiển</button>
+          <button class="btn btn-primary" style="padding: 0.8rem 1.8rem;" onclick="alert('Đang tải file ZIP: de_thi_tuong_duong_2026.zip')">
+            <span>📥 Tải về trọn bộ gói đề thi (.ZIP)</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== VIEW 7: ANALYTICS & STATS (TASK-401) ==================== -->
+    <section id="view-analytics" class="view-section">
+      <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 1.5rem;">
+        <div>
+          <h2 class="page-title">Chỉ số thống kê tương tác sư phạm (KPIs)</h2>
+          <p class="page-subtitle" style="margin-bottom: 0;">Đo lường độ tin cậy toán học, tỷ lệ chấp nhận lần đầu và thời gian xử lý</p>
+        </div>
+        <button class="btn btn-secondary" onclick="navigateTo('view-dashboard')">
+          <span>← Về Dashboard</span>
+        </button>
+      </div>
+
+      <!-- 4 Core KPI Cards -->
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.25rem; margin-bottom: 2rem;">
+        <div class="card" style="border-left: 4px solid var(--success);">
+          <div style="font-size: 0.8rem; color: var(--slate-500); font-weight: 600; text-transform: uppercase;">First-Pass Acceptance Rate</div>
+          <div style="font-size: 2rem; font-weight: 800; color: var(--slate-900); margin: 0.35rem 0;">85.0%</div>
+          <div style="font-size: 0.75rem; color: var(--success); font-weight: 600;">✓ Đạt ngưỡng sư phạm (≥ 60%)</div>
+        </div>
+
+        <div class="card" style="border-left: 4px solid var(--primary);">
+          <div style="font-size: 0.8rem; color: var(--slate-500); font-weight: 600; text-transform: uppercase;">Recovery Rate</div>
+          <div style="font-size: 2rem; font-weight: 800; color: var(--slate-900); margin: 0.35rem 0;">78.5%</div>
+          <div style="font-size: 0.75rem; color: var(--primary); font-weight: 600;">AI sinh lại thành công sau reject</div>
+        </div>
+
+        <div class="card" style="border-left: 4px solid #0284c7;">
+          <div style="font-size: 0.8rem; color: var(--slate-500); font-weight: 600; text-transform: uppercase;">Validation Confidence</div>
+          <div style="font-size: 2rem; font-weight: 800; color: var(--slate-900); margin: 0.35rem 0;">92.0%</div>
+          <div style="font-size: 0.75rem; color: #0284c7; font-weight: 600;">SymPy CAS kiểm chứng tuyệt đối</div>
+        </div>
+
+        <div class="card" style="border-left: 4px solid var(--warning);">
+          <div style="font-size: 0.8rem; color: var(--slate-500); font-weight: 600; text-transform: uppercase;">Avg Pipeline Latency</div>
+          <div style="font-size: 2rem; font-weight: 800; color: var(--slate-900); margin: 0.35rem 0;">1.4s</div>
+          <div style="font-size: 0.75rem; color: var(--slate-500);">Trung bình / câu hỏi</div>
+        </div>
+      </div>
+
+      <!-- Secondary Metrics Bar -->
+      <div class="card">
+        <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 1rem;">Chỉ số đo lường chi tiết phiên làm việc</h3>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+          <div>
+            <div style="font-size: 0.8rem; color: var(--slate-500);">Tần suất sinh lại (Regen Frequency)</div>
+            <div style="font-size: 1.2rem; font-weight: 700;">0.25 lần / câu</div>
+          </div>
+          <div>
+            <div style="font-size: 0.8rem; color: var(--slate-500);">Tỷ lệ hoàn nguyên câu gốc (Revert Rate)</div>
+            <div style="font-size: 1.2rem; font-weight: 700;">5.0%</div>
+          </div>
+          <div>
+            <div style="font-size: 0.8rem; color: var(--slate-500);">Tổng số mã đề đã tạo</div>
+            <div style="font-size: 1.2rem; font-weight: 700;">4 mã đề (80 câu)</div>
+          </div>
+          <div>
+            <div style="font-size: 0.8rem; color: var(--slate-500);">Trần Quota Gemini tiêu tốn</div>
+            <div style="font-size: 1.2rem; font-weight: 700; color: var(--success);">184 / 250 calls</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Modal: Clone Session -->
+  <div class="modal-overlay" id="clone-modal">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title">Nhân bản kỳ thi</h3>
+        <button style="border: none; background: transparent; font-size: 1.25rem; cursor: pointer;" onclick="closeCloneModal()">✕</button>
+      </div>
+      <p style="font-size: 0.85rem; color: var(--slate-500); margin-bottom: 1rem;">
+        Tạo một phiên làm việc mới kế thừa toàn bộ đề nguồn và cấu hình từ đề thi cũ.
+      </p>
+      <input type="text" id="clone-title-input" class="card" style="width: 100%; padding: 0.6rem 0.9rem; margin-bottom: 1.25rem;" value="Đề Kiểm Tra Định Kỳ Giải Tích 12 (Bản sao 2)">
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
+        <button class="btn btn-secondary" onclick="closeCloneModal()">Hủy</button>
+        <button class="btn btn-primary" onclick="confirmClone()">Nhân bản ngay</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- JavaScript logic -->
+  <script src="js/mockData.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
