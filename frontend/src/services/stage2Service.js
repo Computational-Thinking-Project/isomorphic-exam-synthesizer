@@ -33,16 +33,22 @@ export async function fetchSessionDetail(sessionId) {
     : null;
 
   // Chuẩn hóa blueprint_summary: KHÔNG tự tạo chế độ giả lập nếu backend chưa có
-  let blueprintSummary = data.blueprint_summary || null;
+  let blueprintSummary = data.blueprint_summary
+    ? {
+        ...data.blueprint_summary,
+        is_ready: data.blueprint_summary.is_ready !== false,
+      }
+    : null;
 
   // Nếu API chưa nhóm blueprint_summary nhưng có dữ liệu blueprint trong source_questions
   if (!blueprintSummary && Array.isArray(data.source_questions) && data.source_questions.length > 0) {
+    const totalQuestions = data.source_questions.length;
     const questionsWithBlueprints = data.source_questions.filter(
       (q) => q.question_blueprints || q.blueprint || q.variation_modes,
     );
 
-    if (questionsWithBlueprints.length > 0) {
-      const totalQuestions = data.source_questions.length;
+    // Chỉ coi Blueprint đã sẵn sàng khi TOÀN BỘ câu hỏi trong đề nguồn đều có Blueprint
+    if (questionsWithBlueprints.length === totalQuestions) {
       const MODE_MAP = {
         parameter_variation: 'parameter_variation',
         numerical: 'parameter_variation',
@@ -112,12 +118,12 @@ export async function fetchSessionDetail(sessionId) {
           };
         });
 
-      if (supportedModes.length > 0) {
-        blueprintSummary = {
-          total_questions: totalQuestions,
-          supported_modes: supportedModes,
-        };
-      }
+      // Ngay cả khi supportedModes rỗng (tất cả câu chỉ hỗ trợ NONE), Blueprint vẫn sẵn sàng (is_ready: true)
+      blueprintSummary = {
+        total_questions: totalQuestions,
+        supported_modes: supportedModes,
+        is_ready: true,
+      };
     }
   }
 

@@ -127,3 +127,48 @@ test('startGeneration và requestEventTicket gọi đúng endpoint POST tương 
     api.post = originalPost;
   }
 });
+
+test('fetchSessionDetail đánh dấu is_ready: true và supported_modes: [] khi tất cả câu hỏi chỉ hỗ trợ NONE', async () => {
+  const originalGet = api.get;
+  api.get = async () => ({
+    data: {
+      id: 'session-none-only',
+      status: 'blueprinted',
+      source_questions: [
+        { id: 'q1', variation_modes: ['NONE'] },
+        { id: 'q2', variation_modes: ['none'] },
+      ],
+    },
+  });
+
+  try {
+    const detail = await fetchSessionDetail('session-none-only');
+    assert.ok(detail.blueprint_summary, 'Phải có blueprint_summary');
+    assert.equal(detail.blueprint_summary.is_ready, true, 'Blueprint phải sẵn sàng');
+    assert.equal(detail.blueprint_summary.total_questions, 2);
+    assert.deepEqual(detail.blueprint_summary.supported_modes, [], 'supported_modes phải là mảng rỗng');
+  } finally {
+    api.get = originalGet;
+  }
+});
+
+test('fetchSessionDetail trả blueprint_summary: null khi có câu hỏi nguồn thiếu dữ liệu Blueprint', async () => {
+  const originalGet = api.get;
+  api.get = async () => ({
+    data: {
+      id: 'session-incomplete-blueprint',
+      status: 'blueprinted',
+      source_questions: [
+        { id: 'q1', variation_modes: ['parameter_variation'] },
+        { id: 'q2' }, // q2 không có question_blueprints, blueprint, variation_modes
+      ],
+    },
+  });
+
+  try {
+    const detail = await fetchSessionDetail('session-incomplete-blueprint');
+    assert.equal(detail.blueprint_summary, null, 'Blueprint chưa hoàn thiện thì blueprint_summary phải là null');
+  } finally {
+    api.get = originalGet;
+  }
+});

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -168,9 +168,19 @@ export default function Stage2ConfigPage({
     }
   }
 
-  function handleCompleteRedirect() {
+  const handleCompleteRedirect = useCallback(() => {
     navigate(`/session/${sessionId}/stage3`);
-  }
+  }, [navigate, sessionId]);
+
+  // Tự động chuyển hướng khi hoàn tất ở cấp độ container độc lập
+  useEffect(() => {
+    if (isGenerating && sseState.isDone) {
+      const timer = setTimeout(() => {
+        handleCompleteRedirect();
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [isGenerating, sseState.isDone, handleCompleteRedirect]);
 
   // Giao diện khi đang tải phiên
   if (isLoadingSession) {
@@ -254,13 +264,21 @@ export default function Stage2ConfigPage({
   }
 
   // Trích xuất số lượng mã đề thật, không võ đoán mặc định 2 khi F5/reload
+  const statusVersions = Object.keys(sseState.questionStatuses || {}).map((k) =>
+    parseInt(k.split('-')[0], 10),
+  );
+  const maxVersionFromStatuses =
+    statusVersions.length > 0
+      ? Math.max(...statusVersions.filter((n) => !isNaN(n) && n > 0))
+      : null;
+
   const derivedNumVersions =
     activeConfig?.n_versions ||
     activeConfig?.num_versions ||
     (session?.exam_versions?.length > 0 ? session.exam_versions.length : null) ||
     sseState.progress?.n_versions ||
     sseState.progress?.num_versions ||
-    null;
+    (maxVersionFromStatuses && maxVersionFromStatuses > 0 ? maxVersionFromStatuses : null);
 
   return (
     <div className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
@@ -277,35 +295,23 @@ export default function Stage2ConfigPage({
       </div>
 
       {isGenerating ? (
-        derivedNumVersions ? (
-          <GenerationProgressView
-            sessionId={sessionId}
-            sessionTitle={session?.title}
-            numVersions={derivedNumVersions}
-            totalSourceQuestions={
-              session?.source_questions?.length || session?.blueprint_summary?.total_questions || 10
-            }
-            progress={sseState.progress}
-            questionStatuses={sseState.questionStatuses}
-            warnings={sseState.warnings}
-            connectionState={sseState.connectionState}
-            isDone={sseState.isDone}
-            error={sseState.error}
-            reconnectCount={sseState.reconnectCount}
-            onReconnect={sseState.reconnect}
-            onComplete={handleCompleteRedirect}
-          />
-        ) : (
-          <div className="mx-auto max-w-xl rounded-2xl border border-slate-800 bg-slate-900/90 p-8 text-center shadow-xl">
-            <Loader2 className="mx-auto h-10 w-10 animate-spin text-sky-400" />
-            <h3 className="mt-4 text-base font-bold text-white">
-              Đang đồng bộ tiến trình sinh đề...
-            </h3>
-            <p className="mt-2 text-sm text-slate-400">
-              Đang kết nối và lấy thông tin cấu hình số lượng mã đề từ máy chủ. Vui lòng chờ trong giây lát.
-            </p>
-          </div>
-        )
+        <GenerationProgressView
+          sessionId={sessionId}
+          sessionTitle={session?.title}
+          numVersions={derivedNumVersions}
+          totalSourceQuestions={
+            session?.source_questions?.length || session?.blueprint_summary?.total_questions || 10
+          }
+          progress={sseState.progress}
+          questionStatuses={sseState.questionStatuses}
+          warnings={sseState.warnings}
+          connectionState={sseState.connectionState}
+          isDone={sseState.isDone}
+          error={sseState.error}
+          reconnectCount={sseState.reconnectCount}
+          onReconnect={sseState.reconnect}
+          onComplete={handleCompleteRedirect}
+        />
       ) : (
         <Stage2ConfigCard
           session={session}

@@ -33,6 +33,9 @@ export default function Stage2ConfigCard({
 
   // Danh sách các chế độ từ Blueprint
   const supportedModes = session?.blueprint_summary?.supported_modes || [];
+  const isBlueprintReady = Boolean(
+    session?.blueprint_summary && session.blueprint_summary.is_ready !== false,
+  );
 
   // Giá trị khởi tạo từ cấu hình đã lưu hoặc mặc định
   const defaultNumVersions = initialConfig?.n_versions ?? initialConfig?.num_versions ?? 2;
@@ -79,6 +82,11 @@ export default function Stage2ConfigCard({
   async function handleSubmit(event) {
     event.preventDefault();
     setValidationError('');
+
+    if (!isBlueprintReady) {
+      setValidationError('Đề nguồn chưa hoàn tất phân tích Blueprint. Vui lòng quay lại Giai đoạn 1 để xác nhận đề gốc.');
+      return;
+    }
 
     if (numVersions < 1 || numVersions > 4) {
       setValidationError('Số lượng mã đề phải từ 1 đến 4.');
@@ -195,12 +203,24 @@ export default function Stage2ConfigCard({
           </p>
 
           <div className="mt-4 space-y-3">
-            {supportedModes.length === 0 ? (
+            {!isBlueprintReady ? (
               <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 p-4 text-center text-sm text-amber-200">
                 <p className="font-semibold">Chưa có thông tin Blueprint khả dụng</p>
                 <p className="mt-1 text-xs text-amber-300/80">
-                  Phiên làm việc này chưa có chế độ biến thể nào được hỗ trợ. Vui lòng xác nhận đề gốc ở Giai đoạn 1.
+                  Đề nguồn chưa hoàn tất phân tích Blueprint hoặc thiếu dữ liệu câu hỏi. Vui lòng quay lại Giai đoạn 1 để xác nhận đề gốc.
                 </p>
+              </div>
+            ) : supportedModes.length === 0 ? (
+              <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-4 text-sm text-slate-300">
+                <div className="flex items-start gap-3">
+                  <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-sky-400" />
+                  <div>
+                    <p className="font-semibold text-white">Đề nguồn giữ nguyên bài toán gốc</p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      Các câu hỏi trong đề được phân tích chỉ áp dụng chế độ giữ nguyên (không biến đổi số liệu hoặc ngữ cảnh). Hệ thống sẽ sinh các mã đề dựa trên xáo trộn thứ tự câu hỏi bên dưới.
+                    </p>
+                  </div>
+                </div>
               </div>
             ) : (
               supportedModes.map((mode) => {
@@ -358,7 +378,7 @@ export default function Stage2ConfigCard({
 
           <button
             type="submit"
-            disabled={isSubmitting || supportedModes.length === 0}
+            disabled={isSubmitting || !isBlueprintReady}
             className="flex items-center gap-2 rounded-xl bg-sky-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-sky-600/30 hover:bg-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isSubmitting ? (

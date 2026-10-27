@@ -369,3 +369,54 @@ test('Stage2ConfigCard khóa nút nộp khi isSubmitting = true', async () => {
 
   await harness.unmount();
 });
+
+test('Stage2ConfigCard cho phép gửi active_variation_modes: [] khi Blueprint chỉ có NONE và is_ready = true', async () => {
+  let submittedPayload = null;
+  const sessionNoneOnly = {
+    id: 'test-none-only',
+    title: 'Đề chỉ có NONE',
+    subject: 'Toán',
+    grade: 12,
+    status: 'blueprinted',
+    source_questions: [
+      { id: 'q1', question_no: 1, variation_modes: ['NONE'] },
+      { id: 'q2', question_no: 2, variation_modes: ['NONE'] },
+    ],
+    blueprint_summary: {
+      total_questions: 2,
+      supported_modes: [],
+      is_ready: true,
+    },
+  };
+
+  const harness = renderCard({
+    session: sessionNoneOnly,
+    initialConfig: { active_variation_modes: [] },
+    onSubmit: async (payload) => {
+      submittedPayload = payload;
+    },
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('Đề nguồn giữ nguyên bài toán gốc'), 'Phải thông báo đề giữ nguyên nội dung gốc');
+  assert.equal(text.includes('Chưa có thông tin Blueprint khả dụng'), false, 'Không được báo thiếu Blueprint');
+
+  const submitBtn = harness.container.querySelector('button[type="submit"]');
+  assert.equal(submitBtn.getAttribute('disabled'), null, 'Nút submit không được bị disabled');
+
+  const form = harness.container.querySelector('form');
+  await act(async () => {
+    form.dispatchEvent({
+      type: 'submit',
+      bubbles: true,
+      cancelable: true,
+      preventDefault: () => {},
+    });
+  });
+
+  assert.ok(submittedPayload, 'Form phải submit thành công');
+  assert.deepEqual(submittedPayload.active_variation_modes, [], 'Gửi mảng rỗng active_variation_modes');
+
+  await harness.unmount();
+});

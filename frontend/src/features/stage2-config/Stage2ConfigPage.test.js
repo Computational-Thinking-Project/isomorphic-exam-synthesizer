@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { ensureDomEnvironment } from '../../test-support/domHarness.js';
 
 ensureDomEnvironment();
@@ -15,14 +15,20 @@ function renderPage(sessionId = 'session-123', customProps = {}) {
   const container = document.createElement('div');
   const root = createRoot(container);
   let navigateFn = null;
+  let currentLocation = `/session/${sessionId}/stage2`;
 
   function NavigationCapture() {
     navigateFn = useNavigate();
+    const loc = useLocation();
+    currentLocation = loc.pathname;
     return null;
   }
 
   return {
     container,
+    getLocation() {
+      return currentLocation;
+    },
     async render() {
       await act(async () => {
         root.render(
@@ -36,6 +42,10 @@ function renderPage(sessionId = 'session-123', customProps = {}) {
               React.createElement(Route, {
                 path: '/session/:id/stage2',
                 element: React.createElement(Stage2ConfigPage, customProps),
+              }),
+              React.createElement(Route, {
+                path: '/session/:id/stage3',
+                element: React.createElement('div', null, 'Trang Stage 3 Đã Chuyển Hướng'),
               }),
             ),
           ),
@@ -271,7 +281,11 @@ test('Stage2ConfigPage hiển thị trạng thái đồng bộ và không tự �
   await harness.render();
 
   const text = harness.container.textContent;
-  assert.ok(text.includes('Đang đồng bộ tiến trình sinh đề'), 'Phải hiển thị màn hình chờ đồng bộ');
+  assert.ok(
+    text.includes('Đang đồng bộ tiến trình sinh đề') ||
+    text.includes('Đang đồng bộ cấu hình số lượng mã đề'),
+    'Phải hiển thị màn hình chờ đồng bộ',
+  );
   assert.equal(text.includes('Mã đề #1'), false, 'Không tự vẽ tab mã đề #1 khi chưa biết số mã');
   assert.equal(text.includes('Mã đề #2'), false, 'Không tự đoán mặc định 2 mã đề');
 
@@ -421,6 +435,100 @@ test('Stage2ConfigPage nạp cấu hình đã lưu (initialConfig n_versions: 4)
 
   const text = harness.container.textContent;
   assert.ok(text.includes('4 mã đề'), 'Phải hiển thị đúng 4 mã đề từ cấu hình đã lưu');
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigPage phiên generating thiếu config: SSE báo lỗi hiển thị rõ ràng và có nút kết nối lại', async () => {
+  let reconnected = false;
+  const mockLoadSession = async () => ({
+    id: 'session-gen-err',
+    title: 'Đề generating thiếu config',
+    status: 'generating',
+    source_questions: [{ id: 'q1', question_no: 1 }],
+    config: null,
+    exam_versions: [],
+    blueprint_summary: {
+      total_questions: 1,
+      supported_modes: [],
+      is_ready: true,
+    },
+  });
+
+  const mockUseSSE = () => ({
+    connectionState: 'failed',
+    progress: { percent: 15 },
+    questionStatuses: {},
+    warnings: [],
+    isDone: false,
+    error: 'Hết hạn quota Gemini API (ERR_QUOTA_EXCEEDED)',
+    reconnectCount: 1,
+    reconnect: () => {
+      reconnected = true;
+    },
+  });
+
+  const harness = renderPage('session-gen-err', {
+    loadSession: mockLoadSession,
+    useSSEHook: mockUseSSE,
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('Hết hạn quota Gemini API'), 'Lỗi SSE phải được hiển thị ngay cả khi thiếu config');
+
+  const reconnectBtn = Array.from(harness.container.querySelectorAll('button')).find((b) =>
+    b.textContent.includes('Kết nối lại'),
+  );
+  assert.ok(reconnectBtn, 'Phải có nút Kết nối lại');
+  reconnectBtn.click();
+  assert.equal(reconnected, true, 'Bấm nút phải gọi hàm reconnect của hook');
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigPage phiên generating thiếu config: SSE báo done kết thúc trạng thái chờ và chuyển hướng Stage3', async () => {
+  const mockLoadSession = async () => ({
+    id: 'session-gen-done-no-config',
+    title: 'Đề generating thiếu config hoàn thành',
+    status: 'generating',
+    source_questions: [{ id: 'q1', question_no: 1 }],
+    config: null,
+    exam_versions: [],
+    blueprint_summary: {
+      total_questions: 1,
+      supported_modes: [],
+      is_ready: true,
+    },
+  });
+
+  const mockUseSSE = () => ({
+    connectionState: 'connected',
+    progress: { percent: 100 },
+    questionStatuses: {},
+    warnings: [],
+    isDone: true,
+    error: null,
+    reconnectCount: 0,
+    reconnect: () => {},
+  });
+
+  const harness = renderPage('session-gen-done-no-config', {
+    loadSession: mockLoadSession,
+    useSSEHook: mockUseSSE,
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('Đã sinh xong tất cả các mã đề thi đẳng cấu!'), 'Phải hiển thị thông báo hoàn tất');
+
+  // Đợi timer auto-redirect chạy
+  await new Promise((r) => setTimeout(r, 1600));
+  assert.equal(
+    harness.getLocation(),
+    '/session/session-gen-done-no-config/stage3',
+    'Phải tự động điều hướng sang Stage 3',
+  );
 
   await harness.unmount();
 });

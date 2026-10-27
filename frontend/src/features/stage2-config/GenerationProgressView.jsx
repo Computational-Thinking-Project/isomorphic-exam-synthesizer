@@ -58,7 +58,7 @@ const STATUS_CONFIGS = {
 export default function GenerationProgressView({
   sessionId,
   sessionTitle = '',
-  numVersions = 2,
+  numVersions = null,
   totalSourceQuestions = 10,
   progress = {},
   questionStatuses = {},
@@ -70,8 +70,19 @@ export default function GenerationProgressView({
   onReconnect,
   onComplete,
 }) {
+  // Nếu numVersions chưa có, thử suy ra từ các key dạng "${version_index}-${question_no}" trong questionStatuses
+  const statusVersions = Object.keys(questionStatuses || {}).map((k) =>
+    parseInt(k.split('-')[0], 10),
+  );
+  const maxVersionFromStatuses =
+    statusVersions.length > 0
+      ? Math.max(...statusVersions.filter((n) => !isNaN(n) && n > 0))
+      : null;
+  const effectiveNumVersions =
+    numVersions || (maxVersionFromStatuses && maxVersionFromStatuses > 0 ? maxVersionFromStatuses : null);
+
   const [activeVersionTab, setActiveVersionTab] = useState(1);
-  const totalVariants = numVersions * totalSourceQuestions;
+  const totalVariants = effectiveNumVersions ? effectiveNumVersions * totalSourceQuestions : null;
   const percent = Math.min(100, Math.max(0, progress.percent ?? 0));
   const completedCount = progress.completedCount ?? 0;
 
@@ -141,9 +152,9 @@ export default function GenerationProgressView({
             </span>
             <div className="text-right text-xs text-slate-400">
               <span className="font-semibold text-slate-200">
-                {completedCount} / {totalVariants}
+                {totalVariants ? `${completedCount} / ${totalVariants}` : `${completedCount} câu`}
               </span>{' '}
-              câu hỏi đã hoàn tất
+              {totalVariants ? 'câu hỏi đã hoàn tất' : 'đã xử lý'}
             </div>
           </div>
 
@@ -236,7 +247,9 @@ export default function GenerationProgressView({
               <CheckCircle className="h-6 w-6 shrink-0 text-emerald-400" />
               <div>
                 <h4 className="text-sm font-bold text-white">
-                  Đã sinh xong {numVersions} mã đề thi đẳng cấu!
+                  {effectiveNumVersions
+                    ? `Đã sinh xong ${effectiveNumVersions} mã đề thi đẳng cấu!`
+                    : 'Đã sinh xong tất cả các mã đề thi đẳng cấu!'}
                 </h4>
                 <p className="mt-0.5 text-xs text-emerald-300/90">
                   Hệ thống đang tự động chuyển hướng sang trang xem và duyệt đề (Stage 3)...
@@ -271,82 +284,96 @@ export default function GenerationProgressView({
           </div>
 
           {/* Version tabs: Đề 1, Đề 2, ... */}
-          <div className="flex items-center gap-2">
-            {Array.from({ length: numVersions }, (_, i) => i + 1).map((vIdx) => {
-              const isTabActive = activeVersionTab === vIdx;
+          {effectiveNumVersions ? (
+            <div className="flex items-center gap-2">
+              {Array.from({ length: effectiveNumVersions }, (_, i) => i + 1).map((vIdx) => {
+                const isTabActive = activeVersionTab === vIdx;
+                return (
+                  <button
+                    key={vIdx}
+                    type="button"
+                    onClick={() => setActiveVersionTab(vIdx)}
+                    className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all ${
+                      isTabActive
+                        ? 'bg-sky-600 text-white shadow-md shadow-sky-600/30'
+                        : 'border border-slate-700 bg-slate-800/60 text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    Mã đề #{vIdx}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+
+        {/* Lưới các câu hỏi trong mã đề được chọn hoặc trạng thái chờ đồng bộ */}
+        {effectiveNumVersions ? (
+          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: totalSourceQuestions }, (_, i) => i + 1).map((qNo) => {
+              const key = `${activeVersionTab}-${qNo}`;
+              const item = questionStatuses[key];
+              const qWarning = warnings.find(
+                (w) => w?.version_index === activeVersionTab && w?.question_no === qNo,
+              );
+              const statusKey = item?.status || (isDone ? 'done' : 'pending');
+              const statusConfig = STATUS_CONFIGS[statusKey] || STATUS_CONFIGS.pending;
+              const Icon = statusConfig.icon;
+
               return (
-                <button
-                  key={vIdx}
-                  type="button"
-                  onClick={() => setActiveVersionTab(vIdx)}
-                  className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all ${
-                    isTabActive
-                      ? 'bg-sky-600 text-white shadow-md shadow-sky-600/30'
-                      : 'border border-slate-700 bg-slate-800/60 text-slate-300 hover:bg-slate-800'
+                <div
+                  key={key}
+                  className={`flex items-center justify-between rounded-xl border p-3.5 transition-all ${
+                    qWarning
+                      ? 'border-amber-500/60 bg-amber-950/20 hover:border-amber-400'
+                      : 'border-slate-800 bg-slate-800/50 hover:border-slate-700'
                   }`}
                 >
-                  Mã đề #{vIdx}
-                </button>
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-700/80 text-xs font-bold text-slate-200">
+                      {qNo}
+                    </span>
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-xs font-semibold text-white">
+                          Câu {qNo} (Đề {activeVersionTab})
+                        </p>
+                        {qWarning && (
+                          <span
+                            title={qWarning.message || 'Có cảnh báo'}
+                            className="inline-flex items-center text-amber-400"
+                          >
+                            <AlertTriangle className="h-3 w-3" />
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-400 truncate max-w-[120px]">
+                        {qWarning?.message || item?.message || (statusKey === 'done' ? 'Đã hoàn thành' : 'Đang xếp hàng...')}
+                      </p>
+                    </div>
+                  </div>
+
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium ${statusConfig.badgeClass}`}
+                  >
+                    <Icon className={`h-3 w-3 ${statusConfig.spin ? 'animate-spin' : ''}`} />
+                    {statusConfig.label}
+                  </span>
+                </div>
               );
             })}
           </div>
-        </div>
-
-        {/* Lưới các câu hỏi trong mã đề được chọn */}
-        <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: totalSourceQuestions }, (_, i) => i + 1).map((qNo) => {
-            const key = `${activeVersionTab}-${qNo}`;
-            const item = questionStatuses[key];
-            const qWarning = warnings.find(
-              (w) => w?.version_index === activeVersionTab && w?.question_no === qNo,
-            );
-            const statusKey = item?.status || (isDone ? 'done' : 'pending');
-            const statusConfig = STATUS_CONFIGS[statusKey] || STATUS_CONFIGS.pending;
-            const Icon = statusConfig.icon;
-
-            return (
-              <div
-                key={key}
-                className={`flex items-center justify-between rounded-xl border p-3.5 transition-all ${
-                  qWarning
-                    ? 'border-amber-500/60 bg-amber-950/20 hover:border-amber-400'
-                    : 'border-slate-800 bg-slate-800/50 hover:border-slate-700'
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-700/80 text-xs font-bold text-slate-200">
-                    {qNo}
-                  </span>
-                  <div>
-                    <div className="flex items-center gap-1.5">
-                      <p className="text-xs font-semibold text-white">
-                        Câu {qNo} (Đề {activeVersionTab})
-                      </p>
-                      {qWarning && (
-                        <span
-                          title={qWarning.message || 'Có cảnh báo'}
-                          className="inline-flex items-center text-amber-400"
-                        >
-                          <AlertTriangle className="h-3 w-3" />
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-slate-400 truncate max-w-[120px]">
-                      {qWarning?.message || item?.message || (statusKey === 'done' ? 'Đã hoàn thành' : 'Đang xếp hàng...')}
-                    </p>
-                  </div>
-                </div>
-
-                <span
-                  className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium ${statusConfig.badgeClass}`}
-                >
-                  <Icon className={`h-3 w-3 ${statusConfig.spin ? 'animate-spin' : ''}`} />
-                  {statusConfig.label}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+        ) : (
+          <div className="mt-6 rounded-xl border border-slate-800 bg-slate-800/30 p-8 text-center">
+            <Loader2 className="mx-auto h-7 w-7 animate-spin text-sky-400" />
+            <h4 className="mt-3 text-sm font-semibold text-white">
+              Đang đồng bộ cấu hình số lượng mã đề từ máy chủ...
+            </h4>
+            <p className="mt-1 text-xs text-slate-400">
+              Tiến trình sinh đề AI vẫn đang chạy bình thường ở trên. Lưới chi tiết từng câu hỏi sẽ xuất hiện ngay khi cấu hình được nhận diện.
+            </p>
+          </div>
+        )}
 
         <div className="mt-6 rounded-xl border border-slate-800 bg-slate-800/30 p-3 text-center text-xs text-slate-400">
           💡 <em>Lưu ý: Bạn không cần can thiệp trong quá trình sinh. Sau khi hoàn tất, bạn có thể xem lại và bấm "Tạo lại câu này" cho từng câu cụ thể ở Bước 3.</em>
