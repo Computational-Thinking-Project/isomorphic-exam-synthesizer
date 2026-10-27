@@ -100,6 +100,7 @@ class GenerationService:
         self, source: SourceQuestion, item: dict[str, Any], blueprint: dict[str, Any],
         context: RequestContext, seed: int, version_index: int, variation_modes: list[str],
         previous: GeneratedQuestion | None = None, accept: AcceptCandidate | None = None,
+        excluded_identities: set[str] | None = None,
     ) -> QuestionResult:
         result = QuestionResult(
             version_index=version_index, source_question_id=source.id,
@@ -109,7 +110,7 @@ class GenerationService:
             normalized_text(source.question_text),
             sorted(normalized_text(option) for option in source.options),
         ])
-        excluded = {original_identity}
+        excluded = {original_identity, *(excluded_identities or set())}
         if previous:
             excluded.add(candidate_identity(previous))
         feedback: list[dict[str, str]] = []
@@ -205,6 +206,7 @@ class GenerationService:
         self, source: SourceQuestion, blueprint: dict[str, Any], previous: GeneratedQuestion, *,
         confirmed_source_hash: str, context: RequestContext, version_index: int = 1,
         variation_modes: list[str] | None = None,
+        current_candidates: list[GeneratedQuestion] | None = None,
     ) -> QuestionResult:
         source = source.model_copy(deep=True)
         blueprint = deepcopy(blueprint)
@@ -215,9 +217,19 @@ class GenerationService:
             raise ToolError("SOURCE_NOT_CONFIRMED", "Nguồn chưa được xác nhận hoặc đã thay đổi.")
         if previous.source_question_id != source.id or previous.blueprint_fingerprint != fingerprint(blueprint):
             raise ToolError("PREVIOUS_VARIANT_MISMATCH", "Câu cũ không thuộc nguồn và Blueprint này.")
+        # BE supplies the current same-source candidates from the other versions.
+        # Snapshot checks cannot replace a transaction-time uniqueness check in BE.
+        peers = [candidate.model_copy(deep=True) for candidate in current_candidates or []]
+        if any(
+            candidate.source_question_id != source.id
+            or candidate.blueprint_fingerprint != fingerprint(blueprint)
+            for candidate in peers
+        ):
+            raise ToolError("PREVIOUS_VARIANT_MISMATCH", "Câu ở mã đề khác không thuộc nguồn và Blueprint này.")
         seed = (previous.seed + 1 + secrets.randbelow(2 ** 30)) % (2 ** 31)
         return await self._generate(
-            source, item, blueprint, context, seed, version_index, modes, previous=previous
+            source, item, blueprint, context, seed, version_index, modes, previous=previous,
+            excluded_identities={candidate_identity(candidate) for candidate in peers},
         )
 
     async def generate_exam_drafts(
