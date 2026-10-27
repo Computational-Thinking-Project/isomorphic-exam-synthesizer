@@ -1,5 +1,11 @@
 # Frontend — thiết lập local và checkpoint TASK-101/103
 
+## Kiểm cuối W1 — 27/10/2026
+
+- User có quyền chốt đã chọn scope W1: Dashboard/API thật, tạo/mở draft và clone; trạng thái chưa có màn thông báo rõ, ghép ở tuần sau. User xác nhận ca lỗi mở tại Dashboard→bỏ chặn→Thử mở lại khôngF5→đúngID/nội dung đạt, cùng các ca entry/reload/account đã đạt trước đó. Clone sao chép nguồn và Blueprint của phiên sang draft độc lập.
+- Kiểm cuối local tại e09d4cc:154tests, lint và build đạt; sau đó chỉ cập nhật tài liệu, source/runtime vẫn111ca09. Dev0307b1c mới fetch đã là ancestor, không cần merge mới. PR17 remote vẫnDraft/c2613c4; chưa push local hoặc cóCI/review cho head cuối. Sẵn sàng bàn giao review W1, chưa nhận đã merge.
+- Chỉ bắt đầu W2 khi toàn bộ nhánh phần1/W1 đã merge dev. Snapshot GitHub27/10 còn PR17/19/20 mở, nên mốc đó chưa đạt. Không tự lấy PR15/16 hoặc bắt đầu201/203b/204 trong lượt kiểm này.
+
 ## Dashboard mở theo detail mới — 27/10/2026
 
 - Lượt2 entry metadata đã user kiểm UI thật trên Docker development và báo đạt: tạo/replace/list, F5new/draft/clone, lỗi detail do browser chặn và thử lại sau bỏ chặn, signed-out, B không mở phiênA, reset form khi logouttabkhác/loginA. Không nhận Nginx/static, naturalexpiry hoặc ingestionW2 đã kiểm.

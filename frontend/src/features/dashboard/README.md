@@ -4,6 +4,14 @@
 
 TV1 explicitly confirmed authority to decide and accepted W1 scope: real Dashboard/session APIs, creation and opening of drafts/clones, with clear unavailable notices for statuses whose screens arrive in later weeks. Those later screens remain integration backlog; their absence does not block W1 acceptance under this decision. Testing, peer review and merge still require evidence. Clone reuses the whole session's source questions and Blueprints into an independent draft, rather than a selected generated version; TV1 reported a different session ID with the relevant information preserved. W2 starts only after all part1/W1 branches have merged into dev; that gate has not been verified by this documentation update.
 
+### Final W1 verification — 27/10/2026
+
+TV1 additionally reported the new Dashboard open recovery passed on development Docker: block the session-detail request, click Tiếp tục and remain on Dashboard with an error/Thử mở lại; unblock and retry without F5, then open the correct session ID/content. This completes the requested live open recovery check in addition to the increment2 and clone evidence below. No request-count, server500/timeout or natural-expiry claim is made; pending/cancel/stale-status races use the separate fixture evidence.
+
+Final local frontend verification at e09d4cc:154tests passed, lint and build passed. The following checkpoint only edits documentation; executable source remains111ca09. Fetched dev is0307b1c and already an ancestor; no additional merge required. Diff with dev has no backend application, shared API/Supabase client, Auth store or dependency changes. SQL scripts are scoped prerequisites TV1 already applied; do not rerun them on that project.
+
+Code and author-reported live W1 acceptance are ready to hand over for peer review. PR17 is still Draft at remote c2613c4; the final local commits have not been pushed. CI for the final pushed head, peer approval and merge remain outstanding. Later-stage destinations remain a separate integration backlog under the accepted W1 boundary above.
+
 ### Current detail before open — 27/10/2026
 
 Tiếp tục/Xem now calls the existing `getSessionDetail` before choosing a destination, including when the list badge is not draft. `sessionDestination.js` connects only the implemented draft entry; nine other known statuses and unknown statuses keep the user on Dashboard with a notice. No readiness/job fields or Stage2/review/export screens are invented. Stage1 still reads detail on arrival for its own direct-URL/reload protection; two sequential detail reads during a successful Dashboard open are expected.
