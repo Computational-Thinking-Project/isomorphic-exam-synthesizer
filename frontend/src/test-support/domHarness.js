@@ -173,6 +173,15 @@ export class DOMElement extends DOMNode {
       cancelable: true,
       preventDefault: () => {},
     });
+    if (
+      this.tagName.toLowerCase() === 'input' &&
+      (this.type === 'checkbox' || this.getAttribute('type') === 'checkbox')
+    ) {
+      const reactPropsKey = Object.keys(this).find((k) => k.startsWith('__reactProps$'));
+      if (reactPropsKey && typeof this[reactPropsKey]?.onChange === 'function') {
+        this[reactPropsKey].onChange({ target: this, currentTarget: this });
+      }
+    }
   }
 }
 

@@ -148,6 +148,19 @@ export default function App() {
           <Route path="/dashboard" element={<DashboardRoute />} />
           <Route path="/session/:sessionId/stage1" element={<Stage1Route />} />
           <Route path="/session/:sessionId/stage2" element={<Stage2ConfigPage />} />
+          <Route
+            path="/session/:sessionId/stage3"
+            element={
+              <div className="flex min-h-[60vh] flex-col items-center justify-center p-6 text-center text-slate-100">
+                <div className="max-w-md rounded-2xl border border-slate-800 bg-slate-900/90 p-8 shadow-xl">
+                  <h2 className="text-xl font-bold text-white">Giai đoạn 3: Thẩm định & Tinh chỉnh đề thi</h2>
+                  <p className="mt-2 text-sm text-slate-400">
+                    Các mã đề đã hoàn tất sinh. Giao diện Stage 3 đang trong quá trình tích hợp.
+                  </p>
+                </div>
+              </div>
+            }
+          />
         </Route>
 
         <Route path="*" element={<Navigate to="/login" replace />} />

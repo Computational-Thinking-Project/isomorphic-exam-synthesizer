@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -45,9 +45,21 @@ export default function Stage2ConfigPage({
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeConfig, setActiveConfig] = useState(null);
 
-  // Tải dữ liệu phiên làm việc
+  const submitSessionRef = useRef(sessionId);
+  useEffect(() => {
+    submitSessionRef.current = sessionId;
+  }, [sessionId]);
+
+  // Tải dữ liệu phiên làm việc với khả năng cô lập tuyệt đối theo sessionId
   useEffect(() => {
     let active = true;
+
+    // Reset sạch sẽ trạng thái của container theo sessionId hiện tại
+    setSession(null);
+    setIsGenerating(false);
+    setActiveConfig(null);
+    setConfigError(null);
+    setSessionError(null);
 
     async function load() {
       if (!sessionId) {
@@ -96,29 +108,43 @@ export default function Stage2ConfigPage({
   // Xử lý nộp form cấu hình
   async function handleConfigSubmit(payload) {
     if (isSubmittingConfig) return;
+    const targetSessionId = sessionId;
 
     setIsSubmittingConfig(true);
     setConfigError(null);
 
     try {
-      await saveConfig(sessionId, payload);
+      await saveConfig(targetSessionId, payload);
+      if (submitSessionRef.current !== targetSessionId) return;
       setActiveConfig(payload);
 
       // Kích hoạt background generation
-      await startGen(sessionId);
+      await startGen(targetSessionId);
+      if (submitSessionRef.current !== targetSessionId) return;
       setIsGenerating(true);
     } catch (err) {
-      if (err?.code === 'ERR_CONFIG_CONFLICT') {
+      if (submitSessionRef.current !== targetSessionId) return;
+      const resData = err?.response?.data;
+      const errorCode = resData?.code || resData?.detail?.code || err?.code;
+      const errorDetail = resData?.detail || resData?.message || err?.message;
+
+      if (errorCode === 'ERR_CONFIG_CONFLICT') {
         setConfigError(
-          'Cấu hình xung đột với Blueprint của đề bài (ERR_CONFIG_CONFLICT). Vui lòng bỏ chọn các chế độ không tương thích.',
+          `Cấu hình xung đột với Blueprint của đề bài (ERR_CONFIG_CONFLICT): ${
+            typeof errorDetail === 'string' ? errorDetail : 'Vui lòng bỏ chọn các chế độ không tương thích.'
+          }`,
         );
       } else {
         setConfigError(
-          err?.message || 'Không thể lưu cấu hình hoặc khởi động tiến trình sinh đề.',
+          typeof errorDetail === 'string'
+            ? errorDetail
+            : 'Không thể lưu cấu hình hoặc khởi động tiến trình sinh đề.',
         );
       }
     } finally {
-      setIsSubmittingConfig(false);
+      if (submitSessionRef.current === targetSessionId) {
+        setIsSubmittingConfig(false);
+      }
     }
   }
 

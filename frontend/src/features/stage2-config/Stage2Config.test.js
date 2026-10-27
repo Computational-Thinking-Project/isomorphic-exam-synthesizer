@@ -171,11 +171,134 @@ test('Stage2ConfigCard nộp cấu hình thành công với đúng payload quy �
   });
 
   assert.ok(submittedPayload, 'onSubmit phải được gọi');
+  assert.equal(submittedPayload.n_versions, 2);
   assert.equal(submittedPayload.num_versions, 2);
+  assert.deepEqual(submittedPayload.active_variation_modes, ['parameter_variation', 'context_swap']);
   assert.deepEqual(submittedPayload.variation_modes, ['parameter_variation', 'context_swap']);
   assert.deepEqual(submittedPayload.ordering_preferences, {
     shuffle_questions: true,
   });
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigCard bấm trực tiếp checkbox chỉ đổi lựa chọn đúng 1 lần (không double-toggle)', async () => {
+  let submittedPayload = null;
+  const harness = renderCard({
+    session: sampleSession,
+    onSubmit: async (payload) => {
+      submittedPayload = payload;
+    },
+  });
+  await harness.render();
+
+  // Tìm checkbox context_swap
+  const checkboxes = harness.container.querySelectorAll('input[type="checkbox"]');
+  const contextCb = checkboxes.find((c) => c.getAttribute('id') === 'mode-context_swap');
+  assert.ok(contextCb, 'Phải tìm thấy checkbox context_swap');
+  assert.equal(contextCb.checked, true, 'Ban đầu context_swap được chọn');
+
+  // Bấm trực tiếp vào checkbox
+  await act(async () => {
+    contextCb.click();
+  });
+
+  assert.equal(contextCb.checked, false, 'Sau khi click 1 lần, context_swap phải bị bỏ chọn (không bị double toggle trở lại true)');
+
+  // Nộp form để kiểm tra payload thực tế chỉ còn parameter_variation
+  const form = harness.container.querySelector('form');
+  await act(async () => {
+    form.dispatchEvent({
+      type: 'submit',
+      bubbles: true,
+      cancelable: true,
+      preventDefault: () => {},
+    });
+  });
+
+  assert.ok(submittedPayload);
+  assert.deepEqual(submittedPayload.active_variation_modes, ['parameter_variation']);
+  assert.deepEqual(submittedPayload.variation_modes, ['parameter_variation']);
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigCard khôi phục đúng cấu hình đã lưu (initialConfig n_versions: 4 sau khi F5/reload)', async () => {
+  const harness = renderCard({
+    session: sampleSession,
+    initialConfig: {
+      n_versions: 4,
+      active_variation_modes: ['parameter_variation'],
+      ordering_preferences: { shuffle_questions: false },
+    },
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('4 mã đề'), 'Phải nạp số lượng 4 mã đề từ initialConfig');
+  assert.ok(text.includes('20 câu hỏi biến thể'), '4 * 5 = 20 câu');
+
+  const checkboxes = harness.container.querySelectorAll('input[type="checkbox"]');
+  const paramCb = checkboxes.find((c) => c.getAttribute('id') === 'mode-parameter_variation');
+  const contextCb = checkboxes.find((c) => c.getAttribute('id') === 'mode-context_swap');
+  assert.equal(paramCb.checked, true, 'parameter_variation được chọn');
+  assert.equal(contextCb.checked, false, 'context_swap không được chọn theo initialConfig');
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigCard hiển thị thông báo chờ và vô hiệu hóa nút submit khi Blueprint chưa sẵn sàng', async () => {
+  const sessionWithoutBlueprint = {
+    id: 'test-no-blueprint',
+    title: 'Đề chưa có Blueprint',
+    subject: 'Toán',
+    grade: 12,
+    status: 'uploaded',
+    source_questions: [{ id: 'q1', question_no: 1 }],
+    blueprint_summary: null,
+  };
+
+  const harness = renderCard({ session: sessionWithoutBlueprint });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('Chưa có thông tin Blueprint khả dụng'), 'Phải hiển thị thông báo chưa có Blueprint');
+
+  const submitBtn = harness.container.querySelector('button[type="submit"]');
+  assert.equal(submitBtn.getAttribute('disabled') !== null, true, 'Nút submit phải bị vô hiệu hóa');
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigCard chỉ hiển thị chế độ thật mà Blueprint hỗ trợ (không tự tạo thêm chế độ mẫu)', async () => {
+  const sessionWithSingleMode = {
+    id: 'test-single-mode',
+    title: 'Đề chỉ hỗ trợ 1 chế độ',
+    subject: 'Toán',
+    grade: 12,
+    status: 'blueprinted',
+    source_questions: [{ id: 'q1', question_no: 1 }],
+    blueprint_summary: {
+      total_questions: 1,
+      supported_modes: [
+        {
+          id: 'parameter_variation',
+          label: 'Thay đổi số liệu / tham số',
+          description: 'Chỉ hỗ trợ thay số',
+          question_count: 1,
+          is_available: true,
+        },
+      ],
+    },
+  };
+
+  const harness = renderCard({ session: sessionWithSingleMode });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('Thay đổi số liệu / tham số'));
+  assert.equal(text.includes('Đổi ngữ cảnh thực tế'), false, 'Không được tự bịa chế độ Đổi ngữ cảnh');
+  assert.equal(text.includes('Hoán đổi ẩn số'), false, 'Không được tự bịa chế độ Hoán đổi ẩn số');
 
   await harness.unmount();
 });

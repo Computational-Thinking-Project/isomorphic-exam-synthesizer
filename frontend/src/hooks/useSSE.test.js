@@ -303,3 +303,173 @@ test('useSSE dọn dẹp tài nguyên khi unmount hoặc khi enabled = false', a
 
   await harness.unmount();
 });
+
+test('useSSE hỗ trợ percent_complete và cập nhật trạng thái câu hỏi trực tiếp trong progress (TASK-207b)', async () => {
+  MockEventSource.instances = [];
+  const harness = renderHookHarness(() =>
+    useSSE('session-106', {
+      requestTicket: async () => ({ ticket: 't106' }),
+      eventSourceFactory: (url) => new MockEventSource(url),
+    }),
+  );
+
+  await harness.render();
+  const es = MockEventSource.instances[0];
+  await act(async () => {
+    es.simulateOpen();
+  });
+
+  // Gửi progress theo schema BE2 TASK-207b (percent_complete + questions)
+  await act(async () => {
+    es.emit('progress', {
+      percent_complete: 45,
+      completed_count: 9,
+      total_count: 20,
+      message: 'Đang xử lý mã đề 2',
+      questions: [
+        {
+          version_index: 1,
+          question_no: 1,
+          status: 'done',
+          message: 'Hoàn thành câu 1',
+        },
+        {
+          version_index: 1,
+          question_no: 2,
+          status: 'generating',
+          message: 'Đang sinh câu 2',
+        },
+      ],
+    });
+  });
+
+  assert.equal(harness.result.progress.percent, 45, 'percent_complete phải cập nhật progress.percent');
+  assert.equal(harness.result.progress.completedCount, 9);
+  assert.equal(harness.result.questionStatuses['1-1'].status, 'done');
+  assert.equal(harness.result.questionStatuses['1-2'].status, 'generating');
+
+  await harness.unmount();
+});
+
+test('useSSE phân biệt lỗi job (server error) với lỗi mạng: dừng kết nối và không reconnect vô tận', async () => {
+  MockEventSource.instances = [];
+  let errorCallbackPayload = null;
+
+  const harness = renderHookHarness(() =>
+    useSSE('session-107', {
+      requestTicket: async () => ({ ticket: 't107' }),
+      eventSourceFactory: (url) => new MockEventSource(url),
+      onError: (err) => {
+        errorCallbackPayload = err;
+      },
+    }),
+  );
+
+  await harness.render();
+  const es = MockEventSource.instances[0];
+  await act(async () => {
+    es.simulateOpen();
+  });
+
+  // Máy chủ phát sự kiện error nghiệp vụ (hết quota, Gemini failed)
+  await act(async () => {
+    es.emit('error', {
+      error: 'GEMINI_QUOTA_EXCEEDED',
+      message: 'Đã vượt quá hạn mức gọi AI của Google',
+    });
+  });
+
+  assert.equal(harness.result.connectionState, 'failed', 'Lỗi job phải chuyển sang failed');
+  assert.equal(harness.result.error, 'Đã vượt quá hạn mức gọi AI của Google');
+  assert.equal(harness.result.reconnectCount, 0, 'Tuyệt đối không tăng reconnectCount với lỗi job');
+  assert.equal(es.closed, true, 'EventSource phải được đóng ngay');
+  assert.ok(errorCallbackPayload, 'onError callback phải được gọi');
+
+  // Đợi để xác nhận không có timer reconnect nào được kích hoạt
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 1200));
+  });
+  assert.equal(MockEventSource.instances.length, 1, 'Không được tạo thêm EventSource để reconnect');
+
+  await harness.unmount();
+});
+
+test('useSSE cô lập phiên làm việc: huỷ kết nối và bỏ qua ticket trả muộn của phiên cũ khi đổi sang phiên mới', async () => {
+  MockEventSource.instances = [];
+  let resolveTicketA;
+  const ticketAPromise = new Promise((resolve) => {
+    resolveTicketA = resolve;
+  });
+
+  const mockRequestTicket = async (sessionId) => {
+    if (sessionId === 'session-A') {
+      return ticketAPromise;
+    }
+    return { ticket: 'ticket-for-session-B' };
+  };
+
+  let currentSession = 'session-A';
+  const harness = renderHookHarness(() =>
+    useSSE(currentSession, {
+      requestTicket: mockRequestTicket,
+      eventSourceFactory: (url) => new MockEventSource(url),
+    }),
+  );
+
+  await harness.render();
+  // Ticket cho session-A đang chờ giải quyết, chưa có EventSource nào được tạo
+  assert.equal(MockEventSource.instances.length, 0);
+
+  // Người dùng chuyển sang session-B
+  currentSession = 'session-B';
+  await harness.render();
+
+  // session-B nhận ticket ngay lập tức và mở EventSource
+  assert.equal(MockEventSource.instances.length, 1);
+  assert.ok(MockEventSource.instances[0].url.includes('session-B'));
+
+  // Bây giờ ticket của session-A mới trả về muộn
+  await act(async () => {
+    resolveTicketA({ ticket: 'ticket-for-session-A' });
+  });
+
+  // Ticket muộn của session-A phải bị bỏ qua, không mở thêm stream nào
+  assert.equal(MockEventSource.instances.length, 1);
+  assert.ok(MockEventSource.instances[0].url.includes('session-B'));
+
+  await harness.unmount();
+});
+
+test('useSSE reset sạch sẽ trạng thái (progress, done, questionStatuses) khi đổi session', async () => {
+  MockEventSource.instances = [];
+  let currentSession = 'session-X';
+
+  const harness = renderHookHarness(() =>
+    useSSE(currentSession, {
+      requestTicket: async (sId) => ({ ticket: `ticket-${sId}` }),
+      eventSourceFactory: (url) => new MockEventSource(url),
+    }),
+  );
+
+  await harness.render();
+  const esX = MockEventSource.instances[0];
+  await act(async () => {
+    esX.simulateOpen();
+    esX.emit('progress', { percent: 100, completed_count: 10, total_count: 10 });
+    esX.emit('done', { message: 'Xong' });
+  });
+
+  assert.equal(harness.result.isDone, true);
+  assert.equal(harness.result.progress.percent, 100);
+
+  // Đổi sang session-Y
+  currentSession = 'session-Y';
+  await harness.render();
+
+  // State của session-Y phải hoàn toàn sạch sẽ, không rò rỉ 100% hay isDone từ session-X
+  assert.equal(harness.result.isDone, false, 'isDone phải được reset về false');
+  assert.equal(harness.result.progress.percent, 0, 'percent phải được reset về 0%');
+  assert.deepEqual(harness.result.questionStatuses, {}, 'questionStatuses phải rỗng');
+
+  await harness.unmount();
+});

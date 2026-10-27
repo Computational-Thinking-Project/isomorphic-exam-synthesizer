@@ -32,36 +32,15 @@ export default function Stage2ConfigCard({
   const formId = useId();
 
   // Danh sách các chế độ từ Blueprint
-  const supportedModes = session?.blueprint_summary?.supported_modes || [
-    {
-      id: 'parameter_variation',
-      label: 'Thay đổi số liệu / tham số',
-      description: 'Giữ nguyên cấu trúc đề bài toán, thay đổi tham số số học đảm bảo nghiệm đẹp.',
-      question_count: session?.source_questions?.length ?? 10,
-      is_available: true,
-    },
-    {
-      id: 'context_swap',
-      label: 'Đổi ngữ cảnh thực tế',
-      description: 'Giữ nguyên mô hình giải tích, thay đổi tình huống hoặc đối tượng thực tiễn.',
-      question_count: session?.source_questions?.length ?? 10,
-      is_available: true,
-    },
-    {
-      id: 'variable_inversion',
-      label: 'Hoán đổi ẩn số',
-      description: 'Đổi vị trí đại lượng đã cho và đại lượng cần tìm trong bài toán.',
-      question_count: Math.floor((session?.source_questions?.length ?? 10) / 2),
-      is_available: false,
-      unavailable_reason: 'Chưa đủ điều kiện biến đổi hai chiều cho các câu hỏi trong đề.',
-    },
-  ];
+  const supportedModes = session?.blueprint_summary?.supported_modes || [];
 
-  // Giá trị khởi tạo
-  const defaultNumVersions = initialConfig?.num_versions ?? 2;
-  const defaultModes = initialConfig?.variation_modes?.length
-    ? initialConfig.variation_modes
-    : supportedModes.filter((m) => m.is_available).map((m) => m.id);
+  // Giá trị khởi tạo từ cấu hình đã lưu hoặc mặc định
+  const defaultNumVersions = initialConfig?.n_versions ?? initialConfig?.num_versions ?? 2;
+  const availableModes = supportedModes.filter((m) => m.is_available !== false).map((m) => m.id);
+  const configuredModes = initialConfig?.active_variation_modes || initialConfig?.variation_modes;
+  const defaultModes = configuredModes && configuredModes.length > 0
+    ? configuredModes.filter((id) => availableModes.includes(id))
+    : availableModes;
 
   const [numVersions, setNumVersions] = useState(defaultNumVersions);
   const [selectedModes, setSelectedModes] = useState(defaultModes);
@@ -104,7 +83,9 @@ export default function Stage2ConfigCard({
     }
 
     const payload = {
+      n_versions: Number(numVersions),
       num_versions: Number(numVersions),
+      active_variation_modes: selectedModes,
       variation_modes: selectedModes,
       ordering_preferences: {
         shuffle_questions: Boolean(shuffleQuestions),
@@ -213,66 +194,77 @@ export default function Stage2ConfigCard({
           </p>
 
           <div className="mt-4 space-y-3">
-            {supportedModes.map((mode) => {
-              const isSelected = selectedModes.includes(mode.id);
-              const isAvailable = mode.is_available !== false;
+            {supportedModes.length === 0 ? (
+              <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 p-4 text-center text-sm text-amber-200">
+                <p className="font-semibold">Chưa có thông tin Blueprint khả dụng</p>
+                <p className="mt-1 text-xs text-amber-300/80">
+                  Phiên làm việc này chưa có chế độ biến thể nào được hỗ trợ. Vui lòng xác nhận đề gốc ở Giai đoạn 1.
+                </p>
+              </div>
+            ) : (
+              supportedModes.map((mode) => {
+                const isSelected = selectedModes.includes(mode.id);
+                const isAvailable = mode.is_available !== false;
 
-              return (
-                <div
-                  key={mode.id}
-                  onClick={() => toggleMode(mode.id, isAvailable)}
-                  className={`relative flex items-start gap-4 rounded-xl border p-4 transition-all ${
-                    !isAvailable
-                      ? 'cursor-not-allowed border-slate-800 bg-slate-900/40 opacity-55'
-                      : isSelected
-                      ? 'cursor-pointer border-sky-500/60 bg-sky-950/25 ring-1 ring-sky-500/30'
-                      : 'cursor-pointer border-slate-700 bg-slate-800/40 hover:border-slate-600 hover:bg-slate-800/70'
-                  }`}
-                >
-                  <div className="pt-0.5">
-                    <input
-                      type="checkbox"
-                      id={`mode-${mode.id}`}
-                      checked={isSelected && isAvailable}
-                      disabled={!isAvailable || isSubmitting}
-                      onChange={() => toggleMode(mode.id, isAvailable)}
-                      className="h-4 w-4 rounded border-slate-600 bg-slate-700 text-sky-500 focus:ring-sky-500 focus:ring-offset-slate-900 disabled:opacity-40"
-                    />
-                  </div>
+                return (
+                  <div
+                    key={mode.id}
+                    onClick={(e) => {
+                      if (e.target?.tagName?.toLowerCase() === 'input') return;
+                      toggleMode(mode.id, isAvailable);
+                    }}
+                    className={`relative flex items-start gap-4 rounded-xl border p-4 transition-all ${
+                      !isAvailable
+                        ? 'cursor-not-allowed border-slate-800 bg-slate-900/40 opacity-55'
+                        : isSelected
+                        ? 'cursor-pointer border-sky-500/60 bg-sky-950/25 ring-1 ring-sky-500/30'
+                        : 'cursor-pointer border-slate-700 bg-slate-800/40 hover:border-slate-600 hover:bg-slate-800/70'
+                    }`}
+                  >
+                    <div className="pt-0.5">
+                      <input
+                        type="checkbox"
+                        id={`mode-${mode.id}`}
+                        checked={isSelected && isAvailable}
+                        disabled={!isAvailable || isSubmitting}
+                        onChange={() => toggleMode(mode.id, isAvailable)}
+                        className="h-4 w-4 rounded border-slate-600 bg-slate-700 text-sky-500 focus:ring-sky-500 focus:ring-offset-slate-900 disabled:opacity-40"
+                      />
+                    </div>
 
-                  <div className="flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <label
-                        htmlFor={`mode-${mode.id}`}
-                        className={`text-sm font-semibold ${
-                          isAvailable ? 'cursor-pointer text-white' : 'text-slate-400'
-                        }`}
-                      >
-                        {mode.label}
-                      </label>
-                      {isAvailable ? (
-                        <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] font-medium text-slate-300">
-                          Hỗ trợ {mode.question_count}/{totalQuestions} câu
+                    <div className="flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={`text-sm font-semibold select-none ${
+                            isAvailable ? 'text-white' : 'text-slate-400'
+                          }`}
+                        >
+                          {mode.label}
                         </span>
-                      ) : (
-                        <span className="rounded bg-rose-950/40 px-2 py-0.5 text-[11px] font-medium text-rose-300">
-                          Không khả dụng
-                        </span>
+                        {isAvailable ? (
+                          <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] font-medium text-slate-300">
+                            Hỗ trợ {mode.question_count}/{totalQuestions} câu
+                          </span>
+                        ) : (
+                          <span className="rounded bg-rose-950/40 px-2 py-0.5 text-[11px] font-medium text-rose-300">
+                            Không khả dụng
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {mode.description}
+                      </p>
+                      {!isAvailable && mode.unavailable_reason && (
+                        <p className="mt-1.5 flex items-center gap-1 text-xs text-amber-400/90">
+                          <HelpCircle className="h-3.5 w-3.5" />
+                          {mode.unavailable_reason}
+                        </p>
                       )}
                     </div>
-                    <p className="mt-1 text-xs text-slate-400">
-                      {mode.description}
-                    </p>
-                    {!isAvailable && mode.unavailable_reason && (
-                      <p className="mt-1.5 flex items-center gap-1 text-xs text-amber-400/90">
-                        <HelpCircle className="h-3.5 w-3.5" />
-                        {mode.unavailable_reason}
-                      </p>
-                    )}
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </div>
 
@@ -358,7 +350,7 @@ export default function Stage2ConfigCard({
 
           <button
             type="submit"
-            disabled={isSubmitting || selectedModes.length === 0}
+            disabled={isSubmitting || selectedModes.length === 0 || supportedModes.length === 0}
             className="flex items-center gap-2 rounded-xl bg-sky-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-sky-600/30 hover:bg-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isSubmitting ? (

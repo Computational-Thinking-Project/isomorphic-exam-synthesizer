@@ -7,7 +7,8 @@ import { requestEventTicket } from '../services/stage2Service.js';
  * Tuân thủ bảo mật và kiến trúc:
  * - SEC-05 / SEC-13: Ticket handshake dùng 1 lần (TTL 60s), không lưu persistent storage.
  * - P1.6: Tự động xin lại ticket mới và tái kết nối kèm last_event_id khi rớt mạng.
- * - Dọn dẹp kết nối an toàn khi unmount hoặc khi hoàn thành (done).
+ * - Phân biệt rành mạch giữa Lỗi nghiệp vụ máy chủ (Job Error - dừng ngay) và Lỗi kết nối mạng (Network Error - reconnect).
+ * - Cô lập phiên làm việc hoàn toàn: huỷ các ticket trả muộn, chặn rò rỉ state/stream giữa phiên A và B.
  */
 export function useSSE(sessionId, {
   enabled = true,
@@ -42,6 +43,10 @@ export function useSSE(sessionId, {
   const isMountedRef = useRef(true);
   const reconnectAttemptRef = useRef(0);
   const isDoneRef = useRef(false);
+
+  // Bộ định danh phiên và lượt kết nối để cô lập tuyệt đối tác vụ
+  const activeSessionIdRef = useRef(sessionId);
+  const connectionTokenRef = useRef(0);
 
   // Safe callback refs to avoid re-triggering effects
   const callbacksRef = useRef({
@@ -80,6 +85,9 @@ export function useSSE(sessionId, {
   }, []);
 
   const connect = useCallback(async () => {
+    const currentToken = ++connectionTokenRef.current;
+    const currentSessionId = sessionId;
+
     if (!isMountedRef.current || !sessionId || !enabled || isDoneRef.current) {
       return;
     }
@@ -96,12 +104,29 @@ export function useSSE(sessionId, {
     let ticket;
     try {
       const ticketRes = await callbacksRef.current.requestTicket(sessionId);
+      // Kiểm tra xem lượt gọi này còn hợp lệ không trước khi tiếp tục
+      if (
+        !isMountedRef.current ||
+        connectionTokenRef.current !== currentToken ||
+        activeSessionIdRef.current !== currentSessionId ||
+        !enabled
+      ) {
+        return;
+      }
+
       ticket = ticketRes?.ticket;
       if (!ticket) {
         throw new Error('Không nhận được ticket xác thực từ máy chủ.');
       }
     } catch (ticketError) {
-      if (!isMountedRef.current) return;
+      if (
+        !isMountedRef.current ||
+        connectionTokenRef.current !== currentToken ||
+        activeSessionIdRef.current !== currentSessionId ||
+        !enabled
+      ) {
+        return;
+      }
 
       const message = ticketError?.message || 'Không thể xin ticket kết nối tiến trình.';
       if (reconnectAttemptRef.current < maxReconnectAttempts) {
@@ -118,7 +143,14 @@ export function useSSE(sessionId, {
       return;
     }
 
-    if (!isMountedRef.current) return;
+    if (
+      !isMountedRef.current ||
+      connectionTokenRef.current !== currentToken ||
+      activeSessionIdRef.current !== currentSessionId ||
+      !enabled
+    ) {
+      return;
+    }
 
     let url = `/api/sessions/${encodeURIComponent(sessionId)}/events?ticket=${encodeURIComponent(ticket)}`;
     if (lastEventIdRef.current) {
@@ -130,7 +162,7 @@ export function useSSE(sessionId, {
       es = callbacksRef.current.eventSourceFactory(url);
       eventSourceRef.current = es;
     } catch (createError) {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || connectionTokenRef.current !== currentToken) return;
       setConnectionState('failed');
       setError('Trình duyệt không thể khởi tạo kết nối EventSource.');
       callbacksRef.current.onError?.(createError);
@@ -138,7 +170,7 @@ export function useSSE(sessionId, {
     }
 
     es.onopen = () => {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || connectionTokenRef.current !== currentToken) return;
       setConnectionState('connected');
       reconnectAttemptRef.current = 0;
       setReconnectCount(0);
@@ -164,25 +196,73 @@ export function useSSE(sessionId, {
       }
     };
 
-    // Lắng nghe sự kiện progress
+    // Handler xử lý lỗi nghiệp vụ từ job AI / máy chủ (terminal state - không reconnect)
+    const handleJobError = (payloadOrEvent) => {
+      if (!isMountedRef.current || connectionTokenRef.current !== currentToken) return;
+      const data = payloadOrEvent?.data !== undefined ? parsePayload(payloadOrEvent) : payloadOrEvent;
+      const errorMsg =
+        data?.message ||
+        data?.error ||
+        data?.detail ||
+        (typeof data === 'string' ? data : null) ||
+        'Tiến trình sinh đề bị lỗi từ máy chủ.';
+
+      isDoneRef.current = true;
+      cleanupConnection();
+      setConnectionState('failed');
+      setError(errorMsg);
+      callbacksRef.current.onError?.(data || new Error(errorMsg));
+    };
+
+    // 1. Lắng nghe sự kiện progress (hỗ trợ cả percent_complete và percent theo TASK-207b)
     es.addEventListener('progress', (e) => {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || connectionTokenRef.current !== currentToken) return;
       const data = parsePayload(e);
       if (data) {
+        const percentVal = data.percent_complete ?? data.percent;
         setProgress((prev) => ({
-          percent: data.percent ?? prev.percent,
-          completedCount: data.completed_count ?? prev.completedCount,
-          totalCount: data.total_count ?? prev.totalCount,
+          percent: percentVal !== undefined ? percentVal : prev.percent,
+          completedCount: data.completed_count ?? data.completedCount ?? prev.completedCount,
+          totalCount: data.total_count ?? data.totalCount ?? prev.totalCount,
           message: data.message ?? prev.message,
-          estimatedSeconds: data.estimated_seconds ?? prev.estimatedSeconds,
+          estimatedSeconds: data.estimated_seconds ?? data.estimatedSeconds ?? prev.estimatedSeconds,
         }));
+
+        // Hỗ trợ cập nhật trạng thái câu hỏi trực tiếp trong payload progress
+        const qList = Array.isArray(data.questions)
+          ? data.questions
+          : Array.isArray(data.question_statuses)
+          ? data.question_statuses
+          : data.question_no && data.version_index
+          ? [data]
+          : null;
+
+        if (qList && qList.length > 0) {
+          setQuestionStatuses((prev) => {
+            const next = { ...prev };
+            qList.forEach((q) => {
+              if (q.version_index && q.question_no) {
+                const key = `${q.version_index}-${q.question_no}`;
+                next[key] = {
+                  version_index: q.version_index,
+                  question_no: q.question_no,
+                  status: q.status || next[key]?.status || 'generating',
+                  message: q.message ?? next[key]?.message ?? '',
+                  variant_id: q.variant_id ?? next[key]?.variant_id,
+                };
+              }
+            });
+            return next;
+          });
+        }
+
         callbacksRef.current.onProgress?.(data);
       }
     });
 
-    // Lắng nghe cập nhật trạng thái từng câu hỏi
+    // 2. Lắng nghe cập nhật trạng thái từng câu hỏi (question_status)
     const handleQuestionStatus = (e) => {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || connectionTokenRef.current !== currentToken) return;
       const data = parsePayload(e);
       if (data && data.version_index && data.question_no) {
         const key = `${data.version_index}-${data.question_no}`;
@@ -200,9 +280,9 @@ export function useSSE(sessionId, {
     };
     es.addEventListener('question_status', handleQuestionStatus);
 
-    // Lắng nghe sự kiện khi 1 câu hỏi sinh hoàn tất
+    // 3. Lắng nghe sự kiện khi 1 câu hỏi sinh hoàn tất (question_done)
     es.addEventListener('question_done', (e) => {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || connectionTokenRef.current !== currentToken) return;
       const data = parsePayload(e);
       if (data && data.version_index && data.question_no) {
         const key = `${data.version_index}-${data.question_no}`;
@@ -219,18 +299,27 @@ export function useSSE(sessionId, {
       }
     });
 
-    // Lắng nghe cảnh báo
+    // 4. Lắng nghe cảnh báo nghiệp vụ (warning)
     es.addEventListener('warning', (e) => {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || connectionTokenRef.current !== currentToken) return;
       const data = parsePayload(e);
       if (data) {
         setWarnings((prev) => [...prev, data]);
       }
     });
 
-    // Lắng nghe sự kiện hoàn tất toàn bộ tiến trình
+    // 5. Lắng nghe sự kiện lỗi job từ server (error, job_error, failed)
+    es.addEventListener('error', (e) => {
+      if (e?.data) {
+        handleJobError(e);
+      }
+    });
+    es.addEventListener('job_error', handleJobError);
+    es.addEventListener('failed', handleJobError);
+
+    // 6. Lắng nghe sự kiện hoàn tất toàn bộ tiến trình (done)
     es.addEventListener('done', (e) => {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || connectionTokenRef.current !== currentToken) return;
       const data = parsePayload(e);
       isDoneRef.current = true;
       setIsDone(true);
@@ -244,9 +333,14 @@ export function useSSE(sessionId, {
       callbacksRef.current.onDone?.(data);
     });
 
-    // Xử lý lỗi và cơ chế Reconnect thông minh
+    // 7. Xử lý rớt mạng thực sự (onerror không có payload data)
     es.onerror = (err) => {
-      if (!isMountedRef.current || isDoneRef.current) return;
+      if (!isMountedRef.current || connectionTokenRef.current !== currentToken || isDoneRef.current) return;
+
+      if (err?.data) {
+        handleJobError(err);
+        return;
+      }
 
       cleanupConnection();
 
@@ -264,11 +358,28 @@ export function useSSE(sessionId, {
     };
   }, [sessionId, enabled, maxReconnectAttempts, cleanupConnection]);
 
-  // Kích hoạt kết nối khi mount hoặc khi sessionId / enabled thay đổi
+  // Kích hoạt kết nối và RESET state sạch sẽ khi sessionId hoặc enabled thay đổi
   useEffect(() => {
     isMountedRef.current = true;
+    activeSessionIdRef.current = sessionId;
+    connectionTokenRef.current += 1;
     isDoneRef.current = false;
     reconnectAttemptRef.current = 0;
+
+    // Reset sạch sẽ trạng thái của phiên cũ để tránh rò rỉ sang phiên mới
+    setProgress({
+      percent: 0,
+      completedCount: 0,
+      totalCount: 0,
+      message: '',
+      estimatedSeconds: null,
+    });
+    setQuestionStatuses({});
+    setWarnings([]);
+    setError(null);
+    setIsDone(false);
+    setReconnectCount(0);
+    lastEventIdRef.current = null;
 
     if (enabled && sessionId) {
       connect();
