@@ -111,6 +111,16 @@ def validate_file_security(filename: str, file_bytes: bytes) -> str:
                 detail="Corrupted or malformed DOCX archive.",
             ) from exc
 
+    # 4. For text-based formats (.md, .tex): validate strict UTF-8 decoding
+    if ext in (".md", ".tex"):
+        try:
+            file_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid {ext} file: content is not valid UTF-8 text.",
+            ) from exc
+
     return ext
 
 
@@ -144,20 +154,24 @@ async def upload_exam_file_to_storage(
             content_type = "application/octet-stream"
 
     try:
-        # Attempt upload to primary bucket (exam-sources), fallback to exam-raw-files if not found
+        # Attempt upload to primary bucket (exam-sources), fallback only if bucket not found
         try:
             db.storage.from_(bucket_name).upload(
                 path=storage_path,
                 file=file_bytes,
                 file_options={"content-type": content_type, "upsert": "true"},
             )
-        except Exception:
-            # Try fallback bucket
-            db.storage.from_("exam-raw-files").upload(
-                path=storage_path,
-                file=file_bytes,
-                file_options={"content-type": content_type, "upsert": "true"},
-            )
+        except Exception as primary_exc:
+            err_msg = str(primary_exc).lower()
+            if "not found" in err_msg or "nosuchbucket" in err_msg or "404" in err_msg:
+                # Try fallback bucket only when primary bucket is missing
+                db.storage.from_("exam-raw-files").upload(
+                    path=storage_path,
+                    file=file_bytes,
+                    file_options={"content-type": content_type, "upsert": "true"},
+                )
+            else:
+                raise primary_exc
         logger.info("Successfully uploaded exam file to storage: %s", storage_path)
         return storage_path
     except Exception as exc:

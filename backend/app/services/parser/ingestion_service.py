@@ -156,11 +156,12 @@ async def replace_source_questions_atomically(
     ]
 
     try:
-        # Method 2A: Atomic RPC Stored Procedure execution
-        rpc_res = db.rpc(
+        # Method 2A: Atomic RPC Stored Procedure execution in threadpool to prevent event loop blocking
+        rpc_builder = db.rpc(
             "replace_source_questions",
             {"p_session_id": session_id, "p_questions": payload},
-        ).execute()
+        )
+        rpc_res = await asyncio.to_thread(rpc_builder.execute)
 
         if not (rpc_res.data and isinstance(rpc_res.data, dict) and rpc_res.data.get("success")):
             logger.error(
@@ -240,47 +241,34 @@ async def replace_source_questions_atomically(
             detail="Database atomic replacement failed. Please verify session state before retrying.",
         ) from exc
 
-    # Query and return the newly inserted records
-    fetch_res = (
-        db.table("source_questions")
-        .select("*")
-        .eq("session_id", session_id)
-        .order("question_no", desc=False)
-        .execute()
-    )
-    return cast(List[Dict[str, Any]], fetch_res.data or [])
-
-
-async def trigger_blueprint_pipeline(
-    session_id: str,
-    questions: List[Dict[str, Any]],
-) -> None:
-    """Non-blocking background trigger for AI Blueprint Extraction (TASK-203 integration hook).
-
-    LIMITATION / SCOPE NOTE (TASK-202):
-    This function currently serves as an asynchronous event hook / placeholder logging the
-    ingestion event with bounded concurrency. Actual Gemini AI extraction and blueprint storage
-    are integrated in the subsequent TASK-203 pipeline.
-    """
-    semaphore = asyncio.Semaphore(3)
-
-    async def _extract_question(q_data: Dict[str, Any]) -> None:
-        async with semaphore:
-            # Placeholder for TASK-203 Gemini call
-            logger.debug(
-                "Blueprint hook ready: processing session %s, question %s",
-                session_id,
-                q_data.get("question_no"),
-            )
-            await asyncio.sleep(0.01)
-
+    # Query and return the newly inserted records in threadpool
+    # If the fetch fails, do not report an ingestion failure to caller since the RPC transaction committed.
     try:
-        tasks = [_extract_question(q) for q in questions]
-        await asyncio.gather(*tasks, return_exceptions=True)
-        logger.info(
-            "Blueprint pipeline trigger completed for session %s (%d questions)",
-            session_id,
-            len(questions),
+        fetch_builder = (
+            db.table("source_questions")
+            .select("*")
+            .eq("session_id", session_id)
+            .order("question_no", desc=False)
         )
-    except Exception as exc:
-        logger.error("Error in background blueprint pipeline for session %s: %s", session_id, exc)
+        fetch_res = await asyncio.to_thread(fetch_builder.execute)
+        return cast(List[Dict[str, Any]], fetch_res.data or [])
+    except Exception as fetch_exc:
+        logger.warning(
+            "RPC succeeded but failed to fetch newly inserted source_questions for session %s: %s",
+            session_id,
+            fetch_exc,
+        )
+        return [
+            {
+                "session_id": session_id,
+                "question_no": q.question_no,
+                "raw_content": q.raw_content,
+                "options": q.options,
+                "correct_key": q.correct_key,
+                "solution_md": q.solution_md,
+                "has_missing_answer": q.has_missing_answer,
+                "has_security_warning": q.has_security_warning,
+            }
+            for q in questions
+        ]
+

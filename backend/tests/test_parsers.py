@@ -1004,3 +1004,351 @@ def test_docx_table_answer_key_with_colons_and_trailing_empty_cell():
     joined = " ".join(lines)
     assert "1.A" in joined
     assert "2.B" in joined
+
+
+def test_extract_options_probability_formulas_not_treated_as_labels():
+    """Regression test: P(A), P(B), P(C), P(D) must never be misidentified as option labels.
+    
+    Verifies that option contents are completely preserved and not truncated to '= 0.1$'.
+    """
+    from app.services.parser.utils import extract_options_from_text
+
+    text = """Câu 1: Tính xác suất:
+A. P(A)=0.1
+B. P(B)=0.2
+C. P(C)=0.3
+D. P(D)=0.4"""
+
+    stem, opts, key = extract_options_from_text(text)
+    assert stem == "Câu 1: Tính xác suất:"
+    assert opts["A"] == "P(A)=0.1"
+    assert opts["B"] == "P(B)=0.2"
+    assert opts["C"] == "P(C)=0.3"
+    assert opts["D"] == "P(D)=0.4"
+
+
+def test_extract_options_latex_math_formulas_preserved():
+    """Verify LaTeX math formulas with $...$ and set operations are preserved 100%."""
+    from app.services.parser.utils import extract_options_from_text
+
+    text = """Câu 1: Cho hai biến cố A và B.
+A. $P(A) = 0.1$
+B. $P(B) = 0.2$
+C. $P(A \\cap B) = 0.05$
+D. $P(A \\cup B) = 0.25$"""
+
+    stem, opts, key = extract_options_from_text(text)
+    assert stem == "Câu 1: Cho hai biến cố A và B."
+    assert opts["A"] == "$P(A) = 0.1$"
+    assert opts["B"] == "$P(B) = 0.2$"
+    assert opts["C"] == "$P(A \\cap B) = 0.05$"
+    assert opts["D"] == "$P(A \\cup B) = 0.25$"
+
+
+def test_extract_options_coordinates_and_distance_functions():
+    """Verify point coordinates A(1; 2; 3) and distance functions d(A, (P)) are preserved."""
+    from app.services.parser.utils import extract_options_from_text
+
+    text_coords = """Câu 1: Tìm tọa độ điểm:
+A. A(1; 2; 3)
+B. B(-1; 0; 2)
+C. C(0; 1; -2)
+D. D(2; 2; 1)"""
+    stem1, opts1, _ = extract_options_from_text(text_coords)
+    assert opts1["A"] == "A(1; 2; 3)"
+    assert opts1["B"] == "B(-1; 0; 2)"
+
+    text_dist = """Câu 2: Khoảng cách từ điểm đến mặt phẳng:
+A. d(A, (P)) = 2
+B. d(B, (P)) = 3
+C. d(C, (P)) = 1
+D. d(D, (P)) = 4"""
+    stem2, opts2, _ = extract_options_from_text(text_dist)
+    assert opts2["A"] == "d(A, (P)) = 2"
+    assert opts2["B"] == "d(B, (P)) = 3"
+
+
+def test_extract_options_stem_with_graph_symbol():
+    """Verify stem containing graph symbol '(A):' does not confuse the option extractor."""
+    from app.services.parser.utils import extract_options_from_text
+
+    text = """Câu 1: Cho đồ thị (A):
+A. P(A)=0.1
+B. P(B)=0.2
+C. P(C)=0.3
+D. P(D)=0.4"""
+
+    stem, opts, _ = extract_options_from_text(text)
+    assert stem == "Câu 1: Cho đồ thị (A):"
+    assert opts["A"] == "P(A)=0.1"
+    assert opts["B"] == "P(B)=0.2"
+    assert opts["C"] == "P(C)=0.3"
+    assert opts["D"] == "P(D)=0.4"
+
+
+def test_docx_parser_probability_formulas_preserved():
+    """Verify docx_parser preserves probability formulas P(A)=0.1 and generates complete questions."""
+    import io
+    from docx import Document
+    from app.services.parser.docx_parser import parse_docx
+
+    doc = Document()
+    doc.add_paragraph("Câu 1: Cho các biến cố A, B. Tính xác suất:")
+    doc.add_paragraph("A. P(A)=0.1")
+    doc.add_paragraph("B. P(B)=0.2")
+    doc.add_paragraph("C. P(C)=0.3")
+    doc.add_paragraph("D. P(D)=0.4")
+    doc.add_paragraph("BẢNG ĐÁP ÁN:")
+    doc.add_paragraph("1.A")
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    file_bytes = buf.getvalue()
+
+    questions, errors = parse_docx(file_bytes)
+    assert len(errors) == 0
+    assert len(questions) == 1
+    q = questions[0]
+    assert q.options["A"] == "P(A)=0.1"
+    assert q.options["B"] == "P(B)=0.2"
+    assert q.options["C"] == "P(C)=0.3"
+    assert q.options["D"] == "P(D)=0.4"
+    assert q.correct_key == "A"
+
+
+def test_option_marker_in_stem_not_detected_as_key():
+    """Verify bold marker **A.** in question stem is NOT misidentified as the correct answer key."""
+    from app.services.parser.utils import extract_options_from_text
+
+    text = """Cho **A.** là ma trận vuông cấp 3 khả nghịch. Tìm định thức:
+A. det(A) = 1
+B. det(A) = 2
+C. det(A) = 3
+D. det(A) = 4"""
+
+    stem, opts, key = extract_options_from_text(text)
+    assert stem == "Cho **A.** là ma trận vuông cấp 3 khả nghịch. Tìm định thức:"
+    assert len(opts) == 4
+    assert key is None
+
+
+def test_option_extraction_linear_complexity_scalability():
+    """Verify option extraction scales linearly without O(n^4)/O(n^5) combinatorial explosion."""
+    import time
+    from app.services.parser.utils import extract_options_from_text
+
+    # Pathological input with 40 option clusters
+    text = "A. a B. b C. c D. d " * 40
+    t0 = time.perf_counter()
+    res = extract_options_from_text(text)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    # Must complete comfortably under 100ms in any environment
+    assert elapsed_ms < 100.0
+
+
+def test_docx_drawing_image_triggers_unparsed_image():
+    """Verify embedded drawing/image in DOCX is flagged as UNPARSED_IMAGE instead of silently dropped."""
+    import io
+    from docx import Document
+    from docx.oxml import parse_xml
+    from app.services.parser.docx_parser import parse_docx
+
+    doc = Document()
+    p = doc.add_paragraph("Câu 1: Cho hình vẽ sau:")
+    # Add a mock drawing tag <w:drawing>
+    drawing_xml = parse_xml(
+        '<w:drawing xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:inline><w:docPr id="1" name="Picture 1"/></w:inline>'
+        '</w:drawing>'
+    )
+    p._p.append(drawing_xml)
+    doc.add_paragraph("A. 1")
+    doc.add_paragraph("B. 2")
+    doc.add_paragraph("C. 3")
+    doc.add_paragraph("D. 4")
+    doc.add_paragraph("BẢNG ĐÁP ÁN: 1.A")
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    file_bytes = buf.getvalue()
+
+    questions, errors = parse_docx(file_bytes)
+    assert any(e.error_type == "UNPARSED_IMAGE" for e in errors)
+    assert any(q.has_unparsed_image for q in questions)
+
+
+def test_docx_nested_tables_extracts_all_questions():
+    """Verify DOCX parser recursively extracts questions from nested tables in document order."""
+    import io
+    from docx import Document
+    from app.services.parser.docx_parser import parse_docx
+
+    doc = Document()
+    tbl = doc.add_table(rows=1, cols=1)
+    cell = tbl.cell(0, 0)
+    cell.paragraphs[0].text = "Câu 1: Câu hỏi trong bảng chính\nA. 1\nB. 2\nC. 3\nD. 4"
+
+    # Add nested table inside cell
+    nested_tbl = cell.add_table(rows=1, cols=1)
+    nested_cell = nested_tbl.cell(0, 0)
+    nested_cell.paragraphs[0].text = "Câu 2: Câu hỏi trong bảng lồng\nA. 10\nB. 20\nC. 30\nD. 40"
+
+    doc.add_paragraph("BẢNG ĐÁP ÁN: 1.A  2.B")
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    file_bytes = buf.getvalue()
+
+    questions, errors = parse_docx(file_bytes)
+    q_nums = [q.question_no for q in questions]
+    assert 1 in q_nums
+    assert 2 in q_nums
+    assert len(errors) == 0
+
+
+def test_markdown_code_fence_preserves_question_integrity():
+    """Verify Markdown code fences with embedded question headers or options are isolated."""
+    from app.services.parser.markdown_parser import parse_markdown
+
+    md_text = """### Câu 1: Cho đoạn mã Python sau:
+```python
+# Ví dụ về phân đoạn đề thi:
+# Câu 2: Tìm x?
+# A. 1
+# B. 2
+# C. 3
+# D. 4
+x = 5 % 2
+print(x)
+```
+Hỏi kết quả in ra màn hình là gì?
+- A. 1
+- B. 2
+- C. 3
+- D. 4
+
+### BẢNG ĐÁP ÁN:
+1.A
+"""
+    questions, errors = parse_markdown(md_text)
+    assert len(errors) == 0
+    assert len(questions) == 1
+    q = questions[0]
+    assert q.question_no == 1
+    assert "print(x)" in q.raw_content
+    assert "Câu 2:" in q.raw_content
+    assert q.correct_key == "A"
+
+
+def test_validator_detects_duplicate_and_invalid_question_numbers():
+    """Verify validator catches duplicate question numbers and non-positive indices."""
+    from app.models.schemas import ParsedQuestionItem
+    from app.services.parser.validator import validate_exam_integrity
+
+    q_dup1 = ParsedQuestionItem(
+        question_no=1,
+        raw_content="Câu 1 thứ nhất",
+        options={"A": "1", "B": "2", "C": "3", "D": "4"},
+        correct_key="A",
+    )
+    q_dup2 = ParsedQuestionItem(
+        question_no=1,
+        raw_content="Câu 1 thứ hai",
+        options={"A": "1", "B": "2", "C": "3", "D": "4"},
+        correct_key="B",
+    )
+    q_zero = ParsedQuestionItem(
+        question_no=0,
+        raw_content="Câu số không",
+        options={"A": "1", "B": "2", "C": "3", "D": "4"},
+        correct_key="C",
+    )
+
+    errors = validate_exam_integrity([q_dup1, q_dup2, q_zero], [])
+    err_types = [e.error_type for e in errors]
+    assert "DUPLICATE_QUESTION_NO" in err_types
+    assert "INVALID_QUESTION_NO" in err_types
+
+
+def test_validator_detects_empty_stem():
+    """Verify validator rejects questions with empty stems."""
+    from app.models.schemas import ParsedQuestionItem
+    from app.services.parser.validator import validate_exam_integrity
+
+    q = ParsedQuestionItem(
+        question_no=1,
+        raw_content="   ",
+        is_empty_stem=True,
+        options={"A": "1", "B": "2", "C": "3", "D": "4"},
+        correct_key="A",
+    )
+    errors = validate_exam_integrity([q], [])
+    assert any(e.error_type == "EMPTY_STEM" for e in errors)
+
+
+def test_latex_parser_ignores_commented_questions_and_verbatim_percent():
+    """Verify LaTeX parser ignores % commented questions while preserving % inside verbatim."""
+    from app.services.parser.latex_parser import parse_latex
+
+    latex_text = r"""
+\begin{enumerate}
+% \item Câu 1: Câu này đã bị comment out
+% \item[A.] 1 \item[B.] 2 \item[C.] 3 \item[D.] 4
+\item Câu 2: Cho đoạn code sau:
+\begin{verbatim}
+x = 10 % 3
+\end{verbatim}
+Tính giá trị của x (xấp xỉ 50\%):
+\item[A.] 1
+\item[B.] 2
+\item[C.] 3
+\item[D.] 4
+\end{enumerate}
+BẢNG ĐÁP ÁN: 2.A
+"""
+    questions, errors = parse_latex(latex_text)
+    assert len(errors) == 0
+    assert len(questions) == 1
+    q = questions[0]
+    assert q.question_no == 2
+    assert "x = 10 % 3" in q.raw_content
+    assert "50\\%" in q.raw_content
+    assert "Câu này đã bị comment" not in q.raw_content
+
+
+def test_file_security_rejects_invalid_utf8_encoding():
+    """Verify file_security rejects files with invalid UTF-8 encoding."""
+    import pytest
+    from fastapi import HTTPException
+    from app.services.parser.file_security import validate_file_security
+
+    invalid_bytes = b"\xff\xfe\x00\x00\x12\x34"
+    with pytest.raises(HTTPException) as exc_info:
+        validate_file_security("exam.md", invalid_bytes)
+    assert exc_info.value.status_code == 400
+    assert "UTF-8" in exc_info.value.detail
+
+
+def test_validator_detects_conflicting_and_surplus_answer_keys():
+    """Verify validator catches conflicting answer keys and surplus keys for non-existent questions."""
+    from app.models.schemas import ParsedQuestionItem
+    from app.services.parser.utils import RawAnswerKeyInfo
+    from app.services.parser.validator import validate_exam_integrity
+
+    q = ParsedQuestionItem(
+        question_no=1,
+        raw_content="Câu 1 hợp lệ",
+        options={"A": "1", "B": "2", "C": "3", "D": "4"},
+        correct_key="A",
+    )
+    key_info = RawAnswerKeyInfo(
+        raw_pairs=[(1, "A"), (1, "B"), (99, "C")],
+        conflicts={1: ["A", "B"]},
+        mapped_keys={99: "C"},
+    )
+    errors = validate_exam_integrity([q], [], answer_key_info=key_info)
+    err_types = [e.error_type for e in errors]
+    assert "CONFLICTING_ANSWER_KEY" in err_types
+    assert "SURPLUS_ANSWER_KEY" in err_types
+

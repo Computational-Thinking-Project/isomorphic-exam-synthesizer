@@ -1398,3 +1398,76 @@ def test_ingest_file_rpc_sqlstate_23505_unique_violation_returns_500_confirmed_r
     detail = response.json()["detail"]
     assert "Database atomic replacement failed and was rolled back." in detail
     assert not mock_db.table.return_value.delete.called
+
+
+def test_ingest_text_preserves_probability_formulas_full_options(
+    client, mock_auth_user, auth_headers
+):
+    """Regression test: ingest-text preserves probability formulas P(A)=0.1 without truncating to '= 0.1$'."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    mock_rpc_exec = MagicMock()
+    mock_rpc_exec.data = {"success": True, "count": 1}
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_exec
+
+    mock_q_res = MagicMock()
+    mock_q_res.data = [
+        {
+            "id": "q-1",
+            "question_no": 1,
+            "raw_content": "Câu 1: Cho các biến cố A, B.",
+            "options": {"A": "P(A)=0.1", "B": "P(B)=0.2", "C": "P(C)=0.3", "D": "P(D)=0.4"},
+            "correct_option": "A",
+            "correct_key": "A",
+        }
+    ]
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = mock_q_res
+
+    raw_text = """### Câu 1: Cho các biến cố A, B. Khẳng định nào sau đây đúng?
+A. P(A)=0.1
+B. P(B)=0.2
+C. P(C)=0.3
+D. P(D)=0.4
+
+BẢNG ĐÁP ÁN:
+1.A"""
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-text",
+            json={"raw_text": raw_text},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_questions"] == 1
+    q = data["questions"][0]
+    assert q["options"]["A"] == "P(A)=0.1"
+    assert q["options"]["B"] == "P(B)=0.2"
+    assert q["options"]["C"] == "P(C)=0.3"
+    assert q["options"]["D"] == "P(D)=0.4"
+    assert q["correct_option"] == "A"
+
+    # Verify RPC payload passed to database also has the full preserved options
+    rpc_calls = mock_db.rpc.call_args_list
+    assert len(rpc_calls) >= 1
+    rpc_payload = rpc_calls[0][0][1]["p_questions"]
+    assert rpc_payload[0]["options"]["A"] == "P(A)=0.1"
+    assert rpc_payload[0]["options"]["B"] == "P(B)=0.2"
+    assert rpc_payload[0]["options"]["C"] == "P(C)=0.3"
+    assert rpc_payload[0]["options"]["D"] == "P(D)=0.4"
+
+

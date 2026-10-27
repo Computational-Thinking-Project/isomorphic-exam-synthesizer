@@ -194,9 +194,18 @@ class ParserErrorItem(BaseModel):
     """Chi tiết một lỗi bóc tách trong câu hỏi nguồn (TASK-203b)."""
 
     question_no: int = Field(..., description="Số thứ tự câu hỏi bị lỗi (1-indexed)")
-    error_type: Literal["MISSING_ANSWER", "UNPARSED_OMML", "INVALID_FORMAT"] = Field(
-        ..., description="Mã phân loại lỗi bóc tách"
-    )
+    error_type: Literal[
+        "MISSING_ANSWER",
+        "UNPARSED_OMML",
+        "UNPARSED_IMAGE",
+        "AMBIGUOUS_FORMAT",
+        "EMPTY_STEM",
+        "CONFLICTING_ANSWER_KEY",
+        "SURPLUS_ANSWER_KEY",
+        "DUPLICATE_QUESTION_NO",
+        "INVALID_QUESTION_NO",
+        "INVALID_FORMAT",
+    ] = Field(..., description="Mã phân loại lỗi bóc tách")
     message: Optional[str] = Field(None, description="Mô tả chi tiết nguyên nhân lỗi")
 
 
@@ -223,6 +232,8 @@ class ParsedQuestionItem(BaseModel):
     solution_md: Optional[str] = None
     has_missing_answer: bool = False
     has_unparsed_omml: bool = False
+    has_unparsed_image: bool = False
+    is_empty_stem: bool = False
     has_security_warning: bool = False
 
 

@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.models.schemas import ParsedQuestionItem, ParserErrorItem
 from app.services.parser.utils import (
+    RawAnswerKeyInfo,
     check_prompt_injection,
     extract_options_from_text,
     normalize_unicode_nfc,
@@ -42,6 +43,58 @@ OPT_LIST_START_PATTERN = re.compile(
     r"^\s*\\begin\{(?:enumerate|tasks|itemize|multicols)\}(?:\[[^\]]*\]|\([^\)]*\)|\{[^\}]*\})*",
     re.IGNORECASE,
 )
+
+
+def mask_latex_verbatim_spans(text: str) -> Tuple[str, List[Tuple[int, int, str]]]:
+    """Mask verbatim, lstlisting, and \\verb environments preserving exact length and newlines.
+
+    Ensures that any % characters inside verbatim code blocks are protected
+    from LaTeX comment stripping.
+    """
+    spans: List[Tuple[int, int, str]] = []
+    pat = re.compile(
+        r"(\\begin\{(?:verbatim|lstlisting)\}[\s\S]*?\\end\{(?:verbatim|lstlisting)\}|\\verb\|[^|\n]*\|)",
+        re.IGNORECASE,
+    )
+    for m in pat.finditer(text):
+        spans.append((m.start(), m.end(), m.group(0)))
+
+    chars = list(text)
+    for start, end, _ in spans:
+        for i in range(start, end):
+            if chars[i] != "\n":
+                chars[i] = "~"
+    return "".join(chars), spans
+
+
+def strip_latex_comments_preserve_len(text: str) -> str:
+    """Strip LaTeX comments (% to end of line), taking care of escaped \\% vs \\\\%.
+
+    Rules:
+    - Count consecutive backslashes preceding '%'.
+    - If odd number of backslashes (\\%, \\\\\\%): escaped percent sign -> NOT a comment.
+    - If even number of backslashes (%, \\\\%, \\\\\\\\%): genuine comment -> strip to end of line.
+    - Preserves exact line length and newlines by padding stripped comment with spaces.
+    """
+    lines = text.split("\n")
+    cleaned_lines = []
+    for line in lines:
+        comment_start = -1
+        for i, ch in enumerate(line):
+            if ch == "%":
+                bs_count = 0
+                j = i - 1
+                while j >= 0 and line[j] == "\\":
+                    bs_count += 1
+                    j -= 1
+                if bs_count % 2 == 0:
+                    comment_start = i
+                    break
+        if comment_start != -1:
+            cleaned_lines.append(line[:comment_start] + " " * (len(line) - comment_start))
+        else:
+            cleaned_lines.append(line)
+    return "\n".join(cleaned_lines)
 
 
 def clean_latex_list_wrappers(stem: str, options: Dict[str, str]) -> Tuple[str, Dict[str, str]]:
@@ -164,10 +217,24 @@ def parse_latex(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Parser
     """Parse raw LaTeX exam text and return parsed questions and errors."""
     text = normalize_unicode_nfc(raw_content)
 
-    # 1. Parse separate answer table
-    answer_map, text_without_keys = parse_separate_answer_key(text)
+    # 1. Mask verbatim/lstlisting first to protect code % characters
+    masked_verbatim, verbatim_spans = mask_latex_verbatim_spans(text)
 
-    # 2. Segment questions: distinguish between top-level question enumerate and option enumerate
+    # 2. Strip comments preserving length and newlines with backslash parity check
+    stripped_text = strip_latex_comments_preserve_len(masked_verbatim)
+
+    # 3. Restore verbatim content into stripped_text
+    chars = list(stripped_text)
+    for start, end, orig in verbatim_spans:
+        chars[start:end] = list(orig)
+    cleaned_text = "".join(chars)
+
+    # 4. Parse separate answer table
+    answer_map, text_without_keys, key_info = parse_separate_answer_key(
+        cleaned_text, return_info=True
+    )
+
+    # 5. Segment questions: distinguish between top-level question enumerate and option enumerate
     questions_raw: List[Dict[str, Any]] = []
 
     enum_spans = find_outer_latex_environment_spans(text_without_keys, "enumerate")
@@ -203,7 +270,7 @@ def parse_latex(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Parser
                 if not item_text:
                     continue
 
-                # Check if there is an explicit label like [Câu 1:]
+                # Check if there is an explicit label like [Câu 1:] or prefix "Câu X:"
                 lbl_match = re.match(r"^\[(.*?)\]", item_text)
                 if lbl_match:
                     lbl = lbl_match.group(1)
@@ -211,7 +278,11 @@ def parse_latex(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Parser
                     num_match = re.search(r"\d+", lbl)
                     q_no = int(num_match.group(0)) if num_match else q_counter
                 else:
-                    q_no = q_counter
+                    q_hdr = re.match(r"^(?:câu|bài)\s+(\d+)\s*[\.:\-]", item_text, re.IGNORECASE)
+                    if q_hdr:
+                        q_no = int(q_hdr.group(1))
+                    else:
+                        q_no = q_counter
 
                 questions_raw.append({"question_no": q_no, "text": item_text})
                 q_counter += 1
@@ -228,9 +299,19 @@ def parse_latex(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Parser
             q_body = text_without_keys[start_pos:end_pos].strip()
             questions_raw.append({"question_no": q_no, "text": q_body})
 
-    # 3. Process question items
+    # 6. Process question items
     parsed_questions: List[ParsedQuestionItem] = []
     errors: List[ParserErrorItem] = []
+
+    # Record any conflicting answer keys found in the answer section
+    for conf_q, conf_keys in key_info.conflicts.items():
+        errors.append(
+            ParserErrorItem(
+                question_no=conf_q,
+                error_type="CONFLICTING_ANSWER_KEY",
+                message=f"Question {conf_q} has conflicting answer keys in answer section: {conf_keys}",
+            )
+        )
 
     for q_data in questions_raw:
         q_no = q_data["question_no"]
@@ -262,7 +343,6 @@ def parse_latex(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Parser
         if len(options) < 4:
             nested_enums = find_outer_latex_environments(q_text, "enumerate")
             for n_body in nested_enums:
-                # Discard optional parameter before first \item (e.g. [(A)] or [label=...])
                 first_item_match = re.search(r"\\item(?![a-zA-Z])", n_body)
                 if first_item_match:
                     items_body = n_body[first_item_match.end() :]
@@ -299,8 +379,18 @@ def parse_latex(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Parser
                 inline_key = detected_inline_key
 
         # Clean list layout wrappers (\begin{enumerate}, \end{enumerate}, \begin{tasks}, etc.)
-        # while 100% preserving actual math environments (matrix, cases, aligned)
         stem, options = clean_latex_list_wrappers(stem, options)
+
+        # Check for empty stem
+        is_empty_stem = not bool(stem.strip())
+        if is_empty_stem:
+            errors.append(
+                ParserErrorItem(
+                    question_no=q_no,
+                    error_type="EMPTY_STEM",
+                    message=f"Question {q_no} has an empty question stem (no prompt text).",
+                )
+            )
 
         correct_key = answer_map.get(q_no) or inline_key or ""
         has_missing_answer = False
@@ -333,12 +423,14 @@ def parse_latex(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Parser
         parsed_questions.append(
             ParsedQuestionItem(
                 question_no=q_no,
-                raw_content=stem if stem else q_text,
+                raw_content=stem,
                 options=options,
                 correct_key=correct_key if not has_missing_answer else "",
                 solution_md=None,
                 has_missing_answer=has_missing_answer,
                 has_unparsed_omml=False,
+                has_unparsed_image=False,
+                is_empty_stem=is_empty_stem,
                 has_security_warning=has_sec_warning,
             )
         )

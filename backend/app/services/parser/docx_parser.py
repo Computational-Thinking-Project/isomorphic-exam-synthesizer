@@ -22,6 +22,7 @@ from app.models.schemas import ParsedQuestionItem, ParserErrorItem
 from app.services.parser.utils import (
     ANSWER_SECTION_PATTERNS,
     KEY_PAIR_PATTERN,
+    RawAnswerKeyInfo,
     check_prompt_injection,
     extract_key_pair,
     extract_options_from_text,
@@ -38,49 +39,86 @@ QUESTION_START_PATTERN = re.compile(
 
 OMML_MATH_TAGS = ("<m:oMath", "<w:oMath", "<m:oMathPara", "<w:oMathPara")
 EMBEDDED_OLE_MATH_TAGS = ("<w:object", 'progid="Equation.', "Equation.3", "MathType")
+WORD_IMAGE_DRAWING_TAGS = ("<w:drawing", "<w:pict", "<a:blip", "<v:shape", "<v:imagedata")
 
 
-def inspect_paragraph_omml(paragraph) -> Tuple[bool, bool]:
-    """Inspect paragraph XML for OMML math equations or embedded equation objects.
+def inspect_paragraph_visuals(paragraph) -> Tuple[bool, bool, bool]:
+    """Inspect paragraph XML for OMML math equations and embedded drawings/images.
 
     Returns:
-        (has_omml, is_unparsed)
-        If math tags exist and cannot be represented cleanly as text/LaTeX, is_unparsed=True.
+        (has_omml, is_unparsed_omml, has_unparsed_image)
     """
     try:
         xml_str = paragraph._p.xml
     except Exception:
-        return False, False
+        return False, False, False
 
     has_omml = any(tag in xml_str for tag in OMML_MATH_TAGS)
-    has_ole_equation = any(tag in xml_str for tag in EMBEDDED_OLE_MATH_TAGS)
+    has_ole = any(tag in xml_str for tag in EMBEDDED_OLE_MATH_TAGS)
+    has_image = any(tag in xml_str for tag in WORD_IMAGE_DRAWING_TAGS)
 
-    if has_ole_equation:
-        # Legacy Word Equation 3.0 / MathType OLE objects are binary/images and cannot be parsed to LaTeX text
-        return True, True
-
-    if has_omml:
-        # All unconverted OMML math structures (<m:oMath>, <m:sSup>, <m:f>, etc.)
-        # drop their math runs (<m:t>) from paragraph.text and must be flagged as incomplete.
-        return True, True
-
-    return False, False
+    is_unparsed_omml = has_omml or has_ole
+    return is_unparsed_omml, is_unparsed_omml, has_image
 
 
-def inspect_cell_omml(cell) -> Tuple[bool, bool]:
-    """Inspect table cell XML for OMML math equations or embedded equation objects."""
+def inspect_paragraph_omml(paragraph) -> Tuple[bool, bool]:
+    """Backward-compatible helper returning (has_omml, is_unparsed_omml)."""
+    has_omml, is_unparsed_omml, _ = inspect_paragraph_visuals(paragraph)
+    return has_omml, is_unparsed_omml
+
+
+def inspect_cell_visuals(cell) -> Tuple[bool, bool, bool]:
+    """Inspect table cell XML for OMML math equations and embedded drawings/images."""
     try:
         xml_str = cell._tc.xml
     except Exception:
-        return False, False
+        return False, False, False
 
     has_omml = any(tag in xml_str for tag in OMML_MATH_TAGS)
-    has_ole_equation = any(tag in xml_str for tag in EMBEDDED_OLE_MATH_TAGS)
+    has_ole = any(tag in xml_str for tag in EMBEDDED_OLE_MATH_TAGS)
+    has_image = any(tag in xml_str for tag in WORD_IMAGE_DRAWING_TAGS)
 
-    if has_ole_equation or has_omml:
-        return True, True
+    is_unparsed_omml = has_omml or has_ole
+    return is_unparsed_omml, is_unparsed_omml, has_image
 
-    return False, False
+
+def inspect_cell_omml(cell) -> Tuple[bool, bool]:
+    """Backward-compatible helper returning (has_omml, is_unparsed_omml)."""
+    has_omml, is_unparsed_omml, _ = inspect_cell_visuals(cell)
+    return has_omml, is_unparsed_omml
+
+
+def extract_cell_elements(
+    cell: Any, doc: DocumentObject
+) -> List[Tuple[str, bool, bool]]:
+    """Recursively extract text lines and (unparsed_omml, unparsed_image) flags from a cell.
+
+    Traverses child paragraphs and child tables in document order, deduplicating merged cells.
+
+    Returns:
+        List of (subline_text, is_unparsed_omml, has_unparsed_image)
+    """
+    results: List[Tuple[str, bool, bool]] = []
+    _, cell_unparsed_omml, cell_unparsed_img = inspect_cell_visuals(cell)
+
+    seen_sub_tc: set = set()
+    for child in cell._tc:
+        if child.tag.endswith("p"):
+            cp = Paragraph(child, doc)
+            text = normalize_unicode_nfc(cp.text)
+            _, cp_omml, cp_img = inspect_paragraph_visuals(cp)
+            u_omml = cp_omml or cell_unparsed_omml
+            u_img = cp_img or cell_unparsed_img
+            for subline in text.split("\n"):
+                results.append((subline, u_omml, u_img))
+        elif child.tag.endswith("tbl"):
+            sub_tbl = Table(child, doc)
+            for sub_row in sub_tbl.rows:
+                for sub_cell in sub_row.cells:
+                    if sub_cell._tc not in seen_sub_tc:
+                        seen_sub_tc.add(sub_cell._tc)
+                        results.extend(extract_cell_elements(sub_cell, doc))
+    return results
 
 
 def try_parse_table_as_answer_key(tbl: Table) -> Optional[List[str]]:
@@ -234,29 +272,35 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
     # 1. Aggregate text and paragraph info in strict document order (both paragraphs and tables)
     full_paragraphs: List[str] = []
     paragraph_omml_flags: List[bool] = []
+    paragraph_image_flags: List[bool] = []
 
     for child in doc.element.body:
         if child.tag.endswith("p"):
             p = Paragraph(child, doc)
             text = normalize_unicode_nfc(p.text)
-            has_omml, is_unparsed_omml = inspect_paragraph_omml(p)
+            _, is_unparsed_omml, has_image = inspect_paragraph_visuals(p)
             full_paragraphs.append(text)
             paragraph_omml_flags.append(is_unparsed_omml)
+            paragraph_image_flags.append(has_image)
         elif child.tag.endswith("tbl"):
             tbl = Table(child, doc)
             # First, check if this table is an answer key table
             ans_lines = try_parse_table_as_answer_key(tbl)
             if ans_lines:
                 tbl_has_unparsed_omml = any(
-                    inspect_cell_omml(c)[1] for row in tbl.rows for c in row.cells
+                    inspect_cell_visuals(c)[1] for row in tbl.rows for c in row.cells
+                )
+                tbl_has_image = any(
+                    inspect_cell_visuals(c)[2] for row in tbl.rows for c in row.cells
                 )
                 for line in ans_lines:
                     full_paragraphs.append(line)
                     paragraph_omml_flags.append(tbl_has_unparsed_omml)
+                    paragraph_image_flags.append(tbl_has_image)
                 continue
 
             # Otherwise, it's a content/question table: iterate cell-by-cell in document order
-            # preserving question boundaries and individual paragraphs inside cells
+            # preserving question boundaries and recursively traversing nested tables
             for row in tbl.rows:
                 seen_tc = set()
                 unique_cells = []
@@ -266,19 +310,19 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
                         unique_cells.append(cell)
 
                 for cell in unique_cells:
-                    _, cell_unparsed = inspect_cell_omml(cell)
-                    for cp in cell.paragraphs:
-                        text = normalize_unicode_nfc(cp.text)
-                        _, cp_unparsed = inspect_paragraph_omml(cp)
-                        for subline in text.split("\n"):
-                            full_paragraphs.append(subline)
-                            paragraph_omml_flags.append(cp_unparsed or cell_unparsed)
+                    cell_elements = extract_cell_elements(cell, doc)
+                    for subline, u_omml, u_img in cell_elements:
+                        full_paragraphs.append(subline)
+                        paragraph_omml_flags.append(u_omml)
+                        paragraph_image_flags.append(u_img)
 
     # Combine full text for separate answer key parsing
     all_text = "\n".join(full_paragraphs)
 
     # 2. Extract separate answer table at the end
-    answer_map, text_without_keys = parse_separate_answer_key(all_text)
+    answer_map, text_without_keys, key_info = parse_separate_answer_key(
+        all_text, return_info=True
+    )
 
     # Cut off trailing answer key paragraphs to prevent contamination of the last question/options
     cutoff_idx = len(full_paragraphs)
@@ -308,11 +352,22 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
 
     content_paragraphs = full_paragraphs[:cutoff_idx]
     content_omml_flags = paragraph_omml_flags[:cutoff_idx]
+    content_image_flags = paragraph_image_flags[:cutoff_idx]
 
     # 3. Segment paragraphs into question blocks
     questions_raw: List[Dict[str, Any]] = []
     current_q: Optional[Dict[str, Any]] = None
     errors: List[ParserErrorItem] = []
+
+    # Record any conflicting answer keys found in the answer section
+    for conf_q, conf_keys in key_info.conflicts.items():
+        errors.append(
+            ParserErrorItem(
+                question_no=conf_q,
+                error_type="CONFLICTING_ANSWER_KEY",
+                message=f"Question {conf_q} has conflicting answer keys in answer section: {conf_keys}",
+            )
+        )
 
     for idx, p_text in enumerate(content_paragraphs):
         trimmed = p_text.strip()
@@ -328,6 +383,17 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
                             question_no=0,
                             error_type="UNPARSED_OMML",
                             message="Tệp DOCX chứa công thức OMML đứng trước câu hỏi đầu tiên không thể đọc được nội dung.",
+                        )
+                    )
+            if content_image_flags[idx]:
+                if current_q is not None:
+                    current_q["has_unparsed_image"] = True
+                else:
+                    errors.append(
+                        ParserErrorItem(
+                            question_no=0,
+                            error_type="UNPARSED_IMAGE",
+                            message="Tệp DOCX chứa hình ảnh đứng trước câu hỏi đầu tiên không thể đọc được nội dung.",
                         )
                     )
             continue
@@ -346,12 +412,15 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
                 "question_no": q_num,
                 "lines": [body_text] if body_text else [],
                 "has_unparsed_omml": content_omml_flags[idx],
+                "has_unparsed_image": content_image_flags[idx],
             }
         else:
             if current_q is not None:
                 current_q["lines"].append(trimmed)
                 if content_omml_flags[idx]:
                     current_q["has_unparsed_omml"] = True
+                if content_image_flags[idx]:
+                    current_q["has_unparsed_image"] = True
 
     if current_q:
         questions_raw.append(current_q)
@@ -365,6 +434,17 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
 
         # Extract options
         stem, options, inline_key = extract_options_from_text(joined_text)
+
+        # Check for empty stem
+        is_empty_stem = not bool(stem.strip())
+        if is_empty_stem:
+            errors.append(
+                ParserErrorItem(
+                    question_no=q_no,
+                    error_type="EMPTY_STEM",
+                    message=f"Question {q_no} has an empty question stem (no prompt text).",
+                )
+            )
 
         # Determine correct key: precedence (1) separate answer map, (2) inline marker
         correct_key = answer_map.get(q_no) or inline_key or ""
@@ -390,6 +470,16 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
                 )
             )
 
+        has_unparsed_image = q_data.get("has_unparsed_image", False)
+        if has_unparsed_image:
+            errors.append(
+                ParserErrorItem(
+                    question_no=q_no,
+                    error_type="UNPARSED_IMAGE",
+                    message=f"Question {q_no} contains unparsed embedded images or drawings.",
+                )
+            )
+
         # Check options completeness and non-empty content
         if (
             len(options) != 4
@@ -410,12 +500,14 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
         parsed_questions.append(
             ParsedQuestionItem(
                 question_no=q_no,
-                raw_content=stem if stem else joined_text,
+                raw_content=stem,
                 options=options,
                 correct_key=correct_key if not has_missing_answer else "",
                 solution_md=None,
                 has_missing_answer=has_missing_answer,
                 has_unparsed_omml=has_unparsed_omml,
+                has_unparsed_image=has_unparsed_image,
+                is_empty_stem=is_empty_stem,
                 has_security_warning=has_sec_warning,
             )
         )
