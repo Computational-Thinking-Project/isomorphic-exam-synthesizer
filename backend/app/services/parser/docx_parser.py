@@ -15,6 +15,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import docx
 from docx.document import Document as DocumentObject
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 
 from app.models.schemas import ParsedQuestionItem, ParserErrorItem
 from app.services.parser.utils import (
@@ -64,6 +66,22 @@ def inspect_paragraph_omml(paragraph) -> Tuple[bool, bool]:
     return False, False
 
 
+def inspect_cell_omml(cell) -> Tuple[bool, bool]:
+    """Inspect table cell XML for OMML math equations or embedded equation objects."""
+    try:
+        xml_str = cell._tc.xml
+    except Exception:
+        return False, False
+
+    has_omml = any(tag in xml_str for tag in OMML_MATH_TAGS)
+    has_ole_equation = any(tag in xml_str for tag in EMBEDDED_OLE_MATH_TAGS)
+
+    if has_ole_equation or has_omml:
+        return True, True
+
+    return False, False
+
+
 def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[ParserErrorItem]]:
     """Parse a DOCX file in-memory and return extracted questions and validation errors."""
     try:
@@ -78,27 +96,58 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
             )
         ]
 
-    # 1. Aggregate text and paragraph info
-    full_paragraphs = []
-    paragraph_omml_flags = []
+    # 1. Aggregate text and paragraph info in strict document order (both paragraphs and tables)
+    full_paragraphs: List[str] = []
+    paragraph_omml_flags: List[bool] = []
 
-    for p in doc.paragraphs:
-        text = normalize_unicode_nfc(p.text)
-        has_omml, is_unparsed_omml = inspect_paragraph_omml(p)
-        full_paragraphs.append(text)
-        paragraph_omml_flags.append(is_unparsed_omml)
+    for child in doc.element.body:
+        if child.tag.endswith("p"):
+            p = Paragraph(child, doc)
+            text = normalize_unicode_nfc(p.text)
+            has_omml, is_unparsed_omml = inspect_paragraph_omml(p)
+            full_paragraphs.append(text)
+            paragraph_omml_flags.append(is_unparsed_omml)
+        elif child.tag.endswith("tbl"):
+            tbl = Table(child, doc)
+            for row in tbl.rows:
+                seen_tc = set()
+                unique_cells = []
+                for cell in row.cells:
+                    if cell._tc not in seen_tc:
+                        seen_tc.add(cell._tc)
+                        unique_cells.append(cell)
 
-    # Also extract text from any docx tables (common for answer keys or question grids)
-    table_texts = []
-    for table in doc.tables:
-        for row in table.rows:
-            row_cells = [normalize_unicode_nfc(cell.text.strip()) for cell in row.cells]
-            table_texts.append(" ".join(row_cells))
+                row_has_unparsed_omml = any(
+                    inspect_cell_omml(cell)[1] for cell in unique_cells
+                ) or any(
+                    inspect_paragraph_omml(p)[1]
+                    for cell in unique_cells
+                    for p in cell.paragraphs
+                )
+
+                if len(unique_cells) == 1:
+                    # Single-cell row: preserve individual paragraphs
+                    cell = unique_cells[0]
+                    _, cell_unparsed = inspect_cell_omml(cell)
+                    for cp in cell.paragraphs:
+                        text = normalize_unicode_nfc(cp.text)
+                        _, cp_unparsed = inspect_paragraph_omml(cp)
+                        full_paragraphs.append(text)
+                        paragraph_omml_flags.append(cp_unparsed or cell_unparsed)
+                else:
+                    # Multi-cell row (e.g. question columns, option grid, or answer key row)
+                    row_parts = []
+                    for cell in unique_cells:
+                        c_text = normalize_unicode_nfc(cell.text.strip())
+                        if c_text:
+                            row_parts.append(c_text)
+                    row_text = "  ".join(row_parts)
+                    if row_text or row_has_unparsed_omml:
+                        full_paragraphs.append(row_text)
+                        paragraph_omml_flags.append(row_has_unparsed_omml)
 
     # Combine full text for separate answer key parsing
     all_text = "\n".join(full_paragraphs)
-    if table_texts:
-        all_text += "\n\n" + "\n".join(table_texts)
 
     # 2. Extract separate answer table at the end
     answer_map, text_without_keys = parse_separate_answer_key(all_text)
@@ -116,11 +165,16 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
                 cutoff_idx = i
                 break
             # Check for compact answer key line (only towards the tail of the document)
-            if i >= max(0, len(full_paragraphs) - 5):
+            if i >= max(0, len(full_paragraphs) - 10):
                 _, found_opts, _ = extract_options_from_text(p_text)
                 if len(found_opts) < 4:
                     pairs_in_p = list(KEY_PAIR_PATTERN.finditer(p_text))
-                    if len(pairs_in_p) >= 2 and not QUESTION_START_PATTERN.match(p_text.strip()):
+                    residual = KEY_PAIR_PATTERN.sub("", p_text)
+                    if (
+                        len(pairs_in_p) >= 2
+                        and not QUESTION_START_PATTERN.match(p_text.strip())
+                        and not re.search(r"[a-zA-Zà-ỹÀ-Ỹ]{2,}", residual)
+                    ):
                         cutoff_idx = i
                         break
 
@@ -208,13 +262,17 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
                 )
             )
 
-        # Check options completeness
-        if len(options) != 4 or not all(k in options for k in ["A", "B", "C", "D"]):
+        # Check options completeness and non-empty content
+        if (
+            len(options) != 4
+            or not all(k in options for k in ["A", "B", "C", "D"])
+            or any(not (options.get(k) or "").strip() for k in ["A", "B", "C", "D"])
+        ):
             errors.append(
                 ParserErrorItem(
                     question_no=q_no,
                     error_type="INVALID_FORMAT",
-                    message=f"Question {q_no} does not contain all 4 options A, B, C, D.",
+                    message=f"Question {q_no} is missing one or more options or contains empty option content (A, B, C, D required).",
                 )
             )
 
