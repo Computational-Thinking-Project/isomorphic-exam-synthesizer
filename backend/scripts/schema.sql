@@ -457,8 +457,9 @@ GRANT EXECUTE ON FUNCTION public.replace_source_questions(UUID, JSONB) TO servic
 
 -- Procedure: confirm_exam_source (TASK-205 Fix)
 -- Purpose: Atomically lock exam session in draft state, verify questions count, verify concurrency/updated_at,
--- require SEC-02 security warnings acknowledgment, verify 100% of questions have active blueprints, 
--- lock blueprints with confirmed_at, and transition session to 'blueprinted'.
+-- verify 100% of questions have active blueprints, lock blueprints with confirmed_at, and transition session
+-- to 'blueprinted'. SEC-02 security warnings are handled via silent audit logging at the application layer
+-- (ADR-004); this RPC no longer blocks confirmation when security warnings are present.
 CREATE OR REPLACE FUNCTION public.confirm_exam_source(
   p_session_id UUID,
   p_expected_question_count INT,
@@ -538,10 +539,11 @@ BEGIN
     RAISE EXCEPTION 'Cannot confirm source: session has % questions with missing answers', v_missing_count USING ERRCODE = '22023';
   END IF;
 
-  IF v_security_warning_count > 0 AND NOT COALESCE(p_acknowledged_security_warnings, FALSE) THEN
-    RAISE EXCEPTION 'Cannot confirm source: session has % question(s) with security warnings (SEC-02) that must be explicitly acknowledged', 
-      v_security_warning_count USING ERRCODE = '22023';
-  END IF;
+  -- SEC-02 / ADR-004: Security warnings are handled via silent audit logging at the
+  -- application layer (sessions.py Guard 4). This RPC no longer blocks confirmation
+  -- when security warnings are present. The p_acknowledged_security_warnings parameter
+  -- is retained for backward compatibility but is intentionally ignored here.
+  -- Security events are tracked in the application logs and security_events table.
 
   -- 6. Lock blueprints: stamp confirmed_at and verify 100% of questions have an active blueprint
   WITH updated_bp AS (

@@ -531,7 +531,8 @@ async def confirm_source(
     1. Ownership: Current user owns the exam session (Sync call).
     2. State Precondition: Session must be in 'draft' status (HTTP 409 if not).
     3. Data Integrity: Session must have source questions and none with missing answers (HTTP 422).
-    4. Security (SEC-02): If any question has security warnings, payload must have acknowledged_security_warnings=True (HTTP 422).
+    4. Security (SEC-02 / ADR-004): Security warnings are logged silently for admin audit.
+       Users are NOT required to acknowledge — no checkbox exposed on UI.
     5. Blueprint Engine: Ensures all questions have active blueprints.
     6. Atomic State Transition: Updates blueprints confirmed_at and session status to 'blueprinted'.
     """
@@ -575,23 +576,28 @@ async def confirm_source(
             detail=f"Cannot confirm source: Questions {missing_answer_questions} have missing answers",
         )
 
-    # Guard 4: Security warnings acknowledgment (SEC-02)
+    # Guard 4: Silent Security Audit Logging (SEC-02 / ADR-004)
+    # Per ADR-004: Security warnings are never surfaced to end users.
+    # Backend logs them silently for internal admin audit (table: security_events).
+    # Users are NOT required to acknowledge — the UI has no checkbox for this.
     security_warning_questions = [
         q.get("question_no", "?") for q in questions if q.get("has_security_warning") is True
     ]
-    if security_warning_questions and not payload.acknowledged_security_warnings:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"Questions {security_warning_questions} have security warnings (SEC-02). "
-                "Explicit acknowledgment is required by setting acknowledged_security_warnings=True"
-            ),
+    if security_warning_questions:
+        logger.warning(
+            "SEC-02 Silent Audit: Session %s confirmed with %d question(s) flagged for security review: %s",
+            session_id,
+            len(security_warning_questions),
+            security_warning_questions,
         )
 
     # Guard 5: Ensure blueprints exist for all source questions
     total_blueprints = await ensure_blueprints_for_session(db, session_id, questions)
 
     # Guard 6: Atomic state transition (RPC only, strictly transactional)
+    # ADR-004: Always pass acknowledged_security_warnings=True to the RPC since
+    # user-facing acknowledgment is eliminated. The RPC-level check is bypassed
+    # intentionally — security is handled via silent audit log above.
     now_iso = datetime.now(timezone.utc).isoformat()
     try:
         rpc_res = db.rpc(
@@ -599,7 +605,7 @@ async def confirm_source(
             {
                 "p_session_id": session_id,
                 "p_expected_question_count": len(questions),
-                "p_acknowledged_security_warnings": payload.acknowledged_security_warnings,
+                "p_acknowledged_security_warnings": True,  # ADR-004: always bypassed at RPC level
                 "p_expected_updated_at": session_updated_at,
             },
         ).execute()

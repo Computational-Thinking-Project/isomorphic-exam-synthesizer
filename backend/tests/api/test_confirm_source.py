@@ -1,17 +1,17 @@
 """Unit tests for Confirm Source Exam & Blueprint Activation (TASK-205).
 
-Validates all 12 test cases:
-1. Unauthenticated (401)
-2. Forbidden / Wrong Owner (403)
-3. Session Not Found (404)
-4. Conflict when status == 'blueprinted' (409)
-5. Conflict when status == 'generating' (409)
-6. 422 when Session has no questions
-7. 422 when questions have missing answers
-8. 422 when questions have security warnings and acknowledged=False
-9. 422 when questions have security warnings and body is empty {}
+Validates all test cases including ADR-004 (Silent Security Audit) behavioral changes:
+ 1. Unauthenticated (401)
+ 2. Forbidden / Wrong Owner (403)
+ 3. Session Not Found (404)
+ 4. Conflict when status == 'blueprinted' (409)
+ 5. Conflict when status == 'generating' (409)
+ 6. 422 when Session has no questions
+ 7. 422 when questions have missing answers
+ 8. [ADR-004] 200 when questions have security warnings & acknowledged=False (silent audit, not block)
+ 9. [ADR-004] 200 when questions have security warnings & body is empty {} (silent audit, not block)
 10. Success when 0 security warnings and blueprints exist (200)
-11. Success when security warnings acknowledged=True (200)
+11. [ADR-004] RPC always receives p_acknowledged_security_warnings=True (silent audit canonical test)
 12. Auto-creation of missing blueprints during confirmation (200)
 """
 
@@ -225,15 +225,20 @@ def test_confirm_422_has_missing_answer(client, mock_auth_user, auth_headers):
 
 
 # ---------------------------------------------------------------------------
-# 4. Security (SEC-02) Tests (HTTP 422)
+# 4. Security (SEC-02 / ADR-004) Tests — Silent Audit (Always HTTP 200)
 # ---------------------------------------------------------------------------
 
 
-def test_confirm_422_security_unacknowledged(client, mock_auth_user, auth_headers):
-    """Reject with 422 if questions have security warnings and acknowledged=False."""
+def test_confirm_security_warnings_acknowledged_false_still_passes(client, mock_auth_user, auth_headers):
+    """ADR-004: Security warnings with acknowledged=False now succeed (200).
+
+    Per ADR-004, the Guard 4 security-acknowledgment block is eliminated.
+    Security events are silently logged server-side. Clients no longer need
+    to send acknowledged_security_warnings=True to proceed.
+    """
     mock_db = MagicMock()
     mock_status = MagicMock()
-    mock_status.data = [{"status": "draft"}]
+    mock_status.data = [{"status": "draft", "updated_at": "2026-10-28T00:00:00+00:00"}]
     mock_questions = MagicMock()
     mock_questions.data = _create_mock_questions(count=3, has_warning=True)
 
@@ -243,6 +248,21 @@ def test_confirm_422_security_unacknowledged(client, mock_auth_user, auth_header
     mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
         mock_questions
     )
+
+    mock_bps = MagicMock()
+    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
+
+    mock_rpc_res = MagicMock()
+    mock_rpc_res.data = {
+        "success": True,
+        "session_id": MOCK_SESSION_ID,
+        "status": "blueprinted",
+        "confirmed_at": "2026-10-28T00:00:00+00:00",
+        "total_questions": 3,
+        "total_blueprints": 3,
+    }
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
 
     with (
         patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
@@ -254,15 +274,21 @@ def test_confirm_422_security_unacknowledged(client, mock_auth_user, auth_header
             json={"acknowledged_security_warnings": False},
             headers=auth_headers,
         )
-    assert response.status_code == 422
-    assert "security warnings" in response.json()["detail"]
+    # ADR-004: Must succeed with 200, not 422
+    assert response.status_code == 200
+    assert response.json()["status"] == "blueprinted"
 
 
-def test_confirm_422_security_missing_body(client, mock_auth_user, auth_headers):
-    """Reject with 422 when body is empty {} and warnings exist (defaults to False)."""
+def test_confirm_security_warnings_empty_body_still_passes(client, mock_auth_user, auth_headers):
+    """ADR-004: Empty body {} with security warnings now succeeds (200).
+
+    Per ADR-004, no acknowledgment field is required. An empty body defaults
+    acknowledged_security_warnings to False but the Guard no longer blocks.
+    Security events are logged silently for admin audit.
+    """
     mock_db = MagicMock()
     mock_status = MagicMock()
-    mock_status.data = [{"status": "draft"}]
+    mock_status.data = [{"status": "draft", "updated_at": "2026-10-28T00:00:00+00:00"}]
     mock_questions = MagicMock()
     mock_questions.data = _create_mock_questions(count=3, has_warning=True)
 
@@ -272,6 +298,21 @@ def test_confirm_422_security_missing_body(client, mock_auth_user, auth_headers)
     mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
         mock_questions
     )
+
+    mock_bps = MagicMock()
+    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
+
+    mock_rpc_res = MagicMock()
+    mock_rpc_res.data = {
+        "success": True,
+        "session_id": MOCK_SESSION_ID,
+        "status": "blueprinted",
+        "confirmed_at": "2026-10-28T00:00:00+00:00",
+        "total_questions": 3,
+        "total_blueprints": 3,
+    }
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
 
     with (
         patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
@@ -283,8 +324,9 @@ def test_confirm_422_security_missing_body(client, mock_auth_user, auth_headers)
             json={},
             headers=auth_headers,
         )
-    assert response.status_code == 422
-    assert "security warnings" in response.json()["detail"]
+    # ADR-004: Must succeed with 200, not 422
+    assert response.status_code == 200
+    assert response.json()["status"] == "blueprinted"
 
 
 # ---------------------------------------------------------------------------
@@ -345,11 +387,16 @@ def test_confirm_success_no_warnings(client, mock_auth_user, auth_headers):
     assert data["confirmed_at"] is not None
 
 
-def test_confirm_success_security_acknowledged(client, mock_auth_user, auth_headers):
-    """Successful confirmation when security warning exists and acknowledged=True."""
+def test_confirm_security_warnings_are_silently_logged(client, mock_auth_user, auth_headers):
+    """ADR-004: Confirm with security warnings succeeds (200) and logs silently.
+
+    The new canonical success test for sessions with security warnings.
+    Verifies that: (1) HTTP 200 is returned, (2) status is blueprinted,
+    (3) the RPC is called with p_acknowledged_security_warnings=True always.
+    """
     mock_db = MagicMock()
     mock_status = MagicMock()
-    mock_status.data = [{"status": "draft"}]
+    mock_status.data = [{"status": "draft", "updated_at": "2026-10-28T00:00:00+00:00"}]
     mock_questions = MagicMock()
     mock_questions.data = _create_mock_questions(count=3, has_warning=True)
 
@@ -391,6 +438,12 @@ def test_confirm_success_security_acknowledged(client, mock_auth_user, auth_head
     data = response.json()
     assert data["status"] == "blueprinted"
     assert data["total_questions"] == 3
+    # Verify the RPC was called with p_acknowledged_security_warnings=True (ADR-004 bypass)
+    call_args = mock_db.rpc.call_args
+    assert call_args is not None
+    rpc_payload = call_args[0][1]  # Second positional arg is the params dict
+    assert rpc_payload.get("p_acknowledged_security_warnings") is True
+
 
 
 def test_confirm_auto_creates_missing_blueprints(client, mock_auth_user, auth_headers):
