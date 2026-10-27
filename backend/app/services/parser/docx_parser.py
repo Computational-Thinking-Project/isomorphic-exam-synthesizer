@@ -23,6 +23,7 @@ from app.services.parser.utils import (
     ANSWER_SECTION_PATTERNS,
     KEY_PAIR_PATTERN,
     check_prompt_injection,
+    extract_key_pair,
     extract_options_from_text,
     normalize_unicode_nfc,
     parse_separate_answer_key,
@@ -31,7 +32,7 @@ from app.services.parser.utils import (
 logger = logging.getLogger(__name__)
 
 QUESTION_START_PATTERN = re.compile(
-    r"^(?:câu|bài)\s+(?P<num>\d+)\s*[\.:\-]\s*",
+    r"^(?:câu|bài)\s+(?P<num>\d+)\s*[\.:\-\)]\s*",
     re.IGNORECASE,
 )
 
@@ -94,11 +95,11 @@ def try_parse_table_as_answer_key(tbl: Table) -> Optional[List[str]]:
     Returns normalized lines (e.g. ['BẢNG ĐÁP ÁN:', '1.A  2.B']) or None if not an answer key table.
     """
     def _is_num_cell(text: str) -> Optional[int]:
-        m = re.match(r"^(?:câu\s*)?(\d+)\.?$", text.strip(), re.IGNORECASE)
+        m = re.match(r"^(?:câu\s*)?(\d+)\s*[\.:\-\)]?$", text.strip(), re.IGNORECASE)
         return int(m.group(1)) if m else None
 
     def _is_ans_cell(text: str) -> Optional[str]:
-        m = re.match(r"^\[?([A-D])\]?\.?$", text.strip(), re.IGNORECASE)
+        m = re.match(r"^[\(\[]?\s*([A-D])\s*[\)\]]?[\.:]?$", text.strip(), re.IGNORECASE)
         return m.group(1).upper() if m else None
 
     grid: List[List[str]] = []
@@ -144,13 +145,17 @@ def try_parse_table_as_answer_key(tbl: Table) -> Optional[List[str]]:
         if all(re.search(r"^(?:câu|đáp án|đ/a|stt|no|ans)$", c, re.IGNORECASE) for c in r):
             continue
         if len(r) >= 2:
+            # Strip trailing empty padding cells
+            r_clean = list(r)
+            while r_clean and not r_clean[-1]:
+                r_clean.pop()
             row_pairs = []
-            for i in range(0, len(r) - 1, 2):
-                n = _is_num_cell(r[i])
-                a = _is_ans_cell(r[i + 1])
+            for i in range(0, len(r_clean) - 1, 2):
+                n = _is_num_cell(r_clean[i])
+                a = _is_ans_cell(r_clean[i + 1])
                 if n is not None and a is not None:
                     row_pairs.append((n, a))
-            if len(row_pairs) * 2 == len(r):
+            if row_pairs and len(row_pairs) * 2 == len(r_clean):
                 alt_pairs.extend(row_pairs)
 
     if len(alt_pairs) >= 2 or (header_found and len(alt_pairs) >= 1):
@@ -178,7 +183,8 @@ def try_parse_table_as_answer_key(tbl: Table) -> Optional[List[str]]:
                 and all(a is not None for a in c_ans)
             ):
                 for n, a in zip(c_nums, c_ans):
-                    grid_pairs.append((n, a))
+                    if n is not None and a is not None:
+                        grid_pairs.append((n, a))
                 r_idx += 2
             else:
                 r_idx += 1
@@ -190,11 +196,8 @@ def try_parse_table_as_answer_key(tbl: Table) -> Optional[List[str]]:
         direct_pairs: List[Tuple[int, str]] = []
         for r in content_rows:
             for c in r:
-                m = KEY_PAIR_PATTERN.match(c)
-                if m:
-                    num = int(m.group("num1") or m.group("num2"))
-                    key = (m.group("key1") or m.group("key2")).upper()
-                    direct_pairs.append((num, key))
+                for p in KEY_PAIR_PATTERN.finditer(c):
+                    direct_pairs.append(extract_key_pair(p))
         if len(direct_pairs) >= 2 or (header_found and len(direct_pairs) >= 1):
             extracted_pairs = direct_pairs
 

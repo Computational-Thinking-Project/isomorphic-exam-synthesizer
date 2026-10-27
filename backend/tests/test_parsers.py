@@ -972,3 +972,35 @@ D. 4
     ans2, rem2 = parse_separate_answer_key(text_bold)
     assert ans2 == {1: "B"}
     assert "**ĐÁP ÁN**" not in rem2
+
+
+def test_docx_question_start_with_closing_paren():
+    """Verify docx QUESTION_START_PATTERN matches 'Câu 1)' and 'Bài 2)'."""
+    from app.services.parser.docx_parser import QUESTION_START_PATTERN
+
+    m1 = QUESTION_START_PATTERN.match("Câu 1) Cho hàm số f(x)")
+    assert m1 is not None and m1.group("num") == "1"
+
+    m2 = QUESTION_START_PATTERN.match("Bài 5) Tính giới hạn")
+    assert m2 is not None and m2.group("num") == "5"
+
+
+def test_docx_table_answer_key_with_colons_and_trailing_empty_cell():
+    """Verify try_parse_table_as_answer_key handles colons, parens, and trailing empty cells."""
+    from docx import Document
+    from app.services.parser.docx_parser import try_parse_table_as_answer_key
+
+    doc = Document()
+    tbl = doc.add_table(rows=1, cols=5)
+    row = tbl.rows[0]
+    row.cells[0].text = "Câu 1:"
+    row.cells[1].text = "(A)"
+    row.cells[2].text = "Câu 2:"
+    row.cells[3].text = "(B)"
+    row.cells[4].text = "   "  # trailing empty cell
+
+    lines = try_parse_table_as_answer_key(tbl)
+    assert lines is not None
+    joined = " ".join(lines)
+    assert "1.A" in joined
+    assert "2.B" in joined
