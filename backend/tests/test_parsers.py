@@ -2121,3 +2121,202 @@ def test_storage_fallback_not_used_for_403_or_timeout():
     assert not fallback_bucket.upload.called
 
 
+# ==============================================================================
+# SECTION 10: HARDENING FIX-01 TO FIX-24 REGRESSION TESTS (BAO_CAO_LOI_VA_KE_HOACH_SUA_BOC_TACH_DE_THI.md)
+# ==============================================================================
+
+def test_option_marker_markdown_asterisk_before_dot():
+    """Verify **A**. style bold option markers (asterisks before delimiter) are recognized (FIX-08)."""
+    from app.services.parser.utils import extract_options_from_text
+
+    text = """Câu 1: Chọn giá trị đúng:
+**A**. 10
+B. 20
+C. 30
+D. 40
+"""
+    res = extract_options_from_text(text)
+    assert res.error_type is None
+    assert res.detected_key == "A"
+    assert res.options["A"] == "10"
+    assert res.options["B"] == "20"
+
+
+def test_mask_math_blocks_covers_bracket_delimiters_and_environments():
+    """Verify mask_math_blocks masks \\[ ... \\] and equation environments (FIX-11)."""
+    from app.services.parser.utils import extract_options_from_text
+
+    text = r"""Câu 1: Cho công thức:
+\[ A = \frac{1}{2} \]
+\begin{equation}
+B = 2x
+\end{equation}
+A. 1
+B. 2
+C. 3
+D. 4
+"""
+    res = extract_options_from_text(text)
+    assert res.error_type is None
+    assert res.options["A"] == "1"
+    assert res.options["B"] == "2"
+
+
+def test_latex_enumerate_with_optional_arguments():
+    """Verify \\begin{enumerate}[label=\\arabic*.] does not create a fake question from [label=...] (FIX-05)."""
+    from app.services.parser.latex_parser import parse_latex
+
+    text = r"""
+\begin{enumerate}[label=\arabic*.]
+\item Câu 1: Tính $1+1$:
+A. 1  B. 2  C. 3  D. 4
+
+\item Câu 2: Tính $2+2$:
+A. 2  B. 3  C. 4  D. 5
+\end{enumerate}
+BẢNG ĐÁP ÁN: 1.B 2.C
+"""
+    questions, errors = parse_latex(text)
+    assert len(errors) == 0
+    assert len(questions) == 2
+    assert questions[0].question_no == 1
+    assert "label=" not in questions[0].raw_content
+    assert questions[1].question_no == 2
+
+
+def test_latex_answer_header_wrapped_in_textbf():
+    """Verify \\textbf{BẢNG ĐÁP ÁN:} is parsed and separates the answer key cleanly (FIX-06)."""
+    from app.services.parser.latex_parser import parse_latex
+
+    text = r"""
+\begin{enumerate}
+\item Câu 1: Tìm x:
+A. 1  B. 2  C. 3  D. 4
+\end{enumerate}
+
+\textbf{BẢNG ĐÁP ÁN:}
+1.A
+"""
+    questions, errors = parse_latex(text)
+    assert len(errors) == 0
+    assert len(questions) == 1
+    assert questions[0].correct_key == "A"
+    assert "BẢNG ĐÁP ÁN" not in questions[0].options["D"]
+
+
+def test_latex_verbatim_inside_comment_does_not_mask_to_eof():
+    """Verify % \\begin{verbatim} inside a comment does not treat subsequent text as verbatim (FIX-07)."""
+    from app.services.parser.latex_parser import parse_latex
+
+    text = r"""
+% Lưu ý: không dùng \begin{verbatim} ở đây
+
+Câu 1: Câu hỏi thật:
+A. 1
+B. 2
+C. 3
+D. 4
+BẢNG ĐÁP ÁN: 1.A
+"""
+    questions, errors = parse_latex(text)
+    assert len(errors) == 0
+    assert len(questions) == 1
+    assert questions[0].question_no == 1
+    assert questions[0].options["A"] == "1"
+
+
+def test_docx_table_without_header_is_not_falsely_treated_as_answer_key():
+    """Verify a small content table [1, A, 2, B] without answer key header is preserved as content (FIX-01)."""
+    from unittest.mock import MagicMock
+    from app.services.parser.docx_parser import try_parse_table_as_answer_key
+
+    tbl = MagicMock()
+    row = MagicMock()
+    cells = []
+    for val in ["1", "A", "2", "B"]:
+        c = MagicMock()
+        c._tc = MagicMock()
+        c.text = val
+        cells.append(c)
+    row.cells = cells
+    tbl.rows = [row]
+
+    # Without an explicit answer table header, this must NOT be parsed as an answer key
+    result = try_parse_table_as_answer_key(tbl)
+    assert result is None
+
+
+def test_docx_cutoff_does_not_cut_on_word_dap_an_in_question_stem():
+    """Verify question stem mentioning 'đáp án' does not cut off remaining questions (FIX-02)."""
+    paragraphs = [
+        "Câu 1: Hãy chọn đáp án đúng cho hàm số f(x):",
+        "A. 1  B. 2  C. 3  D. 4",
+        "Câu 2: Câu hỏi thứ hai:",
+        "A. 10  B. 20  C. 30  D. 40",
+        "BẢNG ĐÁP ÁN: 1.A  2.B",
+    ]
+    file_bytes = create_minimal_docx(paragraphs)
+    questions, errors = parse_docx(file_bytes)
+    assert len(errors) == 0
+    assert len(questions) == 2
+    assert questions[0].question_no == 1
+    assert questions[1].question_no == 2
+
+
+def test_surplus_and_duplicate_answer_keys_reported_in_markdown():
+    """Verify surplus keys and duplicate keys in separate answer key are reported as errors (FIX-03, FIX-04, FIX-10)."""
+    from app.services.parser.markdown_parser import parse_markdown
+
+    text = """### Câu 1: Câu hỏi 1
+A. 1  B. 2  C. 3  D. 4
+
+BẢNG ĐÁP ÁN:
+1.A  1.A  99.B
+"""
+    questions, errors = parse_markdown(text)
+    err_types = [e.error_type for e in errors]
+    assert "CONFLICTING_ANSWER_KEY" in err_types  # duplicate key 1.A 1.A
+    assert "SURPLUS_ANSWER_KEY" in err_types      # surplus key 99.B
+
+
+def test_file_security_storage_session_id_sanitization():
+    """Verify upload_exam_file_to_storage sanitizes unsafe session_id characters (FIX-17)."""
+    import asyncio
+    from unittest.mock import MagicMock
+    from app.services.parser.file_security import upload_exam_file_to_storage
+
+    db = MagicMock()
+    mock_bucket = MagicMock()
+    db.storage.from_.return_value = mock_bucket
+
+    unsafe_session_id = "sess-123/../../etc"
+    asyncio.run(upload_exam_file_to_storage(db, unsafe_session_id, "test.docx", b"PK0304"))
+
+    assert mock_bucket.upload.called
+    call_path = mock_bucket.upload.call_args[1]["path"]
+    assert ".." not in call_path
+    assert not call_path.startswith("sess-123/../../etc")
+
+
+def test_file_security_docx_corrupted_zip():
+    """Verify validate_file_security rejects corrupt docx archives via testzip (FIX-18)."""
+    import io
+    import zipfile
+    import pytest
+    from fastapi import HTTPException
+    from app.services.parser.file_security import validate_file_security
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("[Content_Types].xml", "ok")
+        zf.writestr("word/document.xml", "ok")
+    data = bytearray(buf.getvalue())
+    # Corrupt a byte inside archive data
+    data[35] = (data[35] + 1) % 256
+
+    with pytest.raises(HTTPException) as exc_info:
+        validate_file_security("test.docx", bytes(data))
+    assert exc_info.value.status_code == 400
+
+
+

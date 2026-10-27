@@ -57,6 +57,20 @@ def mask_latex_verbatim_spans(text: str) -> Tuple[str, List[Tuple[int, int, str]
     ENV_NAMES = {"verbatim", "verbatim*", "lstlisting"}
 
     while i < n:
+        # Check for LaTeX comment: % not preceded by an odd number of backslashes
+        if text[i] == "%":
+            bs_count = 0
+            b_idx = i - 1
+            while b_idx >= 0 and text[b_idx] == "\\":
+                bs_count += 1
+                b_idx -= 1
+            if bs_count % 2 == 0:
+                nl = text.find("\n", i)
+                if nl == -1:
+                    break
+                i = nl + 1
+                continue
+
         if text.startswith(r"\begin", i):
             m = re.match(r"^\\begin\{([a-zA-Z*]+)\}", text[i:])
             if m:
@@ -175,6 +189,26 @@ def find_outer_latex_environment_spans(
 
         depth = 1
         idx = start + len(begin_tag)
+        # Check for optional bracket arguments right after \begin{env}: e.g. [label=\arabic*.]
+        body_start = idx
+        while body_start < len(text) and text[body_start] in " \t\r\n":
+            body_start += 1
+        if body_start < len(text) and text[body_start] == "[":
+            bracket_depth = 1
+            b_idx = body_start + 1
+            while b_idx < len(text) and bracket_depth > 0:
+                if text[b_idx] == "[":
+                    bracket_depth += 1
+                elif text[b_idx] == "]":
+                    bracket_depth -= 1
+                b_idx += 1
+            if bracket_depth == 0:
+                body_start = b_idx
+            else:
+                body_start = idx
+        else:
+            body_start = idx
+
         while depth > 0 and idx < len(text):
             next_begin = text.find(begin_tag, idx)
             next_end = text.find(end_tag, idx)
@@ -189,7 +223,7 @@ def find_outer_latex_environment_spans(
                 depth -= 1
                 if depth == 0:
                     spans.append(
-                        (start, next_end + len(end_tag), text[start + len(begin_tag) : next_end])
+                        (start, next_end + len(end_tag), text[body_start : next_end])
                     )
                 idx = next_end + len(end_tag)
         pos = idx if depth == 0 else len(text)
@@ -237,7 +271,8 @@ def split_latex_items(enum_body: str, source_body: Optional[str] = None) -> List
             else:
                 # Top-level question \item boundary
                 prev_chunk = src[last_end:start].strip()
-                if prev_chunk:
+                # Ignore configuration bracket chunks or whitespace before first item
+                if prev_chunk and not (last_end == 0 and not items and re.match(r"^(?:\[[^\]]*\]|\s)*$", prev_chunk)):
                     items.append(prev_chunk)
                 last_end = match.end()
 
@@ -499,4 +534,37 @@ def parse_latex(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Parser
             )
         )
 
+    # Validate answer section metadata against parsed questions (FIX-03, FIX-04, FIX-10)
+    seen_q_nums = {q.question_no for q in parsed_questions}
+    for dup_q in set(key_info.duplicate_keys):
+        if not any(e.question_no == dup_q and e.error_type == "CONFLICTING_ANSWER_KEY" for e in errors):
+            errors.append(
+                ParserErrorItem(
+                    question_no=dup_q,
+                    error_type="CONFLICTING_ANSWER_KEY",
+                    message=f"Answer section contains duplicate entries for question {dup_q}.",
+                )
+            )
+
+    for pair_q, _ in key_info.raw_pairs:
+        if pair_q <= 0:
+            if not any(e.question_no == pair_q and e.error_type == "INVALID_QUESTION_NO" for e in errors):
+                errors.append(
+                    ParserErrorItem(
+                        question_no=pair_q,
+                        error_type="INVALID_QUESTION_NO",
+                        message=f"Answer section contains invalid question number {pair_q} (must be positive integer).",
+                    )
+                )
+        elif pair_q not in seen_q_nums and parsed_questions:
+            if not any(e.question_no == pair_q and e.error_type == "SURPLUS_ANSWER_KEY" for e in errors):
+                errors.append(
+                    ParserErrorItem(
+                        question_no=pair_q,
+                        error_type="SURPLUS_ANSWER_KEY",
+                        message=f"Answer section contains answer for question {pair_q} which does not exist in exam.",
+                    )
+                )
+
+    errors.sort(key=lambda x: x.question_no)
     return parsed_questions, errors

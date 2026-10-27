@@ -139,7 +139,7 @@ def parse_separate_answer_key(
 
     # 1. Search for answer section heading near the end
     section_heading_pattern = re.compile(
-        r"(?:^|\n)\s*(?:#{1,6}\s*|\*{1,2}|_{1,2})?(?P<header>(?:bảng\s+đáp\s+án|đáp\s+án|hướng\s+dẫn\s+chấm|answer\s+key|answers))(?:\*{1,2}|_{1,2})?\s*[:\n]",
+        r"(?:^|\n)\s*(?:#{1,6}\s*|\*{1,2}|_{1,2}|\\(?:textbf|textit|underline|section\*?)\s*\{)?(?P<header>(?:bảng\s+đáp\s+án|đáp\s+án|hướng\s+dẫn\s+chấm|answer\s+key|answers))(?:\*{1,2}|_{1,2}|\})?\s*[:\n\}]",
         re.IGNORECASE,
     )
 
@@ -275,17 +275,29 @@ def mask_markdown_code_blocks(text: str) -> str:
 
 
 def mask_math_blocks(text: str) -> str:
-    """Mask mathematical blocks ($...$, $$...$$, \\(...\\)) and code blocks with equal-length '~'
-    during option label scanning so math contents (e.g. P(A), f(B)) and code are never misidentified as options.
+    """Mask mathematical blocks ($...$, $$...$$, \\(...\\), \\[...\\], environments) and code blocks
+    with equal-length '~' preserving newlines so math contents and code are never misidentified as options.
     """
+    def _mask_preserve_newlines(m: re.Match) -> str:
+        return "".join("\n" if c == "\n" else "~" for c in m.group(0))
+
     # First mask code blocks
     masked = mask_markdown_code_blocks(text)
     # Display math $$ ... $$
-    masked = re.sub(r"\$\$.*?\$\$", lambda m: "~" * len(m.group(0)), masked, flags=re.DOTALL)
+    masked = re.sub(r"\$\$.*?\$\$", _mask_preserve_newlines, masked, flags=re.DOTALL)
+    # Display math \[ ... \]
+    masked = re.sub(r"\\\[.*?\\\]", _mask_preserve_newlines, masked, flags=re.DOTALL)
+    # Math environments (equation, align, gather, multline, matrix, pmatrix, bmatrix, vmatrix, cases)
+    masked = re.sub(
+        r"\\begin\{(?:equation|align|gather|multline|matrix|pmatrix|bmatrix|vmatrix|cases)\*?\}.*?\\end\{(?:equation|align|gather|multline|matrix|pmatrix|bmatrix|vmatrix|cases)\*?\}",
+        _mask_preserve_newlines,
+        masked,
+        flags=re.DOTALL,
+    )
     # Inline math $ ... $ (does not span newlines, preserves offsets)
     masked = re.sub(r"(?<!\\)\$[^$\n]+(?<!\\)\$", lambda m: "~" * len(m.group(0)), masked)
     # Inline LaTeX math \( ... \)
-    masked = re.sub(r"\\\(.*?\\\)", lambda m: "~" * len(m.group(0)), masked)
+    masked = re.sub(r"\\\(.*?\\\)", _mask_preserve_newlines, masked)
     return masked
 
 
@@ -320,7 +332,7 @@ def extract_options_from_text(text: str) -> OptionExtractionResult:
         r"(?:"
         r"\((?P<p_opt>[A-D])\)(?P<p_del>[\.\:]?)"
         r"|\[(?P<b_opt>[A-D])\](?P<b_del>[\.\:]?)"
-        r"|(?P<l_opt>[A-D])(?P<l_del>[\.\:\)])"
+        r"|(?:\*{1,2}|_{1,2})?(?P<l_opt>[A-D])(?:\*{1,2}|_{1,2})?(?P<l_del>[\.\:\)])"
         r")"
         r"(?:\*{1,2}|_{1,2})?"
         r"(?=\s|$))",

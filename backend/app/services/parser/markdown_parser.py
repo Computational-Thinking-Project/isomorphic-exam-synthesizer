@@ -192,4 +192,37 @@ def parse_markdown(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Par
             )
         )
 
+    # Validate answer section metadata against parsed questions (FIX-03, FIX-04, FIX-10)
+    seen_q_nums = {q.question_no for q in parsed_questions}
+    for dup_q in set(key_info.duplicate_keys):
+        if not any(e.question_no == dup_q and e.error_type == "CONFLICTING_ANSWER_KEY" for e in errors):
+            errors.append(
+                ParserErrorItem(
+                    question_no=dup_q,
+                    error_type="CONFLICTING_ANSWER_KEY",
+                    message=f"Answer section contains duplicate entries for question {dup_q}.",
+                )
+            )
+
+    for pair_q, _ in key_info.raw_pairs:
+        if pair_q <= 0:
+            if not any(e.question_no == pair_q and e.error_type == "INVALID_QUESTION_NO" for e in errors):
+                errors.append(
+                    ParserErrorItem(
+                        question_no=pair_q,
+                        error_type="INVALID_QUESTION_NO",
+                        message=f"Answer section contains invalid question number {pair_q} (must be positive integer).",
+                    )
+                )
+        elif pair_q not in seen_q_nums and parsed_questions:
+            if not any(e.question_no == pair_q and e.error_type == "SURPLUS_ANSWER_KEY" for e in errors):
+                errors.append(
+                    ParserErrorItem(
+                        question_no=pair_q,
+                        error_type="SURPLUS_ANSWER_KEY",
+                        message=f"Answer section contains answer for question {pair_q} which does not exist in exam.",
+                    )
+                )
+
+    errors.sort(key=lambda x: x.question_no)
     return parsed_questions, errors

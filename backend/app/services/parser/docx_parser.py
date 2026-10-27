@@ -120,14 +120,14 @@ def extract_cell_elements(
     return results
 
 
-def try_parse_table_as_answer_key(tbl: Table) -> Optional[List[str]]:
+def try_parse_table_as_answer_key(tbl: Table, is_tail: bool = False) -> Optional[List[str]]:
     """Detect if a table is an answer key table and normalize its entries into key pairs.
 
     Recognizes:
     - Alternating cells in a row (e.g. ['1', 'A', '2', 'B'] or ['Câu 1', 'A'])
     - 2-row grid (Row 2k: question numbers, Row 2k+1: answer letters, e.g. ['1', '2'] / ['A', 'B'])
     - Direct key pairs in cells (e.g. ['1.A', '2.B'])
-    - Tables with 'BẢNG ĐÁP ÁN' headers
+    - Tables with 'BẢNG ĐÁP ÁN' headers or column headers ('Câu' / 'Đ/A')
 
     Returns normalized lines (e.g. ['BẢNG ĐÁP ÁN:', '1.A  2.B']) or None if not an answer key table.
     """
@@ -176,6 +176,21 @@ def try_parse_table_as_answer_key(tbl: Table) -> Optional[List[str]]:
     if not content_rows:
         return None
 
+    # Check if first column has header labels: e.g. Row 0: 'Câu' / Row 1: 'Đ/A'
+    if len(content_rows) >= 2 and content_rows[0] and content_rows[1]:
+        c0_r0 = content_rows[0][0].strip().lower()
+        c0_r1 = content_rows[1][0].strip().lower()
+        if re.search(r"^(?:câu|stt|no)$", c0_r0) and re.search(r"^(?:đ/a|đáp\s*án|ans)$", c0_r1):
+            header_found = True
+
+    # Check if cells contain explicit labels like "Câu 1:" or "1.A"
+    has_explicit_labels = False
+    for r in content_rows:
+        for c in r:
+            if re.search(r"^(?:câu|bài)\s*\d+", c, re.IGNORECASE) or KEY_PAIR_PATTERN.search(c):
+                has_explicit_labels = True
+                break
+
     # Pattern A: Alternating cells in rows (e.g. 1 | A | 2 | B or Câu 1 | A)
     alt_pairs: List[Tuple[int, str]] = []
     for r in content_rows:
@@ -196,7 +211,7 @@ def try_parse_table_as_answer_key(tbl: Table) -> Optional[List[str]]:
             if row_pairs and len(row_pairs) * 2 == len(r_clean):
                 alt_pairs.extend(row_pairs)
 
-    if len(alt_pairs) >= 2 or (header_found and len(alt_pairs) >= 1):
+    if len(alt_pairs) >= 2:
         extracted_pairs = alt_pairs
 
     # Pattern B: 2-row grid (Row 2k numbers, Row 2k+1 answers)
@@ -226,7 +241,7 @@ def try_parse_table_as_answer_key(tbl: Table) -> Optional[List[str]]:
                 r_idx += 2
             else:
                 r_idx += 1
-        if len(grid_pairs) >= 2 or (header_found and len(grid_pairs) >= 1):
+        if len(grid_pairs) >= 2:
             extracted_pairs = grid_pairs
 
     # Pattern C: Direct key pair in cells (e.g. '1.A', '2.B')
@@ -236,11 +251,21 @@ def try_parse_table_as_answer_key(tbl: Table) -> Optional[List[str]]:
             for c in r:
                 for p in KEY_PAIR_PATTERN.finditer(c):
                     direct_pairs.append(extract_key_pair(p))
-        if len(direct_pairs) >= 2 or (header_found and len(direct_pairs) >= 1):
+        if len(direct_pairs) >= 2:
             extracted_pairs = direct_pairs
 
     if not extracted_pairs:
         return None
+
+    # Validation against false-positive content tables (FIX-01):
+    # A table without header and without explicit "Câu X" / "1.A" labels is ONLY accepted
+    # if is_tail=True (at the end of the document) and numbers form a sequential 1..N sequence.
+    if not header_found and not has_explicit_labels:
+        if not is_tail:
+            return None
+        nums = sorted(p[0] for p in extracted_pairs)
+        if nums != list(range(1, len(nums) + 1)):
+            return None
 
     sorted_pairs = sorted(extracted_pairs, key=lambda p: p[0])
     lines = ["BẢNG ĐÁP ÁN:"]
@@ -274,7 +299,8 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
     paragraph_omml_flags: List[bool] = []
     paragraph_image_flags: List[bool] = []
 
-    for child in doc.element.body:
+    body_elements = list(doc.element.body)
+    for idx_el, child in enumerate(body_elements):
         if child.tag.endswith("p"):
             p = Paragraph(child, doc)
             text = normalize_unicode_nfc(p.text)
@@ -284,8 +310,15 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
             paragraph_image_flags.append(has_image)
         elif child.tag.endswith("tbl"):
             tbl = Table(child, doc)
-            # First, check if this table is an answer key table
-            ans_lines = try_parse_table_as_answer_key(tbl)
+            # Check if this table is at the tail of the document (no questions start after it)
+            has_subsequent_q = False
+            for rem in body_elements[idx_el + 1:]:
+                if rem.tag.endswith("p"):
+                    p_rem = Paragraph(rem, doc)
+                    if QUESTION_START_PATTERN.match(p_rem.text.strip()):
+                        has_subsequent_q = True
+                        break
+            ans_lines = try_parse_table_as_answer_key(tbl, is_tail=not has_subsequent_q)
             if ans_lines:
                 tbl_has_unparsed_omml = any(
                     inspect_cell_visuals(c)[1] for row in tbl.rows for c in row.cells
@@ -326,28 +359,29 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
     )
 
     # Cut off trailing answer key paragraphs to prevent contamination of the last question/options
+    has_answer_section = bool(answer_map or key_info.conflicts or key_info.raw_pairs)
     cutoff_idx = len(full_paragraphs)
-    if answer_map:
+    if has_answer_section:
         for i, p_text in enumerate(full_paragraphs):
-            # Check for explicit answer section heading
-            if any(pat.search(p_text) for pat in ANSWER_SECTION_PATTERNS) or re.search(
-                r"^\s*(?:bảng\s+đáp\s+án|đáp\s+án|hướng\s+dẫn\s+chấm|answer\s+key)\b",
-                p_text,
-                re.IGNORECASE,
-            ):
+            is_header = any(pat.search(p_text) for pat in ANSWER_SECTION_PATTERNS) or bool(
+                re.search(
+                    r"^\s*(?:#{1,6}\s*)?(?:bảng\s+đáp\s+án|đáp\s+án|hướng\s+dẫn\s+chấm|answer\s+key)\b",
+                    p_text,
+                    re.IGNORECASE,
+                )
+            )
+            has_subsequent_q = any(
+                QUESTION_START_PATTERN.match(full_paragraphs[j].strip())
+                for j in range(i + 1, len(full_paragraphs))
+            )
+            if is_header and not has_subsequent_q:
                 cutoff_idx = i
                 break
-            # Check for compact answer key line (only towards the tail of the document)
-            if i >= max(0, len(full_paragraphs) - 10):
-                _, found_opts, _ = extract_options_from_text(p_text)
-                if len(found_opts) < 4:
-                    pairs_in_p = list(KEY_PAIR_PATTERN.finditer(p_text))
+            if i >= max(0, len(full_paragraphs) - 10) and not has_subsequent_q:
+                pairs_in_p = list(KEY_PAIR_PATTERN.finditer(p_text))
+                if len(pairs_in_p) >= 2 and not QUESTION_START_PATTERN.match(p_text.strip()):
                     residual = KEY_PAIR_PATTERN.sub("", p_text)
-                    if (
-                        len(pairs_in_p) >= 2
-                        and not QUESTION_START_PATTERN.match(p_text.strip())
-                        and not re.search(r"[a-zA-Zà-ỹÀ-Ỹ]{2,}", residual)
-                    ):
+                    if not re.search(r"[a-zA-Zà-ỹÀ-Ỹ]{3,}", residual):
                         cutoff_idx = i
                         break
 
@@ -536,4 +570,37 @@ def parse_docx(file_bytes: bytes) -> Tuple[List[ParsedQuestionItem], List[Parser
             )
         )
 
+    # Validate answer section metadata against parsed questions (FIX-03, FIX-04, FIX-10)
+    seen_q_nums = {q.question_no for q in parsed_questions}
+    for dup_q in set(key_info.duplicate_keys):
+        if not any(e.question_no == dup_q and e.error_type == "CONFLICTING_ANSWER_KEY" for e in errors):
+            errors.append(
+                ParserErrorItem(
+                    question_no=dup_q,
+                    error_type="CONFLICTING_ANSWER_KEY",
+                    message=f"Answer section contains duplicate entries for question {dup_q}.",
+                )
+            )
+
+    for pair_q, _ in key_info.raw_pairs:
+        if pair_q <= 0:
+            if not any(e.question_no == pair_q and e.error_type == "INVALID_QUESTION_NO" for e in errors):
+                errors.append(
+                    ParserErrorItem(
+                        question_no=pair_q,
+                        error_type="INVALID_QUESTION_NO",
+                        message=f"Answer section contains invalid question number {pair_q} (must be positive integer).",
+                    )
+                )
+        elif pair_q not in seen_q_nums and parsed_questions:
+            if not any(e.question_no == pair_q and e.error_type == "SURPLUS_ANSWER_KEY" for e in errors):
+                errors.append(
+                    ParserErrorItem(
+                        question_no=pair_q,
+                        error_type="SURPLUS_ANSWER_KEY",
+                        message=f"Answer section contains answer for question {pair_q} which does not exist in exam.",
+                    )
+                )
+
+    errors.sort(key=lambda x: x.question_no)
     return parsed_questions, errors
