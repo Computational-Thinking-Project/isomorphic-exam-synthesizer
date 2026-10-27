@@ -24,11 +24,18 @@ ANSWER_SECTION_PATTERNS: list[re.Pattern] = [
     ),
 ]
 
-# Pattern for answer key pairs: 1.A, 1-A, 1: A, Câu 1: A, Câu 1. A, 1. [A]
+# Pattern for answer key pairs: 1.A, 1-A, 1: A, 1/A, 1) A, Câu 1: A, Câu 1. A, 1. [A]
 KEY_PAIR_PATTERN = re.compile(
-    r"(?:câu\s+)?(?P<num>\d+)\s*(?:[\.:\-\)]|\s+)\s*\[?(?P<key>[A-D])\]?(?![a-zA-Z0-9])",
+    r"(?:câu\s+(?P<num1>\d+)\s*(?:[\.:\-\)]|\s*)\s*\[?(?P<key1>[A-D])\]?|(?P<num2>\d+)\s*[\.:\-\)\/]\s*\[?(?P<key2>[A-D])\]?)(?![a-zA-Z0-9])",
     re.IGNORECASE,
 )
+
+
+def extract_key_pair(match: re.Match) -> Tuple[int, str]:
+    """Extract (question_number, key) from a KEY_PAIR_PATTERN regex match."""
+    num_str = match.group("num1") if match.group("num1") is not None else match.group("num2")
+    key_str = match.group("key1") if match.group("key1") is not None else match.group("key2")
+    return int(num_str), key_str.upper()
 
 
 def normalize_unicode_nfc(text: str) -> str:
@@ -57,6 +64,9 @@ def check_prompt_injection(text: str) -> bool:
 def parse_separate_answer_key(full_text: str) -> Tuple[Dict[int, str], str]:
     """Search for separate answer table or key list at the end of the document.
 
+    Guarantees that question stems (e.g. 'Câu 1: A, B là...') are never falsely
+    recognized as answer key tables.
+
     Returns:
         (answer_map, text_without_answer_section)
         where answer_map is {question_no: 'A'|'B'|'C'|'D'}
@@ -64,41 +74,81 @@ def parse_separate_answer_key(full_text: str) -> Tuple[Dict[int, str], str]:
     answer_map: Dict[int, str] = {}
     remaining_text = full_text
 
-    # Search for answer section heading
-    split_pos = -1
-    for pat in ANSWER_SECTION_PATTERNS:
-        matches = list(pat.finditer(full_text))
-        if matches:
-            # Usually the answer table is towards the end of the exam
-            last_match = matches[-1]
-            # Ensure it's not at the very top (e.g. at least after some content)
-            if last_match.start() > 50 or len(matches) == 1:
-                split_pos = last_match.start()
-                break
+    # 1. Search for answer section heading near the end
+    section_heading_pattern = re.compile(
+        r"(?:^|\n)\s*(?P<header>(?:bảng\s+đáp\s+án|đáp\s+án|hướng\s+dẫn\s+chấm|answer\s+key|answers))\s*[:\n]",
+        re.IGNORECASE,
+    )
 
-    if split_pos != -1:
-        answer_text = full_text[split_pos:]
-        remaining_text = full_text[:split_pos].rstrip()
-        # Scan for key pairs in answer_text
-        for m in KEY_PAIR_PATTERN.finditer(answer_text):
-            q_num = int(m.group("num"))
-            key = m.group("key").upper()
+    matches = list(section_heading_pattern.finditer(full_text))
+    if matches:
+        # Check from last match backwards
+        for m in reversed(matches):
+            candidate_pos = m.start()
+            candidate_text = full_text[candidate_pos:]
+            # Must contain valid key pairs
+            candidate_pairs = list(KEY_PAIR_PATTERN.finditer(candidate_text))
+            if candidate_pairs:
+                # Ensure candidate_text does not contain questions with complete option sets
+                # (which would indicate the heading was part of a question stem)
+                _, found_opts, _ = extract_options_from_text(candidate_text)
+                if len(found_opts) < 4:
+                    for p in candidate_pairs:
+                        q_num, key = extract_key_pair(p)
+                        answer_map[q_num] = key
+                    remaining_text = full_text[:candidate_pos].rstrip()
+                    return answer_map, remaining_text
+
+    # 2. If no explicit section heading, inspect trailing block strictly from the end of the document
+    # Avoid scanning across question stems/options. Scan lines backwards from the tail.
+    lines = full_text.splitlines()
+    trailing_key_line_indices: list[int] = []
+    trailing_pairs = []
+
+    # Find the last non-empty line
+    idx = len(lines) - 1
+    while idx >= 0 and not lines[idx].strip():
+        idx -= 1
+
+    while idx >= 0:
+        line = lines[idx].strip()
+        if not line:
+            trailing_key_line_indices.append(idx)
+            idx -= 1
+            continue
+
+        # An answer key line never starts with option markers like 'A.', '*A.', '- A.'
+        if re.search(r"^\s*[\-\*\_]*[A-D][\.\)]", line):
+            break
+
+        # If line contains question options, it is not an answer key line
+        _, found_opts, _ = extract_options_from_text(line)
+        if len(found_opts) >= 2:
+            break
+
+        # Each line in a compact trailing answer key block must contain key pairs
+        line_pairs = list(KEY_PAIR_PATTERN.finditer(line))
+        if not line_pairs:
+            break
+
+        # Check for non-answer words: strip out all matched key pairs and delimiters
+        residual = KEY_PAIR_PATTERN.sub("", line)
+        # If words with length >= 2 remain (e.g. 'là', 'các', 'cho', 'tìm'), this is question text, NOT an answer key line!
+        if re.search(r"[a-zA-Zà-ỹÀ-Ỹ]{2,}", residual):
+            break
+
+        trailing_key_line_indices.append(idx)
+        trailing_pairs.extend(line_pairs)
+        idx -= 1
+
+    # Only accept as an answer block if at least 2 distinct pairs were found strictly in the tail
+    if len(trailing_pairs) >= 2 and trailing_key_line_indices:
+        first_key_line_idx = min(trailing_key_line_indices)
+        for p in trailing_pairs:
+            q_num, key = extract_key_pair(p)
             answer_map[q_num] = key
-
-    # Also scan for trailing compact key format like "1.A 2.B 3.C 4.D" even without explicit header
-    if not answer_map:
-        # Check last 500 characters
-        trailing_chunk = full_text[-500:] if len(full_text) > 500 else full_text
-        pairs = list(KEY_PAIR_PATTERN.finditer(trailing_chunk))
-        # If there are at least 3 consecutive pairs in the tail, treat as answer key
-        if len(pairs) >= 3:
-            first_pair = pairs[0]
-            cutoff = (len(full_text) - len(trailing_chunk)) + first_pair.start()
-            for p in pairs:
-                q_num = int(p.group("num"))
-                key = p.group("key").upper()
-                answer_map[q_num] = key
-            remaining_text = full_text[:cutoff].rstrip()
+        remaining_lines = lines[:first_key_line_idx]
+        remaining_text = "\n".join(remaining_lines).rstrip()
 
     return answer_map, remaining_text
 
