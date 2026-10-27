@@ -19,14 +19,14 @@ SUSPICIOUS_PATTERNS: list[re.Pattern] = [
 # Patterns for separate answer key section detection
 ANSWER_SECTION_PATTERNS: list[re.Pattern] = [
     re.compile(
-        r"(?:bảng\s+đáp\s+án|đáp\s+án|hướng\s+dẫn\s+chấm|answer\s+key|answers)(?:\s*:|\s*\n)",
+        r"(?:#{1,6}\s*|\*{1,2}|_{1,2})?(?:bảng\s+đáp\s+án|đáp\s+án|hướng\s+dẫn\s+chấm|answer\s+key|answers)(?:\*{1,2}|_{1,2})?(?:\s*:|\s*\n)",
         re.IGNORECASE,
     ),
 ]
 
-# Pattern for answer key pairs: 1.A, 1-A, 1: A, 1/A, 1) A, Câu 1: A, Câu 1. A, 1. [A]
+# Pattern for answer key pairs: 1.A, 1-A, 1: A, 1/A, 1) A, Câu 1: A, Câu 1. A, 1. [A], 1. (A)
 KEY_PAIR_PATTERN = re.compile(
-    r"(?:câu\s+(?P<num1>\d+)\s*(?:[\.:\-\)]|\s*)\s*\[?(?P<key1>[A-D])\]?|(?P<num2>\d+)\s*[\.:\-\)\/]\s*\[?(?P<key2>[A-D])\]?)(?![a-zA-Z0-9])",
+    r"(?:câu\s+(?P<num1>\d+)\s*(?:[\.:\-\)]|\s*)\s*[\(\[]?(?P<key1>[A-D])[\)\]]?|(?P<num2>\d+)\s*[\.:\-\)\/]\s*[\(\[]?(?P<key2>[A-D])[\)\]]?)(?![a-zA-Z0-9])",
     re.IGNORECASE,
 )
 
@@ -76,7 +76,7 @@ def parse_separate_answer_key(full_text: str) -> Tuple[Dict[int, str], str]:
 
     # 1. Search for answer section heading near the end
     section_heading_pattern = re.compile(
-        r"(?:^|\n)\s*(?P<header>(?:bảng\s+đáp\s+án|đáp\s+án|hướng\s+dẫn\s+chấm|answer\s+key|answers))\s*[:\n]",
+        r"(?:^|\n)\s*(?:#{1,6}\s*|\*{1,2}|_{1,2})?(?P<header>(?:bảng\s+đáp\s+án|đáp\s+án|hướng\s+dẫn\s+chấm|answer\s+key|answers))(?:\*{1,2}|_{1,2})?\s*[:\n]",
         re.IGNORECASE,
     )
 
@@ -177,7 +177,7 @@ def extract_options_from_text(text: str) -> Tuple[str, Dict[str, str], Optional[
 
     # Regex to split on option prefixes A., B., C., D., A), B), C), D), (A), [A] (with optional bullet markers like - or * or bold **)
     opt_pattern = re.compile(
-        r"(?:\n|\s{2,}|\b)(?:(?:[\-\+]|[\*\_]{1,2})\s*)?\(?\[?(?P<opt>[A-D])[\)\]\.\:]\s*(?:\*{1,2}|_{1,2})?\s*(?P<content>.*?)(?=(?:\n|\s{2,}|\b)(?:(?:[\-\+]|[\*\_]{1,2})\s*)?\(?\[?[A-D][\)\]\.\:]|$)",
+        r"(?:\n|\s+|\b)(?:(?:[\-\+]|[\*\_]{1,2})\s*)?\(?\[?(?P<opt>[A-D])[\)\]\.\:]\s*(?:\*{1,2}|_{1,2})?\s*(?P<content>.*?)(?=(?:\n|\s+|\b)(?:(?:[\-\+]|[\*\_]{1,2})\s*)?\(?\[?[A-D][\)\]\.\:]|$)",
         re.DOTALL,
     )
 
@@ -192,8 +192,9 @@ def extract_options_from_text(text: str) -> Tuple[str, Dict[str, str], Optional[
         for m in matches:
             label = m.group("opt").upper()
             content = m.group("content").strip()
-            # Clean up trailing asterisks, underscores, or stray prefix characters
+            # Clean up trailing asterisks, underscores, or stray prefix/bracket characters
             content = re.sub(r"^[\*\_]+|[\*\_]+$", "", content).strip()
+            content = re.sub(r"[\(\[\s]+$", "", content).strip()
             found_opts[label] = content
 
         if all(k in found_opts for k in ["A", "B", "C", "D"]):

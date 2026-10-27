@@ -922,4 +922,53 @@ C. 3
     assert key == "A"
 
 
+def test_extract_options_single_space_parentheses_no_delimiter_leak():
+    """Verify options with parens separated by only 1 space do not leak '(' into previous options."""
+    from app.services.parser.utils import extract_options_from_text
 
+    text = "Tính tích phân:\n(A) 1 (B) 2 (C) 3 (D) 4"
+    stem, opts, key = extract_options_from_text(text)
+    assert stem == "Tính tích phân:"
+    assert opts == {"A": "1", "B": "2", "C": "3", "D": "4"}
+
+
+def test_key_pair_pattern_with_parentheses():
+    """Verify KEY_PAIR_PATTERN recognizes answers wrapped in parentheses like 1.(A), 1. (A), Câu 1: (A)."""
+    from app.services.parser.utils import KEY_PAIR_PATTERN, extract_key_pair
+
+    cases = ["1.(A)", "1. (A)", "1. (a)", "Câu 1: (A)", "1.(B)", "2. (C)"]
+    for c in cases:
+        m = KEY_PAIR_PATTERN.search(c)
+        assert m is not None, f"Failed to match: {c}"
+        num, key = extract_key_pair(m)
+        assert num >= 1
+        assert key in {"A", "B", "C", "D"}
+
+
+def test_markdown_answer_key_with_markdown_heading_tokens():
+    """Verify parse_separate_answer_key recognizes headings with markdown tokens (##, **)."""
+    from app.services.parser.utils import parse_separate_answer_key
+
+    text_h2 = """Câu 1: 1+1=?
+A. 1
+B. 2
+C. 3
+D. 4
+
+## Bảng đáp án:
+1.B"""
+    ans1, rem1 = parse_separate_answer_key(text_h2)
+    assert ans1 == {1: "B"}
+    assert "## Bảng đáp án:" not in rem1
+
+    text_bold = """Câu 1: 1+1=?
+A. 1
+B. 2
+C. 3
+D. 4
+
+**ĐÁP ÁN**
+1.B"""
+    ans2, rem2 = parse_separate_answer_key(text_bold)
+    assert ans2 == {1: "B"}
+    assert "**ĐÁP ÁN**" not in rem2
