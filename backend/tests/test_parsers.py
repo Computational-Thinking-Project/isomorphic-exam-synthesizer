@@ -20,6 +20,7 @@ from app.services.parser.utils import (
 )
 from app.services.parser.validator import (
     assert_zero_mutation_or_raise,
+    validate_exam_integrity,
 )
 
 
@@ -544,3 +545,184 @@ def test_validator_question_count_boundary():
         assert_zero_mutation_or_raise(fake_questions, [])
     assert exc_info.value.status_code == 422
     assert any("21 questions" in e["message"] for e in exc_info.value.detail["errors"])
+
+
+def create_docx_with_table(omml_in_table: bool = False) -> bytes:
+    """Helper to generate a .docx file with one question outside table and one in a table."""
+    import docx
+    from docx.oxml import parse_xml
+
+    doc = docx.Document()
+    # Question 1: outside table
+    doc.add_paragraph("Câu 1: Câu hỏi ngoài bảng.")
+    doc.add_paragraph("A. 1  B. 2  C. 3  D. 4")
+
+    # Question 2: inside table
+    t = doc.add_table(rows=2, cols=1)
+    cell_stem = t.cell(0, 0)
+    cell_stem.paragraphs[0].text = "Câu 2: Câu hỏi trong bảng"
+
+    if omml_in_table:
+        omml_xml = (
+            '<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+            'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">'
+            "<m:oMath><m:sSup><m:e><m:r><m:t>x</m:t></m:r></m:e>"
+            "<m:sup><m:r><m:t>2</m:t></m:r></m:sup></m:sSup></m:oMath></w:p>"
+        )
+        p_omml = cell_stem.add_paragraph("")
+        p_omml._p.append(parse_xml(omml_xml))
+
+    cell_opts = t.cell(1, 0)
+    cell_opts.paragraphs[0].text = "A. 1  B. 2  C. 3  D. 4"
+
+    # Separate answer table
+    doc.add_paragraph("BẢNG ĐÁP ÁN:")
+    doc.add_paragraph("1.A  2.B")
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def test_docx_parser_question_and_omml_in_table_returns_422():
+    """Suggestion 1: Question inside DOCX table with OMML must be detected and trigger 422 instead of silently dropped."""
+    from fastapi import HTTPException
+
+    file_bytes = create_docx_with_table(omml_in_table=True)
+    questions, errors = parse_docx(file_bytes)
+
+    # Document order: Question 1 outside table, Question 2 inside table
+    assert len(questions) == 2
+    assert questions[0].question_no == 1
+    assert questions[1].question_no == 2
+    assert questions[1].has_unparsed_omml is True
+
+    # Check that UNPARSED_OMML error was recorded for question 2
+    assert any(e.question_no == 2 and e.error_type == "UNPARSED_OMML" for e in errors)
+
+    # Confirm Zero Mutation Guard raises 422
+    with pytest.raises(HTTPException) as exc_info:
+        assert_zero_mutation_or_raise(questions, errors)
+    assert exc_info.value.status_code == 422
+    err_list = exc_info.value.detail["errors"]
+    assert any(e["question_no"] == 2 and e["error_type"] == "UNPARSED_OMML" for e in err_list)
+
+
+def test_docx_parser_question_in_table_valid():
+    """Suggestion 1: Question inside DOCX table without OMML must be parsed successfully in document order."""
+    file_bytes = create_docx_with_table(omml_in_table=False)
+    questions, errors = parse_docx(file_bytes)
+
+    assert len(errors) == 0
+    assert len(questions) == 2
+    assert questions[0].question_no == 1
+    assert questions[0].correct_key == "A"
+    assert questions[1].question_no == 2
+    assert questions[1].correct_key == "B"
+    assert questions[1].options["D"] == "4"
+
+
+def test_validator_rejects_empty_option_content():
+    """Suggestion 2: Options with labels but empty content must be rejected with INVALID_FORMAT and 422."""
+    from fastapi import HTTPException
+
+    q = ParsedQuestionItem(
+        question_no=1,
+        raw_content="Tính đạo hàm của hàm số sau:",
+        options={"A": "", "B": "2", "C": "3", "D": "4"},
+        correct_key="B",
+    )
+    errors = validate_exam_integrity([q], [])
+    assert any(e.question_no == 1 and e.error_type == "INVALID_FORMAT" for e in errors)
+    assert any("empty option content" in e.message for e in errors)
+
+    with pytest.raises(HTTPException) as exc_info:
+        assert_zero_mutation_or_raise([q], [])
+    assert exc_info.value.status_code == 422
+
+
+def test_markdown_parser_rejects_empty_option_content():
+    """Suggestion 2: Markdown parser rejects option A with empty content."""
+    from fastapi import HTTPException
+
+    md_text = """### Câu 1: Cho biểu thức sau
+A. 
+B. 2
+C. 3
+D. 4
+ĐÁP ÁN: 1.B
+"""
+    questions, errors = parse_markdown(md_text)
+    assert any(e.question_no == 1 and e.error_type == "INVALID_FORMAT" for e in errors)
+    with pytest.raises(HTTPException) as exc_info:
+        assert_zero_mutation_or_raise(questions, errors)
+    assert exc_info.value.status_code == 422
+
+
+def test_answer_key_does_not_falsely_match_question_stems():
+    """Suggestion 3: Questions starting with 'Câu 1: A, B là...' must not be mistaken for an answer key table."""
+    text = """Câu 1: A, B là hai biến cố độc lập trong không gian mẫu.
+*A.* 0.5  B. 0.2  C. 0.3  D. 0.1
+
+Câu 2: A, B là hai ma trận vuông cấp hai khả nghịch.
+A. 1  *B.* 2  C. 3  D. 4
+
+Câu 3: A, B là hai tập hợp các điểm trên mặt phẳng toạ độ.
+A. 1  B. 2  *C.* 3  D. 4
+"""
+    answer_map, remaining = parse_separate_answer_key(text)
+    # Must NOT extract false answer key from question stems
+    assert answer_map == {}
+    assert remaining.strip() == text.strip()
+
+    questions, errors = parse_markdown(text)
+    assert len(errors) == 0
+    assert len(questions) == 3
+    assert questions[0].question_no == 1
+    assert questions[0].correct_key == "A"
+    assert questions[1].question_no == 2
+    assert questions[1].correct_key == "B"
+    assert questions[2].question_no == 3
+    assert questions[2].correct_key == "C"
+
+
+def test_latex_parser_distinguishes_question_headers_outside_enumerate():
+    """Suggestion 4: Distinguish question enumerate from option enumerate when question headers exist outside."""
+    raw_latex = r"""\textbf{Câu 1:} Cho hàm số $y=f(x)$ liên tục trên $\mathbb{R}$.
+\begin{enumerate}
+    \item $x = 1$
+    \item $x = 2$
+    \item $x = 3$
+    \item $x = 4$
+\end{enumerate}
+
+\textbf{Câu 2:} Tính đạo hàm của hàm số $y=2x$.
+\begin{enumerate}[(A)]
+    \item $y' = 2$
+    \item $y' = 1$
+    \item $y' = 0$
+    \item $y' = -2$
+\end{enumerate}
+
+BẢNG ĐÁP ÁN:
+1.A  2.A
+"""
+    questions, errors = parse_latex(raw_latex)
+    assert len(errors) == 0
+    # Must parse exactly 2 questions, NOT 8 questions!
+    assert len(questions) == 2
+
+    assert questions[0].question_no == 1
+    assert questions[0].correct_key == "A"
+    assert questions[0].options["A"] == "$x = 1$"
+    assert questions[0].options["B"] == "$x = 2$"
+    assert questions[0].options["C"] == "$x = 3$"
+    assert questions[0].options["D"] == "$x = 4$"
+
+    assert questions[1].question_no == 2
+    assert questions[1].correct_key == "A"
+    assert questions[1].options["A"] == "$y' = 2$"
+    assert questions[1].options["B"] == "$y' = 1$"
+    assert questions[1].options["C"] == "$y' = 0$"
+    assert questions[1].options["D"] == "$y' = -2$"
+

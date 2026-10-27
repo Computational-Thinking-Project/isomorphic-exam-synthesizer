@@ -74,11 +74,13 @@ def clean_latex_list_wrappers(stem: str, options: Dict[str, str]) -> Tuple[str, 
     return cleaned_stem, cleaned_options
 
 
-def find_outer_latex_environments(text: str, env_name: str = "enumerate") -> List[str]:
-    """Find top-level LaTeX environment bodies by balancing \\begin and \\end tags."""
+def find_outer_latex_environment_spans(
+    text: str, env_name: str = "enumerate"
+) -> List[Tuple[int, int, str]]:
+    """Find top-level LaTeX environment spans (start_pos, end_pos, body) by balancing \\begin and \\end tags."""
     begin_tag = f"\\begin{{{env_name}}}"
     end_tag = f"\\end{{{env_name}}}"
-    results: List[str] = []
+    spans: List[Tuple[int, int, str]] = []
 
     pos = 0
     while pos < len(text):
@@ -101,10 +103,17 @@ def find_outer_latex_environments(text: str, env_name: str = "enumerate") -> Lis
             else:
                 depth -= 1
                 if depth == 0:
-                    results.append(text[start + len(begin_tag) : next_end])
+                    spans.append(
+                        (start, next_end + len(end_tag), text[start + len(begin_tag) : next_end])
+                    )
                 idx = next_end + len(end_tag)
         pos = idx if depth == 0 else len(text)
-    return results
+    return spans
+
+
+def find_outer_latex_environments(text: str, env_name: str = "enumerate") -> List[str]:
+    """Find top-level LaTeX environment bodies by balancing \\begin and \\end tags."""
+    return [body for _, _, body in find_outer_latex_environment_spans(text, env_name)]
 
 
 def split_latex_items(enum_body: str) -> List[str]:
@@ -158,44 +167,66 @@ def parse_latex(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Parser
     # 1. Parse separate answer table
     answer_map, text_without_keys = parse_separate_answer_key(text)
 
-    # 2. Strategy A: Check for enumerate environment
+    # 2. Segment questions: distinguish between top-level question enumerate and option enumerate
     questions_raw: List[Dict[str, Any]] = []
 
-    enum_bodies = find_outer_latex_environments(text_without_keys, "enumerate")
-    q_counter = 1
-    for enum_body in enum_bodies:
-        items = split_latex_items(enum_body)
-        for item in items:
-            item_text = item.strip()
-            if not item_text:
-                continue
+    enum_spans = find_outer_latex_environment_spans(text_without_keys, "enumerate")
+    header_matches = list(LATEX_QUESTION_HEADER.finditer(text_without_keys))
 
-            # Check if there is an explicit label like [Câu 1:]
-            lbl_match = re.match(r"^\[(.*?)\]", item_text)
-            if lbl_match:
-                lbl = lbl_match.group(1)
-                item_text = item_text[lbl_match.end() :].strip()
-                num_match = re.search(r"\d+", lbl)
-                q_no = int(num_match.group(0)) if num_match else q_counter
-            else:
-                q_no = q_counter
+    # Detect if question headers exist outside of any top-level enumerate environment
+    headers_outside_enumerate = [
+        m
+        for m in header_matches
+        if not any(start <= m.start() < end for start, end, _ in enum_spans)
+    ]
 
-            questions_raw.append({"question_no": q_no, "text": item_text})
-            q_counter += 1
+    if headers_outside_enumerate:
+        # Strategy B: Document is organized by question headers (e.g. \textbf{Câu 1:}, Câu 1:).
+        # Any enumerate environments inside belong to question bodies (e.g. options list).
+        for idx, m in enumerate(headers_outside_enumerate):
+            q_no = int(m.group("num1") or m.group("num2"))
+            start_pos = m.end()
+            end_pos = (
+                headers_outside_enumerate[idx + 1].start()
+                if idx + 1 < len(headers_outside_enumerate)
+                else len(text_without_keys)
+            )
+            q_body = text_without_keys[start_pos:end_pos].strip()
+            questions_raw.append({"question_no": q_no, "text": q_body})
+    elif enum_spans:
+        # Strategy A: Document is organized as top-level enumerate question list
+        q_counter = 1
+        for _, _, enum_body in enum_spans:
+            items = split_latex_items(enum_body)
+            for item in items:
+                item_text = item.strip()
+                if not item_text:
+                    continue
 
-    # Strategy B: If no enumerate or few items found, segment by "Câu X:" or "\textbf{Câu X:}"
-    if not questions_raw:
-        # Split by question header
-        matches = list(LATEX_QUESTION_HEADER.finditer(text_without_keys))
-        if matches:
-            for idx, m in enumerate(matches):
-                q_no = int(m.group("num1") or m.group("num2"))
-                start_pos = m.end()
-                end_pos = (
-                    matches[idx + 1].start() if idx + 1 < len(matches) else len(text_without_keys)
-                )
-                q_body = text_without_keys[start_pos:end_pos].strip()
-                questions_raw.append({"question_no": q_no, "text": q_body})
+                # Check if there is an explicit label like [Câu 1:]
+                lbl_match = re.match(r"^\[(.*?)\]", item_text)
+                if lbl_match:
+                    lbl = lbl_match.group(1)
+                    item_text = item_text[lbl_match.end() :].strip()
+                    num_match = re.search(r"\d+", lbl)
+                    q_no = int(num_match.group(0)) if num_match else q_counter
+                else:
+                    q_no = q_counter
+
+                questions_raw.append({"question_no": q_no, "text": item_text})
+                q_counter += 1
+    elif header_matches:
+        # Fallback: Split by any question header
+        for idx, m in enumerate(header_matches):
+            q_no = int(m.group("num1") or m.group("num2"))
+            start_pos = m.end()
+            end_pos = (
+                header_matches[idx + 1].start()
+                if idx + 1 < len(header_matches)
+                else len(text_without_keys)
+            )
+            q_body = text_without_keys[start_pos:end_pos].strip()
+            questions_raw.append({"question_no": q_no, "text": q_body})
 
     # 3. Process question items
     parsed_questions: List[ParsedQuestionItem] = []
@@ -211,7 +242,7 @@ def parse_latex(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Parser
 
         # 1. Try LaTeX \task or \item[A.] format
         task_opts = re.findall(
-            r"(?:\\task|\\item\[\s*([A-Da-d])[\.\)]?\s*\])\s*(.*?)(?=(?:\\task|\\item\[\s*[A-Da-d][\.\)]?\s*\])|$)",
+            r"(?:\\task|\\item\[\s*\(?([A-Da-d])\)?[\.\)]?\s*\])\s*(.*?)(?=(?:\\task|\\item\[\s*\(?[A-Da-d]\)?[\.\)]?\s*\])|$)",
             q_text,
             re.DOTALL,
         )
@@ -221,7 +252,9 @@ def parse_latex(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Parser
                 opt_lbl = t[0].upper() if t[0] else labels[idx]
                 options[opt_lbl] = t[1].strip()
 
-            first_opt_match = re.search(r"(?:\\task|\\item\[\s*[A-Da-d][\.\)]?\s*\])", q_text)
+            first_opt_match = re.search(
+                r"(?:\\task|\\item\[\s*\(?[A-Da-d]\)?[\.\)]?\s*\])", q_text
+            )
             if first_opt_match:
                 stem = q_text[: first_opt_match.start()].strip()
 
@@ -229,12 +262,29 @@ def parse_latex(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Parser
         if len(options) < 4:
             nested_enums = find_outer_latex_environments(q_text, "enumerate")
             for n_body in nested_enums:
-                sub_items = [
-                    it.strip() for it in re.split(r"\\item(?![a-zA-Z])", n_body) if it.strip()
-                ]
+                # Discard optional parameter before first \item (e.g. [(A)] or [label=...])
+                first_item_match = re.search(r"\\item(?![a-zA-Z])", n_body)
+                if first_item_match:
+                    items_body = n_body[first_item_match.end() :]
+                    sub_items = [
+                        it.strip()
+                        for it in re.split(r"\\item(?![a-zA-Z])", items_body)
+                        if it.strip()
+                    ]
+                else:
+                    sub_items = [
+                        it.strip() for it in re.split(r"\\item(?![a-zA-Z])", n_body) if it.strip()
+                    ]
+
                 if len(sub_items) == 4:
                     labels = ["A", "B", "C", "D"]
-                    options = {labels[i]: sub_items[i] for i in range(4)}
+                    cleaned_sub = []
+                    for it in sub_items:
+                        cleaned_it = re.sub(
+                            r"^\[\s*\(?[A-Da-d]\)?[\.\)]?\s*\]\s*", "", it
+                        ).strip()
+                        cleaned_sub.append(cleaned_it)
+                    options = {labels[i]: cleaned_sub[i] for i in range(4)}
                     opt_pos = q_text.find(r"\begin{enumerate}")
                     if opt_pos != -1:
                         stem = q_text[:opt_pos].strip()
@@ -264,12 +314,17 @@ def parse_latex(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Parser
                 )
             )
 
-        if len(options) != 4 or not all(k in options for k in ["A", "B", "C", "D"]):
+        # Check options completeness and non-empty content
+        if (
+            len(options) != 4
+            or not all(k in options for k in ["A", "B", "C", "D"])
+            or any(not (options.get(k) or "").strip() for k in ["A", "B", "C", "D"])
+        ):
             errors.append(
                 ParserErrorItem(
                     question_no=q_no,
                     error_type="INVALID_FORMAT",
-                    message=f"Question {q_no} does not contain all 4 options A, B, C, D.",
+                    message=f"Question {q_no} is missing one or more options or contains empty option content (A, B, C, D required).",
                 )
             )
 

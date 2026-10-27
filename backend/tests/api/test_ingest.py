@@ -38,6 +38,51 @@ def create_sample_docx_bytes() -> bytes:
     return buf.getvalue()
 
 
+def create_docx_with_table_and_omml() -> bytes:
+    """Generate docx with 1 question outside table and 1 question with OMML in table (Suggestion 1)."""
+    from docx.oxml import parse_xml
+
+    doc = docx.Document()
+    doc.add_paragraph("Câu 1: Giải phương trình bậc hai $x^2 - 1 = 0$.")
+    doc.add_paragraph("A. $x = 1$  B. $x = 2$  C. $x = 3$  D. $x = 4$")
+
+    t = doc.add_table(rows=2, cols=1)
+    cell_stem = t.cell(0, 0)
+    cell_stem.paragraphs[0].text = "Câu 2: Đạo hàm của hàm số sau:"
+    omml_xml = (
+        '<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">'
+        "<m:oMath><m:sSup><m:e><m:r><m:t>x</m:t></m:r></m:e>"
+        "<m:sup><m:r><m:t>2</m:t></m:r></m:sup></m:sSup></m:oMath></w:p>"
+    )
+    p_omml = cell_stem.add_paragraph("")
+    p_omml._p.append(parse_xml(omml_xml))
+
+    cell_opts = t.cell(1, 0)
+    cell_opts.paragraphs[0].text = "A. 2  B. 1  C. 0  D. -1"
+
+    doc.add_paragraph("BẢNG ĐÁP ÁN:")
+    doc.add_paragraph("1.A  2.B")
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def create_docx_with_empty_option() -> bytes:
+    """Generate docx with option A having empty content (Suggestion 2)."""
+    doc = docx.Document()
+    doc.add_paragraph("Câu 1: Chọn giá trị đúng:")
+    doc.add_paragraph("A.")
+    doc.add_paragraph("B. 2  C. 3  D. 4")
+    doc.add_paragraph("BẢNG ĐÁP ÁN:")
+    doc.add_paragraph("1.B")
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
 # ---------------------------------------------------------------------------
 # 1. Unauthenticated & Authorization Tests
 # ---------------------------------------------------------------------------
@@ -176,6 +221,246 @@ BẢNG ĐÁP ÁN:
     # Ensure NO insert or delete called on database (Database untouched!)
     mock_db.table.return_value.insert.assert_not_called()
     mock_db.table.return_value.delete.assert_not_called()
+
+
+def test_ingest_file_docx_omml_in_table_returns_422_no_rpc_no_storage(
+    client, mock_auth_user, auth_headers
+):
+    """Suggestion 1: DOCX file containing OMML in a table must return 422 and call neither RPC nor Storage."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    docx_bytes = create_docx_with_table_and_omml()
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-file",
+            files={
+                "file": (
+                    "test_omml_table.docx",
+                    docx_bytes,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 422
+    data = response.json()["detail"]
+    assert any(err["error_type"] == "UNPARSED_OMML" for err in data["errors"])
+
+    # Guaranteed Zero Mutation & no Storage upload
+    mock_db.rpc.assert_not_called()
+    mock_db.storage.from_.assert_not_called()
+    mock_db.table.return_value.insert.assert_not_called()
+    mock_db.table.return_value.delete.assert_not_called()
+
+
+def test_ingest_text_empty_option_content_returns_422_no_rpc_no_storage(
+    client, mock_auth_user, auth_headers
+):
+    """Suggestion 2: Text ingestion with empty option content must return 422 and call neither RPC nor Storage."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    raw_text = """### Câu 1: Tìm x biết x > 0:
+A. 
+B. 2
+C. 3
+D. 4
+
+BẢNG ĐÁP ÁN:
+1.B
+"""
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-text",
+            json={"raw_text": raw_text},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 422
+    data = response.json()["detail"]
+    assert any(err["error_type"] == "INVALID_FORMAT" for err in data["errors"])
+
+    mock_db.rpc.assert_not_called()
+    mock_db.storage.from_.assert_not_called()
+    mock_db.table.return_value.insert.assert_not_called()
+    mock_db.table.return_value.delete.assert_not_called()
+
+
+def test_ingest_file_empty_option_content_returns_422_no_rpc_no_storage(
+    client, mock_auth_user, auth_headers
+):
+    """Suggestion 2: DOCX ingestion with empty option content must return 422 and call neither RPC nor Storage."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    docx_bytes = create_docx_with_empty_option()
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-file",
+            files={
+                "file": (
+                    "empty_opt.docx",
+                    docx_bytes,
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 422
+    data = response.json()["detail"]
+    assert any(err["error_type"] == "INVALID_FORMAT" for err in data["errors"])
+
+    mock_db.rpc.assert_not_called()
+    mock_db.storage.from_.assert_not_called()
+    mock_db.table.return_value.insert.assert_not_called()
+    mock_db.table.return_value.delete.assert_not_called()
+
+
+def test_ingest_text_question_stems_not_misidentified_as_answer_key(
+    client, mock_auth_user, auth_headers
+):
+    """Suggestion 3: Text starting with 'Câu 1: A, B là...' must not be cut off and should return 200."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    mock_rpc_exec = MagicMock()
+    mock_rpc_exec.data = {"success": True, "count": 3}
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_exec
+
+    mock_q_res = MagicMock()
+    mock_q_res.data = [
+        {"id": "q-1", "question_no": 1, "correct_key": "A"},
+        {"id": "q-2", "question_no": 2, "correct_key": "B"},
+        {"id": "q-3", "question_no": 3, "correct_key": "C"},
+    ]
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = mock_q_res
+
+    raw_text = """Câu 1: A, B là hai biến cố độc lập trong không gian mẫu.
+*A.* 0.5  B. 0.2  C. 0.3  D. 0.1
+
+Câu 2: A, B là hai ma trận vuông cấp hai khả nghịch.
+A. 1  *B.* 2  C. 3  D. 4
+
+Câu 3: A, B là hai tập hợp các điểm trên mặt phẳng toạ độ.
+A. 1  B. 2  *C.* 3  D. 4
+"""
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-text",
+            json={"raw_text": raw_text},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200
+    res_data = response.json()
+    assert res_data["total_questions"] == 3
+
+
+def test_ingest_text_latex_enumerate_options_parsed_correctly(client, mock_auth_user, auth_headers):
+    """Suggestion 4: LaTeX with question headers outside enumerate options returns 200 and parses 2 questions."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    mock_rpc_exec = MagicMock()
+    mock_rpc_exec.data = {"success": True, "count": 2}
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_exec
+
+    mock_q_res = MagicMock()
+    mock_q_res.data = [
+        {"id": "q-1", "question_no": 1, "correct_key": "A"},
+        {"id": "q-2", "question_no": 2, "correct_key": "A"},
+    ]
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = mock_q_res
+
+    raw_latex = r"""\textbf{Câu 1:} Cho hàm số $y=f(x)$ liên tục trên $\mathbb{R}$.
+\begin{enumerate}
+    \item $x = 1$
+    \item $x = 2$
+    \item $x = 3$
+    \item $x = 4$
+\end{enumerate}
+
+\textbf{Câu 2:} Tính đạo hàm của hàm số $y=2x$.
+\begin{enumerate}[(A)]
+    \item $y' = 2$
+    \item $y' = 1$
+    \item $y' = 0$
+    \item $y' = -2$
+\end{enumerate}
+
+BẢNG ĐÁP ÁN:
+1.A  2.A
+"""
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-text",
+            json={"raw_text": raw_latex},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200
+    res_data = response.json()
+    assert res_data["total_questions"] == 2
 
 
 # ---------------------------------------------------------------------------
