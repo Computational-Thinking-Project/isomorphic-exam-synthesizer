@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowRight,
   CheckCircle,
   Clock,
@@ -61,6 +62,7 @@ export default function GenerationProgressView({
   totalSourceQuestions = 10,
   progress = {},
   questionStatuses = {},
+  warnings = [],
   connectionState = 'connected',
   isDone = false,
   error = null,
@@ -195,6 +197,38 @@ export default function GenerationProgressView({
           </div>
         )}
 
+        {/* Khối cảnh báo nghiệp vụ (warnings) */}
+        {warnings && warnings.length > 0 && (
+          <div
+            role="status"
+            className="mt-6 rounded-xl border border-amber-500/40 bg-amber-950/30 p-4 text-xs text-amber-200"
+          >
+            <div className="flex items-center gap-2 font-semibold text-amber-300">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+              <span>Có {warnings.length} cảnh báo trong quá trình sinh đề (tiến trình vẫn đang tiếp tục):</span>
+            </div>
+            <ul className="mt-2 list-disc pl-5 space-y-1 text-amber-200/90">
+              {warnings.map((w, idx) => {
+                const prefix =
+                  w?.version_index && w?.question_no
+                    ? `Mã đề ${w.version_index}, Câu ${w.question_no}: `
+                    : '';
+                const msg =
+                  w?.message ||
+                  w?.warning_message ||
+                  w?.warning ||
+                  (typeof w === 'string' ? w : JSON.stringify(w));
+                return (
+                  <li key={idx}>
+                    <strong>{prefix}</strong>
+                    {msg}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
         {/* Thông báo thành công và chuyển hướng */}
         {isDone && (
           <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-emerald-500/40 bg-emerald-950/30 p-5 text-emerald-200">
@@ -263,6 +297,9 @@ export default function GenerationProgressView({
           {Array.from({ length: totalSourceQuestions }, (_, i) => i + 1).map((qNo) => {
             const key = `${activeVersionTab}-${qNo}`;
             const item = questionStatuses[key];
+            const qWarning = warnings.find(
+              (w) => w?.version_index === activeVersionTab && w?.question_no === qNo,
+            );
             const statusKey = item?.status || (isDone ? 'done' : 'pending');
             const statusConfig = STATUS_CONFIGS[statusKey] || STATUS_CONFIGS.pending;
             const Icon = statusConfig.icon;
@@ -270,18 +307,32 @@ export default function GenerationProgressView({
             return (
               <div
                 key={key}
-                className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-800/50 p-3.5 transition-all hover:border-slate-700"
+                className={`flex items-center justify-between rounded-xl border p-3.5 transition-all ${
+                  qWarning
+                    ? 'border-amber-500/60 bg-amber-950/20 hover:border-amber-400'
+                    : 'border-slate-800 bg-slate-800/50 hover:border-slate-700'
+                }`}
               >
                 <div className="flex items-center gap-2.5">
                   <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-700/80 text-xs font-bold text-slate-200">
                     {qNo}
                   </span>
                   <div>
-                    <p className="text-xs font-semibold text-white">
-                      Câu {qNo} (Đề {activeVersionTab})
-                    </p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-xs font-semibold text-white">
+                        Câu {qNo} (Đề {activeVersionTab})
+                      </p>
+                      {qWarning && (
+                        <span
+                          title={qWarning.message || 'Có cảnh báo'}
+                          className="inline-flex items-center text-amber-400"
+                        >
+                          <AlertTriangle className="h-3 w-3" />
+                        </span>
+                      )}
+                    </div>
                     <p className="text-[11px] text-slate-400 truncate max-w-[120px]">
-                      {item?.message || (statusKey === 'done' ? 'Đã hoàn thành' : 'Đang xếp hàng...')}
+                      {qWarning?.message || item?.message || (statusKey === 'done' ? 'Đã hoàn thành' : 'Đang xếp hàng...')}
                     </p>
                   </div>
                 </div>

@@ -189,6 +189,7 @@ test('Stage2ConfigPage cô lập trạng thái: chuyển từ phiên A đang gen
       id: 'session-A',
       title: 'Đề A đang sinh',
       status: 'generating',
+      config: { n_versions: 2, active_variation_modes: ['parameter_variation'] },
       source_questions: [{ id: 'q1', question_no: 1 }],
       blueprint_summary: {
         total_questions: 1,
@@ -212,6 +213,7 @@ test('Stage2ConfigPage cô lập trạng thái: chuyển từ phiên A đang gen
     connectionState: 'connected',
     progress: { percent: 50, completedCount: 1, totalCount: 2 },
     questionStatuses: {},
+    warnings: [],
     isDone: false,
     error: null,
     reconnectCount: 0,
@@ -223,7 +225,7 @@ test('Stage2ConfigPage cô lập trạng thái: chuyển từ phiên A đang gen
     useSSEHook: mockUseSSE,
   });
 
-  // 1. Tải phiên A: trạng thái generating -> hiển thị màn tiến độ
+  // 1. Tải phiên A: trạng thái generating có config -> hiển thị màn tiến độ
   await harness.render();
   let text = harness.container.textContent;
   assert.ok(text.includes('Tiến trình sinh đề AI') || text.includes('Đang tạo các biến thể đề thi'));
@@ -233,6 +235,162 @@ test('Stage2ConfigPage cô lập trạng thái: chuyển từ phiên A đang gen
   text = harness.container.textContent;
   assert.ok(text.includes('Đề B mới duyệt'), 'Phải hiển thị tiêu đề đề B');
   assert.ok(text.includes('Bắt đầu sinh đề'), 'Phải hiển thị nút Bắt đầu sinh đề của form, không kẹt lại màn tiến độ A');
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigPage hiển thị trạng thái đồng bộ và không tự đoán 2 mã khi mở lại phiên generating thiếu config', async () => {
+  const mockLoadSession = async () => ({
+    id: 'session-gen-no-config',
+    title: 'Đề generating thiếu config',
+    status: 'generating',
+    source_questions: [{ id: 'q1', question_no: 1 }],
+    config: null,
+    exam_versions: [],
+    blueprint_summary: {
+      total_questions: 1,
+      supported_modes: [{ id: 'parameter_variation', label: 'Thay số', is_available: true }],
+    },
+  });
+
+  const mockUseSSE = () => ({
+    connectionState: 'connecting',
+    progress: { percent: 0 },
+    questionStatuses: {},
+    warnings: [],
+    isDone: false,
+    error: null,
+    reconnectCount: 0,
+    reconnect: () => {},
+  });
+
+  const harness = renderPage('session-gen-no-config', {
+    loadSession: mockLoadSession,
+    useSSEHook: mockUseSSE,
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('Đang đồng bộ tiến trình sinh đề'), 'Phải hiển thị màn hình chờ đồng bộ');
+  assert.equal(text.includes('Mã đề #1'), false, 'Không tự vẽ tab mã đề #1 khi chưa biết số mã');
+  assert.equal(text.includes('Mã đề #2'), false, 'Không tự đoán mặc định 2 mã đề');
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigPage cô lập submit: chuyển A đang lưu sang B thì form B không bị khoá và A không kích hoạt sinh đề', async () => {
+  let resolveSaveA;
+  const saveAPromise = new Promise((resolve) => {
+    resolveSaveA = resolve;
+  });
+
+  let startGenCalledSession = null;
+
+  const sessions = {
+    'session-A': {
+      id: 'session-A',
+      title: 'Đề A',
+      status: 'blueprinted',
+      source_questions: [{ id: 'q1', question_no: 1 }],
+      blueprint_summary: {
+        total_questions: 1,
+        supported_modes: [{ id: 'parameter_variation', label: 'Thay số', is_available: true }],
+      },
+    },
+    'session-B': {
+      id: 'session-B',
+      title: 'Đề B',
+      status: 'blueprinted',
+      source_questions: [{ id: 'q2', question_no: 1 }],
+      blueprint_summary: {
+        total_questions: 1,
+        supported_modes: [{ id: 'parameter_variation', label: 'Thay số', is_available: true }],
+      },
+    },
+  };
+
+  const harness = renderPage('session-A', {
+    loadSession: async (id) => sessions[id],
+    saveConfig: async (id) => {
+      if (id === 'session-A') return saveAPromise;
+      return { success: true };
+    },
+    startGen: async (id) => {
+      startGenCalledSession = id;
+    },
+  });
+  await harness.render();
+
+  // Bấm submit ở phiên A
+  const formA = harness.container.querySelector('form');
+  await act(async () => {
+    formA.dispatchEvent({
+      type: 'submit',
+      bubbles: true,
+      cancelable: true,
+      preventDefault: () => {},
+    });
+  });
+
+  // Chuyển sang phiên B khi saveConfig(A) còn đang pending
+  await harness.navigate('session-B');
+
+  // Form B phải sẵn sàng, nút nộp trên B KHÔNG bị khoá ở trạng thái đang lưu của A
+  const submitBtnB = harness.container.querySelector('button[type="submit"]');
+  assert.ok(submitBtnB, 'Phải có nút submit trên form B');
+  assert.equal(submitBtnB.getAttribute('disabled') === null, true, 'Nút submit của B không được bị khoá');
+  assert.ok(submitBtnB.textContent.includes('Bắt đầu sinh đề'));
+
+  // Phản hồi saveConfig của A trả về muộn
+  await act(async () => {
+    resolveSaveA({ success: true });
+  });
+
+  // startGen(A) tuyệt đối không được gọi vì phiên đã chuyển sang B
+  assert.equal(startGenCalledSession, null, 'Không được gọi startGen(A) sau khi đã chuyển sang phiên B');
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigPage truyền và hiển thị cảnh báo SSE tới giao diện tiến trình', async () => {
+  const mockLoadSession = async () => ({
+    id: 'session-warnings',
+    title: 'Đề có cảnh báo',
+    status: 'generating',
+    config: { n_versions: 2 },
+    source_questions: [{ id: 'q1', question_no: 1 }],
+    blueprint_summary: {
+      total_questions: 1,
+      supported_modes: [{ id: 'parameter_variation', label: 'Thay số', is_available: true }],
+    },
+  });
+
+  const mockUseSSE = () => ({
+    connectionState: 'connected',
+    progress: { percent: 30, completedCount: 0, totalCount: 2 },
+    questionStatuses: {},
+    warnings: [
+      {
+        version_index: 1,
+        question_no: 1,
+        message: 'Phương sai bài toán hơi lớn, cần lưu ý khi thẩm định',
+      },
+    ],
+    isDone: false,
+    error: null,
+    reconnectCount: 0,
+    reconnect: () => {},
+  });
+
+  const harness = renderPage('session-warnings', {
+    loadSession: mockLoadSession,
+    useSSEHook: mockUseSSE,
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('Phương sai bài toán hơi lớn'), 'Cảnh báo từ SSE phải được hiển thị tới người dùng');
+  assert.ok(text.includes('Có 1 cảnh báo trong quá trình sinh đề'));
 
   await harness.unmount();
 });

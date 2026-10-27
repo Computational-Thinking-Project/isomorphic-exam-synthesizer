@@ -201,9 +201,10 @@ export function useSSE(sessionId, {
       if (!isMountedRef.current || connectionTokenRef.current !== currentToken) return;
       const data = payloadOrEvent?.data !== undefined ? parsePayload(payloadOrEvent) : payloadOrEvent;
       const errorMsg =
+        data?.error_message ||
         data?.message ||
-        data?.error ||
         data?.detail ||
+        (typeof data?.error === 'string' ? data.error : null) ||
         (typeof data === 'string' ? data : null) ||
         'Tiến trình sinh đề bị lỗi từ máy chủ.';
 

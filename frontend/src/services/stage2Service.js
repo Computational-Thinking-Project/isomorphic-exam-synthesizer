@@ -42,6 +42,16 @@ export async function fetchSessionDetail(sessionId) {
     );
 
     if (questionsWithBlueprints.length > 0) {
+      const totalQuestions = data.source_questions.length;
+      const MODE_MAP = {
+        parameter_variation: 'parameter_variation',
+        numerical: 'parameter_variation',
+        context_swap: 'context_swap',
+        contextual: 'context_swap',
+        variable_inversion: 'variable_inversion',
+        inversion: 'variable_inversion',
+      };
+
       const MODE_METADATA = {
         parameter_variation: {
           label: 'Thay đổi số liệu / tham số',
@@ -57,33 +67,54 @@ export async function fetchSessionDetail(sessionId) {
         },
       };
 
-      const modeCounts = {};
+      const modeCounts = {
+        parameter_variation: 0,
+        context_swap: 0,
+        variable_inversion: 0,
+      };
+
       questionsWithBlueprints.forEach((q) => {
-        const modes =
+        const rawModes =
           q.question_blueprints?.variation_modes ||
           q.blueprint?.variation_modes ||
           q.variation_modes ||
           [];
-        if (Array.isArray(modes)) {
-          modes.forEach((m) => {
-            modeCounts[m] = (modeCounts[m] || 0) + 1;
+        if (Array.isArray(rawModes)) {
+          const distinctModes = new Set(
+            rawModes
+              .map((m) => String(m).toLowerCase().trim())
+              .filter((m) => m && m !== 'none')
+              .map((m) => MODE_MAP[m] || m),
+          );
+          distinctModes.forEach((canonicalMode) => {
+            if (modeCounts[canonicalMode] !== undefined) {
+              modeCounts[canonicalMode] += 1;
+            }
           });
         }
       });
 
+      // Theo quy tắc Blueprint (DEC-TV1 / 207a):
+      // Một mode CHỈ được coi là is_available: true nếu TẤT CẢ câu hỏi trong đề (phần giao) đều hỗ trợ nó!
       const supportedModes = Object.entries(modeCounts)
         .filter(([, count]) => count > 0)
-        .map(([id, count]) => ({
-          id,
-          label: MODE_METADATA[id]?.label || id,
-          description: MODE_METADATA[id]?.description || '',
-          question_count: count,
-          is_available: true,
-        }));
+        .map(([id, count]) => {
+          const isFullySupported = count === totalQuestions;
+          return {
+            id,
+            label: MODE_METADATA[id]?.label || id,
+            description: MODE_METADATA[id]?.description || '',
+            question_count: count,
+            is_available: isFullySupported,
+            unavailable_reason: isFullySupported
+              ? undefined
+              : `Chỉ hỗ trợ ${count}/${totalQuestions} câu trong đề (yêu cầu toàn bộ câu hỏi hỗ trợ).`,
+          };
+        });
 
       if (supportedModes.length > 0) {
         blueprintSummary = {
-          total_questions: data.source_questions.length,
+          total_questions: totalQuestions,
           supported_modes: supportedModes,
         };
       }
@@ -102,12 +133,15 @@ export async function saveSessionConfig(sessionId, configPayload) {
     throw new Error('Mã phiên làm việc (sessionId) không được để trống.');
   }
 
-  // Đồng bộ payload cả schema BE2 (n_versions, active_variation_modes) và backward compatibility
+  // CHỈ gửi đúng tên trường theo contract BE2 (TASK-207a).
+  // Tuyệt đối không gửi num_versions hay variation_modes để tránh lỗi 422 từ model Pydantic backend.
   const payload = {
-    n_versions: configPayload.n_versions ?? configPayload.num_versions,
-    num_versions: configPayload.num_versions ?? configPayload.n_versions,
-    active_variation_modes: configPayload.active_variation_modes ?? configPayload.variation_modes ?? [],
-    variation_modes: configPayload.variation_modes ?? configPayload.active_variation_modes ?? [],
+    n_versions: Number(configPayload.n_versions ?? configPayload.num_versions ?? 2),
+    active_variation_modes: Array.isArray(configPayload.active_variation_modes)
+      ? configPayload.active_variation_modes
+      : Array.isArray(configPayload.variation_modes)
+      ? configPayload.variation_modes
+      : [],
     ordering_preferences: configPayload.ordering_preferences ?? {
       shuffle_questions: true,
     },

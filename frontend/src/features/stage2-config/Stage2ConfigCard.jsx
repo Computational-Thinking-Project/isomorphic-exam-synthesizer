@@ -37,9 +37,21 @@ export default function Stage2ConfigCard({
   // Giá trị khởi tạo từ cấu hình đã lưu hoặc mặc định
   const defaultNumVersions = initialConfig?.n_versions ?? initialConfig?.num_versions ?? 2;
   const availableModes = supportedModes.filter((m) => m.is_available !== false).map((m) => m.id);
-  const configuredModes = initialConfig?.active_variation_modes || initialConfig?.variation_modes;
-  const defaultModes = configuredModes && configuredModes.length > 0
-    ? configuredModes.filter((id) => availableModes.includes(id))
+
+  // Phân biệt: nếu initialConfig có mảng active_variation_modes (kể cả rỗng []), giữ nguyên lựa chọn
+  // Nếu chưa có config (null/undefined), chọn tất cả các mode khả dụng
+  const hasSavedModes =
+    Array.isArray(initialConfig?.active_variation_modes) ||
+    Array.isArray(initialConfig?.variation_modes);
+
+  const rawConfiguredModes = Array.isArray(initialConfig?.active_variation_modes)
+    ? initialConfig.active_variation_modes
+    : Array.isArray(initialConfig?.variation_modes)
+    ? initialConfig.variation_modes
+    : null;
+
+  const defaultModes = hasSavedModes
+    ? rawConfiguredModes.filter((id) => availableModes.includes(id))
     : availableModes;
 
   const [numVersions, setNumVersions] = useState(defaultNumVersions);
@@ -58,10 +70,6 @@ export default function Stage2ConfigCard({
     setValidationError('');
     setSelectedModes((prev) => {
       if (prev.includes(modeId)) {
-        if (prev.length === 1) {
-          setValidationError('Bạn phải giữ lại ít nhất một chế độ biến thể.');
-          return prev;
-        }
         return prev.filter((id) => id !== modeId);
       }
       return [...prev, modeId];
@@ -77,16 +85,9 @@ export default function Stage2ConfigCard({
       return;
     }
 
-    if (selectedModes.length === 0) {
-      setValidationError('Vui lòng chọn ít nhất một chế độ biến thể.');
-      return;
-    }
-
     const payload = {
       n_versions: Number(numVersions),
-      num_versions: Number(numVersions),
       active_variation_modes: selectedModes,
-      variation_modes: selectedModes,
       ordering_preferences: {
         shuffle_questions: Boolean(shuffleQuestions),
       },
@@ -318,10 +319,17 @@ export default function Stage2ConfigCard({
                   <Layers className="h-3.5 w-3.5 text-sky-400" />
                   Tổng cộng: <strong className="text-white">{totalVariantsToGenerate}</strong> câu hỏi biến thể
                 </span>
-                <span className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-slate-200">
-                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-                  {selectedModes.length} chế độ biến thể được kích hoạt
-                </span>
+                {selectedModes.length > 0 ? (
+                  <span className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-slate-200">
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                    {selectedModes.length} chế độ biến thể được kích hoạt
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-slate-200">
+                    <HelpCircle className="h-3.5 w-3.5 text-slate-400" />
+                    Không chọn biến thể (giữ nguyên câu hỏi gốc)
+                  </span>
+                )}
                 {shuffleQuestions && (
                   <span className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-slate-200">
                     <Shuffle className="h-3.5 w-3.5 text-amber-400" />
@@ -350,7 +358,7 @@ export default function Stage2ConfigCard({
 
           <button
             type="submit"
-            disabled={isSubmitting || selectedModes.length === 0 || supportedModes.length === 0}
+            disabled={isSubmitting || supportedModes.length === 0}
             className="flex items-center gap-2 rounded-xl bg-sky-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-sky-600/30 hover:bg-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isSubmitting ? (

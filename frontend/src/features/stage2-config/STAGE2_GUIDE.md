@@ -13,13 +13,13 @@ Tài liệu này mô tả chi tiết kiến trúc, luồng dữ liệu, hợp đ
 
 ## 2. Điểm Chốt Hợp Đồng API (API Contracts)
 
-### 2.1. Cấu hình sinh đề (TASK-206)
+### 2.1. Cấu hình sinh đề (TASK-206 & Contract BE2 TASK-207a)
 - **Endpoint:** `POST /api/sessions/{session_id}/config`
-- **Payload:**
+- **Payload (Tuân thủ nghiêm ngặt schema Pydantic BE2):**
 ```json
 {
-  "num_versions": 2,
-  "variation_modes": [
+  "n_versions": 2,
+  "active_variation_modes": [
     "parameter_variation",
     "context_swap"
   ],
@@ -29,8 +29,9 @@ Tài liệu này mô tả chi tiết kiến trúc, luồng dữ liệu, hợp đ
 }
 ```
 > [!NOTE]
+> - Trường số lượng mã đề là `n_versions` (in `[1, 4]`), danh sách chế độ là `active_variation_modes` (mảng string, cho phép `[]` nếu không dùng biến thể).
 > - Chỉ cung cấp tùy chọn `shuffle_questions` (xáo trộn thứ tự câu hỏi). Không sử dụng `shuffle_options` theo quyết định thiết kế.
-> - Các chế độ `variation_modes` được đối soát với Blueprint của đề bài; nếu có xung đột, backend trả mã `ERR_CONFIG_CONFLICT` (HTTP 400).
+> - Các chế độ `active_variation_modes` được đối soát với Blueprint của đề bài (tính theo phần giao 100% câu hỏi hỗ trợ); nếu có xung đột, backend trả mã `ERR_CONFIG_CONFLICT` (HTTP 400 kèm `error_message` hoặc `detail`).
 
 ### 2.2. Khởi động tiến trình nền
 - **Endpoint:** `POST /api/sessions/{session_id}/generate`
@@ -49,14 +50,15 @@ Tài liệu này mô tả chi tiết kiến trúc, luồng dữ liệu, hợp đ
 > [!IMPORTANT]
 > Ticket có thời hạn **60 giây** và chỉ được dùng **1 lần**. Hook `useSSE` không lưu ticket vào `localStorage`. Khi kết nối lại, hook tự động gọi API lấy một ticket mới.
 
-### 2.4. Luồng Server-Sent Events (SSE Stream)
+### 2.4. Luồng Server-Sent Events (SSE Stream - TASK-207b)
 - **Endpoint:** `GET /api/sessions/{session_id}/events?ticket={ticket}&last_event_id={id}`
 - **Sự kiện chuẩn hóa:**
-  1. `progress`: `{ percent: 45, completed_count: 9, total_count: 20, message: "...", estimated_seconds: 25 }`
+  1. `progress`: `{ percent_complete: 45, completed_count: 9, total_count: 20, message: "...", estimated_seconds: 25, questions: [...] }`
   2. `question_status`: `{ version_index: 1, question_no: 3, status: "analyzing" | "generating" | "validating" | "retrying" | "done", message: "..." }`
   3. `question_done`: `{ version_index: 1, question_no: 3, variant_id: "..." }`
-  4. `warning`: `{ code: "...", message: "..." }`
-  5. `done`: `{ total_generated: 20, duration_seconds: 35 }`
+  4. `warning`: `{ version_index: 1, question_no: 3, message: "..." }` (tiến trình vẫn tiếp tục, cảnh báo hiển thị trên câu hỏi tương ứng)
+  5. `error`: `{ error: "...", error_message: "..." }` (lỗi job AI dừng kết nối ngay, không reconnect lặp vô hạn)
+  6. `done`: `{ total_generated: 20, duration_seconds: 35 }` (hoàn tất chuyển sang màn bàn giao Stage 3 `/session/:id/stage3`)
 
 ---
 

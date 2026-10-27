@@ -172,9 +172,7 @@ test('Stage2ConfigCard nộp cấu hình thành công với đúng payload quy �
 
   assert.ok(submittedPayload, 'onSubmit phải được gọi');
   assert.equal(submittedPayload.n_versions, 2);
-  assert.equal(submittedPayload.num_versions, 2);
   assert.deepEqual(submittedPayload.active_variation_modes, ['parameter_variation', 'context_swap']);
-  assert.deepEqual(submittedPayload.variation_modes, ['parameter_variation', 'context_swap']);
   assert.deepEqual(submittedPayload.ordering_preferences, {
     shuffle_questions: true,
   });
@@ -218,7 +216,47 @@ test('Stage2ConfigCard bấm trực tiếp checkbox chỉ đổi lựa chọn đ
 
   assert.ok(submittedPayload);
   assert.deepEqual(submittedPayload.active_variation_modes, ['parameter_variation']);
-  assert.deepEqual(submittedPayload.variation_modes, ['parameter_variation']);
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigCard giữ nguyên lựa chọn rỗng đã lưu (active_variation_modes: []) và cho phép bỏ chọn toàn bộ', async () => {
+  let submittedPayload = null;
+  const harness = renderCard({
+    session: sampleSession,
+    initialConfig: {
+      n_versions: 2,
+      active_variation_modes: [],
+    },
+    onSubmit: async (payload) => {
+      submittedPayload = payload;
+    },
+  });
+  await harness.render();
+
+  const checkboxes = harness.container.querySelectorAll('input[type="checkbox"]');
+  const paramCb = checkboxes.find((c) => c.getAttribute('id') === 'mode-parameter_variation');
+  const contextCb = checkboxes.find((c) => c.getAttribute('id') === 'mode-context_swap');
+
+  assert.equal(paramCb.checked, false, 'Không tự ý chọn lại mode khi cấu hình đã lưu là []');
+  assert.equal(contextCb.checked, false, 'context_swap không được chọn khi cấu hình đã lưu là []');
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('Không chọn biến thể (giữ nguyên câu hỏi gốc)'), 'Hiển thị thẻ tóm tắt phù hợp');
+
+  // Nộp form khi không chọn mode nào
+  const form = harness.container.querySelector('form');
+  await act(async () => {
+    form.dispatchEvent({
+      type: 'submit',
+      bubbles: true,
+      cancelable: true,
+      preventDefault: () => {},
+    });
+  });
+
+  assert.ok(submittedPayload, 'Form phải cho phép nộp với active_variation_modes: []');
+  assert.deepEqual(submittedPayload.active_variation_modes, []);
 
   await harness.unmount();
 });

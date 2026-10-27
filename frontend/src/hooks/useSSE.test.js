@@ -473,3 +473,29 @@ test('useSSE reset sạch sẽ trạng thái (progress, done, questionStatuses) 
 
   await harness.unmount();
 });
+
+test('useSSE đọc trường error_message từ payload sự kiện error theo đúng schema BE2', async () => {
+  MockEventSource.instances = [];
+  const harness = renderHookHarness(() =>
+    useSSE('session-108', {
+      requestTicket: async () => ({ ticket: 't108' }),
+      eventSourceFactory: (url) => new MockEventSource(url),
+    }),
+  );
+
+  await harness.render();
+  const es = MockEventSource.instances[0];
+  await act(async () => {
+    es.simulateOpen();
+    es.emit('error', {
+      error: 'GEMINI_CALL_FAILED',
+      error_message: 'Không thể kết nối đến Gemini AI Service',
+    });
+  });
+
+  assert.equal(harness.result.connectionState, 'failed');
+  assert.equal(harness.result.error, 'Không thể kết nối đến Gemini AI Service');
+  assert.equal(es.closed, true);
+
+  await harness.unmount();
+});

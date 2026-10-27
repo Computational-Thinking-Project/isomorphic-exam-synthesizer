@@ -45,14 +45,17 @@ export default function Stage2ConfigPage({
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeConfig, setActiveConfig] = useState(null);
 
-  const submitSessionRef = useRef(sessionId);
-  useEffect(() => {
-    submitSessionRef.current = sessionId;
-  }, [sessionId]);
+  const submitOperationRef = useRef(0);
+  const isMountedRef = useRef(true);
 
   // Tải dữ liệu phiên làm việc với khả năng cô lập tuyệt đối theo sessionId
   useEffect(() => {
+    isMountedRef.current = true;
     let active = true;
+
+    // Vô hiệu hóa mọi lượt submit đang chờ của phiên trước và reset trạng thái đang lưu
+    submitOperationRef.current += 1;
+    setIsSubmittingConfig(false);
 
     // Reset sạch sẽ trạng thái của container theo sessionId hiện tại
     setSession(null);
@@ -97,6 +100,9 @@ export default function Stage2ConfigPage({
 
     return () => {
       active = false;
+      isMountedRef.current = false;
+      submitOperationRef.current += 1;
+      setIsSubmittingConfig(false);
     };
   }, [sessionId, loadSession]);
 
@@ -108,6 +114,8 @@ export default function Stage2ConfigPage({
   // Xử lý nộp form cấu hình
   async function handleConfigSubmit(payload) {
     if (isSubmittingConfig) return;
+
+    const thisOpId = ++submitOperationRef.current;
     const targetSessionId = sessionId;
 
     setIsSubmittingConfig(true);
@@ -115,23 +123,35 @@ export default function Stage2ConfigPage({
 
     try {
       await saveConfig(targetSessionId, payload);
-      if (submitSessionRef.current !== targetSessionId) return;
+      if (!isMountedRef.current || submitOperationRef.current !== thisOpId) {
+        return;
+      }
       setActiveConfig(payload);
 
       // Kích hoạt background generation
       await startGen(targetSessionId);
-      if (submitSessionRef.current !== targetSessionId) return;
+      if (!isMountedRef.current || submitOperationRef.current !== thisOpId) {
+        return;
+      }
       setIsGenerating(true);
     } catch (err) {
-      if (submitSessionRef.current !== targetSessionId) return;
+      if (!isMountedRef.current || submitOperationRef.current !== thisOpId) {
+        return;
+      }
       const resData = err?.response?.data;
       const errorCode = resData?.code || resData?.detail?.code || err?.code;
-      const errorDetail = resData?.detail || resData?.message || err?.message;
+      const errorDetail =
+        resData?.error_message ||
+        resData?.detail ||
+        resData?.message ||
+        err?.message;
 
       if (errorCode === 'ERR_CONFIG_CONFLICT') {
         setConfigError(
           `Cấu hình xung đột với Blueprint của đề bài (ERR_CONFIG_CONFLICT): ${
-            typeof errorDetail === 'string' ? errorDetail : 'Vui lòng bỏ chọn các chế độ không tương thích.'
+            typeof errorDetail === 'string'
+              ? errorDetail
+              : 'Vui lòng bỏ chọn các chế độ không tương thích.'
           }`,
         );
       } else {
@@ -142,7 +162,7 @@ export default function Stage2ConfigPage({
         );
       }
     } finally {
-      if (submitSessionRef.current === targetSessionId) {
+      if (isMountedRef.current && submitOperationRef.current === thisOpId) {
         setIsSubmittingConfig(false);
       }
     }
@@ -233,6 +253,15 @@ export default function Stage2ConfigPage({
     );
   }
 
+  // Trích xuất số lượng mã đề thật, không võ đoán mặc định 2 khi F5/reload
+  const derivedNumVersions =
+    activeConfig?.n_versions ||
+    activeConfig?.num_versions ||
+    (session?.exam_versions?.length > 0 ? session.exam_versions.length : null) ||
+    sseState.progress?.n_versions ||
+    sseState.progress?.num_versions ||
+    null;
+
   return (
     <div className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
       {/* Nút điều hướng phụ trên cùng */}
@@ -248,22 +277,35 @@ export default function Stage2ConfigPage({
       </div>
 
       {isGenerating ? (
-        <GenerationProgressView
-          sessionId={sessionId}
-          sessionTitle={session?.title}
-          numVersions={activeConfig?.num_versions || 2}
-          totalSourceQuestions={
-            session?.source_questions?.length || session?.blueprint_summary?.total_questions || 10
-          }
-          progress={sseState.progress}
-          questionStatuses={sseState.questionStatuses}
-          connectionState={sseState.connectionState}
-          isDone={sseState.isDone}
-          error={sseState.error}
-          reconnectCount={sseState.reconnectCount}
-          onReconnect={sseState.reconnect}
-          onComplete={handleCompleteRedirect}
-        />
+        derivedNumVersions ? (
+          <GenerationProgressView
+            sessionId={sessionId}
+            sessionTitle={session?.title}
+            numVersions={derivedNumVersions}
+            totalSourceQuestions={
+              session?.source_questions?.length || session?.blueprint_summary?.total_questions || 10
+            }
+            progress={sseState.progress}
+            questionStatuses={sseState.questionStatuses}
+            warnings={sseState.warnings}
+            connectionState={sseState.connectionState}
+            isDone={sseState.isDone}
+            error={sseState.error}
+            reconnectCount={sseState.reconnectCount}
+            onReconnect={sseState.reconnect}
+            onComplete={handleCompleteRedirect}
+          />
+        ) : (
+          <div className="mx-auto max-w-xl rounded-2xl border border-slate-800 bg-slate-900/90 p-8 text-center shadow-xl">
+            <Loader2 className="mx-auto h-10 w-10 animate-spin text-sky-400" />
+            <h3 className="mt-4 text-base font-bold text-white">
+              Đang đồng bộ tiến trình sinh đề...
+            </h3>
+            <p className="mt-2 text-sm text-slate-400">
+              Đang kết nối và lấy thông tin cấu hình số lượng mã đề từ máy chủ. Vui lòng chờ trong giây lát.
+            </p>
+          </div>
+        )
       ) : (
         <Stage2ConfigCard
           session={session}
