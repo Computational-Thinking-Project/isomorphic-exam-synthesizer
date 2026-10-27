@@ -46,12 +46,22 @@ def create_generation_config_router(
         current_user: CurrentUser = Depends(get_current_user),
         db: Client = Depends(get_user_db),
     ) -> GenerationConfigResponse:
+        # Preserve established auth/ownership HTTP errors, but never trust HTTP
+        # exceptions raised by a storage adapter as public response bodies.
         try:
             assert_ownership("exam_sessions", str(session_id), current_user.id, db=db)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise _storage_failure() from exc
+        try:
             repository = repository_factory(db)
             context = repository.load_context(session_id)
-            if context is None:
-                raise HTTPException(status_code=404, detail="Session not found")
+        except Exception as exc:
+            raise _storage_failure() from exc
+        if context is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        try:
             if context.session_id != session_id:
                 raise ValueError("Repository context does not match the requested session.")
             config = validate_generation_config(payload, context)
@@ -63,17 +73,19 @@ def create_generation_config_router(
             if result.session_id != session_id:
                 raise ValueError("Saved configuration does not match the requested session.")
             return result
-        except HTTPException:
-            raise
         except GenerationConfigError as exc:
             raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
         except Exception as exc:
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "code": "ERR_CONFIG_STORAGE_FAILURE",
-                    "message": "Generation configuration could not be processed.",
-                },
-            ) from exc
+            raise _storage_failure() from exc
 
     return router
+
+
+def _storage_failure() -> HTTPException:
+    return HTTPException(
+        status_code=500,
+        detail={
+            "code": "ERR_CONFIG_STORAGE_FAILURE",
+            "message": "Generation configuration could not be processed.",
+        },
+    )

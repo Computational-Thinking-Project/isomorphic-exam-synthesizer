@@ -11,6 +11,11 @@ only in isolated test apps with fixture-only persistence. Product `main.py` does
 not register this endpoint. The real save adapter and database RPC integration
 remain pending; the tests do not prove database atomicity, concurrency or RLS.
 
+Storage adapters cannot choose public HTTP responses by throwing arbitrary
+`HTTPException` objects: unexpected factory/read/save failures are sanitized as
+`ERR_CONFIG_STORAGE_FAILURE`. Established Auth/ownership HTTP behavior and typed
+configuration domain errors remain intact.
+
 ## HTTP request
 
 `POST /api/sessions/{session_id}/config`, with a UUID path parameter and an

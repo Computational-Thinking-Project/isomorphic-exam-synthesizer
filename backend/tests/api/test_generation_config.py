@@ -393,6 +393,30 @@ def test_unexpected_repository_failures_do_not_leak_or_retry(api: ApiHarness, ph
     assert len(api.store.save_calls) == (1 if phase == "save" else 0)
 
 
+@pytest.mark.parametrize("phase", ["factory", "read", "save"])
+def test_adapter_http_exceptions_are_not_trusted_public_errors(api: ApiHarness, phase: str) -> None:
+    from fastapi import HTTPException
+
+    error = HTTPException(502, "private DB endpoint and credentials")
+    if phase == "factory":
+        api.factory.side_effect = error
+    elif phase == "read":
+        api.store.load_error = error
+    else:
+        api.store.save_error = error
+    response = api.post(payload())
+    assert response.status_code == 500
+    assert response.json() == {"detail": STORAGE_DETAIL}
+
+
+def test_unexpected_ownership_storage_failure_is_safe(api: ApiHarness) -> None:
+    api.ownership.side_effect = RuntimeError("private DB endpoint")
+    response = api.post(payload())
+    assert response.status_code == 500
+    assert response.json() == {"detail": STORAGE_DETAIL}
+    api.factory.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("status_code", "code"),
     [
