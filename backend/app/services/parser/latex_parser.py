@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # Regex for LaTeX item matching
 LATEX_ITEM_PATTERN = re.compile(r"\\item(?:\[(?P<label>[^\]]+)\])?\s*", re.DOTALL)
 LATEX_QUESTION_HEADER = re.compile(
-    r"(?:\\textbf\{\s*(?:câu|bài)\s+(?P<num1>\d+)[\.:\-]?\s*\}|(?:câu|bài)\s+(?P<num2>\d+)\s*[\.:\-])",
+    r"(?:\\textbf\{\s*(?:câu|bài)\s+(?P<num1>\d+)[\.:\-\)]?\s*\}|(?:câu|bài)\s+(?P<num2>\d+)\s*[\.:\-\)])",
     re.IGNORECASE,
 )
 

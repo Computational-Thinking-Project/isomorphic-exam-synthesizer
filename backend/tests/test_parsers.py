@@ -855,8 +855,8 @@ def test_docx_parser_answer_key_grid_table_two_rows():
 
 def test_docx_parser_unsupported_table_layout_triggers_422():
     """Review Round 2 [P2]: Unsupported or malformed table layout triggers 422 with zero cloud mutation."""
-    from fastapi import HTTPException
     import docx
+    from fastapi import HTTPException
 
     doc = docx.Document()
     tbl = doc.add_table(rows=1, cols=2)
@@ -1005,6 +1005,7 @@ def test_docx_question_start_with_closing_paren():
 def test_docx_table_answer_key_with_colons_and_trailing_empty_cell():
     """Verify try_parse_table_as_answer_key handles colons, parens, and trailing empty cells."""
     from docx import Document
+
     from app.services.parser.docx_parser import try_parse_table_as_answer_key
 
     doc = Document()
@@ -1106,7 +1107,9 @@ D. P(D)=0.4"""
 def test_docx_parser_probability_formulas_preserved():
     """Verify docx_parser preserves probability formulas P(A)=0.1 and generates complete questions."""
     import io
+
     from docx import Document
+
     from app.services.parser.docx_parser import parse_docx
 
     doc = Document()
@@ -1152,6 +1155,7 @@ D. det(A) = 4"""
 def test_option_extraction_linear_complexity_scalability():
     """Verify option extraction scales linearly without O(n^4)/O(n^5) combinatorial explosion."""
     import time
+
     from app.services.parser.utils import extract_options_from_text
 
     # Pathological input with 40 option clusters
@@ -1167,8 +1171,10 @@ def test_option_extraction_linear_complexity_scalability():
 def test_docx_drawing_image_triggers_unparsed_image():
     """Verify embedded drawing/image in DOCX is flagged as UNPARSED_IMAGE instead of silently dropped."""
     import io
+
     from docx import Document
     from docx.oxml import parse_xml
+
     from app.services.parser.docx_parser import parse_docx
 
     doc = Document()
@@ -1198,7 +1204,9 @@ def test_docx_drawing_image_triggers_unparsed_image():
 def test_docx_nested_tables_extracts_all_questions():
     """Verify DOCX parser recursively extracts questions from nested tables in document order."""
     import io
+
     from docx import Document
+
     from app.services.parser.docx_parser import parse_docx
 
     doc = Document()
@@ -1338,6 +1346,7 @@ def test_file_security_rejects_invalid_utf8_encoding():
     """Verify file_security rejects files with invalid UTF-8 encoding."""
     import pytest
     from fastapi import HTTPException
+
     from app.services.parser.file_security import validate_file_security
 
     invalid_bytes = b"\xff\xfe\x00\x00\x12\x34"
@@ -1776,6 +1785,7 @@ def test_docx_image_flag_does_not_leak_to_other_question_in_cell():
     """Verify image in Question 2 inside a cell does not taint Question 1 in the same cell."""
     import unittest.mock
     from unittest.mock import MagicMock
+
     from app.services.parser.docx_parser import extract_cell_elements
 
     mock_doc = MagicMock()
@@ -1808,6 +1818,7 @@ def test_docx_nested_table_preserves_all_questions_in_order():
     """Verify nested tables are traversed preserving question order."""
     import unittest.mock
     from unittest.mock import MagicMock
+
     from app.services.parser.docx_parser import extract_cell_elements
 
     mock_doc = MagicMock()
@@ -1848,6 +1859,7 @@ def test_docx_nested_table_preserves_all_questions_in_order():
 def test_docx_merged_cells_do_not_duplicate_questions():
     """Verify merged cells sharing the same _tc element do not duplicate content."""
     from unittest.mock import MagicMock
+
     from app.services.parser.docx_parser import try_parse_table_as_answer_key
 
     tbl = MagicMock()
@@ -1879,6 +1891,7 @@ def test_docx_merged_cells_do_not_duplicate_questions():
 def test_docx_omml_and_image_errors_are_distinct():
     """Verify inspect_paragraph_visuals distinguishes OMML equations from drawings."""
     from unittest.mock import MagicMock
+
     from app.services.parser.docx_parser import inspect_paragraph_visuals
 
     p_omml = MagicMock()
@@ -1998,6 +2011,7 @@ def test_unparsed_image_blocks_zero_mutation_guard():
     """Verify unparsed image raises HTTP 422 in assert_zero_mutation_or_raise."""
     import pytest
     from fastapi import HTTPException
+
     from app.models.schemas import ParsedQuestionItem
     from app.services.parser.validator import assert_zero_mutation_or_raise
 
@@ -2013,6 +2027,7 @@ def test_unparsed_omml_blocks_zero_mutation_guard():
     """Verify unparsed OMML raises HTTP 422 in assert_zero_mutation_or_raise."""
     import pytest
     from fastapi import HTTPException
+
     from app.models.schemas import ParsedQuestionItem
     from app.services.parser.validator import assert_zero_mutation_or_raise
 
@@ -2028,6 +2043,7 @@ def test_parser_ambiguous_format_blocks_zero_mutation_guard():
     """Verify AMBIGUOUS_FORMAT error from parser blocks ingestion with HTTP 422."""
     import pytest
     from fastapi import HTTPException
+
     from app.models.schemas import ParsedQuestionItem, ParserErrorItem
     from app.services.parser.validator import assert_zero_mutation_or_raise
 
@@ -2045,6 +2061,7 @@ def test_invalid_utf8_md_is_rejected():
     """Verify invalid UTF-8 bytes for Markdown file raises HTTP 400."""
     import pytest
     from fastapi import HTTPException
+
     from app.services.parser.file_security import validate_file_security
 
     with pytest.raises(HTTPException) as exc_info:
@@ -2057,6 +2074,7 @@ def test_invalid_utf8_tex_is_rejected():
     """Verify invalid UTF-8 bytes for LaTeX file raises HTTP 400."""
     import pytest
     from fastapi import HTTPException
+
     from app.services.parser.file_security import validate_file_security
 
     with pytest.raises(HTTPException) as exc_info:
@@ -2066,18 +2084,51 @@ def test_invalid_utf8_tex_is_rejected():
 
 
 def test_utf8_bom_policy_is_consistent():
-    """Verify UTF-8 files with BOM (\\xef\\xbb\\xbf) are accepted."""
+    """Verify UTF-8 files with BOM (\\xef\\xbb\\xbf) are accepted and parsed completely without losing question 1."""
     from app.services.parser.file_security import validate_file_security
+    from app.services.parser.markdown_parser import parse_markdown
 
-    bom_bytes = b"\xef\xbb\xbf# C\xc3\xa2u 1:\nA. 1\nB. 2\nC. 3\nD. 4\n"
+    bom_bytes = (
+        b"\xef\xbb\xbf# C\xc3\xa2u 1: T\xc3\xadnh 1 + 1?\n"
+        b"*A*. 2\nB. 3\nC. 4\nD. 5\n\n"
+        b"# C\xc3\xa2u 2: T\xc3\xadnh 2 + 2?\n"
+        b"A. 3\n*B*. 4\nC. 5\nD. 6\n"
+    )
     ext = validate_file_security("exam.md", bom_bytes)
     assert ext == ".md"
+
+    # Verify decoding with utf-8-sig as in sessions.py
+    text_content = bom_bytes.decode("utf-8-sig")
+    questions, errors = parse_markdown(text_content)
+    assert len(errors) == 0
+    assert len(questions) == 2
+    assert questions[0].question_no == 1
+    assert "Tính 1 + 1?" in questions[0].raw_content
+    assert questions[0].options["A"] == "2"
+    assert questions[0].correct_key == "A"
+
+    assert questions[1].question_no == 2
+    assert "Tính 2 + 2?" in questions[1].raw_content
+    assert questions[1].options["B"] == "4"
+    assert questions[1].correct_key == "B"
+
+    # Also verify defense-in-depth: even if passed string with raw \ufeff, normalize_unicode_nfc strips it
+    raw_bom_str = (
+        "\ufeff# Câu 1: Phép tính cơ bản?\nA. 1\n*B*. 2\nC. 3\nD. 4\n\n"
+        "# Câu 2: Câu hỏi tiếp theo?\n*A*. 10\nB. 20\nC. 30\nD. 40\n"
+    )
+    q_direct, err_direct = parse_markdown(raw_bom_str)
+    assert len(err_direct) == 0
+    assert len(q_direct) == 2
+    assert q_direct[0].question_no == 1
+    assert q_direct[1].question_no == 2
 
 
 def test_storage_fallback_only_for_missing_bucket():
     """Verify storage upload falls back to exam-raw-files only when primary bucket is missing (404)."""
     import asyncio
     from unittest.mock import MagicMock
+
     from app.services.parser.file_security import upload_exam_file_to_storage
 
     db = MagicMock()
@@ -2105,6 +2156,7 @@ def test_storage_fallback_not_used_for_403_or_timeout():
     """Verify storage upload does not fall back to exam-raw-files for 403 or timeout."""
     import asyncio
     from unittest.mock import MagicMock
+
     from app.services.parser.file_security import upload_exam_file_to_storage
 
     db = MagicMock()
@@ -2228,6 +2280,7 @@ BẢNG ĐÁP ÁN: 1.A
 def test_docx_table_without_header_is_not_falsely_treated_as_answer_key():
     """Verify a small content table [1, A, 2, B] without answer key header is preserved as content (FIX-01)."""
     from unittest.mock import MagicMock
+
     from app.services.parser.docx_parser import try_parse_table_as_answer_key
 
     tbl = MagicMock()
@@ -2283,6 +2336,7 @@ def test_file_security_storage_session_id_sanitization():
     """Verify upload_exam_file_to_storage sanitizes unsafe session_id characters (FIX-17)."""
     import asyncio
     from unittest.mock import MagicMock
+
     from app.services.parser.file_security import upload_exam_file_to_storage
 
     db = MagicMock()
@@ -2302,8 +2356,10 @@ def test_file_security_docx_corrupted_zip():
     """Verify validate_file_security rejects corrupt docx archives via testzip (FIX-18)."""
     import io
     import zipfile
+
     import pytest
     from fastapi import HTTPException
+
     from app.services.parser.file_security import validate_file_security
 
     buf = io.BytesIO()
@@ -2333,8 +2389,9 @@ class TestP11DocxDataTableFalsePositive:
 
     def test_data_table_no_header_not_assigned_as_answer_key(self):
         """A content table '1|A','2|B' without any explicit label must NOT be accepted."""
-        from app.services.parser.docx_parser import try_parse_table_as_answer_key
         from unittest.mock import MagicMock
+
+        from app.services.parser.docx_parser import try_parse_table_as_answer_key
 
         def _make_table(rows_data):
             tbl = MagicMock()
@@ -2361,8 +2418,9 @@ class TestP11DocxDataTableFalsePositive:
 
     def test_answer_table_with_header_still_accepted(self):
         """A table with 'BẢNG ĐÁP ÁN' header MUST still be accepted after P1-1 fix."""
-        from app.services.parser.docx_parser import try_parse_table_as_answer_key
         from unittest.mock import MagicMock
+
+        from app.services.parser.docx_parser import try_parse_table_as_answer_key
 
         def _make_table(rows_data):
             tbl = MagicMock()
@@ -2388,8 +2446,9 @@ class TestP11DocxDataTableFalsePositive:
 
     def test_explicit_cau_label_table_accepted(self):
         """A table with 'Câu N' explicit labels should still be accepted."""
-        from app.services.parser.docx_parser import try_parse_table_as_answer_key
         from unittest.mock import MagicMock
+
+        from app.services.parser.docx_parser import try_parse_table_as_answer_key
 
         def _make_table(rows_data):
             tbl = MagicMock()
@@ -2553,3 +2612,67 @@ class TestP13DocxMidDocumentAnswerSection:
         for opt_text in (q2.options or {}).values():
             assert "BẢNG" not in opt_text, "Q2 options must not contain answer section data"
             assert "1.A" not in opt_text
+
+
+class TestEnhancedQuestionHeaderFormats:
+    """Verify enhanced heading+bold combinations, closing parentheses, and BOM edge cases."""
+
+    def test_markdown_heading_combined_with_bold_and_indentation(self):
+        """Markdown headers like '### **Câu 1:**' and indented '  Câu 2)' are correctly parsed."""
+        from app.services.parser.markdown_parser import parse_markdown
+
+        md_text = (
+            "### **Câu 1:** Câu hỏi một với heading và bold.\n"
+            "*A*. 10\nB. 20\nC. 30\nD. 40\n\n"
+            "  Câu 2) Câu hỏi hai thụt dòng với dấu ngoặc đơn.\n"
+            "A. 1\n*B*. 2\nC. 3\nD. 4\n\n"
+            "__Câu 3:__ Câu hỏi ba với gạch dưới.\n"
+            "A. x\nB. y\n*C*. z\nD. t\n"
+        )
+        questions, errors = parse_markdown(md_text)
+        assert len(errors) == 0
+        assert len(questions) == 3
+        assert questions[0].question_no == 1
+        assert questions[0].correct_key == "A"
+        assert questions[1].question_no == 2
+        assert questions[1].correct_key == "B"
+        assert questions[2].question_no == 3
+        assert questions[2].correct_key == "C"
+
+    def test_latex_closing_parenthesis_question_headers(self):
+        """LaTeX headers with closing parenthesis like '\\textbf{Câu 1)}' and 'Câu 2)' are parsed."""
+        from app.services.parser.latex_parser import parse_latex
+
+        latex_text = (
+            "\\textbf{Câu 1)} Giải phương trình bậc nhất $2x = 4$.\n"
+            "A. 1  B. 2  C. 3  D. 4\n\n"
+            "Câu 2) Giải phương trình bậc hai $x^2 = 9$.\n"
+            "A. 1  B. 2  C. 3  D. 4\n\n"
+            "\\textbf{BẢNG ĐÁP ÁN:}\n"
+            "1.B 2.C\n"
+        )
+        questions, errors = parse_latex(latex_text)
+        assert len(errors) == 0
+        assert len(questions) == 2
+        assert questions[0].question_no == 1
+        assert questions[0].correct_key == "B"
+        assert questions[1].question_no == 2
+        assert questions[1].correct_key == "C"
+
+    def test_mid_document_bom_artifact_stripped(self):
+        """Mid-document BOM characters (e.g. from concatenated files) are stripped and do not break parsing."""
+        from app.services.parser.markdown_parser import parse_markdown
+
+        # File 1 + File 2 concatenated where file 2 starts with BOM
+        md_text = (
+            "\ufeff### Câu 1: Câu hỏi một.\n"
+            "*A*. 1\nB. 2\nC. 3\nD. 4\n\n"
+            "\ufeff### Câu 2: Câu hỏi hai sau khi ghép file có dính BOM.\n"
+            "A. 1\n*B*. 2\nC. 3\nD. 4\n"
+        )
+        questions, errors = parse_markdown(md_text)
+        assert len(errors) == 0
+        assert len(questions) == 2
+        assert questions[0].question_no == 1
+        assert questions[1].question_no == 2
+

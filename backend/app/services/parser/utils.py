@@ -78,12 +78,14 @@ def extract_key_pair(match: re.Match) -> Tuple[int, str]:
 
 
 def normalize_unicode_nfc(text: str) -> str:
-    """Normalize string to Unicode NFC standard and clean up carriage returns."""
+    """Normalize string to Unicode NFC standard, clean up carriage returns and strip BOM."""
     if not text:
         return ""
     normalized = unicodedata.normalize("NFC", text)
     # Standardize line breaks to \n
     normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
+    # Strip UTF-8 BOM if present anywhere in text
+    normalized = normalized.replace("\ufeff", "")
     return normalized
 
 

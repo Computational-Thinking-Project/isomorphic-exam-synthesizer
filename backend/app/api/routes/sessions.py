@@ -394,10 +394,10 @@ async def ingest_file(
     if ext == ".docx":
         parsed_questions, parser_errors = parse_docx(file_bytes)
     elif ext == ".tex":
-        text_content = file_bytes.decode("utf-8", errors="replace")
+        text_content = file_bytes.decode("utf-8-sig", errors="replace")
         parsed_questions, parser_errors = parse_latex(text_content)
     elif ext == ".md":
-        text_content = file_bytes.decode("utf-8", errors="replace")
+        text_content = file_bytes.decode("utf-8-sig", errors="replace")
         parsed_questions, parser_errors = parse_markdown(text_content)
     else:
         raise HTTPException(
@@ -467,7 +467,7 @@ async def ingest_text(
             detail=f"Cannot ingest questions: session is in '{session_status}' state (must be 'draft')",
         )
 
-    raw_text = payload.raw_text
+    raw_text = payload.raw_text.replace("\ufeff", "")
 
     # Parse with markdown parser or latex parser with intelligent detection and dual fallback
     is_latex = any(

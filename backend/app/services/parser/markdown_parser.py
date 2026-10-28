@@ -25,7 +25,7 @@ from app.services.parser.utils import (
 logger = logging.getLogger(__name__)
 
 MD_QUESTION_HEADER = re.compile(
-    r"(?:^|\n)(?:#{1,6}\s*|\*{1,2}|_{1,2})?(?:câu|bài)\s+(?P<num>\d+)(?:\*{1,2}|_{1,2})?\s*[\.:\-](?:\*{1,2}|_{1,2})?\s*",
+    r"(?:^|\n)[ \t]*(?:#{1,6}\s*)?(?:\*{1,2}|_{1,2})?(?:câu|bài)\s+(?P<num>\d+)(?:\*{1,2}|_{1,2})?\s*[\.:\-\)](?:\*{1,2}|_{1,2})?\s*",
     re.IGNORECASE,
 )
 
@@ -64,8 +64,8 @@ def parse_markdown(raw_content: str) -> Tuple[List[ParsedQuestionItem], List[Par
             masked_q_body = masked_without_keys[start_pos:end_pos].strip()
             questions_raw.append({"question_no": q_no, "text": q_body, "masked_text": masked_q_body})
     else:
-        # Fallback: check if numbered like "1.", "2."
-        numbered_matches = list(re.finditer(r"(?:^|\n)(?P<num>\d+)\.\s+", masked_without_keys))
+        # Fallback: check if numbered like "1.", "1)", "2."
+        numbered_matches = list(re.finditer(r"(?:^|\n)[ \t]*(?P<num>\d+)[\.\)]\s+", masked_without_keys))
         if numbered_matches:
             for idx, m in enumerate(numbered_matches):
                 q_no = int(m.group("num"))

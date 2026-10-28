@@ -1525,6 +1525,7 @@ BẢNG ĐÁP ÁN:
 def test_sync_supabase_execute_does_not_block_event_loop():
     """Verify replace_source_questions_atomically runs sync db calls in asyncio.to_thread."""
     import asyncio
+
     from app.models.schemas import ParsedQuestionItem
     from app.services.parser.ingestion_service import replace_source_questions_atomically
 
@@ -1618,6 +1619,282 @@ D. 4"""
 
     assert response.status_code == 422
     assert not mock_db.rpc.called
+
+
+def test_ingest_file_markdown_with_bom_preserves_all_questions_and_answers(
+    client, mock_auth_user, auth_headers
+):
+    """[P2 Regression Test] Uploading Markdown file with UTF-8 BOM preserves all questions, stem, options, and answers."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    mock_db.storage.from_.return_value.upload.return_value = MagicMock()
+
+    mock_rpc_exec = MagicMock()
+    mock_rpc_exec.data = {"success": True, "count": 2}
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_exec
+
+    mock_q_res = MagicMock()
+    mock_q_res.data = [
+        {"id": "q-1", "question_no": 1, "correct_key": "A"},
+        {"id": "q-2", "question_no": 2, "correct_key": "B"},
+    ]
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = mock_q_res
+
+    # 2-question Markdown file with UTF-8 BOM (\xef\xbb\xbf) and directly marked answers (*A*, *B*)
+    md_bom_content = (
+        b"\xef\xbb\xbf### C\xc3\xa2u 1: Gi\xc3\xa1 tr\xe1\xbb\x8b c\xe1\xbb\xa7a x trong ph\xc6\xb0\xc6\xa1ng tr\xc3\xacnh x + 1 = 2 l\xc3\xa0:\n"
+        b"*A*. 1\n"
+        b"B. 2\n"
+        b"C. 3\n"
+        b"D. 4\n\n"
+        b"### C\xc3\xa2u 2: Gi\xc3\xa1 tr\xe1\xbb\x8b c\xe1\xbb\xa7a x trong ph\xc6\xb0\xc6\xa1ng tr\xc3\xacnh x - 2 = 0 l\xc3\xa0:\n"
+        b"A. 1\n"
+        b"*B*. 2\n"
+        b"C. 3\n"
+        b"D. 4\n"
+    )
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-file",
+            files={
+                "file": (
+                    "exam_with_bom.md",
+                    md_bom_content,
+                    "text/markdown",
+                )
+            },
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200
+    res_data = response.json()
+    assert res_data["total_questions"] == 2
+
+    # Verify Storage upload was called
+    mock_db.storage.from_.return_value.upload.assert_called_once()
+
+    # Verify RPC payload: both question 1 and question 2 received with full integrity
+    assert mock_db.rpc.called
+    rpc_call_args = mock_db.rpc.call_args[0][1]["p_questions"]
+    assert len(rpc_call_args) == 2
+
+    # Validate Question 1
+    q1 = rpc_call_args[0]
+    assert q1["question_no"] == 1
+    assert "x + 1 = 2" in q1["raw_content"]
+    assert q1["options"]["A"] == "1"
+    assert q1["options"]["B"] == "2"
+    assert q1["options"]["C"] == "3"
+    assert q1["options"]["D"] == "4"
+    assert q1["correct_key"] == "A"
+
+    # Validate Question 2
+    q2 = rpc_call_args[1]
+    assert q2["question_no"] == 2
+    assert "x - 2 = 0" in q2["raw_content"]
+    assert q2["options"]["A"] == "1"
+    assert q2["options"]["B"] == "2"
+    assert q2["options"]["C"] == "3"
+    assert q2["options"]["D"] == "4"
+    assert q2["correct_key"] == "B"
+
+
+def test_ingest_text_with_bom_char_preserves_all_questions(
+    client, mock_auth_user, auth_headers
+):
+    """[P2 Regression Test] Ingesting text with BOM character preserves all questions."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    mock_rpc_exec = MagicMock()
+    mock_rpc_exec.data = {"success": True, "count": 2}
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_exec
+
+    mock_q_res = MagicMock()
+    mock_q_res.data = [
+        {"id": "q-1", "question_no": 1, "correct_key": "C"},
+        {"id": "q-2", "question_no": 2, "correct_key": "D"},
+    ]
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = mock_q_res
+
+    raw_text = (
+        "\ufeff### Câu 1: Tìm nguyên hàm của f(x) = 0?\n"
+        "A. x  B. 1  *C*. C  D. 0\n\n"
+        "### Câu 2: Tìm đạo hàm của f(x) = x?\n"
+        "A. 0  B. x  C. 2  *D*. 1\n"
+    )
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-text",
+            json={"raw_text": raw_text},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["total_questions"] == 2
+    rpc_call_args = mock_db.rpc.call_args[0][1]["p_questions"]
+    assert len(rpc_call_args) == 2
+    assert rpc_call_args[0]["question_no"] == 1
+    assert rpc_call_args[0]["correct_key"] == "C"
+    assert rpc_call_args[1]["question_no"] == 2
+    assert rpc_call_args[1]["correct_key"] == "D"
+
+
+def test_ingest_file_latex_with_bom_preserves_all_questions_and_answers(
+    client, mock_auth_user, auth_headers
+):
+    """[P2 Regression Test] Uploading LaTeX file with UTF-8 BOM preserves all questions, stem, options, and answers."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    mock_db.storage.from_.return_value.upload.return_value = MagicMock()
+
+    mock_rpc_exec = MagicMock()
+    mock_rpc_exec.data = {"success": True, "count": 2}
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_exec
+
+    mock_q_res = MagicMock()
+    mock_q_res.data = [
+        {"id": "q-1", "question_no": 1, "correct_key": "A"},
+        {"id": "q-2", "question_no": 2, "correct_key": "C"},
+    ]
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = mock_q_res
+
+    tex_bom_content = (
+        b"\xef\xbb\xbf\\documentclass{article}\n\\begin{document}\n"
+        b"\\textbf{C\xc3\xa2u 1:} Cho ph\xc6\xb0\xc6\xa1ng tr\xc3\xacnh $x^2 = 4$.\n"
+        b"A. $x = \\pm 2$  B. $x = 2$  C. $x = -2$  D. $x = 0$\n\n"
+        b"\\textbf{C\xc3\xa2u 2:} \xc4\x90\xe1\xba\xa1o h\xc3\xa0m c\xe1\xbb\xa7a $y = x^3$ l\xc3\xa0:\n"
+        b"A. $x^2$  B. $2x$  C. $3x^2$  D. $3x$\n\n"
+        b"\\textbf{B\xe1\xba\xa2NG \xc4\x90\xc3\x81P \xc3\x81N:}\n1.A 2.C\n"
+        b"\\end{document}\n"
+    )
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-file",
+            files={
+                "file": (
+                    "exam_with_bom.tex",
+                    tex_bom_content,
+                    "application/x-tex",
+                )
+            },
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200
+    res_data = response.json()
+    assert res_data["total_questions"] == 2
+
+    # Verify RPC payload
+    assert mock_db.rpc.called
+    rpc_call_args = mock_db.rpc.call_args[0][1]["p_questions"]
+    assert len(rpc_call_args) == 2
+    assert rpc_call_args[0]["question_no"] == 1
+    assert rpc_call_args[0]["correct_key"] == "A"
+    assert rpc_call_args[1]["question_no"] == 2
+    assert rpc_call_args[1]["correct_key"] == "C"
+
+
+def test_ingest_file_markdown_heading_bold_and_closing_paren(
+    client, mock_auth_user, auth_headers
+):
+    """Uploading Markdown with heading+bold format and closing paren question header succeeds."""
+    mock_db = MagicMock()
+    mock_ownership = MagicMock()
+    mock_ownership.data = [{"user_id": "00000000-0000-0000-0000-000000000001"}]
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft"}]
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        mock_ownership,
+        mock_status,
+    ]
+
+    mock_db.storage.from_.return_value.upload.return_value = MagicMock()
+
+    mock_rpc_exec = MagicMock()
+    mock_rpc_exec.data = {"success": True, "count": 2}
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_exec
+
+    mock_q_res = MagicMock()
+    mock_q_res.data = [
+        {"id": "q-1", "question_no": 1, "correct_key": "B"},
+        {"id": "q-2", "question_no": 2, "correct_key": "D"},
+    ]
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = mock_q_res
+
+    md_content = (
+        "### **Câu 1:** Đồ thị hàm số bậc ba?\n"
+        "A. 1\n*B*. 2\nC. 3\nD. 4\n\n"
+        "  Câu 2) Tìm cực trị của hàm số?\n"
+        "A. 1\nB. 2\nC. 3\n*D*. 4\n"
+    ).encode("utf-8")
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/ingest-file",
+            files={
+                "file": (
+                    "exam_heading_bold.md",
+                    md_content,
+                    "text/markdown",
+                )
+            },
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200
+    res_data = response.json()
+    assert res_data["total_questions"] == 2
+    rpc_call_args = mock_db.rpc.call_args[0][1]["p_questions"]
+    assert len(rpc_call_args) == 2
+    assert rpc_call_args[0]["question_no"] == 1
+    assert rpc_call_args[0]["correct_key"] == "B"
+    assert rpc_call_args[1]["question_no"] == 2
+    assert rpc_call_args[1]["correct_key"] == "D"
+
+
 
 
 
