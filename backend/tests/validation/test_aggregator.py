@@ -469,3 +469,39 @@ class TestAggregatorReviewRegressionFixes:
         assert report.status == "failed"
         assert any("Multiple options satisfy the equation" in err for err in report.errors)
         assert any("worker error" in w.lower() or "oserror" in w.lower() for w in report.warnings)
+
+    def test_flexible_label_designations_in_aggregator(self):
+        # Various valid letter formats must resolve correctly across all validation tiers
+        for ans in ["A.", "Option A", "(A)", "Phương án A", "Đáp án A"]:
+            report = validate_question(
+                question_text="Phương trình $x + 1 = 2$ có nghiệm là",
+                options=["1", "2", "3", "4"],
+                correct_answer=ans,
+            )
+            assert report.passed is True
+            assert report.status == "passed"
+            assert report.confidence == "sympy_verified"
+            assert len(report.errors) == 0
+
+    def test_out_of_scope_complex_numbers_in_aggregator(self):
+        # Complex numbers domain is out-of-scope for single-equation CAS and routes directly to rule fallback
+        report = validate_question(
+            question_text="Cho số phức z = 3 + 4i. Tìm phần thực của z.",
+            options=["3", "4", "-3", "-4"],
+            correct_answer="A",
+        )
+        assert report.passed is True
+        assert report.status == "passed"
+        assert report.confidence == "rule_only"
+        assert any("complex_numbers" in w for w in report.warnings)
+
+    def test_nested_latex_invariants_in_aggregator(self):
+        # Denominator containing nested power 2^{3} - 8 == 0 must fail overall report
+        report = validate_question(
+            question_text=r"Tính giá trị của biểu thức $P = \frac{1}{2^{3} - 8}$",
+            options=["1", "2", "3", "4"],
+            correct_answer="1",
+        )
+        assert report.passed is False
+        assert report.status == "failed"
+        assert any("Zero denominator detected" in err for err in report.errors)

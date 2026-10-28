@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.services.validator.base import CheckResult, ValidationReport
 from app.services.validator.logic_checker import (
+    _resolve_option_letter,
     are_expressions_equivalent,
     check_designated_answer,
     check_duplicate_options,
@@ -151,17 +152,12 @@ def validate_question(
     sympy_res: Optional[EvaluationResult] = None
     uniqueness_inconclusive: bool = False
 
-    # Resolve correct answer text content if designated by label letter A, B, C, D
+    # Resolve correct answer text content if designated by label letter (supports 'A', 'A.', 'Option A', '(A)', etc.)
     resolved_answer = correct_answer
-    if (
-        correct_answer
-        and str(correct_answer).strip().upper() in ("A", "B", "C", "D")
-        and options
-        and len(options) == 4
-    ):
-        opt_idx = ord(str(correct_answer).strip().upper()) - ord("A")
-        if 0 <= opt_idx < len(options) and options[opt_idx] and str(options[opt_idx]).strip():
-            resolved_answer = str(options[opt_idx]).strip()
+    if correct_answer and options and len(options) == 4:
+        letter_res = _resolve_option_letter(correct_answer, options)
+        if letter_res is not None and letter_res[1] and str(letter_res[1]).strip():
+            resolved_answer = str(letter_res[1]).strip()
 
     if is_oos:
         # Route directly to rule fallback to prevent process pool timeout/crash on non-CAS domains
