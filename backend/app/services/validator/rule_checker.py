@@ -34,7 +34,7 @@ import ast
 import logging
 import math
 import re
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, getcontext
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -113,6 +113,36 @@ def _format_fraction(val: Fraction) -> str:
     return str(val)
 
 
+def _exact_integer_nth_root(val: int, n: int) -> Optional[int]:
+    """
+    Return exact integer n-th root of non-negative integer val if it exists,
+    otherwise None.
+    """
+    if val < 0 or n <= 0:
+        return None
+    if val == 0:
+        return 0
+    if val == 1 or n == 1:
+        return val
+    if n == 2:
+        r = math.isqrt(val)
+        return r if r * r == val else None
+
+    # Binary search for exact integer n-th root (n >= 3)
+    low = 1
+    high = 1 << ((val.bit_length() + n - 1) // n)
+    while low <= high:
+        mid = (low + high) // 2
+        p = mid**n
+        if p == val:
+            return mid
+        if p < val:
+            low = mid + 1
+        else:
+            high = mid - 1
+    return None
+
+
 class SafeNumericEvaluator(ast.NodeVisitor):
     """
     Strict, deterministic AST visitor that safely evaluates basic numeric
@@ -167,11 +197,39 @@ class SafeNumericEvaluator(ast.NodeVisitor):
                 raise ZeroDivisionError("Division by zero in AST evaluation")
             return left / right
         if isinstance(node.op, ast.Pow):
-            if abs(left) > 1000 or abs(right) > 20:
+            if abs(left) > 1000000 or abs(right) > 20:
                 raise ValueError("Exponentiation out of safe bounds")
             if right.denominator != 1:
-                flt_res = float(left) ** float(right)
-                return Fraction(str(round(flt_res, 12))).limit_denominator(1000000)
+                p = right.numerator
+                q = right.denominator
+                if left == 0:
+                    if p > 0:
+                        return Fraction(0)
+                    raise ZeroDivisionError(
+                        "Division by zero in AST evaluation (0 to non-positive power)"
+                    )
+                if left < 0 and q % 2 == 0:
+                    raise ValueError(f"Even root of negative number: {left}")
+
+                abs_num = abs(left.numerator)
+                den = left.denominator
+                num_r = _exact_integer_nth_root(abs_num, q)
+                den_r = _exact_integer_nth_root(den, q)
+                if num_r is not None and den_r is not None:
+                    root_frac = Fraction(num_r, den_r)
+                    sign = -1 if (left < 0 and p % 2 != 0) else 1
+                    return sign * (root_frac**p)
+
+                # Fallback to high-precision Decimal without limit_denominator
+                getcontext().prec = 50
+                dec_base = Decimal(abs_num) / Decimal(den)
+                dec_exp = Decimal(abs(p)) / Decimal(q)
+                dec_res = dec_base**dec_exp
+                if p < 0:
+                    dec_res = Decimal(1) / dec_res
+                sign = -1 if (left < 0 and p % 2 != 0) else 1
+                return sign * Fraction(str(dec_res))
+
             return left ** int(right)
         if isinstance(node.op, ast.Mod):
             if right == 0:
