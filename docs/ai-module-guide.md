@@ -1,3 +1,5 @@
+> AI W2 dùng gateway async, Blueprint chung và generator kèm solution: xem [hợp đồng tích hợp hiện tại](ai-w2-integration.md). Các API generator đồng bộ bên dưới là legacy; routes W2 phải dùng service mới.
+
 # Hướng Dẫn Tích Hợp Module AI & Isomorphic Generator (TV5)
 
 > **Người phụ trách:** TV5 (AI Integration & Generator)  
@@ -14,6 +16,21 @@ Tài liệu này cung cấp toàn bộ quy cách kỹ thuật (**Input**, **Outp
 ---
 
 ## 2. Input Specs (Module AI cần gì từ nhóm)
+
+### Gemini key pool
+
+Backend nhận `GEMINI_API_KEY` cũ và ba biến tùy chọn `GEMINI_API_KEY_1`,
+`GEMINI_API_KEY_2`, `GEMINI_API_KEY_3`. Bỏ key rỗng/trùng; mỗi request sinh câu,
+retry hoặc AI schema repair chọn ngẫu nhiên một key trong pool. Chọn ngẫu nhiên
+có thể lặp lại cùng key, không bảo đảm phân phối bằng nhau trong một batch nhỏ.
+Truyền `GeminiClient(api_key=...)` sẽ chỉ dùng key được chỉ định.
+
+SDK tự retry được tắt để mỗi lần retry do client quản lý đều chọn lại key.
+Không tự tạo thêm lượt retry khi hết quota. Các key cùng Google Cloud project
+chia sẻ rate limit; pool không giảm tổng request/token và không bảo đảm tránh 429.
+Docker backend đã đọc `.env` qua `env_file`; sau thay đổi cần recreate container
+(và rebuild để nhận code mới). Không cần thêm dependency cho key pool.
+Key thật chỉ nằm trong `.env` được Git ignore; `.env.example` chỉ chứa placeholder.
 
 ### 2.1. Cấu hình & Biến môi trường (Dành cho TV6 cấu hình Docker)
 Module AI đọc từ `backend/app/core/config.py` và yêu cầu 2 biến trong `.env`:
@@ -168,11 +185,11 @@ TV3 có thể cắm trực tiếp 2 hàm high-level từ `backend/app/services/g
    ```python
    from app.services.generation.generator import regenerate_single_variant
 
-   # Tái sinh câu hỏi với seed mới hoặc kèm feedback từ giáo viên / hệ thống kiểm tra
+   # Tái sinh với seed mới; feedback chỉ do validator nội bộ cung cấp
    new_variant = regenerate_single_variant(
        source_question=target_question,
        seed=payload.seed,
-       feedback=payload.feedback  # Ví dụ: "Đổi phương án nhiễu khác, không dùng nghiệm âm"
+       feedback=validation_feedback  # Không nhận prompt từ giáo viên
    )
    ```
 

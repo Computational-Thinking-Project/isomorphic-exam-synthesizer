@@ -18,7 +18,7 @@ class Config:
     max_requests_per_item: int = 3
     max_output_tokens: int = 16384
     concurrency: int = 3
-    schema_path: Path = ROOT / "docs/blueprints/science-blueprint.schema.json"
+    schema_path: Path = TOOL_DIR / "science-blueprint.schema.json"
     prompt_directory: Path = TOOL_DIR / "prompts"
 
     def public(self):
