@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
@@ -116,23 +116,76 @@ export default function Stage3ReviewPage({
   const [isRetryingAll, setIsRetryingAll] = useState(false);
   const [actionMessage, setActionMessage] = useState(null);
 
+  const loadOperationRef = useRef(0);
+  const retryOperationRef = useRef(0);
+  const isMountedRef = useRef(true);
+
   const loadData = useCallback(async () => {
-    if (!sessionId) return;
+    if (!sessionId) {
+      if (isMountedRef.current) {
+        setIsLoading(false);
+        setError('Không có mã phiên làm việc hợp lệ.');
+      }
+      return;
+    }
+
+    const currentOp = ++loadOperationRef.current;
+    const targetSessionId = sessionId;
+
     setIsLoading(true);
     setError(null);
+
     try {
-      const data = await loadSession(sessionId);
+      const data = await loadSession(targetSessionId);
+      if (
+        !isMountedRef.current ||
+        loadOperationRef.current !== currentOp ||
+        targetSessionId !== sessionId
+      ) {
+        return;
+      }
       setSession(data);
     } catch (err) {
+      if (
+        !isMountedRef.current ||
+        loadOperationRef.current !== currentOp ||
+        targetSessionId !== sessionId
+      ) {
+        return;
+      }
       setError(extractErrorString(err, 'Không thể tải thông tin chi tiết đề thi.'));
     } finally {
-      setIsLoading(false);
+      if (
+        isMountedRef.current &&
+        loadOperationRef.current === currentOp &&
+        targetSessionId === sessionId
+      ) {
+        setIsLoading(false);
+      }
     }
   }, [sessionId, loadSession]);
 
   useEffect(() => {
+    isMountedRef.current = true;
+    loadOperationRef.current += 1;
+    retryOperationRef.current += 1;
+
+    // Reset sạch sẽ dữ liệu của phiên trước để tránh rò rỉ hoặc hiển thị nhầm khi đang tải phiên mới
+    setSession(null);
+    setError(null);
+    setActiveVersionTab(1);
+    setActionMessage(null);
+    setRegeneratingQuestions({});
+    setIsRetryingAll(false);
+
     loadData();
-  }, [loadData]);
+
+    return () => {
+      isMountedRef.current = false;
+      loadOperationRef.current += 1;
+      retryOperationRef.current += 1;
+    };
+  }, [sessionId, loadData]);
 
   const numVersions =
     session?.config?.n_versions ||
@@ -155,40 +208,78 @@ export default function Stage3ReviewPage({
   // Hành động sinh bù cho câu bị thiếu
   const handleRetryMissingQuestion = async (versionIndex, questionNo) => {
     const key = `${versionIndex}-${questionNo}`;
+    const thisOp = ++retryOperationRef.current;
+    const targetSessionId = sessionId;
+
     setRegeneratingQuestions((prev) => ({ ...prev, [key]: true }));
     setActionMessage(null);
 
     try {
-      await retryGen(sessionId);
+      await retryGen(targetSessionId);
+      if (
+        !isMountedRef.current ||
+        retryOperationRef.current !== thisOp ||
+        targetSessionId !== sessionId
+      ) {
+        return;
+      }
       setActionMessage({
         type: 'success',
         text: `Đã kích hoạt tiến trình sinh bù cho Câu ${questionNo} (Mã đề ${versionIndex}).`,
       });
       await loadData();
     } catch (err) {
+      if (
+        !isMountedRef.current ||
+        retryOperationRef.current !== thisOp ||
+        targetSessionId !== sessionId
+      ) {
+        return;
+      }
       const msg = extractErrorString(err, 'Không thể kích hoạt sinh bù cho câu hỏi này.');
       setActionMessage({ type: 'error', text: msg });
     } finally {
-      setRegeneratingQuestions((prev) => ({ ...prev, [key]: false }));
+      if (isMountedRef.current && retryOperationRef.current === thisOp) {
+        setRegeneratingQuestions((prev) => ({ ...prev, [key]: false }));
+      }
     }
   };
 
   // Hành động "Sinh bù tất cả câu thiếu"
   const handleRetryAllMissing = async () => {
     if (isRetryingAll) return;
+    const thisOp = ++retryOperationRef.current;
+    const targetSessionId = sessionId;
+
     setIsRetryingAll(true);
     setActionMessage(null);
 
     try {
-      await retryGen(sessionId);
+      await retryGen(targetSessionId);
+      if (
+        !isMountedRef.current ||
+        retryOperationRef.current !== thisOp ||
+        targetSessionId !== sessionId
+      ) {
+        return;
+      }
       setActionMessage({
         type: 'success',
         text: 'Đã kích hoạt sinh bù các câu còn thiếu. Đang chuyển về màn hình tiến trình Stage 2...',
       });
       setTimeout(() => {
-        navigate(`/session/${sessionId}/stage2`);
+        if (isMountedRef.current && targetSessionId === sessionId) {
+          navigate(`/session/${sessionId}/stage2`);
+        }
       }, 1200);
     } catch (err) {
+      if (
+        !isMountedRef.current ||
+        retryOperationRef.current !== thisOp ||
+        targetSessionId !== sessionId
+      ) {
+        return;
+      }
       const msg = extractErrorString(err, 'Không thể kích hoạt sinh bù.');
       setActionMessage({ type: 'error', text: msg });
       setIsRetryingAll(false);

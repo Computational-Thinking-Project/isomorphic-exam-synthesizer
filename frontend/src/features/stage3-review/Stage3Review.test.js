@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { ensureDomEnvironment } from '../../test-support/domHarness.js';
 
 ensureDomEnvironment();
@@ -14,6 +14,12 @@ const { default: Stage3ReviewPage } = await import('./Stage3ReviewPage.jsx');
 function renderStage3Page(sessionId, { loadSession, retryGen } = {}) {
   const container = document.createElement('div');
   const root = createRoot(container);
+  let navigateFn = null;
+
+  function NavigationCapture() {
+    navigateFn = useNavigate();
+    return null;
+  }
 
   return {
     container,
@@ -23,6 +29,7 @@ function renderStage3Page(sessionId, { loadSession, retryGen } = {}) {
           React.createElement(
             MemoryRouter,
             { initialEntries: [`/session/${sessionId}/stage3`] },
+            React.createElement(NavigationCapture),
             React.createElement(
               Routes,
               null,
@@ -36,6 +43,11 @@ function renderStage3Page(sessionId, { loadSession, retryGen } = {}) {
             ),
           ),
         );
+      });
+    },
+    async navigate(nextId) {
+      await act(async () => {
+        navigateFn(`/session/${nextId}/stage3`);
       });
     },
     async unmount() {
@@ -259,4 +271,110 @@ test('Stage3ReviewPage nút Phê duyệt & Xuất bản đề bị khóa khi phi
   assert.ok(approveBtn.textContent.includes('Chờ Stage 3'), 'Nút phải ghi rõ Chờ Stage 3');
 
   await harness.unmount();
+});
+
+test('Stage3ReviewPage chuyển phiên A -> B: phản hồi A về muộn không được ghi đè phiên B', async () => {
+  let resolveSessionA;
+  let resolveSessionB;
+
+  const mockLoadSession = (sId) => {
+    if (sId === 'session-A') {
+      return new Promise((resolve) => {
+        resolveSessionA = () =>
+          resolve({
+            id: 'session-A',
+            title: 'Đề thi A (Phiên cũ)',
+            status: 'generated',
+            subject: 'Toán',
+            grade: 12,
+            exam_versions: [
+              {
+                version_index: 1,
+                questions: [{ question_no: 1, content: 'Đề A câu 1', options: { A: '1' }, correct_key: 'A' }],
+              },
+            ],
+          });
+      });
+    }
+    if (sId === 'session-B') {
+      return new Promise((resolve) => {
+        resolveSessionB = () =>
+          resolve({
+            id: 'session-B',
+            title: 'Đề thi B (Phiên mới)',
+            status: 'generated',
+            subject: 'Toán',
+            grade: 12,
+            exam_versions: [
+              {
+                version_index: 1,
+                questions: [{ question_no: 1, content: 'Đề B câu 1', options: { A: '2' }, correct_key: 'A' }],
+              },
+            ],
+          });
+      });
+    }
+    return Promise.reject(new Error('Unknown session'));
+  };
+
+  const harness = renderStage3Page('session-A', {
+    loadSession: mockLoadSession,
+  });
+
+  // 1. Mở phiên A (đang tải)
+  await harness.render();
+
+  // 2. Chuyển sang phiên B trong khi A vẫn đang chờ mạng
+  await harness.navigate('session-B');
+
+  // 3. Phiên B hoàn thành tải trước
+  await act(async () => {
+    resolveSessionB();
+  });
+
+  // Màn hình hiển thị đề thi B
+  assert.ok(harness.container.textContent.includes('Đề thi B (Phiên mới)'));
+  assert.equal(harness.container.textContent.includes('Đề thi A (Phiên cũ)'), false);
+
+  // 4. Phản hồi của A về muộn
+  await act(async () => {
+    resolveSessionA();
+  });
+
+  // Phản hồi của A phải bị bỏ qua, màn hình vẫn giữ nguyên đề thi B
+  assert.ok(harness.container.textContent.includes('Đề thi B (Phiên mới)'));
+  assert.equal(
+    harness.container.textContent.includes('Đề thi A (Phiên cũ)'),
+    false,
+    'Phản hồi đến muộn của phiên A không được ghi đè phiên B',
+  );
+
+  await harness.unmount();
+});
+
+test('Stage3ReviewPage hủy bỏ phản hồi khi unmount trong lúc tải', async () => {
+  let resolveSession;
+  const mockLoadSession = () =>
+    new Promise((resolve) => {
+      resolveSession = () =>
+        resolve({
+          id: 'session-unmount',
+          title: 'Đề thi unmount',
+          status: 'generated',
+        });
+    });
+
+  const harness = renderStage3Page('session-unmount', {
+    loadSession: mockLoadSession,
+  });
+
+  await harness.render();
+
+  // Rời trang khi chưa tải xong
+  await harness.unmount();
+
+  // Phản hồi về sau khi đã unmount
+  await act(async () => {
+    resolveSession();
+  });
 });
