@@ -1,6 +1,6 @@
 # AI W2 — triển khai và hợp đồng tích hợp
 
-Cập nhật 24/10/2026. Chủ trì: Trương Thành Đạt. Hùng review; Đạt tự cập nhật và tự merge Docker cho task của mình theo quy trình nhóm. Phần AI được đóng gói để review vào dev; chưa merge.
+Cập nhật 26/10/2026. Chủ trì: Trương Thành Đạt. Hùng review; Đạt tự cập nhật và tự merge Docker cho task của mình theo quy trình nhóm. PR #18 đã được Hùng approve và merge vào dev tại 0307b1c; CI và Docker environment đều đạt. Bổ sung chống trùng khi sinh lại trong nhánh tiếp theo; xem biên bản ai-w2-handoff.md.
 
 ## Flow đã chốt
 
@@ -16,7 +16,7 @@ Không gọi Blueprint khi mới ingest. Giáo viên không nhập prompt hoặc
 | Gemini async | `services/ai/gateway.py` | Chọn ngẫu nhiên key khả dụng mỗi attempt, 429 cooldown, 401/403 vô hiệu hóa key và cho retry qua key khác nếu còn, concurrency tối đa 3, deadline và quota hook |
 | Blueprint | `BlueprintService.extract_sources` | Kiểm nguồn xác nhận, chuyển schema app sang canonical 0.4.0, extractor của Hùng dùng chung CLI, cache có fingerprint, retry phần thiếu, callback từng câu |
 | Sinh đề | `GenerationService.generate_exam_drafts` | N=1–4, 1–20 câu, một request cho candidate+answer+solution mỗi vị trí, tiếp tục từ phần đã lưu, chống trùng giữa mã |
-| Sinh lại | `GenerationService.regenerate_question` | Giữ Blueprint, seed mới, chống trùng nguồn/câu cũ; không nhận prompt giáo viên; trả candidate mới để BE thay thế nguyên tử sau thành công |
+| Sinh lại | `GenerationService.regenerate_question` | Giữ Blueprint, seed mới, chống trùng nguồn/câu cũ và các candidate cùng nguồn được BE truyền qua current_candidates; không nhận prompt giáo viên; trả candidate mới để BE thay thế nguyên tử sau thành công |
 | Kiểm tra | `CandidateValidator` | Tái sử dụng syntax, logic options, SymPy hiện có; solution key/final answer nhất quán; process timeout cho CAS |
 | Output | `models/generation.py` | Nội dung model tách metadata server, solution từng bước và Markdown, kết quả từng vị trí, báo cáo check và batch status |
 
@@ -122,3 +122,23 @@ Options là mảng bốn string theo thứ tự A/B/C/D, frontend gắn nhãn th
 ### Chuẩn bị PR trên dev mới
 
 Baseline đã đồng bộ PR #7 Google login (`bbb7c5e`). Nghiệm thu host trước đóng gói: **304 passed, 1 live opt-in skipped**, Ruff đạt, Mypy 52 files đạt. Các key thật và output demo ở file ignored, không đưa vào Git. Docker engine/CLI không có trên host này; dùng workflow Docker environment của PR để nghiệm thu backend và standalone Blueprint. Chờ Hùng (`benalexx007`) review trước khi merge; các routes/DB/SSE/UI W2 vẫn là phần tích hợp với BE/FE.
+
+
+## Sinh lại không trùng mã đề khác (bổ sung sau review PR #18)
+
+```python
+replacement = await services.generation.regenerate_question(
+    source, stored_blueprint, previous_candidate,
+    confirmed_source_hash=stored_single_source_hash,
+    context=review_context, version_index=version_index,
+    current_candidates=other_current_candidates_for_same_source,
+)
+```
+
+BE phải đọc candidate hiện tại của cùng câu nguồn ở tất cả mã đề còn lại trong cùng session; truyền qua `current_candidates`. Service snapshot dữ liệu, kiểm source ID/Blueprint fingerprint trước API, loại trùng theo stem và options chuẩn hóa (không phụ thuộc thứ tự options), retry trong tối đa 4 attempts. Tham số mặc định rỗng giữ tương thích caller cũ, nhưng caller review nhiều mã bắt buộc truyền đủ danh sách. Không phát hiện mọi trùng lặp ngữ nghĩa.
+
+Nếu thất bại, giữ nguyên câu cũ. Khi thành công, BE khóa session hoặc dùng revision/CAS trong transaction, đọc lại các candidate hiện hành và dùng `candidate_identity` kiểm trùng trước khi đổi con trỏ. Nếu revision đã đổi hoặc xuất hiện trùng, rollback và trả conflict; không tự lặp gọi AI vô hạn. Giữ quota reservation bền vững riêng cho review. Service không chứng minh ownership/session membership; route phải kiểm trước khi gọi.
+
+Revert to Source là thao tác riêng, không gọi Gemini và không đi qua regenerate. Chưa triển khai endpoint này; khi triển khai phải ghi provenance và cho phép ngoại lệ câu nguồn có chủ đích, vẫn yêu cầu giáo viên duyệt. Không tự thêm nút này trong phạm vi AI.
+
+Các kết quả kiểm thử 24/10 ở trên là lịch sử. Trạng thái hiện tại: PR #18 đã merge, live smoke đã đạt và Docker CI đã đạt; flow HTTP/DB/SSE/UI W2 vẫn chưa nghiệm thu vì các điểm nối chưa được triển khai trong baseline.
