@@ -586,3 +586,75 @@ test('Stage2ConfigPage phiên partial_generated: SSE báo done nhưng isPartial 
 
   await harness.unmount();
 });
+
+test('Stage2ConfigPage xử lý lỗi 409 sinh bù dạng object detail: {code, message} an toàn, không làm crash React child', async () => {
+  const mockLoadSession = async () => ({
+    id: 'session-retry-error-test',
+    title: 'Đề kiểm tra lỗi retry 409',
+    status: 'generating',
+    source_questions: [{ id: 'q1', question_no: 1 }, { id: 'q2', question_no: 2 }],
+    config: { num_versions: 2 },
+    exam_versions: [],
+    blueprint_summary: {
+      total_questions: 2,
+      supported_modes: [],
+      is_ready: true,
+    },
+  });
+
+  const mockUseSSE = () => ({
+    connectionState: 'connected',
+    progress: {
+      percent: 50,
+      completedCount: 2,
+      totalVariants: 4,
+      session_status: 'partial_generated',
+      is_partial: true,
+    },
+    questionStatuses: {},
+    warnings: [],
+    isDone: true,
+    isPartial: true,
+    error: null,
+    reconnectCount: 0,
+    reconnect: () => {},
+  });
+
+  // Giả lập lỗi HTTP 409 trả về object detail: { code, message }
+  const mockRetryGen = async () => {
+    const err = new Error('Request failed with status code 409');
+    err.response = {
+      status: 409,
+      data: {
+        detail: {
+          code: 'ERR_SESSION_CONFLICT',
+          message: 'Phiên đang trong tiến trình sinh đề nền, không thể sinh bù trùng lặp.',
+        },
+      },
+    };
+    throw err;
+  };
+
+  const harness = renderPage('session-retry-error-test', {
+    loadSession: mockLoadSession,
+    useSSEHook: mockUseSSE,
+    retryGen: mockRetryGen,
+  });
+  await harness.render();
+
+  const retryBtn = Array.from(harness.container.querySelectorAll('button')).find(
+    (b) => b.textContent.includes('Sinh bù các câu còn thiếu'),
+  );
+  assert.ok(retryBtn, 'Phải có nút Sinh bù các câu còn thiếu');
+
+  await act(async () => {
+    retryBtn.click();
+  });
+
+  // Xác minh thông báo lỗi được hiển thị dưới dạng chuỗi an toàn, không gây crash màn hình React
+  const alertBox = harness.container.querySelector('[role="alert"]');
+  assert.ok(alertBox, 'Phải có alert box hiển thị lỗi');
+  assert.ok(alertBox.textContent.includes('Phiên đang trong tiến trình sinh đề nền'));
+
+  await harness.unmount();
+});

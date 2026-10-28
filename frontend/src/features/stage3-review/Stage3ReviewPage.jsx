@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Download,
   FileCheck,
+  Info,
   Loader2,
   RefreshCw,
   Sparkles,
@@ -16,16 +17,87 @@ import MathRenderer from '../../components/MathRenderer.jsx';
 import { fetchSessionDetail, retryGeneration } from '../../services/stage2Service.js';
 
 /**
+ * Trích xuất an toàn chuỗi thông báo lỗi từ response HTTP
+ */
+function extractErrorString(err, fallback = 'Đã xảy ra lỗi.') {
+  const resData = err?.response?.data;
+  if (typeof resData?.error_message === 'string') return resData.error_message;
+  if (typeof resData?.message === 'string') return resData.message;
+  if (typeof resData?.detail === 'string') return resData.detail;
+  if (typeof resData?.detail?.message === 'string') return resData.detail.message;
+  if (typeof resData?.detail?.error === 'string') return resData.detail.error;
+  if (typeof resData?.error === 'string') return resData.error;
+  if (typeof err?.message === 'string') return err.message;
+  return fallback;
+}
+
+/**
+ * Adapter tìm kiếm biến thể câu hỏi linh hoạt hỗ trợ nhiều cấu trúc dữ liệu từ Backend:
+ * - Nested questions trong exam_versions[i].questions hoặc exam_versions[i].version_questions
+ * - Flat questions trong session.version_questions (so khớp theo version_id hoặc version_index/code)
+ */
+function findVariantInSession(session, versionIndex, questionNo) {
+  if (!session) return null;
+
+  const versions = session.exam_versions || [];
+  const targetCode = String(100 + versionIndex);
+
+  // Tìm phiên bản tương ứng
+  const v = versions.find((ver, idx) => {
+    const vIdx = ver.version_index ?? ver.index ?? idx + 1;
+    const code = String(ver.version_code || '');
+    return vIdx === versionIndex || code === targetCode || code === String(versionIndex);
+  });
+
+  // 1. Kiểm tra nested trong version
+  if (v) {
+    const vQuestions = v.questions || v.version_questions || [];
+    const found = vQuestions.find((q) => {
+      const qNum = q.question_no ?? q.number;
+      return qNum === questionNo;
+    });
+    if (found) return found;
+  }
+
+  // 2. Kiểm tra mảng phẳng version_questions ở session root
+  if (Array.isArray(session.version_questions)) {
+    const found = session.version_questions.find((q) => {
+      const qNum = q.question_no ?? q.number;
+      if (qNum !== questionNo) return false;
+
+      if (v?.id && q.version_id) {
+        return q.version_id === v.id;
+      }
+      const qVIdx = q.version_index ?? q.version_code;
+      return qVIdx === versionIndex || String(qVIdx) === targetCode;
+    });
+    if (found) return found;
+  }
+
+  return null;
+}
+
+/**
+ * Đếm tổng số câu hỏi biến thể thực sự đã được nạp trong dữ liệu phiên
+ */
+function countTotalLoadedVariants(session) {
+  if (!session) return 0;
+  let count = 0;
+  if (Array.isArray(session.version_questions)) {
+    count += session.version_questions.length;
+  }
+  if (Array.isArray(session.exam_versions)) {
+    session.exam_versions.forEach((v) => {
+      const qList = v.questions || v.version_questions || [];
+      count += qList.length;
+    });
+  }
+  return count;
+}
+
+/**
  * Stage3ReviewPage: Màn hình Xem & Duyệt đề thi đẳng cấu (Giai đoạn 3)
  * Route: /session/:sessionId/stage3
- *
- * Hỗ trợ:
- * 1. Duyệt từng mã đề và từng câu hỏi biến thể kèm công thức toán KaTeX.
- * 2. Nhận diện trạng thái partial_generated (sinh thiếu câu):
- *    - Báo lỗi rõ ràng ở đầu trang.
- *    - Hiển thị ô cảnh báo cho các câu bị thiếu kèm nút "Tạo lại câu này".
- *    - Chặn nút xuất bản / phê duyệt theo quy định W2 khi chưa đủ 100% câu.
- * 3. Cho phép tạo lại từng câu cụ thể hoặc sinh bù toàn bộ các câu thiếu.
  */
 export default function Stage3ReviewPage({
   loadSession = fetchSessionDetail,
@@ -52,7 +124,7 @@ export default function Stage3ReviewPage({
       const data = await loadSession(sessionId);
       setSession(data);
     } catch (err) {
-      setError(err?.message || 'Không thể tải thông tin chi tiết đề thi.');
+      setError(extractErrorString(err, 'Không thể tải thông tin chi tiết đề thi.'));
     } finally {
       setIsLoading(false);
     }
@@ -77,38 +149,24 @@ export default function Stage3ReviewPage({
     session?.status === 'partial_generated' ||
     Boolean(session?.is_partial);
 
-  // Tra cứu biến thể đã sinh cho cặp (mã đề, số câu)
-  const getVariant = (versionIndex, questionNo) => {
-    const version = session?.exam_versions?.find(
-      (v) => (v.version_index ?? v.index ?? 1) === versionIndex,
-    );
-    const questions = version?.questions || version?.version_questions || [];
-    return questions.find(
-      (q) => (q.question_no ?? q.number) === questionNo,
-    );
-  };
+  const loadedVariantsCount = countTotalLoadedVariants(session);
+  const hasLoadedAnyVariants = loadedVariantsCount > 0;
 
-  // Hành động "Tạo lại câu này" cho câu cụ thể
-  const handleRegenerateQuestion = async (versionIndex, questionNo) => {
+  // Hành động sinh bù cho câu bị thiếu
+  const handleRetryMissingQuestion = async (versionIndex, questionNo) => {
     const key = `${versionIndex}-${questionNo}`;
     setRegeneratingQuestions((prev) => ({ ...prev, [key]: true }));
     setActionMessage(null);
 
     try {
-      // Kích hoạt sinh bù qua endpoint retry-generation hoặc cập nhật câu
       await retryGen(sessionId);
       setActionMessage({
         type: 'success',
-        text: `Đã kích hoạt tạo lại Câu ${questionNo} (Mã đề ${versionIndex}). Tiến trình đang chạy ngầm.`,
+        text: `Đã kích hoạt tiến trình sinh bù cho Câu ${questionNo} (Mã đề ${versionIndex}).`,
       });
-      // Tải lại dữ liệu phiên
       await loadData();
     } catch (err) {
-      const msg =
-        err?.response?.data?.error_message ||
-        err?.response?.data?.detail ||
-        err?.message ||
-        'Không thể tạo lại câu hỏi này.';
+      const msg = extractErrorString(err, 'Không thể kích hoạt sinh bù cho câu hỏi này.');
       setActionMessage({ type: 'error', text: msg });
     } finally {
       setRegeneratingQuestions((prev) => ({ ...prev, [key]: false }));
@@ -131,11 +189,7 @@ export default function Stage3ReviewPage({
         navigate(`/session/${sessionId}/stage2`);
       }, 1200);
     } catch (err) {
-      const msg =
-        err?.response?.data?.error_message ||
-        err?.response?.data?.detail ||
-        err?.message ||
-        'Không thể kích hoạt sinh bù.';
+      const msg = extractErrorString(err, 'Không thể kích hoạt sinh bù.');
       setActionMessage({ type: 'error', text: msg });
       setIsRetryingAll(false);
     }
@@ -192,7 +246,9 @@ export default function Stage3ReviewPage({
             {session?.title || 'Xem & Duyệt Đề Thi Đẳng Cấu'}
           </h1>
           <p className="mt-1 text-xs text-slate-400">
-            Môn học: <span className="text-slate-200">{session?.subject || 'Toán'}</span> • Lớp: <span className="text-slate-200">{session?.grade || 12}</span> • Số mã đề: <span className="text-slate-200">{numVersions}</span>
+            Môn học: <span className="text-slate-200">{session?.subject || 'Toán'}</span> • Lớp:{' '}
+            <span className="text-slate-200">{session?.grade || 12}</span> • Số mã đề:{' '}
+            <span className="text-slate-200">{numVersions}</span>
           </p>
         </div>
 
@@ -262,12 +318,27 @@ export default function Stage3ReviewPage({
                 Cảnh báo: Đề thi có câu hỏi chưa hoàn tất (<code>partial_generated</code>)
               </h3>
               <p className="mt-1 text-xs text-amber-200/90 leading-relaxed">
-                Tiến trình sinh đề bị dừng trước khi hoàn thành 100% (do chạm trần hạn ngạch API Gemini hoặc câu hỏi không đạt ràng buộc nghiệm đẹp).
-                Theo quy chế W2, tính năng Xuất bản file và Phê duyệt cuối bị tạm khóa cho đến khi đủ câu.
-                Bạn có thể duyệt từng câu bên dưới và bấm nút <strong>"Tạo lại câu này"</strong> đối với các câu bị thiếu.
+                Tiến trình sinh đề bị dừng trước khi hoàn thành 100% (do chạm trần hạn ngạch API
+                Gemini hoặc câu hỏi không đạt ràng buộc nghiệm đẹp). Theo quy chế W2, tính năng Xuất
+                bản file và Phê duyệt cuối bị tạm khóa cho đến khi đủ câu. Bạn có thể duyệt từng câu
+                bên dưới và bấm nút <strong>"Sinh bù câu này"</strong> đối với các câu bị thiếu.
               </p>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Thông báo khi backend chưa nạp dữ liệu chi tiết câu hỏi (tránh suy đoán võ đoán là chưa sinh) */}
+      {!hasLoadedAnyVariants && !isPartial && (
+        <div className="rounded-2xl border border-slate-700 bg-slate-900/80 p-8 text-center text-slate-300">
+          <Info className="mx-auto h-8 w-8 text-sky-400" />
+          <h3 className="mt-3 text-base font-semibold text-white">
+            Đang đồng bộ dữ liệu chi tiết các mã đề từ Backend
+          </h3>
+          <p className="mt-1 text-xs text-slate-400 max-w-md mx-auto">
+            Các mã đề thi đã được ghi nhận. Dữ liệu chi tiết từng câu hỏi biến thể đang trong quá trình
+            đồng bộ từ cơ sở dữ liệu.
+          </p>
         </div>
       )}
 
@@ -295,12 +366,17 @@ export default function Stage3ReviewPage({
       {/* Danh sách các câu hỏi trong mã đề được chọn */}
       <div className="space-y-4">
         {Array.from({ length: totalSourceQuestions }, (_, i) => i + 1).map((qNo) => {
-          const variant = getVariant(activeVersionTab, qNo);
+          const variant = findVariantInSession(session, activeVersionTab, qNo);
           const isMissing = !variant;
           const regKey = `${activeVersionTab}-${qNo}`;
           const isRegenerating = regeneratingQuestions[regKey];
 
           if (isMissing) {
+            // Nếu cả phiên hoàn toàn chưa có variant nào và không phải partial, hiển thị trạng thái chờ tải
+            if (!hasLoadedAnyVariants && !isPartial) {
+              return null;
+            }
+
             return (
               <div
                 key={qNo}
@@ -323,7 +399,7 @@ export default function Stage3ReviewPage({
 
                   <button
                     type="button"
-                    onClick={() => handleRegenerateQuestion(activeVersionTab, qNo)}
+                    onClick={() => handleRetryMissingQuestion(activeVersionTab, qNo)}
                     disabled={isRegenerating}
                     className="inline-flex items-center gap-1.5 rounded-xl border border-rose-500/40 bg-rose-900/40 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-rose-900/60 disabled:opacity-50"
                   >
@@ -332,7 +408,7 @@ export default function Stage3ReviewPage({
                     ) : (
                       <RefreshCw className="h-3.5 w-3.5" />
                     )}
-                    Tạo lại câu này
+                    Sinh bù câu này
                   </button>
                 </div>
               </div>
@@ -342,11 +418,28 @@ export default function Stage3ReviewPage({
           // Hiển thị câu hỏi đã hoàn tất
           const options = variant.options || {};
           const correctKey = variant.correct_key || variant.answer;
+          const hasWarning = Boolean(
+            variant.has_warning ||
+            variant.status === 'warning' ||
+            variant.status === 'needs_review' ||
+            variant.warning_message ||
+            (variant.validation_report &&
+              variant.validation_report.is_valid === false),
+          );
+          const warningMsg =
+            variant.warning_message ||
+            variant.validation_report?.warning ||
+            variant.validation_report?.message ||
+            'Câu hỏi có cảnh báo nghiệm hoặc ràng buộc cần lưu ý.';
 
           return (
             <div
               key={qNo}
-              className="rounded-2xl border border-slate-700 bg-slate-900/90 p-5 shadow-lg transition-all"
+              className={`rounded-2xl border p-5 shadow-lg transition-all ${
+                hasWarning
+                  ? 'border-amber-500/50 bg-slate-900/90'
+                  : 'border-slate-700 bg-slate-900/90'
+              }`}
             >
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
                 <div className="flex items-center gap-2.5">
@@ -356,26 +449,40 @@ export default function Stage3ReviewPage({
                   <span className="text-xs font-semibold text-white">
                     Câu {qNo} (Mã đề #{100 + activeVersionTab})
                   </span>
-                  <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-950/40 px-2 py-0.5 text-[11px] font-medium text-emerald-300">
-                    <CheckCircle className="h-3 w-3" />
-                    Đạt chuẩn
-                  </span>
+
+                  {/* Badge phản ánh đúng chất lượng thẩm định: Đạt chuẩn vs Có cảnh báo */}
+                  {hasWarning ? (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-950/40 px-2.5 py-0.5 text-[11px] font-medium text-amber-300">
+                      <AlertTriangle className="h-3 w-3" />
+                      Cần thẩm định (Có cảnh báo)
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-950/40 px-2.5 py-0.5 text-[11px] font-medium text-emerald-300">
+                      <CheckCircle className="h-3 w-3" />
+                      Đạt chuẩn
+                    </span>
+                  )}
                 </div>
 
+                {/* Nút thao tác câu đã sinh: Khóa rõ ràng khi chưa có endpoint đổi câu đơn lẻ */}
                 <button
                   type="button"
-                  onClick={() => handleRegenerateQuestion(activeVersionTab, qNo)}
-                  disabled={isRegenerating}
-                  className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800/60 px-2.5 py-1 text-xs font-medium text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-50"
+                  disabled
+                  title="Tính năng đổi biến thể cho câu đã đạt chuẩn sẽ sẵn sàng khi Stage 3 tích hợp đầy đủ đầu nối backend."
+                  className="inline-flex cursor-not-allowed items-center gap-1 rounded-lg border border-slate-800 bg-slate-800/40 px-2.5 py-1 text-xs font-medium text-slate-500 opacity-60"
                 >
-                  {isRegenerating ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-3 w-3" />
-                  )}
-                  Tạo lại câu này
+                  <RefreshCw className="h-3 w-3" />
+                  Đổi biến thể (Chờ Stage 3)
                 </button>
               </div>
+
+              {/* Thông báo chi tiết cảnh báo nếu có */}
+              {hasWarning && (
+                <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-950/20 p-2.5 text-xs text-amber-200/90 flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
+                  <span>{warningMsg}</span>
+                </div>
+              )}
 
               {/* Nội dung đề bài */}
               <div className="mt-3 text-sm text-slate-200">
@@ -386,7 +493,8 @@ export default function Stage3ReviewPage({
               {Object.keys(options).length > 0 && (
                 <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {Object.entries(options).map(([key, optVal]) => {
-                    const isCorrect = String(key).toUpperCase() === String(correctKey).toUpperCase();
+                    const isCorrect =
+                      String(key).toUpperCase() === String(correctKey).toUpperCase();
                     return (
                       <div
                         key={key}

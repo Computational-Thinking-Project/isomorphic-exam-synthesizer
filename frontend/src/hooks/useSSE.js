@@ -424,12 +424,20 @@ export function useSSE(sessionId, {
     };
   }, [sessionId, enabled, connect, cleanupConnection]);
 
-  // Hàm thủ công cho phép người dùng bấm "Kết nối lại" trên giao diện
+  // Hàm thủ công cho phép người dùng bấm "Kết nối lại" hoặc kích hoạt vòng theo dõi mới khi sinh bù
   const manualReconnect = useCallback(() => {
     isDoneRef.current = false;
+    setIsDone(false);
     reconnectAttemptRef.current = 0;
     setReconnectCount(0);
     setError(null);
+    lastEventIdRef.current = null;
+    setProgress((prev) => ({
+      ...prev,
+      session_status: 'generating',
+      is_partial: false,
+      message: 'Đang kết nối lại tiến trình sinh đề...',
+    }));
     connect();
   }, [connect]);
 

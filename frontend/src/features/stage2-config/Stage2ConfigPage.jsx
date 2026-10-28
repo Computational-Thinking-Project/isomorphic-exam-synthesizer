@@ -26,6 +26,21 @@ import {
  * 3. Kích hoạt sinh đề và hiển thị tiến trình SSE thời gian thực (GenerationProgressView)
  * 4. Tự động điều hướng sang Stage 3 khi hoàn tất
  */
+/**
+ * Trích xuất chuỗi thông báo lỗi an toàn từ response HTTP (tránh lỗi React child khi response trả về object)
+ */
+function extractErrorString(err, fallback = 'Không thể thực hiện thao tác.') {
+  const resData = err?.response?.data;
+  if (typeof resData?.error_message === 'string') return resData.error_message;
+  if (typeof resData?.message === 'string') return resData.message;
+  if (typeof resData?.detail === 'string') return resData.detail;
+  if (typeof resData?.detail?.message === 'string') return resData.detail.message;
+  if (typeof resData?.detail?.error === 'string') return resData.detail.error;
+  if (typeof resData?.error === 'string') return resData.error;
+  if (typeof err?.message === 'string') return err.message;
+  return fallback;
+}
+
 export default function Stage2ConfigPage({
   loadSession = fetchSessionDetail,
   saveConfig = saveSessionConfig,
@@ -50,6 +65,7 @@ export default function Stage2ConfigPage({
   const [retryError, setRetryError] = useState(null);
 
   const submitOperationRef = useRef(0);
+  const retryOperationRef = useRef(0);
   const isMountedRef = useRef(true);
 
   // Tải dữ liệu phiên làm việc với khả năng cô lập tuyệt đối theo sessionId
@@ -57,9 +73,12 @@ export default function Stage2ConfigPage({
     isMountedRef.current = true;
     let active = true;
 
-    // Vô hiệu hóa mọi lượt submit đang chờ của phiên trước và reset trạng thái đang lưu
+    // Vô hiệu hóa mọi lượt submit và retry đang chờ của phiên trước
     submitOperationRef.current += 1;
+    retryOperationRef.current += 1;
     setIsSubmittingConfig(false);
+    setIsRetryingGeneration(false);
+    setRetryError(null);
 
     // Reset sạch sẽ trạng thái của container theo sessionId hiện tại
     setSession(null);
@@ -106,7 +125,9 @@ export default function Stage2ConfigPage({
       active = false;
       isMountedRef.current = false;
       submitOperationRef.current += 1;
+      retryOperationRef.current += 1;
       setIsSubmittingConfig(false);
+      setIsRetryingGeneration(false);
     };
   }, [sessionId, loadSession]);
 
@@ -178,21 +199,41 @@ export default function Stage2ConfigPage({
 
   const handleRetryGeneration = useCallback(async () => {
     if (isRetryingGeneration) return;
+
+    const thisRetryOp = ++retryOperationRef.current;
+    const targetSessionId = sessionId;
+
     setIsRetryingGeneration(true);
     setRetryError(null);
+
     try {
-      await retryGen(sessionId);
+      await retryGen(targetSessionId);
+      if (
+        !isMountedRef.current ||
+        retryOperationRef.current !== thisRetryOp ||
+        targetSessionId !== sessionId
+      ) {
+        return;
+      }
       setIsGenerating(true);
       sseState.reconnect();
     } catch (err) {
-      const msg =
-        err?.response?.data?.error_message ||
-        err?.response?.data?.detail ||
-        err?.message ||
-        'Không thể kích hoạt tiến trình sinh bù từ máy chủ.';
+      if (
+        !isMountedRef.current ||
+        retryOperationRef.current !== thisRetryOp ||
+        targetSessionId !== sessionId
+      ) {
+        return;
+      }
+      const msg = extractErrorString(
+        err,
+        'Không thể kích hoạt tiến trình sinh bù từ máy chủ.',
+      );
       setRetryError(msg);
     } finally {
-      setIsRetryingGeneration(false);
+      if (isMountedRef.current && retryOperationRef.current === thisRetryOp) {
+        setIsRetryingGeneration(false);
+      }
     }
   }, [isRetryingGeneration, retryGen, sessionId, sseState]);
 
