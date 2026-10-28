@@ -4,6 +4,7 @@ Unit tests for Rule-Based Fallback Checker (VAL-04 / TASK-107c).
 
 import json
 from decimal import Decimal
+from fractions import Fraction
 from pathlib import Path
 
 from app.models.schemas import GeneratedVariant, SourceQuestion
@@ -983,3 +984,43 @@ class TestRuleCheckerReviewRegressionFixes:
         res_ln = check_mathematical_invariants(r"Tính giá trị của \ln(1/3*3-1)")
         assert res_ln.passed is False
         assert any("Logarithm argument must be strictly positive" in err for err in res_ln.errors)
+
+    def test_non_integer_power_exact_precision_and_domain_invariants(self):
+        # 1. Exact rational power preservation: 0.00000000000001**0.5 is 1e-7, not 0
+        val = safe_eval_numeric_expr("0.00000000000001**0.5")
+        assert val == Fraction(1, 10000000)
+        assert val != 0
+
+        # Rational powers with rational bases
+        assert safe_eval_numeric_expr("(4/9)**0.5") == Fraction(2, 3)
+        assert safe_eval_numeric_expr("(-8/27)**(1/3)") == Fraction(-2, 3)
+        assert safe_eval_numeric_expr("(-8/27)**(2/3)") == Fraction(4, 9)
+        assert safe_eval_numeric_expr("(-4)**0.5") is None
+
+        # 2. \frac{1}{0.00000000000001**0.5}: denominator is non-zero (1e-7), must NOT fail
+        res_frac_valid = check_mathematical_invariants(
+            r"Tính giá trị của \frac{1}{0.00000000000001**0.5}"
+        )
+        assert res_frac_valid.passed is True
+        assert len(res_frac_valid.errors) == 0
+
+        # 3. \frac{1}{0.00000000000001**0.5 - 0.0000001}: denominator evaluates to 0, must FAIL
+        res_frac_zero = check_mathematical_invariants(
+            r"Tính giá trị của \frac{1}{0.00000000000001**0.5 - 0.0000001}"
+        )
+        assert res_frac_zero.passed is False
+        assert any("Zero denominator detected" in err for err in res_frac_zero.errors)
+
+        # 4. \sqrt{0.00000000000001**0.5}: radicand is positive (1e-7 >= 0), must pass
+        res_sqrt_valid = check_mathematical_invariants(
+            r"Tính giá trị của \sqrt{0.00000000000001**0.5}"
+        )
+        assert res_sqrt_valid.passed is True
+        assert len(res_sqrt_valid.errors) == 0
+
+        # 5. \sqrt{0.00000000000001**0.5 - 0.0000002}: radicand is negative (-1e-7 < 0), must FAIL
+        res_sqrt_neg = check_mathematical_invariants(
+            r"Tính giá trị của \sqrt{0.00000000000001**0.5 - 0.0000002}"
+        )
+        assert res_sqrt_neg.passed is False
+        assert any("Negative radicand in even root" in err for err in res_sqrt_neg.errors)
