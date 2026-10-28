@@ -2,7 +2,7 @@
 
 - Nguồn giao việc: [docs/planning.md#task-303](../planning.md) (commit 506384b; 28/10/2026).
 - Phụ trách: Tâm (`@AI-WFox`); reviewer: Duy (`@johannguyen015` — đề xuất).
-- Repo/nhánh: `isomorphic-exam-synthesizer` / `feat/tam-task-303-fisher-yates-shuffler`; PR: <sẽ điền link khi tạo Draft PR>.
+- Repo/nhánh: `isomorphic-exam-synthesizer` / `feat/tam-task-303-fisher-yates-shuffler`; PR: [#24](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/24).
 - Hạn đạt: tối thứ 3 03/11/2026; ETA task: Chủ Nhật 01/11/2026 (Tâm tự xác nhận, bàn giao trước sáng thứ 2 02/11/2026 cho Duy làm TASK-305).
 
 ## Mình cần làm gì?
@@ -67,7 +67,7 @@
 
 ## Bàn giao – điền theo kết quả thực tế
 
-- PR/commit/output: <sẽ điền khi tạo PR>.
-- Đã làm / đã kiểm: Chưa có code, đang ở bước Draft Plan.
-- Đã chấp nhận: Chưa có review.
-- Còn chờ/bước tiếp: Mở Draft PR, chờ Hùng và Duy phản hồi câu hỏi contract, tiến hành code từ thứ 6.
+- PR/commit/output: PR [#24](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/24) (Draft plan-only).
+- Đã làm / đã kiểm: Kế hoạch triển khai Template M2, câu hỏi contract cho Hùng và Duy.
+- Đã chấp nhận: Chờ review từ Duy (`@johannguyen015`).
+- Còn chờ/bước tiếp: Phản hồi từ Hùng và Duy trên PR #24; bắt đầu triển khai code và unit test từ thứ 6.
