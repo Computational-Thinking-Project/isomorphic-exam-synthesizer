@@ -7,6 +7,8 @@
 
 ## Quick start (Docker)
 
+Hướng dẫn tham gia: [CONTRIBUTING](CONTRIBUTING.md), [quy trình giao việc/review](docs/review/WORKFLOW.md) và [5 mẫu dùng chung](docs/review/TEMPLATES.md). Agent bắt đầu từ [AGENTS.md](AGENTS.md). Bộ workflow v0.1 đang chờ review/pilot; lịch tuần và trạng thái được ghi trong WORKFLOW.
+
 Install Git and Docker Desktop (Linux containers / WSL 2 on Windows), then reopen
 your terminal. No host Python or Node installation is needed.
 
