@@ -608,17 +608,17 @@ class SafeNumericEvaluator(ast.NodeVisitor):
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
             if func_name == "abs" and len(node.args) == 1:
-                arg: RadicalFraction = self.visit(node.args[0])
-                if arg.is_zero() or arg.to_decimal() >= 0:
-                    return arg
-                return -arg
+                abs_arg: RadicalFraction = self.visit(node.args[0])
+                if abs_arg.is_zero() or abs_arg.to_decimal() >= 0:
+                    return abs_arg
+                return -abs_arg
             if func_name == "sqrt" and len(node.args) == 1:
-                arg: RadicalFraction = self.visit(node.args[0])
-                if arg.is_zero():
+                sqrt_arg: RadicalFraction = self.visit(node.args[0])
+                if sqrt_arg.is_zero():
                     return RadicalFraction({})
-                if arg.to_decimal() < 0:
-                    raise ValueError(f"Square root of negative number: {arg.to_decimal()}")
-                arg_frac = arg.to_fraction()
+                if sqrt_arg.to_decimal() < 0:
+                    raise ValueError(f"Square root of negative number: {sqrt_arg.to_decimal()}")
+                arg_frac = sqrt_arg.to_fraction()
                 if arg_frac is not None:
                     return RadicalFraction.from_sqrt(arg_frac)
                 raise ValueError("Square root of compound radical not supported")
