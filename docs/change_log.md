@@ -13,6 +13,7 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
 
 ## 📋 Mục lục các Quyết định
 
+- [DEC-TV1-004: Bộ hướng dẫn giao việc và review chung v0.1 — proposed](#dec-tv1-004)
 - [ADR-001: Chuẩn hóa Model AI `gemini-3.5-flash-lite`, Schema Repair Pass và Kiến Trúc Black-Box Generator](#adr-001-chuẩn-hóa-model-ai-gemini-35-flash-lite-schema-repair-pass-và-kiến-trúc-black-box-generator)
 - [DEC-TV1-001: Chuẩn bị Login UI và kiểm tra frontend](#dec-tv1-001-chuẩn-bị-login-ui-và-kiểm-tra-frontend)
 - [DEC-TV1-002: Tích hợp Google OAuth, profile và bootstrap Auth](#dec-tv1-002-tích-hợp-google-oauth-profile-và-bootstrap-auth)
@@ -28,6 +29,19 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
 ---
 
 ## Chi tiết các Quyết định
+
+<a id="dec-tv1-004"></a>
+
+### DEC-TV1-004: Bộ hướng dẫn giao việc và review chung v0.1
+
+- **Ngày soạn/người đề xuất:** 28/10/2026 — Trung Anh / philip-kkk / TV1.
+- **Trạng thái:** proposed, chuẩn bị để review tài liệu và chọn pilot; chưa ghi nhận PR docs đã merge, toàn nhóm đã đồng bộ hoặc pilot đã chạy. Đây chưa phải ngày nhóm phê duyệt toàn bộ gói quy trình.
+- **Ngữ cảnh:** phân công và review cần chung format, đúng phiên bản code, đầu vào có mốc giao rõ và phản hồi lỗi có bằng chứng để giảm chuyển lời/sửa lặp.
+- **Phần đã được Trung Anh xác nhận:** Duy là leader; giao việc thứ 4 hoặc sáng thứ 5; thành viên/agent đọc, lập plan và tạo Draft PR để giải đáp trong thứ 5; code từ thứ 6; hạn đợt tối thứ 3 tuần sau. Mẫu leader phải có thứ tự task theo phụ thuộc, mốc cần input, ETA giao input và ETA xong task để task sau còn thời gian code/tích hợp/review/sửa. Chưa chốt giờ hạn hoặc ETA của task thật.
+- **Nội dung gói đề xuất:** [WORKFLOW](review/WORKFLOW.md) là nguồn quy trình, [TEMPLATES](review/TEMPLATES.md) có 5 mẫu; hỏi input trên PR Conversation, finding/fix/verify trong cùng thread/ID; code head và kết quả kiểm được cập nhật cho từng lượt. Root AGENTS và hướng dẫn đóng góp dẫn về cùng nguồn.
+- **Phạm vi ảnh hưởng:** `AGENTS.md`, `docs/review/WORKFLOW.md`, `docs/review/TEMPLATES.md`, `CONTRIBUTING.md`, `.github/pull_request_template.md`, `README.md` và mục này. Thành viên chỉ tạo file tuần/task khi có phân công thật, không bắt Issue hoặc thêm tracker cạnh tranh.
+- **Giữ quy định hiện hành:** ít nhất 1 thành viên khác Approve, phối hợp owner, checks phù hợp/CI và quyền merge; verified của agent không thay GitHub Approve. Không thêm bot/messenger, token, CI mới hoặc branch protection.
+- **Chờ xác nhận khi rollout:** PR/task pilot, hai owner, quyền cụ thể và cách xử lý bất đồng. Đề xuất chuyển người sau hai lần sửa cùng finding chưa đạt chưa phải luật bắt buộc. Cập nhật căn cứ chấp nhận và kết quả pilot khi thực sự có, không tự chuyển status thành active.
 
 ### ADR-001: Chuẩn hóa Model AI `gemini-3.5-flash-lite`, Schema Repair Pass và Kiến Trúc Black-Box Generator
 * **Ngày quyết định:** 16/10/2026
