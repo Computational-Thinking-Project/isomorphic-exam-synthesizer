@@ -1079,3 +1079,38 @@ class TestRuleCheckerReviewRegressionFixes:
 
         # Large base with sub-unit exponent is computed accurately without safe bounds abort
         assert safe_eval_numeric_expr("100000000**0.5") == 10000
+
+    def test_radical_exact_zero_and_invariants_f02(self):
+        # 1. Exact zero detection in radical arithmetic without approximate floating-point leakage
+        assert safe_eval_numeric_expr("2**0.5*2**0.5-2") == 0
+        assert safe_eval_numeric_expr("(2**0.5 + 3**0.5)**2 - (5 + 2*6**0.5)") == 0
+
+        # 2. LaTeX and pow zero denominator detection (finding F02)
+        res_latex = check_mathematical_invariants(r"Tính \frac{1}{\sqrt{2}*\sqrt{2}-2}")
+        assert res_latex.passed is False
+        assert any("Zero denominator detected" in err for err in res_latex.errors)
+
+        res_pow = check_mathematical_invariants(r"Tính \frac{1}{2**0.5*2**0.5-2}")
+        assert res_pow.passed is False
+        assert any("Zero denominator detected" in err for err in res_pow.errors)
+
+        # 3. Non-zero radicals safely pass invariant check
+        res_valid_sqrt = check_mathematical_invariants(r"Tính \frac{1}{\sqrt{2}}")
+        assert res_valid_sqrt.passed is True
+
+        res_valid_diff = check_mathematical_invariants(r"Tính \frac{1}{\sqrt{2}-1}")
+        assert res_valid_diff.passed is True
+
+        # 4. Irrational radicals cannot be converted to a fake rational Fraction
+        assert safe_eval_numeric_expr("2**0.5") is None
+
+        # 5. Preservation of small fractional power regression cases (F01)
+        assert safe_eval_numeric_expr("0.00000000000001**0.5") == Fraction(1, 10000000)
+        res_small_valid = check_mathematical_invariants(r"Tính \frac{1}{0.00000000000001**0.5}")
+        assert res_small_valid.passed is True
+
+        res_small_zero = check_mathematical_invariants(
+            r"Tính \frac{1}{0.00000000000001**0.5-0.0000001}"
+        )
+        assert res_small_zero.passed is False
+        assert any("Zero denominator detected" in err for err in res_small_zero.errors)

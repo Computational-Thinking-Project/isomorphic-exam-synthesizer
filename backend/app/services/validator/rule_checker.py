@@ -350,49 +350,191 @@ def _latex_to_python_numeric(expr: str) -> str:
     return cleaned
 
 
+def _square_free_decomp(n: int) -> Tuple[int, int]:
+    """
+    Decompose positive integer n into (k, d) such that n = k^2 * d,
+    where d is square-free (d >= 1).
+    """
+    if n <= 0:
+        raise ValueError(f"Square-free decomposition requires positive integer, got {n}")
+    k = 1
+    d = n
+    limit = math.isqrt(d)
+    i = 2
+    while i <= limit:
+        i2 = i * i
+        while d % i2 == 0:
+            k *= i
+            d //= i2
+            limit = math.isqrt(d)
+        i += 1
+    return k, d
+
+
+class RadicalFraction:
+    """
+    Exact algebraic arithmetic over the field extension Q[sqrt(d1), sqrt(d2), ...].
+    Represents an element as sum_{d} c_d * sqrt(d), where each d >= 1 is a square-free
+    integer and c_d is an exact Fraction.
+    By Besicovitch's theorem (1940), square roots of distinct square-free integers
+    are linearly independent over Q. Thus, an element equals 0 if and only if
+    all coefficients c_d are 0 (empty dictionary).
+    This guarantees 100% exact zero-detection without any floating-point/epsilon ambiguity.
+    """
+
+    def __init__(self, terms: Optional[Dict[int, Fraction]] = None) -> None:
+        self.terms: Dict[int, Fraction] = {}
+        if terms:
+            for d, c in terms.items():
+                if c != 0:
+                    self.terms[d] = c
+
+    @classmethod
+    def from_rational(cls, val: Fraction) -> "RadicalFraction":
+        if val == 0:
+            return cls({})
+        return cls({1: val})
+
+    @classmethod
+    def from_sqrt(cls, frac: Fraction) -> "RadicalFraction":
+        if frac < 0:
+            raise ValueError(f"Square root of negative number in real domain: {frac}")
+        if frac == 0:
+            return cls({})
+        p, q = frac.numerator, frac.denominator
+        k, d = _square_free_decomp(p * q)
+        return cls({d: Fraction(k, q)})
+
+    def is_zero(self) -> bool:
+        return len(self.terms) == 0
+
+    def to_fraction(self) -> Optional[Fraction]:
+        """Return the exact rational Fraction if this element lies in Q, else None."""
+        if self.is_zero():
+            return Fraction(0)
+        if len(self.terms) == 1 and 1 in self.terms:
+            return self.terms[1]
+        return None
+
+    def to_decimal(self, prec: int = 50) -> Decimal:
+        """High-precision Decimal evaluation for strict sign/order determination."""
+        if self.is_zero():
+            return Decimal(0)
+        getcontext().prec = prec
+        total = Decimal(0)
+        for d, c in self.terms.items():
+            dec_c = Decimal(c.numerator) / Decimal(c.denominator)
+            if d == 1:
+                total += dec_c
+            else:
+                total += dec_c * Decimal(d).sqrt()
+        return total
+
+    def __neg__(self) -> "RadicalFraction":
+        return RadicalFraction({d: -c for d, c in self.terms.items()})
+
+    def __pos__(self) -> "RadicalFraction":
+        return self
+
+    def __add__(self, other: "RadicalFraction") -> "RadicalFraction":
+        res = dict(self.terms)
+        for d, c in other.terms.items():
+            res[d] = res.get(d, Fraction(0)) + c
+        return RadicalFraction(res)
+
+    def __sub__(self, other: "RadicalFraction") -> "RadicalFraction":
+        res = dict(self.terms)
+        for d, c in other.terms.items():
+            res[d] = res.get(d, Fraction(0)) - c
+        return RadicalFraction(res)
+
+    def __mul__(self, other: "RadicalFraction") -> "RadicalFraction":
+        res: Dict[int, Fraction] = {}
+        for d1, c1 in self.terms.items():
+            for d2, c2 in other.terms.items():
+                g = math.gcd(d1, d2)
+                d_out = (d1 // g) * (d2 // g)
+                res[d_out] = res.get(d_out, Fraction(0)) + c1 * c2 * g
+        return RadicalFraction(res)
+
+    def __truediv__(self, other: "RadicalFraction") -> "RadicalFraction":
+        if other.is_zero():
+            raise ZeroDivisionError("Division by zero in RadicalFraction")
+        if len(other.terms) == 1:
+            d, c = next(iter(other.terms.items()))
+            inv = RadicalFraction({d: Fraction(1, c * d)})
+            return self * inv
+        if len(other.terms) == 2:
+            items = list(other.terms.items())
+            (d1, c1), (d2, c2) = items[0], items[1]
+            denom_scalar = c1 * c1 * d1 - c2 * c2 * d2
+            if denom_scalar == 0:
+                raise ZeroDivisionError("Division by zero in RadicalFraction")
+            conjugate = RadicalFraction({d1: c1, d2: -c2})
+            num = self * conjugate
+            return RadicalFraction({d: c / denom_scalar for d, c in num.terms.items()})
+        raise ValueError("General division of multi-term radical not supported")
+
+    def __pow__(self, p: int) -> "RadicalFraction":
+        if p == 0:
+            return RadicalFraction.from_rational(Fraction(1))
+        if p < 0:
+            one = RadicalFraction.from_rational(Fraction(1))
+            return one / (self ** (-p))
+        res = RadicalFraction.from_rational(Fraction(1))
+        base = self
+        exp = p
+        while exp > 0:
+            if exp % 2 == 1:
+                res = res * base
+            base = base * base
+            exp //= 2
+        return res
+
+
 class SafeNumericEvaluator(ast.NodeVisitor):
     """
     Strict, deterministic AST visitor that safely evaluates basic numeric
     arithmetic expressions (+, -, *, /, **, %) and safe functions (sqrt, abs)
     without using eval() or arbitrary code execution.
-    Maintains exact rational Fraction precision to prevent IEEE 754 precision loss
-    and recurring decimal division rounding errors.
+    Maintains exact algebraic radical and rational Fraction precision to prevent
+    IEEE 754 precision loss and false zero/non-zero deductions.
     """
 
     def __init__(self, source: Optional[str] = None) -> None:
         self.source = source
 
-    def visit_Expression(self, node: ast.Expression) -> Fraction:
+    def visit_Expression(self, node: ast.Expression) -> RadicalFraction:
         return self.visit(node.body)
 
-    def visit_Constant(self, node: ast.Constant) -> Fraction:
+    def visit_Constant(self, node: ast.Constant) -> RadicalFraction:
         if self.source is not None:
             raw = ast.get_source_segment(self.source, node)
             if raw is not None:
                 cleaned_raw = raw.strip().strip("()").replace("_", "")
                 try:
-                    return Fraction(cleaned_raw)
+                    return RadicalFraction.from_rational(Fraction(cleaned_raw))
                 except ValueError:
                     pass
         if isinstance(node.value, int):
-            return Fraction(node.value)
+            return RadicalFraction.from_rational(Fraction(node.value))
         if isinstance(node.value, float):
-            return Fraction(str(node.value))
+            return RadicalFraction.from_rational(Fraction(str(node.value)))
         if isinstance(node.value, str):
-            return Fraction(node.value)
+            return RadicalFraction.from_rational(Fraction(node.value))
         raise ValueError(f"Unsupported constant type: {type(node.value)}")
 
-    def visit_UnaryOp(self, node: ast.UnaryOp) -> Fraction:
-        operand: Fraction = self.visit(node.operand)
+    def visit_UnaryOp(self, node: ast.UnaryOp) -> RadicalFraction:
+        operand: RadicalFraction = self.visit(node.operand)
         if isinstance(node.op, ast.UAdd):
             return +operand
         if isinstance(node.op, ast.USub):
             return -operand
         raise ValueError(f"Unsupported unary operator: {type(node.op)}")
 
-    def visit_BinOp(self, node: ast.BinOp) -> Fraction:
-        left: Fraction = self.visit(node.left)
-        right: Fraction = self.visit(node.right)
+    def visit_BinOp(self, node: ast.BinOp) -> RadicalFraction:
+        left: RadicalFraction = self.visit(node.left)
+        right: RadicalFraction = self.visit(node.right)
         if isinstance(node.op, ast.Add):
             return left + right
         if isinstance(node.op, ast.Sub):
@@ -400,81 +542,96 @@ class SafeNumericEvaluator(ast.NodeVisitor):
         if isinstance(node.op, ast.Mult):
             return left * right
         if isinstance(node.op, ast.Div):
-            if right == 0:
+            if right.is_zero():
                 raise ZeroDivisionError("Division by zero in AST evaluation")
             return left / right
         if isinstance(node.op, ast.Pow):
-            if left == 0 and right == 0:
+            if left.is_zero() and right.is_zero():
                 raise ValueError("Indeterminate form 0**0")
-            max_base = 10**18 if abs(right) <= 1 else 1000000
-            if abs(left) > max_base or abs(right) > 20:
+            right_frac = right.to_fraction()
+            if right_frac is None:
+                raise ValueError("Irrational exponent unsupported")
+            max_base = 10**18 if abs(right_frac) <= 1 else 1000000
+            left_dec = left.to_decimal()
+            if abs(left_dec) > max_base or abs(right_frac) > 20:
                 raise ValueError("Exponentiation out of safe bounds")
-            if right.denominator != 1:
-                p = right.numerator
-                q = right.denominator
-                if left == 0:
-                    if p > 0:
-                        return Fraction(0)
-                    raise ZeroDivisionError(
-                        "Division by zero in AST evaluation (0 to non-positive power)"
-                    )
-                if left < 0 and q % 2 == 0:
-                    raise ValueError(f"Even root of negative number: {left}")
+            if right_frac.denominator == 1:
+                return left ** int(right_frac)
 
-                abs_num = abs(left.numerator)
-                den = left.denominator
+            p = right_frac.numerator
+            q = right_frac.denominator
+            if left.is_zero():
+                if p > 0:
+                    return RadicalFraction({})
+                raise ZeroDivisionError(
+                    "Division by zero in AST evaluation (0 to non-positive power)"
+                )
+            if left_dec < 0 and q % 2 == 0:
+                raise ValueError(f"Even root of negative number: {left_dec}")
+
+            # Half-integer exponent (q == 2) -> exact square root
+            if q == 2:
+                left_frac = left.to_fraction()
+                if left_frac is not None:
+                    root = RadicalFraction.from_sqrt(left_frac)
+                    return root**p
+                raise ValueError("Square root of compound radical not supported")
+
+            # General rational exponent q > 2
+            left_frac = left.to_fraction()
+            if left_frac is not None:
+                abs_num = abs(left_frac.numerator)
+                den = left_frac.denominator
                 num_r = _exact_integer_nth_root(abs_num, q)
                 den_r = _exact_integer_nth_root(den, q)
                 if num_r is not None and den_r is not None:
                     root_frac = Fraction(num_r, den_r)
-                    sign = -1 if (left < 0 and p % 2 != 0) else 1
-                    return sign * (root_frac**p)
+                    sign = -1 if (left_frac < 0 and p % 2 != 0) else 1
+                    return RadicalFraction.from_rational(sign * (root_frac**p))
 
-                # Fallback to high-precision Decimal without limit_denominator
-                getcontext().prec = 50
-                dec_base = Decimal(abs_num) / Decimal(den)
-                dec_exp = Decimal(abs(p)) / Decimal(q)
-                dec_res = dec_base**dec_exp
-                if p < 0:
-                    dec_res = Decimal(1) / dec_res
-                sign = -1 if (left < 0 and p % 2 != 0) else 1
-                return sign * Fraction(str(dec_res))
+            raise ValueError(
+                f"Irrational root cannot be represented as exact fraction: ({left_frac})**({right_frac})"
+            )
 
-            return left ** int(right)
         if isinstance(node.op, ast.Mod):
-            if right == 0:
+            if right.is_zero():
                 raise ZeroDivisionError("Modulo by zero in AST evaluation")
-            return left % right
+            left_f = left.to_fraction()
+            right_f = right.to_fraction()
+            if left_f is not None and right_f is not None:
+                return RadicalFraction.from_rational(left_f % right_f)
+            raise ValueError("Modulo unsupported for irrational radicals")
+
         raise ValueError(f"Unsupported binary operator: {type(node.op)}")
 
-    def visit_Call(self, node: ast.Call) -> Fraction:
+    def visit_Call(self, node: ast.Call) -> RadicalFraction:
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
             if func_name == "abs" and len(node.args) == 1:
-                return abs(self.visit(node.args[0]))
+                arg: RadicalFraction = self.visit(node.args[0])
+                if arg.is_zero() or arg.to_decimal() >= 0:
+                    return arg
+                return -arg
             if func_name == "sqrt" and len(node.args) == 1:
-                val: Fraction = self.visit(node.args[0])
-                if val < 0:
-                    raise ValueError(f"Square root of negative number: {val}")
-                if val == 0:
-                    return Fraction(0)
-                num_sqrt = math.isqrt(val.numerator)
-                den_sqrt = math.isqrt(val.denominator)
-                if num_sqrt * num_sqrt == val.numerator and den_sqrt * den_sqrt == val.denominator:
-                    return Fraction(num_sqrt, den_sqrt)
-                dec = Decimal(val.numerator) / Decimal(val.denominator)
-                return Fraction(str(dec.sqrt()))
+                arg: RadicalFraction = self.visit(node.args[0])
+                if arg.is_zero():
+                    return RadicalFraction({})
+                if arg.to_decimal() < 0:
+                    raise ValueError(f"Square root of negative number: {arg.to_decimal()}")
+                arg_frac = arg.to_fraction()
+                if arg_frac is not None:
+                    return RadicalFraction.from_sqrt(arg_frac)
+                raise ValueError("Square root of compound radical not supported")
         raise ValueError("Unsupported function call in AST evaluator")
 
-    def generic_visit(self, node: ast.AST) -> Fraction:
+    def generic_visit(self, node: ast.AST) -> RadicalFraction:
         raise ValueError(f"Disallowed AST node: {type(node).__name__}")
 
 
-def safe_eval_numeric_expr(expr_str: str) -> Optional[Fraction]:
+def safe_eval_radical_expr(expr_str: str) -> Optional[RadicalFraction]:
     """
-    Safely evaluate a basic numeric expression string to an exact Fraction using AST.
-    Returns None if the expression contains variables, unsupported syntax,
-    or evaluation fails.
+    Safely evaluate an expression with exact radical and rational arithmetic.
+    Returns RadicalFraction, or None if evaluation fails/contains variables.
     """
     if not expr_str or not expr_str.strip():
         return None
@@ -484,11 +641,43 @@ def safe_eval_numeric_expr(expr_str: str) -> Optional[Fraction]:
     try:
         tree = ast.parse(cleaned, mode="eval")
         evaluator = SafeNumericEvaluator(source=cleaned)
-        return evaluator.visit(tree)
+        res = evaluator.visit(tree)
+        if isinstance(res, RadicalFraction):
+            return res
+        if isinstance(res, Fraction):
+            return RadicalFraction.from_rational(res)
+        return None
     except (SyntaxError, ValueError, ZeroDivisionError, OverflowError, InvalidOperation):
         return None
     except Exception:
         return None
+
+
+def safe_eval_numeric_expr(expr_str: str) -> Optional[Fraction]:
+    """
+    Safely evaluate a basic numeric expression string to an exact Fraction using AST.
+    Returns None if the expression contains variables, unsupported syntax,
+    or cannot be simplified to an exact rational Fraction.
+    """
+    rad = safe_eval_radical_expr(expr_str)
+    if rad is not None:
+        return rad.to_fraction()
+    return None
+
+
+def _contains_algebraic_variables(text: str) -> bool:
+    """
+    Check if a mathematical text contains free algebraic variables (e.g. x, y, z, t).
+    Ignores LaTeX commands (\\frac, \\sqrt, \\sin, \\cos, etc.) and known function names.
+    """
+    s = re.sub(r"\\[a-zA-Z]+", "", text)
+    s = re.sub(
+        r"\b(?:sqrt|abs|sin|cos|tan|cot|log|ln|exp|min|max|pi|theta|alpha|beta)\b",
+        "",
+        s,
+        flags=re.IGNORECASE,
+    )
+    return bool(re.search(r"[a-zA-Z]", s))
 
 
 def _first_not_none(*args: Any) -> Any:
@@ -763,12 +952,13 @@ def check_mathematical_invariants(
                     f"Zero denominator detected in fraction: '\\frac{{{num_str}}}{{{denom_str}}}'"
                 )
                 continue
-            denom_val = safe_eval_numeric_expr(denom_str)
-            if denom_val is not None and denom_val == 0:
-                errors.append(
-                    f"Zero denominator detected: denominator '{denom_str}' evaluates to 0 in '\\frac{{{num_str}}}{{{denom_str}}}'"
-                )
-            elif denom_val is None and not re.search(r"[a-zA-Z]", denom_str):
+            rad_denom = safe_eval_radical_expr(denom_str)
+            if rad_denom is not None:
+                if rad_denom.is_zero():
+                    errors.append(
+                        f"Zero denominator detected: denominator '{denom_str}' evaluates to 0 in '\\frac{{{num_str}}}{{{denom_str}}}'"
+                    )
+            elif not _contains_algebraic_variables(denom_str):
                 errors.append(
                     f"Zero or uncomputable denominator detected: '{denom_str}' cannot be evaluated in '\\frac{{{num_str}}}{{{denom_str}}}'"
                 )
@@ -776,12 +966,13 @@ def check_mathematical_invariants(
         # Check plain fractions: A / B
         for match in PLAIN_FRACTION_REGEX.finditer(text_segment):
             num_str, denom_str = match.group(1).strip(), match.group(2).strip()
-            denom_val = _parse_bound_value(denom_str)
-            if denom_val is not None and denom_val == 0:
-                errors.append(
-                    f"Zero denominator detected in numerical fraction: '{num_str}/{denom_str}'"
-                )
-            elif denom_val is None and not re.search(r"[a-zA-Z]", denom_str):
+            rad_denom = safe_eval_radical_expr(denom_str)
+            if rad_denom is not None:
+                if rad_denom.is_zero():
+                    errors.append(
+                        f"Zero denominator detected in numerical fraction: '{num_str}/{denom_str}'"
+                    )
+            elif not _contains_algebraic_variables(denom_str):
                 errors.append(
                     f"Zero or uncomputable denominator detected in numerical fraction: '{num_str}/{denom_str}'"
                 )
@@ -792,14 +983,14 @@ def check_mathematical_invariants(
             deg = degree if degree is not None else 2
             # Even root requires radicand >= 0 in real domain
             if deg % 2 == 0:
-                rad_val = safe_eval_numeric_expr(radicand_str)
+                rad_val = safe_eval_radical_expr(radicand_str)
                 if rad_val is not None:
-                    if rad_val < 0:
+                    if rad_val.to_decimal() < 0:
                         errors.append(
                             f"Negative radicand in even root (index {deg}): radicand '{radicand_str}' "
-                            f"evaluates to {_format_fraction(rad_val)} < 0."
+                            f"evaluates to {str(rad_val.to_decimal())} < 0."
                         )
-                elif not re.search(r"[a-zA-Z]", radicand_str):
+                elif not _contains_algebraic_variables(radicand_str):
                     errors.append(
                         f"Uncomputable radicand in even root (index {deg}): '{radicand_str}' cannot be evaluated."
                     )
@@ -809,40 +1000,40 @@ def check_mathematical_invariants(
         # \log_b(A)
         for base_str, arg_str in _extract_latex_logs(text_segment):
             if arg_str:
-                arg_val = safe_eval_numeric_expr(arg_str.strip())
+                arg_val = safe_eval_radical_expr(arg_str.strip())
                 if arg_val is not None:
-                    if arg_val <= 0:
+                    if arg_val.is_zero() or arg_val.to_decimal() <= 0:
                         errors.append(
-                            f"Logarithm argument must be strictly positive: argument '{arg_str}' evaluates to {_format_fraction(arg_val)} <= 0."
+                            f"Logarithm argument must be strictly positive: argument '{arg_str}' evaluates to {str(arg_val.to_decimal())} <= 0."
                         )
-                elif not re.search(r"[a-zA-Z]", arg_str):
+                elif not _contains_algebraic_variables(arg_str):
                     errors.append(
                         f"Uncomputable logarithm argument: '{arg_str}' cannot be evaluated."
                     )
             if base_str:
-                base_val = _parse_bound_value(base_str.strip())
+                base_val = safe_eval_radical_expr(base_str.strip())
                 if base_val is not None:
-                    if base_val <= 0:
+                    if base_val.is_zero() or base_val.to_decimal() <= 0:
                         errors.append(
-                            f"Logarithm base must be strictly positive: base '{base_str}' evaluates to {_format_fraction(base_val)} <= 0."
+                            f"Logarithm base must be strictly positive: base '{base_str}' evaluates to {str(base_val.to_decimal())} <= 0."
                         )
-                    elif base_val == 1:
+                    elif (base_val - RadicalFraction.from_rational(Fraction(1))).is_zero():
                         errors.append(
                             f"Logarithm base cannot be equal to 1: base '{base_str}' evaluates to 1."
                         )
-                elif not re.search(r"[a-zA-Z]", base_str):
+                elif not _contains_algebraic_variables(base_str):
                     errors.append(f"Uncomputable logarithm base: '{base_str}' cannot be evaluated.")
 
         # \ln(A)
         for arg_str in _extract_latex_lns(text_segment):
             if arg_str:
-                arg_val = safe_eval_numeric_expr(arg_str.strip())
+                arg_val = safe_eval_radical_expr(arg_str.strip())
                 if arg_val is not None:
-                    if arg_val <= 0:
+                    if arg_val.is_zero() or arg_val.to_decimal() <= 0:
                         errors.append(
-                            f"Logarithm argument must be strictly positive: argument '{arg_str}' evaluates to {_format_fraction(arg_val)} <= 0."
+                            f"Logarithm argument must be strictly positive: argument '{arg_str}' evaluates to {str(arg_val.to_decimal())} <= 0."
                         )
-                elif not re.search(r"[a-zA-Z]", arg_str):
+                elif not _contains_algebraic_variables(arg_str):
                     errors.append(
                         f"Uncomputable logarithm argument: '{arg_str}' cannot be evaluated."
                     )
