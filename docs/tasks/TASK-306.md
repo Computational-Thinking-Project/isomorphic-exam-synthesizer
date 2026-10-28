@@ -2,7 +2,7 @@
 
 - Nguồn giao việc: [docs/planning.md#task-306a](../planning.md) (commit 506384b; 28/10/2026).
 - Phụ trách: Tâm (`@AI-WFox`); reviewer: Duy (`@johannguyen015` — đề xuất) / Đạt (`@dat-001` — cross-review).
-- Repo/nhánh: `isomorphic-exam-synthesizer` / `feat/tam-task-306-typst-compiler-engine`; PR: <sẽ điền link khi tạo Draft PR>.
+- Repo/nhánh: `isomorphic-exam-synthesizer` / `feat/tam-task-306-typst-compiler-engine`; PR: [#25](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/25).
 - Hạn đạt: tối thứ 3 03/11/2026; ETA task: Thứ 2 02/11/2026 (Tâm tự xác nhận, bàn giao trước thứ 3 03/11/2026 cho TASK-307 Export Center).
 
 ## Mình cần làm gì?
@@ -75,7 +75,7 @@
 
 ## Bàn giao – điền theo kết quả thực tế
 
-- PR/commit/output: <sẽ điền khi tạo PR>.
+- PR/commit/output: PR [#25](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/25) (Draft plan-only).
 - Đã làm / đã kiểm: Kế hoạch triển khai Template M2, câu hỏi môi trường Docker cho Duy và naming format cho Đạt.
 - Đã chấp nhận: Chờ review từ Duy (`@johannguyen015`) và Đạt (`@dat-001`).
 - Còn chờ/bước tiếp: Mở Draft PR, chờ phản hồi câu hỏi môi trường Docker, bắt đầu triển khai code từ thứ 6.
