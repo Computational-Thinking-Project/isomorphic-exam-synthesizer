@@ -1,16 +1,18 @@
 """SSE router factory; explicit current-owner lookup is required for product wiring."""
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import datetime
 from functools import partial
 from typing import Annotated
 from uuid import UUID
 
+from anyio import CancelScope
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from slowapi import Limiter
 from starlette.concurrency import run_in_threadpool
+from starlette.types import Receive, Scope, Send
 from supabase import Client
 
 from app.api.dependencies import assert_ownership, get_current_user, get_user_db
@@ -19,6 +21,7 @@ from app.core.rate_limit import limiter as default_limiter
 from app.models.schemas import CurrentUser
 from app.services.generation.events import (
     EventBufferCapacityError,
+    EventBufferLease,
     EventHistoryLost,
     GenerationEventBroker,
 )
@@ -33,6 +36,38 @@ from app.services.observability.runtime_registry import RuntimeRegistry
 class StreamTicketResponse(BaseModel):
     ticket: UUID
     expires_at: datetime
+
+
+class GenerationStreamingResponse(StreamingResponse):
+    """Own the generator across ASGI send failures and disconnect cancellation.
+
+    StreamingResponse can fail while sending a yielded chunk, outside the
+    generator's finally block. Explicitly close it, without relying on GC.
+    """
+
+    def __init__(
+        self, stream: AsyncGenerator[str, None], *, lease: EventBufferLease | None = None
+    ) -> None:
+        self._stream = stream
+        self._lease = lease
+        super().__init__(
+            stream,
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+        )
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            # ASGI <2.4 uses an AnyIO cancellation scope for disconnects. Its
+            # cancellation must not interrupt the broker's async cleanup lock.
+            with CancelScope(shield=True):
+                try:
+                    await self._stream.aclose()
+                finally:
+                    if self._lease is not None:
+                        await self._lease.close()
 
 
 def create_generation_stream_router(
@@ -95,7 +130,8 @@ def create_generation_stream_router(
         if authorized is not True:
             raise HTTPException(403, "You do not have permission to access this stream.")
         try:
-            await events.check_cursor(session_id, last_event_id)
+            registry.snapshot()
+            lease = await events.reserve_session(session_id, last_event_id=last_event_id)
         except EventHistoryLost:
             raise HTTPException(
                 409,
@@ -106,14 +142,11 @@ def create_generation_stream_router(
             ) from None
         except EventBufferCapacityError:
             raise HTTPException(503, "Stream service is temporarily unavailable.") from None
-        try:
-            registry.snapshot()
         except Exception:
             raise HTTPException(503, "Stream service is temporarily unavailable.") from None
-        return StreamingResponse(
+        return GenerationStreamingResponse(
             events.stream(session_id, last_event_id=last_event_id, registry=registry),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+            lease=lease,
         )
 
     return router

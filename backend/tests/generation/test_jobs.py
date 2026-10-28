@@ -1,4 +1,5 @@
 import asyncio
+import json
 from dataclasses import replace
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
@@ -130,6 +131,34 @@ def test_success_commits_each_question_and_releases_runtime_handles() -> None:
         assert 720 <= age < 725
         with pytest.raises(GenerationJobError):
             await runner.run(claimed, store)
+
+    asyncio.run(scenario())
+
+
+def test_flat_progress_payload_reports_committed_counts_for_pr22_consumer() -> None:
+    async def scenario() -> None:
+        plan = make_plan()
+        store, pipeline, events, registry, runner = harness(plan)
+        pipeline.warning = True
+        await runner.claim(store, plan.session_id)
+        await runner.run(plan, store)
+        frames = [frame async for frame in events.stream(plan.session_id, registry=registry)]
+        progress = [
+            json.loads(frame.split("data: ", 1)[1])
+            for frame in frames
+            if "event: progress\n" in frame
+        ]
+        assert progress[0]["completed_count"] == 0
+        assert progress[-1]["completed_count"] == len(store.saved) == 2
+        assert progress[-1]["total_count"] == 2
+        assert progress[-1]["percent_complete"] == 100
+        assert any(item["completed_count"] == 1 for item in progress)
+        warnings = [
+            json.loads(frame.split("data: ", 1)[1])
+            for frame in frames
+            if "event: warning\n" in frame
+        ]
+        assert all(item["message"] and item["version_index"] == 1 for item in warnings)
 
     asyncio.run(scenario())
 
@@ -301,6 +330,44 @@ def test_duplicate_claim_and_duplicate_run_are_rejected() -> None:
             await running
         assert registry.snapshot().background_jobs_running == 0
         assert store.finished[-1][1] == "ERR_GENERATION_INTERRUPTED"
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ["conflict", "db_error", "cancel"])
+def test_failed_claim_releases_empty_buffer_for_next_session(failure: str) -> None:
+    async def scenario() -> None:
+        first = make_plan()
+        second = make_plan()
+        events = GenerationEventBroker(max_sessions=1)
+        registry = RuntimeRegistry()
+        registry.start()
+        runner = GenerationJobRunner(FakePipeline(), events, registry)
+        entered = asyncio.Event()
+
+        class RejectedStore(FakeStore):
+            async def claim(self, session_id: UUID, *, retry: bool) -> GenerationPlan:
+                if failure == "conflict":
+                    raise GenerationJobError(409, "ERR_ALREADY_GENERATING", "Already generating.")
+                if failure == "db_error":
+                    raise ConnectionError("private database endpoint")
+                entered.set()
+                await asyncio.Event().wait()
+                raise AssertionError("Unreachable")
+
+        rejected = RejectedStore(first)
+        if failure == "cancel":
+            task = asyncio.create_task(runner.claim(rejected, first.session_id))
+            await asyncio.wait_for(entered.wait(), 1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            with pytest.raises((GenerationJobError, ConnectionError)):
+                await runner.claim(rejected, first.session_id)
+        accepted = FakeStore(second)
+        claimed = await runner.claim(accepted, second.session_id)
+        assert (await runner.run(claimed, accepted)).status == "generated"
 
     asyncio.run(scenario())
 

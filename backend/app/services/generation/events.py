@@ -3,7 +3,7 @@
 import asyncio
 import math
 from collections import deque
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import UUID
@@ -26,6 +26,17 @@ class _SessionEvents:
     next_id: int = 1
     terminal: bool = False
     subscribers: int = 0
+    reservations: set[object] = field(default_factory=set)
+
+
+@dataclass(frozen=True, slots=True)
+class EventBufferLease:
+    """An idempotent reservation for a pending job or HTTP stream response."""
+
+    _release: Callable[[], Awaitable[None]]
+
+    async def close(self) -> None:
+        await self._release()
 
 
 class GenerationEventBroker:
@@ -85,16 +96,52 @@ class GenerationEventBroker:
         async with self._condition:
             self._session(session_id).terminal = False
 
-    async def ensure_session(self, session_id: UUID) -> None:
-        """Check/allocate buffer capacity before a durable job claim mutates DB."""
+    def _drop_empty(self, session_id: UUID, session: _SessionEvents) -> None:
+        # Called under the condition. A failed claim/disconnected empty watcher
+        # has no history to retain, but another owner may still need this slot.
+        if (
+            self._sessions.get(session_id) is session
+            and not session.events
+            and not session.subscribers
+            and not session.reservations
+        ):
+            del self._sessions[session_id]
+
+    async def reserve_session(
+        self,
+        session_id: UUID,
+        *,
+        last_event_id: int | None = None,
+    ) -> EventBufferLease:
+        if last_event_id is not None and (type(last_event_id) is not int or last_event_id < 0):
+            raise ValueError("Event cursor must be a nonnegative integer.")
+        token = object()
         async with self._condition:
-            self._session(session_id)
+            existing = self._sessions.get(session_id)
+            if last_event_id is not None:
+                # Validate before allocating; a bad cursor must not consume capacity.
+                self._after(existing if existing is not None else _SessionEvents(), last_event_id)
+            session = self._session(session_id)
+            session.reservations.add(token)
+        return EventBufferLease(lambda: self._release_session(session_id, session, token))
+
+    async def _release_session(
+        self, session_id: UUID, session: _SessionEvents, token: object
+    ) -> None:
+        async with self._condition:
+            if self._sessions.get(session_id) is not session:
+                return
+            session.reservations.discard(token)
+            self._drop_empty(session_id, session)
 
     async def check_cursor(self, session_id: UUID, cursor: int = 0) -> None:
         if type(cursor) is not int or cursor < 0:
             raise ValueError("Event cursor must be a nonnegative integer.")
         async with self._condition:
-            self._after(self._session(session_id), cursor)
+            session = self._sessions.get(session_id)
+            self._after(session if session is not None else _SessionEvents(), cursor)
+            if session is None and len(self._sessions) >= self._capacity:
+                raise EventBufferCapacityError("Event session capacity reached.")
 
     async def forget(self, session_id: UUID) -> bool:
         """Explicit cleanup only for terminal histories with no active subscribers."""
@@ -102,7 +149,7 @@ class GenerationEventBroker:
             session = self._sessions.get(session_id)
             if session is None:
                 return True
-            if not session.terminal or session.subscribers:
+            if not session.terminal or session.subscribers or session.reservations:
                 return False
             del self._sessions[session_id]
             return True
@@ -124,7 +171,11 @@ class GenerationEventBroker:
         await self.check_cursor(session_id, last_event_id)
         async with self._condition:
             session = self._session(session_id)
-            handle = registry.begin_sse_connection()
+            try:
+                handle = registry.begin_sse_connection()
+            except Exception:
+                self._drop_empty(session_id, session)
+                raise
             session.subscribers += 1
         cursor = last_event_id
         try:
@@ -161,7 +212,7 @@ class GenerationEventBroker:
                         ),
                     )
                     # This is a connection error, not a newly persisted job event.
-                    yield f"event: error\ndata: {error.model_dump_json(exclude={'id'})}\n\n"
+                    yield f"event: error\ndata: {error.data.model_dump_json()}\n\n"
                     return
                 if heartbeat:
                     yield ": heartbeat\n\n"
@@ -175,3 +226,4 @@ class GenerationEventBroker:
             handle.close()
             async with self._condition:
                 session.subscribers -= 1
+                self._drop_empty(session_id, session)

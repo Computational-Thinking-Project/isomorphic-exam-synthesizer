@@ -8,8 +8,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Protocol, TypeVar
 from uuid import UUID
 
+from anyio import CancelScope
+
 from app.models.generation_events import EventName, GenerationEventData, SessionOutcome
-from app.services.generation.events import GenerationEventBroker
+from app.services.generation.events import EventBufferLease, GenerationEventBroker
 from app.services.generation.job_contracts import (
     GeneratedDraft,
     GenerationJobError,
@@ -119,6 +121,7 @@ class GenerationJobRunner:
         self._timeout = timeout_seconds
         self._provider_slots = asyncio.Semaphore(3)
         self._claims: dict[UUID, UUID | None] = {}
+        self._buffer_leases: dict[UUID, EventBufferLease] = {}
         self._executing: set[UUID] = set()
         self._claim_lock = asyncio.Lock()
 
@@ -131,8 +134,9 @@ class GenerationJobRunner:
                     409, "ERR_ALREADY_GENERATING", "The session is already generating."
                 )
             self._claims[session_id] = None
+        buffer_lease = None
         try:
-            await self._events.ensure_session(session_id)
+            buffer_lease = await self._events.reserve_session(session_id)
             # The store must compare timestamps inside its update/transaction.
             await store.fail_stale(
                 session_id, cutoff=datetime.now(timezone.utc) - timedelta(minutes=12)
@@ -143,10 +147,14 @@ class GenerationJobRunner:
             await self._events.reopen(session_id)
             async with self._claim_lock:
                 self._claims[session_id] = plan.job_id
+                self._buffer_leases[session_id] = buffer_lease
             return plan
         except BaseException:
-            async with self._claim_lock:
-                self._claims.pop(session_id, None)
+            with CancelScope(shield=True):
+                if buffer_lease is not None:
+                    await buffer_lease.close()
+                async with self._claim_lock:
+                    self._claims.pop(session_id, None)
             raise
 
     async def run(self, plan: GenerationPlan, store: GenerationJobStore) -> JobOutcome:
@@ -170,6 +178,7 @@ class GenerationJobRunner:
             deadline = asyncio.get_running_loop().time() + self._timeout
             calls = ProviderCalls(store, plan, self._registry, self._provider_slots, deadline)
             async with asyncio.timeout_at(deadline):
+                await self._emit(plan, "progress", len(completed))
                 for target in plan.targets:
                     if target in completed:
                         continue
@@ -200,6 +209,7 @@ class GenerationJobRunner:
                     await self._emit(
                         plan, "question_done", len(completed), target=target, draft=draft
                     )
+                    await self._emit(plan, "progress", len(completed))
         except GenerationQuotaExceeded:
             code = "ERR_GEMINI_QUOTA_EXHAUSTED"
         except TimeoutError:
@@ -249,9 +259,13 @@ class GenerationJobRunner:
         finally:
             if handle is not None:
                 handle.close()
-            async with self._claim_lock:
-                self._claims.pop(plan.session_id, None)
-                self._executing.discard(plan.session_id)
+            with CancelScope(shield=True):
+                async with self._claim_lock:
+                    buffer_lease = self._buffer_leases.pop(plan.session_id, None)
+                    self._claims.pop(plan.session_id, None)
+                    self._executing.discard(plan.session_id)
+                if buffer_lease is not None:
+                    await buffer_lease.close()
 
     async def _emit(
         self,
@@ -264,6 +278,16 @@ class GenerationJobRunner:
         code: str | None = None,
         outcome: SessionOutcome | None = None,
     ) -> None:
+        messages = {
+            "progress": "Generating exam questions.",
+            "question_done": "Question saved successfully.",
+            "warning": "Question requires teacher review.",
+            "error": "Generation could not complete this operation.",
+            "done": "Generation completed.",
+        }
+        message = messages[event]
+        if outcome == "partial_generated":
+            message = "Generation stopped with some questions still missing."
         await self._events.publish(
             plan.session_id,
             event,
@@ -281,5 +305,8 @@ class GenerationJobRunner:
                 error_code=code,
                 error_message="Generation could not complete this operation." if code else None,
                 session_status=outcome,
+                completed_count=completed,
+                total_count=len(plan.targets),
+                message=message,
             ),
         )

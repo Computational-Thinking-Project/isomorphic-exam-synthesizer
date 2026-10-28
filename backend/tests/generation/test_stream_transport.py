@@ -7,7 +7,11 @@ import pytest
 from pydantic import ValidationError
 
 from app.models.generation_events import GenerationEvent, GenerationEventData
-from app.services.generation.events import EventHistoryLost, GenerationEventBroker
+from app.services.generation.events import (
+    EventBufferCapacityError,
+    EventHistoryLost,
+    GenerationEventBroker,
+)
 from app.services.generation.tickets import (
     InvalidStreamTicket,
     StreamTicketStore,
@@ -69,7 +73,10 @@ def test_sse_json_cannot_inject_frames_and_native_fields_match() -> None:
     assert frame.startswith("id: 3\nevent: warning\ndata: ")
     assert frame.count("\n\n") == 1
     payload = json.loads(frame.split("data: ", 1)[1])
-    assert payload["id"] == 3 and payload["data"]["error_message"] == "line\n\nevent: done"
+    assert payload["error_message"] == "line\n\nevent: done"
+    assert "data" not in payload and "id" not in payload
+    # The internal W2 envelope stays intact; native SSE fields carry id/event.
+    assert event.model_dump()["data"]["error_message"] == payload["error_message"]
 
 
 @pytest.mark.parametrize("bad", [True, -1, float("nan"), float("inf"), 101, "5"])
@@ -128,6 +135,91 @@ def test_ring_capacity_and_stale_future_cursors() -> None:
     asyncio.run(scenario())
 
 
+def test_invalid_cursor_does_not_allocate_an_empty_session() -> None:
+    async def scenario() -> None:
+        broker = GenerationEventBroker(max_sessions=1)
+        with pytest.raises(EventHistoryLost):
+            await broker.check_cursor(uuid4(), 10)
+        assert (await broker.publish(uuid4(), "progress", data())).id == 1
+
+    asyncio.run(scenario())
+
+
+def test_reservations_are_idempotent_and_do_not_release_another_owner() -> None:
+    async def scenario() -> None:
+        broker = GenerationEventBroker(max_sessions=1)
+        sid = uuid4()
+        first = await broker.reserve_session(sid)
+        second = await broker.reserve_session(sid)
+        await first.close()
+        await first.close()
+        with pytest.raises(EventBufferCapacityError):
+            await broker.reserve_session(uuid4())
+        await second.close()
+        replacement = await broker.reserve_session(sid)
+        await first.close()  # Old state/token must not release the replacement.
+        with pytest.raises(EventBufferCapacityError):
+            await broker.reserve_session(uuid4())
+        await replacement.close()
+        other = await broker.reserve_session(uuid4())
+        await other.close()
+
+    asyncio.run(scenario())
+
+
+def test_empty_subscriber_holds_buffer_after_job_reservation_closes() -> None:
+    async def scenario() -> None:
+        registry = RuntimeRegistry()
+        registry.start()
+        broker = GenerationEventBroker(max_sessions=1)
+        sid = uuid4()
+        lease = await broker.reserve_session(sid)
+        stream = broker.stream(sid, registry=registry)
+        await anext(stream)
+        await lease.close()
+        with pytest.raises(EventBufferCapacityError):
+            await broker.reserve_session(uuid4())
+        await stream.aclose()
+        replacement = await broker.reserve_session(uuid4())
+        await replacement.close()
+        assert registry.snapshot().active_sse_connections == 0
+
+    asyncio.run(scenario())
+
+
+def test_release_preserves_history_and_forget_waits_for_live_reservations() -> None:
+    async def scenario() -> None:
+        registry = RuntimeRegistry()
+        registry.start()
+        broker = GenerationEventBroker(max_sessions=1)
+        sid = uuid4()
+        lease = await broker.reserve_session(sid)
+        await broker.publish(sid, "done", data(100))
+        assert not await broker.forget(sid)
+        await lease.close()
+        with pytest.raises(EventBufferCapacityError):
+            await broker.reserve_session(uuid4())
+        frames = [frame async for frame in broker.stream(sid, registry=registry)]
+        assert "id: 1\nevent: done" in frames[-1]
+        assert await broker.forget(sid)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "counts",
+    [
+        {"completed_count": True, "total_count": 2},
+        {"completed_count": 3, "total_count": 2},
+        {"completed_count": 0, "total_count": 0},
+        {"completed_count": 1},
+    ],
+)
+def test_progress_counts_cannot_misreport_committed_questions(counts: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        GenerationEventData.model_validate({**data().model_dump(), **counts})
+
+
 def test_heartbeat_live_delivery_disconnect_and_slow_subscriber() -> None:
     async def scenario() -> None:
         registry = RuntimeRegistry()
@@ -168,7 +260,8 @@ def test_cancelled_waiter_releases_connection_and_allows_cleanup() -> None:
         with pytest.raises(asyncio.CancelledError):
             await waiter
         assert registry.snapshot().active_sse_connections == 0
-        assert not await broker.forget(sid)
+        # A disconnected empty session has no replay history and is reclaimed.
+        assert await broker.forget(sid)
         await broker.publish(sid, "error", data())
         assert await broker.forget(sid)
 

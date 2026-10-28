@@ -8,13 +8,122 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.dependencies import get_current_user, get_user_db
-from app.api.routes.generation_stream import create_generation_stream_router
+from app.api.routes.generation_stream import (
+    GenerationStreamingResponse,
+    create_generation_stream_router,
+)
 from app.core.rate_limit import create_limiter, register_rate_limiter
 from app.models.generation_events import GenerationEventData
 from app.models.schemas import CurrentUser
 from app.services.generation.events import GenerationEventBroker
 from app.services.generation.tickets import StreamTicketStore
 from app.services.observability.runtime_registry import RuntimeRegistry
+
+
+@pytest.mark.parametrize("spec_version", ["2.3", "2.4"])
+@pytest.mark.parametrize("failed_chunk", [1, 2])
+def test_asgi_send_disconnect_closes_stream_without_gc(
+    spec_version: str,
+    failed_chunk: int,
+) -> None:
+    async def scenario() -> None:
+        registry = RuntimeRegistry()
+        registry.start()
+        events = GenerationEventBroker()
+        sid = uuid4()
+        await events.publish(
+            sid,
+            "done",
+            GenerationEventData(
+                timestamp=datetime.now(timezone.utc),
+                status="done",
+                percent_complete=100,
+            ),
+        )
+        response = GenerationStreamingResponse(events.stream(sid, registry=registry))
+        body_count = 0
+
+        async def receive():
+            await asyncio.Event().wait()
+
+        async def send(message):
+            nonlocal body_count
+            if message["type"] == "http.response.body":
+                body_count += 1
+                if body_count == failed_chunk:
+                    raise OSError("simulated disconnected client")
+
+        with pytest.raises(Exception):
+            await asyncio.wait_for(
+                response(
+                    {"type": "http", "asgi": {"spec_version": spec_version}},
+                    receive,
+                    send,
+                ),
+                1,
+            )
+        assert registry.snapshot().active_sse_connections == 0
+        assert await events.forget(sid)
+
+    asyncio.run(scenario())
+
+
+def test_cancel_during_asgi_send_closes_stream_without_gc() -> None:
+    async def scenario() -> None:
+        registry = RuntimeRegistry()
+        registry.start()
+        events = GenerationEventBroker()
+        sid = uuid4()
+        response = GenerationStreamingResponse(events.stream(sid, registry=registry))
+        sending = asyncio.Event()
+
+        async def receive():
+            await asyncio.Event().wait()
+
+        async def send(message):
+            if message["type"] == "http.response.body":
+                sending.set()
+                await asyncio.Event().wait()
+
+        task = asyncio.create_task(
+            response(
+                {"type": "http", "asgi": {"spec_version": "2.4"}},
+                receive,
+                send,
+            )
+        )
+        await asyncio.wait_for(sending.wait(), 1)
+        assert registry.snapshot().active_sse_connections == 1
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert registry.snapshot().active_sse_connections == 0
+
+    asyncio.run(scenario())
+
+
+def test_response_header_failure_releases_reservation_before_generator_starts() -> None:
+    async def scenario() -> None:
+        registry = RuntimeRegistry()
+        registry.start()
+        events = GenerationEventBroker(max_sessions=1)
+        sid = uuid4()
+        lease = await events.reserve_session(sid, last_event_id=0)
+        response = GenerationStreamingResponse(events.stream(sid, registry=registry), lease=lease)
+
+        async def receive():
+            await asyncio.Event().wait()
+
+        async def send(message):
+            raise OSError("headers could not be sent")
+
+        with pytest.raises(Exception):
+            await response({"type": "http", "asgi": {"spec_version": "2.4"}}, receive, send)
+        assert registry.snapshot().active_sse_connections == 0
+        replacement = await events.reserve_session(uuid4())
+        await replacement.close()
+
+    asyncio.run(scenario())
 
 
 @pytest.fixture
