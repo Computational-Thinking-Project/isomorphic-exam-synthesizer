@@ -40,6 +40,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.services.validator.base import CheckResult
 from app.services.validator.logic_checker import (
+    _resolve_option_letter,
     are_expressions_equivalent,
     normalize_latex_string,
 )
@@ -71,6 +72,14 @@ OUT_OF_SCOPE_PATTERNS = {
         r"đồng\s+biến|nghịch\s+biến|điểm\s+uốn|tiếp\s+tuyến)\b",
         re.IGNORECASE,
     ),
+    "complex_numbers": re.compile(
+        r"\b(?:số\s+phức|phần\s+thực|phần\s+ảo|môđun|mô-đun|số\s+phức\s+liên\s+hợp|dạng\s+lượng\s+giác)\b",
+        re.IGNORECASE,
+    ),
+    "linear_algebra_matrices": re.compile(
+        r"\b(?:ma\s+trận|định\s+thức|hệ\s+phương\s+trình\s+(?:bậc\s+nhất\s+)?(?:ba|3|bốn|4)\s+ẩn)\b",
+        re.IGNORECASE,
+    ),
 }
 
 # Regex for fraction patterns in LaTeX: \frac{A}{B} or \dfrac{A}{B}
@@ -90,10 +99,10 @@ LATEX_LOG_REGEX = re.compile(
 )
 LATEX_LN_REGEX = re.compile(r"\\ln\s*(?:\(\s*\{?([^{}\)\s]+)\}?\s*\)|\{([^{}]+)\})")
 
-# Regex for quadratic equation: a x^2 + b x + c = 0
+# Regex for quadratic equation: a x^2 + b x + c = 0 (supports variables x, t, y, u, z)
 QUADRATIC_EQ_REGEX = re.compile(
-    r"(?:(?P<a>[+-]?\s*\d*(?:\.\d+)?)\s*\*?\s*(?:x\^2|x²|t\^2|t²))\s*"
-    r"(?:(?P<b>[+-]\s*\d*(?:\.\d+)?)\s*\*?\s*(?:x|t))\s*"
+    r"(?:(?P<a>[+-]?\s*\d*(?:\.\d+)?)\s*\*?\s*(?:[xtyuz]\^2|[xtyuz]²))\s*"
+    r"(?:(?P<b>[+-]\s*\d*(?:\.\d+)?)\s*\*?\s*[xtyuz])\s*"
     r"(?:(?P<c>[+-]\s*\d+(?:\.\d+)?))?\s*=\s*0",
     re.IGNORECASE,
 )
@@ -141,6 +150,204 @@ def _exact_integer_nth_root(val: int, n: int) -> Optional[int]:
         else:
             high = mid - 1
     return None
+
+
+def _extract_balanced_braces(text: str, start_pos: int) -> Optional[Tuple[str, int]]:
+    """
+    Extract content of balanced { ... } starting at start_pos (where text[start_pos] == '{').
+    Returns (content, end_pos_after_closing_brace) or None if unclosed / invalid.
+    """
+    if start_pos >= len(text) or text[start_pos] != "{":
+        return None
+    depth = 0
+    for i in range(start_pos, len(text)):
+        if text[i] == "{" and (i == 0 or text[i - 1] != "\\"):
+            depth += 1
+        elif text[i] == "}" and (i == 0 or text[i - 1] != "\\"):
+            depth -= 1
+            if depth == 0:
+                return text[start_pos + 1 : i], i + 1
+    return None
+
+
+def _extract_latex_fractions(text: str) -> List[Tuple[str, str]]:
+    """Extract all LaTeX fractions \\frac{num}{den} or \\dfrac{num}{den} supporting nested braces."""
+    results: List[Tuple[str, str]] = []
+    pattern = re.compile(r"\\(?:d)?frac(?=[^a-zA-Z]|$)")
+    for m in pattern.finditer(text):
+        idx = m.end()
+        while idx < len(text) and text[idx].isspace():
+            idx += 1
+        if idx >= len(text) or text[idx] != "{":
+            continue
+        num_res = _extract_balanced_braces(text, idx)
+        if not num_res:
+            continue
+        num_str, idx = num_res
+        while idx < len(text) and text[idx].isspace():
+            idx += 1
+        if idx >= len(text) or text[idx] != "{":
+            continue
+        den_res = _extract_balanced_braces(text, idx)
+        if not den_res:
+            continue
+        den_str, _ = den_res
+        results.append((num_str.strip(), den_str.strip()))
+    return results
+
+
+def _extract_latex_sqrts(text: str) -> List[Tuple[Optional[int], str]]:
+    """Extract all LaTeX radicals \\sqrt[n]{radicand} or \\sqrt{radicand} supporting nested braces."""
+    results: List[Tuple[Optional[int], str]] = []
+    pattern = re.compile(r"\\sqrt(?=[^a-zA-Z]|$)")
+    for m in pattern.finditer(text):
+        idx = m.end()
+        degree: Optional[int] = None
+        while idx < len(text) and text[idx].isspace():
+            idx += 1
+        if idx < len(text) and text[idx] == "[":
+            end_bracket = text.find("]", idx)
+            if end_bracket != -1:
+                deg_content = text[idx + 1 : end_bracket].strip()
+                if deg_content.isdigit():
+                    degree = int(deg_content)
+                idx = end_bracket + 1
+        while idx < len(text) and text[idx].isspace():
+            idx += 1
+        if idx < len(text) and text[idx] == "{":
+            res = _extract_balanced_braces(text, idx)
+            if res:
+                results.append((degree, res[0].strip()))
+    return results
+
+
+def _extract_latex_logs(text: str) -> List[Tuple[Optional[str], str]]:
+    """Extract (base_str, arg_str) from \\log_{base}(arg) or \\log_b(arg) or \\log(arg) or \\log{arg}."""
+    results: List[Tuple[Optional[str], str]] = []
+    pattern = re.compile(r"\\log(?=[^a-zA-Z]|$)")
+    for m in pattern.finditer(text):
+        idx = m.end()
+        base_str: Optional[str] = None
+        while idx < len(text) and text[idx].isspace():
+            idx += 1
+        if idx < len(text) and text[idx] == "_":
+            idx += 1
+            while idx < len(text) and text[idx].isspace():
+                idx += 1
+            if idx < len(text) and text[idx] == "{":
+                res = _extract_balanced_braces(text, idx)
+                if res:
+                    base_str, idx = res
+            else:
+                m_base = re.match(r"([0-9a-zA-Z\.\-]+)", text[idx:])
+                if m_base:
+                    base_str = m_base.group(1)
+                    idx += m_base.end()
+        while idx < len(text) and text[idx].isspace():
+            idx += 1
+        if idx < len(text) and text[idx] == "{":
+            res = _extract_balanced_braces(text, idx)
+            if res:
+                results.append((base_str, res[0].strip()))
+        elif idx < len(text) and text[idx] == "(":
+            depth = 0
+            start = idx
+            for i in range(start, len(text)):
+                if text[i] == "(":
+                    depth += 1
+                elif text[i] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        results.append((base_str, text[start + 1 : i].strip()))
+                        break
+    return results
+
+
+def _extract_latex_lns(text: str) -> List[str]:
+    """Extract arg_str from \\ln(arg) or \\ln{arg} supporting nested braces."""
+    results: List[str] = []
+    pattern = re.compile(r"\\ln(?=[^a-zA-Z]|$)")
+    for m in pattern.finditer(text):
+        idx = m.end()
+        while idx < len(text) and text[idx].isspace():
+            idx += 1
+        if idx < len(text) and text[idx] == "{":
+            res = _extract_balanced_braces(text, idx)
+            if res:
+                results.append(res[0].strip())
+        elif idx < len(text) and text[idx] == "(":
+            depth = 0
+            start = idx
+            for i in range(start, len(text)):
+                if text[i] == "(":
+                    depth += 1
+                elif text[i] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        results.append(text[start + 1 : i].strip())
+                        break
+    return results
+
+
+def _latex_to_python_numeric(expr: str) -> str:
+    """Pre-convert LaTeX fraction and sqrt macros into standard Python arithmetic for AST parsing."""
+    cleaned = expr.strip()
+    cleaned = re.sub(r"\\(?:left|right)", "", cleaned)
+    # Replace \sqrt{...} with sqrt(...)
+    while r"\sqrt" in cleaned:
+        m = re.search(r"\\sqrt(?=[^a-zA-Z]|$)(?:\s*\[\s*(\d+)\s*\])?", cleaned)
+        if not m:
+            break
+        idx = m.end()
+        while idx < len(cleaned) and cleaned[idx].isspace():
+            idx += 1
+        if idx < len(cleaned) and cleaned[idx] == "{":
+            res = _extract_balanced_braces(cleaned, idx)
+            if res:
+                inner, end_idx = res
+                deg = m.group(1)
+                if deg and deg != "2":
+                    replacement = f"(({_latex_to_python_numeric(inner)})**(1/{deg}))"
+                else:
+                    replacement = f"sqrt({_latex_to_python_numeric(inner)})"
+                cleaned = cleaned[: m.start()] + replacement + cleaned[end_idx:]
+                continue
+        break
+
+    # Replace \frac{A}{B} or \dfrac{A}{B} with ((A)/(B))
+    while re.search(r"\\(?:d)?frac(?=[^a-zA-Z]|$)", cleaned):
+        m = re.search(r"\\(?:d)?frac(?=[^a-zA-Z]|$)", cleaned)
+        if not m:
+            break
+        idx = m.end()
+        while idx < len(cleaned) and cleaned[idx].isspace():
+            idx += 1
+        num_res = (
+            _extract_balanced_braces(cleaned, idx)
+            if idx < len(cleaned) and cleaned[idx] == "{"
+            else None
+        )
+        if not num_res:
+            break
+        num_str, idx2 = num_res
+        while idx2 < len(cleaned) and cleaned[idx2].isspace():
+            idx2 += 1
+        den_res = (
+            _extract_balanced_braces(cleaned, idx2)
+            if idx2 < len(cleaned) and cleaned[idx2] == "{"
+            else None
+        )
+        if not den_res:
+            break
+        den_str, end_idx = den_res
+        replacement = (
+            f"(({_latex_to_python_numeric(num_str)})/({_latex_to_python_numeric(den_str)}))"
+        )
+        cleaned = cleaned[: m.start()] + replacement + cleaned[end_idx:]
+
+    cleaned = cleaned.replace("{", "(").replace("}", ")")
+    cleaned = cleaned.replace("^", "**")
+    return cleaned
 
 
 class SafeNumericEvaluator(ast.NodeVisitor):
@@ -197,7 +404,10 @@ class SafeNumericEvaluator(ast.NodeVisitor):
                 raise ZeroDivisionError("Division by zero in AST evaluation")
             return left / right
         if isinstance(node.op, ast.Pow):
-            if abs(left) > 1000000 or abs(right) > 20:
+            if left == 0 and right == 0:
+                raise ValueError("Indeterminate form 0**0")
+            max_base = 10**18 if abs(right) <= 1 else 1000000
+            if abs(left) > max_base or abs(right) > 20:
                 raise ValueError("Exponentiation out of safe bounds")
             if right.denominator != 1:
                 p = right.numerator
@@ -269,13 +479,7 @@ def safe_eval_numeric_expr(expr_str: str) -> Optional[Fraction]:
     if not expr_str or not expr_str.strip():
         return None
 
-    cleaned = expr_str.strip()
-    # Strip LaTeX commands like \left, \right
-    cleaned = re.sub(r"\\(?:left|right)", "", cleaned)
-    # Replace LaTeX curly braces with parentheses
-    cleaned = cleaned.replace("{", "(").replace("}", ")")
-    # Replace ^ with **
-    cleaned = cleaned.replace("^", "**")
+    cleaned = _latex_to_python_numeric(expr_str)
 
     try:
         tree = ast.parse(cleaned, mode="eval")
@@ -552,9 +756,8 @@ def check_mathematical_invariants(
 
     # 1. Denominator Non-Zero Check
     for text_segment in combined_texts:
-        # Check LaTeX fractions: \frac{A}{B}
-        for match in LATEX_FRACTION_REGEX.finditer(text_segment):
-            num_str, denom_str = match.group(1).strip(), match.group(2).strip()
+        # Check LaTeX fractions: \frac{A}{B} or \dfrac{A}{B} supporting nested braces
+        for num_str, denom_str in _extract_latex_fractions(text_segment):
             if denom_str in ("0", "0.0"):
                 errors.append(
                     f"Zero denominator detected in fraction: '\\frac{{{num_str}}}{{{denom_str}}}'"
@@ -585,29 +788,26 @@ def check_mathematical_invariants(
 
     # 2. Non-Negative Radicand (Even Roots) Check
     for text_segment in combined_texts:
-        for match in LATEX_SQRT_REGEX.finditer(text_segment):
-            degree_str, radicand_str = match.group(1), match.group(2).strip()
-            degree = int(degree_str) if degree_str else 2
+        for degree, radicand_str in _extract_latex_sqrts(text_segment):
+            deg = degree if degree is not None else 2
             # Even root requires radicand >= 0 in real domain
-            if degree % 2 == 0:
+            if deg % 2 == 0:
                 rad_val = safe_eval_numeric_expr(radicand_str)
                 if rad_val is not None:
                     if rad_val < 0:
                         errors.append(
-                            f"Negative radicand in even root (index {degree}): radicand '{radicand_str}' "
+                            f"Negative radicand in even root (index {deg}): radicand '{radicand_str}' "
                             f"evaluates to {_format_fraction(rad_val)} < 0."
                         )
                 elif not re.search(r"[a-zA-Z]", radicand_str):
                     errors.append(
-                        f"Uncomputable radicand in even root (index {degree}): '{radicand_str}' cannot be evaluated."
+                        f"Uncomputable radicand in even root (index {deg}): '{radicand_str}' cannot be evaluated."
                     )
 
     # 3. Logarithm Domain Check
     for text_segment in combined_texts:
         # \log_b(A)
-        for match in LATEX_LOG_REGEX.finditer(text_segment):
-            base_str = match.group(1) or match.group(2)
-            arg_str = match.group(3) or match.group(4)
+        for base_str, arg_str in _extract_latex_logs(text_segment):
             if arg_str:
                 arg_val = safe_eval_numeric_expr(arg_str.strip())
                 if arg_val is not None:
@@ -634,8 +834,7 @@ def check_mathematical_invariants(
                     errors.append(f"Uncomputable logarithm base: '{base_str}' cannot be evaluated.")
 
         # \ln(A)
-        for match in LATEX_LN_REGEX.finditer(text_segment):
-            arg_str = match.group(1) or match.group(2)
+        for arg_str in _extract_latex_lns(text_segment):
             if arg_str:
                 arg_val = safe_eval_numeric_expr(arg_str.strip())
                 if arg_val is not None:
@@ -729,12 +928,18 @@ def check_mathematical_invariants(
                     )
 
     # 6. Geometric Invariant: Triangle Inequality
-    # Check for "tam giác ... có ba cạnh / các cạnh a, b, c"
+    # Check for "tam giác ... có ba cạnh / các cạnh a, b, c" or "AB = 3, BC = 4, AC = 10"
     tri_match = re.search(
         r"\b(?:ba\s+cạnh|các\s+cạnh)\s+(?:lần\s+lượt\s+là\s+)?(\d+(?:\.\d+)?)\s*[,;\s]\s*(\d+(?:\.\d+)?)\s*(?:và|[,;\s])\s*(\d+(?:\.\d+)?)",
         question_text,
         re.IGNORECASE,
     )
+    if not tri_match:
+        tri_match = re.search(
+            r"\b[A-Za-z]{2}\s*=\s*(\d+(?:\.\d+)?)\s*[,;\s]\s*[A-Za-z]{2}\s*=\s*(\d+(?:\.\d+)?)\s*(?:và|[,;\s])\s*[A-Za-z]{2}\s*=\s*(\d+(?:\.\d+)?)",
+            question_text,
+            re.IGNORECASE,
+        )
     if tri_match:
         try:
             s1, s2, s3 = (
@@ -809,9 +1014,10 @@ def check_distractor_reasonableness(
 
     # Verify correct_answer is present among options
     if correct_answer:
+        # Check either letter designation ('A', 'A.', 'Option A', '(A)', 'Phương án A') or matching option content
+        letter_resolved = _resolve_option_letter(correct_answer, options)
+        label_match = letter_resolved is not None
         norm_ans = normalize_latex_string(correct_answer.strip())
-        # Check either label ("A", "B", "C", "D") or matching option content (including mathematical equivalence)
-        label_match = correct_answer.strip().upper() in ("A", "B", "C", "D")
         content_match = any(
             norm_ans == normalize_latex_string(opt.strip())
             or are_expressions_equivalent(correct_answer.strip(), opt.strip())
