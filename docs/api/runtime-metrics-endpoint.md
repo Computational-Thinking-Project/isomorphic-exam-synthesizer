@@ -141,13 +141,21 @@ excluded from its denominator. For example, 3 failures among 12 completed
 attempts produce 0.25. A later successful retry is a separate attempt; it does
 not erase the earlier failure. Cleanup must not record completion twice.
 
-**Pending AI input:** confirm a single instrumentation boundary, SDK automatic
-retry behavior and provider outcome classification with the AI owner. Hidden
-SDK retries must be observed or explicitly accounted for; do not silently
-assume one SDK method call equals one outbound attempt or change retry policy.
-The Blueprint subprocess has request metadata, but a separate process does not
-share the backend's in-memory collector. Its usage/outcome reporting and crash
-behavior need a confirmed bridge before claiming full coverage.
+**AI input verified in PR18/21:** the W2 gateway explicitly sets SDK retry
+attempts to 1, applies a shared semaphore of at most 3 and invokes
+RequestContext.reserve_request immediately before each transport dispatch.
+W2 Blueprint extraction now runs through backend AIRuntime; the standalone CLI
+is not the W2 request path. These services and their AIRuntime lifespan are now
+present on this branch after dev synchronization. The TASK-207 job runner and
+runtime metrics collector are not yet connected to that shared AI path. Do not
+invent a subprocess metrics bridge for W2 or reuse the legacy sync generator.
+
+**Still pending:** connect one raw-request outcome boundary to the collector
+with the AI owner, including success/failure/cancellation. The reserve hook is
+not an outcome hook. Do not count an entire batch as a request, double-reserve
+the existing DB hook, or mark provider success/failure from local validation.
+If any separate process is later included, its reporting/crash contract needs
+an explicit bridge rather than assuming shared Python memory.
 
 These counters do not increment or replace `exam_sessions.gemini_call_count`,
 `gemini_review_calls` or the 250-call per-batch guard. Their scopes/lifetimes are

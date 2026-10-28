@@ -3,14 +3,45 @@
 ## Implementation status
 
 Python implements the event models, bounded ticket store, event broker, job
-runner and two router factories. They are exercised in isolated tests. Product
-`main.py` does not register these factories: real durable storage, current-owner
-lookup and the AI/validator adapter must be supplied explicitly. No in-memory
-database or fake AI is installed in the product app.
+runner, two router factories and explicit AI batch mapping/reservation adapters.
+AI PR18/21 is now inherited through Quỳnh's dev synchronization at `91843e0`.
+Product `main.py` does not register the TASK-207 factories: durable storage,
+current-owner lookup and the runner's transition to the batch callback path
+remain pending. No in-memory database or fake AI is installed in the product app.
 
-The current branch predates the async AI integration already on `dev`. Do not
-copy or replace that AI implementation. Connect its raw request boundary and
-confirmed Blueprint inputs when integrating the branches.
+`AIBatchAdapter` calls the existing GenerationService; it does not implement
+another generator or gateway. The current isolated GenerationJobRunner still
+uses its per-target Protocol, so the new adapter is not a drop-in replacement
+until the durable snapshot/result persistence contract is integrated.
+
+## AI batch adapter contract
+
+- Map source rows with `map_source_questions(rows,session_id)`; content and IDs
+  are preserved and options are ordered A-D explicitly.
+- Build internal `AIBatchInputs` from trusted stored sources/confirmation hash,
+  canonical Blueprint JSON by source ID, base_seed, exact variation_modes and
+  completed QuestionResult records. The adapter does not confirm a source or
+  invent a hash from client input. Modes are passed unchanged, including [].
+- Inject `AIRuntime.generation` into `AIBatchAdapter`; call
+  `run(plan,inputs,store,deadline=...,on_result=...)`. Source/version/cache
+  identities and ordering must agree with the job plan.
+- The required async callback receives `PreparedAIResult(target,draft,raw_result)`.
+  Persist the whole raw result/provenance and the display draft when available.
+  Commit before returning and before publishing question_done/progress. Error
+  results have no draft; do not invent a row. Completed cache gets no new callback.
+- Callback failure propagates and may cancel sibling AI tasks. Keep acknowledged
+  commits and reconcile uncertain writes; never auto-retry the callback.
+- `JobRequestReservation` supplies the gateway's one-reservation-per-transport
+  RequestContext. It requires an existing durable store; it implements no SQL
+  or local quota substitute. Fatal/uncertain reservation failures are latched,
+  checked before delivery and after the batch, and block further dispatches.
+- Source/result validation, request deadlines, seed/fingerprints and cross-version
+  uniqueness remain with the existing AI service. The adapter never loops
+  single-question generation or wraps the batch in ProviderCalls.send.
+
+The module is verified with real AI service/gateway/validator code and offline
+SDK/persistence fixtures. Full Rule4 context, warning-after-exhaustion policy,
+atomic DB semantics and live API/browser/proxy acceptance remain integration gates.
 
 ## HTTP factories
 
@@ -53,7 +84,7 @@ Wire frame:
 ```text
 id: 14
 event: question_done
-data: {"id":14,"event":"question_done","data":{"timestamp":"2026-10-27T10:30:00Z","question_no":3,"version_index":1,"status":"done","percent_complete":45.0,"retry_count":0,"error_message":null,"error_code":null,"session_status":null}}
+data: {"timestamp":"2026-10-27T10:30:00Z","question_no":3,"version_index":1,"status":"done","percent_complete":45.0,"retry_count":0,"error_message":null,"error_code":null,"session_status":null,"completed_count":9,"total_count":20,"message":"Question saved successfully."}
 
 ```
 
@@ -61,6 +92,14 @@ JSON encoding prevents newlines in values from injecting SSE frames. Named
 events are `progress`, `question_done`, `warning`, `error` and `done`.
 `question_no` and `version_index` are null for overall job events. Integers are
 strict, progress is finite in [0,100], and timestamps require a timezone.
+
+The internal `GenerationEvent` model retains the W2 `{id,event,data}` envelope.
+On the wire, SSE carries id/event as native fields and JSON contains only the
+inner payload. This matches PR22 `a4cf946`'s hook: no second `data` wrapper.
+Runner events include paired `completed_count`/`total_count` and a safe `message`.
+An initial progress event covers resume, including an already complete job; a
+progress event after each successful save updates counts immediately. Warnings
+provide the `message` consumed by the UI, without exposing raw exceptions.
 
 One shared broker per event loop/worker retains the last 50 events per session.
 IDs keep increasing across retry jobs. Replay includes events newer than the
@@ -76,9 +115,18 @@ before reconnecting; do not silently assume the missing events were delivered.
 The frontend/DB integration must provide the current cursor for this resync.
 
 Current default capacities: 4096 live tickets, 1024 session histories. Expired
-tickets are pruned on access. Capacity fails explicitly. The owner of app
+tickets are pruned on access. Capacity fails explicitly. Pending jobs and HTTP
+responses hold idempotent buffer leases. Failed/cancelled claims and empty
+disconnected streams release their slots; invalid cursors allocate nothing.
+History or buffers still held by another job/subscriber are preserved. The owner of app
 lifecycle must call broker `forget` for terminal, unsubscribed histories after
 its agreed replay retention period. No unbounded history is retained.
+
+`GenerationStreamingResponse` explicitly closes its generator and lease in
+cancellation-shielded cleanup. An ASGI send error can occur while the generator
+is paused at yield; relying only on its finally block would leave gauges and
+subscribers active until GC. Tests cover ASGI 2.3/2.4, first/later body failures,
+cancellation while sending and header failure before generator entry.
 
 ## Job lifecycle and accounting
 
@@ -92,14 +140,15 @@ its agreed replay retention period. No unbounded history is retained.
 - AI supplies the four validation stages and retry behavior. Saveable candidates
   with warnings still count toward a complete `generated` job. No saveable
   candidate emits a warning and creates no fake row.
-- Each real outbound attempt, including repair/retry/solution calls, must pass
-  through `ProviderCalls.send`. Durable quota is reserved immediately before
-  transport and is capped at 250 across the session, including Blueprint usage.
-- One shared semaphore bounds outbound calls to three across jobs. Local
-  validation and heuristic/mock operations do not reserve calls. The AI adapter
-  must account for hidden SDK retries instead of wrapping a whole high-level method.
-- Known provider failures increment runtime error statistics. Unknown outcomes
-  on cancellation/whole-job timeout are released without inventing a result.
+- The current isolated runner uses `ProviderCalls.send` for raw attempts. The
+  new AI batch path instead injects JobRequestReservation into the existing
+  gateway hook, reserving once immediately before transport, with a durable
+  session cap of 250 including Blueprint usage. Never combine both wrappers.
+- The shared AI gateway bounds outbound concurrency to three and disables SDK
+  retries. Local validation and heuristic/mock operations do not reserve calls.
+- ProviderCalls already models known/unknown outcomes in the isolated runner.
+  The new shared AI path still needs a raw outcome hook for runtime metrics;
+  reservation counts or QuestionResult.attempts are not a substitute for it.
 - Execution timeout is at most 600 seconds. Quota/timeout with committed progress
   finishes `partial_generated`; without any committed progress it finishes `failed`.
   Fatal errors finish `failed` while preserving already committed rows.
@@ -117,20 +166,37 @@ its agreed replay retention period. No unbounded history is retained.
 
 `GenerationJobStore` defines Python methods, not assumed RPC wire names:
 `claim`, `reserve_gemini_call`, `save_draft`, `finish` and `fail_stale`.
-Duy must confirm atomic DB operations, stable errors, current-owner lookup,
-job fencing representation and an isolated test database. Python never emulates
+Duy must confirm atomic DB operations, stable errors, worker access,
+job fencing representation and an isolated test database. Quỳnh can implement
+the current-owner Python lookup using the existing trusted server DB client once
+access/lifetime is agreed. Python never emulates
 transactions with unrelated writes. `finish` must verify actual DB completeness;
 an uncertain save is not proof that no row was committed.
 
-AI must map confirmed source/Blueprint/config data to its real async service and
-return a validated `GeneratedDraft`; local test doubles prove neither real
-Gemini behavior nor the four production validators. The legacy flat fallback
-Blueprint and the AI service's structured Blueprint need an explicit adapter.
+Quỳnh's mapping/batch modules now adapt confirmed inputs and QuestionResult to
+the existing service. Real snapshot loading and persistence remain pending;
+offline tests prove neither live Gemini behavior nor all four integrated validators.
+Legacy flat fallback Blueprint records are not automatically canonical AI inputs.
 
-The eventual app lifespan must create/start one shared runtime registry, broker,
-ticket store and runner, and mount both factories with real adapters. Keep
+Extend the existing AIRuntime lifespan to create/start one shared runtime registry,
+broker, ticket store and runner, then mount both factories with real adapters. Keep
 generation config persistence behind its separate TASK-207a RPC gate. OPS must
 verify single worker, SSE proxy buffering/timeouts and ticket-safe access logs.
+
+PR18/21 provide real async batch generation with completed/on_result callbacks
+and cross-version uniqueness. An adapter must preserve that batch behavior,
+confirmed server hash and cached result fingerprints; looping over independent
+single-question calls is not an equivalent integration. The gateway already
+disables hidden SDK retries and reserves once immediately before transport.
+Its request hook does not yet provide complete runtime outcome instrumentation;
+do not wrap the whole service in ProviderCalls.send or reserve twice.
+
+Collector snapshot PR22 `2d74017` preserves partial percentage/counts and explicitly
+sends shuffle_options:false. Remaining gates include retry button vs reconnect,
+missing-card status/reload partial, history-loss resync, case-sensitive mode IDs
+and saved config/Blueprint detail projection. Do not change backend defaults or
+partial policy to conceal these differences. PR19/20 supply rule/aggregator
+contracts, not DB or app lifecycle adapters.
 
 Partial-generation restrictions on export/finalize belong at those endpoints;
 none are implemented or bypassed by this module. DB RLS, locking, rollback,
