@@ -424,14 +424,15 @@ export function useSSE(sessionId, {
     };
   }, [sessionId, enabled, connect, cleanupConnection]);
 
-  // Hàm thủ công cho phép người dùng bấm "Kết nối lại" hoặc kích hoạt vòng theo dõi mới khi sinh bù
+  // Hàm thủ công cho phép người dùng bấm "Kết nối lại" hoặc kích hoạt vòng theo dõi mới khi sinh bù trong cùng một phiên
   const manualReconnect = useCallback(() => {
     isDoneRef.current = false;
     setIsDone(false);
     reconnectAttemptRef.current = 0;
     setReconnectCount(0);
     setError(null);
-    lastEventIdRef.current = null;
+    // Giữ nguyên lastEventIdRef.current của phiên hiện tại để tiếp tục mốc sự kiện đã nhận,
+    // tránh bị từ chối do backend broker chỉ lưu buffer giới hạn (ví dụ: 50 sự kiện gần nhất).
     setProgress((prev) => ({
       ...prev,
       session_status: 'generating',
@@ -457,5 +458,6 @@ export function useSSE(sessionId, {
     isPartial,
     reconnectCount,
     reconnect: manualReconnect,
+    manualReconnect,
   };
 }

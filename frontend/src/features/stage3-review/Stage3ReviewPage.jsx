@@ -282,10 +282,12 @@ export default function Stage3ReviewPage({
           ) : (
             <button
               type="button"
-              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-emerald-700/30 hover:bg-emerald-500"
+              disabled
+              title="Tính năng phê duyệt & xuất bản file đề thi sẽ sẵn sàng khi hoàn tất tích hợp API Stage 3."
+              className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800/60 px-4 py-2 text-xs font-semibold text-slate-400 opacity-70"
             >
               <FileCheck className="h-3.5 w-3.5" />
-              Phê duyệt & Xuất bản đề
+              Phê duyệt & Xuất bản đề (Chờ Stage 3)
             </button>
           )}
         </div>
@@ -329,15 +331,16 @@ export default function Stage3ReviewPage({
       )}
 
       {/* Thông báo khi backend chưa nạp dữ liệu chi tiết câu hỏi (tránh suy đoán võ đoán là chưa sinh) */}
-      {!hasLoadedAnyVariants && !isPartial && (
+      {!hasLoadedAnyVariants && (
         <div className="rounded-2xl border border-slate-700 bg-slate-900/80 p-8 text-center text-slate-300">
           <Info className="mx-auto h-8 w-8 text-sky-400" />
           <h3 className="mt-3 text-base font-semibold text-white">
             Đang đồng bộ dữ liệu chi tiết các mã đề từ Backend
           </h3>
           <p className="mt-1 text-xs text-slate-400 max-w-md mx-auto">
-            Các mã đề thi đã được ghi nhận. Dữ liệu chi tiết từng câu hỏi biến thể đang trong quá trình
-            đồng bộ từ cơ sở dữ liệu.
+            {isPartial
+              ? 'Phiên này được ghi nhận ở trạng thái sinh dở (partial_generated), nhưng API chi tiết hiện tại chưa nạp danh sách câu hỏi biến thể. Giao diện đang giữ trạng thái chờ để tránh đánh dấu sai các câu đã lưu trong cơ sở dữ liệu.'
+              : 'Các mã đề thi đã được ghi nhận. Dữ liệu chi tiết từng câu hỏi biến thể đang trong quá trình đồng bộ từ cơ sở dữ liệu.'}
           </p>
         </div>
       )}
@@ -372,8 +375,8 @@ export default function Stage3ReviewPage({
           const isRegenerating = regeneratingQuestions[regKey];
 
           if (isMissing) {
-            // Nếu cả phiên hoàn toàn chưa có variant nào và không phải partial, hiển thị trạng thái chờ tải
-            if (!hasLoadedAnyVariants && !isPartial) {
+            // Khi cả phiên chưa nạp được bất kỳ variant nào từ API, giữ trạng thái chờ tải (không kết luận là câu bị thiếu)
+            if (!hasLoadedAnyVariants) {
               return null;
             }
 

@@ -561,3 +561,74 @@ test('useSSE thông thường khi done với session_status === generated thì i
 
   await harness.unmount();
 });
+
+test('useSSE manualReconnect giữ nguyên last_event_id khi kết nối lại hoặc sinh bù cùng phiên (kể cả khi lịch sử vượt 50 sự kiện)', async () => {
+  MockEventSource.instances = [];
+  let ticketCallCount = 0;
+  const harness = renderHookHarness(({ sessionId = 'session-chk-1' } = {}) =>
+    useSSE(sessionId, {
+      requestTicket: async () => {
+        ticketCallCount += 1;
+        return { ticket: `t-chk-${ticketCallCount}` };
+      },
+      eventSourceFactory: (url) => new MockEventSource(url),
+    }),
+  );
+
+  await harness.render();
+  const es1 = MockEventSource.instances[0];
+  assert.ok(es1, 'EventSource 1 phải được khởi tạo');
+  assert.equal(es1.url.includes('last_event_id'), false, 'Kết nối ban đầu chưa có last_event_id');
+
+  // Mô phỏng nhận 70 sự kiện liên tiếp (vượt quá dung lượng buffer 50 sự kiện của broker backend)
+  await act(async () => {
+    es1.simulateOpen();
+    for (let i = 1; i <= 70; i++) {
+      es1.emit(
+        'progress',
+        { percent: i, message: `Tiến độ sự kiện ${i}` },
+        String(i),
+      );
+    }
+    // Phát event done kết thúc với trạng thái partial_generated
+    es1.emit('done', {
+      session_status: 'partial_generated',
+      percent: 70,
+      completed_count: 7,
+      total_count: 10,
+    });
+  });
+
+  assert.equal(harness.result.isDone, true);
+  assert.equal(harness.result.isPartial, true);
+  assert.equal(harness.result.progress.percent, 70);
+
+  // Kích hoạt manualReconnect (khi người dùng bấm Sinh bù hoặc Kết nối lại)
+  await act(async () => {
+    harness.result.manualReconnect();
+  });
+
+  // Kiểm tra: isDone phải được reset về false để đón nhận stream mới
+  assert.equal(harness.result.isDone, false);
+  assert.equal(harness.result.progress.session_status, 'generating');
+
+  // Kiểm tra EventSource thứ 2: Bắt buộc phải mang theo last_event_id=70
+  assert.equal(MockEventSource.instances.length, 2);
+  const es2 = MockEventSource.instances[1];
+  assert.ok(
+    es2.url.includes('&last_event_id=70'),
+    `URL của EventSource mới (${es2.url}) phải mang theo &last_event_id=70 để broker tiếp tục stream từ mốc đã đọc`,
+  );
+
+  // Chuyển sang phiên khác (session B): last_event_id phải được xóa sạch
+  await harness.render({ sessionId: 'session-chk-2' });
+  assert.equal(MockEventSource.instances.length, 3);
+  const es3 = MockEventSource.instances[2];
+  assert.equal(
+    es3.url.includes('last_event_id'),
+    false,
+    'Chuyển sang phiên khác thì không được mang last_event_id của phiên cũ',
+  );
+
+  await harness.unmount();
+});

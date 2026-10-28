@@ -197,3 +197,66 @@ test('Stage3ReviewPage hiển thị trạng thái chờ đồng bộ khi phiên 
 
   await harness.unmount();
 });
+
+test('Stage3ReviewPage đối với phiên partial_generated nhưng API chưa nạp mảng variants: hiển thị trạng thái chờ đồng bộ, không kết luận câu đã lưu là chưa sinh', async () => {
+  const mockLoadSession = async (sId) => ({
+    id: sId,
+    title: 'Đề thi sinh dở chờ API chi tiết',
+    status: 'partial_generated',
+    subject: 'Toán',
+    grade: 12,
+    config: { n_versions: 2 },
+    source_questions: [{ id: 'q1', question_no: 1 }, { id: 'q2', question_no: 2 }],
+    exam_versions: [
+      // Backend chỉ trả exam_versions metadata, chưa trả version_questions
+      { id: 'v1', version_code: '101' },
+      { id: 'v2', version_code: '102' },
+    ],
+  });
+
+  const harness = renderStage3Page('sess-partial-syncing', {
+    loadSession: mockLoadSession,
+  });
+
+  await harness.render();
+
+  const text = harness.container.textContent;
+  // Không được kết luận bừa các câu là "Chưa được sinh thành công"
+  assert.equal(text.includes('Chưa được sinh thành công'), false, 'Không được kết luận câu thiếu khi API chưa nạp mảng variants');
+  assert.ok(text.includes('Đang đồng bộ dữ liệu chi tiết các mã đề từ Backend'), 'Phải hiển thị thẻ thông báo đang đồng bộ');
+
+  await harness.unmount();
+});
+
+test('Stage3ReviewPage nút Phê duyệt & Xuất bản đề bị khóa khi phiên hoàn tất, hiển thị rõ đang chờ tích hợp Stage 3', async () => {
+  const mockLoadSession = async (sId) => ({
+    id: sId,
+    title: 'Đề thi hoàn tất',
+    status: 'generated',
+    subject: 'Toán',
+    grade: 12,
+    config: { n_versions: 1 },
+    source_questions: [{ id: 'q1', question_no: 1 }],
+    exam_versions: [
+      {
+        version_index: 1,
+        questions: [{ question_no: 1, content: 'Toán 1', options: { A: '1' }, correct_key: 'A' }],
+      },
+    ],
+  });
+
+  const harness = renderStage3Page('sess-completed-btn', {
+    loadSession: mockLoadSession,
+  });
+
+  await harness.render();
+
+  const approveBtn = Array.from(harness.container.querySelectorAll('button')).find(
+    (b) => b.textContent.includes('Phê duyệt & Xuất bản đề'),
+  );
+  assert.ok(approveBtn, 'Phải có nút Phê duyệt & Xuất bản đề');
+  assert.equal(approveBtn.getAttribute('disabled') !== null, true, 'Nút Phê duyệt & Xuất bản đề phải bị disabled');
+  assert.ok(approveBtn.textContent.includes('Chờ Stage 3'), 'Nút phải ghi rõ Chờ Stage 3');
+
+  await harness.unmount();
+});
