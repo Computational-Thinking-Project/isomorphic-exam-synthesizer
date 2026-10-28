@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { register } from 'node:module';
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate, useLocation } from 'react-router-dom';
 import { ensureDomEnvironment } from '../../test-support/domHarness.js';
 
 ensureDomEnvironment();
@@ -15,14 +15,20 @@ function renderStage3Page(sessionId, { loadSession, retryGen } = {}) {
   const container = document.createElement('div');
   const root = createRoot(container);
   let navigateFn = null;
+  let currentLocation = `/session/${sessionId}/stage3`;
 
   function NavigationCapture() {
     navigateFn = useNavigate();
+    const loc = useLocation();
+    currentLocation = loc.pathname;
     return null;
   }
 
   return {
     container,
+    getLocation() {
+      return currentLocation;
+    },
     async render() {
       await act(async () => {
         root.render(
@@ -39,6 +45,10 @@ function renderStage3Page(sessionId, { loadSession, retryGen } = {}) {
                   loadSession,
                   retryGen,
                 }),
+              }),
+              React.createElement(Route, {
+                path: '/session/:sessionId/stage2',
+                element: React.createElement('div', null, 'Trang Stage 2 Đã Chuyển Hướng'),
               }),
             ),
           ),
@@ -377,4 +387,188 @@ test('Stage3ReviewPage hủy bỏ phản hồi khi unmount trong lúc tải', as
   await act(async () => {
     resolveSession();
   });
+});
+
+test('Stage3ReviewPage: retry A thành công rồi chuyển B trước khi hết timer 1.2s phải giữ nguyên B, không kéo về A/stage2', async () => {
+  const mockLoadSession = async (sId) => ({
+    id: sId,
+    title: `Đề thi ${sId}`,
+    status: 'partial_generated',
+    subject: 'Toán',
+    grade: 12,
+    config: { n_versions: 2 },
+    source_questions: [{ id: 'q1', question_no: 1 }],
+    exam_versions: [{ version_index: 1, questions: [] }],
+  });
+
+  const retryCalls = [];
+  const mockRetryGen = async (sId) => {
+    retryCalls.push(sId);
+    return { ok: true };
+  };
+
+  const harness = renderStage3Page('session-A', {
+    loadSession: mockLoadSession,
+    retryGen: mockRetryGen,
+  });
+
+  await harness.render();
+  assert.equal(harness.getLocation(), '/session/session-A/stage3');
+
+  // 1. Bấm nút "Sinh bù tất cả câu thiếu" ở phiên A
+  const retryAllBtn = Array.from(harness.container.querySelectorAll('button')).find((b) =>
+    b.textContent.includes('Sinh bù tất cả câu thiếu'),
+  );
+  assert.ok(retryAllBtn);
+  await act(async () => {
+    retryAllBtn.click();
+  });
+  assert.equal(retryCalls.length, 1);
+  assert.equal(retryCalls[0], 'session-A');
+
+  // 2. Chuyển sang phiên B trước khi timer 1.2s hết hạn (sau 50ms)
+  await new Promise((r) => setTimeout(r, 50));
+  await harness.navigate('session-B');
+  assert.equal(harness.getLocation(), '/session/session-B/stage3');
+
+  // 3. Chờ thêm 1.4s (đã vượt quá mốc 1.2s của timer phiên A)
+  await new Promise((r) => setTimeout(r, 1400));
+
+  // Timer của A phải bị hủy: URL bắt buộc phải giữ nguyên ở phiên B!
+  assert.equal(
+    harness.getLocation(),
+    '/session/session-B/stage3',
+    'Timer điều hướng của phiên A không được kéo URL về /session/session-A/stage2',
+  );
+
+  await harness.unmount();
+});
+
+test('Stage3ReviewPage: retry A thành công rồi chuyển A -> B -> A trước khi timer chạy, thao tác cũ của A không được điều hướng', async () => {
+  const mockLoadSession = async (sId) => ({
+    id: sId,
+    title: `Đề thi ${sId}`,
+    status: 'partial_generated',
+    subject: 'Toán',
+    grade: 12,
+    config: { n_versions: 2 },
+    source_questions: [{ id: 'q1', question_no: 1 }],
+    exam_versions: [{ version_index: 1, questions: [] }],
+  });
+
+  const retryCalls = [];
+  const mockRetryGen = async (sId) => {
+    retryCalls.push(sId);
+    return { ok: true };
+  };
+
+  const harness = renderStage3Page('session-A', {
+    loadSession: mockLoadSession,
+    retryGen: mockRetryGen,
+  });
+
+  await harness.render();
+
+  // Bấm sinh bù tất cả ở phiên A
+  const retryAllBtn = Array.from(harness.container.querySelectorAll('button')).find((b) =>
+    b.textContent.includes('Sinh bù tất cả câu thiếu'),
+  );
+  await act(async () => {
+    retryAllBtn.click();
+  });
+
+  // Nhanh chóng chuyển sang B rồi quay lại A
+  await new Promise((r) => setTimeout(r, 50));
+  await harness.navigate('session-B');
+  await new Promise((r) => setTimeout(r, 50));
+  await harness.navigate('session-A');
+
+  // Chờ vượt quá thời gian 1.2s của timer từ thao tác đầu tiên
+  await new Promise((r) => setTimeout(r, 1400));
+
+  // Vẫn phải ở lại Stage 3 của A (vì thao tác cũ đã bị vô hiệu hóa bởi bộ đếm lượt và hủy timer)
+  assert.equal(
+    harness.getLocation(),
+    '/session/session-A/stage3',
+    'Thao tác cũ không được kích hoạt điều hướng nhầm khi chuyển A -> B -> A',
+  );
+
+  await harness.unmount();
+});
+
+test('Stage3ReviewPage: retry A thành công rồi unmount trước khi timer chạy không gây lỗi và không điều hướng', async () => {
+  const mockLoadSession = async (sId) => ({
+    id: sId,
+    title: `Đề thi ${sId}`,
+    status: 'partial_generated',
+    subject: 'Toán',
+    grade: 12,
+    config: { n_versions: 2 },
+    source_questions: [{ id: 'q1', question_no: 1 }],
+    exam_versions: [{ version_index: 1, questions: [] }],
+  });
+
+  const mockRetryGen = async () => ({ ok: true });
+
+  const harness = renderStage3Page('session-unmount-timer', {
+    loadSession: mockLoadSession,
+    retryGen: mockRetryGen,
+  });
+
+  await harness.render();
+
+  const retryAllBtn = Array.from(harness.container.querySelectorAll('button')).find((b) =>
+    b.textContent.includes('Sinh bù tất cả câu thiếu'),
+  );
+  await act(async () => {
+    retryAllBtn.click();
+  });
+
+  // Unmount ngay lập tức khi timer đang chờ
+  await harness.unmount();
+
+  // Chờ timer hết hạn
+  await new Promise((r) => setTimeout(r, 1400));
+});
+
+test('Stage3ReviewPage: retry thông thường ở A không đổi phiên sẽ tự động điều hướng về /session/A/stage2 sau 1.2s', async () => {
+  const mockLoadSession = async (sId) => ({
+    id: sId,
+    title: `Đề thi ${sId}`,
+    status: 'partial_generated',
+    subject: 'Toán',
+    grade: 12,
+    config: { n_versions: 2 },
+    source_questions: [{ id: 'q1', question_no: 1 }],
+    exam_versions: [{ version_index: 1, questions: [] }],
+  });
+
+  const mockRetryGen = async () => ({ ok: true });
+
+  const harness = renderStage3Page('session-normal-retry', {
+    loadSession: mockLoadSession,
+    retryGen: mockRetryGen,
+  });
+
+  await harness.render();
+  assert.equal(harness.getLocation(), '/session/session-normal-retry/stage3');
+
+  const retryAllBtn = Array.from(harness.container.querySelectorAll('button')).find((b) =>
+    b.textContent.includes('Sinh bù tất cả câu thiếu'),
+  );
+  await act(async () => {
+    retryAllBtn.click();
+  });
+
+  // Chờ timer 1.2s hoàn tất
+  await new Promise((r) => setTimeout(r, 1400));
+
+  // Phải điều hướng thành công về Stage 2 của phiên hiện tại
+  assert.equal(
+    harness.getLocation(),
+    '/session/session-normal-retry/stage2',
+    'Phải tự động điều hướng về Stage 2 khi người dùng ở lại phiên',
+  );
+
+  await harness.unmount();
 });

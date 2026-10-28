@@ -119,6 +119,8 @@ export default function Stage3ReviewPage({
   const loadOperationRef = useRef(0);
   const retryOperationRef = useRef(0);
   const isMountedRef = useRef(true);
+  const activeSessionIdRef = useRef(sessionId);
+  const navigationTimerRef = useRef(null);
 
   const loadData = useCallback(async () => {
     if (!sessionId) {
@@ -140,7 +142,7 @@ export default function Stage3ReviewPage({
       if (
         !isMountedRef.current ||
         loadOperationRef.current !== currentOp ||
-        targetSessionId !== sessionId
+        activeSessionIdRef.current !== targetSessionId
       ) {
         return;
       }
@@ -149,7 +151,7 @@ export default function Stage3ReviewPage({
       if (
         !isMountedRef.current ||
         loadOperationRef.current !== currentOp ||
-        targetSessionId !== sessionId
+        activeSessionIdRef.current !== targetSessionId
       ) {
         return;
       }
@@ -158,7 +160,7 @@ export default function Stage3ReviewPage({
       if (
         isMountedRef.current &&
         loadOperationRef.current === currentOp &&
-        targetSessionId === sessionId
+        activeSessionIdRef.current === targetSessionId
       ) {
         setIsLoading(false);
       }
@@ -167,8 +169,15 @@ export default function Stage3ReviewPage({
 
   useEffect(() => {
     isMountedRef.current = true;
+    activeSessionIdRef.current = sessionId;
     loadOperationRef.current += 1;
     retryOperationRef.current += 1;
+
+    // Hủy bỏ bất kỳ bộ hẹn giờ điều hướng nào đang chờ của phiên trước
+    if (navigationTimerRef.current) {
+      clearTimeout(navigationTimerRef.current);
+      navigationTimerRef.current = null;
+    }
 
     // Reset sạch sẽ dữ liệu của phiên trước để tránh rò rỉ hoặc hiển thị nhầm khi đang tải phiên mới
     setSession(null);
@@ -184,6 +193,10 @@ export default function Stage3ReviewPage({
       isMountedRef.current = false;
       loadOperationRef.current += 1;
       retryOperationRef.current += 1;
+      if (navigationTimerRef.current) {
+        clearTimeout(navigationTimerRef.current);
+        navigationTimerRef.current = null;
+      }
     };
   }, [sessionId, loadData]);
 
@@ -219,7 +232,7 @@ export default function Stage3ReviewPage({
       if (
         !isMountedRef.current ||
         retryOperationRef.current !== thisOp ||
-        targetSessionId !== sessionId
+        activeSessionIdRef.current !== targetSessionId
       ) {
         return;
       }
@@ -232,7 +245,7 @@ export default function Stage3ReviewPage({
       if (
         !isMountedRef.current ||
         retryOperationRef.current !== thisOp ||
-        targetSessionId !== sessionId
+        activeSessionIdRef.current !== targetSessionId
       ) {
         return;
       }
@@ -254,12 +267,18 @@ export default function Stage3ReviewPage({
     setIsRetryingAll(true);
     setActionMessage(null);
 
+    // Hủy bỏ hẹn giờ chuyển trang cũ nếu đang chờ
+    if (navigationTimerRef.current) {
+      clearTimeout(navigationTimerRef.current);
+      navigationTimerRef.current = null;
+    }
+
     try {
       await retryGen(targetSessionId);
       if (
         !isMountedRef.current ||
         retryOperationRef.current !== thisOp ||
-        targetSessionId !== sessionId
+        activeSessionIdRef.current !== targetSessionId
       ) {
         return;
       }
@@ -267,16 +286,20 @@ export default function Stage3ReviewPage({
         type: 'success',
         text: 'Đã kích hoạt sinh bù các câu còn thiếu. Đang chuyển về màn hình tiến trình Stage 2...',
       });
-      setTimeout(() => {
-        if (isMountedRef.current && targetSessionId === sessionId) {
-          navigate(`/session/${sessionId}/stage2`);
+      navigationTimerRef.current = setTimeout(() => {
+        if (
+          isMountedRef.current &&
+          retryOperationRef.current === thisOp &&
+          activeSessionIdRef.current === targetSessionId
+        ) {
+          navigate(`/session/${targetSessionId}/stage2`);
         }
       }, 1200);
     } catch (err) {
       if (
         !isMountedRef.current ||
         retryOperationRef.current !== thisOp ||
-        targetSessionId !== sessionId
+        activeSessionIdRef.current !== targetSessionId
       ) {
         return;
       }

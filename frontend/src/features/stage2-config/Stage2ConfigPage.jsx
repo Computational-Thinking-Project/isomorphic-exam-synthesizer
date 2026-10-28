@@ -67,10 +67,12 @@ export default function Stage2ConfigPage({
   const submitOperationRef = useRef(0);
   const retryOperationRef = useRef(0);
   const isMountedRef = useRef(true);
+  const activeSessionIdRef = useRef(sessionId);
 
   // Tải dữ liệu phiên làm việc với khả năng cô lập tuyệt đối theo sessionId
   useEffect(() => {
     isMountedRef.current = true;
+    activeSessionIdRef.current = sessionId;
     let active = true;
 
     // Vô hiệu hóa mọi lượt submit và retry đang chờ của phiên trước
@@ -148,19 +150,31 @@ export default function Stage2ConfigPage({
 
     try {
       await saveConfig(targetSessionId, payload);
-      if (!isMountedRef.current || submitOperationRef.current !== thisOpId) {
+      if (
+        !isMountedRef.current ||
+        submitOperationRef.current !== thisOpId ||
+        activeSessionIdRef.current !== targetSessionId
+      ) {
         return;
       }
       setActiveConfig(payload);
 
       // Kích hoạt background generation
       await startGen(targetSessionId);
-      if (!isMountedRef.current || submitOperationRef.current !== thisOpId) {
+      if (
+        !isMountedRef.current ||
+        submitOperationRef.current !== thisOpId ||
+        activeSessionIdRef.current !== targetSessionId
+      ) {
         return;
       }
       setIsGenerating(true);
     } catch (err) {
-      if (!isMountedRef.current || submitOperationRef.current !== thisOpId) {
+      if (
+        !isMountedRef.current ||
+        submitOperationRef.current !== thisOpId ||
+        activeSessionIdRef.current !== targetSessionId
+      ) {
         return;
       }
       const resData = err?.response?.data;
@@ -211,7 +225,7 @@ export default function Stage2ConfigPage({
       if (
         !isMountedRef.current ||
         retryOperationRef.current !== thisRetryOp ||
-        targetSessionId !== sessionId
+        activeSessionIdRef.current !== targetSessionId
       ) {
         return;
       }
@@ -221,7 +235,7 @@ export default function Stage2ConfigPage({
       if (
         !isMountedRef.current ||
         retryOperationRef.current !== thisRetryOp ||
-        targetSessionId !== sessionId
+        activeSessionIdRef.current !== targetSessionId
       ) {
         return;
       }
