@@ -172,15 +172,22 @@ export default function Stage2ConfigPage({
     navigate(`/session/${sessionId}/stage3`);
   }, [navigate, sessionId]);
 
-  // Tự động chuyển hướng khi hoàn tất ở cấp độ container độc lập
+  // Tự động chuyển hướng khi hoàn tất ở cấp độ container độc lập — CHỈ KHI hoàn tất 100% (không partial_generated)
   useEffect(() => {
     if (isGenerating && sseState.isDone) {
-      const timer = setTimeout(() => {
-        handleCompleteRedirect();
-      }, 1500);
-      return () => clearTimeout(timer);
+      const isPartial =
+        sseState.progress?.session_status === 'partial_generated' ||
+        Boolean(sseState.progress?.is_partial) ||
+        (sseState.progress?.percent !== undefined && sseState.progress.percent < 100);
+
+      if (!isPartial) {
+        const timer = setTimeout(() => {
+          handleCompleteRedirect();
+        }, 1500);
+        return () => clearTimeout(timer);
+      }
     }
-  }, [isGenerating, sseState.isDone, handleCompleteRedirect]);
+  }, [isGenerating, sseState.isDone, sseState.progress, handleCompleteRedirect]);
 
   // Giao diện khi đang tải phiên
   if (isLoadingSession) {

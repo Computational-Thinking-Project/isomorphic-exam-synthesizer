@@ -98,6 +98,7 @@ export default function Stage2ConfigCard({
       active_variation_modes: selectedModes,
       ordering_preferences: {
         shuffle_questions: Boolean(shuffleQuestions),
+        shuffle_options: false,
       },
     };
 

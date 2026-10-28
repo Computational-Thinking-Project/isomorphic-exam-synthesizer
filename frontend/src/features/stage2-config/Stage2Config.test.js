@@ -175,6 +175,7 @@ test('Stage2ConfigCard nộp cấu hình thành công với đúng payload quy �
   assert.deepEqual(submittedPayload.active_variation_modes, ['parameter_variation', 'context_swap']);
   assert.deepEqual(submittedPayload.ordering_preferences, {
     shuffle_questions: true,
+    shuffle_options: false,
   });
 
   await harness.unmount();

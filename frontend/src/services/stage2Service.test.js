@@ -35,6 +35,10 @@ test('saveSessionConfig CHỈ gửi đúng tên trường theo contract 207a (kh
     ]);
     assert.equal(capturedPost.payload.n_versions, 3);
     assert.deepEqual(capturedPost.payload.active_variation_modes, ['parameter_variation']);
+    assert.deepEqual(capturedPost.payload.ordering_preferences, {
+      shuffle_questions: true,
+      shuffle_options: false,
+    });
     assert.equal(capturedPost.payload.num_versions, undefined, 'Không được chứa num_versions');
     assert.equal(capturedPost.payload.variation_modes, undefined, 'Không được chứa variation_modes');
   } finally {
@@ -64,9 +68,10 @@ test('fetchSessionDetail tính phần giao các chế độ Blueprint: chỉ b�
     assert.equal(detail.blueprint_summary.total_questions, 2);
 
     const paramMode = detail.blueprint_summary.supported_modes.find(
-      (m) => m.id === 'parameter_variation',
+      (m) => m.id === 'NUMERICAL',
     );
-    assert.ok(paramMode, 'Phải có chế độ parameter_variation');
+    assert.ok(paramMode, 'Phải có chế độ NUMERICAL (giữ nguyên ID gốc)');
+    assert.equal(paramMode.label, 'Thay đổi số liệu / tham số');
     assert.equal(paramMode.question_count, 1);
     assert.equal(
       paramMode.is_available,
@@ -79,30 +84,31 @@ test('fetchSessionDetail tính phần giao các chế độ Blueprint: chỉ b�
   }
 });
 
-test('fetchSessionDetail bật is_available khi 100% câu hỏi trong đề đều hỗ trợ chế độ đó', async () => {
+test('fetchSessionDetail bật is_available khi 100% câu hỏi trong đề đều hỗ trợ chế độ đó và giữ nguyên ID gốc NUMERICAL', async () => {
   const originalGet = api.get;
 
-  // Cả Q1 và Q2 đều hỗ trợ NUMERICAL
+  // Cả Q1 và Q2 đều hỗ trợ NUMERICAL (giữ nguyên ID gốc để không xung đột ERR_CONFIG_CONFLICT với policy backend)
   api.get = async () => ({
     data: {
       id: 'session-full-support',
-      title: 'Đề 100% hỗ trợ',
+      title: 'Đề 100% hỗ trợ NUMERICAL',
       status: 'blueprinted',
       source_questions: [
         { id: 'q1', variation_modes: ['NUMERICAL'] },
-        { id: 'q2', variation_modes: ['parameter_variation'] },
+        { id: 'q2', variation_modes: ['NUMERICAL'] },
       ],
     },
   });
 
   try {
     const detail = await fetchSessionDetail('session-full-support');
-    const paramMode = detail.blueprint_summary.supported_modes.find(
-      (m) => m.id === 'parameter_variation',
+    const numericalMode = detail.blueprint_summary.supported_modes.find(
+      (m) => m.id === 'NUMERICAL',
     );
-    assert.ok(paramMode);
-    assert.equal(paramMode.question_count, 2);
-    assert.equal(paramMode.is_available, true, '100% câu hỏi hỗ trợ thì is_available phải là true');
+    assert.ok(numericalMode, 'Phải giữ nguyên ID gốc NUMERICAL từ Blueprint');
+    assert.equal(numericalMode.label, 'Thay đổi số liệu / tham số');
+    assert.equal(numericalMode.question_count, 2);
+    assert.equal(numericalMode.is_available, true, '100% câu hỏi hỗ trợ thì is_available phải là true');
   } finally {
     api.get = originalGet;
   }

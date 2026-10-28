@@ -318,18 +318,47 @@ export function useSSE(sessionId, {
     es.addEventListener('job_error', handleJobError);
     es.addEventListener('failed', handleJobError);
 
-    // 6. Lắng nghe sự kiện hoàn tất toàn bộ tiến trình (done)
+    // 6. Lắng nghe sự kiện kết thúc tiến trình (done)
     es.addEventListener('done', (e) => {
       if (!isMountedRef.current || connectionTokenRef.current !== currentToken) return;
       const data = parsePayload(e);
       isDoneRef.current = true;
       setIsDone(true);
       setConnectionState('completed');
-      setProgress((prev) => ({
-        ...prev,
-        percent: 100,
-        message: 'Hoàn tất quá trình sinh các mã đề!',
-      }));
+
+      const isPartial =
+        data?.session_status === 'partial_generated' ||
+        data?.status === 'partial_generated' ||
+        (data?.percent_complete !== undefined && data.percent_complete < 100) ||
+        (data?.percent !== undefined && data.percent < 100);
+
+      setProgress((prev) => {
+        const currentCompleted =
+          data?.completed_count ?? data?.completedCount ?? prev.completedCount ?? 0;
+        const currentTotal =
+          data?.total_count ?? data?.totalCount ?? prev.totalCount ?? null;
+        const currentPercent =
+          data?.percent_complete ??
+          data?.percent ??
+          (isPartial ? (prev.percent ?? 50) : 100);
+
+        return {
+          ...prev,
+          percent: currentPercent,
+          completedCount: currentCompleted,
+          totalCount: currentTotal,
+          session_status:
+            data?.session_status || data?.status || (isPartial ? 'partial_generated' : 'generated'),
+          is_partial: isPartial,
+          message:
+            data?.message ||
+            (isPartial
+              ? `Tiến trình kết thúc ở trạng thái sinh một phần (partial_generated). Đã sinh được ${currentCompleted}${
+                  currentTotal ? ` / ${currentTotal}` : ''
+                } câu.`
+              : 'Hoàn tất quá trình sinh các mã đề!'),
+        };
+      });
       cleanupConnection();
       callbacksRef.current.onDone?.(data);
     });
@@ -404,6 +433,12 @@ export function useSSE(sessionId, {
     connect();
   }, [connect]);
 
+  const isPartial = Boolean(
+    progress.is_partial ||
+      progress.session_status === 'partial_generated' ||
+      (isDone && (progress.percent ?? 100) < 100),
+  );
+
   return {
     connectionState,
     progress,
@@ -411,6 +446,7 @@ export function useSSE(sessionId, {
     warnings,
     error,
     isDone,
+    isPartial,
     reconnectCount,
     reconnect: manualReconnect,
   };

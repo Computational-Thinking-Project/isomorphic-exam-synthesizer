@@ -532,3 +532,57 @@ test('Stage2ConfigPage phiên generating thiếu config: SSE báo done kết th�
 
   await harness.unmount();
 });
+
+test('Stage2ConfigPage phiên partial_generated: SSE báo done nhưng isPartial = true không tự động điều hướng sang Stage 3 và hiển thị cảnh báo sinh một phần', async () => {
+  const mockLoadSession = async () => ({
+    id: 'session-partial-gen',
+    title: 'Đề sinh một phần',
+    status: 'generating',
+    source_questions: [{ id: 'q1', question_no: 1 }, { id: 'q2', question_no: 2 }],
+    config: { num_versions: 2 },
+    exam_versions: [],
+    blueprint_summary: {
+      total_questions: 2,
+      supported_modes: [],
+      is_ready: true,
+    },
+  });
+
+  const mockUseSSE = () => ({
+    connectionState: 'connected',
+    progress: {
+      percent: 50,
+      completedCount: 2,
+      totalVariants: 4,
+      session_status: 'partial_generated',
+      is_partial: true,
+    },
+    questionStatuses: {},
+    warnings: [],
+    isDone: true,
+    isPartial: true,
+    error: null,
+    reconnectCount: 0,
+    reconnect: () => {},
+  });
+
+  const harness = renderPage('session-partial-gen', {
+    loadSession: mockLoadSession,
+    useSSEHook: mockUseSSE,
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('partial_generated'), 'Phải hiển thị nhãn partial_generated');
+  assert.ok(text.includes('Còn thiếu 2 câu'), 'Phải tính và hiển thị đúng số câu còn thiếu');
+
+  // Đợi timer 1600ms để kiểm tra xem có redirect nhầm hay không
+  await new Promise((r) => setTimeout(r, 1600));
+  assert.equal(
+    harness.getLocation(),
+    '/session/session-partial-gen/stage2',
+    'Không được tự động điều hướng sang Stage 3 khi chỉ mới hoàn thành một phần',
+  );
+
+  await harness.unmount();
+});

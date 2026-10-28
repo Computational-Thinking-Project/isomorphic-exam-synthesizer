@@ -120,7 +120,10 @@ location /api/ {
 - **Tự động hóa hoàn toàn**: Tiến trình sinh đề của AI tại Stage 2 trải qua 5 bước: *Đang phân tích 🔍 -> Đang soạn nội dung ⏳ -> Đang kiểm tra 🔍 -> Đang tinh chỉnh 🔄 -> Hoàn thành ✅*. Nếu câu hỏi gặp lỗi hoặc chưa thỏa mãn ràng buộc nghiệm đẹp, pipeline tự động kích hoạt retry và tinh chỉnh ngầm dưới background mà không bắt người dùng phải can thiệp thủ công.
 - **Trải nghiệm người dùng**: Giảng viên không cần bấm "sinh bù" ở Stage 2. Sau khi toàn bộ các mã đề sinh xong và chuyển sang Stage 3 (`/session/:id/stage3`), giảng viên sẽ được xem trực quan toàn bộ ma trận đề thi; tại đây nút *"Tạo lại câu này"* được cung cấp riêng cho từng câu hỏi nếu giảng viên muốn sinh lại biến thể theo ý muốn chủ quan.
 
-### 6.3. Tình trạng bàn giao Stage 3 và Phụ thuộc Backend 207
-- **Giao diện Stage 2**: Đã hoàn thiện 100% hợp đồng FE2 (TASK-206 & TASK-208), đạt 199/199 unit tests tự động trên các fixtures và schema hợp đồng đã thống nhất.
+### 6.3. Tình trạng bàn giao Stage 3 và Các đầu nối tích hợp Backend 207
+- **Phạm vi đã kiểm thử độc lập ở FE2**: Đã triển khai và kiểm thử giao diện Stage 2 (TASK-206 & TASK-208) trên bộ test harness ReactDOM và contract schemas giả lập (199/199 unit tests).
 - **Màn chờ Stage 3**: Tuyến đường `/session/:id/stage3` đã được định tuyến sẵn với màn chờ tích hợp an toàn (không rơi vào wildcard/Login), sẵn sàng kết nối ngay khi Stage 3 được triển khai.
-- **Phụ thuộc Backend 207**: Khi BE2 hoàn thành tích hợp TASK-207a/b trên môi trường dev/staging, toàn bộ luồng frontend đã sẵn sàng tương thích mà không cần sửa đổi mã nguồn.
+- **Các đầu nối phụ thuộc BE2 cần kiểm thử tích hợp thực tế**:
+  1. *Ticket handshake*: Xác thực Bearer JWT thật từ Supabase để lấy ticket dùng 1 lần (TTL 60s) và stream qua proxy Nginx không đệm.
+  2. *Re-sync tiến độ khi mất kết nối*: Kiểm thử replay ring-buffer với `last_event_id` thật trên máy chủ khi client bị đứt kết nối mạng.
+  3. *Trạng thái hoàn thành một phần (`partial_generated`)*: Kiểm thử luồng dừng, giữ nguyên số câu thật và giao diện phục hồi khi backend xử lý hết quota hoặc gặp câu hỏi không đạt ràng buộc nghiệm đẹp.

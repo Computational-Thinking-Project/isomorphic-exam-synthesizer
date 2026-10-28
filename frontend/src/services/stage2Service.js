@@ -49,7 +49,7 @@ export async function fetchSessionDetail(sessionId) {
 
     // Chỉ coi Blueprint đã sẵn sàng khi TOÀN BỘ câu hỏi trong đề nguồn đều có Blueprint
     if (questionsWithBlueprints.length === totalQuestions) {
-      const MODE_MAP = {
+      const CANONICAL_MAP = {
         parameter_variation: 'parameter_variation',
         numerical: 'parameter_variation',
         context_swap: 'context_swap',
@@ -73,11 +73,8 @@ export async function fetchSessionDetail(sessionId) {
         },
       };
 
-      const modeCounts = {
-        parameter_variation: 0,
-        context_swap: 0,
-        variable_inversion: 0,
-      };
+      const rawIdMap = new Map(); // key lowercase -> original ID from Blueprint
+      const modeCounts = {};
 
       questionsWithBlueprints.forEach((q) => {
         const rawModes =
@@ -86,30 +83,42 @@ export async function fetchSessionDetail(sessionId) {
           q.variation_modes ||
           [];
         if (Array.isArray(rawModes)) {
-          const distinctModes = new Set(
-            rawModes
-              .map((m) => String(m).toLowerCase().trim())
-              .filter((m) => m && m !== 'none')
-              .map((m) => MODE_MAP[m] || m),
-          );
-          distinctModes.forEach((canonicalMode) => {
-            if (modeCounts[canonicalMode] !== undefined) {
-              modeCounts[canonicalMode] += 1;
+          const distinctInQuestion = new Set();
+          rawModes.forEach((raw) => {
+            const trimmed = String(raw).trim();
+            if (trimmed && trimmed.toLowerCase() !== 'none') {
+              const lower = trimmed.toLowerCase();
+              if (!rawIdMap.has(lower)) {
+                rawIdMap.set(lower, trimmed);
+              }
+              distinctInQuestion.add(lower);
             }
+          });
+
+          distinctInQuestion.forEach((lower) => {
+            modeCounts[lower] = (modeCounts[lower] || 0) + 1;
           });
         }
       });
 
       // Theo quy tắc Blueprint (DEC-TV1 / 207a):
       // Một mode CHỈ được coi là is_available: true nếu TẤT CẢ câu hỏi trong đề (phần giao) đều hỗ trợ nó!
+      // QUAN TRỌNG (sửa P2): Giữ nguyên ID mode gốc từ Blueprint (ví dụ: NUMERICAL, parameter_variation),
+      // chỉ dùng canonical key để tra cứu nhãn/mô tả hiển thị.
       const supportedModes = Object.entries(modeCounts)
         .filter(([, count]) => count > 0)
-        .map(([id, count]) => {
+        .map(([lower, count]) => {
+          const originalId = rawIdMap.get(lower) || lower;
+          const canonical = CANONICAL_MAP[lower] || lower;
+          const meta = MODE_METADATA[canonical] || {
+            label: originalId,
+            description: `Chế độ biến thể ${originalId}`,
+          };
           const isFullySupported = count === totalQuestions;
           return {
-            id,
-            label: MODE_METADATA[id]?.label || id,
-            description: MODE_METADATA[id]?.description || '',
+            id: originalId,
+            label: meta.label,
+            description: meta.description,
             question_count: count,
             is_available: isFullySupported,
             unavailable_reason: isFullySupported
@@ -148,8 +157,13 @@ export async function saveSessionConfig(sessionId, configPayload) {
       : Array.isArray(configPayload.variation_modes)
       ? configPayload.variation_modes
       : [],
-    ordering_preferences: configPayload.ordering_preferences ?? {
-      shuffle_questions: true,
+    ordering_preferences: {
+      shuffle_questions: Boolean(
+        configPayload.ordering_preferences?.shuffle_questions ?? true,
+      ),
+      shuffle_options: Boolean(
+        configPayload.ordering_preferences?.shuffle_options ?? false,
+      ),
     },
   };
 

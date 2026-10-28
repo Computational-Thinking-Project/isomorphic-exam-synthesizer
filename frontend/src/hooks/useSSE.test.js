@@ -499,3 +499,65 @@ test('useSSE đọc trường error_message từ payload sự kiện error theo 
 
   await harness.unmount();
 });
+
+test('useSSE nhận diện session_status === partial_generated từ event done, giữ nguyên phần trăm thực tế và không ép lên 100%', async () => {
+  MockEventSource.instances = [];
+  const harness = renderHookHarness(() =>
+    useSSE('session-partial-1', {
+      requestTicket: async () => ({ ticket: 't-part-1' }),
+      eventSourceFactory: (url) => new MockEventSource(url),
+    }),
+  );
+
+  await harness.render();
+  const es = MockEventSource.instances[0];
+  await act(async () => {
+    es.simulateOpen();
+    es.emit('done', {
+      session_status: 'partial_generated',
+      percent: 60,
+      completed_count: 3,
+      total_count: 5,
+      message: 'Hoàn thành một phần',
+    });
+  });
+
+  assert.equal(harness.result.isDone, true);
+  assert.equal(harness.result.isPartial, true);
+  assert.equal(harness.result.progress.percent, 60, 'Không được ép percent thành 100% khi partial_generated');
+  assert.equal(harness.result.progress.completedCount, 3);
+  assert.equal(harness.result.progress.totalCount, 5);
+  assert.equal(harness.result.progress.session_status, 'partial_generated');
+  assert.equal(es.closed, true);
+
+  await harness.unmount();
+});
+
+test('useSSE thông thường khi done với session_status === generated thì isPartial = false và percent = 100%', async () => {
+  MockEventSource.instances = [];
+  const harness = renderHookHarness(() =>
+    useSSE('session-complete-1', {
+      requestTicket: async () => ({ ticket: 't-comp-1' }),
+      eventSourceFactory: (url) => new MockEventSource(url),
+    }),
+  );
+
+  await harness.render();
+  const es = MockEventSource.instances[0];
+  await act(async () => {
+    es.simulateOpen();
+    es.emit('done', {
+      session_status: 'generated',
+      percent: 100,
+      completed_count: 5,
+      total_count: 5,
+    });
+  });
+
+  assert.equal(harness.result.isDone, true);
+  assert.equal(harness.result.isPartial, false);
+  assert.equal(harness.result.progress.percent, 100);
+  assert.equal(es.closed, true);
+
+  await harness.unmount();
+});

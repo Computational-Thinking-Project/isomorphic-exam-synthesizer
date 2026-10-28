@@ -86,15 +86,20 @@ export default function GenerationProgressView({
   const percent = Math.min(100, Math.max(0, progress.percent ?? 0));
   const completedCount = progress.completedCount ?? 0;
 
-  // Auto redirect sau khi hoàn tất 1.5 giây
+  const isPartial =
+    progress?.session_status === 'partial_generated' ||
+    Boolean(progress?.is_partial) ||
+    (isDone && (progress?.percent ?? 100) < 100);
+
+  // Auto redirect sau khi hoàn tất 1.5 giây — CHỈ KHI sinh đủ 100% đề (không partial_generated)
   useEffect(() => {
-    if (isDone && onComplete) {
+    if (isDone && !isPartial && onComplete) {
       const timer = setTimeout(() => {
         onComplete();
       }, 1500);
       return () => clearTimeout(timer);
     }
-  }, [isDone, onComplete]);
+  }, [isDone, isPartial, onComplete]);
 
   // Đảm bảo tab mã đề luôn hợp lệ nếu số lượng mã đề thay đổi
   useEffect(() => {
@@ -247,8 +252,8 @@ export default function GenerationProgressView({
           </div>
         )}
 
-        {/* Thông báo thành công và chuyển hướng */}
-        {isDone && (
+        {/* Thông báo kết thúc tiến trình: Phân biệt sinh đủ 100% với hoàn thành một phần (partial_generated) */}
+        {isDone && !isPartial && (
           <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-emerald-500/40 bg-emerald-950/30 p-5 text-emerald-200">
             <div className="flex items-center gap-3">
               <CheckCircle className="h-6 w-6 shrink-0 text-emerald-400" />
@@ -274,6 +279,54 @@ export default function GenerationProgressView({
                 <ArrowRight className="h-3.5 w-3.5" />
               </button>
             )}
+          </div>
+        )}
+
+        {isDone && isPartial && (
+          <div
+            role="status"
+            className="mt-6 rounded-xl border border-amber-500/50 bg-amber-950/40 p-5 text-amber-200"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-amber-400" />
+                <div>
+                  <h4 className="text-sm font-bold text-white">
+                    Tiến trình hoàn thành một phần (<code>partial_generated</code>)
+                  </h4>
+                  <p className="mt-1 text-xs text-amber-200/90">
+                    Đã tạo được <strong className="text-white">{completedCount}</strong>
+                    {totalVariants ? ` / ${totalVariants}` : ''} câu hỏi ({percent}%).
+                    {totalVariants && completedCount < totalVariants
+                      ? ` Còn thiếu ${totalVariants - completedCount} câu do gặp lỗi hoặc hạn mức sinh đề.`
+                      : ' Một số câu hỏi chưa thể hoàn tất đầy đủ.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {onReconnect && (
+                  <button
+                    type="button"
+                    onClick={onReconnect}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/50 bg-amber-900/40 px-3.5 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-900/60"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Thử phục hồi / Sinh lại
+                  </button>
+                )}
+                {onComplete && (
+                  <button
+                    type="button"
+                    onClick={onComplete}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-amber-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-amber-600/30 hover:bg-amber-500"
+                  >
+                    Đến Stage 3 xem các câu đã sinh
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>
