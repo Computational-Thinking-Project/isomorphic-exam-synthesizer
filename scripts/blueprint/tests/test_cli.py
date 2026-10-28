@@ -42,6 +42,21 @@ def test_single_stdin_from_other_cwd(tmp_path, item):
     assert json.loads(process.stdout)["output"].endswith("result.json")
 
 
+def test_unicode_output_path_with_ascii_console(tmp_path, item):
+    output = tmp_path / "đề-kết-quả.json"
+    process = subprocess.run(
+        [sys.executable, str(SCRIPT), "--mode", "single", "--input", "-",
+         "--output", str(output), "--provider", "mock"],
+        input=json.dumps(item, ensure_ascii=False),
+        capture_output=True, text=True, encoding="utf-8", timeout=20,
+        env={**os.environ, "PYTHONIOENCODING": "ascii", "PYTHONUTF8": "0"},
+    )
+    assert process.returncode == 0, process.stderr
+    assert json.loads(process.stdout)["output"] == str(output.resolve())
+    result = json.loads(output.read_text(encoding="utf-8"))
+    assert result["results"][0]["blueprint"]["requirement"]["source"] == item["source"]
+
+
 def test_batch_partial_and_missing_id(tmp_path, item):
     process, result = call(tmp_path, {"questions": [item, {"source": {}}]}, "batch")
     assert process.returncode == 3, process.stderr

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -39,7 +39,7 @@ class GenerateRequest(BaseModel):
     """Payload từ người dùng ở Stage 02: Chỉ cần chọn số lượng N đề cần sinh."""
 
     source_exam_id: str = Field(..., description="Mã đề thi gốc")
-    n_versions: int = Field(default=4, ge=1, le=20, description="Số lượng phiên bản đề cần sinh")
+    n_versions: int = Field(default=4, ge=1, le=4, description="Số lượng phiên bản đề cần sinh")
 
 
 class RegenerateQuestionRequest(BaseModel):
@@ -174,6 +174,80 @@ class SessionDetailResponse(BaseModel):
     exam_versions: List[dict] = Field(default_factory=list, description="Danh sách các mã đề")
 
 
+class IngestTextRequest(BaseModel):
+    """Payload cho endpoint nhập trực tiếp đề thi dạng text (TASK-202)."""
+
+    raw_text: str = Field(..., description="Nội dung văn bản đề thi thô kèm công thức LaTeX")
+
+    @field_validator("raw_text")
+    @classmethod
+    def validate_raw_text(cls, v: str) -> str:
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError("raw_text must not be empty or whitespace only")
+        if len(trimmed) > 100_000:
+            raise ValueError("raw_text exceeds maximum allowed length of 100,000 characters")
+        return trimmed
+
+
+class ParserErrorItem(BaseModel):
+    """Chi tiết một lỗi bóc tách trong câu hỏi nguồn (TASK-203b)."""
+
+    question_no: int = Field(..., description="Số thứ tự câu hỏi bị lỗi (1-indexed)")
+    error_type: Literal[
+        "MISSING_ANSWER",
+        "UNPARSED_OMML",
+        "UNPARSED_IMAGE",
+        "AMBIGUOUS_FORMAT",
+        "EMPTY_STEM",
+        "CONFLICTING_ANSWER_KEY",
+        "SURPLUS_ANSWER_KEY",
+        "DUPLICATE_QUESTION_NO",
+        "INVALID_QUESTION_NO",
+        "INVALID_FORMAT",
+    ] = Field(..., description="Mã phân loại lỗi bóc tách")
+    message: Optional[str] = Field(None, description="Mô tả chi tiết nguyên nhân lỗi")
+
+
+class IngestValidationErrorResponse(BaseModel):
+    """Payload phản hồi HTTP 422 khi phát hiện lỗi bóc tách dữ liệu đề thi."""
+
+    detail: str = Field(
+        "Exam content incomplete or unprocessable", description="Thông điệp tổng quan"
+    )
+    errors: List[ParserErrorItem] = Field(
+        default_factory=list, description="Danh sách các câu hỏi bị lỗi"
+    )
+
+
+class ParsedQuestionItem(BaseModel):
+    """Dữ liệu một câu hỏi sau khi bóc tách In-Memory trước khi lưu CSDL."""
+
+    question_no: int
+    raw_content: str
+    options: Dict[str, str] = Field(
+        ..., description="Chính xác 4 lựa chọn {'A': '...', 'B': '...', 'C': '...', 'D': '...'}"
+    )
+    correct_key: str = Field(..., description="'A', 'B', 'C', hoặc 'D'")
+    solution_md: Optional[str] = None
+    has_missing_answer: bool = False
+    has_unparsed_omml: bool = False
+    has_unparsed_image: bool = False
+    is_empty_stem: bool = False
+    has_security_warning: bool = False
+
+
+class IngestSuccessResponse(BaseModel):
+    """Phản hồi thành công từ endpoints Ingestion (TASK-202)."""
+
+    session_id: str = Field(..., description="Mã định danh phiên làm việc")
+    message: str = Field("Exam ingested successfully", description="Thông điệp thành công")
+    total_questions: int = Field(..., description="Tổng số câu hỏi hợp lệ đã nạp")
+    questions: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Danh sách câu hỏi nguồn đã lưu"
+    )
+
+
 # Re-export validator schemas for convenient consumption across services and routes
 from app.services.validator.base import CheckResult, ValidationReport  # noqa: E402
 
@@ -191,6 +265,11 @@ __all__ = [
     "SessionItem",
     "SessionListResponse",
     "SessionDetailResponse",
+    "IngestTextRequest",
+    "ParserErrorItem",
+    "IngestValidationErrorResponse",
+    "ParsedQuestionItem",
+    "IngestSuccessResponse",
     "CheckResult",
     "ValidationReport",
 ]

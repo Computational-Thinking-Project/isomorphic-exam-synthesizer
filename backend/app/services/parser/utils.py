@@ -1,0 +1,506 @@
+"""Parsing utilities, Unicode NFC normalization, separate answer key detection, and security checks (SEC-02)."""
+
+import re
+import unicodedata
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+
+# Patterns for prompt injection detection (SEC-02)
+SUSPICIOUS_PATTERNS: list[re.Pattern] = [
+    re.compile(r"ignore\s+(?:all\s+)?previous\s+instructions", re.IGNORECASE),
+    re.compile(r"disregard\s+(?:all\s+)?prior\s+instructions", re.IGNORECASE),
+    re.compile(r"system\s*prompt\s*:", re.IGNORECASE),
+    re.compile(r"you\s+are\s+now\s+(?:a|an)\s+[a-z]+", re.IGNORECASE),
+    re.compile(r"output\s+the\s+system\s+instructions", re.IGNORECASE),
+    re.compile(r"bypass\s+(?:all\s+)?security", re.IGNORECASE),
+    re.compile(r"DAN\s+mode", re.IGNORECASE),
+    re.compile(r"jailbreak", re.IGNORECASE),
+]
+
+# Patterns for separate answer key section detection.
+# Supports plain, Markdown-heading, bold, italic, and combinations like '## **BẢNG ĐÁP ÁN**'.
+_ANSWER_SECTION_KEYWORD = r"(?:bảng\s+đáp\s+án|đáp\s+án|hướng\s+dẫn\s+chấm|answer\s+key|answers)"
+ANSWER_SECTION_PATTERNS: list[re.Pattern] = [
+    re.compile(
+        r"(?:#{1,6}\s*)?(?:\*{1,2}|_{1,2})?" + _ANSWER_SECTION_KEYWORD + r"(?:\*{1,2}|_{1,2})?(?:\s*:|\s*(?:\n|$))",
+        re.IGNORECASE,
+    ),
+]
+
+# Pattern for answer key pairs: 1.A, 1-A, 1: A, 1/A, 1) A, Câu 1: A, Câu 1. A, 1. [A], 1. (A)
+KEY_PAIR_PATTERN = re.compile(
+    r"(?:câu\s+(?P<num1>\d+)\s*(?:[\.:\-\)]|\s*)\s*[\(\[]?(?P<key1>[A-D])[\)\]]?|(?P<num2>\d+)\s*[\.:\-\)\/]\s*[\(\[]?(?P<key2>[A-D])[\)\]]?)(?![a-zA-Z0-9])",
+    re.IGNORECASE,
+)
+
+
+@dataclass
+class RawAnswerKeyInfo:
+    """Detailed metadata about detected separate answer key pairs and structural conflicts."""
+
+    raw_pairs: List[Tuple[int, str]] = field(default_factory=list)
+    duplicate_keys: List[int] = field(default_factory=list)
+    conflicts: Dict[int, List[str]] = field(default_factory=dict)
+    mapped_keys: Dict[int, str] = field(default_factory=dict)
+    unmatched_keys: List[int] = field(default_factory=list)
+
+
+class OptionExtractionResult(tuple):
+    """3-tuple compatible return object for extract_options_from_text with error_type metadata."""
+
+    def __new__(
+        cls,
+        stem: str,
+        options: Dict[str, str],
+        detected_key: Optional[str],
+        error_type: Optional[str] = None,
+    ):
+        return super().__new__(cls, (stem, options, detected_key))
+
+    def __init__(
+        self,
+        stem: str,
+        options: Dict[str, str],
+        detected_key: Optional[str],
+        error_type: Optional[str] = None,
+    ):
+        self.stem = stem
+        self.options = options
+        self.detected_key = detected_key
+        self.error_type = error_type
+
+
+def extract_key_pair(match: re.Match) -> Tuple[int, str]:
+    """Extract (question_number, key) from a KEY_PAIR_PATTERN regex match."""
+    num_str = match.group("num1") if match.group("num1") is not None else match.group("num2")
+    key_str = match.group("key1") if match.group("key1") is not None else match.group("key2")
+    return int(num_str), key_str.upper()
+
+
+def normalize_unicode_nfc(text: str) -> str:
+    """Normalize string to Unicode NFC standard, clean up carriage returns and strip BOM."""
+    if not text:
+        return ""
+    normalized = unicodedata.normalize("NFC", text)
+    # Standardize line breaks to \n
+    normalized = normalized.replace("\r\n", "\n").replace("\r", "\n")
+    # Strip UTF-8 BOM if present anywhere in text
+    normalized = normalized.replace("\ufeff", "")
+    return normalized
+
+
+def check_prompt_injection(text: str) -> bool:
+    """Check text for known prompt injection / control keywords (SEC-02).
+
+    Returns True if any suspicious pattern is detected.
+    """
+    if not text:
+        return False
+    for pat in SUSPICIOUS_PATTERNS:
+        if pat.search(text):
+            return True
+    return False
+
+
+def parse_separate_answer_key(
+    full_text: str,
+    return_info: bool = False,
+) -> Any:
+    """Search for separate answer table or key list at the end of the document.
+
+    Guarantees that question stems (e.g. 'Câu 1: A, B là...') are never falsely
+    recognized as answer key tables. Detects duplicate and conflicting keys.
+
+    Returns:
+        If return_info=False: (answer_map, text_without_answer_section)
+        If return_info=True: (answer_map, text_without_answer_section, key_info: RawAnswerKeyInfo)
+    """
+    raw_pairs: List[Tuple[int, str]] = []
+    duplicate_keys: List[int] = []
+    conflicts: Dict[int, List[str]] = {}
+    mapped_keys: Dict[int, str] = {}
+    remaining_text = full_text
+
+    def _process_pairs(pairs: List[re.Match]) -> None:
+        seen_map: Dict[int, str] = {}
+        for p in pairs:
+            q_num, key = extract_key_pair(p)
+            raw_pairs.append((q_num, key))
+            if q_num in seen_map:
+                duplicate_keys.append(q_num)
+                if seen_map[q_num] != key:
+                    if q_num not in conflicts:
+                        conflicts[q_num] = [seen_map[q_num]]
+                    if key not in conflicts[q_num]:
+                        conflicts[q_num].append(key)
+            else:
+                seen_map[q_num] = key
+
+        # Mapped keys only include non-conflicting valid positive question numbers
+        for q_num, key in seen_map.items():
+            if q_num not in conflicts and q_num > 0:
+                mapped_keys[q_num] = key
+
+    # 1. Search for answer section heading near the end.
+    # Handles combinations: plain, ## heading, **bold**, ## **bold**, \textbf{...}, etc.
+    section_heading_pattern = re.compile(
+        r"(?:^|\n)\s*"
+        r"(?:#{1,6}\s*)?"                                                              # optional Markdown heading ##
+        r"(?:\*{1,2}|_{1,2}|\\(?:textbf|textit|underline|section\*?)\s*\{)?"         # optional bold/italic/LaTeX cmd
+        r"(?P<header>(?:bảng\s+đáp\s+án|đáp\s+án|hướng\s+dẫn\s+chấm|answer\s+key|answers))"
+        r"(?:\*{1,2}|_{1,2}|\})?"                                                      # optional closing marker
+        r"(?:\s*:|\s*(?:\n|\}|$))",
+        re.IGNORECASE,
+    )
+
+    matches = list(section_heading_pattern.finditer(full_text))
+    if matches:
+        # Check from last match backwards
+        for m in reversed(matches):
+            candidate_pos = m.start()
+            candidate_text = full_text[candidate_pos:]
+            candidate_pairs = list(KEY_PAIR_PATTERN.finditer(candidate_text))
+            if candidate_pairs:
+                _, found_opts, _ = extract_options_from_text(candidate_text)
+                if len(found_opts) < 4:
+                    _process_pairs(candidate_pairs)
+                    remaining_text = full_text[:candidate_pos].rstrip()
+                    key_info = RawAnswerKeyInfo(
+                        raw_pairs=raw_pairs,
+                        duplicate_keys=duplicate_keys,
+                        conflicts=conflicts,
+                        mapped_keys=mapped_keys,
+                    )
+                    if return_info:
+                        return mapped_keys, remaining_text, key_info
+                    return mapped_keys, remaining_text
+
+    # 2. If no explicit section heading, inspect trailing block strictly from the end of the document
+    lines = full_text.splitlines()
+    trailing_key_line_indices: list[int] = []
+    trailing_pairs = []
+
+    idx = len(lines) - 1
+    while idx >= 0 and not lines[idx].strip():
+        idx -= 1
+
+    while idx >= 0:
+        line = lines[idx].strip()
+        if not line:
+            trailing_key_line_indices.append(idx)
+            idx -= 1
+            continue
+
+        if re.search(r"^\s*[\-\*\_]*[A-D][\.\)]", line):
+            break
+
+        _, found_opts, _ = extract_options_from_text(line)
+        if len(found_opts) >= 2:
+            break
+
+        line_pairs = list(KEY_PAIR_PATTERN.finditer(line))
+        if not line_pairs:
+            break
+
+        residual = KEY_PAIR_PATTERN.sub("", line)
+        if re.search(r"[a-zA-Zà-ỹÀ-Ỹ]{2,}", residual):
+            break
+
+        trailing_key_line_indices.append(idx)
+        trailing_pairs.extend(line_pairs)
+        idx -= 1
+
+    if len(trailing_pairs) >= 2 and trailing_key_line_indices:
+        first_key_line_idx = min(trailing_key_line_indices)
+        _process_pairs(trailing_pairs)
+        remaining_lines = lines[:first_key_line_idx]
+        remaining_text = "\n".join(remaining_lines).rstrip()
+
+    key_info = RawAnswerKeyInfo(
+        raw_pairs=raw_pairs,
+        duplicate_keys=duplicate_keys,
+        conflicts=conflicts,
+        mapped_keys=mapped_keys,
+    )
+    if return_info:
+        return mapped_keys, remaining_text, key_info
+    return mapped_keys, remaining_text
+
+
+MAX_OPTION_CANDIDATES: int = 120
+
+
+def mask_markdown_code_blocks(text: str) -> str:
+    """Mask multi-line code fences (```...``` and ~~~...~~~) and inline code (`...`) with '~'
+    preserving EXACT character length and newline positions.
+
+    Supports:
+    - Code fences with 3 or more backticks (```) or tildes (~~~).
+    - Closing fence matching the same delimiter character and length >= opening delimiter length.
+    - Unclosed code fences are masked all the way to EOF.
+    - Inline code runs of 1 or more backticks.
+    - Guarantees len(masked) == len(text) and exact newline offsets.
+    """
+    if not text:
+        return ""
+
+    lines = text.split("\n")
+    masked_lines: List[str] = []
+    in_fence = False
+    fence_char = ""
+    fence_len = 0
+
+    fence_open_pattern = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})(.*)$")
+
+    for line in lines:
+        if not in_fence:
+            m = fence_open_pattern.match(line)
+            if m:
+                in_fence = True
+                fence_delim = m.group(1)
+                fence_char = fence_delim[0]
+                fence_len = len(fence_delim)
+                masked_lines.append("~" * len(line))
+            else:
+                # Mask inline code: runs of backticks `...` or ``...``
+                masked_line = re.sub(
+                    r"(`+)(.+?)\1",
+                    lambda im: "~" * len(im.group(0)),
+                    line,
+                )
+                masked_lines.append(masked_line)
+        else:
+            # Check for closing fence matching character and length >= fence_len
+            close_pattern = re.compile(r"^[ ]{0,3}(`{3,}|~{3,})\s*$")
+            cm = close_pattern.match(line)
+            if cm and cm.group(1)[0] == fence_char and len(cm.group(1)) >= fence_len:
+                in_fence = False
+                fence_char = ""
+                fence_len = 0
+                masked_lines.append("~" * len(line))
+            else:
+                masked_lines.append("~" * len(line))
+
+    return "\n".join(masked_lines)
+
+
+def mask_math_blocks(text: str) -> str:
+    """Mask mathematical blocks ($...$, $$...$$, \\(...\\), \\[...\\], environments) and code blocks
+    with equal-length '~' preserving newlines so math contents and code are never misidentified as options.
+    """
+    def _mask_preserve_newlines(m: re.Match) -> str:
+        return "".join("\n" if c == "\n" else "~" for c in m.group(0))
+
+    # First mask code blocks
+    masked = mask_markdown_code_blocks(text)
+    # Display math $$ ... $$
+    masked = re.sub(r"\$\$.*?\$\$", _mask_preserve_newlines, masked, flags=re.DOTALL)
+    # Display math \[ ... \]
+    masked = re.sub(r"\\\[.*?\\\]", _mask_preserve_newlines, masked, flags=re.DOTALL)
+    # Math environments (equation, align, gather, multline, matrix, pmatrix, bmatrix, vmatrix, cases)
+    masked = re.sub(
+        r"\\begin\{(?:equation|align|gather|multline|matrix|pmatrix|bmatrix|vmatrix|cases)\*?\}.*?\\end\{(?:equation|align|gather|multline|matrix|pmatrix|bmatrix|vmatrix|cases)\*?\}",
+        _mask_preserve_newlines,
+        masked,
+        flags=re.DOTALL,
+    )
+    # Inline math $ ... $ (does not span newlines, preserves offsets)
+    masked = re.sub(r"(?<!\\)\$[^$\n]+(?<!\\)\$", lambda m: "~" * len(m.group(0)), masked)
+    # Inline LaTeX math \( ... \)
+    masked = re.sub(r"\\\(.*?\\\)", _mask_preserve_newlines, masked)
+    return masked
+
+
+class OptionMatch(NamedTuple):
+    opt: str
+    start: int
+    end: int
+    is_newline: bool
+    has_bullet: bool
+    fmt: str
+
+
+def extract_options_from_text(text: str) -> OptionExtractionResult:
+    """Extract options A, B, C, D from question body text with strict boundary and context awareness.
+
+    Guarantees:
+    - Linear complexity O(n) preventing CPU exhaustion (ReDoS/Combinatorial explosion).
+    - Streaming candidate limit MAX_OPTION_CANDIDATES: terminates early on pathological inputs.
+    - Pure structural scoring without favoring late quads (eliminates a.start bias).
+    - Rejects ambiguous quads and multiple marked options with AMBIGUOUS_FORMAT.
+    - Protects mathematical formulas such as P(A), P(B), f(A), coordinates A(x; y), and LaTeX delimiters
+      from being misidentified as option labels.
+    - Scoped marker detection: only identifies bold/asterisk markers directly attached to true option prefixes.
+    """
+    masked = mask_math_blocks(text)
+
+    # Strict option label prefix pattern:
+    pattern = re.compile(
+        r"(?P<raw>(?:^|[\n\r]|[ \t]+)"
+        r"(?:(?P<bullet>[\-\*\+]|[\*\_]{1,2})\s*)?"
+        r"(?<![a-zA-Z0-9_\\])"
+        r"(?:"
+        r"\((?P<p_opt>[A-D])\)(?P<p_del>[\.\:]?)"
+        r"|\[(?P<b_opt>[A-D])\](?P<b_del>[\.\:]?)"
+        r"|(?:\*{1,2}|_{1,2})?(?P<l_opt>[A-D])(?:\*{1,2}|_{1,2})?(?P<l_del>[\.\:\)])"
+        r")"
+        r"(?:\*{1,2}|_{1,2})?"
+        r"(?=\s|$))",
+        re.MULTILINE,
+    )
+
+    matches: list[OptionMatch] = []
+    for cand_match in pattern.finditer(masked):
+        if len(matches) >= MAX_OPTION_CANDIDATES:
+            return OptionExtractionResult(text, {}, None, error_type="AMBIGUOUS_FORMAT")
+
+        opt = cand_match.group("p_opt") or cand_match.group("b_opt") or cand_match.group("l_opt")
+        raw_slice = text[cand_match.start():cand_match.end()]
+        is_newline = ("\n" in raw_slice or "\r" in raw_slice or cand_match.start() == 0)
+        has_bullet = bool(cand_match.group("bullet"))
+        fmt = "p" if cand_match.group("p_opt") else ("b" if cand_match.group("b_opt") else "l")
+        matches.append(
+            OptionMatch(
+                opt=opt,
+                start=cand_match.start(),
+                end=cand_match.end(),
+                is_newline=is_newline,
+                has_bullet=has_bullet,
+                fmt=fmt,
+            )
+        )
+
+    if not matches:
+        return OptionExtractionResult(text, {}, None)
+
+    # Linear scan state machine to find candidate quadruplets:
+    # A quadruplet is an ordered sequence of 4 options A -> B -> C -> D
+    candidate_quads: list[Tuple[OptionMatch, OptionMatch, OptionMatch, OptionMatch]] = []
+
+    # Method 1: Global sequential pass
+    current_chain: list[OptionMatch] = []
+    for cand in matches:
+        if cand.opt == "A":
+            current_chain = [cand]
+        elif cand.opt == "B":
+            if len(current_chain) == 1 and current_chain[0].opt == "A":
+                current_chain.append(cand)
+            elif len(current_chain) > 1 and current_chain[1].opt == "B":
+                current_chain = []
+        elif cand.opt == "C":
+            if len(current_chain) == 2 and current_chain[1].opt == "B":
+                current_chain.append(cand)
+            elif len(current_chain) > 2 and current_chain[2].opt == "C":
+                current_chain = []
+        elif cand.opt == "D":
+            if len(current_chain) == 3 and current_chain[2].opt == "C":
+                candidate_quads.append(
+                    (current_chain[0], current_chain[1], current_chain[2], cand)
+                )
+                current_chain = []
+
+    # Method 2: Format-scoped passes if Method 1 found nothing (e.g. mixed noise)
+    if not candidate_quads:
+        for target_fmt in ("l", "p", "b"):
+            fmt_matches = [item for item in matches if item.fmt == target_fmt]
+            c_chain: list[OptionMatch] = []
+            for cand in fmt_matches:
+                if cand.opt == "A":
+                    c_chain = [cand]
+                elif cand.opt == "B":
+                    if len(c_chain) == 1 and c_chain[0].opt == "A":
+                        c_chain.append(cand)
+                    else:
+                        c_chain = []
+                elif cand.opt == "C":
+                    if len(c_chain) == 2 and c_chain[1].opt == "B":
+                        c_chain.append(cand)
+                    else:
+                        c_chain = []
+                elif cand.opt == "D":
+                    if len(c_chain) == 3 and c_chain[2].opt == "C":
+                        candidate_quads.append((c_chain[0], c_chain[1], c_chain[2], cand))
+                        c_chain = []
+
+    if not candidate_quads:
+        return OptionExtractionResult(text, {}, None)
+
+    # Score candidate quadruplets structurally
+    scored_candidates: list[Tuple[float, Tuple[OptionMatch, OptionMatch, OptionMatch, OptionMatch]]] = []
+    for quad in candidate_quads:
+        a, b, c, d = quad
+        span_a = text[a.end:b.start].strip()
+        span_b = text[b.end:c.start].strip()
+        span_c = text[c.end:d.start].strip()
+        if not (span_a and span_b and span_c):
+            continue
+
+        score = 0.0
+        # Consistent label format (all paren, all bracket, or all letter)
+        if a.fmt == b.fmt == c.fmt == d.fmt:
+            score += 20.0
+        # Consistent newline boundary across all options
+        if a.is_newline == b.is_newline == c.is_newline == d.is_newline:
+            score += 10.0
+        # High-confidence layout: each option starts on a new line
+        if a.is_newline and b.is_newline and c.is_newline and d.is_newline:
+            score += 15.0
+        # Consistent bullet styling
+        if a.has_bullet == b.has_bullet == c.has_bullet == d.has_bullet:
+            score += 5.0
+        # Structural length sanity: options having substantial content
+        if min(len(span_a), len(span_b), len(span_c)) > 0:
+            score += 5.0
+        scored_candidates.append((score, quad))
+
+    if not scored_candidates:
+        return OptionExtractionResult(text, {}, None)
+
+    scored_candidates.sort(key=lambda x: x[0], reverse=True)
+    best_score, best_quad = scored_candidates[0]
+
+    # Check for ambiguity: multiple top candidates with equal top scores but different spans
+    if len(scored_candidates) > 1:
+        top_tier = [q for s, q in scored_candidates if abs(s - best_score) < 0.0001]
+        if len(top_tier) > 1 and any(q != best_quad for q in top_tier):
+            return OptionExtractionResult(text, {}, None, error_type="AMBIGUOUS_FORMAT")
+
+    a, b, c, d = best_quad
+    stem = text[:a.start].strip()
+    stem = re.sub(r"[\*\_]+$", "", stem).strip()
+
+    quad_items = [a, b, c, d]
+    opts: Dict[str, str] = {}
+    marked_keys: list[str] = []
+
+    for i in range(4):
+        item = quad_items[i]
+        next_start = quad_items[i + 1].start if i < 3 else len(text)
+        content = text[item.end:next_start].strip()
+        if i == 3:
+            # If trailing explanation / solution section exists after option D, cut before it
+            expl_match = re.search(
+                r"(?:\n\s*)+(?:giải\s+thích|hướng\s+dẫn\s+giải|lời\s+giải|solution|explanation)\b.*$",
+                content,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if expl_match:
+                content = content[:expl_match.start()].strip()
+        content = re.sub(r"^[\*\_]+|[\*\_]+$", "", content).strip()
+        content = re.sub(r"[\(\[\s]+$", "", content).strip()
+        opts[item.opt] = content
+
+        # Scoped marker detection: check if label prefix is marked as correct with bold or asterisks
+        raw_label = text[item.start:item.end]
+        if re.search(r"[\*\_]{1,2}[A-D][\*\_]{0,2}[\.\:\)]|[\(\[][\*\_]{1,2}[A-D][\*\_]{0,2}[\)\]]", raw_label):
+            marked_keys.append(item.opt)
+
+    if len(marked_keys) == 1:
+        detected_key = marked_keys[0]
+        return OptionExtractionResult(stem, opts, detected_key)
+    elif len(marked_keys) > 1:
+        # Multiple marked options -> ambiguous answer key!
+        return OptionExtractionResult(stem, opts, None, error_type="AMBIGUOUS_FORMAT")
+    else:
+        return OptionExtractionResult(stem, opts, None)
+

@@ -1,6 +1,46 @@
-# Frontend — thiết lập local và checkpoint Auth
+# Frontend — thiết lập local và checkpoint TASK-101/103
+
+## Kiểm cuối W1 — 27/10/2026
+
+- User có quyền chốt đã chọn scope W1: Dashboard/API thật, tạo/mở draft và clone; trạng thái chưa có màn thông báo rõ, ghép ở tuần sau. User xác nhận ca lỗi mở tại Dashboard→bỏ chặn→Thử mở lại khôngF5→đúngID/nội dung đạt, cùng các ca entry/reload/account đã đạt trước đó. Clone sao chép nguồn và Blueprint của phiên sang draft độc lập.
+- Kiểm cuối local tại e09d4cc:154tests, lint và build đạt; sau đó chỉ cập nhật tài liệu, source/runtime vẫn111ca09. Dev0307b1c mới fetch đã là ancestor, không cần merge mới. PR17 remote vẫnDraft/c2613c4; chưa push local hoặc cóCI/review cho head cuối. Sẵn sàng bàn giao review W1, chưa nhận đã merge.
+- Chỉ bắt đầu W2 khi toàn bộ nhánh phần1/W1 đã merge dev. Snapshot GitHub27/10 còn PR17/19/20 mở, nên mốc đó chưa đạt. Không tự lấy PR15/16 hoặc bắt đầu201/203b/204 trong lượt kiểm này.
+
+## Dashboard mở theo detail mới — 27/10/2026
+
+- Lượt2 entry metadata đã user kiểm UI thật trên Docker development và báo đạt: tạo/replace/list, F5new/draft/clone, lỗi detail do browser chặn và thử lại sau bỏ chặn, signed-out, B không mở phiênA, reset form khi logouttabkhác/loginA. Không nhận Nginx/static, naturalexpiry hoặc ingestionW2 đã kiểm.
+- Dashboard nay GET detail mới trước Tiếp tục/Xem, có pending/hủy/error/thử lại, chặn click lặp và bỏ phản hồi cũ khi rời trang/đổi tài khoản. Chỉ nối đích draft đã có; các trạng thái khác thông báo chưa kết nối/chưa hỗ trợ. Không POST khi mở, không thêm màn hoặc readiness/job contract.
+- Agent154tests/lint/build và browser Auth/API mô phỏng đạt (0POST/0pageerrors); chưa có user kiểm UI thật cho chính hành vi mở mới này. Xem [Dashboard README](src/features/dashboard/README.md). Chưa TASK103Done hoặc bắt đầu201/203b/204.
 
 Frontend sản phẩm dùng React/Vite và JavaScript/JSX. Đây là hướng dẫn cho repo sản phẩm; bộ `ui-draft` trong workspace là tài liệu thiết kế riêng.
+
+## Đồng bộ dev — lượt 1, 27/10/2026
+
+- Nhánh TASK103 nhận dev `0307b1c` (PR18 AI/Blueprint) từ nền Dashboard `c2613c4`; merge không xung đột, giữ nguyên App/Dashboard/Stage1 và client dùng chung. Chưa lấy PR15/16 hoặc triển khai thêm màn/trạng thái.
+- Kiểm cây kết hợp trước commit: frontend146tests/lint/build đạt. Image backend build theo lockfile đạt; snapshot không chứa env thật, container tạm không mạng: backend + standalone Blueprint304tests đạt/1live opt-in skipped/1Starlette deprecation warning; Ruff đạt, Mypy52source files đạt, SymPy LaTeX smoke và pip check đạt.
+- Các kiểm này không gọi AI/cloud và không restart container sản phẩm. UI Stage1 qua Docker/Google thật vẫn là lượt2; full status routing và màn đích còn theo plan, TASK103 chưa hoàn tất. Nhật ký chi tiết ở workspace `tmp/task103-sync-dev-20261027/QA.md`.
+
+## Checkpoint hiện hành — TASK103 lượt C, 26/10/2026
+
+- Nền dev đã merge tại170b847; create/detail service và SQL prerequisite đã lưu tại a117f0c/51db6be. User đã kiểm API thật: tạo/đọc phiên thành công, B đọc phiên A bị404, exam_versions setup đạt metadata checks. Các checkpoint pending merge bên dưới là lịch sử.
+- Tạo đề mới mở `/session/new/stage1`, form thông tin chỉ POST khi xác nhận; thành công replace sang ID thật. Tiếp tục draft (kể cả bản clone) mở đúng ID và đọc lại detail. Không tự tạo khi mount/F5. Nếu trạng thái mới không còn draft thì hiện thông báo; các màn trạng thái khác còn chưa nối.
+- Agent146 tests/lint/build đạt; kiểm trình duyệt local bằng Auth/API mô phỏng đạt create/replace/F5/retry/protected/account reset/mobile và Dashboard/clone/mở bản sao. Chưa kiểm màn entry mới bằng Docker/OAuth/cloud thật hoặc Nginx; không lấy kiểm API lượt B thay cho kiểm UI mới.
+- Đây là entry/metadata của103, chưa có nhập/trích xuất/xác nhận nguồn W2 hoặc Stage2. TASK103 chưa Done. Chi tiết: [Stage1 entry](src/features/stage1-ingestion/README.md).
+
+## Đồng bộ nền dev — 26/10/2026
+
+- Đang ghép `origin/dev` tại `bbb7c5e` vào `feat/task-103-dashboard-api` bằng merge dừng trước commit. Auth PR #7 đã squash merge vào dev; không còn chờ review Auth để tiếp tục Dashboard.
+- Giữ nguyên Dashboard API/list/phân trang/Clone Modal và account guard; nhận các file Blueprint/config/health từ dev. Không đưa mock vào route sản phẩm, không nhận các PR backend W2 đang chờ merge.
+- Kiểm tự động sau ghép: agent chạy **113/113 Node tests**, lint và build đều đạt ngày26/10. DashboardRoute giữ nguyên nội dung so với mốc đã kiểm trước merge; diff cây chuẩn bị commit với dev chỉ còn11file Dashboard/setup DB/docs. Chưa kiểm browser/cloud/Docker mới; checkpoint24/10 bên dưới vẫn là bằng chứng lịch sử. Tạo mới/Mở Stage chưa được triển khai trong lượt đồng bộ này.
+
+## Checkpoint TASK-103 — 24/10/2026
+
+- Nhánh `feat/task-103-dashboard-api` đã đồng bộ PR6 tại merge `e7530a4` (dev `2c68b3a`). Dashboard tải list thật, phân trang, đủ10nhãn trạng thái và mở Clone Modal với service thật. Thành công tải lại trang1; adapter riêng chuyển thông báo lỗi nhưng giữ một API/Supabase client/store và xử lý401 chung. Tạo/mở Stage vẫn là thông báo.
+- Tại code `6c16807`, TV1 kiểm trình duyệt/API/Supabase thật: danh sách trống và có dữ liệu; modal mở/đóng, focus/Tab/Esc, chặn tiêu đề trống; clone201, danh sách tự cập nhật và F5 giữ bản sao. Lỗi mạng giữ modal/tiêu đề, không tự đăng xuất/gửi lại; chủ động thử lại sau khôi phục mạng thành công.
+- TV1 kiểm A có4phiên thử; B tải list200 không thấy phiên A và gọi clone ID nguồn A có thật nhận404, không tạo bản ghi. Verifier chỉ đọc do TV1 chạy trả `passed: true`: nguồn/bản sao mỗi bên1câu và1blueprint, nội dung đúng fixture, ID khác và liên kết đúng bản sao. Dữ liệu là fixture kỹ thuật, không phải đề/blueprint đã được AI hoặc giáo viên duyệt. Chi tiết và giới hạn ở [bằng chứng Dashboard](src/features/dashboard/README.md#live-browser-and-cloud-verification--24102026).
+- Sau đồng bộ, TV1 báo frontend host **85 tests** và lint/build đạt; lượt Docker tiếp theo: backend **209 passed, 1 warning trong14.22s**, frontend **85 tests passed**. Warning là `StarletteDeprecationWarning` về `httpx` trong TestClient, không phải test fail; chưa đổi dependency trong phạm vi này. Đây là kết quả TV1 chạy, agent không rerun Docker.
+- Mốc ghép modal: agent kiểm **113/113 Node tests**, lint/build và **18/18 ca ghép riêng** bằng ReactDOM thật với DOM/SDK/HTTP mô phỏng. Bộ18 không nằm trong113 hoặcCI, không phải kiểm trình duyệt/cloud. Chi tiết tại [checkpoint Dashboard](src/features/dashboard/README.md).
+- Còn thiếu: màn/route và nơi tạo bản ghi phiên được nhóm chốt, ghép/kiểm Tạo mới và Mở/Tiếp tục. Phân trang nhiều trang, race và lỗi HTTP khác đã kiểm bằng fixtures; chưa kiểm nhiều trang cloud, mọi chiều/endpoint quyền hoặc cleanup khi cloud clone lỗi. Chưa đánh dấu TASK-103 Done hoặc đã được reviewer nghiệm thu.
 
 ## Chạy bằng Docker của nhóm
 
@@ -79,7 +119,7 @@ Mở `http://localhost:3000/login`. Nếu Vite chuyển sang 3001, dùng đúng 
 - Dùng Supabase project/provider Google hiện có, không tạo lại chỉ để chạy frontend.
 - Nút Google dùng `redirectTo = window.location.origin + '/login'`. Supabase Redirect URLs cần cho phép origin/cổng local tương ứng; checkpoint nhóm đã chuẩn bị `http://localhost:3000/login` và `http://localhost:3001/login`.
 - Callback cấu hình bên Google là `<SUPABASE_PROJECT_URL>/auth/v1/callback`; `/login` là đích quay về frontend sau đó.
-- `/api` được Vite proxy tới `API_PROXY_TARGET`, mặc định `http://localhost:8000` khi chạy trực tiếp và được cấu hình `http://backend:8000` trong Docker. Profile đã nối `GET /api/users/me`; API danh sách/clone phiên vẫn ở bước tích hợp riêng. Chạy được Vite không chứng minh API nghiệp vụ đã tích hợp.
+- `/api` được Vite proxy tới `API_PROXY_TARGET`, mặc định `http://localhost:8000` khi chạy trực tiếp và được cấu hình `http://backend:8000` trong Docker. Profile nối `GET /api/users/me`; Dashboard nối list/clone theo checkpoint24/10. Chạy được Vite hoặc health check không thay việc kiểm các request nghiệp vụ.
 - Cấu hình Docker của Tâm đã được đồng bộ vào nhánh Auth. Compose dev truyền hai biến public vào Vite; bản static dùng build args. Sau đổi env cần chạy lại `up` để áp dụng.
 
 ## Trạng thái Auth hiện tại
@@ -136,8 +176,8 @@ Unit tests dùng source thật và Auth/HTTP giả lập, không cần key/env h
 
 ## Phần đang chờ tích hợp/review
 
-- TASK-101: code Google login/profile/avatar và các ca thật trong bảng trên đã có bằng chứng TV1; chưa được review/nghiệm thu. Token tự hết hạn hoặc refresh thật thất bại chưa kiểm trên cloud; hành vi 401/refresh thất bại có kiểm giả lập.
-- Dashboard danh sách phiên/API list/clone, Clone Modal của Bội Anh và điều hướng theo dữ liệu thật chưa được tích hợp trong nhánh Auth này.
-- Chưa kiểm bản static Nginx và CI của head Auth mới. Quyền ghi/sessions/storage sẽ kiểm cùng phạm vi tích hợp tương ứng; quyền SELECT profile không thay bằng chứng cho các phần đó.
+- TASK-101: code Google login/profile/avatar đã được squash merge qua PR #7 vào dev tại `bbb7c5e`. Token tự hết hạn hoặc refresh thật thất bại chưa kiểm trên cloud; hành vi 401/refresh thất bại có kiểm giả lập. Việc merge không thay bằng chứng cho các ca chưa kiểm.
+- TASK-103: list API/phân trang và Clone Modal đã nối; browser/cloud list, clone, persistence, copy câu/blueprint và ca B bị chặn clone nguồn A đã đạt theo TV1 ở checkpoint24/10. Điều hướng Stage/nơi tạo phiên chưa chốt; chưa kiểm phân trang nhiều trang cloud hoặc mọi endpoint/chiều quyền.
+- Chưa kiểm lại bản static Nginx hoặc CI của commit merge Dashboard sắp lưu. Bằng chứng sessions chỉ áp cho các thao tác/fixture đã nêu; không suy ra quyền UPDATE, storage hoặc cleanup khi lỗi cloud. Quyền SELECT profile không thay kiểm các phần đó.
 
-Nhánh hiện tại: `feat/task-101-google-login` → `dev`, tiếp tục Draft PR #7. Sau Auth review/merge mới làm TASK-103 trên `feat/task-103-dashboard-api`. **Chưa đánh dấu TASK-101/103 Done.** Quyết định tích hợp và SQL được ghi ở [DEC-TV1-002](../docs/change_log.md#dec-tv1-002-tích-hợp-google-oauth-profile-và-bootstrap-auth).
+Nhánh đang triển khai: `feat/task-103-dashboard-api`, ban đầu từ nền Auth `978003a`; đang đồng bộ dev sau khi Auth squash merge. PR #6 Clone Modal đã merge tại `2c68b3a` và đã ghép vào Dashboard. Trước khi PR #17 vào dev, cần lưu merge, kiểm diff chỉ còn phạm vi TASK-103 và hoàn tất các tiêu chí tạo/mở còn thiếu. **TASK-103 chưa hoàn tất.** Quyết định Auth và SQL được ghi ở [DEC-TV1-002](../docs/change_log.md#dec-tv1-002-tích-hợp-google-oauth-profile-và-bootstrap-auth); các checkpoint23–24/10 phía trên là lịch sử theo phạm vi đã nêu.

@@ -5,7 +5,7 @@ import os
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 TOOL_DIR = Path(__file__).resolve().parent
 MAX_INPUT_BYTES = 262_144
 MAX_RESPONSE_BYTES = 2_097_152
@@ -51,7 +51,10 @@ def canonical(value):
 
 
 def load_json(path):
-    return strict_json(Path(path).read_text(encoding="utf-8-sig"))
+    path = Path(path).resolve()
+    if path == (ROOT / "docs/blueprints/science-blueprint.schema.json").resolve():
+        path = TOOL_DIR / "science-blueprint.schema.json"
+    return strict_json(path.read_text(encoding="utf-8-sig"))
 
 
 def preflight_output(path, protected=()):

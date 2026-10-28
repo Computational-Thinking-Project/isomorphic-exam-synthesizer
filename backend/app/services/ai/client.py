@@ -2,6 +2,7 @@ import html
 import json
 import logging
 import re
+import secrets
 import time
 import unicodedata
 from typing import Optional
@@ -66,15 +67,33 @@ class GeminiClient(BaseAIClient):
         :param model_name: Tên model Gemini (mặc định lấy từ settings.GEMINI_MODEL)
         :param max_retries: Số lần thử lại tối đa khi gặp lỗi tạm thời (429, 503)
         """
-        raw_key = api_key or settings.GEMINI_API_KEY.get_secret_value()
-        if not raw_key:
+        api_keys = [api_key] if api_key else settings.get_gemini_api_keys()
+        if not api_keys:
             raise ValueError(
-                "GEMINI_API_KEY chưa được cấu hình. Vui lòng điền khóa vào file .env."
+                "Chưa cấu hình Gemini API key. Điền GEMINI_API_KEY hoặc GEMINI_API_KEY_1..3 vào .env."
             )
 
         self.model_name = model_name or settings.GEMINI_MODEL
         self.max_retries = max_retries
-        self.client = genai.Client(api_key=raw_key)
+        self._clients = tuple(
+            genai.Client(
+                api_key=key,
+                http_options=types.HttpOptions(
+                    retry_options=types.HttpRetryOptions(attempts=1),
+                ),
+            )
+            for key in api_keys
+        )
+        self.client = self._clients[0]  # Compatibility for existing callers.
+
+    def generate_content(
+        self, *, contents: str, config: types.GenerateContentConfig
+    ) -> types.GenerateContentResponse:
+        """Choose a key for each actual request, including retries and repair."""
+        client = secrets.choice(self._clients)
+        return client.models.generate_content(
+            model=self.model_name, contents=contents, config=config
+        )
 
     def generate_variant(
         self,
@@ -143,8 +162,7 @@ Yêu cầu:
                     "Gọi Gemini API model=%s (lần thử %d/%d) cho câu hỏi %s",
                     self.model_name, attempt, self.max_retries, source.id
                 )
-                response = self.client.models.generate_content(
-                    model=self.model_name,
+                response = self.generate_content(
                     contents=user_prompt,
                     config=config,
                 )
