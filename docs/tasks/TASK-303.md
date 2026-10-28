@@ -1,15 +1,15 @@
-# TASK-303 — Plan và Bàn Giao: Thuật Toán Hoán Vị Xác Định Fisher-Yates & Đồng Bộ Lời Giải Chi Tiết
+# TASK-303 — Plan và bàn giao
 
-- Nguồn giao việc: [docs/tasks/W3_ASSIGNMENT.md](W3_ASSIGNMENT.md) (v2.1; 28/10/2026).
-- Phụ trách: Tâm (`@AI-WFox`); Reviewer: Duy (`@johannguyen015` — đề xuất).
+- Nguồn giao việc: [docs/planning.md#task-303](../planning.md) (commit 506384b; 28/10/2026).
+- Phụ trách: Tâm (`@AI-WFox`); reviewer: Duy (`@johannguyen015` — đề xuất).
 - Repo/nhánh: `isomorphic-exam-synthesizer` / `feat/tam-task-303-fisher-yates-shuffler`; PR: <sẽ điền link khi tạo Draft PR>.
-- Hạn đợt: Tối thứ 3 03/11/2026; ETA task: Chủ Nhật 01/11/2026 (bàn giao trước sáng thứ 2 02/11/2026 để Duy làm TASK-305).
+- Hạn đạt: tối thứ 3 03/11/2026; ETA task: Chủ Nhật 01/11/2026 (Tâm tự xác nhận, bàn giao trước sáng thứ 2 02/11/2026 cho Duy làm TASK-305).
 
 ## Mình cần làm gì?
 
 - Hành vi/tiêu chí đạt:
   - Xây dựng service xáo trộn xác định `backend/app/services/shuffler/service.py` dựa trên thuật toán Fisher-Yates shuffle.
-  - Sinh seed ngẫu nhiên xác định cho từng mã đề: `seed = hash(session_id + str(version_index))`. Cùng seed và cùng dữ liệu gốc phải luôn luôn tạo ra cùng một kết quả xáo trộn bất biến.
+  - Sinh seed ngẫu nhiên xác định cho từng mã đề: `seed = hash(session_id + str(version_index))`. Cùng seed và cùng dữ liệu gốc luôn tạo ra cùng một kết quả xáo trộn bất biến.
   - **Bảo vệ tính toàn vẹn Canonical (Canonical Invariant):**
     - Mọi lượt shuffle luôn đọc từ các trường dữ liệu chuẩn `canonical_question_no`, `canonical_options`, `canonical_correct_key`, `canonical_solution_md` của các câu hỏi mang cờ `is_current = true`.
     - Tuyệt đối không bao giờ shuffle đè lên dữ liệu đã bị xáo trộn ở các lượt trước.
@@ -26,29 +26,48 @@
     - Gọi `assert_ownership`.
     - Kiểm tra điều kiện tiên quyết: phiên làm việc phải ở trạng thái `reviewed` (100% câu hỏi hiện hành đã đạt `approved`).
 - Ngoài phạm vi:
-  - Không phê duyệt phiên hoặc kích hoạt khóa `HTTP 423 Locked` (thuộc phạm vi TASK-305 của Duy).
-  - Không sinh lại biến thể câu hỏi (thuộc phạm vi TASK-304 của Đạt).
-- Cần input từ ai/task nào:
-  - Dữ liệu `canonical_*` và migration schema từ Hùng (`TASK-302`).
-  - Trạng thái 100% câu approved từ Duy (`TASK-301`).
-- Output giao cho ai/task nào:
-  - Bàn giao API `POST /finalize/shuffle` và bảng ma trận `answer_keys` cho Duy (`TASK-305`) trước sáng thứ 2 02/11/2026.
+  - Phê duyệt phiên hoặc kích hoạt khóa `HTTP 423 Locked` (thuộc TASK-305 của Duy).
+  - Sinh lại biến thể câu hỏi (thuộc TASK-304 của Đạt).
+- Hiện đã có:
+  - Cấu trúc cơ sở dữ liệu và bảng `exam_versions`, `version_questions`, `answer_keys` trong migrations ban đầu (`backend/migrations/`).
+  - Đã kiểm: Xác thực quyền sở hữu `assert_ownership` trong `backend/app/services/session.py`.
 
-## File dự kiến sửa hoặc thêm
+## File và thứ tự triển khai từ thứ 6
 
-| File | Mục đích | Output chính | Cách kiểm tự động hoặc thủ công |
-|---|---|---|---|
-| `backend/app/services/shuffler/__init__.py` | Module package init | Service exports | Import check |
-| `backend/app/services/shuffler/schemas.py` | Pydantic schemas cho Shuffler | Input/Output contract models | Schema validation tests |
-| `backend/app/services/shuffler/service.py` | Thuật toán Fisher-Yates, sync solution_md | Logic hoán vị xác định | Unit tests |
-| `backend/app/api/routes/finalize.py` | Route API POST /finalize/shuffle | Endpoint tích hợp | Integration tests |
-| `backend/tests/shuffler/test_shuffler.py` | Kiểm thử toàn diện thuật toán và đồng bộ | Bộ test suite deterministic shuffle | `pytest backend/tests/shuffler/` |
-| `docs/tasks/TASK-303.md` | Tài liệu kế hoạch và bàn giao task | Plan chuẩn hóa M2 | Đọc và rà soát tài liệu |
+| Lượt / file dự kiến | Mục đích sửa | Output mong muốn | Cần input gì trước | Cách kiểm |
+|---|---|---|---|---|
+| 1. `backend/app/services/shuffler/__init__.py` | Module package init | Service exports | Không có | Import check |
+| 2. `backend/app/services/shuffler/schemas.py` | Pydantic schemas cho Shuffler | Input/Output contract models | Không có | Schema validation tests |
+| 3. `backend/app/services/shuffler/service.py` | Thuật toán Fisher-Yates, sync solution_md | Logic hoán vị xác định | Task 302 (hoặc mock) | Unit tests in-memory |
+| 4. `backend/app/api/routes/finalize.py` | Route API POST /finalize/shuffle | Endpoint tích hợp | Service shuffler | Integration tests |
+| 5. `backend/tests/shuffler/test_shuffler.py` | Kiểm thử toàn diện thuật toán và đồng bộ | Bộ test suite deterministic shuffle | Không có | `pytest backend/tests/shuffler/` |
+| 6. `docs/tasks/TASK-303.md` | Cập nhật tài liệu và tiến độ task | Plan chuẩn hóa M2 | Không có | Manual check |
 
-## Tự kiểm và giới hạn
+## Đầu vào và câu hỏi – giải đáp trên Draft PR trong thứ 5
 
-- [ ] Lệnh kiểm thuật toán shuffler: `pytest backend/tests/shuffler/ -v`
-- [ ] Lệnh kiểm API finalize: `pytest backend/tests/api/test_finalize.py -v`
-- [ ] Lệnh kiểm linter: `ruff check backend/app/services/shuffler/ backend/tests/shuffler/`
-- [ ] Lệnh kiểm format: `ruff format --check backend/app/services/shuffler/ backend/tests/shuffler/`
-- Giới hạn: Trong giai đoạn chờ Hùng hoàn tất migration `TASK-302` vào chiều thứ 6, core shuffler service được xây dựng và kiểm thử độc lập với in-memory fixture / mock repository.
+| Cần ai/task nào | Câu hỏi/input cụ thể | Cần trước | ETA bên cung cấp xác nhận | Phần làm ngay/chờ | Link trả lời/contract |
+|---|---|---|---|---|---|
+| Hùng (`@benalexx007` - TASK-302) | Cấu trúc JSONB cụ thể của `canonical_options` là list các chuỗi `["A...", "B..."]` hay object `{"A": "...", ...}`? | Sáng thứ 6 30/10 | Chiều thứ 5 29/10 | Làm ngay với adapter hỗ trợ cả 2 dạng | Chờ giải đáp trên Draft PR |
+| Duy (`@johannguyen015` - TASK-305) | Response của `POST /finalize/shuffle` trả về permutation list hay object map theo question_id? | Sáng thứ 6 30/10 | Chiều thứ 5 29/10 | Làm ngay với schema pydantic | Chờ giải đáp trên Draft PR |
+
+- Output mình cần giao cho task sau: Bàn giao API `POST /finalize/shuffle`, service xáo trộn và bảng `answer_keys` cho Duy (`TASK-305`) trước sáng thứ 2 02/11/2026.
+- Lịch có khả thi không? Hoàn toàn khả thi vì logic Fisher-Yates thuần thuật toán toán học và test in-memory có thể triển khai độc lập trước khi DB migration hoàn tất.
+- Quyết định đã thống nhất: Canonical Invariant là bắt buộc, không được mutate in-place dữ liệu `canonical_*`.
+
+## Kế hoạch tự kiểm
+
+- Tình huống thành công:
+  - Shuffle cùng một seed ra cùng kết quả 100%.
+  - Shuffle nhiều lần trên cùng dữ liệu không làm mất dữ liệu canonical gốc.
+  - `solution_md` được cập nhật chính xác nhãn đáp án mới.
+- Tình huống lỗi:
+  - Phiên chưa `reviewed` (chưa đủ 100% approved) bị chặn với HTTP 400 Bad Request.
+  - User không phải chủ sở hữu bị chặn với HTTP 403 Forbidden.
+- Môi trường: Pytest local, in-memory fixtures. Chưa thể kiểm với DB thật cho tới khi migration hoàn tất.
+
+## Bàn giao – điền theo kết quả thực tế
+
+- PR/commit/output: <sẽ điền khi tạo PR>.
+- Đã làm / đã kiểm: Chưa có code, đang ở bước Draft Plan.
+- Đã chấp nhận: Chưa có review.
+- Còn chờ/bước tiếp: Mở Draft PR, chờ Hùng và Duy phản hồi câu hỏi contract, tiến hành code từ thứ 6.
