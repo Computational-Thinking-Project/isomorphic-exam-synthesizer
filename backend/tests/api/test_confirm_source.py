@@ -477,21 +477,10 @@ def test_confirm_security_warnings_records_persistent_audit_event(
     }
     mock_db.rpc.return_value.execute.return_value = mock_rpc_res
 
-    mock_events_table = MagicMock()
-    mock_insert = MagicMock()
-    mock_insert.execute.return_value = MagicMock(data=[{"id": "evt-1"}])
-
-    def table_router(table_name):
-        if table_name == "security_events":
-            mock_events_table.insert = MagicMock(return_value=mock_insert)
-            return mock_events_table
-        return mock_db.table.return_value
-
     with (
         patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
         patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
         patch("app.api.routes.sessions.assert_ownership", return_value=None),
-        patch.object(mock_db, "table", side_effect=table_router),
     ):
         response = client.post(
             f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
@@ -500,8 +489,9 @@ def test_confirm_security_warnings_records_persistent_audit_event(
         )
 
     assert response.status_code == 200
-    mock_events_table.insert.assert_called_once()
-    audit_payload = mock_events_table.insert.call_args[0][0]
+    assert any(c[0][0] == "security_events" for c in mock_db.table.call_args_list)
+    assert mock_db.table.return_value.insert.called
+    audit_payload = mock_db.table.return_value.insert.call_args[0][0]
     assert audit_payload["session_id"] == MOCK_SESSION_ID
     assert audit_payload["event_type"] == "PROMPT_INJECTION_DETECTED"
     assert audit_payload["severity"] == "WARN"
@@ -590,18 +580,13 @@ def test_confirm_security_audit_failure_is_handled_gracefully(
     }
     mock_db.rpc.return_value.execute.return_value = mock_rpc_res
 
-    def table_router(table_name):
-        if table_name == "security_events":
-            mock_fail = MagicMock()
-            mock_fail.insert.return_value.execute.side_effect = Exception("Simulated DB connection timeout")
-            return mock_fail
-        return mock_db.table.return_value
+    # Simulate exception specifically during insert execution
+    mock_db.table.return_value.insert.side_effect = Exception("Simulated DB connection timeout")
 
     with (
         patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
         patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
         patch("app.api.routes.sessions.assert_ownership", return_value=None),
-        patch.object(mock_db, "table", side_effect=table_router),
     ):
         response = client.post(
             f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
