@@ -122,11 +122,35 @@ BEGIN
     RAISE EXCEPTION 'Cannot confirm source: session has % questions with missing answers', v_missing_count USING ERRCODE = '22023';
   END IF;
 
-  -- SEC-02 / ADR-004: Security warnings are handled via silent audit logging at the
-  -- application layer (sessions.py Guard 4). This RPC no longer blocks confirmation
-  -- when security warnings are present. The p_acknowledged_security_warnings parameter
-  -- is retained for backward compatibility but is intentionally ignored here.
-  -- Security events are tracked in the application logs and security_events table.
+  -- SEC-02 / ADR-004: Security warnings do not block confirmation (user-facing acknowledgment
+  -- eliminated per ADR-004). The p_acknowledged_security_warnings parameter is retained for
+  -- backward compatibility. When security warnings are present, a persistent audit record
+  -- is atomically inserted into public.security_events.
+  IF v_security_warning_count > 0 THEN
+    INSERT INTO public.security_events (
+      session_id,
+      user_id,
+      event_type,
+      severity,
+      sanitized_detail
+    ) VALUES (
+      p_session_id,
+      v_session_user_id,
+      'PROMPT_INJECTION_DETECTED',
+      'WARN',
+      jsonb_build_object(
+        'action', 'confirm_source',
+        'warning_questions_count', v_security_warning_count,
+        'flagged_questions', (
+          SELECT COALESCE(jsonb_agg(jsonb_build_object('id', id, 'question_no', question_no)), '[]'::jsonb)
+          FROM public.source_questions
+          WHERE session_id = p_session_id AND has_security_warning = TRUE
+        ),
+        'silent_audit', TRUE,
+        'adr_version', 'ADR-004'
+      )
+    );
+  END IF;
 
   -- 6. Lock blueprints: stamp confirmed_at and verify 100% of questions have an active blueprint
   WITH updated_bp AS (

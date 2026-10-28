@@ -586,15 +586,41 @@ async def confirm_source(
     # Backend logs them silently for internal admin audit (table: security_events).
     # Users are NOT required to acknowledge — the UI has no checkbox for this.
     security_warning_questions = [
-        q.get("question_no", "?") for q in questions if q.get("has_security_warning") is True
+        q for q in questions if q.get("has_security_warning") is True
     ]
     if security_warning_questions:
+        flagged_nos = [q.get("question_no", "?") for q in security_warning_questions]
         logger.warning(
             "SEC-02 Silent Audit: Session %s confirmed with %d question(s) flagged for security review: %s",
             session_id,
             len(security_warning_questions),
-            security_warning_questions,
+            flagged_nos,
         )
+        try:
+            db.table("security_events").insert(
+                {
+                    "session_id": session_id,
+                    "user_id": current_user.id,
+                    "event_type": "PROMPT_INJECTION_DETECTED",
+                    "severity": "WARN",
+                    "sanitized_detail": {
+                        "action": "confirm_source",
+                        "warning_questions_count": len(security_warning_questions),
+                        "flagged_questions": [
+                            {"id": q.get("id"), "question_no": q.get("question_no")}
+                            for q in security_warning_questions
+                        ],
+                        "silent_audit": True,
+                        "adr_version": "ADR-004",
+                    },
+                }
+            ).execute()
+        except Exception as audit_err:
+            logger.error(
+                "Failed to insert persistent audit record into security_events for session %s: %s",
+                session_id,
+                audit_err,
+            )
 
     # Guard 5: Ensure blueprints exist for all source questions
     total_blueprints = await ensure_blueprints_for_session(db, session_id, questions)

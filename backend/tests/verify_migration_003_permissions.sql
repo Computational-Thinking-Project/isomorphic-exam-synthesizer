@@ -362,7 +362,16 @@ BEGIN
     RAISE EXCEPTION 'Scenario 6 FAILED: ADR-004 confirmation with security warnings should succeed, got: %', v_res;
   END IF;
 
-  RAISE NOTICE '[PASS] Scenario 6 (ADR-004 security warning silent audit): Successfully confirmed session despite warning flags.';
+  -- Verify persistent audit entry in public.security_events (ADR-004 & F02 requirement)
+  IF NOT EXISTS (
+    SELECT 1 FROM public.security_events
+    WHERE session_id = v_warning_session_id
+      AND event_type = 'PROMPT_INJECTION_DETECTED'
+  ) THEN
+    RAISE EXCEPTION 'Scenario 6 FAILED: ADR-004 persistent audit record not created in security_events table';
+  END IF;
+
+  RAISE NOTICE '[PASS] Scenario 6 (ADR-004 security warning silent audit): Successfully confirmed session and verified persistent security_events record.';
 END $$;
 
 RESET ROLE;

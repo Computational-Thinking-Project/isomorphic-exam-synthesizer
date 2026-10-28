@@ -14,7 +14,7 @@ Endpoint này phục vụ việc **xác nhận đề thi nguồn** sau khi giả
 1. **Kiểm tra quyền sở hữu (Ownership):** Xác thực người dùng và kiểm tra quyền trên phiên làm việc.
 2. **Kiểm tra trạng thái phiên (State Precondition):** Phiên bắt buộc phải ở trạng thái `draft`. Nếu ở trạng thái khác (ví dụ `blueprinted` hoặc `generating`), trả về mã `HTTP 409 Conflict`.
 3. **Kiểm tra toàn vẹn câu hỏi nguồn (Data Integrity):** Phiên phải có ít nhất 1 câu hỏi nguồn và **không có câu nào thiếu đáp án** (`has_missing_answer == true`).
-4. **Kiểm soát An ninh (SEC-02):** Nếu có câu hỏi nguồn chứa cảnh báo an ninh (`has_security_warning == true`), yêu cầu người dùng phải xác nhận tường minh thông qua trường `acknowledged_security_warnings: true`. Nếu không, trả về `HTTP 422`.
+4. **Kiểm soát An ninh Âm thầm (SEC-02 / ADR-004 Silent Security Audit):** Nếu có câu hỏi nguồn chứa cảnh báo an ninh (`has_security_warning == true`), hệ thống tự động ghi vết kiểm toán vào bảng `public.security_events` mà không hiển thị cảnh báo hay bắt buộc người dùng xác nhận trên giao diện. Quá trình xác nhận đề nguồn vẫn diễn ra bình thường (HTTP 200).
 5. **Động cơ Blueprint Tự Động & Hợp Đồng Với TASK-203 (Automatic Blueprint Engine):** Đảm bảo 100% câu hỏi nguồn đều có Blueprint tương ứng trong bảng `question_blueprints` (có ràng buộc `UNIQUE (source_question_id)`).
    - **Hợp đồng với TASK-203:** Pipeline AI nền (TASK-203) phụ trách sinh các Blueprint toán học chuẩn xác với điều kiện bất biến (`invariants`), chứng minh tính khả giải và miền biến thiên phức tạp (`extraction_source: "AI_PIPELINE"`).
    - **Cơ chế Fallback Tất Định (Deterministic Fallback):** Nếu giảng viên bấm xác nhận đề trước khi pipeline nền hoàn tất hoặc trong môi trường offline/test, endpoint tự động kích hoạt `ensure_blueprints_for_session` trích xuất biến số mặc định ($\pm 5$) có đóng dấu `is_fallback: true` và `extraction_source: "FALLBACK_DETERMINISTIC"` qua cơ chế `upsert(..., ignore_duplicates=True)` để chống nhân bản khi chạy song song.
@@ -42,7 +42,7 @@ Endpoint này phục vụ việc **xác nhận đề thi nguồn** sau khi giả
 
 | Trường | Kiểu | Bắt buộc | Mặc định | Mô tả |
 |---|---|---|---|---|
-| `acknowledged_security_warnings` | `boolean` | Không | `false` | Xác nhận đã kiểm tra và đồng ý tiếp tục với các câu hỏi có cảnh báo an ninh (SEC-02). |
+| `acknowledged_security_warnings` | `boolean` | Không | `false` | [DEPRECATED per ADR-004] Trước đây dùng để xác nhận SEC-02. Nay trường này không còn bắt buộc và được bỏ qua ở backend (tự động ghi nhận log kiểm toán ngầm). Giữ lại vì mục đích tương thích ngược. |
 
 ---
 
@@ -81,7 +81,6 @@ Endpoint này phục vụ việc **xác nhận đề thi nguồn** sau khi giả
 | **409 Conflict** | Trạng thái phiên khác `draft` (đã `blueprinted`, `generating`), hoặc số lượng câu hỏi bị thay đổi đồng thời giữa lúc đọc và chốt | `{"detail": "Cannot confirm source: Session status has changed concurrently or is not in draft status"}` |
 | **422 Unprocessable** | Phiên chưa có câu hỏi nguồn nào | `{"detail": "Cannot confirm source: Session has no source questions"}` |
 | **422 Unprocessable** | Có câu hỏi thiếu đáp án (`has_missing_answer == true`) | `{"detail": "Cannot confirm source: Questions [3] have missing answers"}` |
-| **422 Unprocessable** | Có câu cảnh báo an ninh mà `acknowledged_security_warnings == false` | `{"detail": "Questions [1] have security warnings (SEC-02). Explicit acknowledgment is required by setting acknowledged_security_warnings=True"}` |
 | **429 Too Many Requests** | Vượt ngưỡng Rate Limit CRUD | `{"detail": "Rate limit exceeded"}` |
 | **500 Internal Error** | Lỗi CSDL khi update trạng thái phiên hoặc blueprints | `{"detail": "Failed to confirm source and lock blueprints: ..."}` |
 
@@ -89,18 +88,20 @@ Endpoint này phục vụ việc **xác nhận đề thi nguồn** sau khi giả
 
 ## 4. Ví Dụ Sử Dụng (cURL)
 
-### A. Xác nhận đề nguồn thông thường (Không có cảnh báo an ninh)
+### A. Xác nhận đề nguồn thông thường
 ```bash
+curl -X POST "http://localhost:8000/api/sessions/11111111-1111-1111-1111-111111111111/confirm-source" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+### B. Xác nhận đề nguồn khi có cảnh báo an ninh (SEC-02 / ADR-004 Silent Audit)
+```bash
+# Vẫn gửi request bình thường (body rỗng hoặc kèm acknowledged_security_warnings tùy chọn)
+# Hệ thống tự động ghi vết kiểm toán vào bảng security_events và trả về HTTP 200 OK
 curl -X POST "http://localhost:8000/api/sessions/11111111-1111-1111-1111-111111111111/confirm-source" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"acknowledged_security_warnings": false}'
-```
-
-### B. Xác nhận đề nguồn có cảnh báo an ninh (SEC-02)
-```bash
-curl -X POST "http://localhost:8000/api/sessions/11111111-1111-1111-1111-111111111111/confirm-source" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"acknowledged_security_warnings": true}'
 ```

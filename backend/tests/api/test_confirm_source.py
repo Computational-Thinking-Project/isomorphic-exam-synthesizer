@@ -445,6 +445,175 @@ def test_confirm_security_warnings_are_silently_logged(client, mock_auth_user, a
     assert rpc_payload.get("p_acknowledged_security_warnings") is True
 
 
+def test_confirm_security_warnings_records_persistent_audit_event(
+    client, mock_auth_user, auth_headers
+):
+    """ADR-004 & F02: Confirming with security warnings records a persistent entry into security_events."""
+    mock_db = MagicMock()
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft", "updated_at": "2026-10-28T00:00:00+00:00"}]
+    mock_questions = MagicMock()
+    mock_questions.data = _create_mock_questions(count=3, has_warning=True)
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        mock_status
+    )
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        mock_questions
+    )
+
+    mock_bps = MagicMock()
+    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
+
+    mock_rpc_res = MagicMock()
+    mock_rpc_res.data = {
+        "success": True,
+        "session_id": MOCK_SESSION_ID,
+        "status": "blueprinted",
+        "confirmed_at": "2026-10-28T00:00:00+00:00",
+        "total_questions": 3,
+        "total_blueprints": 3,
+    }
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
+
+    mock_events_table = MagicMock()
+    mock_insert = MagicMock()
+    mock_insert.execute.return_value = MagicMock(data=[{"id": "evt-1"}])
+
+    def table_router(table_name):
+        if table_name == "security_events":
+            mock_events_table.insert = MagicMock(return_value=mock_insert)
+            return mock_events_table
+        return mock_db.table.return_value
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+        patch("app.api.routes.sessions.assert_ownership", return_value=None),
+        patch.object(mock_db, "table", side_effect=table_router),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
+            json={"acknowledged_security_warnings": False},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200
+    mock_events_table.insert.assert_called_once()
+    audit_payload = mock_events_table.insert.call_args[0][0]
+    assert audit_payload["session_id"] == MOCK_SESSION_ID
+    assert audit_payload["event_type"] == "PROMPT_INJECTION_DETECTED"
+    assert audit_payload["severity"] == "WARN"
+    assert audit_payload["sanitized_detail"]["action"] == "confirm_source"
+    assert audit_payload["sanitized_detail"]["warning_questions_count"] == 1
+    assert audit_payload["sanitized_detail"]["silent_audit"] is True
+
+
+def test_confirm_no_security_warnings_does_not_call_security_events(
+    client, mock_auth_user, auth_headers
+):
+    """ADR-004 & F02: When no questions have security warnings, security_events is not touched."""
+    mock_db = MagicMock()
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft", "updated_at": "2026-10-28T00:00:00+00:00"}]
+    mock_questions = MagicMock()
+    mock_questions.data = _create_mock_questions(count=3, has_warning=False)
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        mock_status
+    )
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        mock_questions
+    )
+
+    mock_bps = MagicMock()
+    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
+
+    mock_rpc_res = MagicMock()
+    mock_rpc_res.data = {
+        "success": True,
+        "session_id": MOCK_SESSION_ID,
+        "status": "blueprinted",
+        "confirmed_at": "2026-10-28T00:00:00+00:00",
+        "total_questions": 3,
+        "total_blueprints": 3,
+    }
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+        patch("app.api.routes.sessions.assert_ownership", return_value=None),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
+            json={},
+            headers=auth_headers,
+        )
+
+    assert response.status_code == 200
+    for call in mock_db.table.call_args_list:
+        assert call[0][0] != "security_events"
+
+
+def test_confirm_security_audit_failure_is_handled_gracefully(
+    client, mock_auth_user, auth_headers
+):
+    """ADR-004 & F02: Audit insert failure logs an error and does not block confirmation."""
+    mock_db = MagicMock()
+    mock_status = MagicMock()
+    mock_status.data = [{"status": "draft", "updated_at": "2026-10-28T00:00:00+00:00"}]
+    mock_questions = MagicMock()
+    mock_questions.data = _create_mock_questions(count=3, has_warning=True)
+
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
+        mock_status
+    )
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+        mock_questions
+    )
+
+    mock_bps = MagicMock()
+    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
+    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
+
+    mock_rpc_res = MagicMock()
+    mock_rpc_res.data = {
+        "success": True,
+        "session_id": MOCK_SESSION_ID,
+        "status": "blueprinted",
+        "confirmed_at": "2026-10-28T00:00:00+00:00",
+        "total_questions": 3,
+        "total_blueprints": 3,
+    }
+    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
+
+    def table_router(table_name):
+        if table_name == "security_events":
+            mock_fail = MagicMock()
+            mock_fail.insert.return_value.execute.side_effect = Exception("Simulated DB connection timeout")
+            return mock_fail
+        return mock_db.table.return_value
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+        patch("app.api.routes.sessions.assert_ownership", return_value=None),
+        patch.object(mock_db, "table", side_effect=table_router),
+    ):
+        response = client.post(
+            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
+            json={"acknowledged_security_warnings": False},
+            headers=auth_headers,
+        )
+
+    # Must still succeed with 200 because DB RPC handles transaction atomically
+    assert response.status_code == 200
+    assert response.json()["status"] == "blueprinted"
+
+
 
 def test_confirm_auto_creates_missing_blueprints(client, mock_auth_user, auth_headers):
     """Confirm-source auto-creates missing blueprints if background task was partial."""
