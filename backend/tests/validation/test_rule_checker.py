@@ -1024,3 +1024,58 @@ class TestRuleCheckerReviewRegressionFixes:
         )
         assert res_sqrt_neg.passed is False
         assert any("Negative radicand in even root" in err for err in res_sqrt_neg.errors)
+
+    def test_nested_latex_braces_and_invariants(self):
+        # 1. Nested power in fraction denominator: 2^{3} - 8 == 0
+        res_frac_nested = check_mathematical_invariants(r"Tính giá trị của \frac{1}{2^{3} - 8}")
+        assert res_frac_nested.passed is False
+        assert any("Zero denominator detected" in err for err in res_frac_nested.errors)
+
+        # 2. Nested sqrt in fraction denominator: \sqrt{4} - 2 == 0
+        res_sqrt_denom = check_mathematical_invariants(r"Tính giá trị của \frac{1}{\sqrt{4} - 2}")
+        assert res_sqrt_denom.passed is False
+        assert any("Zero denominator detected" in err for err in res_sqrt_denom.errors)
+
+        # 3. Nested fraction in radical: -\frac{1}{4} < 0
+        res_sqrt_frac = check_mathematical_invariants(r"Tính giá trị của \sqrt{-\frac{1}{4}}")
+        assert res_sqrt_frac.passed is False
+        assert any("Negative radicand in even root" in err for err in res_sqrt_frac.errors)
+
+        # 4. Nested power in radical: 2^{2} - 5 == -1 < 0
+        res_sqrt_pow = check_mathematical_invariants(r"Tính giá trị của \sqrt{2^{2} - 5}")
+        assert res_sqrt_pow.passed is False
+        assert any("Negative radicand in even root" in err for err in res_sqrt_pow.errors)
+
+    def test_label_resolution_in_distractor_reasonableness(self):
+        options = ["10", "20", "30", "40"]
+        # Standard letter labels with dots, parentheses, and prefixes
+        assert check_distractor_reasonableness(options, correct_answer="A.").passed is True
+        assert check_distractor_reasonableness(options, correct_answer="Option B").passed is True
+        assert check_distractor_reasonableness(options, correct_answer="(C)").passed is True
+        assert check_distractor_reasonableness(options, correct_answer="Phương án D").passed is True
+        assert check_distractor_reasonableness(options, correct_answer="E.").passed is False
+
+    def test_out_of_scope_math_extensions(self):
+        # Complex numbers
+        is_oos, cat = detect_out_of_scope_math("Tìm phần thực và phần ảo của số phức z = 3 + 4i")
+        assert is_oos is True
+        assert cat == "complex_numbers"
+
+        # Linear algebra / matrices
+        is_oos2, cat2 = detect_out_of_scope_math("Tính định thức của ma trận vuông A cấp 3")
+        assert is_oos2 is True
+        assert cat2 == "linear_algebra_matrices"
+
+    def test_triangle_inequality_geometric_format_and_ast_limits(self):
+        # AB = 3, BC = 4, AC = 10 violates triangle inequality (3 + 4 < 10)
+        res_tri = check_mathematical_invariants(
+            "Cho tam giác ABC có AB = 3, BC = 4, AC = 10. Tính diện tích."
+        )
+        assert res_tri.passed is False
+        assert any("Triangle inequality violated" in err for err in res_tri.errors)
+
+        # Indeterminate form 0^0 is safely rejected
+        assert safe_eval_numeric_expr("0**0") is None
+
+        # Large base with sub-unit exponent is computed accurately without safe bounds abort
+        assert safe_eval_numeric_expr("100000000**0.5") == 10000
