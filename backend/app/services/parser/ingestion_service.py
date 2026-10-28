@@ -1,5 +1,6 @@
-"""Ingestion Service for Atomic Database Replacement and Blueprint Trigger (TASK-202 / TASK-205)."""
+"""Ingestion Service for Atomic Database Replacement and Blueprint Trigger (TASK-202)."""
 
+import asyncio
 import logging
 import re
 from typing import Any, Dict, List, Optional, cast
@@ -37,8 +38,10 @@ NETWORK_TRANSPORT_EXCEPTIONS: tuple[type[BaseException], ...] = (
 
 def is_network_timeout(exc: BaseException) -> bool:
     """Check if exception or any nested cause/context represents a network timeout."""
+    seen: set[int] = set()
     cur: Optional[BaseException] = exc
-    while cur is not None:
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
         if isinstance(cur, NETWORK_TIMEOUT_EXCEPTIONS):
             return True
         cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
@@ -48,8 +51,10 @@ def is_network_timeout(exc: BaseException) -> bool:
 
 def is_network_transport(exc: BaseException) -> bool:
     """Check if exception or any nested cause/context represents a network transport or disconnection error."""
+    seen: set[int] = set()
     cur: Optional[BaseException] = exc
-    while cur is not None:
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
         if isinstance(cur, NETWORK_TRANSPORT_EXCEPTIONS):
             return True
         cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
@@ -151,11 +156,12 @@ async def replace_source_questions_atomically(
     ]
 
     try:
-        # Method 2A: Atomic RPC Stored Procedure execution
-        rpc_res = db.rpc(
+        # Method 2A: Atomic RPC Stored Procedure execution in threadpool to prevent event loop blocking
+        rpc_builder = db.rpc(
             "replace_source_questions",
             {"p_session_id": session_id, "p_questions": payload},
-        ).execute()
+        )
+        rpc_res = await asyncio.to_thread(rpc_builder.execute)
 
         if not (rpc_res.data and isinstance(rpc_res.data, dict) and rpc_res.data.get("success")):
             logger.error(
@@ -178,7 +184,7 @@ async def replace_source_questions_atomically(
         err_msg = str(exc)
         err_lower = err_msg.lower()
         logger.error("RPC replace_source_questions failed for session %s: %s", session_id, exc)
-        code = getattr(exc, "code", "") or ""
+        code = str(getattr(exc, "code", "") or "").strip().upper()
 
         if (
             code == "42501"
@@ -235,15 +241,40 @@ async def replace_source_questions_atomically(
             detail="Database atomic replacement failed. Please verify session state before retrying.",
         ) from exc
 
-    # Query and return the newly inserted records
-    fetch_res = (
-        db.table("source_questions")
-        .select("*")
-        .eq("session_id", session_id)
-        .order("question_no", desc=False)
-        .execute()
-    )
-    return cast(List[Dict[str, Any]], fetch_res.data or [])
+    # Query and return the newly inserted records in threadpool
+    # If the fetch fails, do not report an ingestion failure to caller since the RPC transaction committed.
+    try:
+        fetch_builder = (
+            db.table("source_questions")
+            .select("*")
+            .eq("session_id", session_id)
+            .order("question_no", desc=False)
+        )
+        fetch_res = await asyncio.to_thread(fetch_builder.execute)
+        return cast(List[Dict[str, Any]], fetch_res.data or [])
+    except Exception as fetch_exc:
+        logger.warning(
+            "RPC succeeded but failed to fetch newly inserted source_questions for session %s: %s",
+            session_id,
+            fetch_exc,
+        )
+        return [
+            {
+                "session_id": session_id,
+                "question_no": q.question_no,
+                "raw_content": q.raw_content,
+                "options": q.options,
+                "correct_key": q.correct_key,
+                "solution_md": q.solution_md,
+                "has_missing_answer": q.has_missing_answer,
+                "has_security_warning": q.has_security_warning,
+            }
+            for q in questions
+        ]
+
+
+# Alias for backward compatibility
+is_confirmed_rollback = is_database_rollback_evidence
 
 
 async def trigger_blueprint_pipeline(
@@ -281,3 +312,5 @@ async def trigger_blueprint_pipeline(
             )
     except Exception as exc:
         logger.error("Error in background blueprint pipeline for session %s: %s", session_id, exc)
+
+

@@ -82,13 +82,13 @@ Module Ingestion cung cấp 2 endpoints nhận và bóc tách đề thi nguồn,
 
 ---
 
-### 2.3. Asynchronous Blueprint Hook (`trigger_blueprint_pipeline`)
+### 2.3. Ranh giới kiến trúc & Tách biệt luồng Blueprint (ADR 0001)
 
 > [!NOTE]
-> **Giới hạn kiến trúc (TASK-202):**
-> Hàm `trigger_blueprint_pipeline` hiện tại hoạt động như một asynchronous event hook / placeholder với bounded concurrency (`asyncio.Semaphore(3)`) nhằm phục vụ việc ghi nhận log và kiểm thử an toàn luồng bất đồng bộ ngay sau khi câu hỏi được nạp thành công.
+> **Tuân thủ Kiến trúc ADR 0001 (Source Confirmation First):**
+> Các endpoint Ingestion (`ingest-file`, `ingest-text`) chỉ chịu trách nhiệm bóc tách dữ liệu và lưu trữ câu hỏi nguồn nguyên tử vào bảng `source_questions`.
 > 
-> Việc gọi Gemini AI trích xuất Blueprint và ghi dữ liệu phân tích vào bảng `question_blueprints` là phạm vi tích hợp tiếp theo của nhiệm vụ **TASK-203**.
+> Việc gọi Gemini AI trích xuất Blueprint không tự động kích hoạt tại Ingestion nhằm bảo vệ quota và bảo đảm tính chính xác của dữ liệu. Pipeline Blueprint thật sự sẽ được kích hoạt tại nhiệm vụ **TASK-205** (`POST /api/sessions/{session_id}/confirm-source`) sau khi giáo viên duyệt và xác nhận câu hỏi nguồn.
 
 ---
 

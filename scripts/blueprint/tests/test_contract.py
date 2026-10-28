@@ -2,14 +2,13 @@ import copy
 from argparse import Namespace
 
 import pytest
-from jsonschema import Draft202012Validator
-
 from blueprint_tool.common import ToolError, canonical, strict_json
 from blueprint_tool.config import resolve_config
 from blueprint_tool.extractor import assemble
 from blueprint_tool.input_adapter import Contracts, input_items
 from blueprint_tool.schema_adapter import build_api_schema, generation_payload
 from blueprint_tool.validators import schema_issues, validate_blueprint, validate_input
+from jsonschema import Draft202012Validator
 
 
 @pytest.mark.parametrize(

@@ -14,7 +14,7 @@ import logging
 import re
 import uuid
 import zipfile
-from typing import Optional
+from typing import Any, Optional, cast
 
 from fastapi import HTTPException, status
 from supabase import Client
@@ -90,12 +90,29 @@ def validate_file_security(filename: str, file_bytes: bytes) -> str:
 
         try:
             with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
-                # Anti-Zip Bomb check
-                total_uncompressed = sum(info.file_size for info in zf.infolist())
+                infolist = zf.infolist()
+
+                # Anti-Zip Bomb check: max entry count
+                if len(infolist) > 1000:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="DOCX archive contains too many files (exceeds 1000 entry limit).",
+                    )
+
+                # Anti-Zip Bomb check: total uncompressed size
+                total_uncompressed = sum(info.file_size for info in infolist)
                 if total_uncompressed > MAX_DOCX_UNCOMPRESSED_SIZE:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="File decompression size exceeds 50MB limit (potential Zip Bomb).",
+                    )
+
+                # Verify archive integrity via testzip()
+                corrupted = zf.testzip()
+                if corrupted is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Corrupted entry in DOCX archive: {corrupted}",
                     )
 
                 # Required Word document entries check
@@ -109,6 +126,19 @@ def validate_file_security(filename: str, file_bytes: bytes) -> str:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Corrupted or malformed DOCX archive.",
+            ) from exc
+
+    # 4. For text-based formats (.md, .tex): validate strict UTF-8 decoding (supports UTF-8 BOM)
+    if ext in (".md", ".tex"):
+        try:
+            if file_bytes.startswith(b"\xef\xbb\xbf"):
+                file_bytes.decode("utf-8-sig")
+            else:
+                file_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid {ext} file: content is not valid UTF-8 text.",
             ) from exc
 
     return ext
@@ -127,37 +157,66 @@ async def upload_exam_file_to_storage(
     Returns the storage object path on success, or None if storage upload fails or is unavailable.
     Does not crash the request if Supabase Storage is not configured in dev/mock environment.
     """
+    # Sanitize session_id to only alphanumeric, hyphens and underscores (FIX-17)
+    clean_session_id = re.sub(r"[^a-zA-Z0-9_\-]", "", session_id)
+    if not clean_session_id:
+        clean_session_id = "unknown_session"
+
     clean_name = sanitize_filename(filename)
     unique_key = f"{uuid.uuid4().hex[:8]}_{clean_name}"
-    storage_path = f"{session_id}/{unique_key}"
+    storage_path = f"{clean_session_id}/{unique_key}"
 
-    # Determine default MIME type
-    if not content_type:
-        ext = get_file_extension(filename)
-        if ext == ".docx":
-            content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        elif ext == ".tex":
-            content_type = "application/x-tex"
-        elif ext == ".md":
-            content_type = "text/markdown"
-        else:
-            content_type = "application/octet-stream"
+    # Determine safe MIME type derived strictly from validated extension (FIX-17)
+    ext = get_file_extension(filename)
+    allowed_mimes = {
+        ".docx": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+        ".tex": ["application/x-tex", "text/x-tex", "text/plain"],
+        ".md": ["text/markdown", "text/x-markdown", "text/plain"],
+    }
+    default_mime = {
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".tex": "application/x-tex",
+        ".md": "text/markdown",
+    }.get(ext, "application/octet-stream")
+
+    final_content_type = default_mime
+    if content_type and ext in allowed_mimes and content_type.lower() in allowed_mimes[ext]:
+        final_content_type = content_type.lower()
 
     try:
-        # Attempt upload to primary bucket (exam-sources), fallback to exam-raw-files if not found
+        # Attempt upload to primary bucket (exam-sources), fallback only if bucket not found
         try:
             db.storage.from_(bucket_name).upload(
                 path=storage_path,
                 file=file_bytes,
-                file_options={"content-type": content_type, "upsert": "true"},
+                file_options={"content-type": final_content_type, "upsert": "true"},
             )
-        except Exception:
-            # Try fallback bucket
-            db.storage.from_("exam-raw-files").upload(
-                path=storage_path,
-                file=file_bytes,
-                file_options={"content-type": content_type, "upsert": "true"},
+        except Exception as primary_exc:
+            err_msg = str(primary_exc).lower()
+            status_code = getattr(primary_exc, "status_code", getattr(primary_exc, "code", None))
+            is_404 = (
+                status_code == 404
+                or "404" in err_msg
+                or "nosuchbucket" in err_msg
+                or "bucket not found" in err_msg
             )
+            is_forbidden_or_timeout = (
+                status_code in (401, 403)
+                or "403" in err_msg
+                or "401" in err_msg
+                or "timeout" in err_msg
+                or "permission" in err_msg
+                or "unauthorized" in err_msg
+            )
+            if is_404 and not is_forbidden_or_timeout:
+                # Try fallback bucket only when primary bucket is missing
+                db.storage.from_("exam-raw-files").upload(
+                    path=storage_path,
+                    file=file_bytes,
+                    file_options=cast(Any, {"content-type": final_content_type, "upsert": "true"}),
+                )
+            else:
+                raise primary_exc
         logger.info("Successfully uploaded exam file to storage: %s", storage_path)
         return storage_path
     except Exception as exc:

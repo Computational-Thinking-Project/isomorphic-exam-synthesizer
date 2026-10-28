@@ -405,10 +405,10 @@ async def ingest_file(
     if ext == ".docx":
         parsed_questions, parser_errors = parse_docx(file_bytes)
     elif ext == ".tex":
-        text_content = file_bytes.decode("utf-8", errors="replace")
+        text_content = file_bytes.decode("utf-8-sig", errors="replace")
         parsed_questions, parser_errors = parse_latex(text_content)
     elif ext == ".md":
-        text_content = file_bytes.decode("utf-8", errors="replace")
+        text_content = file_bytes.decode("utf-8-sig", errors="replace")
         parsed_questions, parser_errors = parse_markdown(text_content)
     else:
         raise HTTPException(
@@ -437,7 +437,6 @@ async def ingest_file(
 
     # Trigger background Blueprint extraction pipeline (TASK-203 hook)
     background_tasks.add_task(trigger_blueprint_pipeline, session_id, saved_questions)
-
     return IngestSuccessResponse(
         session_id=session_id,
         message="Exam file ingested and validated successfully",
@@ -481,13 +480,20 @@ async def ingest_text(
             detail=f"Cannot ingest questions: session is in '{session_status}' state (must be 'draft')",
         )
 
-    raw_text = payload.raw_text
+    raw_text = payload.raw_text.replace("\ufeff", "")
 
-    # Parse with markdown parser or latex parser if latex environments are present
-    if "\\begin{enumerate}" in raw_text or "\\item" in raw_text:
+    # Parse with markdown parser or latex parser with intelligent detection and dual fallback
+    is_latex = any(
+        k in raw_text for k in ["\\begin{", "\\item", "\\textbf{", "\\documentclass", "\\section{"]
+    )
+    if is_latex:
         parsed_questions, parser_errors = parse_latex(raw_text)
+        if not parsed_questions and not parser_errors:
+            parsed_questions, parser_errors = parse_markdown(raw_text)
     else:
         parsed_questions, parser_errors = parse_markdown(raw_text)
+        if not parsed_questions and not parser_errors:
+            parsed_questions, parser_errors = parse_latex(raw_text)
 
     # Zero Mutation Guard: In-Memory Pre-validation
     assert_zero_mutation_or_raise(parsed_questions, parser_errors)
@@ -501,7 +507,6 @@ async def ingest_text(
 
     # Trigger background Blueprint extraction pipeline (TASK-203 hook)
     background_tasks.add_task(trigger_blueprint_pipeline, session_id, saved_questions)
-
     return IngestSuccessResponse(
         session_id=session_id,
         message="Exam text ingested and validated successfully",
@@ -697,5 +702,4 @@ async def confirm_source(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database atomic confirmation failed. Please verify session state before retrying.",
         ) from exc
-
 

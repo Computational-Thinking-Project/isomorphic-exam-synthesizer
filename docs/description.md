@@ -1,3 +1,5 @@
+> Cập nhật AI W2 24/10/2026: xác nhận đề nguồn trước khi sinh Blueprint; không có Blueprint editor/prompt giáo viên; candidate và solution cùng request. [ADR chính thức](adr/0001-confirm-before-blueprint.md) và [contract hiện tại](ai-w2-integration.md) thay các mô tả flow cũ bên dưới.
+
 # Isomorphic Exam Synthesizer
 ## An AI Assistant for Instructor-Reviewed Multi-Version Mathematics Exams
 **Week 2 Project Proposal: Topic, Actors, Core Functions, Platform and Workflow**

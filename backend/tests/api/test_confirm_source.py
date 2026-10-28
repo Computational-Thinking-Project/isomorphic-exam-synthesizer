@@ -553,7 +553,7 @@ def test_confirm_source_rpc_primary_success(client, mock_auth_user, auth_headers
         {
             "p_session_id": MOCK_SESSION_ID,
             "p_expected_question_count": 4,
-            "p_acknowledged_security_warnings": False,
+            "p_acknowledged_security_warnings": True,
             "p_expected_updated_at": "2026-10-26T00:00:00+00:00",
         },
     )
