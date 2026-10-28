@@ -55,8 +55,12 @@ DECLARE
   v_session_status public.session_status;
   v_session_updated_at TIMESTAMPTZ;
   v_role TEXT := COALESCE(
-    current_setting('request.jwt.claim.role', true),
-    (current_setting('request.jwt.claims', true)::jsonb ->> 'role')
+    NULLIF(current_setting('request.jwt.claim.role', true), ''),
+    CASE 
+      WHEN NULLIF(current_setting('request.jwt.claims', true), '') IS NOT NULL 
+      THEN NULLIF((current_setting('request.jwt.claims', true)::jsonb ->> 'role'), '')
+      ELSE NULL 
+    END
   );
   v_current_count INT;
   v_missing_count INT;
@@ -80,7 +84,7 @@ BEGIN
     IF v_session_user_id != auth.uid() THEN
       RAISE EXCEPTION 'Access denied: not session owner' USING ERRCODE = '42501';
     END IF;
-  ELSIF v_role = 'service_role' OR session_user IN ('postgres', 'supabase_admin') THEN
+  ELSIF v_role = 'service_role' OR (v_role IS NULL AND session_user IN ('postgres', 'supabase_admin')) THEN
     NULL; -- Trusted internal backend service role or direct database administrator
   ELSE
     RAISE EXCEPTION 'Unauthorized: caller must be authenticated or have service role' USING ERRCODE = '42501';

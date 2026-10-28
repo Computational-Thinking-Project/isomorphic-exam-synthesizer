@@ -9,7 +9,7 @@
 -- 3. authenticated caller with NULL/empty UID: rejected (42501: Unauthorized: caller must be authenticated)
 -- 4. valid owner on non-draft session: rejected (22023: session not in draft status)
 -- 5. valid owner with outdated p_expected_updated_at (concurrent edit): rejected (22023)
--- 6. valid owner on session with unacknowledged security warnings: rejected (22023)
+-- 6. valid owner on session with security warnings: SUCCESS (ADR-004 Silent Audit)
 -- 7. valid owner on session with missing blueprints: rejected (22023)
 -- 8. valid owner with question count mismatch: rejected (22023)
 -- 9. valid owner on valid draft session with all blueprints: SUCCESS (200 equivalent)
@@ -43,6 +43,13 @@ BEGIN
   GRANT anon TO authenticator;
   GRANT authenticated TO authenticator;
   GRANT service_role TO authenticator;
+
+  -- Ensure current session user (e.g. postgres in Supabase Cloud SQL Editor) can switch roles
+  BEGIN
+    EXECUTE format('GRANT anon, authenticated, service_role TO %I', session_user);
+  EXCEPTION WHEN OTHERS THEN
+    NULL;
+  END;
 
   -- Ensure PL/pgSQL language privilege
   GRANT USAGE ON LANGUAGE plpgsql TO PUBLIC;
@@ -146,7 +153,6 @@ SELECT set_config('request.jwt.claim.role', 'anon', true);
 SELECT set_config('request.jwt.claim.sub', '', true);
 SELECT set_config('request.jwt.claims', '{"role": "anon"}'::text, true);
 
-SET SESSION AUTHORIZATION authenticator;
 SET ROLE anon;
 
 DO $$
@@ -183,7 +189,6 @@ BEGIN
 END $$;
 
 RESET ROLE;
-RESET SESSION AUTHORIZATION;
 
 -- ----------------------------------------------------------------------------
 -- Scenario 2: Authenticated non-owner caller (Attacker trying to confirm victim's session)
@@ -193,7 +198,6 @@ SELECT set_config('request.jwt.claim.role', 'authenticated', true);
 SELECT set_config('request.jwt.claim.sub', '22222222-2222-2222-2222-222222222222', true);
 SELECT set_config('request.jwt.claims', '{"role": "authenticated", "sub": "22222222-2222-2222-2222-222222222222"}'::text, true);
 
-SET SESSION AUTHORIZATION authenticator;
 SET ROLE authenticated;
 
 DO $$
@@ -221,7 +225,6 @@ BEGIN
 END $$;
 
 RESET ROLE;
-RESET SESSION AUTHORIZATION;
 
 -- ----------------------------------------------------------------------------
 -- Scenario 3: Authenticated with NULL/empty UID claim (rejected with 42501)
@@ -230,7 +233,6 @@ SELECT set_config('request.jwt.claim.role', 'authenticated', true);
 SELECT set_config('request.jwt.claim.sub', '', true);
 SELECT set_config('request.jwt.claims', '{"role": "authenticated"}'::text, true);
 
-SET SESSION AUTHORIZATION authenticator;
 SET ROLE authenticated;
 
 DO $$
@@ -258,7 +260,6 @@ BEGIN
 END $$;
 
 RESET ROLE;
-RESET SESSION AUTHORIZATION;
 
 -- ----------------------------------------------------------------------------
 -- Scenario 4: Valid owner on non-draft session (rejected with 22023)
@@ -267,7 +268,6 @@ SELECT set_config('request.jwt.claim.role', 'authenticated', true);
 SELECT set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
 SELECT set_config('request.jwt.claims', '{"role": "authenticated", "sub": "11111111-1111-1111-1111-111111111111"}'::text, true);
 
-SET SESSION AUTHORIZATION authenticator;
 SET ROLE authenticated;
 
 DO $$
@@ -295,7 +295,6 @@ BEGIN
 END $$;
 
 RESET ROLE;
-RESET SESSION AUTHORIZATION;
 
 -- ----------------------------------------------------------------------------
 -- Scenario 5: Valid owner with outdated expected updated_at (concurrent edit)
@@ -304,7 +303,6 @@ SELECT set_config('request.jwt.claim.role', 'authenticated', true);
 SELECT set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
 SELECT set_config('request.jwt.claims', '{"role": "authenticated", "sub": "11111111-1111-1111-1111-111111111111"}'::text, true);
 
-SET SESSION AUTHORIZATION authenticator;
 SET ROLE authenticated;
 
 DO $$
@@ -338,48 +336,36 @@ BEGIN
 END $$;
 
 RESET ROLE;
-RESET SESSION AUTHORIZATION;
 
 -- ----------------------------------------------------------------------------
--- Scenario 6: Unacknowledged security warnings (rejected with 22023)
+-- Scenario 6: Valid owner on session with security warnings (ADR-004: SUCCESS via Silent Audit)
+-- Per ADR-004, security warnings are logged silently and do NOT block confirmation in RPC.
 -- ----------------------------------------------------------------------------
 SELECT set_config('request.jwt.claim.role', 'authenticated', true);
 SELECT set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
 SELECT set_config('request.jwt.claims', '{"role": "authenticated", "sub": "11111111-1111-1111-1111-111111111111"}'::text, true);
 
-SET SESSION AUTHORIZATION authenticator;
 SET ROLE authenticated;
 
 DO $$
 DECLARE
   v_warning_session_id UUID := 'cccccccc-cccc-cccc-cccc-cccccccccccc';
-  v_test_passed BOOLEAN := FALSE;
-  v_err_code TEXT;
-  v_err_msg TEXT;
+  v_res JSONB;
 BEGIN
-  BEGIN
-    PERFORM public.confirm_exam_source(
-      v_warning_session_id,
-      1,
-      FALSE
-    );
-  EXCEPTION WHEN OTHERS THEN
-    GET STACKED DIAGNOSTICS v_err_code = RETURNED_SQLSTATE, v_err_msg = MESSAGE_TEXT;
-    IF v_err_code = '22023' AND v_err_msg LIKE '%security warnings%' THEN
-      v_test_passed := TRUE;
-      RAISE NOTICE '[PASS] Scenario 6 (unacknowledged warning): Correctly rejected with 22023 (%: %)', v_err_code, v_err_msg;
-    ELSE
-      RAISE WARNING '[FAIL] Scenario 6 (unacknowledged warning): Unexpected error code %: %', v_err_code, v_err_msg;
-    END IF;
-  END;
+  v_res := public.confirm_exam_source(
+    v_warning_session_id,
+    1,
+    FALSE
+  );
 
-  IF NOT v_test_passed THEN
-    RAISE EXCEPTION 'Scenario 6 FAILED: unacknowledged security warning was not rejected!';
+  IF (v_res->>'success')::BOOLEAN != TRUE OR (v_res->>'status') != 'blueprinted' THEN
+    RAISE EXCEPTION 'Scenario 6 FAILED: ADR-004 confirmation with security warnings should succeed, got: %', v_res;
   END IF;
+
+  RAISE NOTICE '[PASS] Scenario 6 (ADR-004 security warning silent audit): Successfully confirmed session despite warning flags.';
 END $$;
 
 RESET ROLE;
-RESET SESSION AUTHORIZATION;
 
 -- ----------------------------------------------------------------------------
 -- Scenario 7: Question without blueprint (rejected with 22023, session remains draft)
@@ -388,7 +374,6 @@ SELECT set_config('request.jwt.claim.role', 'authenticated', true);
 SELECT set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
 SELECT set_config('request.jwt.claims', '{"role": "authenticated", "sub": "11111111-1111-1111-1111-111111111111"}'::text, true);
 
-SET SESSION AUTHORIZATION authenticator;
 SET ROLE authenticated;
 
 DO $$
@@ -427,7 +412,6 @@ BEGIN
 END $$;
 
 RESET ROLE;
-RESET SESSION AUTHORIZATION;
 
 -- ----------------------------------------------------------------------------
 -- Scenario 8: Question count mismatch (rejected with 22023)
@@ -436,7 +420,6 @@ SELECT set_config('request.jwt.claim.role', 'authenticated', true);
 SELECT set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
 SELECT set_config('request.jwt.claims', '{"role": "authenticated", "sub": "11111111-1111-1111-1111-111111111111"}'::text, true);
 
-SET SESSION AUTHORIZATION authenticator;
 SET ROLE authenticated;
 
 DO $$
@@ -465,7 +448,6 @@ BEGIN
 END $$;
 
 RESET ROLE;
-RESET SESSION AUTHORIZATION;
 
 -- ----------------------------------------------------------------------------
 -- Scenario 9: Valid owner confirmation (SUCCESS)
@@ -474,7 +456,6 @@ SELECT set_config('request.jwt.claim.role', 'authenticated', true);
 SELECT set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', true);
 SELECT set_config('request.jwt.claims', '{"role": "authenticated", "sub": "11111111-1111-1111-1111-111111111111"}'::text, true);
 
-SET SESSION AUTHORIZATION authenticator;
 SET ROLE authenticated;
 
 DO $$
@@ -516,7 +497,6 @@ BEGIN
 END $$;
 
 RESET ROLE;
-RESET SESSION AUTHORIZATION;
 
 -- ----------------------------------------------------------------------------
 -- Scenario 10: Service role caller (SUCCESS)
@@ -528,7 +508,6 @@ SELECT set_config('request.jwt.claim.role', 'service_role', true);
 SELECT set_config('request.jwt.claim.sub', '', true);
 SELECT set_config('request.jwt.claims', '{"role": "service_role"}'::text, true);
 
-SET SESSION AUTHORIZATION authenticator;
 SET ROLE service_role;
 
 DO $$
@@ -551,7 +530,6 @@ BEGIN
 END $$;
 
 RESET ROLE;
-RESET SESSION AUTHORIZATION;
 
 -- ----------------------------------------------------------------------------
 -- Scenario 11: Direct Database Administrator (postgres / supabase_admin)
@@ -559,7 +537,6 @@ RESET SESSION AUTHORIZATION;
 -- Direct DB administrator maintenance call without any JWT claims must succeed.
 -- ----------------------------------------------------------------------------
 RESET ROLE;
-RESET SESSION AUTHORIZATION;
 
 -- Explicitly clear all JWT claims
 SELECT set_config('request.jwt.claim.role', '', true);
