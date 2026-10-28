@@ -48,6 +48,11 @@ const STATUS_CONFIGS = {
     badgeClass: 'bg-emerald-950/60 text-emerald-300 border-emerald-700/60',
     icon: CheckCircle,
   },
+  missing: {
+    label: 'Chưa sinh',
+    badgeClass: 'bg-rose-950/60 text-rose-300 border-rose-700/60',
+    icon: AlertCircle,
+  },
   pending: {
     label: 'Chờ xử lý',
     badgeClass: 'bg-slate-800/80 text-slate-400 border-slate-700',
@@ -68,6 +73,8 @@ export default function GenerationProgressView({
   error = null,
   reconnectCount = 0,
   onReconnect,
+  onRetryGeneration,
+  isRetrying = false,
   onComplete,
 }) {
   // Nếu numVersions chưa có, thử suy ra từ các key dạng "${version_index}-${question_no}" trong questionStatuses
@@ -305,21 +312,26 @@ export default function GenerationProgressView({
               </div>
 
               <div className="flex items-center gap-2">
-                {onReconnect && (
+                {onRetryGeneration && (
                   <button
                     type="button"
-                    onClick={onReconnect}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/50 bg-amber-900/40 px-3.5 py-2 text-xs font-semibold text-amber-100 hover:bg-amber-900/60"
+                    onClick={onRetryGeneration}
+                    disabled={isRetrying}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/50 bg-amber-600 px-3.5 py-2 text-xs font-semibold text-white shadow-lg shadow-amber-600/30 hover:bg-amber-500 disabled:opacity-50"
                   >
-                    <RefreshCw className="h-3.5 w-3.5" />
-                    Thử phục hồi / Sinh lại
+                    {isRetrying ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    )}
+                    Sinh bù các câu còn thiếu
                   </button>
                 )}
                 {onComplete && (
                   <button
                     type="button"
                     onClick={onComplete}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-amber-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-amber-600/30 hover:bg-amber-500"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700"
                   >
                     Đến Stage 3 xem các câu đã sinh
                     <ArrowRight className="h-3.5 w-3.5" />
@@ -376,7 +388,23 @@ export default function GenerationProgressView({
               const qWarning = warnings.find(
                 (w) => w?.version_index === activeVersionTab && w?.question_no === qNo,
               );
-              const statusKey = item?.status || (isDone ? 'done' : 'pending');
+
+              // QUAN TRỌNG (Sửa lỗi P2 theo review của Philip và Quỳnh):
+              // Khi isDone=true nhưng phiên ở trạng thái partial_generated (sinh một phần):
+              // Nếu câu hỏi không có bản ghi status hoặc status !== 'done', tuyệt đối KHÔNG ĐƯỢC
+              // đánh dấu là 'done'. Phải hiển thị trạng thái 'missing' (Chưa sinh / Cần sinh bù).
+              let statusKey;
+              if (item?.status) {
+                statusKey = item.status;
+              } else if (isDone && !isPartial) {
+                statusKey = 'done';
+              } else if (isDone && isPartial) {
+                statusKey = 'missing';
+              } else {
+                statusKey = 'pending';
+              }
+
+              const isMissing = statusKey === 'missing';
               const statusConfig = STATUS_CONFIGS[statusKey] || STATUS_CONFIGS.pending;
               const Icon = statusConfig.icon;
 
@@ -384,13 +412,21 @@ export default function GenerationProgressView({
                 <div
                   key={key}
                   className={`flex items-center justify-between rounded-xl border p-3.5 transition-all ${
-                    qWarning
+                    isMissing
+                      ? 'border-rose-500/40 bg-rose-950/20 hover:border-rose-400'
+                      : qWarning
                       ? 'border-amber-500/60 bg-amber-950/20 hover:border-amber-400'
                       : 'border-slate-800 bg-slate-800/50 hover:border-slate-700'
                   }`}
                 >
                   <div className="flex items-center gap-2.5">
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-700/80 text-xs font-bold text-slate-200">
+                    <span
+                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
+                        isMissing
+                          ? 'bg-rose-900/60 text-rose-200'
+                          : 'bg-slate-700/80 text-slate-200'
+                      }`}
+                    >
                       {qNo}
                     </span>
                     <div>
@@ -407,8 +443,14 @@ export default function GenerationProgressView({
                           </span>
                         )}
                       </div>
-                      <p className="text-[11px] text-slate-400 truncate max-w-[120px]">
-                        {qWarning?.message || item?.message || (statusKey === 'done' ? 'Đã hoàn thành' : 'Đang xếp hàng...')}
+                      <p className="text-[11px] text-slate-400 truncate max-w-[140px]">
+                        {qWarning?.message ||
+                          item?.message ||
+                          (statusKey === 'done'
+                            ? 'Đã hoàn thành'
+                            : isMissing
+                            ? 'Chưa sinh (cần sinh bù)'
+                            : 'Đang xếp hàng...')}
                       </p>
                     </div>
                   </div>

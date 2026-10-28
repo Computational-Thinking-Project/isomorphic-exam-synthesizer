@@ -112,18 +112,21 @@ location /api/ {
 
 ## 6. Quyết Định Thiết Kế Sản Phẩm & Phạm Vi Bàn Giao
 
-### 6.1. Căn cứ quyết định loại bỏ `shuffle_options` (chỉ giữ `shuffle_questions`)
-- **Căn cứ UX & Nghiệp vụ**: Bản chất của bài toán sinh đề thi đẳng cấu là tạo ra các phiên bản đề thi ($N \in [1, 4]$) có **nội dung câu hỏi khác nhau** (thay đổi số liệu/tham số hoặc hoán đổi ngữ cảnh thực tế theo Blueprint), đồng thời kết hợp xáo trộn thứ tự các câu hỏi trong đề (`ordering_preferences.shuffle_questions: true`). Vì vậy, thí sinh ngồi cạnh nhau đã hoàn toàn nhận các câu hỏi khác nhau.
-- **An toàn kỹ thuật**: Việc xáo trộn thứ tự các phương án lựa chọn (A, B, C, D) tiềm ẩn rủi ro làm hỏng ngữ nghĩa của các câu hỏi trắc nghiệm có đáp án phụ thuộc vị trí (ví dụ: *"Cả A và B đều đúng"*, *"Tất cả các đáp án trên đều sai"*). Do đó, hệ thống thống nhất chỉ cung cấp tùy chọn xáo trộn thứ tự câu hỏi `shuffle_questions` để đảm bảo an toàn tuyệt đối.
+### 6.1. Hỗ trợ tùy chọn xáo trộn `shuffle_questions` và `shuffle_options`
+- **Mục đích `shuffle_questions`**: Hoán vị ngẫu nhiên thứ tự các câu hỏi trên từng mã đề, đảm bảo thí sinh cùng phòng làm các câu khác vị trí nhau.
+- **Mục đích `shuffle_options`**: Xáo trộn vị trí các phương án lựa chọn (A, B, C, D) trên từng câu hỏi giữa các mã đề. Điều này ngăn ngừa trường hợp dù nội dung câu hỏi đã thay đổi biến thể nhưng vị trí đáp án đúng ở các mã đề lại trùng lặp (ví dụ: câu 1 của các mã đề 101, 102, 103 đều rơi vào phương án A).
+- **Hợp đồng Backend**: Cung cấp `ordering_preferences: { shuffle_questions: boolean, shuffle_options: boolean }` cho endpoint `/sessions/{id}/config`.
 
-### 6.2. Căn cứ luồng sinh tự động ngầm ở Stage 2 (không có nút sinh bù)
-- **Tự động hóa hoàn toàn**: Tiến trình sinh đề của AI tại Stage 2 trải qua 5 bước: *Đang phân tích 🔍 -> Đang soạn nội dung ⏳ -> Đang kiểm tra 🔍 -> Đang tinh chỉnh 🔄 -> Hoàn thành ✅*. Nếu câu hỏi gặp lỗi hoặc chưa thỏa mãn ràng buộc nghiệm đẹp, pipeline tự động kích hoạt retry và tinh chỉnh ngầm dưới background mà không bắt người dùng phải can thiệp thủ công.
-- **Trải nghiệm người dùng**: Giảng viên không cần bấm "sinh bù" ở Stage 2. Sau khi toàn bộ các mã đề sinh xong và chuyển sang Stage 3 (`/session/:id/stage3`), giảng viên sẽ được xem trực quan toàn bộ ma trận đề thi; tại đây nút *"Tạo lại câu này"* được cung cấp riêng cho từng câu hỏi nếu giảng viên muốn sinh lại biến thể theo ý muốn chủ quan.
+### 6.2. Luồng xử lý sinh đề, sinh bù và phân định Stage 2 với Stage 3
+- **Tự động hóa thông minh (Full Automation)**: Tiến trình sinh đề của AI tại Stage 2 trải qua 5 bước: *Đang phân tích 🔍 -> Đang soạn nội dung ⏳ -> Đang kiểm tra 🔍 -> Đang tinh chỉnh 🔄 -> Hoàn thành ✅*. Nếu câu hỏi gặp lỗi hoặc chưa thỏa mãn ràng buộc nghiệm đẹp, pipeline backend tự động kích hoạt retry ngầm dựa trên quota cho phép.
+- **Phân định rõ khi hoàn thành một phần (`partial_generated`)**:
+  - Khi phiên sinh thiếu câu (do chạm hạn mức API hoặc timeout), Stage 2 giữ nguyên các câu thiếu ở trạng thái **"Chưa sinh"** (không đánh dấu nhầm thành Hoàn thành).
+  - Tách bạch rõ 2 hành động: **"Kết nối lại mạng"** (SSE Reconnect) và **"Sinh bù các câu còn thiếu"** (gọi endpoint `POST /api/sessions/{session_id}/retry-generation` theo contract W2).
+  - Khi chuyển sang **Stage 3 (Xem & Duyệt đề)**: Hệ thống cảnh báo rõ trạng thái `partial_generated`, khóa xuất bản file và hiển thị thẻ cảnh báo kèm nút **"Tạo lại câu này"** trực tiếp trên từng câu bị thiếu, giúp giảng viên chủ động hoàn tất đề thi.
 
 ### 6.3. Tình trạng bàn giao Stage 3 và Các đầu nối tích hợp Backend 207
-- **Phạm vi đã kiểm thử độc lập ở FE2**: Đã triển khai và kiểm thử giao diện Stage 2 (TASK-206 & TASK-208) trên bộ test harness ReactDOM và contract schemas giả lập (199/199 unit tests).
-- **Màn chờ Stage 3**: Tuyến đường `/session/:id/stage3` đã được định tuyến sẵn với màn chờ tích hợp an toàn (không rơi vào wildcard/Login), sẵn sàng kết nối ngay khi Stage 3 được triển khai.
+- **Giao diện Stage 2 & Stage 3**: Đã triển khai và kiểm thử giao diện Stage 2 (TASK-206 & TASK-208) cùng màn hình duyệt Stage 3 (Stage3ReviewPage) trên bộ test harness ReactDOM và contract schemas.
 - **Các đầu nối phụ thuộc BE2 cần kiểm thử tích hợp thực tế**:
   1. *Ticket handshake*: Xác thực Bearer JWT thật từ Supabase để lấy ticket dùng 1 lần (TTL 60s) và stream qua proxy Nginx không đệm.
   2. *Re-sync tiến độ khi mất kết nối*: Kiểm thử replay ring-buffer với `last_event_id` thật trên máy chủ khi client bị đứt kết nối mạng.
-  3. *Trạng thái hoàn thành một phần (`partial_generated`)*: Kiểm thử luồng dừng, giữ nguyên số câu thật và giao diện phục hồi khi backend xử lý hết quota hoặc gặp câu hỏi không đạt ràng buộc nghiệm đẹp.
+  3. *Trạng thái hoàn thành một phần (`partial_generated`) và Sinh bù*: Kiểm thử luồng dừng, giữ nguyên số câu thật và gọi endpoint `POST /api/sessions/{session_id}/retry-generation` khi cần sinh bù các biến thể còn thiếu.

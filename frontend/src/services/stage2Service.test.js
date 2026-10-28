@@ -5,6 +5,7 @@ import {
   fetchSessionDetail,
   saveSessionConfig,
   startGeneration,
+  retryGeneration,
   requestEventTicket,
 } from './stage2Service.js';
 
@@ -129,6 +130,84 @@ test('startGeneration và requestEventTicket gọi đúng endpoint POST tương 
 
     assert.equal(calls[0], '/sessions/sess-100/generate');
     assert.equal(calls[1], '/sessions/sess-100/events/ticket');
+  } finally {
+    api.post = originalPost;
+  }
+});
+
+test('retryGeneration gọi đúng endpoint POST /sessions/:id/retry-generation theo contract W2', async () => {
+  let calledUrl = null;
+  const originalPost = api.post;
+
+  api.post = async (url) => {
+    calledUrl = url;
+    return { data: { success: true } };
+  };
+
+  try {
+    await retryGeneration('sess-retry-99');
+    assert.equal(calledUrl, '/sessions/sess-retry-99/retry-generation');
+  } finally {
+    api.post = originalPost;
+  }
+});
+
+test('fetchSessionDetail phân biệt hoa/thường (case-sensitive) chính xác theo Policy 207a: NUMERICAL khác numerical', async () => {
+  const originalGet = api.get;
+
+  // Q1 hỗ trợ NUMERICAL, Q2 hỗ trợ numerical (hai chuỗi khác nhau về case)
+  api.get = async () => ({
+    data: {
+      id: 'session-case-sensitive',
+      title: 'Đề kiểm tra case sensitivity',
+      status: 'blueprinted',
+      source_questions: [
+        { id: 'q1', variation_modes: ['NUMERICAL'] },
+        { id: 'q2', variation_modes: ['numerical'] },
+      ],
+    },
+  });
+
+  try {
+    const detail = await fetchSessionDetail('session-case-sensitive');
+    const upperMode = detail.blueprint_summary.supported_modes.find((m) => m.id === 'NUMERICAL');
+    const lowerMode = detail.blueprint_summary.supported_modes.find((m) => m.id === 'numerical');
+
+    assert.ok(upperMode, 'Phải có mục NUMERICAL riêng');
+    assert.ok(lowerMode, 'Phải có mục numerical riêng');
+    assert.equal(upperMode.question_count, 1);
+    assert.equal(lowerMode.question_count, 1);
+    assert.equal(upperMode.is_available, false, 'Chỉ 1/2 câu hỗ trợ NUMERICAL nên is_available phải false');
+    assert.equal(lowerMode.is_available, false, 'Chỉ 1/2 câu hỗ trợ numerical nên is_available phải false');
+  } finally {
+    api.get = originalGet;
+  }
+});
+
+test('saveSessionConfig gửi shuffle_options: true khi người dùng chọn xáo đáp án', async () => {
+  let capturedPost = null;
+  const originalPost = api.post;
+
+  api.post = async (url, payload) => {
+    capturedPost = payload;
+    return { data: { success: true } };
+  };
+
+  try {
+    await saveSessionConfig('session-shuffle-opt', {
+      n_versions: 2,
+      active_variation_modes: ['parameter_variation'],
+      ordering_preferences: {
+        shuffle_questions: true,
+        shuffle_options: true,
+      },
+    });
+
+    assert.ok(capturedPost);
+    assert.deepEqual(capturedPost.ordering_preferences, {
+      shuffle_questions: true,
+      shuffle_options: true,
+    });
   } finally {
     api.post = originalPost;
   }

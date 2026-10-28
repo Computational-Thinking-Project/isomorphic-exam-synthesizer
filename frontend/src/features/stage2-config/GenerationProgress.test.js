@@ -155,3 +155,53 @@ test('GenerationProgressView tự động gọi onComplete sau khi nhận isDone
 
   await harness.unmount();
 });
+
+test('GenerationProgressView trong phiên partial_generated: câu chưa có kết quả hiển thị Chưa sinh (missing), không bị gán nhầm Hoàn thành', async () => {
+  let retryGenerationCalled = false;
+  const harness = renderProgress({
+    sessionId: 'session-prog-partial',
+    numVersions: 1,
+    totalSourceQuestions: 2,
+    progress: {
+      percent: 50,
+      completedCount: 1,
+      totalCount: 2,
+      session_status: 'partial_generated',
+      is_partial: true,
+    },
+    questionStatuses: {
+      '1-1': { version_index: 1, question_no: 1, status: 'done', message: 'Đã hoàn thành' },
+      // 1-2 bị thiếu / chưa sinh
+    },
+    isDone: true,
+    onRetryGeneration: () => {
+      retryGenerationCalled = true;
+    },
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  // 1. Phải có thông báo partial_generated và số câu thiếu
+  assert.ok(text.includes('partial_generated'));
+  assert.ok(text.includes('Còn thiếu 1 câu'));
+
+  // 2. Câu 1 phải hiển thị Hoàn thành
+  assert.ok(text.includes('Câu 1 (Đề 1)'));
+
+  // 3. Câu 2 chưa có kết quả phải hiển thị Chưa sinh, không được gán Hoàn thành
+  assert.ok(text.includes('Câu 2 (Đề 1)'));
+  assert.ok(text.includes('Chưa sinh'));
+  assert.ok(text.includes('cần sinh bù'));
+
+  // 4. Bấm nút Sinh bù các câu còn thiếu
+  const retryBtn = Array.from(harness.container.querySelectorAll('button')).find(
+    (b) => b.textContent.includes('Sinh bù các câu còn thiếu'),
+  );
+  assert.ok(retryBtn, 'Phải có nút Sinh bù các câu còn thiếu');
+  await act(async () => {
+    retryBtn.click();
+  });
+  assert.equal(retryGenerationCalled, true, 'onRetryGeneration phải được gọi');
+
+  await harness.unmount();
+});

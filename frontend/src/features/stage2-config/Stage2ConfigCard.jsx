@@ -62,6 +62,9 @@ export default function Stage2ConfigCard({
   const [shuffleQuestions, setShuffleQuestions] = useState(
     initialConfig?.ordering_preferences?.shuffle_questions ?? true,
   );
+  const [shuffleOptions, setShuffleOptions] = useState(
+    initialConfig?.ordering_preferences?.shuffle_options ?? false,
+  );
   const [validationError, setValidationError] = useState('');
 
   const totalQuestions = session?.source_questions?.length || session?.blueprint_summary?.total_questions || 0;
@@ -98,7 +101,7 @@ export default function Stage2ConfigCard({
       active_variation_modes: selectedModes,
       ordering_preferences: {
         shuffle_questions: Boolean(shuffleQuestions),
-        shuffle_options: false,
+        shuffle_options: Boolean(shuffleOptions),
       },
     };
 
@@ -299,28 +302,54 @@ export default function Stage2ConfigCard({
             Tối ưu hóa khả năng chống nhìn bài giữa các thí sinh ngồi cạnh nhau.
           </p>
 
-          <div className="mt-4 rounded-xl border border-slate-700 bg-slate-800/40 p-4">
-            <label className="flex cursor-pointer items-start gap-3">
-              <input
-                type="checkbox"
-                id="shuffle-questions-checkbox"
-                checked={shuffleQuestions}
-                disabled={isSubmitting}
-                onChange={(e) => setShuffleQuestions(e.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border-slate-600 bg-slate-700 text-sky-500 focus:ring-sky-500 focus:ring-offset-slate-900"
-              />
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-white">
-                    Xáo trộn thứ tự câu hỏi giữa các mã đề (shuffle_questions)
-                  </span>
-                  <Shuffle className="h-3.5 w-3.5 text-slate-400" />
+          <div className="mt-4 space-y-3">
+            <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-4">
+              <label className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="checkbox"
+                  id="shuffle-questions-checkbox"
+                  checked={shuffleQuestions}
+                  disabled={isSubmitting}
+                  onChange={(e) => setShuffleQuestions(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-slate-600 bg-slate-700 text-sky-500 focus:ring-sky-500 focus:ring-offset-slate-900"
+                />
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-white">
+                      Xáo trộn thứ tự câu hỏi giữa các mã đề (shuffle_questions)
+                    </span>
+                    <Shuffle className="h-3.5 w-3.5 text-slate-400" />
+                  </div>
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    Các câu hỏi sẽ được hoán vị ngẫu nhiên trên từng mã đề, đảm bảo thí sinh cùng phòng làm các câu khác vị trí nhau.
+                  </p>
                 </div>
-                <p className="mt-0.5 text-xs text-slate-400">
-                  Các câu hỏi sẽ được hoán vị ngẫu nhiên trên từng mã đề, đảm bảo thí sinh cùng phòng làm các câu khác vị trí nhau.
-                </p>
-              </div>
-            </label>
+              </label>
+            </div>
+
+            <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-4">
+              <label className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="checkbox"
+                  id="shuffle-options-checkbox"
+                  checked={shuffleOptions}
+                  disabled={isSubmitting}
+                  onChange={(e) => setShuffleOptions(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-slate-600 bg-slate-700 text-sky-500 focus:ring-sky-500 focus:ring-offset-slate-900"
+                />
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-white">
+                      Xáo trộn thứ tự các đáp án A, B, C, D (shuffle_options)
+                    </span>
+                    <Shuffle className="h-3.5 w-3.5 text-sky-400" />
+                  </div>
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    Xáo trộn vị trí các phương án lựa chọn trên từng câu hỏi giữa các mã đề, phòng trường hợp dù đã tạo câu hỏi khác nhau nhưng vị trí đáp án đúng ở các mã đề lại giống nhau (ví dụ: câu 1 của các mã 101, 102, 103 đều rơi vào phương án A).
+                  </p>
+                </div>
+              </label>
+            </div>
           </div>
         </div>
 
@@ -355,6 +384,12 @@ export default function Stage2ConfigCard({
                   <span className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-slate-200">
                     <Shuffle className="h-3.5 w-3.5 text-amber-400" />
                     Thứ tự câu hỏi xáo ngẫu nhiên
+                  </span>
+                )}
+                {shuffleOptions && (
+                  <span className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-slate-200">
+                    <Shuffle className="h-3.5 w-3.5 text-sky-400" />
+                    Thứ tự đáp án (A, B, C, D) xáo ngẫu nhiên
                   </span>
                 )}
               </div>

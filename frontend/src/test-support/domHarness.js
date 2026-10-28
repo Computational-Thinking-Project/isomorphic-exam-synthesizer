@@ -177,6 +177,7 @@ export class DOMElement extends DOMNode {
       this.tagName.toLowerCase() === 'input' &&
       (this.type === 'checkbox' || this.getAttribute('type') === 'checkbox')
     ) {
+      this.checked = !this.checked;
       const reactPropsKey = Object.keys(this).find((k) => k.startsWith('__reactProps$'));
       if (reactPropsKey && typeof this[reactPropsKey]?.onChange === 'function') {
         this[reactPropsKey].onChange({ target: this, currentTarget: this });

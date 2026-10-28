@@ -107,17 +107,21 @@ test('Stage2ConfigCard hiển thị đúng danh sách chế độ biến thể v
   await harness.unmount();
 });
 
-test('Stage2ConfigCard chỉ cung cấp tùy chọn shuffle_questions và không có shuffle_options', async () => {
+test('Stage2ConfigCard cung cấp cả hai tùy chọn shuffle_questions và shuffle_options', async () => {
   const harness = renderCard({ session: sampleSession });
   await harness.render();
 
   const text = harness.container.textContent;
   assert.ok(text.includes('shuffle_questions'), 'Phải có tùy chọn shuffle_questions');
-  assert.equal(text.includes('shuffle_options'), false, 'Tuyệt đối không có shuffle_options theo yêu cầu');
+  assert.ok(text.includes('shuffle_options'), 'Phải có tùy chọn shuffle_options theo yêu cầu');
 
   const shuffleCb = harness.container.querySelector('#shuffle-questions-checkbox');
   assert.ok(shuffleCb, 'Phải có checkbox id shuffle-questions-checkbox');
   assert.equal(shuffleCb.checked, true, 'shuffle_questions mặc định là Bật');
+
+  const shuffleOptCb = harness.container.querySelector('#shuffle-options-checkbox');
+  assert.ok(shuffleOptCb, 'Phải có checkbox id shuffle-options-checkbox');
+  assert.equal(shuffleOptCb.checked, false, 'shuffle_options mặc định là Tắt');
 
   await harness.unmount();
 });
@@ -418,6 +422,49 @@ test('Stage2ConfigCard cho phép gửi active_variation_modes: [] khi Blueprint 
 
   assert.ok(submittedPayload, 'Form phải submit thành công');
   assert.deepEqual(submittedPayload.active_variation_modes, [], 'Gửi mảng rỗng active_variation_modes');
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigCard hỗ trợ bật/tắt xáo trộn đáp án shuffle_options để tránh trùng vị trí đáp án giữa các mã đề', async () => {
+  let submittedPayload = null;
+  const harness = renderCard({
+    session: sampleSession,
+    initialConfig: {
+      ordering_preferences: {
+        shuffle_questions: true,
+        shuffle_options: false,
+      },
+    },
+    onSubmit: async (payload) => {
+      submittedPayload = payload;
+    },
+  });
+  await harness.render();
+
+  const shuffleOptionsCb = harness.container.querySelector('#shuffle-options-checkbox');
+  assert.ok(shuffleOptionsCb, 'Phải có checkbox #shuffle-options-checkbox');
+  assert.equal(shuffleOptionsCb.checked, false, 'Mặc định lấy từ initialConfig là false');
+
+  // Click để bật lên true
+  await act(async () => {
+    shuffleOptionsCb.click();
+  });
+  assert.equal(shuffleOptionsCb.checked, true, 'Sau khi click thì checked = true');
+
+  // Submit form
+  const form = harness.container.querySelector('form');
+  await act(async () => {
+    form.dispatchEvent({
+      type: 'submit',
+      bubbles: true,
+      cancelable: true,
+      preventDefault: () => {},
+    });
+  });
+
+  assert.ok(submittedPayload);
+  assert.equal(submittedPayload.ordering_preferences.shuffle_options, true, 'Payload phải gửi shuffle_options: true');
 
   await harness.unmount();
 });

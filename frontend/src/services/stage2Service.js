@@ -73,7 +73,6 @@ export async function fetchSessionDetail(sessionId) {
         },
       };
 
-      const rawIdMap = new Map(); // key lowercase -> original ID from Blueprint
       const modeCounts = {};
 
       questionsWithBlueprints.forEach((q) => {
@@ -86,37 +85,33 @@ export async function fetchSessionDetail(sessionId) {
           const distinctInQuestion = new Set();
           rawModes.forEach((raw) => {
             const trimmed = String(raw).trim();
-            if (trimmed && trimmed.toLowerCase() !== 'none') {
-              const lower = trimmed.toLowerCase();
-              if (!rawIdMap.has(lower)) {
-                rawIdMap.set(lower, trimmed);
-              }
-              distinctInQuestion.add(lower);
+            if (trimmed && trimmed.toUpperCase() !== 'NONE') {
+              distinctInQuestion.add(trimmed);
             }
           });
 
-          distinctInQuestion.forEach((lower) => {
-            modeCounts[lower] = (modeCounts[lower] || 0) + 1;
+          distinctInQuestion.forEach((rawId) => {
+            modeCounts[rawId] = (modeCounts[rawId] || 0) + 1;
           });
         }
       });
 
       // Theo quy tắc Blueprint (DEC-TV1 / 207a):
       // Một mode CHỈ được coi là is_available: true nếu TẤT CẢ câu hỏi trong đề (phần giao) đều hỗ trợ nó!
-      // QUAN TRỌNG (sửa P2): Giữ nguyên ID mode gốc từ Blueprint (ví dụ: NUMERICAL, parameter_variation),
-      // chỉ dùng canonical key để tra cứu nhãn/mô tả hiển thị.
+      // QUAN TRỌNG (sửa P2): Giữ nguyên ID mode gốc và phân biệt chữ hoa/thường chính xác theo Policy 207a
+      // (ví dụ: NUMERICAL khác numerical, không được gộp nhầm gây lỗi 400 ERR_CONFIG_CONFLICT).
+      // Chỉ dùng chuỗi lowercase để tra cứu nhãn tiếng Việt và mô tả hiển thị.
       const supportedModes = Object.entries(modeCounts)
         .filter(([, count]) => count > 0)
-        .map(([lower, count]) => {
-          const originalId = rawIdMap.get(lower) || lower;
-          const canonical = CANONICAL_MAP[lower] || lower;
+        .map(([rawId, count]) => {
+          const canonical = CANONICAL_MAP[rawId.toLowerCase()] || rawId.toLowerCase();
           const meta = MODE_METADATA[canonical] || {
-            label: originalId,
-            description: `Chế độ biến thể ${originalId}`,
+            label: rawId,
+            description: `Chế độ biến thể ${rawId}`,
           };
           const isFullySupported = count === totalQuestions;
           return {
-            id: originalId,
+            id: rawId,
             label: meta.label,
             description: meta.description,
             question_count: count,
@@ -181,6 +176,17 @@ export async function startGeneration(sessionId) {
 
   const response = await api.post(
     `/sessions/${encodeURIComponent(sessionId)}/generate`,
+  );
+  return response.data;
+}
+
+export async function retryGeneration(sessionId) {
+  if (!sessionId) {
+    throw new Error('Mã phiên làm việc (sessionId) không được để trống.');
+  }
+
+  const response = await api.post(
+    `/sessions/${encodeURIComponent(sessionId)}/retry-generation`,
   );
   return response.data;
 }

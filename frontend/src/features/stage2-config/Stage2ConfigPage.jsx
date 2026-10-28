@@ -12,6 +12,7 @@ import GenerationProgressView from './GenerationProgressView.jsx';
 import { useSSE } from '../../hooks/useSSE.js';
 import {
   fetchSessionDetail,
+  retryGeneration,
   saveSessionConfig,
   startGeneration,
 } from '../../services/stage2Service.js';
@@ -29,6 +30,7 @@ export default function Stage2ConfigPage({
   loadSession = fetchSessionDetail,
   saveConfig = saveSessionConfig,
   startGen = startGeneration,
+  retryGen = retryGeneration,
   useSSEHook = useSSE,
 }) {
   const params = useParams();
@@ -44,6 +46,8 @@ export default function Stage2ConfigPage({
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [activeConfig, setActiveConfig] = useState(null);
+  const [isRetryingGeneration, setIsRetryingGeneration] = useState(false);
+  const [retryError, setRetryError] = useState(null);
 
   const submitOperationRef = useRef(0);
   const isMountedRef = useRef(true);
@@ -171,6 +175,26 @@ export default function Stage2ConfigPage({
   const handleCompleteRedirect = useCallback(() => {
     navigate(`/session/${sessionId}/stage3`);
   }, [navigate, sessionId]);
+
+  const handleRetryGeneration = useCallback(async () => {
+    if (isRetryingGeneration) return;
+    setIsRetryingGeneration(true);
+    setRetryError(null);
+    try {
+      await retryGen(sessionId);
+      setIsGenerating(true);
+      sseState.reconnect();
+    } catch (err) {
+      const msg =
+        err?.response?.data?.error_message ||
+        err?.response?.data?.detail ||
+        err?.message ||
+        'Không thể kích hoạt tiến trình sinh bù từ máy chủ.';
+      setRetryError(msg);
+    } finally {
+      setIsRetryingGeneration(false);
+    }
+  }, [isRetryingGeneration, retryGen, sessionId, sseState]);
 
   // Tự động chuyển hướng khi hoàn tất ở cấp độ container độc lập — CHỈ KHI hoàn tất 100% (không partial_generated)
   useEffect(() => {
@@ -314,9 +338,11 @@ export default function Stage2ConfigPage({
           warnings={sseState.warnings}
           connectionState={sseState.connectionState}
           isDone={sseState.isDone}
-          error={sseState.error}
+          error={retryError || sseState.error}
           reconnectCount={sseState.reconnectCount}
           onReconnect={sseState.reconnect}
+          onRetryGeneration={handleRetryGeneration}
+          isRetrying={isRetryingGeneration}
           onComplete={handleCompleteRedirect}
         />
       ) : (
