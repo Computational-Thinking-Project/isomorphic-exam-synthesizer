@@ -1,12 +1,14 @@
 -- ============================================================================
--- Migration 005 (v2): Hardened Generation Job Operations RPC [TASK-207b]
--- Fixes and Enhancements:
---   - FIX CRITICAL: Fencing token NULL bypass blocked using IS DISTINCT FROM
---   - FIX CRITICAL: Enforce invariant "status = 'generating' => active_job_id NOT NULL"
---   - claim: Anti-concurrency lock with SQLSTATE 55006, validates config exists
---   - reserve/finish: Strictly validates job_token against active_job_id
---   - fail_stale: Strictly restricted to service_role, validates p_cutoff_seconds > 0
---   - Uses helper current_role(), make_interval(), triggers updated_at
+-- Migration 005 (v3): Hardened Generation Job Operations RPC [TASK-207b]
+-- Prerequisites: PostgreSQL 13+ (built-in gen_random_uuid) or pgcrypto extension.
+-- Note: This RPC trusts background workers to persist generated rows into version_questions.
+--
+-- Security & Concurrency Enhancements:
+--   - NULL-Safe Authorization: current_role() is guaranteed non-NULL ('anon' fallback).
+--   - Strict Fencing Token: p_job_token IS DISTINCT FROM v_active_job_id (NULL rejected).
+--   - Invariant Check: status = 'generating' => active_job_id NOT NULL (55000).
+--   - Anti-race Claim Lock: returns standard 55006 (object_in_use) if already generating.
+--   - fail_stale: strictly restricted to service_role, validates p_cutoff_seconds > 0.
 -- ============================================================================
 
 -- 1. Ensure active_job_id column exists on exam_sessions
@@ -63,9 +65,9 @@ BEGIN
     RAISE EXCEPTION 'Session not found: %', p_session_id USING ERRCODE = 'P0002';
   END IF;
 
-  -- 2. Enforce ownership
+  -- 2. Enforce ownership (NULL-safe: current_role() is guaranteed non-NULL)
   IF public.current_role() != 'service_role'
-     AND (v_session_user_id != auth.uid() OR auth.uid() IS NULL) THEN
+     AND (v_session_user_id IS DISTINCT FROM auth.uid() OR auth.uid() IS NULL) THEN
     RAISE EXCEPTION 'Access denied: caller does not own session %', p_session_id
       USING ERRCODE = '42501';
   END IF;
@@ -82,7 +84,7 @@ BEGIN
         v_session_status USING ERRCODE = '22023';
     END IF;
   ELSE
-    IF v_session_status NOT IN ('configured', 'partial_generated', 'failed') THEN
+    IF v_session_status NOT IN ('partial_generated', 'failed') THEN
       RAISE EXCEPTION 'Cannot retry from status %', v_session_status USING ERRCODE = '22023';
     END IF;
   END IF;
@@ -168,9 +170,9 @@ BEGIN
     RAISE EXCEPTION 'Session not found: %', p_session_id USING ERRCODE = 'P0002';
   END IF;
 
-  -- 3. Enforce ownership
+  -- 3. Enforce ownership (NULL-safe)
   IF public.current_role() != 'service_role'
-     AND (v_session_user_id != auth.uid() OR auth.uid() IS NULL) THEN
+     AND (v_session_user_id IS DISTINCT FROM auth.uid() OR auth.uid() IS NULL) THEN
     RAISE EXCEPTION 'Access denied: caller does not own session %', p_session_id
       USING ERRCODE = '42501';
   END IF;
@@ -252,9 +254,9 @@ BEGIN
     RAISE EXCEPTION 'Session not found: %', p_session_id USING ERRCODE = 'P0002';
   END IF;
 
-  -- 3. Enforce ownership
+  -- 3. Enforce ownership (NULL-safe)
   IF public.current_role() != 'service_role'
-     AND (v_session_user_id != auth.uid() OR auth.uid() IS NULL) THEN
+     AND (v_session_user_id IS DISTINCT FROM auth.uid() OR auth.uid() IS NULL) THEN
     RAISE EXCEPTION 'Access denied: caller does not own session %', p_session_id
       USING ERRCODE = '42501';
   END IF;
@@ -294,7 +296,7 @@ END;
 $$;
 
 -- ----------------------------------------------------------------------------
--- 6. fail_stale_generation_job (Restricted to service_role)
+-- 6. fail_stale_generation_job (Restricted strictly to service_role)
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.fail_stale_generation_job(
   p_session_id UUID,
@@ -312,13 +314,13 @@ DECLARE
   v_recovered BOOLEAN := FALSE;
   v_now TIMESTAMPTZ := now();
 BEGIN
-  -- 1. Validate cutoff seconds
+  -- 1. Strictly validate cutoff seconds
   IF p_cutoff_seconds IS NULL OR p_cutoff_seconds <= 0 THEN
     RAISE EXCEPTION 'p_cutoff_seconds must be positive (got %)', p_cutoff_seconds
       USING ERRCODE = '22023';
   END IF;
 
-  -- 2. Restrict to service_role
+  -- 2. Restrict to service_role (NULL-safe)
   IF public.current_role() != 'service_role' THEN
     RAISE EXCEPTION 'fail_stale_generation_job is restricted to service_role'
       USING ERRCODE = '42501';

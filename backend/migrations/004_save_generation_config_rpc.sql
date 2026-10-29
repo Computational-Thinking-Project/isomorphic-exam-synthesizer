@@ -1,14 +1,21 @@
 -- ============================================================================
--- Migration 004 (v2): Atomic Save Generation Config RPC & Shared Helpers
+-- Migration 004 (v3): Atomic Save Generation Config RPC & Shared Helpers
 -- Part A: Shared Helpers, Triggers & Partial Index
 -- Part B: Hardened save_generation_config RPC
+--
+-- Security & NULL-Semantics Hardening:
+--   - current_role() falls back to 'anon' (NEVER returns NULL, prevents auth bypass)
+--   - is_valid_variation_modes: handles NULL elements, NULL inputs, case normalization,
+--     strict search_path = pg_catalog, pg_temp, and revoked from PUBLIC/anon.
+--   - Explicit NULL checks for p_active_variation_modes and p_ordering_preferences.
+--   - Row locking on source_questions (FOR SHARE) to prevent TOCTOU during validation.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
 -- Part A. Shared Helpers & Triggers
 -- ----------------------------------------------------------------------------
 
--- 1. Helper: Current JWT Role (supports both claim formats)
+-- 1. Helper: Current JWT Role (guaranteed non-NULL; fallback to 'anon')
 CREATE OR REPLACE FUNCTION public.current_role()
 RETURNS TEXT
 LANGUAGE sql
@@ -22,7 +29,8 @@ AS $$
       WHEN NULLIF(current_setting('request.jwt.claims', true), '') IS NOT NULL 
       THEN NULLIF((current_setting('request.jwt.claims', true)::jsonb ->> 'role'), '')
       ELSE NULL 
-    END
+    END,
+    'anon'   -- Fallback: never returns NULL to prevent PL/pgSQL condition bypass
   );
 $$;
 
@@ -68,27 +76,33 @@ CREATE INDEX IF NOT EXISTS idx_exam_sessions_active_job
   ON public.exam_sessions (updated_at)
   WHERE active_job_id IS NOT NULL AND status = 'generating';
 
--- 7. Helper: Validate variation modes (domain modes for Isomorphic Exam Synthesizer)
+-- 7. Helper: Validate variation modes (immune to NULL elements, non-array inputs, case variations)
 CREATE OR REPLACE FUNCTION public.is_valid_variation_modes(p_modes JSONB)
 RETURNS BOOLEAN
 LANGUAGE sql
 IMMUTABLE
+SET search_path = pg_catalog, pg_temp
 AS $$
-  SELECT 
+  SELECT COALESCE(
     jsonb_typeof(p_modes) = 'array'
     AND NOT EXISTS (
       SELECT 1
       FROM jsonb_array_elements_text(p_modes) AS m(value)
-      WHERE trim(m.value) = ''
-         OR m.value NOT IN (
-           'NUMERICAL', 'STRUCTURAL', 'CONTEXTUAL', 'NONE',
+      WHERE m.value IS NULL
+         OR trim(m.value) = ''
+         OR lower(trim(m.value)) NOT IN (
            'numerical', 'structural', 'contextual', 'none',
            'parameter_variation', 'context_swap', 'difficulty_shift',
            'shuffle_answers', 'paraphrase', 'reorder_options',
            'tone_formal', 'tone_conversational'
          )
-    );
+    ),
+    FALSE
+  );
 $$;
+
+REVOKE EXECUTE ON FUNCTION public.is_valid_variation_modes(JSONB) FROM PUBLIC, anon;
+GRANT  EXECUTE ON FUNCTION public.is_valid_variation_modes(JSONB) TO authenticated, service_role;
 
 -- ----------------------------------------------------------------------------
 -- Part B. Generation Config Schema Hardening & RPC
@@ -111,7 +125,7 @@ BEGIN
       ADD CONSTRAINT uq_generation_configs_session_id UNIQUE (session_id);
   END IF;
 
-  -- updated_at column
+  -- updated_at column with safe backfill
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'public'
@@ -161,9 +175,9 @@ BEGIN
     RAISE EXCEPTION 'Session not found: %', p_session_id USING ERRCODE = 'P0002';
   END IF;
 
-  -- 2. Ownership check via current_role()
+  -- 2. Ownership check (NULL-safe: current_role() is guaranteed non-NULL)
   IF public.current_role() != 'service_role'
-     AND (v_session_user_id != auth.uid() OR auth.uid() IS NULL) THEN
+     AND (v_session_user_id IS DISTINCT FROM auth.uid() OR auth.uid() IS NULL) THEN
     RAISE EXCEPTION 'Access denied: caller does not own session %', p_session_id
       USING ERRCODE = '42501';
   END IF;
@@ -180,13 +194,19 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
-  -- 5. Validate variation modes (type + domain content)
+  -- 5. Validate variation modes (explicit NULL check + domain validator)
+  IF p_active_variation_modes IS NULL THEN
+    RAISE EXCEPTION 'active_variation_modes cannot be NULL' USING ERRCODE = '22023';
+  END IF;
   IF NOT public.is_valid_variation_modes(p_active_variation_modes) THEN
     RAISE EXCEPTION 'Invalid active_variation_modes: must be a JSON array of known mode strings'
       USING ERRCODE = '22023';
   END IF;
 
-  -- 6. Validate ordering preferences (object + required schema keys)
+  -- 6. Validate ordering preferences (explicit NULL check + object + required schema keys)
+  IF p_ordering_preferences IS NULL THEN
+    RAISE EXCEPTION 'ordering_preferences cannot be NULL' USING ERRCODE = '22023';
+  END IF;
   IF jsonb_typeof(p_ordering_preferences) != 'object' THEN
     RAISE EXCEPTION 'ordering_preferences must be a JSON object' USING ERRCODE = '22023';
   END IF;
@@ -200,7 +220,10 @@ BEGIN
     RAISE EXCEPTION 'ordering_preferences values must be boolean' USING ERRCODE = '22023';
   END IF;
 
-  -- 7. Validate source question count (1-20)
+  -- 7. Defense-in-depth: Shared lock on source_questions to eliminate TOCTOU races
+  PERFORM 1 FROM public.source_questions WHERE session_id = p_session_id FOR SHARE;
+
+  -- 8. Validate source question count (1-20)
   SELECT COUNT(*) INTO v_source_count
   FROM public.source_questions WHERE session_id = p_session_id;
 
@@ -209,7 +232,7 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
-  -- 8. Validate all source questions have confirmed blueprints (NOT EXISTS)
+  -- 9. Validate all source questions have confirmed blueprints (NOT EXISTS)
   IF EXISTS (
     SELECT 1
     FROM public.source_questions sq
@@ -222,7 +245,7 @@ BEGIN
     RAISE EXCEPTION 'Not all source questions have confirmed blueprints' USING ERRCODE = '22023';
   END IF;
 
-  -- 9. Upsert configuration (trigger trg_generation_configs_updated_at handles updated_at)
+  -- 10. Upsert configuration (trigger trg_generation_configs_updated_at handles updated_at)
   INSERT INTO public.generation_configs (
     session_id, n_versions, active_variation_modes, ordering_preferences
   ) VALUES (
@@ -234,7 +257,7 @@ BEGIN
     ordering_preferences = EXCLUDED.ordering_preferences
   RETURNING id, updated_at INTO v_config_id, v_revision;
 
-  -- 10. Transition session status to 'configured' (trigger trg_exam_sessions_updated_at handles updated_at)
+  -- 11. Transition session status to 'configured' (trigger trg_exam_sessions_updated_at handles updated_at)
   UPDATE public.exam_sessions SET status = 'configured' WHERE id = p_session_id;
 
   RETURN jsonb_build_object(
@@ -252,6 +275,6 @@ BEGIN
 END;
 $$;
 
--- 11. Least privilege (SEC-04)
+-- 12. Least privilege (SEC-04)
 REVOKE EXECUTE ON FUNCTION public.save_generation_config(UUID, INT, JSONB, JSONB) FROM PUBLIC, anon;
 GRANT  EXECUTE ON FUNCTION public.save_generation_config(UUID, INT, JSONB, JSONB) TO authenticated, service_role;

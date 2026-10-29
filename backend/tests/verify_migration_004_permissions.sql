@@ -1,12 +1,13 @@
 -- ============================================================================
--- Verification Suite for Migration 004 & 005 (v2) [TASK-207a/b]
+-- Verification Suite for Migration 004 & 005 (v3) [TASK-207a/b]
 -- Tests:
 -- 1. Schema invariants (columns, constraints, triggers, indexes, functions)
--- 2. Fencing token enforcement (stale worker rejection, IS DISTINCT FROM)
--- 3. Quota bounds validation (negative/zero/exceeded quota rejection)
--- 4. Claim idempotency & concurrency protection (55006 object_in_use)
--- 5. Variation modes domain validation & ordering preferences validation
--- 6. Permissions / Least-privilege (fail_stale restricted to service_role)
+-- 2. NULL-Semantics & current_role() non-NULL guarantee
+-- 3. is_valid_variation_modes rejection of NULL, [null], case insensitivity
+-- 4. Fencing token enforcement (IS DISTINCT FROM rejects NULL and mismatch)
+-- 5. Quota bounds validation (negative/zero/exceeded quota rejection)
+-- 6. Claim idempotency & concurrency protection (55006 object_in_use)
+-- 7. Permissions / Least-privilege (fail_stale restricted to service_role)
 -- ============================================================================
 
 BEGIN;
@@ -122,17 +123,40 @@ BEGIN
 END $$;
 
 -- ----------------------------------------------------------------------------
--- 4. Functional & Domain Validation Unit Checks
+-- 4. Functional & NULL-Semantics Unit Checks
 -- ----------------------------------------------------------------------------
 DO $$
 BEGIN
+  -- current_role() must never return NULL
+  IF public.current_role() IS NULL THEN
+    RAISE EXCEPTION 'current_role() returned NULL! Must return anon when unset.';
+  END IF;
+
+  IF public.current_role() != 'anon' THEN
+    RAISE EXCEPTION 'Expected default current_role() to be anon, got %', public.current_role();
+  END IF;
+
   -- Variation modes validation
   IF NOT public.is_valid_variation_modes('["NUMERICAL"]'::jsonb) THEN
     RAISE EXCEPTION 'is_valid_variation_modes failed for valid mode NUMERICAL';
   END IF;
 
+  IF NOT public.is_valid_variation_modes('["numerical"]'::jsonb) THEN
+    RAISE EXCEPTION 'is_valid_variation_modes failed for lowercase numerical';
+  END IF;
+
   IF NOT public.is_valid_variation_modes('[]'::jsonb) THEN
     RAISE EXCEPTION 'is_valid_variation_modes failed for empty array []';
+  END IF;
+
+  -- NULL array input must return FALSE
+  IF public.is_valid_variation_modes(NULL) IS NOT FALSE THEN
+    RAISE EXCEPTION 'is_valid_variation_modes(NULL) must evaluate to FALSE';
+  END IF;
+
+  -- Array containing null element must return FALSE
+  IF public.is_valid_variation_modes('["numerical", null]'::jsonb) IS NOT FALSE THEN
+    RAISE EXCEPTION 'is_valid_variation_modes with null element must evaluate to FALSE';
   END IF;
 
   IF public.is_valid_variation_modes('["malicious_mode_injection"]'::jsonb) THEN
@@ -143,7 +167,7 @@ BEGIN
     RAISE EXCEPTION 'is_valid_variation_modes allowed non-array input';
   END IF;
 
-  RAISE NOTICE 'Step 4: Domain validation helper tests passed.';
+  RAISE NOTICE 'Step 4: All functional, domain, and NULL-semantics tests passed.';
 END $$;
 
 ROLLBACK;
