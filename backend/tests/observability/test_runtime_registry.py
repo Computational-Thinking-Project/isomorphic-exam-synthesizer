@@ -194,6 +194,7 @@ def test_parallel_producers_and_snapshot_readers_keep_consistent_counts(
     assert snapshot.active_sse_connections == snapshot.background_jobs_running == 0
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("error", [RuntimeError, asyncio.CancelledError])
 async def test_async_producers_release_gauges_in_finally(
     registry: RuntimeRegistry, error: type[BaseException]
