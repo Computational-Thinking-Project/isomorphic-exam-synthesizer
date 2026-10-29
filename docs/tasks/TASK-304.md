@@ -1,17 +1,17 @@
 # TASK-304 — Plan và bàn giao: Targeted Regeneration
 
-- Trạng thái: **Draft — plan/input**, ngày 29/10/2026; chưa triển khai code W3.
+- Trạng thái: **Draft — đã triển khai adapter/schema/mock và đang tự kiểm**, ngày 29/10/2026; chưa tích hợp DB thật. Đạt yêu cầu triển khai ngay trong phiên này.
 - Nguồn: W3_ASSIGNMENT.md v2.1 (28/10/2026) và w3.md do Đạt cung cấp ngoài repo. Bản v2.1 chưa có đường dẫn GitHub được xác minh; chờ Duy cung cấp nguồn chung. Không dùng bản W3 cũ làm assignment v2.1.
 - Owner: Trương Thành Đạt (`Thanhdat3010`); reviewer: Tâm (`AI-WFox`), **đề xuất**, chưa coi đã nhận review.
 - Nhánh: `feat/dat-task-304-targeted-regeneration`, target `dev`; baseline `dc62d3c1d8616316771f8c1dc5a8a1ab56a2ff8c`.
 - Workflow v0.1 — proposed; docs commit `506384b`. Xem [WORKFLOW](../review/WORKFLOW.md) và [TEMPLATES](../review/TEMPLATES.md).
-- Hạn: tối thứ 3 03/11/2026. Theo assignment: giao schema/mock trưa thứ 6 30/10, hoàn thiện AI thứ 7 31/10. Các ETA cần xác nhận lại trên Conversation.
+- Hạn: tối thứ 3 03/11/2026. Theo assignment: giao schema/mock trưa thứ 6 30/10, hoàn thiện AI thứ 7 31/10. Duy đã xác nhận schema/mock trước trưa 30/10 trên PR #26.
 
 ## Mình cần làm gì?
 
 - Sinh lại duy nhất câu bị reject, giữ source snapshot đã xác nhận và Blueprint canonical 0.4.0; trả candidate, đáp án và lời giải mới trong cùng request ở đường thành công.
 - Tái sử dụng `GenerationService.regenerate_question`, gateway async/key pool, schema repair, validator và `candidate_identity`; không tạo generator/gateway song song.
-- Nhận source, Blueprint, previous candidate, current same-source peers, context quota/deadline và reason theo contract thống nhất với Duy. IDs/ownership và truy vấn dữ liệu do API Duy quản lý.
+- Nhận source, Blueprint, previous candidate, current same-source peers, quota/deadline; không nhận reason/prompt giáo viên theo phản hồi Duy. IDs/ownership và truy vấn dữ liệu do API Duy quản lý.
 - Xử lý AI hoàn toàn ngoài DB transaction; trả object Pydantic để Duy lưu trong transaction ngắn thứ hai. Thất bại giữ câu cũ; BE kiểm revision/uniqueness nguyên tử trước persist.
 - Giữ mapping bốn string options theo A–D, correct_key, structured solution, solution_md, validation report và warning/teacher-review flags. Unknown không được coi là chứng minh toán học hoặc đẳng cấu sư phạm.
 - Ngoài phạm vi: sinh lại cả đề, sửa Blueprint ngầm, endpoint/DB review lifecycle, stale recovery, migration, UI và export.
@@ -46,7 +46,7 @@
 | Duy + Hùng / TASK-302 | Blueprint canonical, hash xác nhận, peers/revision và quota reservation hook đọc từ đâu? | Trước API/DB integration; TBD | Dùng source/Blueprint fixture hợp lệ |
 | Duy | Nguồn assignment v2.1 trên GitHub và xác nhận ETA schema/full AI | Trong thứ 5; TBD | Giữ nguồn do owner cung cấp, không tự xuất bản assignment thay leader |
 
-Quyết định đã thống nhất: chỉ scope/ownership theo assignment được người dùng cung cấp; các câu hỏi trên **chưa được giải đáp**. Không tự đổi flow reason/retry vì tài liệu mới nhắc đến nó.
+Duy đã giải đáp tại [PR #26](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/26#issuecomment-6485507631): không text giáo viên, trần 4 attempts/2 math retries, nguồn/hash/peers do BE load. Xem [handoff hiện hành](../ai-w3-targeted-regeneration.md) cho schema, callable và các chênh lệch chưa nối trong PR #28. Các câu hỏi phía trên được giữ như lịch sử plan, không thay quyết định mới này.
 
 ## Lịch và bàn giao
 
@@ -66,7 +66,8 @@ Quyết định đã thống nhất: chỉ scope/ownership theo assignment đư�
 
 ## Bàn giao — trạng thái thực tế
 
-- Đã làm: đọc assignment v2.1, baseline, PR #19/#20 và lập plan M2.
-- Đã kiểm: đối chiếu file/interface và dependency qua đọc tĩnh; diff/docs checks của commit plan sẽ ghi ở PR body.
-- Chưa làm: implementation W3, test sản phẩm cho task này, live API W3 hoặc DB E2E.
-- Chưa có review/chấp nhận. Bước tiếp: chốt các câu hỏi trên Conversation rồi code phần đủ rõ từ 30/10 trên cùng nhánh/PR.
+- Đã làm: `RegeneratedVariantResult`, callable `TargetedRegenerator`, mock tách biệt, adapter snapshot tái sử dụng GenerationService/gateway/validator. Không nhận prompt giáo viên; không giữ DB connection.
+- Đã kiểm: regression AI/schema/mock/quota/duplicate/mapping; kết quả và head cụ thể trong PR body.
+- Chưa làm/chưa kiểm: DB thật, live Gemini W3, aggregator #20 chưa merge, durable quota/cancellation của BE và E2E reject.
+- Duy PR #28 hiện giữ chỗ 3 calls và chưa load canonical Blueprint/hash/source ID của peers; xem handoff. Không dùng fixture/mock thay chứng nhận tích hợp.
+- Chưa có reviewer xác minh hoặc GitHub Approve.
