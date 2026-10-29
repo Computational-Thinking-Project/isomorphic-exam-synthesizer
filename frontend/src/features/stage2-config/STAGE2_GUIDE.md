@@ -24,13 +24,14 @@ Tài liệu này mô tả chi tiết kiến trúc, luồng dữ liệu, hợp đ
     "context_swap"
   ],
   "ordering_preferences": {
-    "shuffle_questions": true
+    "shuffle_questions": true,
+    "shuffle_options": true
   }
 }
 ```
 > [!NOTE]
 > - Trường số lượng mã đề là `n_versions` (in `[1, 4]`), danh sách chế độ là `active_variation_modes` (mảng string, cho phép `[]` nếu không dùng biến thể).
-> - Chỉ cung cấp tùy chọn `shuffle_questions` (xáo trộn thứ tự câu hỏi). Không sử dụng `shuffle_options` theo quyết định thiết kế.
+> - Hỗ trợ cả hai tùy chọn xáo trộn trong `ordering_preferences`: `shuffle_questions` (hoán vị thứ tự câu hỏi giữa các đề) và `shuffle_options` (xáo trộn vị trí 4 phương án A/B/C/D để ngăn ngừa vị trí đáp án đúng trùng lặp giữa các mã đề).
 > - Các chế độ `active_variation_modes` được đối soát với Blueprint của đề bài (tính theo phần giao 100% câu hỏi hỗ trợ); nếu có xung đột, backend trả mã `ERR_CONFIG_CONFLICT` (HTTP 400 kèm `error_message` hoặc `detail`).
 
 ### 2.2. Khởi động tiến trình nền
@@ -122,7 +123,7 @@ location /api/ {
 - **Phân định rõ khi hoàn thành một phần (`partial_generated`)**:
   - Khi phiên sinh thiếu câu (do chạm hạn mức API hoặc timeout), Stage 2 giữ nguyên các câu thiếu ở trạng thái **"Chưa sinh"** (không đánh dấu nhầm thành Hoàn thành).
   - Tách bạch rõ 2 hành động: **"Kết nối lại mạng"** (SSE Reconnect) và **"Sinh bù các câu còn thiếu"** (gọi endpoint `POST /api/sessions/{session_id}/retry-generation` theo contract W2).
-  - Khi chuyển sang **Stage 3 (Xem & Duyệt đề)**: Hệ thống cảnh báo rõ trạng thái `partial_generated`, khóa xuất bản file và hiển thị thẻ cảnh báo kèm nút **"Tạo lại câu này"** trực tiếp trên từng câu bị thiếu, giúp giảng viên chủ động hoàn tất đề thi.
+  - Khi chuyển sang **Stage 3 (Xem & Duyệt đề)**: Hệ thống cảnh báo rõ trạng thái `partial_generated`, khóa xuất bản file và hiển thị thẻ cảnh báo kèm nút **"Sinh bù câu này"** trực tiếp trên từng câu bị thiếu (kích hoạt `POST /api/sessions/:id/retry-generation` cho phiên; tính năng đổi biến thể cho câu đã sinh sẽ sẵn sàng khi hoàn tất tích hợp API Stage 3).
 
 ### 6.3. Tình trạng bàn giao Stage 3 và Các đầu nối tích hợp Backend 207
 - **Giao diện Stage 2 & Stage 3**: Đã triển khai và kiểm thử giao diện Stage 2 (TASK-206 & TASK-208) cùng màn hình duyệt Stage 3 (Stage3ReviewPage) trên bộ test harness ReactDOM và contract schemas.
