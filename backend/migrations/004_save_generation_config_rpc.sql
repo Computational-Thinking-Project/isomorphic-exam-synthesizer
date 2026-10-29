@@ -1,14 +1,15 @@
 -- ============================================================================
--- Migration 004 (v3): Atomic Save Generation Config RPC & Shared Helpers
+-- Migration 004 (v4): Atomic Save Generation Config RPC & Shared Helpers
 -- Part A: Shared Helpers, Triggers & Partial Index
 -- Part B: Hardened save_generation_config RPC
 --
--- Security & NULL-Semantics Hardening:
---   - current_role() falls back to 'anon' (NEVER returns NULL, prevents auth bypass)
---   - is_valid_variation_modes: handles NULL elements, NULL inputs, case normalization,
---     strict search_path = pg_catalog, pg_temp, and revoked from PUBLIC/anon.
---   - Explicit NULL checks for p_active_variation_modes and p_ordering_preferences.
---   - Row locking on source_questions (FOR SHARE) to prevent TOCTOU during validation.
+-- Security, Concurrency & Data Normalization Hardening:
+--   - current_role(): Guaranteed non-NULL ('anon' fallback).
+--   - is_valid_variation_modes(): Case-expression guards against SQL evaluation order bugs,
+--     checks for NULL elements, normalizes case, and runs in pg_catalog search_path.
+--   - Data Normalization: Normalizes modes to lower(trim()) before persisting to DB.
+--   - TOCTOU Elimination: Locks both source_questions and question_blueprints FOR SHARE.
+--   - Schema Invariants: Verifies non-partial, valid unique index and guarantees updated_at NOT NULL.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -76,29 +77,29 @@ CREATE INDEX IF NOT EXISTS idx_exam_sessions_active_job
   ON public.exam_sessions (updated_at)
   WHERE active_job_id IS NOT NULL AND status = 'generating';
 
--- 7. Helper: Validate variation modes (immune to NULL elements, non-array inputs, case variations)
+-- 7. Helper: Validate variation modes (CASE guards against SQL short-circuit evaluation order)
 CREATE OR REPLACE FUNCTION public.is_valid_variation_modes(p_modes JSONB)
 RETURNS BOOLEAN
 LANGUAGE sql
 IMMUTABLE
 SET search_path = pg_catalog, pg_temp
 AS $$
-  SELECT COALESCE(
-    jsonb_typeof(p_modes) = 'array'
-    AND NOT EXISTS (
-      SELECT 1
-      FROM jsonb_array_elements_text(p_modes) AS m(value)
-      WHERE m.value IS NULL
-         OR trim(m.value) = ''
-         OR lower(trim(m.value)) NOT IN (
-           'numerical', 'structural', 'contextual', 'none',
-           'parameter_variation', 'context_swap', 'difficulty_shift',
-           'shuffle_answers', 'paraphrase', 'reorder_options',
-           'tone_formal', 'tone_conversational'
-         )
-    ),
-    FALSE
-  );
+  SELECT CASE 
+    WHEN jsonb_typeof(p_modes) = 'array' THEN
+      NOT EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements_text(p_modes) AS m(value)
+        WHERE m.value IS NULL
+           OR trim(m.value) = ''
+           OR lower(trim(m.value)) NOT IN (
+             'numerical', 'structural', 'contextual', 'none',
+             'parameter_variation', 'context_swap', 'difficulty_shift',
+             'shuffle_answers', 'paraphrase', 'reorder_options',
+             'tone_formal', 'tone_conversational'
+           )
+      )
+    ELSE FALSE
+  END;
 $$;
 
 REVOKE EXECUTE ON FUNCTION public.is_valid_variation_modes(JSONB) FROM PUBLIC, anon;
@@ -108,16 +109,18 @@ GRANT  EXECUTE ON FUNCTION public.is_valid_variation_modes(JSONB) TO authenticat
 -- Part B. Generation Config Schema Hardening & RPC
 -- ----------------------------------------------------------------------------
 
--- 8. Ensure unique constraint & updated_at on generation_configs
+-- 8. Ensure non-partial, valid unique constraint & updated_at on generation_configs
 DO $$
 BEGIN
-  -- Unique constraint on session_id (checks pg_index for any unique index/constraint)
+  -- Unique constraint on session_id (checks pg_index for valid, non-partial single-column unique index)
   IF NOT EXISTS (
     SELECT 1
     FROM pg_index i
     JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)
     WHERE i.indrelid = 'public.generation_configs'::regclass
       AND i.indisunique
+      AND i.indisvalid
+      AND i.indpred IS NULL
       AND a.attname = 'session_id'
       AND array_length(i.indkey, 1) = 1
   ) THEN
@@ -125,22 +128,25 @@ BEGIN
       ADD CONSTRAINT uq_generation_configs_session_id UNIQUE (session_id);
   END IF;
 
-  -- updated_at column with safe backfill
+  -- Ensure updated_at column exists
   IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name = 'generation_configs'
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' 
+      AND table_name = 'generation_configs' 
       AND column_name = 'updated_at'
   ) THEN
-    ALTER TABLE public.generation_configs
-      ADD COLUMN updated_at TIMESTAMPTZ NULL;
-
-    UPDATE public.generation_configs SET updated_at = COALESCE(created_at, now());
-
-    ALTER TABLE public.generation_configs
-      ALTER COLUMN updated_at SET NOT NULL,
-      ALTER COLUMN updated_at SET DEFAULT now();
+    ALTER TABLE public.generation_configs ADD COLUMN updated_at TIMESTAMPTZ NULL;
   END IF;
+
+  -- Backfill any existing rows with NULL updated_at
+  UPDATE public.generation_configs 
+  SET updated_at = COALESCE(created_at, now()) 
+  WHERE updated_at IS NULL;
+
+  -- Enforce NOT NULL and DEFAULT
+  ALTER TABLE public.generation_configs 
+    ALTER COLUMN updated_at SET NOT NULL,
+    ALTER COLUMN updated_at SET DEFAULT now();
 END $$;
 
 -- 9. Drop old RPC signature
@@ -164,6 +170,7 @@ DECLARE
   v_source_count INT := 0;
   v_config_id UUID;
   v_revision TIMESTAMPTZ;
+  v_normalized_modes JSONB;
 BEGIN
   -- 1. Lock session row
   SELECT user_id, status INTO v_session_user_id, v_session_status
@@ -203,6 +210,13 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
+  -- Normalize modes (lower and trim, deduplicated) to ensure consistent worker lookup
+  SELECT COALESCE(
+    jsonb_agg(DISTINCT lower(trim(m.value))),
+    '[]'::jsonb
+  ) INTO v_normalized_modes
+  FROM jsonb_array_elements_text(p_active_variation_modes) AS m(value);
+
   -- 6. Validate ordering preferences (explicit NULL check + object + required schema keys)
   IF p_ordering_preferences IS NULL THEN
     RAISE EXCEPTION 'ordering_preferences cannot be NULL' USING ERRCODE = '22023';
@@ -220,8 +234,12 @@ BEGIN
     RAISE EXCEPTION 'ordering_preferences values must be boolean' USING ERRCODE = '22023';
   END IF;
 
-  -- 7. Defense-in-depth: Shared lock on source_questions to eliminate TOCTOU races
-  PERFORM 1 FROM public.source_questions WHERE session_id = p_session_id FOR SHARE;
+  -- 7. Defense-in-depth: Shared lock on source_questions and blueprints to eliminate TOCTOU races
+  PERFORM 1 
+  FROM public.source_questions sq
+  LEFT JOIN public.question_blueprints qb ON qb.source_question_id = sq.id
+  WHERE sq.session_id = p_session_id 
+  FOR SHARE;
 
   -- 8. Validate source question count (1-20)
   SELECT COUNT(*) INTO v_source_count
@@ -245,11 +263,11 @@ BEGIN
     RAISE EXCEPTION 'Not all source questions have confirmed blueprints' USING ERRCODE = '22023';
   END IF;
 
-  -- 10. Upsert configuration (trigger trg_generation_configs_updated_at handles updated_at)
+  -- 10. Upsert normalized configuration (trigger trg_generation_configs_updated_at handles updated_at)
   INSERT INTO public.generation_configs (
     session_id, n_versions, active_variation_modes, ordering_preferences
   ) VALUES (
-    p_session_id, p_n_versions, p_active_variation_modes, p_ordering_preferences
+    p_session_id, p_n_versions, v_normalized_modes, p_ordering_preferences
   )
   ON CONFLICT (session_id) DO UPDATE SET
     n_versions = EXCLUDED.n_versions,
@@ -268,7 +286,7 @@ BEGIN
     'status', 'configured',
     'config', jsonb_build_object(
       'n_versions', p_n_versions,
-      'active_variation_modes', p_active_variation_modes,
+      'active_variation_modes', v_normalized_modes,
       'ordering_preferences', p_ordering_preferences
     )
   );

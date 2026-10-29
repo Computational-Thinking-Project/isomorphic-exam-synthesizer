@@ -1,10 +1,15 @@
 -- ============================================================================
--- Migration 005 (v3): Hardened Generation Job Operations RPC [TASK-207b]
+-- Migration 005 (v4): Hardened Generation Job Operations RPC [TASK-207b]
 -- Prerequisites: PostgreSQL 13+ (built-in gen_random_uuid) or pgcrypto extension.
--- Note: This RPC trusts background workers to persist generated rows into version_questions.
+-- Note: Background workers run under service_role. finish_generation_job is strictly
+-- restricted to service_role to prevent unverified client completion.
 --
 -- Security & Concurrency Enhancements:
 --   - NULL-Safe Authorization: current_role() is guaranteed non-NULL ('anon' fallback).
+--   - Strict Outcome Validation: p_outcome IS NULL checked before enum cast.
+--   - Strict Retry Validation: p_is_retry IS NULL rejected, retry allowed only from
+--     'partial_generated' or 'failed'.
+--   - Service-Role Only Finish: finish_generation_job revoked from authenticated.
 --   - Strict Fencing Token: p_job_token IS DISTINCT FROM v_active_job_id (NULL rejected).
 --   - Invariant Check: status = 'generating' => active_job_id NOT NULL (55000).
 --   - Anti-race Claim Lock: returns standard 55006 (object_in_use) if already generating.
@@ -54,7 +59,12 @@ DECLARE
   v_committed_targets JSONB;
   v_job_id UUID := COALESCE(p_job_token, gen_random_uuid());
 BEGIN
-  -- 1. Lock session row
+  -- 1. Validate p_is_retry explicitly
+  IF p_is_retry IS NULL THEN
+    RAISE EXCEPTION 'p_is_retry cannot be NULL' USING ERRCODE = '22023';
+  END IF;
+
+  -- 2. Lock session row
   SELECT user_id, status, gemini_call_count
     INTO v_session_user_id, v_session_status, v_current_quota
   FROM public.exam_sessions
@@ -65,19 +75,19 @@ BEGIN
     RAISE EXCEPTION 'Session not found: %', p_session_id USING ERRCODE = 'P0002';
   END IF;
 
-  -- 2. Enforce ownership (NULL-safe: current_role() is guaranteed non-NULL)
+  -- 3. Enforce ownership (NULL-safe: current_role() is guaranteed non-NULL)
   IF public.current_role() != 'service_role'
      AND (v_session_user_id IS DISTINCT FROM auth.uid() OR auth.uid() IS NULL) THEN
     RAISE EXCEPTION 'Access denied: caller does not own session %', p_session_id
       USING ERRCODE = '42501';
   END IF;
 
-  -- 3. Anti-concurrency check: 55006 (object_in_use)
+  -- 4. Anti-concurrency check: 55006 (object_in_use)
   IF v_session_status = 'generating' THEN
     RAISE EXCEPTION 'Session % is already generating', p_session_id USING ERRCODE = '55006';
   END IF;
 
-  -- 4. State machine transition check
+  -- 5. State machine transition check
   IF NOT p_is_retry THEN
     IF v_session_status != 'configured' THEN
       RAISE EXCEPTION 'Cannot start generation: session must be configured (current: %)',
@@ -85,11 +95,12 @@ BEGIN
     END IF;
   ELSE
     IF v_session_status NOT IN ('partial_generated', 'failed') THEN
-      RAISE EXCEPTION 'Cannot retry from status %', v_session_status USING ERRCODE = '22023';
+      RAISE EXCEPTION 'Cannot retry from status % (only partial_generated or failed)',
+        v_session_status USING ERRCODE = '22023';
     END IF;
   END IF;
 
-  -- 5. Config must exist (fail-closed)
+  -- 6. Config must exist (fail-closed)
   SELECT row_to_json(c)::jsonb INTO v_config
   FROM public.generation_configs c
   WHERE c.session_id = p_session_id;
@@ -99,19 +110,19 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
-  -- 6. Quota ceiling check (250 calls limit)
+  -- 7. Quota ceiling check (250 calls limit)
   IF v_current_quota >= 250 THEN
     RAISE EXCEPTION 'Quota exceeded: % of 250 calls already used', v_current_quota
       USING ERRCODE = '22023';
   END IF;
 
-  -- 7. Transition status and set active_job_id (trigger trg_exam_sessions_updated_at updates updated_at)
+  -- 8. Transition status and set active_job_id (trigger trg_exam_sessions_updated_at updates updated_at)
   UPDATE public.exam_sessions
   SET status = 'generating',
       active_job_id = v_job_id
   WHERE id = p_session_id;
 
-  -- 8. Fetch committed targets for incremental resume
+  -- 9. Fetch committed targets for incremental resume
   SELECT COALESCE(jsonb_agg(jsonb_build_object(
     'version_id', vq.version_id,
     'source_question_id', vq.source_question_id,
@@ -218,7 +229,7 @@ END;
 $$;
 
 -- ----------------------------------------------------------------------------
--- 5. finish_generation_job
+-- 5. finish_generation_job (Restricted to service_role)
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.finish_generation_job(
   p_session_id UUID,
@@ -237,13 +248,20 @@ DECLARE
   v_target_status public.session_status;
   v_now TIMESTAMPTZ := now();
 BEGIN
-  -- 1. Validate outcome
-  IF p_outcome NOT IN ('generated', 'partial_generated', 'failed') THEN
-    RAISE EXCEPTION 'Invalid outcome: %', p_outcome USING ERRCODE = '22023';
+  -- 1. Validate outcome (strict NULL check before enum cast)
+  IF p_outcome IS NULL OR p_outcome NOT IN ('generated', 'partial_generated', 'failed') THEN
+    RAISE EXCEPTION 'Invalid outcome status: must be generated, partial_generated, or failed (got %)', 
+      p_outcome USING ERRCODE = '22023';
   END IF;
   v_target_status := p_outcome::public.session_status;
 
-  -- 2. Lock session row
+  -- 2. Restrict execution to service_role (background worker)
+  IF public.current_role() != 'service_role' THEN
+    RAISE EXCEPTION 'Access denied: finish_generation_job is strictly restricted to service_role'
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- 3. Lock session row
   SELECT user_id, status, active_job_id
     INTO v_session_user_id, v_session_status, v_active_job_id
   FROM public.exam_sessions
@@ -252,13 +270,6 @@ BEGIN
 
   IF v_session_user_id IS NULL THEN
     RAISE EXCEPTION 'Session not found: %', p_session_id USING ERRCODE = 'P0002';
-  END IF;
-
-  -- 3. Enforce ownership (NULL-safe)
-  IF public.current_role() != 'service_role'
-     AND (v_session_user_id IS DISTINCT FROM auth.uid() OR auth.uid() IS NULL) THEN
-    RAISE EXCEPTION 'Access denied: caller does not own session %', p_session_id
-      USING ERRCODE = '42501';
   END IF;
 
   -- 4. State validation: only generating session can finish
@@ -296,7 +307,7 @@ END;
 $$;
 
 -- ----------------------------------------------------------------------------
--- 6. fail_stale_generation_job (Restricted strictly to service_role)
+-- 6. fail_stale_generation_job (Restricted to service_role)
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.fail_stale_generation_job(
   p_session_id UUID,
@@ -314,7 +325,7 @@ DECLARE
   v_recovered BOOLEAN := FALSE;
   v_now TIMESTAMPTZ := now();
 BEGIN
-  -- 1. Strictly validate cutoff seconds
+  -- 1. Validate cutoff seconds
   IF p_cutoff_seconds IS NULL OR p_cutoff_seconds <= 0 THEN
     RAISE EXCEPTION 'p_cutoff_seconds must be positive (got %)', p_cutoff_seconds
       USING ERRCODE = '22023';
@@ -322,7 +333,7 @@ BEGIN
 
   -- 2. Restrict to service_role (NULL-safe)
   IF public.current_role() != 'service_role' THEN
-    RAISE EXCEPTION 'fail_stale_generation_job is restricted to service_role'
+    RAISE EXCEPTION 'Access denied: fail_stale_generation_job is restricted to service_role'
       USING ERRCODE = '42501';
   END IF;
 
@@ -364,8 +375,9 @@ GRANT  EXECUTE ON FUNCTION public.claim_generation_job(UUID, BOOLEAN, UUID) TO a
 REVOKE EXECUTE ON FUNCTION public.reserve_generation_quota(UUID, INT, UUID) FROM PUBLIC, anon;
 GRANT  EXECUTE ON FUNCTION public.reserve_generation_quota(UUID, INT, UUID) TO authenticated, service_role;
 
-REVOKE EXECUTE ON FUNCTION public.finish_generation_job(UUID, TEXT, UUID) FROM PUBLIC, anon;
-GRANT  EXECUTE ON FUNCTION public.finish_generation_job(UUID, TEXT, UUID) TO authenticated, service_role;
+-- finish_generation_job is strictly restricted to service_role (Background Worker)
+REVOKE EXECUTE ON FUNCTION public.finish_generation_job(UUID, TEXT, UUID) FROM PUBLIC, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION public.finish_generation_job(UUID, TEXT, UUID) TO service_role;
 
 -- fail_stale_generation_job is strictly restricted to service_role (Recovery cleaner)
 REVOKE EXECUTE ON FUNCTION public.fail_stale_generation_job(UUID, INT) FROM PUBLIC, anon, authenticated;

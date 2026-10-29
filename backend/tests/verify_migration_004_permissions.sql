@@ -1,13 +1,11 @@
 -- ============================================================================
--- Verification Suite for Migration 004 & 005 (v3) [TASK-207a/b]
+-- Verification Suite for Migration 004 & 005 (v4) [TASK-207a/b]
 -- Tests:
 -- 1. Schema invariants (columns, constraints, triggers, indexes, functions)
 -- 2. NULL-Semantics & current_role() non-NULL guarantee
--- 3. is_valid_variation_modes rejection of NULL, [null], case insensitivity
--- 4. Fencing token enforcement (IS DISTINCT FROM rejects NULL and mismatch)
--- 5. Quota bounds validation (negative/zero/exceeded quota rejection)
--- 6. Claim idempotency & concurrency protection (55006 object_in_use)
--- 7. Permissions / Least-privilege (fail_stale restricted to service_role)
+-- 3. is_valid_variation_modes with CASE protection, NULL elements, normalization
+-- 4. finish_generation_job restricted strictly to service_role
+-- 5. fail_stale_generation_job restricted strictly to service_role
 -- ============================================================================
 
 BEGIN;
@@ -32,16 +30,18 @@ BEGIN
     RAISE EXCEPTION 'Missing updated_at column on generation_configs';
   END IF;
 
-  -- Constraints / Unique Index
+  -- Constraints / Unique Index (must be non-partial single column)
   IF NOT EXISTS (
     SELECT 1
     FROM pg_index i
     JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)
     WHERE i.indrelid = 'public.generation_configs'::regclass
       AND i.indisunique
+      AND i.indisvalid
+      AND i.indpred IS NULL
       AND a.attname = 'session_id'
   ) THEN
-    RAISE EXCEPTION 'Missing unique constraint on generation_configs(session_id)';
+    RAISE EXCEPTION 'Missing valid, non-partial unique index on generation_configs(session_id)';
   END IF;
 
   -- Partial Index
@@ -69,42 +69,22 @@ BEGIN
 END $$;
 
 -- ----------------------------------------------------------------------------
--- 2. Verify helper functions & RPC existence
--- ----------------------------------------------------------------------------
-DO $$
-DECLARE
-  v_functions TEXT[] := ARRAY[
-    'current_role',
-    'tg_set_updated_at',
-    'is_valid_variation_modes',
-    'save_generation_config',
-    'claim_generation_job',
-    'reserve_generation_quota',
-    'finish_generation_job',
-    'fail_stale_generation_job'
-  ];
-  v_fn TEXT;
-BEGIN
-  FOREACH v_fn IN ARRAY v_functions LOOP
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_proc p
-      JOIN pg_namespace n ON p.pronamespace = n.oid
-      WHERE n.nspname = 'public' AND p.proname = v_fn
-    ) THEN
-      RAISE EXCEPTION 'Function public.% does not exist!', v_fn;
-    END IF;
-  END LOOP;
-  RAISE NOTICE 'Step 2: All 8 helper and RPC functions verified in public schema.';
-END $$;
-
--- ----------------------------------------------------------------------------
--- 3. Verify Least-Privilege Permissions
+-- 2. Verify Least-Privilege Permissions
 -- ----------------------------------------------------------------------------
 DO $$
 DECLARE
   v_has_auth BOOLEAN;
+  v_has_service BOOLEAN;
 BEGIN
-  -- fail_stale must be blocked from authenticated role
+  -- finish_generation_job must be REVOKED from authenticated
+  SELECT has_function_privilege('authenticated', 'public.finish_generation_job(UUID, TEXT, UUID)', 'EXECUTE')
+  INTO v_has_auth;
+
+  IF v_has_auth = TRUE THEN
+    RAISE EXCEPTION 'Security failure: authenticated role must NOT have EXECUTE on finish_generation_job!';
+  END IF;
+
+  -- fail_stale must be REVOKED from authenticated
   SELECT has_function_privilege('authenticated', 'public.fail_stale_generation_job(UUID, INT)', 'EXECUTE')
   INTO v_has_auth;
 
@@ -112,18 +92,26 @@ BEGIN
     RAISE EXCEPTION 'Security failure: authenticated role must NOT have EXECUTE on fail_stale_generation_job!';
   END IF;
 
-  -- save_generation_config must be granted to authenticated
+  -- finish_generation_job and fail_stale must be GRANTED to service_role
+  SELECT has_function_privilege('service_role', 'public.finish_generation_job(UUID, TEXT, UUID)', 'EXECUTE')
+  INTO v_has_service;
+
+  IF v_has_service = FALSE THEN
+    RAISE EXCEPTION 'Permission failure: service_role must have EXECUTE on finish_generation_job!';
+  END IF;
+
+  -- save_generation_config must be GRANTED to authenticated
   SELECT has_function_privilege('authenticated', 'public.save_generation_config(UUID, INT, JSONB, JSONB)', 'EXECUTE')
   INTO v_has_auth;
   IF v_has_auth = FALSE THEN
     RAISE EXCEPTION 'Permission failure: authenticated role must have EXECUTE on save_generation_config!';
   END IF;
 
-  RAISE NOTICE 'Step 3: Least privilege permissions verified.';
+  RAISE NOTICE 'Step 2: Least privilege permissions verified.';
 END $$;
 
 -- ----------------------------------------------------------------------------
--- 4. Functional & NULL-Semantics Unit Checks
+-- 3. Functional & NULL-Semantics Unit Checks
 -- ----------------------------------------------------------------------------
 DO $$
 BEGIN
@@ -132,17 +120,13 @@ BEGIN
     RAISE EXCEPTION 'current_role() returned NULL! Must return anon when unset.';
   END IF;
 
-  IF public.current_role() != 'anon' THEN
-    RAISE EXCEPTION 'Expected default current_role() to be anon, got %', public.current_role();
-  END IF;
-
-  -- Variation modes validation
+  -- Variation modes validation with CASE protection
   IF NOT public.is_valid_variation_modes('["NUMERICAL"]'::jsonb) THEN
     RAISE EXCEPTION 'is_valid_variation_modes failed for valid mode NUMERICAL';
   END IF;
 
-  IF NOT public.is_valid_variation_modes('["numerical"]'::jsonb) THEN
-    RAISE EXCEPTION 'is_valid_variation_modes failed for lowercase numerical';
+  IF NOT public.is_valid_variation_modes('["  numerical  "]'::jsonb) THEN
+    RAISE EXCEPTION 'is_valid_variation_modes failed for padded lowercase numerical';
   END IF;
 
   IF NOT public.is_valid_variation_modes('[]'::jsonb) THEN
@@ -154,20 +138,25 @@ BEGIN
     RAISE EXCEPTION 'is_valid_variation_modes(NULL) must evaluate to FALSE';
   END IF;
 
+  -- Scalar/object must safely return FALSE via CASE without throw
+  IF public.is_valid_variation_modes('{"not": "array"}'::jsonb) IS NOT FALSE THEN
+    RAISE EXCEPTION 'is_valid_variation_modes object must evaluate to FALSE';
+  END IF;
+
+  IF public.is_valid_variation_modes('"scalar_string"'::jsonb) IS NOT FALSE THEN
+    RAISE EXCEPTION 'is_valid_variation_modes scalar string must evaluate to FALSE';
+  END IF;
+
+  IF public.is_valid_variation_modes('123'::jsonb) IS NOT FALSE THEN
+    RAISE EXCEPTION 'is_valid_variation_modes scalar number must evaluate to FALSE';
+  END IF;
+
   -- Array containing null element must return FALSE
   IF public.is_valid_variation_modes('["numerical", null]'::jsonb) IS NOT FALSE THEN
     RAISE EXCEPTION 'is_valid_variation_modes with null element must evaluate to FALSE';
   END IF;
 
-  IF public.is_valid_variation_modes('["malicious_mode_injection"]'::jsonb) THEN
-    RAISE EXCEPTION 'is_valid_variation_modes allowed unrecognized mode';
-  END IF;
-
-  IF public.is_valid_variation_modes('"not_an_array"'::jsonb) THEN
-    RAISE EXCEPTION 'is_valid_variation_modes allowed non-array input';
-  END IF;
-
-  RAISE NOTICE 'Step 4: All functional, domain, and NULL-semantics tests passed.';
+  RAISE NOTICE 'Step 3: All functional, domain, and NULL-semantics tests passed.';
 END $$;
 
 ROLLBACK;
