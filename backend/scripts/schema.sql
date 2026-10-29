@@ -71,8 +71,11 @@ CREATE TABLE IF NOT EXISTS public.exam_sessions (
   retry_count INT NOT NULL DEFAULT 0,
   gemini_review_calls INT NOT NULL DEFAULT 0,
   approved_at TIMESTAMPTZ NULL,
+  active_job_id UUID NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT chk_quota_range CHECK (gemini_call_count BETWEEN 0 AND 250),
+  CONSTRAINT chk_generating_has_job CHECK (status <> 'generating' OR active_job_id IS NOT NULL)
 );
 
 -- Table 3: Source Questions (Ingested from original document)
@@ -114,7 +117,9 @@ CREATE TABLE IF NOT EXISTS public.generation_configs (
   n_versions INT NOT NULL CHECK (n_versions BETWEEN 1 AND 4),
   active_variation_modes JSONB NOT NULL DEFAULT '[]'::jsonb,
   ordering_preferences JSONB NOT NULL DEFAULT '{"shuffle_questions": true, "shuffle_options": true}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_generation_configs_session_id UNIQUE (session_id)
 );
 
 -- Table 6: Exam Versions (Each generated variant code: e.g., 101, 102, 103, 104)
@@ -125,7 +130,8 @@ CREATE TABLE IF NOT EXISTS public.exam_versions (
   shuffle_seed TEXT,
   permutations JSONB,
   is_finalized BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_exam_versions_session_code UNIQUE (session_id, version_code)
 );
 
 -- Table 7: Version Questions (Variant questions with Canonical Data Model)

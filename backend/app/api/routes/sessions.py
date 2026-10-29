@@ -183,10 +183,39 @@ async def get_session_detail(
     )
     exam_versions = cast(List[dict[str, Any]], v_res.data or [])
 
+    # Fetch generation_config if saved (Stage 2 / TASK-207a)
+    cfg_res = (
+        db.table("generation_configs").select("*").eq("session_id", session_id).limit(1).execute()
+    )
+    cfg_rows = cast(List[dict[str, Any]], cfg_res.data or [])
+    generation_config = cfg_rows[0] if cfg_rows else None
+
+    # Compute blueprint summary for Stage 2 readiness projection
+    blueprint_summary = None
+    if source_questions:
+        source_ids = [str(q.get("id")) for q in source_questions if q.get("id")]
+        bp_res = (
+            db.table("question_blueprints")
+            .select("id,source_question_id,confirmed_at,is_fallback")
+            .in_("source_question_id", source_ids)
+            .execute()
+        )
+        bp_rows = cast(List[dict[str, Any]], bp_res.data or [])
+        confirmed_count = sum(1 for bp in bp_rows if bp.get("confirmed_at") is not None)
+        total_sources = len(source_questions)
+        blueprint_summary = {
+            "total_sources": total_sources,
+            "total_blueprints": len(bp_rows),
+            "confirmed_blueprints": confirmed_count,
+            "is_ready": total_sources > 0 and confirmed_count == total_sources,
+        }
+
     return SessionDetailResponse(
         **session_record,
         source_questions=source_questions,
         exam_versions=exam_versions,
+        generation_config=generation_config,
+        blueprint_summary=blueprint_summary,
     )
 
 
@@ -585,9 +614,7 @@ async def confirm_source(
     # Per ADR-004: Security warnings are never surfaced to end users.
     # Backend logs them silently for internal admin audit (table: security_events).
     # Users are NOT required to acknowledge — the UI has no checkbox for this.
-    security_warning_questions = [
-        q for q in questions if q.get("has_security_warning") is True
-    ]
+    security_warning_questions = [q for q in questions if q.get("has_security_warning") is True]
     if security_warning_questions:
         flagged_nos = [q.get("question_no", "?") for q in security_warning_questions]
         logger.warning(
@@ -670,7 +697,12 @@ async def confirm_source(
         )
         code = getattr(exc, "code", "") or ""
 
-        if code == "42501" or "42501" in err_msg or "access denied" in err_lower or "unauthorized" in err_lower:
+        if (
+            code == "42501"
+            or "42501" in err_msg
+            or "access denied" in err_lower
+            or "unauthorized" in err_lower
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied or session ownership mismatch",
@@ -728,4 +760,3 @@ async def confirm_source(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Database atomic confirmation failed. Please verify session state before retrying.",
         ) from exc
-

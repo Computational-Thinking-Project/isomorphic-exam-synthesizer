@@ -24,9 +24,11 @@ class Settings(BaseSettings):
             self.GEMINI_API_KEY_2,
             self.GEMINI_API_KEY_3,
         )
-        return list(dict.fromkeys(
-            value for secret in secrets if (value := secret.get_secret_value().strip())
-        ))
+        return list(
+            dict.fromkeys(
+                value for secret in secrets if (value := secret.get_secret_value().strip())
+            )
+        )
 
     # Supabase Credentials
     SUPABASE_URL: str = ""
@@ -36,6 +38,7 @@ class Settings(BaseSettings):
     # Security & Limits
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
     MAX_UPLOAD_SIZE_MB: int = 10
+    ADMIN_EMAILS: str = ""  # Comma-separated list of admin emails (SEC-08 / TASK-207c)
 
     # Ports
     BACKEND_PORT: int = 8000
