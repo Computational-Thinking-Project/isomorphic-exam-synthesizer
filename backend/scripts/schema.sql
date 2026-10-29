@@ -72,12 +72,10 @@ CREATE TABLE IF NOT EXISTS public.exam_sessions (
   gemini_review_calls INT NOT NULL DEFAULT 0,
   approved_at TIMESTAMPTZ NULL,
   active_job_id UUID NULL,
-  last_progress_at TIMESTAMPTZ NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT chk_quota_range CHECK (gemini_call_count BETWEEN 0 AND 250),
-  CONSTRAINT chk_generating_has_job CHECK (status <> 'generating' OR active_job_id IS NOT NULL),
-  CONSTRAINT chk_not_generating_has_no_job CHECK (status = 'generating' OR active_job_id IS NULL)
+  CONSTRAINT chk_generating_has_job CHECK (status <> 'generating' OR active_job_id IS NOT NULL)
 );
 
 -- Table 3: Source Questions (Ingested from original document)

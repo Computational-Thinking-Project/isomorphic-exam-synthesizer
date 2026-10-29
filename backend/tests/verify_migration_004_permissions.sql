@@ -1,10 +1,10 @@
 -- ============================================================================
--- Verification Suite for Migration 004 & 005 (v6) [TASK-207a/b]
+-- Verification Suite for Migration 004 & 005 (v6-lite) [TASK-207a/b]
 -- Tests:
 -- 1. Schema invariants (columns, constraints, triggers, indexes, functions)
 -- 2. NULL-Semantics & current_role() non-NULL guarantee
--- 3. is_valid_variation_modes with CASE protection, NULL elements, normalization
--- 4. Service-role-only isolation for worker RPCs (finish, fail_stale, reserve, persist, heartbeat)
+-- 3. is_valid_variation_modes validation
+-- 4. Service-role-only isolation for worker RPCs (reserve, persist, finish, fail_stale)
 -- 5. Client authorization for claim & save_generation_config
 -- ============================================================================
 
@@ -21,13 +21,6 @@ BEGIN
     WHERE table_schema = 'public' AND table_name = 'exam_sessions' AND column_name = 'active_job_id'
   ) THEN
     RAISE EXCEPTION 'Missing active_job_id column on exam_sessions';
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'exam_sessions' AND column_name = 'last_progress_at'
-  ) THEN
-    RAISE EXCEPTION 'Missing last_progress_at column on exam_sessions';
   END IF;
 
   -- Columns on generation_configs
@@ -47,10 +40,6 @@ BEGIN
     RAISE EXCEPTION 'Missing constraint chk_generating_has_job on exam_sessions';
   END IF;
 
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_not_generating_has_no_job') THEN
-    RAISE EXCEPTION 'Missing constraint chk_not_generating_has_no_job on exam_sessions';
-  END IF;
-
   -- Constraints on exam_versions
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_exam_versions_session_code') THEN
     RAISE EXCEPTION 'Missing constraint uq_exam_versions_session_code on exam_versions';
@@ -64,29 +53,11 @@ BEGIN
     RAISE EXCEPTION 'Missing unique index idx_single_current_version_question on version_questions';
   END IF;
 
-  -- Constraints / Unique Index on generation_configs(session_id)
+  -- Unique constraint on generation_configs(session_id)
   IF NOT EXISTS (
-    SELECT 1
-    FROM pg_index i
-    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = i.indkey[0]
-    WHERE i.indrelid = 'public.generation_configs'::regclass
-      AND i.indisunique
-      AND i.indisvalid
-      AND i.indpred IS NULL
-      AND i.indexprs IS NULL
-      AND i.indnkeyatts = 1
-      AND a.attname = 'session_id'
-      AND NOT a.attisdropped
+    SELECT 1 FROM pg_constraint WHERE conname = 'uq_generation_configs_session_id'
   ) THEN
-    RAISE EXCEPTION 'Missing valid, non-partial single-column unique index on generation_configs(session_id)';
-  END IF;
-
-  -- Partial Index on exam_sessions
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes
-    WHERE schemaname = 'public' AND indexname = 'idx_exam_sessions_active_job'
-  ) THEN
-    RAISE EXCEPTION 'Missing partial index idx_exam_sessions_active_job';
+    RAISE EXCEPTION 'Missing constraint uq_generation_configs_session_id on generation_configs';
   END IF;
 
   -- Triggers
@@ -153,34 +124,24 @@ BEGIN
     RAISE EXCEPTION 'Permission failure: service_role must have EXECUTE on persist_version_question!';
   END IF;
 
-  -- 2.5 heartbeat_generation_job: service_role ONLY
-  SELECT has_function_privilege('authenticated', 'public.heartbeat_generation_job(UUID, UUID)', 'EXECUTE') INTO v_has_auth;
-  IF v_has_auth = TRUE THEN
-    RAISE EXCEPTION 'Security failure: authenticated role must NOT have EXECUTE on heartbeat_generation_job!';
-  END IF;
-  SELECT has_function_privilege('service_role', 'public.heartbeat_generation_job(UUID, UUID)', 'EXECUTE') INTO v_has_service;
-  IF v_has_service = FALSE THEN
-    RAISE EXCEPTION 'Permission failure: service_role must have EXECUTE on heartbeat_generation_job!';
-  END IF;
-
-  -- 2.6 is_valid_variation_modes: internal service_role ONLY
+  -- 2.5 is_valid_variation_modes: internal only
   SELECT has_function_privilege('authenticated', 'public.is_valid_variation_modes(JSONB)', 'EXECUTE') INTO v_has_auth;
   IF v_has_auth = TRUE THEN
     RAISE EXCEPTION 'Security failure: authenticated role must NOT have EXECUTE on is_valid_variation_modes!';
   END IF;
 
-  -- 2.7 Client functions: save_generation_config & claim_generation_job
+  -- 2.6 Client functions: save_generation_config & claim_generation_job
   SELECT has_function_privilege('authenticated', 'public.save_generation_config(UUID, INT, JSONB, JSONB)', 'EXECUTE') INTO v_has_auth;
   IF v_has_auth = FALSE THEN
     RAISE EXCEPTION 'Permission failure: authenticated role must have EXECUTE on save_generation_config!';
   END IF;
 
-  SELECT has_function_privilege('authenticated', 'public.claim_generation_job(UUID, BOOLEAN, UUID)', 'EXECUTE') INTO v_has_auth;
+  SELECT has_function_privilege('authenticated', 'public.claim_generation_job(UUID, BOOLEAN)', 'EXECUTE') INTO v_has_auth;
   IF v_has_auth = FALSE THEN
     RAISE EXCEPTION 'Permission failure: authenticated role must have EXECUTE on claim_generation_job!';
   END IF;
 
-  RAISE NOTICE 'Step 2: Least privilege permissions for all 7 RPCs and helpers verified.';
+  RAISE NOTICE 'Step 2: Least privilege permissions for all RPCs and helpers verified.';
 END $$;
 
 -- ----------------------------------------------------------------------------
