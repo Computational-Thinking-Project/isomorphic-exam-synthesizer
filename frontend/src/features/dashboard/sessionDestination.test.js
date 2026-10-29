@@ -20,9 +20,12 @@ function setup(overrides = {}) {
   return { opener, calls, destinations };
 }
 
-test('resolver chỉ nối draft; chín enum còn lại và unknown không tới màn chưa có', () => {
+test('resolver nối draft sang stage1, blueprinted/configured/generating sang stage2; sáu enum còn lại và unknown không tới màn chưa có', () => {
   assert.deepEqual(sessionDestination({ id: 'a/b', status: 'draft' }), { path: '/session/a%2Fb/stage1', notice: '' });
-  for (const status of ['blueprinted', 'configured', 'generating', 'partial_generated', 'generated', 'reviewed', 'approved', 'exported', 'failed']) {
+  for (const status of ['blueprinted', 'configured', 'generating']) {
+    assert.deepEqual(sessionDestination({ id: 'saved', status }), { path: '/session/saved/stage2', notice: '' });
+  }
+  for (const status of ['partial_generated', 'generated', 'reviewed', 'approved', 'exported', 'failed']) {
     const result = sessionDestination({ id: 'saved', status });
     assert.equal(result.path, null);
     assert.match(result.notice, /chưa được kết nối/);
@@ -35,15 +38,15 @@ test('resolver chỉ nối draft; chín enum còn lại và unknown không tới
 });
 
 test('chỉ đọc detail khi bấm mở, lấy trạng thái mới thay vì badge list', async () => {
-  let status = 'configured';
+  let status = 'approved';
   const { opener, calls, destinations } = setup({ load: async (id) => { calls.push({ id }); return { id, status }; } });
   assert.equal(calls.length, 0);
   await opener.open('saved');
   assert.deepEqual(destinations, []);
   assert.match(opener.getSnapshot().notice, /chưa được kết nối/);
-  status = 'draft';
+  status = 'configured';
   await opener.open('saved');
-  assert.deepEqual(destinations, ['/session/saved/stage1']);
+  assert.deepEqual(destinations, ['/session/saved/stage2']);
   assert.equal(calls.length, 2);
 });
 
