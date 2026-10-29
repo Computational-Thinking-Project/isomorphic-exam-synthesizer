@@ -1,11 +1,11 @@
 -- ============================================================================
--- Verification Suite for Migration 004 & 005 (v4) [TASK-207a/b]
+-- Verification Suite for Migration 004 & 005 (v5) [TASK-207a/b]
 -- Tests:
 -- 1. Schema invariants (columns, constraints, triggers, indexes, functions)
 -- 2. NULL-Semantics & current_role() non-NULL guarantee
 -- 3. is_valid_variation_modes with CASE protection, NULL elements, normalization
--- 4. finish_generation_job restricted strictly to service_role
--- 5. fail_stale_generation_job restricted strictly to service_role
+-- 4. Service-role-only isolation for worker RPCs (finish, fail_stale, reserve, persist, heartbeat)
+-- 5. Client authorization for claim & save_generation_config
 -- ============================================================================
 
 BEGIN;
@@ -15,7 +15,7 @@ BEGIN;
 -- ----------------------------------------------------------------------------
 DO $$
 BEGIN
-  -- Columns
+  -- Columns on exam_sessions
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'public' AND table_name = 'exam_sessions' AND column_name = 'active_job_id'
@@ -25,26 +25,50 @@ BEGIN
 
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'exam_sessions' AND column_name = 'last_progress_at'
+  ) THEN
+    RAISE EXCEPTION 'Missing last_progress_at column on exam_sessions';
+  END IF;
+
+  -- Columns on generation_configs
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'public' AND table_name = 'generation_configs' AND column_name = 'updated_at'
   ) THEN
     RAISE EXCEPTION 'Missing updated_at column on generation_configs';
   END IF;
 
-  -- Constraints / Unique Index (must be non-partial single column)
+  -- Constraints on exam_sessions
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_quota_range') THEN
+    RAISE EXCEPTION 'Missing constraint chk_quota_range on exam_sessions';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_generating_has_job') THEN
+    RAISE EXCEPTION 'Missing constraint chk_generating_has_job on exam_sessions';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_not_generating_has_no_job') THEN
+    RAISE EXCEPTION 'Missing constraint chk_not_generating_has_no_job on exam_sessions';
+  END IF;
+
+  -- Constraints / Unique Index on generation_configs(session_id)
   IF NOT EXISTS (
     SELECT 1
     FROM pg_index i
-    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)
+    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = i.indkey[0]
     WHERE i.indrelid = 'public.generation_configs'::regclass
       AND i.indisunique
       AND i.indisvalid
       AND i.indpred IS NULL
+      AND i.indexprs IS NULL
+      AND i.indnkeyatts = 1
       AND a.attname = 'session_id'
+      AND NOT a.attisdropped
   ) THEN
-    RAISE EXCEPTION 'Missing valid, non-partial unique index on generation_configs(session_id)';
+    RAISE EXCEPTION 'Missing valid, non-partial single-column unique index on generation_configs(session_id)';
   END IF;
 
-  -- Partial Index
+  -- Partial Index on exam_sessions
   IF NOT EXISTS (
     SELECT 1 FROM pg_indexes
     WHERE schemaname = 'public' AND indexname = 'idx_exam_sessions_active_job'
@@ -65,7 +89,7 @@ BEGIN
     RAISE EXCEPTION 'Missing trigger trg_generation_configs_updated_at';
   END IF;
 
-  RAISE NOTICE 'Step 1: All schema elements, columns, indexes, and triggers verified.';
+  RAISE NOTICE 'Step 1: All schema elements, columns, constraints, indexes, and triggers verified.';
 END $$;
 
 -- ----------------------------------------------------------------------------
@@ -76,38 +100,74 @@ DECLARE
   v_has_auth BOOLEAN;
   v_has_service BOOLEAN;
 BEGIN
-  -- finish_generation_job must be REVOKED from authenticated
-  SELECT has_function_privilege('authenticated', 'public.finish_generation_job(UUID, TEXT, UUID)', 'EXECUTE')
-  INTO v_has_auth;
-
+  -- 2.1 finish_generation_job: service_role ONLY
+  SELECT has_function_privilege('authenticated', 'public.finish_generation_job(UUID, TEXT, UUID)', 'EXECUTE') INTO v_has_auth;
   IF v_has_auth = TRUE THEN
     RAISE EXCEPTION 'Security failure: authenticated role must NOT have EXECUTE on finish_generation_job!';
   END IF;
-
-  -- fail_stale must be REVOKED from authenticated
-  SELECT has_function_privilege('authenticated', 'public.fail_stale_generation_job(UUID, INT)', 'EXECUTE')
-  INTO v_has_auth;
-
-  IF v_has_auth = TRUE THEN
-    RAISE EXCEPTION 'Security failure: authenticated role must NOT have EXECUTE on fail_stale_generation_job!';
-  END IF;
-
-  -- finish_generation_job and fail_stale must be GRANTED to service_role
-  SELECT has_function_privilege('service_role', 'public.finish_generation_job(UUID, TEXT, UUID)', 'EXECUTE')
-  INTO v_has_service;
-
+  SELECT has_function_privilege('service_role', 'public.finish_generation_job(UUID, TEXT, UUID)', 'EXECUTE') INTO v_has_service;
   IF v_has_service = FALSE THEN
     RAISE EXCEPTION 'Permission failure: service_role must have EXECUTE on finish_generation_job!';
   END IF;
 
-  -- save_generation_config must be GRANTED to authenticated
-  SELECT has_function_privilege('authenticated', 'public.save_generation_config(UUID, INT, JSONB, JSONB)', 'EXECUTE')
-  INTO v_has_auth;
+  -- 2.2 fail_stale_generation_job: service_role ONLY
+  SELECT has_function_privilege('authenticated', 'public.fail_stale_generation_job(UUID, INT)', 'EXECUTE') INTO v_has_auth;
+  IF v_has_auth = TRUE THEN
+    RAISE EXCEPTION 'Security failure: authenticated role must NOT have EXECUTE on fail_stale_generation_job!';
+  END IF;
+  SELECT has_function_privilege('service_role', 'public.fail_stale_generation_job(UUID, INT)', 'EXECUTE') INTO v_has_service;
+  IF v_has_service = FALSE THEN
+    RAISE EXCEPTION 'Permission failure: service_role must have EXECUTE on fail_stale_generation_job!';
+  END IF;
+
+  -- 2.3 reserve_generation_quota: service_role ONLY
+  SELECT has_function_privilege('authenticated', 'public.reserve_generation_quota(UUID, INT, UUID)', 'EXECUTE') INTO v_has_auth;
+  IF v_has_auth = TRUE THEN
+    RAISE EXCEPTION 'Security failure: authenticated role must NOT have EXECUTE on reserve_generation_quota!';
+  END IF;
+  SELECT has_function_privilege('service_role', 'public.reserve_generation_quota(UUID, INT, UUID)', 'EXECUTE') INTO v_has_service;
+  IF v_has_service = FALSE THEN
+    RAISE EXCEPTION 'Permission failure: service_role must have EXECUTE on reserve_generation_quota!';
+  END IF;
+
+  -- 2.4 persist_version_question: service_role ONLY
+  SELECT has_function_privilege('authenticated', 'public.persist_version_question(UUID, UUID, INT, UUID, INT, TEXT, JSONB, TEXT, TEXT, BOOLEAN)', 'EXECUTE') INTO v_has_auth;
+  IF v_has_auth = TRUE THEN
+    RAISE EXCEPTION 'Security failure: authenticated role must NOT have EXECUTE on persist_version_question!';
+  END IF;
+  SELECT has_function_privilege('service_role', 'public.persist_version_question(UUID, UUID, INT, UUID, INT, TEXT, JSONB, TEXT, TEXT, BOOLEAN)', 'EXECUTE') INTO v_has_service;
+  IF v_has_service = FALSE THEN
+    RAISE EXCEPTION 'Permission failure: service_role must have EXECUTE on persist_version_question!';
+  END IF;
+
+  -- 2.5 heartbeat_generation_job: service_role ONLY
+  SELECT has_function_privilege('authenticated', 'public.heartbeat_generation_job(UUID, UUID)', 'EXECUTE') INTO v_has_auth;
+  IF v_has_auth = TRUE THEN
+    RAISE EXCEPTION 'Security failure: authenticated role must NOT have EXECUTE on heartbeat_generation_job!';
+  END IF;
+  SELECT has_function_privilege('service_role', 'public.heartbeat_generation_job(UUID, UUID)', 'EXECUTE') INTO v_has_service;
+  IF v_has_service = FALSE THEN
+    RAISE EXCEPTION 'Permission failure: service_role must have EXECUTE on heartbeat_generation_job!';
+  END IF;
+
+  -- 2.6 is_valid_variation_modes: internal service_role ONLY
+  SELECT has_function_privilege('authenticated', 'public.is_valid_variation_modes(JSONB)', 'EXECUTE') INTO v_has_auth;
+  IF v_has_auth = TRUE THEN
+    RAISE EXCEPTION 'Security failure: authenticated role must NOT have EXECUTE on is_valid_variation_modes!';
+  END IF;
+
+  -- 2.7 Client functions: save_generation_config & claim_generation_job
+  SELECT has_function_privilege('authenticated', 'public.save_generation_config(UUID, INT, JSONB, JSONB)', 'EXECUTE') INTO v_has_auth;
   IF v_has_auth = FALSE THEN
     RAISE EXCEPTION 'Permission failure: authenticated role must have EXECUTE on save_generation_config!';
   END IF;
 
-  RAISE NOTICE 'Step 2: Least privilege permissions verified.';
+  SELECT has_function_privilege('authenticated', 'public.claim_generation_job(UUID, BOOLEAN, UUID)', 'EXECUTE') INTO v_has_auth;
+  IF v_has_auth = FALSE THEN
+    RAISE EXCEPTION 'Permission failure: authenticated role must have EXECUTE on claim_generation_job!';
+  END IF;
+
+  RAISE NOTICE 'Step 2: Least privilege permissions for all 7 RPCs and helpers verified.';
 END $$;
 
 -- ----------------------------------------------------------------------------

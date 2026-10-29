@@ -1,13 +1,15 @@
 -- ============================================================================
--- Migration 004 (v4): Atomic Save Generation Config RPC & Shared Helpers
+-- Migration 004 (v5): Atomic Save Generation Config RPC & Shared Helpers
 -- Part A: Shared Helpers, Triggers & Partial Index
 -- Part B: Hardened save_generation_config RPC
 --
--- Security, Concurrency & Data Normalization Hardening:
+-- Security, Concurrency & Data Normalization Hardening (Review v4 Resolution):
 --   - current_role(): Guaranteed non-NULL ('anon' fallback).
---   - is_valid_variation_modes(): Case-expression guards against SQL evaluation order bugs,
---     checks for NULL elements, normalizes case, and runs in pg_catalog search_path.
---   - Data Normalization: Normalizes modes to lower(trim()) before persisting to DB.
+--   - is_valid_variation_modes(): Declared STABLE (collation-aware lower()),
+--     CASE-expression guards against SQL evaluation order bugs,
+--     strictly internal (REVOKED from PUBLIC, anon, authenticated).
+--   - Data Normalization: Normalizes modes to lower(trim()) with deterministic ORDER BY.
+--   - Unique Index Detection: Uses indnkeyatts = 1, indexprs IS NULL, indpred IS NULL.
 --   - TOCTOU Elimination: Locks both source_questions and question_blueprints FOR SHARE.
 --   - Schema Invariants: Verifies non-partial, valid unique index and guarantees updated_at NOT NULL.
 -- ============================================================================
@@ -58,7 +60,7 @@ CREATE TRIGGER trg_generation_configs_updated_at
 BEFORE UPDATE ON public.generation_configs
 FOR EACH ROW EXECUTE FUNCTION public.tg_set_updated_at();
 
--- 5. Ensure active_job_id column exists on exam_sessions before index creation
+-- 5. Ensure active_job_id and last_progress_at columns exist on exam_sessions before index creation
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -70,6 +72,16 @@ BEGIN
     ALTER TABLE public.exam_sessions 
       ADD COLUMN active_job_id UUID NULL;
   END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_schema = 'public' 
+      AND table_name = 'exam_sessions' 
+      AND column_name = 'last_progress_at'
+  ) THEN
+    ALTER TABLE public.exam_sessions 
+      ADD COLUMN last_progress_at TIMESTAMPTZ NULL;
+  END IF;
 END $$;
 
 -- 6. Partial index for recovery job (scans only active generating sessions)
@@ -77,11 +89,11 @@ CREATE INDEX IF NOT EXISTS idx_exam_sessions_active_job
   ON public.exam_sessions (updated_at)
   WHERE active_job_id IS NOT NULL AND status = 'generating';
 
--- 7. Helper: Validate variation modes (CASE guards against SQL short-circuit evaluation order)
+-- 7. Helper: Validate variation modes (STABLE due to collation-dependent lower(); CASE guards execution order)
 CREATE OR REPLACE FUNCTION public.is_valid_variation_modes(p_modes JSONB)
 RETURNS BOOLEAN
 LANGUAGE sql
-IMMUTABLE
+STABLE
 SET search_path = pg_catalog, pg_temp
 AS $$
   SELECT CASE 
@@ -102,8 +114,9 @@ AS $$
   END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.is_valid_variation_modes(JSONB) FROM PUBLIC, anon;
-GRANT  EXECUTE ON FUNCTION public.is_valid_variation_modes(JSONB) TO authenticated, service_role;
+-- Restricted strictly: internal helper for save_generation_config
+REVOKE EXECUTE ON FUNCTION public.is_valid_variation_modes(JSONB) FROM PUBLIC, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION public.is_valid_variation_modes(JSONB) TO service_role;
 
 -- ----------------------------------------------------------------------------
 -- Part B. Generation Config Schema Hardening & RPC
@@ -112,17 +125,19 @@ GRANT  EXECUTE ON FUNCTION public.is_valid_variation_modes(JSONB) TO authenticat
 -- 8. Ensure non-partial, valid unique constraint & updated_at on generation_configs
 DO $$
 BEGIN
-  -- Unique constraint on session_id (checks pg_index for valid, non-partial single-column unique index)
+  -- Unique constraint on session_id (checks pg_index using indnkeyatts = 1 to correctly handle INCLUDE columns)
   IF NOT EXISTS (
     SELECT 1
     FROM pg_index i
-    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)
+    JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = i.indkey[0]
     WHERE i.indrelid = 'public.generation_configs'::regclass
       AND i.indisunique
       AND i.indisvalid
       AND i.indpred IS NULL
+      AND i.indexprs IS NULL
+      AND i.indnkeyatts = 1
       AND a.attname = 'session_id'
-      AND array_length(i.indkey, 1) = 1
+      AND NOT a.attisdropped
   ) THEN
     ALTER TABLE public.generation_configs
       ADD CONSTRAINT uq_generation_configs_session_id UNIQUE (session_id);
@@ -210,9 +225,9 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
-  -- Normalize modes (lower and trim, deduplicated) to ensure consistent worker lookup
+  -- Normalize modes (lower, trim, deduplicated with deterministic alphabetical ordering)
   SELECT COALESCE(
-    jsonb_agg(DISTINCT lower(trim(m.value))),
+    jsonb_agg(DISTINCT lower(trim(m.value)) ORDER BY lower(trim(m.value))),
     '[]'::jsonb
   ) INTO v_normalized_modes
   FROM jsonb_array_elements_text(p_active_variation_modes) AS m(value);
