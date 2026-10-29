@@ -73,7 +73,7 @@ Nhằm tạo trải nghiệm mượt mà, trực quan cho giảng viên và lo�
 5. ✅ **Hoàn thành** (`done`): Câu hỏi đã sẵn sàng.
 
 > [!TIP]
-> Toàn bộ quá trình kiểm tra và tinh chỉnh diễn ra **hoàn toàn tự động**. Giảng viên không cần thao tác bấm "sinh bù" ở Stage 2. Nút "Tạo lại câu này" sẽ xuất hiện ở Stage 3 nếu giảng viên muốn đổi biến thể cụ thể sau khi xem toàn bộ đề thi.
+> Quá trình kiểm tra và tinh chỉnh diễn ra **tự động** trong giới hạn retry của hệ thống. Nếu phiên kết thúc ở trạng thái `partial_generated` (chạm trần hạn ngạch API hoặc câu không đạt nghiệm đẹp), các câu chưa hoàn thành sẽ mang trạng thái "Chưa sinh" và giao diện hiển thị nút **"Sinh bù các câu còn thiếu"** (`POST /api/sessions/:id/retry-generation`). Khi chuyển sang Stage 3, giảng viên có thể bấm **"Sinh bù câu này"** đối với câu bị thiếu; tính năng đổi biến thể cho câu đã sinh sẽ sẵn sàng khi hoàn tất tích hợp API Stage 3.
 
 ---
 
