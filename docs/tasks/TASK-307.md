@@ -1,6 +1,6 @@
 # TASK-307 — Plan và bàn giao: XeLaTeX, Markdown và ZIP Bundler
 
-- Trạng thái: **Draft — plan/input**, ngày 29/10/2026; chưa triển khai code W3.
+- Trạng thái: **Draft — bundler đã triển khai bằng fixture**, ngày 29/10/2026; Đạt yêu cầu triển khai ngay trong phiên này, chưa nghiệm thu E2E.
 - Nguồn: W3_ASSIGNMENT.md v2.1 (28/10/2026) và w3.md do Đạt cung cấp ngoài repo. Chưa có đường dẫn GitHub được xác minh cho bản v2.1; chờ Duy cung cấp nguồn chung. Không lấy bản W3 cũ làm assignment mới.
 - Owner: Trương Thành Đạt (`Thanhdat3010`); reviewer: Tâm (`AI-WFox`), **đề xuất**, chưa coi đã nhận review.
 - Nhánh: `feat/dat-task-307-dual-export-bundler`, target `dev`; baseline `dc62d3c1d8616316771f8c1dc5a8a1ab56a2ff8c`.
@@ -66,9 +66,13 @@ Các đề xuất chưa là quyết định đã chốt. Reviewer Tâm mới ở
 - Pytest exporter và backend/Blueprint regression, Ruff/Mypy; requirements/resources và Docker CI trên head cuối nếu thay dependency/image.
 - E2E với Duy/Tâm/Hùng: approved snapshot → PDF → ZIP → Storage → Signed URL → tải/giải nén/mở file; unit ZIP không thay nghiệm thu chain.
 
+## Quyết định sau phản hồi Duy
+
+Duy đã chốt ZIP/filenames và input approved thật chiều 02/11 tại [PR #27](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/27#issuecomment-6485753431). Xem [handoff bundler](../export-w3-bundler.md) cho typed boundary/bytes/lỗi/giới hạn. Các câu hỏi phía trên giữ lịch sử plan; chưa coi schema snapshot/PDF/Storage đã được mọi owner chấp nhận.
+
 ## Bàn giao — trạng thái thực tế
 
-- Đã làm: đọc assignment v2.1, baseline, plan PR #24/#25; lập M2 và đề xuất boundary/filename/contract.
-- Đã kiểm: đọc tĩnh dependency và file ownership; docs checks thực tế ghi tại PR body.
-- Chưa làm: implementation, renderer/compiler, upload hoặc test tích hợp W3. Chưa có review/chấp nhận.
-- Bước tiếp: chốt input/output trên Conversation, làm phần fixture độc lập từ 30/10 và tích hợp input thật theo lịch.
+- Đã làm: boundary models, Jinja2 XeLaTeX template, Markdown, ZIP in-memory và metadata; Jinja2/MarkupSafe trong requirements/lock. Không đổi Dockerfile/package __init__ chung.
+- Đã kiểm: 24 exporter tests đạt; 1 compile test skip vì thiếu XeLaTeX. Ruff/Mypy/pip check đạt. Kết quả full regression/head trong PR body.
+- Chưa kiểm: XeLaTeX compile/layout, dữ liệu approved/PDF thật, mapper DB, E2E Storage/Signed URL. PDF fixture không chứng nhận renderer của Tâm.
+- Chưa có reviewer xác minh/GitHub Approve; giữ Draft cho phần phụ thuộc thiếu.
