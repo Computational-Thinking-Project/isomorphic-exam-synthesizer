@@ -1,5 +1,39 @@
 # TASK-207b — Plan và bàn giao W2: Background generation, lưu tiến độ và SSE
 
+## Cập nhật CI của PR30 — 29/10/2026
+
+- PR: [#30](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30), nhánh `feat/task-207c-runtime-metrics`, trạng thái Draft — coding. Đã merge dev bằng `92c99d7` và đưa ba plan lên PR tại `adcb9b7`; snapshot lập plan bên dưới được giữ làm lịch sử.
+- Đã sửa fixture `ai_case` bằng `pytest_asyncio.fixture`, hoạt động với strict từ root và auto từ backend. Commit `80332c5` — `test(generation): declare async integration fixture explicitly`.
+- Đã sửa test persistence/resume: callback đầu lưu kết quả thực nhận, callback sau ném đúng ConnectionError mô phỏng; chủ động kiểm version1/version2 đến trước bằng Event nằm ngoài callback lock. Resume dùng target/raw result đã commit và chỉ cấp lại payload của candidate chưa lưu. Commit `9486f6e` — `test(generation): make persistence resume checks order independent`.
+- Regression từ root phát hiện thêm hai trường hợp của một test async cleanup metrics chưa có marker. Bổ sung đúng `pytest.mark.asyncio` trong `backend/tests/observability/test_runtime_registry.py`, không đổi code metrics. Commit `222e647` — `test(observability): mark async cleanup checks explicitly`. Đây là phát hiện thêm thuộc cùng lỗi tương thích strict/auto; file test này bổ sung ngoài danh sách dự kiến ban đầu.
+- Không thay API, adapter production/callback lock, deadline, dependencies hoặc CI workflow. Không cần input mới để sửa tests; các gate DB/AI/Auth/FE/OPS của W2 trong plan vẫn giữ nguyên.
+
+### Kiểm chứng thực chạy
+
+Container Python3.11 không mạng, source mount read-only, không mount `.env`; cài dependencies từ wheels có sẵn bằng `--no-index --require-hashes -r backend/requirements.lock`, `pip check` đạt. Auth environment dùng giá trị giả của CI. Provider SDK và persistence là fixtures; service/gateway/validator dùng code thật.
+
+| Kiểm tra | Lệnh / cách thực hiện | Kết quả |
+| --- | --- | --- |
+| Integration riêng | `python -m pytest backend/tests/generation/test_ai_batch_integration.py --asyncio-mode=strict -q`, rồi auto | 15 passed mỗi chế độ |
+| Stability resume | `-k save_failure --asyncio-mode=strict` và auto, mỗi chế độ10lần; mỗi lần gồm hai thứ tự callback | 20 vòng, tổng40ca đạt |
+| Hai file test đã sửa | `python -m pytest backend/tests/generation/test_ai_batch_integration.py backend/tests/observability/test_runtime_registry.py --asyncio-mode=strict -q`, rồi auto | 52 passed mỗi chế độ |
+| Regression từ root có pyproject.toml gốc | `python -m pytest backend/tests scripts/blueprint/tests -q` | 1044 passed, 1 skipped, 21 warnings, 85.26s |
+| Regression từ backend | `python -m pytest tests -q` | 1003 passed, 21 warnings, 56.22s |
+| Ruff | `ruff check backend/app scripts/blueprint backend/tests/generation/test_ai_batch_integration.py backend/tests/observability/test_runtime_registry.py` | Đạt |
+| Mypy | `mypy backend/app --ignore-missing-imports` | Đạt, 79 source files |
+| Format | `ruff format --check` hai file tests đã sửa | Đạt |
+| SymPy smoke | `parse_latex('x^2+1')` cho `x**2 + 1` | Đạt |
+
+Pytest thực chạy thêm `-p no:cacheprovider --tb=short --disable-warnings`; Ruff dùng `--no-cache`, Mypy cache đặt trong container tạm. Các kết quả là local, chưa xác nhận GitHub CI cho commits mới. Frontend không đổi; kết quả220tests/lint/build ở lượt chẩn đoán trước không được ghi thành lượt chạy mới.
+
+### Bàn giao sau sửa CI
+
+Code tests đã kiểm ở local `222e647`; chưa push hoặc đăng/cập nhật PR từ lượt triển khai. Chưa chạy live Supabase/Gemini/browser E2E hoặc lại toàn bộ Docker Compose. Các lỗi CI không phải nghiệm thu xong TASK207b/c. Khi Quỳnh push, cập nhật M3 bằng head mới và kiểm hai jobs trên GitHub. Nếu có finding review tương ứng thì phản hồi M5 cùng ID/thread là claimed_fixed; không tự đánh verified hay GitHub Approve.
+
+---
+
+## Snapshot M2 trước sửa CI — giữ nguyên nguồn và dependency lịch sử
+
 - Trạng thái: **Draft — plan/input**, ngày 29/10/2026 (Asia/Saigon); chưa triển khai trong lượt này.
 - Assignment: `w2_21_10.md` mục TASK-207b, bản Quỳnh cung cấp đang untracked; link/version W2 chung chờ Duy. [ADR0001](../adr/0001-confirm-before-blueprint.md) xác định confirm nguồn trước extraction; code chưa khớp không tự sửa acceptance.
 - Owner: Quỳnh / `nhatquynh1107` (BE2); phối hợp Duy, Đạt/Hùng, Tâm, Bội Anh và OPS. Reviewer đề xuất theo phần ảnh hưởng, chưa được xác nhận.
