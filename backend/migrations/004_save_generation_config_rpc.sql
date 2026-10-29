@@ -85,7 +85,9 @@ REVOKE EXECUTE ON FUNCTION public.is_valid_variation_modes(JSONB) FROM PUBLIC, a
 DO $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'uq_generation_configs_session_id'
+    SELECT 1 FROM pg_constraint 
+    WHERE conrelid = 'public.generation_configs'::regclass 
+      AND conname = 'uq_generation_configs_session_id'
   ) THEN
     ALTER TABLE public.generation_configs
       ADD CONSTRAINT uq_generation_configs_session_id UNIQUE (session_id);
@@ -130,7 +132,7 @@ BEGIN
   WHERE id = p_session_id
   FOR UPDATE;
 
-  IF v_session_user_id IS NULL THEN
+  IF NOT FOUND THEN
     RAISE EXCEPTION 'Session not found: %', p_session_id USING ERRCODE = 'P0002';
   END IF;
 

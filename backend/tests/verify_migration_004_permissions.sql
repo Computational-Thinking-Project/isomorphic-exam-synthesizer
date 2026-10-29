@@ -32,30 +32,30 @@ BEGIN
   END IF;
 
   -- Constraints on exam_sessions
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_quota_range') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.exam_sessions'::regclass AND conname = 'chk_quota_range') THEN
     RAISE EXCEPTION 'Missing constraint chk_quota_range on exam_sessions';
   END IF;
 
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_generating_has_job') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.exam_sessions'::regclass AND conname = 'chk_generating_has_job') THEN
     RAISE EXCEPTION 'Missing constraint chk_generating_has_job on exam_sessions';
   END IF;
 
   -- Constraints on exam_versions
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_exam_versions_session_code') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'public.exam_versions'::regclass AND conname = 'uq_exam_versions_session_code') THEN
     RAISE EXCEPTION 'Missing constraint uq_exam_versions_session_code on exam_versions';
   END IF;
 
   -- Partial unique index on version_questions
   IF NOT EXISTS (
     SELECT 1 FROM pg_indexes 
-    WHERE schemaname = 'public' AND indexname = 'idx_single_current_version_question'
+    WHERE schemaname = 'public' AND tablename = 'version_questions' AND indexname = 'idx_single_current_version_question'
   ) THEN
     RAISE EXCEPTION 'Missing unique index idx_single_current_version_question on version_questions';
   END IF;
 
   -- Unique constraint on generation_configs(session_id)
   IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'uq_generation_configs_session_id'
+    SELECT 1 FROM pg_constraint WHERE conrelid = 'public.generation_configs'::regclass AND conname = 'uq_generation_configs_session_id'
   ) THEN
     RAISE EXCEPTION 'Missing constraint uq_generation_configs_session_id on generation_configs';
   END IF;

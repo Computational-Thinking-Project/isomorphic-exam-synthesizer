@@ -23,6 +23,7 @@ BEGIN
   END IF;
 
   -- Backfill any unexpected NULLs before enforcing NOT NULL
+  UPDATE public.exam_sessions SET status = 'draft' WHERE status IS NULL;
   UPDATE public.exam_sessions SET gemini_call_count = 0 WHERE gemini_call_count IS NULL;
   UPDATE public.exam_sessions SET active_job_id = NULL WHERE status <> 'generating' AND active_job_id IS NOT NULL;
   UPDATE public.exam_sessions SET status = 'failed' WHERE status = 'generating' AND active_job_id IS NULL;
@@ -34,18 +35,30 @@ BEGIN
     ALTER COLUMN gemini_call_count SET DEFAULT 0;
 
   -- Add CHECK constraints
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_quota_range') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conrelid = 'public.exam_sessions'::regclass 
+      AND conname = 'chk_quota_range'
+  ) THEN
     ALTER TABLE public.exam_sessions
       ADD CONSTRAINT chk_quota_range CHECK (gemini_call_count BETWEEN 0 AND 250);
   END IF;
 
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_generating_has_job') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conrelid = 'public.exam_sessions'::regclass 
+      AND conname = 'chk_generating_has_job'
+  ) THEN
     ALTER TABLE public.exam_sessions
       ADD CONSTRAINT chk_generating_has_job CHECK (status <> 'generating' OR active_job_id IS NOT NULL);
   END IF;
 
   -- Ensure unique constraint on exam_versions(session_id, version_code)
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_exam_versions_session_code') THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conrelid = 'public.exam_versions'::regclass 
+      AND conname = 'uq_exam_versions_session_code'
+  ) THEN
     ALTER TABLE public.exam_versions
       ADD CONSTRAINT uq_exam_versions_session_code UNIQUE (session_id, version_code);
   END IF;
@@ -53,7 +66,9 @@ BEGIN
   -- Ensure partial unique index on version_questions(version_id, source_question_id) for current questions
   IF NOT EXISTS (
     SELECT 1 FROM pg_indexes 
-    WHERE schemaname = 'public' AND indexname = 'idx_single_current_version_question'
+    WHERE schemaname = 'public' 
+      AND tablename = 'version_questions'
+      AND indexname = 'idx_single_current_version_question'
   ) THEN
     CREATE UNIQUE INDEX idx_single_current_version_question
       ON public.version_questions (version_id, source_question_id)
@@ -105,7 +120,7 @@ BEGIN
   WHERE id = p_session_id
   FOR UPDATE;
 
-  IF v_session_user_id IS NULL THEN
+  IF NOT FOUND THEN
     RAISE EXCEPTION 'Session not found: %', p_session_id USING ERRCODE = 'P0002';
   END IF;
 
@@ -187,7 +202,7 @@ $$;
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.reserve_generation_quota(
   p_session_id UUID,
-  p_calls_requested INT DEFAULT 1,
+  p_calls_requested INT,
   p_job_token UUID
 )
 RETURNS JSONB
@@ -219,7 +234,7 @@ BEGIN
   WHERE id = p_session_id
   FOR UPDATE;
 
-  IF v_session_user_id IS NULL THEN
+  IF NOT FOUND THEN
     RAISE EXCEPTION 'Session not found: %', p_session_id USING ERRCODE = 'P0002';
   END IF;
 
@@ -305,7 +320,7 @@ BEGIN
   WHERE id = p_session_id
   FOR UPDATE;
 
-  IF v_session_status IS NULL THEN
+  IF NOT FOUND THEN
     RAISE EXCEPTION 'Session not found: %', p_session_id USING ERRCODE = 'P0002';
   END IF;
 
@@ -428,7 +443,7 @@ BEGIN
   WHERE id = p_session_id
   FOR UPDATE;
 
-  IF v_session_user_id IS NULL THEN
+  IF NOT FOUND THEN
     RAISE EXCEPTION 'Session not found: %', p_session_id USING ERRCODE = 'P0002';
   END IF;
 
@@ -494,7 +509,7 @@ BEGIN
   WHERE id = p_session_id
   FOR UPDATE;
 
-  IF v_current_status IS NULL THEN
+  IF NOT FOUND THEN
     RAISE EXCEPTION 'Session not found: %', p_session_id USING ERRCODE = 'P0002';
   END IF;
 
