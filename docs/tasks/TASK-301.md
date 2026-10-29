@@ -1,104 +1,126 @@
 # TASK-301 — Plan và Bàn Giao: API Thẩm Định 1-1, Vòng Đời `is_current`, Revert Nguyên Tử & Safe Re-shuffle Invalidation
 
-- **Nguồn giao việc:** [W3_ASSIGNMENT.md](../../W3_ASSIGNMENT.md) (v2.1; 28/10/2026), [w3.md](../../w3.md)
+- **Nguồn giao việc:** [W3_ASSIGNMENT.md](W3_ASSIGNMENT.md) (v2.1; 28/10/2026), [w3.md](../../w3.md)
 - **Phụ trách:** Duy (`johannguyen015` — Lead); Hùng (`benalexx007` — Contributor)
 - **Reviewer:** Hùng (`benalexx007` — đã chốt)
 - **Repo/nhánh:** `feat/duy-task-301-review-lifecycle-api`; PR: [Draft PR URL](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/new/feat/duy-task-301-review-lifecycle-api)
 - **Hạn đợt:** tối thứ 3 03/11/2026; **ETA task:** Thứ 7 31/10/2026 (Duy xác nhận)
+- **Phiên bản:** v6.0 (Production-Grade & Merge-Ready)
 
 ---
 
-## Mình cần làm gì?
+## 1. Sáu Nguyên Tắc Bất Biến (Phải Tuân Thủ Tuyệt Đối)
 
-### Hành vi / Tiêu chí đạt:
-1. **Kiểm soát phiên & Bảo vệ quyền sở hữu:**
-   - Mọi endpoint thẩm định đều qua `assert_ownership` xác minh quyền sở hữu tài nguyên của user.
-   - Kiểm tra `session.status`: nếu đang `generating` $\rightarrow$ trả về `HTTP 409 Conflict`; nếu đã `approved` hoặc `exported` $\rightarrow$ trả về `HTTP 423 Locked`.
-2. **Endpoint Chấp nhận câu hỏi (`POST /api/sessions/{session_id}/questions/{version_question_id}/accept`):**
-   - Xác minh bản ghi có `is_current = true`.
-   - Cập nhật `status = "approved"`, ghi nhận bản ghi audit log vào `review_logs` (`action_type = "ACCEPT"`).
-3. **Endpoint Từ chối & Sinh lại biến thể (`POST /api/sessions/{session_id}/questions/{version_question_id}/reject`):**
-   - **Trần Quota Thẩm định độc lập:** Kiểm tra `exam_sessions.gemini_review_calls < 30`. Nếu đã chạm 30 lượt $\rightarrow$ từ chối ngay với mã `ERR_REVIEW_QUOTA_EXHAUSTED` (HTTP 429). Mỗi lượt gọi AI sinh lại thành công/thất bại đều tính `gemini_review_calls += 1`.
-   - **Kiểm soát đồng thời:** Sử dụng `asyncio.Semaphore(1)` theo từng `session_id` để tránh race condition khi người dùng bấm reject dồn dập.
-   - **Mô hình 2 Transaction Ngắn (Chống cạn kiệt DB Connection Pool):**
-     - *Short DB Transaction 1:* Kiểm tra `is_current = true`, cập nhật `status = "regenerating"`, `updated_at = now()` và commit giải phóng connection ngay.
-     - *AI Regeneration ngoài DB Transaction (10–30s):* Gọi module TASK-304 sinh biến thể câu hỏi đạt chuẩn toán học + lời giải chi tiết mới. Tuyệt đối không giữ DB connection.
-     - *Short DB Transaction 2:*
-       - Đánh dấu câu cũ: `is_current = false`, `status = "rejected"`.
-       - Chèn câu mới: `is_current = true`, `regenerated_from_id = old_id`, `status = "pending_review"`.
-       - Ghi audit log vào `review_logs` (`action_type = "REJECT"`, `reason = reason`).
-4. **Cơ chế Tự động Mở Khóa Crash (Stale Regeneration Guard):**
-   - Quét các câu có `status = "regenerating"` mà `updated_at < now() - interval '3 minutes'` $\rightarrow$ tự động giải phóng về `pending_review` kèm ghi log `REJECT_FAILED`.
-5. **Quy trình Hoàn nguyên Nguyên tử (Atomic Revert Flow):**
-   - Endpoint `POST /api/sessions/{session_id}/questions/{version_question_id}/revert`: Thực thi trong 1 PostgreSQL Transaction duy nhất:
-     - Đánh dấu biến thể hiện tại: `is_current = false`.
-     - Chèn bản ghi mới sao chép nguyên văn từ câu gốc (`source_questions`): `is_current = true`, `is_reverted = true`, `status = "approved"`, `regenerated_from_id = old_id`.
-     - Ghi `review_logs` (`action_type = "REVERT"`).
-6. **Vô hiệu hóa Trạng thái Hoán vị An toàn (Safe Re-shuffle Invalidation):**
-   - Nếu thực hiện Reject hoặc Revert khi phiên đã từng bấm Shuffle (`exam_versions.is_finalized = true`) $\rightarrow$ tự động hạ trạng thái phiên về `generated` và reset `exam_versions.is_finalized = false`. Bắt buộc phải bấm Shuffle lại trước khi Approve.
-7. **Endpoint Theo dõi Tiến độ Duyệt (`GET /api/sessions/{session_id}/review/progress`):**
-   - Trả về JSON: `required_count`, `current_count`, `approved_count`, danh sách câu chưa duyệt, `is_complete`, `can_finalize`.
-
-### Ngoài phạm vi:
-- Giữ DB connection trong lúc chờ Gemini sinh biến thể.
-- Triển khai UI/UX Frontend (đã thống nhất hoãn toàn bộ frontend trong Tuần 3).
-- Chỉnh sửa các bảng CSDL không thuộc phạm vi Stage 3 review.
-
-### Hiện đã có:
-- Hạ tầng Auth Supabase JWT, `assert_ownership` trong `backend/app/api/dependencies.py` (đã pass CI ở Stage 1 & 2).
-- Bảng `exam_sessions`, `exam_versions`, `version_questions` cơ bản.
-- Pipeline kiểm định toán học 4 tầng từ Stage 2 (`backend/app/services/validator/`).
+1. **Single Source of Truth cho Quota:** Chỉ một transaction được phép thay đổi `gemini_review_calls`: TX1 (+3), TX2 (refund `3 - actual_k`), Emergency Rollback (-3). Không có nơi nào khác được can thiệp vào quota.
+2. **Idempotency qua UNIQUE Constraint:** Cột `regeneration_id UUID NULL UNIQUE` trên câu mới là rào chắn CSDL ngăn chặn double-insert và double-refund khi rớt mạng hoặc retry.
+3. **Atomic Ownership qua Rowcount:** Chỉ tiến trình nào UPDATE được `status = 'regenerating' -> X` với `rowcount == 1` mới sở hữu quyền refund/chuyển trạng thái. Ai `rowcount == 0` tuyệt đối không thao tác.
+4. **Thứ tự Invariant:** UPDATE câu cũ (`is_current = false`) trước $\rightarrow$ INSERT câu mới (`is_current = true`) sau để bảo vệ Partial Unique Index.
+5. **Không giữ kết nối DB khi gọi AI:** Tách biệt hoàn toàn TX1, pha gọi Gemini AI (không giữ DB connection), và TX2.
+6. **Concurrency Model B:** Cho phép reject các câu khác nhau song song; không block thao tác Accept trên câu khác khi có câu đang regenerating; chặn Shuffle/Finalize nếu còn câu regenerating.
 
 ---
 
-## File và thứ tự triển khai từ thứ 6 (30/10/2026)
+## 2. Ma Trận Trạng Thái Hệ Thống (State Transition Matrix)
 
-| Lượt / file dự kiến | Mục đích sửa | Output mong muốn | Cần input gì trước | Cách kiểm |
+### 2.1. Ma trận Trạng thái Phiên (Session Level Guards)
+| Endpoint | Session `generating` | Session `generated` / `reviewed` | Session `approved` / `exported` |
+|---|---|---|---|
+| `POST .../accept` | `HTTP 409 Conflict` | ✅ Cho phép duyệt độc lập | `HTTP 423 Locked` |
+| `POST .../reject` | `HTTP 409 Conflict` | ✅ Cho phép xử lý (nếu quota còn đủ $\ge 3$) | `HTTP 423 Locked` |
+| `POST .../revert` | `HTTP 409 Conflict` | ✅ Cho phép xử lý độc lập | `HTTP 423 Locked` |
+| `GET .../progress`| ✅ Trả về tiến độ | ✅ Trả về tiến độ (Read-only) | ✅ Trả về tiến độ (Read-only) |
+
+*Nguyên tắc:* Nếu session đang có câu `regenerating`, endpoint `GET /progress` trả về `can_finalize = False` để ngăn chặn shuffle khi chưa ổn định.
+
+### 2.2. Ma trận Trạng thái Câu hỏi (Question Level Guards)
+| Hành động | Câu `is_current = false` | Câu `pending_review` (`is_current=true`) | Câu `regenerating` (`is_current=true`) | Câu `approved` (`is_current=true`) |
 |---|---|---|---|---|
-| Lượt 1: `backend/app/models/schemas.py` | Bổ sung Pydantic models cho Review request/response | `ReviewActionResponse`, `RejectQuestionRequest`, `ReviewProgressResponse` | Thống nhất API conventions | `mypy backend/app/models/schemas.py` |
-| Lượt 2: `backend/app/services/review/service.py` | Xây dựng logic nghiệp vụ: 2 short transactions, quota guard, stale guard, atomic revert | ReviewService với các hàm `accept_question`, `reject_and_regenerate`, `revert_to_source`, `get_review_progress` | TASK-302 (Schema & Repo từ Hùng), TASK-304 (Mock AI từ Đạt) | Unit test mock DB & AI calls |
-| Lượt 3: `backend/app/api/routes/review.py` | Router FastAPI nối các endpoints `/accept`, `/reject`, `/revert`, `/progress` | Bộ 4 endpoints hoạt động theo chuẩn RESTful | Router cấu hình trong `backend/app/main.py` | FastAPI TestClient / pytest |
-| Lượt 4: `backend/tests/services/test_review_lifecycle.py` | Viết bộ integration test kiểm thử vòng đời thẩm định | Suite test tự động bao phủ 100% các ca: accept, reject 2-tx, revert, 30 calls quota, stale guard, safe invalidation | DB test environment | `pytest backend/tests/services/test_review_lifecycle.py` |
+| **Accept** | `HTTP 400 Bad Request` | ✅ Chuyển `approved` (`rowcount=1`) | `HTTP 409 Conflict` | `HTTP 200 OK` (Idempotent) |
+| **Reject** | `HTTP 400 Bad Request` | ✅ Reserve 3 calls & Kích hoạt 2-TX | `HTTP 409 Conflict` | ✅ Cho phép reject lại (hạ shuffle) |
+| **Revert** | `HTTP 400 Bad Request` | ✅ Nếu đã từng biến thể $\rightarrow$ Revert; Nếu chưa từng biến thể $\rightarrow$ `HTTP 400` | `HTTP 409 Conflict` | ✅ Nếu đã là bản revert $\rightarrow$ `HTTP 200` Idempotent |
 
 ---
 
-## Đầu vào và câu hỏi — giải đáp trên Draft PR trong thứ 5 (29/10/2026)
+## 3. Kiến Trúc Chi Tiết & Giải Pháp Kỹ Thuật
 
-| Cần ai/task nào | Câu hỏi/input cụ thể | Cần trước | ETA bên cung cấp xác nhận | Phần làm ngay/chờ | Link trả lời/contract |
-|---|---|---|---|---|---|
-| Hùng (`benalexx007` / TASK-302) | Migration SQL: cột `canonical_*`, `is_current`, `regenerated_from_id`, `is_reverted`, Partial Unique Index `uq_version_questions_current`, bảng `review_logs`, cột `gemini_review_calls` | Trưa Thứ 6 (30/10) | Trưa Thứ 6 (30/10) | Nháp Router & Schema Pydantic trước, chờ SQL để chạy tích hợp DB | PR TASK-302 |
-| Đạt (`Thanhdat3010` / TASK-304) | Pydantic Schema output & Mock hàm `regenerate_question(session_id, question_id, reason)` | Trưa Thứ 6 (30/10) | Trưa Thứ 6 (30/10) | Viết khung 2-transactions với mock data trước, chờ AI engine thật | PR TASK-304 |
+### 3.1. Idempotency TX2 & Emergency Rollback qua `regeneration_id`
+- Thêm cột `regeneration_id UUID NULL` và Partial Unique Index `uq_version_questions_regeneration` trên `version_questions`.
+- Sinh `regeneration_id = uuid4()` 1 lần duy nhất tại Service layer cho mỗi request reject.
+- **TX2 (`complete_regeneration_tx`):**
+  - SELECT theo `regeneration_id`: nếu đã tồn tại $\rightarrow$ trả về kết quả cũ (idempotent, không insert/refund lần 2).
+  - UPDATE câu cũ `status = 'rejected'` với điều kiện `status = 'regenerating'`: chỉ tiếp tục nếu `rowcount == 1`.
+  - INSERT câu mới mang `regeneration_id`, kế thừa đầy đủ `source_question_id`, `version_id`.
+  - Refund phần dư `3 - actual_calls` và ghi log `review_logs` (`action_type = 'REJECT'`).
+- **Emergency Rollback (`emergency_rollback_tx`):**
+  - SELECT theo `regeneration_id`: nếu câu mới đã commit $\rightarrow$ return `False` ngay (không refund, không đổi trạng thái).
+  - UPDATE câu cũ `status = 'pending_review'` với điều kiện `status = 'regenerating'`: chỉ khi `rowcount == 1` mới trừ quota -3 và ghi log `REJECT_FAILED`.
 
-- **Output Duy cần giao cho task sau:**
-  - Cho Tâm (TASK-303): Toàn bộ câu hỏi biến thể đạt `status = approved`, sẵn sàng để Shuffler đọc dữ liệu `canonical_*` vào sáng Chủ Nhật 01/11.
-  - Cho Đạt (TASK-304): `session_id`, `question_id`, `reason` từ body request reject của người dùng.
-- **Lịch có khả thi không?** Khả thi. Đã có kế hoạch dùng mock function của Đạt trong Thứ 6 nếu AI engine chưa hoàn tất 100%, bảo đảm không bị nghẽn tiến độ.
-- **Quyết định đã thống nhất:** Không giữ DB connection quá 1s trong suốt quá trình người dùng reject; mọi cuộc gọi AI chạy ngoài transaction.
+### 3.2. Công Thức `required_count` Đa Version Bất Biến
+```sql
+SELECT COUNT(*) 
+FROM (
+    SELECT DISTINCT version_id, source_question_id 
+    FROM version_questions vq
+    JOIN exam_versions ev ON vq.version_id = ev.id
+    WHERE ev.session_id = :session_id
+      AND vq.source_question_id IS NOT NULL
+) AS required_slots;
+```
+Bảo đảm phiên có $N$ mã đề $\times$ $M$ câu luôn ra đúng $N \times M$ slots câu hỏi, bất biến qua reject và revert.
+
+### 3.3. Quota Max Reservation (Hằng Số 3 Calls)
+- Hằng số: `MAX_AI_CALLS_PER_REJECT = 3` (khớp với hợp đồng TASK-304: 1 initial call + tối đa 2 math retries).
+- TX1: Tăng quota +3 (`WHERE calls + 3 <= 30`). Nếu không đủ $\rightarrow$ `HTTP 429 ERR_REVIEW_QUOTA_EXHAUSTED`.
+- TX2: Hoàn lại `3 - actual_calls`.
+- AI fail / timeout: Hoàn lại toàn bộ 3 calls.
+
+### 3.4. State Guards & Lock Registry
+- **Chặn Revert câu chưa từng biến thể:** Ném ngay `HTTP 400 ERR_QUESTION_NOT_REGENERATED`.
+- **Accept SQL Check-and-Act:** UPDATE câu `pending_review` $\rightarrow$ `approved` với kiểm tra rowcount.
+- **Lock Registry:** Dùng `WeakValueDictionary[UUID, asyncio.Lock]` đồng bộ trong event loop, giải phóng tự động qua GC.
 
 ---
 
-## Kế hoạch tự kiểm
+## 4. Kế Hoạch File Triển Khai
 
-1. **Kiểm tra Chấp nhận (Accept):**
-   - Gọi `POST .../accept` khi `is_current = true` $\rightarrow$ trả về 200, DB có `status = "approved"`, `review_logs` có bản ghi `ACCEPT`.
-   - Gọi `POST .../accept` khi `is_current = false` $\rightarrow$ trả về 400/404 lỗi không hợp lệ.
-2. **Kiểm tra Từ chối (Reject) & 2 Transactions:**
-   - Gọi `POST .../reject` với lý do cụ thể $\rightarrow$ xác nhận trạng thái câu cũ thành `is_current = false, status = "rejected"`, câu mới có `is_current = true, status = "pending_review"`, `review_logs` có bản ghi `REJECT`.
-   - Giả lập tải: Kiểm tra không có DB connection nào bị chiếm dụng trong lúc hàm AI đang ngủ 5 giây.
-3. **Kiểm tra Hạn mức Quota Thẩm định (30 calls):**
-   - Gọi reject liên tiếp 30 lần $\rightarrow$ lần thứ 31 trả về `HTTP 429 Too Many Requests` (`ERR_REVIEW_QUOTA_EXHAUSTED`).
-4. **Kiểm tra Stale Regeneration Guard:**
-   - Cố tình chèn 1 câu mang `status = "regenerating"` với `updated_at` cách đây 4 phút $\rightarrow$ gọi `GET .../progress` $\rightarrow$ xác nhận câu tự động được phục hồi về `pending_review` kèm log `REJECT_FAILED`.
-5. **Kiểm tra Hoàn nguyên Nguyên tử (Revert):**
-   - Gọi `POST .../revert` $\rightarrow$ câu biến thể bị hạ `is_current = false`, bản ghi mới được tạo chép nguyên văn câu gốc với `is_current = true, is_reverted = true, status = "approved"`.
-6. **Kiểm tra Vô hiệu hóa Shuffle (Safe Invalidation):**
-   - Bật giả lập `exam_versions.is_finalized = true` $\rightarrow$ gọi reject hoặc revert $\rightarrow$ xác minh `is_finalized` bị reset về `false` và session bị hạ về `generated`.
+| Lượt / file | Mục đích | Output mong muốn | Cách kiểm |
+|---|---|---|---|
+| Lượt 0: Schema & Migrations | Bổ sung `regeneration_id` và audit log | `004_stage3_review_and_shuffle.sql` (Hùng) hoặc `005_regeneration_id.sql` | SQL schema check |
+| Lượt 1: `backend/app/models/schemas.py` | Schemas, `ReserveResult` enum, `ReviewDomainException` | Request/Response models, Error handlers | `mypy backend/app/models/schemas.py` |
+| Lượt 2: `backend/app/services/review/repository.py` | Thao tác DB với `rowcount == 1`, TX2 idempotent, emergency rollback | Repository functions | Unit tests mock DB |
+| Lượt 3: `backend/app/services/review/service.py` | Orchestration TX1 $\rightarrow$ AI timeout 45s $\rightarrow$ TX2 retry backoff | ReviewService, SessionLockRegistry | Service tests |
+| Lượt 4: `backend/app/api/routes/review.py` | FastAPI Router cho 4 endpoints | Route handlers | FastAPI TestClient |
+| Lượt 5: `backend/tests/services/test_review_lifecycle.py` | 18 ca kiểm thử tích hợp chuyên sâu | Bộ test suite 18/18 pass | `pytest backend/tests/services/test_review_lifecycle.py -v` |
 
 ---
 
-## Bàn giao — điền theo kết quả thực tế
+## 5. Danh Mục 18 Ca Kiểm Thử Tự Động Bắt Buộc
 
-- **PR/commit/output:** `feat/duy-task-301-review-lifecycle-api`
-- **Đã làm / đã kiểm:** *[Sẽ cập nhật khi bắt đầu code từ Thứ 6]*
-- **Đã chấp nhận:** *[Chờ Hùng review và approve]*
-- **Còn chờ/bước tiếp:** Chờ Hùng bàn giao SQL Migration và Đạt bàn giao Mock AI vào trưa Thứ 6 30/10.
+1. `test_connection_pool_zero_checkout_during_ai` (P0)
+2. `test_tx2_network_error_after_commit_is_idempotent` (P0)
+3. `test_emergency_rollback_idempotent_no_double_refund` (P0)
+4. `test_emergency_rollback_after_tx2_succeeded_no_refund` (P0)
+5. `test_stale_guard_and_emergency_rollback_race` (P0)
+6. `test_multi_version_required_count_invariant` (P0)
+7. `test_quota_marginal_success_at_27` (P0)
+8. `test_quota_blocked_at_28` (P0)
+9. `test_revert_never_regenerated_question_returns_400` (P1)
+10. `test_concurrent_accept_while_other_question_regenerating` (P1)
+11. `test_revert_idempotency_returns_200` (P1)
+12. `test_immediate_rollback_and_quota_refund_on_ai_timeout` (P1)
+13. `test_partial_unique_index_order_prevents_violation` (P1)
+14. `test_idor_cross_session_returns_404` (P1)
+15. `test_session_status_guards` (P1)
+16. `test_can_finalize_matrix_multi_version` (P1)
+17. `test_review_logs_audit_integrity` (P1)
+18. `test_safe_invalidation_unsets_finalized` (P1)
+
+---
+
+## 6. Lệnh Kiểm Tra Nghiệm Thu
+
+```bash
+ruff check backend/app/services/review backend/app/api/routes/review.py
+mypy backend/app/services/review --strict
+pytest backend/tests/services/test_review_lifecycle.py -v
+```
