@@ -9,6 +9,8 @@ Provides endpoints for:
 - Cloning an existing session (deep copying source questions and blueprints)
 """
 
+import logging
+from datetime import datetime, timezone
 from typing import Any, List, Optional, cast
 
 from fastapi import (
@@ -29,6 +31,8 @@ from supabase import Client
 from app.api.dependencies import assert_ownership, get_current_user, get_user_db
 from app.core.rate_limit import crud_rate_limit
 from app.models.schemas import (
+    ConfirmSourceRequest,
+    ConfirmSourceResponse,
     CurrentUser,
     IngestSuccessResponse,
     IngestTextRequest,
@@ -41,6 +45,7 @@ from app.models.schemas import (
 )
 from app.services.parser import (
     assert_zero_mutation_or_raise,
+    ensure_blueprints_for_session,
     parse_docx,
     parse_latex,
     parse_markdown,
@@ -48,8 +53,14 @@ from app.services.parser import (
     validate_file_security,
 )
 from app.services.parser.ingestion_service import (
+    is_database_rollback_evidence,
+    is_network_timeout,
+    is_network_transport,
     replace_source_questions_atomically,
+    trigger_blueprint_pipeline,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -424,6 +435,8 @@ async def ingest_file(
         questions=parsed_questions,
     )
 
+    # Trigger background Blueprint extraction pipeline (TASK-203 hook)
+    background_tasks.add_task(trigger_blueprint_pipeline, session_id, saved_questions)
     return IngestSuccessResponse(
         session_id=session_id,
         message="Exam file ingested and validated successfully",
@@ -492,9 +505,227 @@ async def ingest_text(
         questions=parsed_questions,
     )
 
+    # Trigger background Blueprint extraction pipeline (TASK-203 hook)
+    background_tasks.add_task(trigger_blueprint_pipeline, session_id, saved_questions)
     return IngestSuccessResponse(
         session_id=session_id,
         message="Exam text ingested and validated successfully",
         total_questions=len(saved_questions),
         questions=saved_questions,
     )
+
+
+@router.post(
+    "/{session_id}/confirm-source",
+    response_model=ConfirmSourceResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Confirm source exam and activate blueprints (TASK-205)",
+)
+@crud_rate_limit
+async def confirm_source(
+    session_id: str,
+    payload: ConfirmSourceRequest,
+    request: Request,
+    response: Response,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_user_db),
+) -> ConfirmSourceResponse:
+    """Confirm source exam questions, lock blueprints, and transition session to Stage 2.
+
+    Guards:
+    1. Ownership: Current user owns the exam session (Sync call).
+    2. State Precondition: Session must be in 'draft' status (HTTP 409 if not).
+    3. Data Integrity: Session must have source questions and none with missing answers (HTTP 422).
+    4. Security (SEC-02 / ADR-004): Security warnings are logged silently for admin audit.
+       Users are NOT required to acknowledge — no checkbox exposed on UI.
+    5. Blueprint Engine: Ensures all questions have active blueprints.
+    6. Atomic State Transition: Updates blueprints confirmed_at and session status to 'blueprinted'.
+    """
+    # Guard 1: Ownership verification (Sync function)
+    assert_ownership("exam_sessions", session_id, current_user.id, db=db)
+
+    # Guard 2: State Precondition (must be 'draft')
+    s_res = db.table("exam_sessions").select("status, updated_at").eq("id", session_id).execute()
+    s_rows = cast(List[dict[str, Any]], s_res.data or [])
+    if not s_rows:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    session_status = str(s_rows[0].get("status", ""))
+    session_updated_at = s_rows[0].get("updated_at")
+    if session_status != "draft":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Session is in '{session_status}' state; cannot confirm source unless in 'draft'",
+        )
+
+    # Guard 3: Fetch & validate source questions
+    q_res = (
+        db.table("source_questions")
+        .select("*")
+        .eq("session_id", session_id)
+        .order("question_no", desc=False)
+        .execute()
+    )
+    questions = cast(List[dict[str, Any]], q_res.data or [])
+    if not questions:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Cannot confirm source: Session has no source questions",
+        )
+
+    missing_answer_questions = [
+        q.get("question_no", "?") for q in questions if q.get("has_missing_answer") is True
+    ]
+    if missing_answer_questions:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Cannot confirm source: Questions {missing_answer_questions} have missing answers",
+        )
+
+    # Guard 4: Silent Security Audit Logging (SEC-02 / ADR-004)
+    # Per ADR-004: Security warnings are never surfaced to end users.
+    # Backend logs them silently for internal admin audit (table: security_events).
+    # Users are NOT required to acknowledge — the UI has no checkbox for this.
+    security_warning_questions = [
+        q for q in questions if q.get("has_security_warning") is True
+    ]
+    if security_warning_questions:
+        flagged_nos = [q.get("question_no", "?") for q in security_warning_questions]
+        logger.warning(
+            "SEC-02 Silent Audit: Session %s confirmed with %d question(s) flagged for security review: %s",
+            session_id,
+            len(security_warning_questions),
+            flagged_nos,
+        )
+        try:
+            db.table("security_events").insert(
+                {
+                    "session_id": session_id,
+                    "user_id": current_user.id,
+                    "event_type": "PROMPT_INJECTION_DETECTED",
+                    "severity": "WARN",
+                    "sanitized_detail": {
+                        "action": "confirm_source",
+                        "warning_questions_count": len(security_warning_questions),
+                        "flagged_questions": [
+                            {"id": q.get("id"), "question_no": q.get("question_no")}
+                            for q in security_warning_questions
+                        ],
+                        "silent_audit": True,
+                        "adr_version": "ADR-004",
+                    },
+                }
+            ).execute()
+        except Exception as audit_err:
+            logger.error(
+                "Failed to insert persistent audit record into security_events for session %s: %s",
+                session_id,
+                audit_err,
+            )
+
+    # Guard 5: Ensure blueprints exist for all source questions
+    total_blueprints = await ensure_blueprints_for_session(db, session_id, questions)
+
+    # Guard 6: Atomic state transition (RPC only, strictly transactional)
+    # ADR-004: Always pass acknowledged_security_warnings=True to the RPC since
+    # user-facing acknowledgment is eliminated. The RPC-level check is bypassed
+    # intentionally — security is handled via silent audit log above.
+    now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        rpc_res = db.rpc(
+            "confirm_exam_source",
+            {
+                "p_session_id": session_id,
+                "p_expected_question_count": len(questions),
+                "p_acknowledged_security_warnings": True,  # ADR-004: always bypassed at RPC level
+                "p_expected_updated_at": session_updated_at,
+            },
+        ).execute()
+
+        if rpc_res.data and isinstance(rpc_res.data, dict) and rpc_res.data.get("success"):
+            confirmed_at_str = rpc_res.data.get("confirmed_at") or now_iso
+            actual_total_questions = rpc_res.data.get("total_questions", len(questions))
+            actual_total_blueprints = rpc_res.data.get("total_blueprints", total_blueprints)
+            return ConfirmSourceResponse(
+                session_id=session_id,
+                status="blueprinted",
+                confirmed_at=str(confirmed_at_str),
+                total_questions=actual_total_questions,
+                total_blueprints=actual_total_blueprints,
+                message="Source confirmed and blueprints locked successfully",
+            )
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to confirm source: database returned unsuccessful response",
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        err_msg = str(exc)
+        err_lower = err_msg.lower()
+        logger.error(
+            "RPC confirm_exam_source failed for session %s: %s",
+            session_id,
+            exc,
+        )
+        code = getattr(exc, "code", "") or ""
+
+        if code == "42501" or "42501" in err_msg or "access denied" in err_lower or "unauthorized" in err_lower:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied or session ownership mismatch",
+            ) from exc
+        if (
+            code == "22023"
+            or "22023" in err_msg
+            or "draft" in err_lower
+            or "mismatch" in err_lower
+            or "state" in err_lower
+            or "warning" in err_lower
+            or "missing" in err_lower
+            or "concurrent" in err_lower
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Cannot confirm source: {err_msg}",
+            ) from exc
+        if code == "P0002" or "p0002" in err_lower or "not found" in err_lower:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found",
+            ) from exc
+
+        # 4. Network Timeout (504): Commit status is uncertain
+        if is_network_timeout(exc):
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=(
+                    "Database atomic confirmation status is uncertain due to network timeout. "
+                    "The transaction may have completed. Please verify session state before retrying."
+                ),
+            ) from exc
+
+        # 5. Network Disconnection / Lost Response / Transport Error (504): Commit status is uncertain
+        if is_network_transport(exc):
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=(
+                    "Database atomic confirmation status is uncertain due to network communication error. "
+                    "The transaction may have completed. Please verify session state before retrying."
+                ),
+            ) from exc
+
+        # 6. Confirmed Database Execution Failure with Rollback Evidence (500)
+        if is_database_rollback_evidence(exc):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database atomic confirmation failed and was rolled back.",
+            ) from exc
+
+        # 7. Unverified / Unexpected Failure without DB Evidence (500):
+        # Do not falsely affirm that the transaction was rolled back.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database atomic confirmation failed. Please verify session state before retrying.",
+        ) from exc
+
