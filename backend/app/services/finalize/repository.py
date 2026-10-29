@@ -228,3 +228,4 @@ class FinalizeRepository:
                 )
 
         return version_codes, normalized_rows
+
