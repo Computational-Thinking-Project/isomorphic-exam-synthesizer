@@ -55,4 +55,6 @@ def current_user(test_user_id: str) -> CurrentUser:
 @pytest.fixture
 def client() -> TestClient:
     """TestClient for FastAPI app."""
+    if hasattr(app.state, "limiter") and hasattr(app.state.limiter, "_storage"):
+        app.state.limiter._storage.reset()
     return TestClient(app)

@@ -56,6 +56,33 @@
   - Mypy static type checking: 0 errors in 34 source files.
   - Ruff linter & formatter: all checks passed.
 
+---
+
+## 2026-10-22 — Bá Duy (BE1 / johannguyen015), TASK-205 Source Confirmation & Blueprint Activation (BE-03)
+
+- Branch: `feat/be1-task-205-confirm-source`; Base: `dev`.
+- Implemented Source Confirmation Endpoint:
+  - `POST /api/sessions/{session_id}/confirm-source`
+- Implemented Multi-Layer Guards & State Transitions:
+  - Guard 1 (Ownership): `assert_ownership` synchronous verification (HTTP 403 / 404).
+  - Guard 2 (State Precondition): Ensures session is in `'draft'` status (rejects with HTTP 409 Conflict if `'blueprinted'` or `'generating'`).
+  - Guard 3 (Data Integrity): Ensures session contains at least 1 source question and zero missing answers (`has_missing_answer == False`, HTTP 422).
+  - Guard 4 (Security SEC-02): Enforces explicit acknowledgment via `acknowledged_security_warnings: True` if any source question contains prompt injection / suspicious patterns (HTTP 422).
+  - Guard 5 (Blueprint Engine): `ensure_blueprints_for_session` guarantees 100% of source questions have active mathematical blueprints (auto-generates deterministic fallback blueprints if background pipeline was incomplete).
+  - Guard 6 (Atomic State Transition): Atomically updates blueprints `confirmed_at` and session status to `'blueprinted'`.
+- Implemented Blueprint Engine Service:
+  - `backend/app/services/parser/blueprint_service.py` with `extract_default_blueprint` and `ensure_blueprints_for_session`.
+  - Connected `trigger_blueprint_pipeline` in `ingestion_service.py` to `ensure_blueprints_for_session`.
+- Quality Verification:
+  - 12/12 new confirm-source tests passed (`pytest tests/api/test_confirm_source.py`).
+  - 49/49 total backend tests passed (100% pass rate).
+  - Mypy static type checking: 0 issues in 35 source files.
+  - Ruff linter: All checks passed on scoped files.
+- Documentation:
+  - Created API specification in `docs/api/confirm-source-endpoint.md`.
+
+---
+
 ## 2026-10-24 — Bá Duy (BE1 / johannguyen015), TASK-202 Review Remediation (PR #15)
 
 - Branch: `feat/be1-task-202-ingestion-parsers`; PR #15; Base: `dev`.
@@ -79,6 +106,37 @@
   - Total tests increased from 37 to 42 tests (`pytest tests/test_parsers.py tests/api/test_ingest.py tests/api/test_sessions.py -v` -> 42/42 passed 100%).
   - Static type checking: `mypy` passed with 0 errors.
   - Linter & Formatting: `ruff check` and `ruff format --check` passed 100%.
+
+---
+
+## 2026-10-25 — Bá Duy (BE1 / johannguyen015), TASK-205 Review Remediation (PR #16)
+
+- Branch: `feat/be1-task-205-confirm-source`; PR #16; Base: `dev`.
+- Remediation fixes addressing code review comments from Philip (`philip-kkk`):
+  - [P1] Synchronized Base Branch Fixes:
+    - Merged `origin/feat/be1-task-202-ingestion-parsers` (PR #15) into `feat/be1-task-205-confirm-source`.
+    - Inherited security hardening of `replace_source_questions` RPC (SEC-04 least privilege, FOR UPDATE lock, draft guard).
+    - Inherited strict Zero Cloud Mutation in `ingestion_service.py`.
+  - [P1] Atomic Confirm Source RPC (`confirm_exam_source`):
+    - Created `confirm_exam_source` PostgreSQL RPC with row lock (`FOR UPDATE`), owner authorization, draft state check, question count integrity check, and simultaneous update of `confirmed_at` and session `status = 'blueprinted'` in 1 ACID transaction.
+    - Added standalone idempotent migration `backend/migrations/003_confirm_exam_source_rpc.sql` and updated `backend/scripts/schema.sql`.
+    - Enforced least privilege: `REVOKE EXECUTE ... FROM PUBLIC, anon` and `GRANT EXECUTE ... TO authenticated, service_role`.
+  - [P1] Defense-in-Depth & Chống Báo Thành Công Sai (False 200):
+    - In `sessions.py`: Added row match validation on session update. If 0 rows matched (concurrent deletion or state change), returns `HTTP 409 Conflict`.
+    - Added automatic rollback of session state back to `draft` if blueprint confirmation fails during fallback execution.
+  - [P2] Blueprint Deduplication & Concurrency Protection:
+    - Added `CONSTRAINT uq_question_blueprints_source_question UNIQUE (source_question_id)` in `schema.sql` and migration `003`.
+    - Updated `ensure_blueprints_for_session` in `blueprint_service.py` to use `upsert(..., ignore_duplicates=True, on_conflict="source_question_id")`, preserving existing and confirmed blueprints without duplication.
+  - [Q1] Clarified Fallback Heuristic vs AI Contract:
+    - In `extract_default_blueprint`: Added metadata tags `is_fallback: True` and `extraction_source: "FALLBACK_DETERMINISTIC"`.
+    - Documented architectural contract with TASK-203 AI pipeline in `docs/api/confirm-source-endpoint.md` and `docs/change_log.md` (ADR-003).
+- Quality Verification:
+  - 18/18 tests in `backend/tests/api/test_confirm_source.py` passed (including 6 new remediation edge-case tests).
+  - 252/252 tests passed in complete backend test suite (100% pass rate).
+  - `mypy backend/app` passed with 0 errors across 40 source files.
+  - `ruff check` passed on all scoped files.
+
+---
 
 ## 2026-10-26 — Bá Duy (BE1 / johannguyen015), TASK-202 Review Remediation Round 3 (PR #15)
 
@@ -104,6 +162,8 @@
   - Linter: `ruff check` passed 100% clean.
   - Static type checking: `mypy` passed with 0 errors.
 
+---
+
 ## 2026-10-26 — Bá Duy (BE1 / johannguyen015), TASK-202 Review Remediation Round 4 (PR #15)
 
 - Branch: `feat/be1-task-202-ingestion-parsers`; PR #15; Base: `dev`.
@@ -118,6 +178,67 @@
     - Scoped TASK-202 tests: **58 tests passed** (23 parser tests + 18 ingest API tests + 17 session tests).
     - Clarified test breakdown: selective suite vs entire backend test suite.
 
+---
 
+## 2026-10-26 — Bá Duy (BE1 / johannguyen015), TASK-205 Review Remediation Round 3 (PR #16)
 
+- Branch: `feat/be1-task-205-confirm-source`; PR #16; Base: `dev`.
+- Remediation fixes addressing Reviewer Philip's (`philip-kkk`) Round 3 feedback:
+  - [P1] Phân Loại Ngoại Lệ Mạng Phân Tán Bằng `isinstance`:
+    - Loại bỏ hoàn toàn chuỗi so khớp `"timeout" in err_lower` trong `backend/app/api/routes/sessions.py` và `backend/app/services/parser/ingestion_service.py`.
+    - Định nghĩa các hàm kiểm tra ngoại lệ `is_network_timeout`, `is_network_transport`, và `is_database_rollback_evidence` duyệt toàn bộ chuỗi cây nguyên nhân (`__cause__` / `__context__`).
+    - Phân biệt minh bạch: ngoại lệ mạng chưa rõ trạng thái commit (`httpx.TimeoutException`, `httpx.TransportError`, `httpcore.RemoteProtocolError`) trả về **HTTP 504 Gateway Timeout** kèm khuyến nghị kiểm tra trạng thái phiên trước khi thử lại, tuyệt đối không khẳng định đã rollback.
+    - Chỉ trả về **HTTP 500 kèm khẳng định rollback** khi có bằng chứng từ chối từ `postgrest.exceptions.APIError`. Lỗi runtime không rõ nguyên nhân trả về HTTP 500 trung lập.
+  - [P1] Chuẩn Hóa Script Kiểm Quyền SQL (`backend/tests/verify_migration_003_permissions.sql`):
+    - Khởi tạo preflight user fixture trong `auth.users` và `public.users` (`v_owner_id`, `v_attacker_id`), loại bỏ triệt để lỗi khóa ngoại `exam_sessions_user_id_fkey` trên DB trắng.
+    - Giả lập đúng cơ chế caller PostgREST thông qua `SET SESSION AUTHORIZATION authenticator; SET ROLE anon / authenticated / service_role;` cho 10 kịch bản PostgREST.
+    - Kiểm tra `anon` bị từ chối `EXECUTE` ở tầng PostgreSQL Engine với SQLSTATE `42501` và `has_function_privilege` trả về `FALSE` (SEC-04 Least Privilege).
+    - Bổ sung Scenario 11 kiểm chứng trực tiếp Quản trị viên CSDL (`session_user IN ('postgres', 'supabase_admin')`) thực thi bảo trì thành công không cần JWT claims.
+    - Toàn bộ script nằm trong một transaction kết thúc bằng `ROLLBACK;` (zero dirty test data).
+  - [P1] Đồng Bộ Các Cải Tiến Từ TASK-202:
+    - Kế thừa script `backend/tests/verify_migration_002_permissions.sql` đã nghiệm thu từ nhánh TASK-202.
+    - Đồng bộ `ingestion_service.py` với chuẩn type annotation `tuple[type[BaseException], ...]`.
+  - [P2] Mở Rộng Bộ Kiểm Thử Ngoại Lệ Mạng:
+    - Bổ sung 6 unit tests với instance ngoại lệ thật trong `backend/tests/api/test_confirm_source.py`: `httpx.ReadTimeout("")`, `httpx.ReadError("")`, `httpx.RemoteProtocolError`, `httpcore.RemoteProtocolError`, `APIError`, unconfirmed runtime error.
+- Quality Verification:
+  - 26/26 tests passed trong `backend/tests/api/test_confirm_source.py` (100%).
+  - 266/266 tests passed trong toàn bộ test suite backend (100% pass rate).
+  - `ruff check app/` đạt 0 errors (all checks passed).
+  - `mypy app/ --ignore-missing-imports` đạt 0 errors trên 40 source files.
+  - SymPy LaTeX smoke test: parse thành công `x**2 + 1`.
 
+---
+
+## 2026-10-26 — Bá Duy (BE1 / johannguyen015), TASK-205 Review Remediation Round 4 (PR #16)
+
+- Branch: `feat/be1-task-205-confirm-source`; PR #16; Base: `dev`.
+- Remediation fixes addressing Reviewer Philip's (`philip-kkk`) Round 4 feedback:
+  - [P2] Chuẩn Hóa Bằng Chứng Rollback CSDL & Loại Bỏ Suy Luận Rollback Sai Khi Nhận Lỗi Gateway:
+    - Đồng bộ `is_database_rollback_evidence()` từ commit `4f227be` của PR #15 vào `backend/app/services/parser/ingestion_service.py`.
+    - Dùng regex `POSTGRES_SQLSTATE_PATTERN = re.compile(r"^[0-9A-Z]{5}$")` để chỉ công nhận mã SQLSTATE chuẩn 5 ký tự alnum của PostgreSQL (ví dụ `P0001`, `23505`, `40P01`).
+    - Loại trừ hoàn toàn các mã HTTP Gateway (`500, 502, 503, 504`), thông báo non-JSON (`message == "JSON could not be generated"` do SDK PostgREST sinh ra khi gặp HTML/text từ reverse proxy), và nội dung chứa HTML trong `details`.
+    - Cập nhật endpoint `confirm_source` tại `backend/app/api/routes/sessions.py`: Mọi lỗi Gateway 502/503/504 hoặc ngoại lệ chưa xác minh đều trả về thông điệp trung tính an toàn: `"Database atomic confirmation failed. Please verify session state before retrying."` (HTTP 500, không khẳng định rollback).
+    - Giữ nguyên các nhánh xử lý `is_network_timeout` và `is_network_transport` (`HTTP 504 Gateway Timeout`) và tuân thủ nghiêm ngặt nguyên tắc Zero RPC Auto-Retry.
+  - [P2] Mở Rộng Unit Tests (Fault Injection Tầng Gateway):
+    - Bổ sung 4 unit tests mới trong `backend/tests/api/test_confirm_source.py`: Gateway 502 HTML, Gateway 504 HTML, APIError mã lạ không phải JSON, APIError với code=None.
+    - Đồng bộ 4 unit tests tương ứng trong `backend/tests/api/test_ingest.py` và cập nhật test RPC failure dùng SQLSTATE `P0001` chuẩn.
+- Quality Verification:
+  - 30/30 tests passed trong `backend/tests/api/test_confirm_source.py` (100%).
+  - 18/18 tests passed trong `backend/tests/api/test_ingest.py` (100%).
+  - Toàn bộ backend test suite đạt 100% pass rate.
+  - `ruff check app/` và `mypy app/ --ignore-missing-imports` đạt 0 errors.
+
+---
+
+## 2026-10-26 — Bá Duy (BE1 / johannguyen015), TASK-202 & TASK-205 Review Remediation Round 5 (PR #15 / PR #16)
+
+- Branch: `feat/be1-task-205-confirm-source` / `feat/be1-task-202-ingestion-parsers`.
+- Remediation fixes addressing code review comments from Reviewer Philip (`philip-kkk`):
+  - [P2] Loại Trừ PostgreSQL SQLSTATE Class 08 Khỏi Bằng Chứng Rollback CSDL (DEC-BE1-008):
+    - Bổ sung `POSTGRES_NON_ROLLBACK_SQLSTATE_PREFIXES = ("08",)` và `POSTGRES_NON_ROLLBACK_SQLSTATES = {"40003"}` vào `ingestion_service.py`.
+    - Khi gặp các mã lỗi kết nối Class 08 (như `08007` - *transaction resolution unknown* hoặc `08006` - *connection failure*), hàm `is_database_rollback_evidence()` trả về `False`.
+    - Cả hai endpoint Ingestion (`replace_source_questions`) và Confirm Source (`confirm_exam_source`) đều trả về phản hồi HTTP 500 với thông điệp trung tính yêu cầu đọc lại phiên (`"Database atomic ... failed. Please verify session state before retrying."`), tuyệt đối không khẳng định sai rằng CSDL đã rollback.
+    - Bảo toàn các mã lỗi ràng buộc dữ liệu xác định (`23505`, `P0001`) trả về thông báo xác nhận rollback.
+  - [Unit Tests & Regression]:
+    - Bổ sung unit tests cho SQLSTATE `08007`, `08006` và `23505` trên cả 2 endpoint Ingest và Confirm Source.
+    - Toàn bộ test suite backend đạt 100% pass rate.
