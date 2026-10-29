@@ -7,8 +7,8 @@ Implements 18 critical test cases:
 4. test_emergency_rollback_cannot_double_refund
 5. test_stale_guard_cannot_double_refund_tx2
 6. test_multi_version_required_count_invariant
-7. test_reserve_at_calls_27
-8. test_reserve_at_calls_28_blocked
+7. test_reserve_at_calls_26
+8. test_reserve_at_calls_27_blocked
 9. test_revert_never_regenerated_question
 10. test_accept_parallel_with_regenerating
 11. test_revert_idempotency
@@ -308,7 +308,7 @@ async def test_tx2_retry_idempotency():
     session_id = "00000000-0000-0000-0000-000000000002"
     user_id = "user-123"
     q_id = "vq-001"
-    state = _setup_standard_session_state(session_id, user_id, question_id=q_id, gemini_calls=3)
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id, gemini_calls=4)
     # Set status to regenerating (simulating TX1 has completed)
     state["version_questions"][0]["status"] = "regenerating"
     db = MockSupabaseClient(state)
@@ -330,13 +330,13 @@ async def test_tx2_retry_idempotency():
         old_q_snapshot=old_snapshot,
         new_data=new_data,
         regeneration_id=regen_id,
-        actual_calls=1,  # 3 - 1 = 2 calls refund
+        actual_calls=1,  # 4 - 1 = 3 calls refund
         user_id=user_id,
     )
     assert res1 is not None
     assert str(res1["regeneration_id"]) == str(regen_id)
 
-    # Check quota after Call 1: 3 - 2 = 1
+    # Check quota after Call 1: 4 - 3 = 1
     session_row = state["exam_sessions"][0]
     assert session_row["gemini_review_calls"] == 1
     insert_count_after_call1 = len(
@@ -513,12 +513,12 @@ async def test_multi_version_required_count_invariant():
 
 
 @pytest.mark.asyncio
-async def test_reserve_at_calls_27():
-    """Test 7: At 27 calls, reserving 3 calls reaches 30 <= 30 (Allowed)."""
+async def test_reserve_at_calls_26():
+    """Test 7: At 26 calls, reserving 4 calls reaches 30 <= 30 (Allowed)."""
     session_id = "00000000-0000-0000-0000-000000000007"
     user_id = "user-123"
     q_id = "vq-001"
-    state = _setup_standard_session_state(session_id, user_id, question_id=q_id, gemini_calls=27)
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id, gemini_calls=26)
     db = MockSupabaseClient(state)
     repo = ReviewRepository(db)
 
@@ -530,12 +530,12 @@ async def test_reserve_at_calls_27():
 
 
 @pytest.mark.asyncio
-async def test_reserve_at_calls_28_blocked():
-    """Test 8: At 28 calls, reserving 3 calls would exceed 30 (28 + 3 = 31 > 30) -> 429 Error."""
+async def test_reserve_at_calls_27_blocked():
+    """Test 8: At 27 calls, reserving 4 calls would exceed 30 (27 + 4 = 31 > 30) -> 429 Error."""
     session_id = "00000000-0000-0000-0000-000000000008"
     user_id = "user-123"
     q_id = "vq-001"
-    state = _setup_standard_session_state(session_id, user_id, question_id=q_id, gemini_calls=28)
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id, gemini_calls=27)
     db = MockSupabaseClient(state)
     service = ReviewService(db)
 
@@ -544,8 +544,8 @@ async def test_reserve_at_calls_28_blocked():
 
     assert exc_info.value.status_code == 429
     assert exc_info.value.error_code == "ERR_REVIEW_QUOTA_EXHAUSTED"
-    # Quota remained 28
-    assert state["exam_sessions"][0]["gemini_review_calls"] == 28
+    # Quota remained 27
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 27
 
 
 @pytest.mark.asyncio

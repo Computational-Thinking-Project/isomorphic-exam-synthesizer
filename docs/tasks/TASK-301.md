@@ -11,7 +11,7 @@
 
 ## 1. Sáu Nguyên Tắc Bất Biến (Phải Tuân Thủ Tuyệt Đối)
 
-1. **Single Source of Truth cho Quota:** Chỉ một transaction được phép thay đổi `gemini_review_calls`: TX1 (+3), TX2 (refund `3 - actual_k`), Emergency Rollback (-3). Không có nơi nào khác được can thiệp vào quota.
+1. **Single Source of Truth cho Quota:** Chỉ một transaction được phép thay đổi `gemini_review_calls`: TX1 (+4), TX2 (refund `4 - actual_k`), Emergency Rollback (-4). Không có nơi nào khác được can thiệp vào quota.
 2. **Idempotency qua UNIQUE Constraint:** Cột `regeneration_id UUID NULL UNIQUE` trên câu mới là rào chắn CSDL ngăn chặn double-insert và double-refund khi rớt mạng hoặc retry.
 3. **Atomic Ownership qua Rowcount:** Chỉ tiến trình nào UPDATE được `status = 'regenerating' -> X` với `rowcount == 1` mới sở hữu quyền refund/chuyển trạng thái. Ai `rowcount == 0` tuyệt đối không thao tác.
 4. **Thứ tự Invariant:** UPDATE câu cũ (`is_current = false`) trước $\rightarrow$ INSERT câu mới (`is_current = true`) sau để bảo vệ Partial Unique Index.
@@ -68,11 +68,11 @@ FROM (
 ```
 Bảo đảm phiên có $N$ mã đề $\times$ $M$ câu luôn ra đúng $N \times M$ slots câu hỏi, bất biến qua reject và revert.
 
-### 3.3. Quota Max Reservation (Hằng Số 3 Calls)
-- Hằng số: `MAX_AI_CALLS_PER_REJECT = 3` (khớp với hợp đồng TASK-304: 1 initial call + tối đa 2 math retries).
-- TX1: Tăng quota +3 (`WHERE calls + 3 <= 30`). Nếu không đủ $\rightarrow$ `HTTP 429 ERR_REVIEW_QUOTA_EXHAUSTED`.
-- TX2: Hoàn lại `3 - actual_calls`.
-- AI fail / timeout: Hoàn lại toàn bộ 3 calls.
+### 3.3. Quota Max Reservation (Hằng Số 4 Calls)
+- Hằng số: `MAX_AI_CALLS_PER_REJECT = 4` (khớp với hợp đồng TASK-304: 1 initial call + tối đa 2 math retries + 1 format/schema repair).
+- TX1: Tăng quota +4 (`WHERE calls + 4 <= 30`). Nếu không đủ $\rightarrow$ `HTTP 429 ERR_REVIEW_QUOTA_EXHAUSTED`.
+- TX2: Hoàn lại `4 - actual_calls`.
+- AI fail / timeout: Hoàn lại toàn bộ 4 calls.
 
 ### 3.4. State Guards & Lock Registry
 - **Chặn Revert câu chưa từng biến thể:** Ném ngay `HTTP 400 ERR_QUESTION_NOT_REGENERATED`.
@@ -102,8 +102,8 @@ Bảo đảm phiên có $N$ mã đề $\times$ $M$ câu luôn ra đúng $N \time
 4. `test_emergency_rollback_after_tx2_succeeded_no_refund` (P0)
 5. `test_stale_guard_and_emergency_rollback_race` (P0)
 6. `test_multi_version_required_count_invariant` (P0)
-7. `test_quota_marginal_success_at_27` (P0)
-8. `test_quota_blocked_at_28` (P0)
+7. `test_quota_marginal_success_at_26` (P0)
+8. `test_quota_blocked_at_27` (P0)
 9. `test_revert_never_regenerated_question_returns_400` (P1)
 10. `test_concurrent_accept_while_other_question_regenerating` (P1)
 11. `test_revert_idempotency_returns_200` (P1)
