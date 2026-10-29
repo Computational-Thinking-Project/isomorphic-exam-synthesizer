@@ -17,7 +17,7 @@ import pytest_asyncio
 from pydantic import SecretStr
 
 from app.core.config import Settings
-from app.models.generation import StepByStepSolution
+from app.models.generation import CandidatePayload, StepByStepSolution
 from app.models.generation_events import GenerationEventData
 from app.models.schemas import SourceQuestion
 from app.services.ai.gateway import GeminiGateway
@@ -109,6 +109,7 @@ async def ai_case(monkeypatch):
     try:
         yield SimpleNamespace(
             adapter=AIBatchAdapter(service),
+            service=service,
             plan=plan,
             inputs=inputs,
             store=store,
@@ -194,28 +195,88 @@ async def test_two_versions_commit_before_sse_and_keep_honest_warnings(ai_case):
 
 
 @pytest.mark.asyncio
-async def test_save_failure_preserves_acknowledged_rows_and_resume_skips_them(ai_case):
+@pytest.mark.parametrize("first_version", [1, 2])
+async def test_save_failure_preserves_acknowledged_rows_and_resume_skips_them(
+    ai_case, monkeypatch, first_version
+):
     case = ai_case
-    saved_first = asyncio.Event()
+    saved_targets = []
+    failed_results = []
+    delivered_targets = []
+    real_batch = case.service.generate_exam_drafts
+
+    async def ordered_batch(*args, **kwargs):
+        deliver = kwargs["on_result"]
+        first_acknowledged = asyncio.Event()
+
+        async def ordered_result(result):
+            # Gate before entering the adapter's callback lock. Waiting inside
+            # save would deadlock if the other version acquired that lock first.
+            if result.version_index != first_version:
+                await first_acknowledged.wait()
+            await deliver(result)
+            if result.version_index == first_version:
+                first_acknowledged.set()
+
+        kwargs["on_result"] = ordered_result
+        return await real_batch(*args, **kwargs)
 
     async def save(prepared):
-        if prepared.target.version_index == 1:
+        assert prepared.draft is not None
+        delivered_targets.append(prepared.target)
+        if not saved_targets:
             await case.store.save(prepared)
-            saved_first.set()
+            assert prepared.target in case.store.rows
+            saved_targets.append(prepared.target)
         else:
-            await saved_first.wait()
+            failed_results.append(prepared)
             raise ConnectionError("simulated persistence failure")
 
-    with pytest.raises(ExceptionGroup):
-        await execute(case, callback=save)
-    assert len(case.store.rows) == 1
-    previous = next(iter(case.store.rows.values())).model_dump(mode="json")
+    with monkeypatch.context() as patch:
+        patch.setattr(case.service, "generate_exam_drafts", ordered_batch)
+        with pytest.raises(ExceptionGroup) as error:
+            await execute(case, callback=save)
+    assert len(error.value.exceptions) == 1
+    failure = error.value.exceptions[0]
+    assert isinstance(failure, ConnectionError)
+    assert str(failure) == "simulated persistence failure"
+    assert [target.version_index for target in delivered_targets] == [
+        first_version,
+        3 - first_version,
+    ]
+    assert len(saved_targets) == len(failed_results) == 1
+    saved_target = saved_targets[0]
+    failed = failed_results[0]
+    assert set(case.store.rows) == {saved_target}
+    assert failed.target not in case.store.rows
+    previous = case.store.rows[saved_target].model_dump(mode="json")
     plan = replace(case.plan, saved=frozenset(case.store.rows), gemini_call_count=case.store.count)
     inputs = case.inputs.model_copy(update={"completed": tuple(case.store.rows.values())})
+
+    # Replace any remaining fixture replies with exactly the unsaved candidate;
+    # resume must not depend on the fixture queue's size or candidate ordering.
+    assert len(case.calls) == case.store.count == 2
+    assert failed.raw_result.candidate is not None
+    payload = CandidatePayload.model_validate(
+        {name: getattr(failed.raw_result.candidate, name) for name in CandidatePayload.model_fields}
+    )
+    case.responses[:] = [payload.model_dump(mode="json")]
     requests_before = len(case.calls)
-    batch = await execute(case, plan=plan, inputs=inputs)
+    resumed_targets = []
+
+    async def save_missing(prepared):
+        assert prepared.target not in plan.saved
+        resumed_targets.append(prepared.target)
+        await case.store.save(prepared)
+
+    batch = await execute(case, plan=plan, inputs=inputs, callback=save_missing)
     assert batch.status == "generated" and len(case.calls) == requests_before + 1
-    assert case.store.rows[plan.targets[0]].model_dump(mode="json") == previous
+    assert case.store.count == plan.gemini_call_count + 1 == len(case.calls)
+    assert resumed_targets == [failed.target]
+    assert len(batch.results) == 2 and set(case.store.rows) == set(plan.targets)
+    assert all(result.candidate is not None for result in batch.results)
+    assert case.responses == []
+    assert case.store.rows[saved_target].model_dump(mode="json") == previous
 
 
 @pytest.mark.asyncio
