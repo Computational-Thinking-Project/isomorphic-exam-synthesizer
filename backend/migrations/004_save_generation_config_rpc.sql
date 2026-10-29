@@ -174,6 +174,11 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
+  IF jsonb_typeof(p_ordering_preferences->'shuffle_questions') != 'boolean'
+     OR jsonb_typeof(p_ordering_preferences->'shuffle_options') != 'boolean' THEN
+    RAISE EXCEPTION 'ordering_preferences values must be boolean' USING ERRCODE = '22023';
+  END IF;
+
   -- 7. Validate source question count (1-20)
   SELECT COUNT(*) INTO v_source_count
   FROM public.source_questions WHERE session_id = p_session_id;

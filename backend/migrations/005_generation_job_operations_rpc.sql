@@ -188,7 +188,7 @@ $$;
 CREATE OR REPLACE FUNCTION public.reserve_generation_quota(
   p_session_id UUID,
   p_calls_requested INT DEFAULT 1,
-  p_job_token UUID DEFAULT NULL
+  p_job_token UUID
 )
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -291,6 +291,11 @@ BEGIN
     RAISE EXCEPTION 'p_version_index must be between 1 and 4 (got %)', p_version_index
       USING ERRCODE = '22023';
   END IF;
+
+  IF p_question_no IS NULL OR p_question_no < 1 THEN
+    RAISE EXCEPTION 'p_question_no must be positive (got %)', p_question_no
+      USING ERRCODE = '22023';
+  END IF;
   v_version_code := (100 + p_version_index)::TEXT;
 
   -- 1. Lock session row to verify active fencing token
@@ -325,73 +330,59 @@ BEGIN
   END IF;
 
   -- 4. Ensure target exam_version exists (idempotent upsert)
+  INSERT INTO public.exam_versions (session_id, version_code)
+  VALUES (p_session_id, v_version_code)
+  ON CONFLICT (session_id, version_code) DO NOTHING;
+
   SELECT id INTO v_version_id
   FROM public.exam_versions
   WHERE session_id = p_session_id AND version_code = v_version_code;
 
-  IF v_version_id IS NULL THEN
-    INSERT INTO public.exam_versions (session_id, version_code)
-    VALUES (p_session_id, v_version_code)
-    ON CONFLICT (session_id, version_code) DO UPDATE
-      SET version_code = EXCLUDED.version_code
-    RETURNING id INTO v_version_id;
-  END IF;
-
-  -- 5. Idempotent upsert into version_questions
-  SELECT id INTO v_question_id
-  FROM public.version_questions
-  WHERE version_id = v_version_id
-    AND source_question_id = p_source_question_id
-    AND is_current = TRUE;
-
-  IF v_question_id IS NOT NULL THEN
-    UPDATE public.version_questions
-    SET question_no = p_question_no,
-        content = p_content,
-        options = p_options,
-        correct_key = p_correct_key,
-        solution_md = p_solution_md,
-        canonical_question_no = p_question_no,
-        canonical_options = p_options,
-        canonical_correct_key = p_correct_key,
-        canonical_solution_md = p_solution_md,
-        has_warning = COALESCE(p_has_warning, FALSE),
-        updated_at = now()
-    WHERE id = v_question_id;
-  ELSE
-    INSERT INTO public.version_questions (
-      version_id,
-      source_question_id,
-      question_no,
-      content,
-      options,
-      correct_key,
-      solution_md,
-      canonical_question_no,
-      canonical_options,
-      canonical_correct_key,
-      canonical_solution_md,
-      has_warning,
-      status,
-      is_current
-    ) VALUES (
-      v_version_id,
-      p_source_question_id,
-      p_question_no,
-      p_content,
-      p_options,
-      p_correct_key,
-      p_solution_md,
-      p_question_no,
-      p_options,
-      p_correct_key,
-      p_solution_md,
-      COALESCE(p_has_warning, FALSE),
-      'pending_review',
-      TRUE
-    )
-    RETURNING id INTO v_question_id;
-  END IF;
+  -- 5. Atomic upsert into version_questions
+  INSERT INTO public.version_questions (
+    version_id,
+    source_question_id,
+    question_no,
+    content,
+    options,
+    correct_key,
+    solution_md,
+    canonical_question_no,
+    canonical_options,
+    canonical_correct_key,
+    canonical_solution_md,
+    has_warning,
+    status,
+    is_current
+  ) VALUES (
+    v_version_id,
+    p_source_question_id,
+    p_question_no,
+    p_content,
+    p_options,
+    p_correct_key,
+    p_solution_md,
+    p_question_no,
+    p_options,
+    p_correct_key,
+    p_solution_md,
+    COALESCE(p_has_warning, FALSE),
+    'pending_review',
+    TRUE
+  )
+  ON CONFLICT (version_id, source_question_id) WHERE is_current = TRUE DO UPDATE SET
+    question_no = EXCLUDED.question_no,
+    content = EXCLUDED.content,
+    options = EXCLUDED.options,
+    correct_key = EXCLUDED.correct_key,
+    solution_md = EXCLUDED.solution_md,
+    canonical_question_no = EXCLUDED.canonical_question_no,
+    canonical_options = EXCLUDED.canonical_options,
+    canonical_correct_key = EXCLUDED.canonical_correct_key,
+    canonical_solution_md = EXCLUDED.canonical_solution_md,
+    has_warning = EXCLUDED.has_warning,
+    updated_at = now()
+  RETURNING id INTO v_question_id;
 
   RETURN jsonb_build_object(
     'success', TRUE,
@@ -408,7 +399,7 @@ $$;
 CREATE OR REPLACE FUNCTION public.finish_generation_job(
   p_session_id UUID,
   p_outcome TEXT,
-  p_job_token UUID DEFAULT NULL
+  p_job_token UUID
 )
 RETURNS JSONB
 LANGUAGE plpgsql
