@@ -172,6 +172,12 @@ class SessionDetailResponse(BaseModel):
     updated_at: str
     source_questions: List[dict] = Field(default_factory=list, description="Danh sách câu hỏi gốc")
     exam_versions: List[dict] = Field(default_factory=list, description="Danh sách các mã đề")
+    generation_config: Optional[dict] = Field(
+        default=None, description="Cấu hình sinh đề Stage 2 nếu có"
+    )
+    blueprint_summary: Optional[dict] = Field(
+        default=None, description="Tóm tắt trạng thái Blueprint"
+    )
 
 
 class IngestTextRequest(BaseModel):
@@ -246,6 +252,8 @@ class IngestSuccessResponse(BaseModel):
     questions: List[Dict[str, Any]] = Field(
         default_factory=list, description="Danh sách câu hỏi nguồn đã lưu"
     )
+
+
 class ConfirmSourceRequest(BaseModel):
     """Payload xác nhận đề nguồn và chuyển sang Stage 2 (TASK-205).
 
@@ -274,4 +282,3 @@ class ConfirmSourceResponse(BaseModel):
     total_questions: int = Field(..., description="Tổng câu nguồn đã khóa")
     total_blueprints: int = Field(..., description="Tổng blueprints tương ứng")
     message: str = "Source confirmed and blueprints locked successfully"
-

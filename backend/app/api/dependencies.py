@@ -141,6 +141,32 @@ async def get_user_db(
     return get_authenticated_client(current_user.access_token)
 
 
+async def get_current_admin_user(
+    current_user: CurrentUser = Depends(get_current_user),
+) -> CurrentUser:
+    """Verify administrator privileges (SEC-08 / TASK-207c).
+
+    In development and test environments, any authenticated user is granted access.
+    In production/staging environments, strictly checks whether user email is
+    enrolled in ADMIN_EMAILS. Missing privileges return HTTP 403 Forbidden.
+    """
+    from app.core.config import settings
+
+    if settings.ENVIRONMENT in ("development", "test"):
+        return current_user
+
+    admin_list = [
+        email.strip().lower() for email in settings.ADMIN_EMAILS.split(",") if email.strip()
+    ]
+    if current_user.email and current_user.email.strip().lower() in admin_list:
+        return current_user
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Administrator privileges required to access this resource",
+    )
+
+
 def assert_ownership(
     table: str,
     resource_id: str,
@@ -200,7 +226,12 @@ def assert_ownership(
 
     # 3. question_blueprints -> source_questions -> exam_sessions
     if table == "question_blueprints":
-        response = client.table("question_blueprints").select("source_question_id").eq("id", resource_id).execute()
+        response = (
+            client.table("question_blueprints")
+            .select("source_question_id")
+            .eq("id", resource_id)
+            .execute()
+        )
         rows = cast(list[dict[str, Any]], response.data or [])
         if not rows:
             raise HTTPException(
@@ -224,7 +255,12 @@ def assert_ownership(
 
     # 5. review_logs -> version_questions -> exam_versions -> exam_sessions
     if table == "review_logs":
-        response = client.table("review_logs").select("version_question_id").eq("id", resource_id).execute()
+        response = (
+            client.table("review_logs")
+            .select("version_question_id")
+            .eq("id", resource_id)
+            .execute()
+        )
         rows = cast(list[dict[str, Any]], response.data or [])
         if not rows:
             raise HTTPException(

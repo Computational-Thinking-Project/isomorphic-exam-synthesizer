@@ -114,7 +114,9 @@ CREATE TABLE IF NOT EXISTS public.generation_configs (
   n_versions INT NOT NULL CHECK (n_versions BETWEEN 1 AND 4),
   active_variation_modes JSONB NOT NULL DEFAULT '[]'::jsonb,
   ordering_preferences JSONB NOT NULL DEFAULT '{"shuffle_questions": true, "shuffle_options": true}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_generation_configs_session_id UNIQUE (session_id)
 );
 
 -- Table 6: Exam Versions (Each generated variant code: e.g., 101, 102, 103, 104)
