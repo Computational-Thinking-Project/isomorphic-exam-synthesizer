@@ -1,22 +1,29 @@
 -- ============================================================================
--- Migration 005 (v5): Hardened Generation Job Operations & Persistence RPC [TASK-207b]
+-- Migration 005 (v6): Hardened Generation Job Operations & Persistence RPC [TASK-207b]
 -- Prerequisites: PostgreSQL 13+ (built-in gen_random_uuid) or pgcrypto extension.
 -- Note: Background workers run under service_role.
 --
--- Security, Fencing & Consistency Hardening (Review v4 Resolution):
---   - P1 FIX: persist_version_question RPC enforces active_job_id fencing token
---     on all data writes into version_questions (prevents zombie worker pollution).
---   - P1 FIX: DB NOT NULL and CHECK constraints on exam_sessions enforce invariants:
---     chk_quota_range, chk_generating_has_job, chk_not_generating_has_no_job.
---   - P2 FIX: last_progress_at heartbeat tracking and heartbeat_generation_job RPC.
---   - P2 FIX: reserve_generation_quota REVOKED from authenticated, restricted to service_role.
---   - P2 FIX: fail_stale_generation_job checks COALESCE(last_progress_at, updated_at).
---   - P3 FIX: Outcome status and p_is_retry strictly validated against NULL.
---   - P3 FIX: Response returns true committed finished_at timestamp from RETURNING updated_at.
+-- Security, Fencing & Consistency Hardening (Review v5 Resolution):
+--   - B1 FIX: Safe backfill transitions orphan generating sessions (active_job_id IS NULL)
+--     to 'failed' before applying chk_generating_has_job constraint.
+--   - B2 FIX: persist_version_question verifies p_source_question_id belongs to p_session_id.
+--   - M1 FIX: finish_generation_job verifies questions persistence completeness
+--     (outcome 'generated' requires all expected questions; 'partial_generated' requires >= 1).
+--   - M2 FIX: persist_version_question is fully idempotent (ON CONFLICT on exam_versions;
+--     checks existing is_current question before INSERT/UPDATE on version_questions).
+--   - M3 FIX: p_version_index validated strictly between 1 and 4, and cannot exceed
+--     configured n_versions from generation_configs.
+--   - M4 DOC: Documented schema prerequisites for exam_versions and version_questions.
+--   - Md1 DOC: canonical_* represents the immutable generated baseline variant, preserved
+--     per docs/planning.md for Stage 3 side-by-side review and reversion.
+--   - Md2 DOC: claim_generation_job remains GRANTED to authenticated because FastAPI's
+--     generate endpoint executes runner.claim under user auth with strict ownership verification.
+--   - Mi3 DOC: claim response preserves both starting_quota and gemini_call_count for
+--     backwards compatibility with PR #30 GenerationPlan contract.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
--- 1. Schema Invariants & Column Setup on exam_sessions
+-- 1. Schema Invariants, Indexes & Constraints Setup
 -- ----------------------------------------------------------------------------
 DO $$
 BEGIN
@@ -44,6 +51,9 @@ BEGIN
   UPDATE public.exam_sessions SET gemini_call_count = 0 WHERE gemini_call_count IS NULL;
   UPDATE public.exam_sessions SET active_job_id = NULL WHERE status <> 'generating' AND active_job_id IS NOT NULL;
 
+  -- B1 FIX: Resolve legacy orphan generating sessions BEFORE adding constraint
+  UPDATE public.exam_sessions SET status = 'failed' WHERE status = 'generating' AND active_job_id IS NULL;
+
   -- Enforce NOT NULL on status and gemini_call_count
   ALTER TABLE public.exam_sessions
     ALTER COLUMN status SET NOT NULL,
@@ -65,6 +75,22 @@ BEGIN
     ALTER TABLE public.exam_sessions
       ADD CONSTRAINT chk_not_generating_has_no_job CHECK (status = 'generating' OR active_job_id IS NULL);
   END IF;
+
+  -- Ensure unique constraint on exam_versions(session_id, version_code)
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_exam_versions_session_code') THEN
+    ALTER TABLE public.exam_versions
+      ADD CONSTRAINT uq_exam_versions_session_code UNIQUE (session_id, version_code);
+  END IF;
+
+  -- Ensure partial unique index on version_questions(version_id, source_question_id) for current questions
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes 
+    WHERE schemaname = 'public' AND indexname = 'idx_single_current_version_question'
+  ) THEN
+    CREATE UNIQUE INDEX idx_single_current_version_question
+      ON public.version_questions (version_id, source_question_id)
+      WHERE is_current = TRUE;
+  END IF;
 END $$;
 
 -- 2. Drop existing signatures to avoid overload mismatch
@@ -72,10 +98,11 @@ DROP FUNCTION IF EXISTS public.claim_generation_job(UUID, BOOLEAN);
 DROP FUNCTION IF EXISTS public.claim_generation_job(UUID, BOOLEAN, UUID);
 DROP FUNCTION IF EXISTS public.reserve_generation_quota(UUID, INT);
 DROP FUNCTION IF EXISTS public.reserve_generation_quota(UUID, INT, UUID);
-DROP FUNCTION IF EXISTS public.heartbeat_generation_job(UUID, UUID);
 DROP FUNCTION IF EXISTS public.persist_version_question(UUID, UUID, INT, UUID, INT, TEXT, JSONB, TEXT, TEXT, BOOLEAN);
+DROP FUNCTION IF EXISTS public.heartbeat_generation_job(UUID, UUID);
 DROP FUNCTION IF EXISTS public.finish_generation_job(UUID, TEXT);
 DROP FUNCTION IF EXISTS public.finish_generation_job(UUID, TEXT, UUID);
+DROP FUNCTION IF EXISTS public.fail_stale_generation_job(UUID);
 DROP FUNCTION IF EXISTS public.fail_stale_generation_job(UUID, INT);
 
 -- ----------------------------------------------------------------------------
@@ -84,7 +111,7 @@ DROP FUNCTION IF EXISTS public.fail_stale_generation_job(UUID, INT);
 CREATE OR REPLACE FUNCTION public.claim_generation_job(
   p_session_id UUID,
   p_is_retry BOOLEAN DEFAULT FALSE,
-  p_job_token UUID DEFAULT NULL
+  p_worker_job_id UUID DEFAULT NULL
 )
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -94,20 +121,21 @@ AS $$
 DECLARE
   v_session_user_id UUID;
   v_session_status public.session_status;
+  v_active_job_id UUID;
   v_current_quota INT;
   v_config JSONB;
   v_committed_targets JSONB;
-  v_job_id UUID := COALESCE(p_job_token, gen_random_uuid());
+  v_job_id UUID;
   v_now TIMESTAMPTZ := now();
 BEGIN
-  -- 1. Validate p_is_retry explicitly against NULL
+  -- 0. Validate p_is_retry is not NULL
   IF p_is_retry IS NULL THEN
     RAISE EXCEPTION 'p_is_retry cannot be NULL' USING ERRCODE = '22023';
   END IF;
 
-  -- 2. Lock session row
-  SELECT user_id, status, gemini_call_count
-    INTO v_session_user_id, v_session_status, v_current_quota
+  -- 1. Lock session row
+  SELECT user_id, status, active_job_id, gemini_call_count
+    INTO v_session_user_id, v_session_status, v_active_job_id, v_current_quota
   FROM public.exam_sessions
   WHERE id = p_session_id
   FOR UPDATE;
@@ -116,66 +144,70 @@ BEGIN
     RAISE EXCEPTION 'Session not found: %', p_session_id USING ERRCODE = 'P0002';
   END IF;
 
-  -- 3. Enforce ownership (NULL-safe: current_role() is guaranteed non-NULL)
+  -- 2. Authorization (NULL-safe: caller must be service_role or owner)
   IF public.current_role() != 'service_role'
      AND (v_session_user_id IS DISTINCT FROM auth.uid() OR auth.uid() IS NULL) THEN
     RAISE EXCEPTION 'Access denied: caller does not own session %', p_session_id
       USING ERRCODE = '42501';
   END IF;
 
-  -- 4. Anti-concurrency check: 55006 (object_in_use)
+  -- 3. Concurrency check: Reject if already actively generating
   IF v_session_status = 'generating' THEN
-    RAISE EXCEPTION 'Session % is already generating', p_session_id USING ERRCODE = '55006';
+    RAISE EXCEPTION 'Session % is already being generated by job %',
+      p_session_id, v_active_job_id USING ERRCODE = '55006';
   END IF;
 
-  -- 5. State machine transition check
+  -- 4. State validation
   IF NOT p_is_retry THEN
     IF v_session_status != 'configured' THEN
-      RAISE EXCEPTION 'Cannot start generation: session must be configured (current: %)',
+      RAISE EXCEPTION 'Cannot claim generation: session must be configured (current: %)',
         v_session_status USING ERRCODE = '22023';
     END IF;
   ELSE
     IF v_session_status NOT IN ('partial_generated', 'failed') THEN
-      RAISE EXCEPTION 'Cannot retry from status % (only partial_generated or failed)',
+      RAISE EXCEPTION 'Cannot retry generation: session status must be partial_generated or failed (current: %)',
         v_session_status USING ERRCODE = '22023';
     END IF;
   END IF;
 
-  -- 6. Config must exist (fail-closed)
-  SELECT row_to_json(c)::jsonb INTO v_config
-  FROM public.generation_configs c
-  WHERE c.session_id = p_session_id;
+  -- 5. Read generation config
+  SELECT jsonb_build_object(
+    'n_versions', n_versions,
+    'active_variation_modes', active_variation_modes,
+    'ordering_preferences', ordering_preferences
+  ) INTO v_config
+  FROM public.generation_configs
+  WHERE session_id = p_session_id;
 
   IF v_config IS NULL THEN
-    RAISE EXCEPTION 'Session % has no saved generation config', p_session_id
-      USING ERRCODE = '22023';
+    RAISE EXCEPTION 'Generation config not found for session %', p_session_id
+      USING ERRCODE = '55000';
   END IF;
 
-  -- 7. Quota ceiling check (250 calls limit)
-  IF v_current_quota >= 250 THEN
-    RAISE EXCEPTION 'Quota exceeded: % of 250 calls already used', v_current_quota
-      USING ERRCODE = '22023';
-  END IF;
+  -- 6. Read committed targets (for incremental retry resume)
+  SELECT COALESCE(
+    jsonb_agg(jsonb_build_object(
+      'version_code', ev.version_code,
+      'source_question_id', vq.source_question_id,
+      'question_no', vq.question_no
+    )),
+    '[]'::jsonb
+  ) INTO v_committed_targets
+  FROM public.exam_versions ev
+  JOIN public.version_questions vq ON vq.version_id = ev.id
+  WHERE ev.session_id = p_session_id AND vq.is_current = TRUE;
 
-  -- 8. Transition status, record active_job_id fencing token, and init last_progress_at
+  -- 7. Transition to generating and set active fencing token
+  v_job_id := COALESCE(p_worker_job_id, gen_random_uuid());
+
   UPDATE public.exam_sessions
   SET status = 'generating',
       active_job_id = v_job_id,
-      last_progress_at = v_now
+      last_progress_at = v_now,
+      retry_count = CASE WHEN p_is_retry THEN retry_count + 1 ELSE retry_count END
   WHERE id = p_session_id;
 
-  -- 9. Fetch committed targets for incremental resume
-  SELECT COALESCE(jsonb_agg(jsonb_build_object(
-    'version_id', vq.version_id,
-    'source_question_id', vq.source_question_id,
-    'question_no', vq.question_no
-  )), '[]'::jsonb) INTO v_committed_targets
-  FROM public.version_questions vq
-  JOIN public.exam_versions ev ON vq.version_id = ev.id
-  WHERE ev.session_id = p_session_id;
-
   RETURN jsonb_build_object(
-    'success', TRUE,
     'session_id', p_session_id,
     'job_id', v_job_id,
     'status', 'generating',
@@ -208,21 +240,21 @@ DECLARE
   v_new_quota INT;
   v_now TIMESTAMPTZ := now();
 BEGIN
-  -- 1. Validate input bounds
-  IF p_calls_requested IS NULL OR p_calls_requested < 1 OR p_calls_requested > 250 THEN
-    RAISE EXCEPTION 'p_calls_requested must be between 1 and 250 (got %)', p_calls_requested
-      USING ERRCODE = '22023';
-  END IF;
-
-  -- 2. Restrict to service_role (background worker)
+  -- 1. Restrict strictly to service_role (NULL-safe)
   IF public.current_role() != 'service_role' THEN
     RAISE EXCEPTION 'Access denied: reserve_generation_quota is restricted to service_role'
       USING ERRCODE = '42501';
   END IF;
 
+  -- 2. Validate requested quota increment
+  IF p_calls_requested IS NULL OR p_calls_requested < 1 OR p_calls_requested > 250 THEN
+    RAISE EXCEPTION 'p_calls_requested must be between 1 and 250 (got %)', p_calls_requested
+      USING ERRCODE = '22023';
+  END IF;
+
   -- 3. Lock session row
-  SELECT user_id, status, gemini_call_count, active_job_id
-    INTO v_session_user_id, v_session_status, v_current_quota, v_active_job_id
+  SELECT user_id, status, active_job_id, gemini_call_count
+    INTO v_session_user_id, v_session_status, v_active_job_id, v_current_quota
   FROM public.exam_sessions
   WHERE id = p_session_id
   FOR UPDATE;
@@ -231,32 +263,26 @@ BEGIN
     RAISE EXCEPTION 'Session not found: %', p_session_id USING ERRCODE = 'P0002';
   END IF;
 
-  -- 4. State validation: only generating session can reserve quota
+  -- 4. State validation: only generating session can consume quota
   IF v_session_status != 'generating' THEN
-    RAISE EXCEPTION 'Cannot reserve quota: session % not generating (current: %)',
+    RAISE EXCEPTION 'Cannot reserve quota: session % is not generating (current: %)',
       p_session_id, v_session_status USING ERRCODE = '22023';
   END IF;
 
-  -- 5. Invariant check: status = 'generating' => active_job_id NOT NULL
-  IF v_active_job_id IS NULL THEN
-    RAISE EXCEPTION 'Invariant violated: session % is generating but has no active_job_id',
-      p_session_id USING ERRCODE = '55000';
-  END IF;
-
-  -- 6. Fencing token check: NULL cannot bypass (IS DISTINCT FROM)
+  -- 5. Fencing token check: NULL cannot bypass (IS DISTINCT FROM)
   IF p_job_token IS DISTINCT FROM v_active_job_id THEN
-    RAISE EXCEPTION 'Fencing token mismatch: supplied token does not match active job % for session %',
-      v_active_job_id, p_session_id USING ERRCODE = '55006';
+    RAISE EXCEPTION 'Fencing token mismatch: job % is stale for session % (active: %)',
+      p_job_token, p_session_id, v_active_job_id USING ERRCODE = '55006';
   END IF;
 
-  -- 7. Quota ceiling check
-  IF (v_current_quota + p_calls_requested) > 250 THEN
-    RAISE EXCEPTION 'Quota exceeded: reserve % (current %, cap 250)',
-      p_calls_requested, v_current_quota USING ERRCODE = '22023';
-  END IF;
-
+  -- 6. Check durable quota hard-cap (250 calls across entire session lifecycle)
   v_new_quota := v_current_quota + p_calls_requested;
+  IF v_new_quota > 250 THEN
+    RAISE EXCEPTION 'Gemini quota hard-cap exceeded for session %: requested %, current %, cap 250',
+      p_session_id, p_calls_requested, v_current_quota USING ERRCODE = '54000';
+  END IF;
 
+  -- 7. Atomically increment quota and update heartbeat
   UPDATE public.exam_sessions
   SET gemini_call_count = v_new_quota,
       last_progress_at = v_now
@@ -264,16 +290,16 @@ BEGIN
 
   RETURN jsonb_build_object(
     'session_id', p_session_id,
-    'gemini_call_count', v_new_quota,
-    'previous_quota', v_current_quota,
-    'reserved_this_call', p_calls_requested,
+    'job_id', p_job_token,
+    'reserved_calls', p_calls_requested,
+    'new_total_calls', v_new_quota,
     'remaining_quota', (250 - v_new_quota)
   );
 END;
 $$;
 
 -- ----------------------------------------------------------------------------
--- 5. persist_version_question (Fencing Token Protection on Data Writes)
+-- 5. persist_version_question (Fencing Token Protection & Idempotent Persistence)
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.persist_version_question(
   p_session_id UUID,
@@ -295,18 +321,26 @@ AS $$
 DECLARE
   v_session_status public.session_status;
   v_active_job_id UUID;
+  v_configured_n_versions INT;
   v_version_id UUID;
   v_question_id UUID;
-  v_version_code TEXT := (100 + p_version_index)::TEXT;
+  v_version_code TEXT;
   v_now TIMESTAMPTZ := now();
 BEGIN
-  -- 1. Restrict to service_role
+  -- 1. Restrict strictly to service_role
   IF public.current_role() != 'service_role' THEN
     RAISE EXCEPTION 'Access denied: persist_version_question is restricted to service_role'
       USING ERRCODE = '42501';
   END IF;
 
-  -- 2. Lock session row to verify active fencing token
+  -- 2. Validate p_version_index (M3 FIX)
+  IF p_version_index IS NULL OR p_version_index < 1 OR p_version_index > 4 THEN
+    RAISE EXCEPTION 'p_version_index must be between 1 and 4 (got %)', p_version_index
+      USING ERRCODE = '22023';
+  END IF;
+  v_version_code := (100 + p_version_index)::TEXT;
+
+  -- 3. Lock session row to verify active fencing token
   SELECT status, active_job_id
     INTO v_session_status, v_active_job_id
   FROM public.exam_sessions
@@ -328,7 +362,26 @@ BEGIN
       p_job_token, p_session_id, v_active_job_id USING ERRCODE = '55006';
   END IF;
 
-  -- 3. Ensure target exam_version exists
+  -- 4. Validate p_version_index does not exceed session configuration (M3 FIX)
+  SELECT n_versions INTO v_configured_n_versions
+  FROM public.generation_configs
+  WHERE session_id = p_session_id;
+
+  IF v_configured_n_versions IS NOT NULL AND p_version_index > v_configured_n_versions THEN
+    RAISE EXCEPTION 'p_version_index % exceeds configured n_versions % for session %',
+      p_version_index, v_configured_n_versions, p_session_id USING ERRCODE = '22023';
+  END IF;
+
+  -- 5. B2 FIX: Verify p_source_question_id belongs to p_session_id
+  IF NOT EXISTS (
+    SELECT 1 FROM public.source_questions
+    WHERE id = p_source_question_id AND session_id = p_session_id
+  ) THEN
+    RAISE EXCEPTION 'source_question % does not belong to session %',
+      p_source_question_id, p_session_id USING ERRCODE = '22023';
+  END IF;
+
+  -- 6. M2 FIX: Ensure target exam_version exists (idempotent upsert)
   SELECT id INTO v_version_id
   FROM public.exam_versions
   WHERE session_id = p_session_id AND version_code = v_version_code;
@@ -336,44 +389,72 @@ BEGIN
   IF v_version_id IS NULL THEN
     INSERT INTO public.exam_versions (session_id, version_code, created_at)
     VALUES (p_session_id, v_version_code, v_now)
+    ON CONFLICT (session_id, version_code) DO UPDATE
+      SET version_code = EXCLUDED.version_code
     RETURNING id INTO v_version_id;
   END IF;
 
-  -- 4. Upsert row into version_questions
-  INSERT INTO public.version_questions (
-    version_id,
-    source_question_id,
-    question_no,
-    content,
-    options,
-    correct_key,
-    solution_md,
-    canonical_question_no,
-    canonical_options,
-    canonical_correct_key,
-    canonical_solution_md,
-    has_warning,
-    status,
-    is_current
-  ) VALUES (
-    v_version_id,
-    p_source_question_id,
-    p_question_no,
-    p_content,
-    p_options,
-    p_correct_key,
-    p_solution_md,
-    p_question_no,
-    p_options,
-    p_correct_key,
-    p_solution_md,
-    p_has_warning,
-    'pending_review',
-    TRUE
-  )
-  RETURNING id INTO v_question_id;
+  -- 7. M2 FIX: Idempotent upsert into version_questions
+  SELECT id INTO v_question_id
+  FROM public.version_questions
+  WHERE version_id = v_version_id
+    AND source_question_id = p_source_question_id
+    AND is_current = TRUE;
 
-  -- 5. Touch last_progress_at to prevent false-positive stale timeout
+  IF v_question_id IS NOT NULL THEN
+    UPDATE public.version_questions
+    SET question_no = p_question_no,
+        content = p_content,
+        options = p_options,
+        correct_key = p_correct_key,
+        solution_md = p_solution_md,
+        canonical_question_no = p_question_no,
+        canonical_options = p_options,
+        canonical_correct_key = p_correct_key,
+        canonical_solution_md = p_solution_md,
+        has_warning = COALESCE(p_has_warning, FALSE),
+        updated_at = v_now
+    WHERE id = v_question_id;
+  ELSE
+    INSERT INTO public.version_questions (
+      version_id,
+      source_question_id,
+      question_no,
+      content,
+      options,
+      correct_key,
+      solution_md,
+      canonical_question_no,
+      canonical_options,
+      canonical_correct_key,
+      canonical_solution_md,
+      has_warning,
+      status,
+      is_current,
+      created_at,
+      updated_at
+    ) VALUES (
+      v_version_id,
+      p_source_question_id,
+      p_question_no,
+      p_content,
+      p_options,
+      p_correct_key,
+      p_solution_md,
+      p_question_no,
+      p_options,
+      p_correct_key,
+      p_solution_md,
+      COALESCE(p_has_warning, FALSE),
+      'pending_review',
+      TRUE,
+      v_now,
+      v_now
+    )
+    RETURNING id INTO v_question_id;
+  END IF;
+
+  -- 8. Touch last_progress_at to prevent false-positive stale timeout
   UPDATE public.exam_sessions
   SET last_progress_at = v_now
   WHERE id = p_session_id;
@@ -458,14 +539,14 @@ DECLARE
 BEGIN
   -- 1. Validate outcome (strict NULL check before enum cast)
   IF p_outcome IS NULL OR p_outcome NOT IN ('generated', 'partial_generated', 'failed') THEN
-    RAISE EXCEPTION 'Invalid outcome status: must be generated, partial_generated, or failed (got %)', 
-      p_outcome USING ERRCODE = '22023';
+    RAISE EXCEPTION 'Invalid outcome status: % (must be generated, partial_generated, or failed)', p_outcome
+      USING ERRCODE = '22023';
   END IF;
   v_target_status := p_outcome::public.session_status;
 
-  -- 2. Restrict execution to service_role (background worker)
+  -- 2. Restrict to service_role (NULL-safe)
   IF public.current_role() != 'service_role' THEN
-    RAISE EXCEPTION 'Access denied: finish_generation_job is strictly restricted to service_role'
+    RAISE EXCEPTION 'Access denied: finish_generation_job is restricted to service_role'
       USING ERRCODE = '42501';
   END IF;
 
@@ -498,7 +579,49 @@ BEGIN
       p_job_token, p_session_id, v_active_job_id USING ERRCODE = '55006';
   END IF;
 
-  -- 7. Transition status and clear active_job_id (RETURNING true updated_at)
+  -- 7. M1 FIX: Verify question persistence completeness
+  IF p_outcome = 'generated' THEN
+    DECLARE
+      v_expected INT;
+      v_actual INT;
+    BEGIN
+      SELECT c.n_versions * (SELECT COUNT(*) FROM public.source_questions WHERE session_id = p_session_id)
+        INTO v_expected
+      FROM public.generation_configs c
+      WHERE c.session_id = p_session_id;
+
+      IF v_expected IS NULL OR v_expected = 0 THEN
+        RAISE EXCEPTION 'Cannot finish as generated: session % has no valid generation config or source questions',
+          p_session_id USING ERRCODE = '55000';
+      END IF;
+
+      SELECT COUNT(*) INTO v_actual
+      FROM public.version_questions vq
+      JOIN public.exam_versions ev ON vq.version_id = ev.id
+      WHERE ev.session_id = p_session_id AND vq.is_current = TRUE;
+
+      IF v_actual < v_expected THEN
+        RAISE EXCEPTION 'Cannot finish as generated: expected % questions, found % for session %',
+          v_expected, v_actual, p_session_id USING ERRCODE = '22023';
+      END IF;
+    END;
+  ELSIF p_outcome = 'partial_generated' THEN
+    DECLARE
+      v_actual INT;
+    BEGIN
+      SELECT COUNT(*) INTO v_actual
+      FROM public.version_questions vq
+      JOIN public.exam_versions ev ON vq.version_id = ev.id
+      WHERE ev.session_id = p_session_id AND vq.is_current = TRUE;
+
+      IF v_actual < 1 THEN
+        RAISE EXCEPTION 'Cannot finish as partial_generated: 0 questions persisted for session %',
+          p_session_id USING ERRCODE = '22023';
+      END IF;
+    END;
+  END IF;
+
+  -- 8. Transition status and clear active_job_id (RETURNING true updated_at)
   UPDATE public.exam_sessions
   SET status = v_target_status,
       active_job_id = NULL
@@ -583,10 +706,12 @@ $$;
 -- ----------------------------------------------------------------------------
 -- 9. Least privilege (SEC-04)
 -- ----------------------------------------------------------------------------
+-- Client functions: claim_generation_job remains GRANTED to authenticated because
+-- FastAPI's generate endpoint calls runner.claim under user auth (enforcing ownership)
 REVOKE EXECUTE ON FUNCTION public.claim_generation_job(UUID, BOOLEAN, UUID) FROM PUBLIC, anon;
 GRANT  EXECUTE ON FUNCTION public.claim_generation_job(UUID, BOOLEAN, UUID) TO authenticated, service_role;
 
--- reserve, persist, heartbeat, finish, and fail_stale are strictly for service_role
+-- Worker functions: strictly service_role only
 REVOKE EXECUTE ON FUNCTION public.reserve_generation_quota(UUID, INT, UUID) FROM PUBLIC, anon, authenticated;
 GRANT  EXECUTE ON FUNCTION public.reserve_generation_quota(UUID, INT, UUID) TO service_role;
 

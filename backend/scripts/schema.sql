@@ -132,7 +132,8 @@ CREATE TABLE IF NOT EXISTS public.exam_versions (
   shuffle_seed TEXT,
   permutations JSONB,
   is_finalized BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT uq_exam_versions_session_code UNIQUE (session_id, version_code)
 );
 
 -- Table 7: Version Questions (Variant questions with Canonical Data Model)

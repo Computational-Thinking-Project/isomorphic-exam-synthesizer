@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 004 (v5): Atomic Save Generation Config RPC & Shared Helpers
+-- Migration 004 (v6): Atomic Save Generation Config RPC & Shared Helpers
 -- Part A: Shared Helpers, Triggers & Partial Index
 -- Part B: Hardened save_generation_config RPC
 --
@@ -249,12 +249,12 @@ BEGIN
     RAISE EXCEPTION 'ordering_preferences values must be boolean' USING ERRCODE = '22023';
   END IF;
 
-  -- 7. Defense-in-depth: Shared lock on source_questions and blueprints to eliminate TOCTOU races
+  -- 7. Defense-in-depth: Exclusive row lock on source_questions to eliminate TOCTOU races (Mi1)
   PERFORM 1 
   FROM public.source_questions sq
   LEFT JOIN public.question_blueprints qb ON qb.source_question_id = sq.id
   WHERE sq.session_id = p_session_id 
-  FOR SHARE;
+  FOR UPDATE OF sq;
 
   -- 8. Validate source question count (1-20)
   SELECT COUNT(*) INTO v_source_count

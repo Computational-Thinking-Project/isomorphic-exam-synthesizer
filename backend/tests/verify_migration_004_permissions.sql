@@ -1,5 +1,5 @@
 -- ============================================================================
--- Verification Suite for Migration 004 & 005 (v5) [TASK-207a/b]
+-- Verification Suite for Migration 004 & 005 (v6) [TASK-207a/b]
 -- Tests:
 -- 1. Schema invariants (columns, constraints, triggers, indexes, functions)
 -- 2. NULL-Semantics & current_role() non-NULL guarantee
@@ -49,6 +49,19 @@ BEGIN
 
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_not_generating_has_no_job') THEN
     RAISE EXCEPTION 'Missing constraint chk_not_generating_has_no_job on exam_sessions';
+  END IF;
+
+  -- Constraints on exam_versions
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_exam_versions_session_code') THEN
+    RAISE EXCEPTION 'Missing constraint uq_exam_versions_session_code on exam_versions';
+  END IF;
+
+  -- Partial unique index on version_questions
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_indexes 
+    WHERE schemaname = 'public' AND indexname = 'idx_single_current_version_question'
+  ) THEN
+    RAISE EXCEPTION 'Missing unique index idx_single_current_version_question on version_questions';
   END IF;
 
   -- Constraints / Unique Index on generation_configs(session_id)
