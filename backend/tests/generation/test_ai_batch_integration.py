@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, Mock
 from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 from pydantic import SecretStr
 
 from app.core.config import Settings
@@ -56,7 +57,7 @@ class FixtureStore:
             self.rows[prepared.target] = prepared.raw_result.model_copy(deep=True)
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def ai_case(monkeypatch):
     data = json.loads((Path(__file__).parents[1] / "fixtures/ai_pipeline.json").read_text())
     source = SourceQuestion.model_validate(data["source"])
