@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS public.exam_sessions (
   retry_count INT NOT NULL DEFAULT 0,
   gemini_review_calls INT NOT NULL DEFAULT 0,
   approved_at TIMESTAMPTZ NULL,
+  active_job_id UUID NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

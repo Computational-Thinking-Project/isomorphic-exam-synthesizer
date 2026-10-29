@@ -8,6 +8,8 @@ DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'uq_generation_configs_session_id'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM pg_indexes WHERE indexname = 'uq_generation_configs_session_id'
   ) THEN
     ALTER TABLE public.generation_configs 
       ADD CONSTRAINT uq_generation_configs_session_id UNIQUE (session_id);
@@ -51,7 +53,6 @@ DECLARE
     END
   );
   v_source_count INT := 0;
-  v_confirmed_bp_count INT := 0;
   v_now TIMESTAMPTZ := now();
   v_config_id UUID;
 BEGIN
@@ -90,7 +91,7 @@ BEGIN
     RAISE EXCEPTION 'ordering_preferences must be a JSON object' USING ERRCODE = '22023';
   END IF;
 
-  -- 6. Verify source question count and blueprint readiness
+  -- 6. Verify source question count (1 to 20 questions)
   SELECT COUNT(*) INTO v_source_count
   FROM public.source_questions
   WHERE session_id = p_session_id;
@@ -100,15 +101,20 @@ BEGIN
       v_source_count USING ERRCODE = '22023';
   END IF;
 
-  SELECT COUNT(*) INTO v_confirmed_bp_count
-  FROM public.question_blueprints qb
-  JOIN public.source_questions sq ON qb.source_question_id = sq.id
-  WHERE sq.session_id = p_session_id 
-    AND qb.confirmed_at IS NOT NULL;
-
-  IF v_confirmed_bp_count < v_source_count THEN
-    RAISE EXCEPTION 'Cannot save config: missing confirmed blueprints (expected %, confirmed %)', 
-      v_source_count, v_confirmed_bp_count USING ERRCODE = '22023';
+  -- Verify that EVERY source question has a confirmed blueprint (NOT EXISTS check ensures robustness)
+  IF EXISTS (
+    SELECT 1 
+    FROM public.source_questions sq
+    WHERE sq.session_id = p_session_id
+      AND NOT EXISTS (
+        SELECT 1 
+        FROM public.question_blueprints qb
+        WHERE qb.source_question_id = sq.id 
+          AND qb.confirmed_at IS NOT NULL
+      )
+  ) THEN
+    RAISE EXCEPTION 'Cannot save config: not all source questions have confirmed blueprints' 
+      USING ERRCODE = '22023';
   END IF;
 
   -- 7. Upsert configuration preferences
@@ -142,6 +148,7 @@ BEGIN
   RETURN jsonb_build_object(
     'success', TRUE,
     'session_id', p_session_id,
+    'config_id', v_config_id,
     'status', 'configured',
     'config', jsonb_build_object(
       'n_versions', p_n_versions,
