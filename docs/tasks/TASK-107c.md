@@ -29,26 +29,30 @@
 | File | Mục đích | Output chính | Cách kiểm tự động hoặc thủ công |
 |---|---|---|---|
 | `backend/app/services/validator/rule_checker.py` | Triển khai Rule-Based Fallback Checker | Các hàm kiểm tra độc lập và bộ điều phối fallback | `pytest backend/tests/validation/test_rule_checker.py` |
-| `backend/tests/validation/test_rule_checker.py` | Unit tests toàn diện và regression tests | 75 test cases bao phủ toàn bộ chức năng và edge cases | `pytest backend/tests/validation/ -v` |
+| `backend/tests/validation/test_rule_checker.py` | Unit tests toàn diện và regression tests | 77 test cases bao phủ toàn bộ chức năng và edge cases | `pytest backend/tests/validation/ -v` |
 | `docs/tasks/TASK-107c.md` | Tài liệu kế hoạch và bàn giao task theo chuẩn Workflow M2 | Plan chuẩn hóa | Đọc và rà soát tài liệu |
 
 ## Tự kiểm và giới hạn
 
 - [x] Lệnh kiểm: `pytest backend/tests/validation/test_rule_checker.py -v`
-- [x] Kết quả: 75/75 passed (100% green).
+- [x] Kết quả: 77/77 passed (100% green).
 - [x] Lệnh kiểm linter: `ruff check backend/app/services/validator/rule_checker.py backend/tests/validation/test_rule_checker.py`
 - [x] Kết quả: All checks passed.
 - [x] Lệnh kiểm format: `ruff format --check backend/app/services/validator/rule_checker.py backend/tests/validation/test_rule_checker.py`
 - [x] Kết quả: 2 files already formatted.
+- [x] Lệnh kiểm typecheck: `mypy backend/app --ignore-missing-imports`
+- [x] Kết quả: Success: no issues found in 33 source files.
 - [x] Lệnh kiểm toàn bộ suite validation: `pytest backend/tests/validation/ -v`
-- [x] Kết quả: 167/167 passed.
+- [x] Kết quả: 169/169 passed.
 - Giới hạn: Biểu thức chứa các hàm số lượng giác thuần túy hoặc số vô tỉ siêu việt ($e, \pi$) mà không có CAS hỗ trợ sẽ được đánh giá qua xấp xỉ số học hoặc phân loại ngoài phạm vi.
 
 ## Bàn giao – điền theo kết quả thực tế
 
 - PR/commit/output: PR [#19](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/19).
 - Đã làm / đã kiểm:
-  - F01 (verified bởi Philip).
-  - F02 (claimed_fixed): Triển khai `RadicalFraction` xử lý đại số căn nguyên vẹn `\sqrt{2}*\sqrt{2}-2` và `2**0.5*2**0.5-2` thành 0 chính xác; `check_mathematical_invariants` bắt đúng mẫu 0 và phân biệt biến số đại số với hàm số toán học qua `_contains_algebraic_variables`.
-- Đã chấp nhận: Chờ Philip (`@philip-kkk`) verify F02 và approve PR.
+  - F01: `verified` bởi Philip tại commit `1308a59`.
+  - F02: `verified` bởi Philip tại commit `1308a59`.
+  - F03 (`claimed_fixed`): Triển khai phương thức xác định dấu toán học chính xác `RadicalFraction.sign()` dựa trên định lý Besicovitch và so sánh chuẩn bình phương hữu tỉ $c_1^2 d_1$ vs $c_2^2 d_2$; loại bỏ hoàn toàn việc suy luận dấu từ `to_decimal(prec=50)` xấp xỉ; xử lý chính xác phép lấy trị tuyệt đối `abs()` và bắt đúng căn bậc chẵn của số âm cực nhỏ $q - \sqrt{2} < 0$.
+  - F04 (`claimed_fixed`): Bổ sung giới hạn ngân sách tính toán `max_limit = 100_000` cho hàm tách thừa số bình phương `_square_free_decomp`, giải quyết trong < 15ms và từ chối có kiểm soát với `ValueError` đối với các số nguyên lớn gần $10^{18}$ thay vì treo CPU quá 5s; giữ trọn vẹn khả năng xử lý căn chính phương $O(1)$ và các căn số học thông thường.
+- Đã chấp nhận: Chờ Philip (`@philip-kkk`) verify F03, F04 và approve PR.
 - Còn chờ/bước tiếp: Đồng bộ sang PR #20 (`TASK-107d`).
