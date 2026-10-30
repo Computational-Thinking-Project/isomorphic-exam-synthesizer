@@ -7,6 +7,8 @@
 
 ## Quick start (Docker)
 
+**UI walkthrough cho bài trình bày:** lấy nhánh `feat/ui-ux-integration`, xem [gói PREVIEW portable và runbook](docs/ui-walkthrough/README.md). Mở file bằng Chrome, không cần Docker/Node; đây là preview dữ liệu mẫu, tách khỏi ứng dụng sản phẩm.
+
 Hướng dẫn tham gia: [CONTRIBUTING](CONTRIBUTING.md), [quy trình giao việc/review](docs/review/WORKFLOW.md) và [5 mẫu dùng chung](docs/review/TEMPLATES.md). Agent bắt đầu từ [AGENTS.md](AGENTS.md). Bộ workflow v0.1 đang chờ review/pilot; lịch tuần và trạng thái được ghi trong WORKFLOW.
 
 Install Git and Docker Desktop (Linux containers / WSL 2 on Windows), then reopen
