@@ -4,7 +4,6 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
-
 from starlette.requests import Request
 
 from app.main import app
