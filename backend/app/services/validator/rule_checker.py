@@ -350,24 +350,41 @@ def _latex_to_python_numeric(expr: str) -> str:
     return cleaned
 
 
-def _square_free_decomp(n: int) -> Tuple[int, int]:
+def _square_free_decomp(n: int, max_limit: int = 100_000) -> Tuple[int, int]:
     """
     Decompose positive integer n into (k, d) such that n = k^2 * d,
     where d is square-free (d >= 1).
+    Enforces a strict computational budget (max_limit = 100_000) to prevent
+    long CPU hangs when factoring huge integers (F04).
     """
     if n <= 0:
         raise ValueError(f"Square-free decomposition requires positive integer, got {n}")
     k = 1
     d = n
-    limit = math.isqrt(d)
-    i = 2
+    r = math.isqrt(d)
+    if r * r == d:
+        return k * r, 1
+
+    # Fast check for factor 2
+    while d % 4 == 0:
+        k *= 2
+        d //= 4
+
+    i = 3
+    limit = min(math.isqrt(d), max_limit)
     while i <= limit:
         i2 = i * i
         while d % i2 == 0:
             k *= i
             d //= i2
-            limit = math.isqrt(d)
-        i += 1
+            limit = min(math.isqrt(d), max_limit)
+        i += 2
+
+    r = math.isqrt(d)
+    if r * r == d:
+        return k * r, 1
+    if r > max_limit:
+        raise ValueError(f"Square-free decomposition exceeded computation budget for {n}")
     return k, d
 
 
@@ -408,6 +425,58 @@ class RadicalFraction:
     def is_zero(self) -> bool:
         return len(self.terms) == 0
 
+    def sign(self) -> Optional[int]:
+        """
+        Determine the exact mathematical sign of the radical expression:
+        returns 1 if strictly positive (> 0), -1 if strictly negative (< 0),
+        0 if exactly zero, or None if inconclusive (F03).
+        Guarantees 100% exact sign determination for rational and 2-term radicals
+        via Besicovitch linear independence and exact squared-norm comparison:
+        c1*sqrt(d1) + c2*sqrt(d2) > 0 <=> c1^2*d1 > c2^2*d2 (when c1 > 0, c2 < 0).
+        For multi-term radicals (>= 3 terms), uses adaptive Decimal precision
+        with conservative error margins, or returns None if inconclusive.
+        """
+        if self.is_zero():
+            return 0
+        if len(self.terms) == 1:
+            d, c = next(iter(self.terms.items()))
+            return 1 if c > 0 else -1
+        if len(self.terms) == 2:
+            items = list(self.terms.items())
+            (d1, c1), (d2, c2) = items[0], items[1]
+            if c1 > 0 and c2 > 0:
+                return 1
+            if c1 < 0 and c2 < 0:
+                return -1
+            pos_term = (d1, c1) if c1 > 0 else (d2, c2)
+            neg_term = (d2, c2) if c1 > 0 else (d1, c1)
+            pos_sq = (pos_term[1] ** 2) * pos_term[0]
+            neg_sq = (neg_term[1] ** 2) * neg_term[0]
+            if pos_sq > neg_sq:
+                return 1
+            if pos_sq < neg_sq:
+                return -1
+            return 0
+
+        # >= 3 terms
+        if all(c > 0 for c in self.terms.values()):
+            return 1
+        if all(c < 0 for c in self.terms.values()):
+            return -1
+
+        for prec in (100, 250):
+            getcontext().prec = prec
+            total = Decimal(0)
+            for d, c in self.terms.items():
+                dec_c = Decimal(c.numerator) / Decimal(c.denominator)
+                total += dec_c if d == 1 else dec_c * Decimal(d).sqrt()
+            margin = Decimal(len(self.terms) * 10) * (Decimal(10) ** (-prec + 10))
+            if total > margin:
+                return 1
+            if total < -margin:
+                return -1
+        return None
+
     def to_fraction(self) -> Optional[Fraction]:
         """Return the exact rational Fraction if this element lies in Q, else None."""
         if self.is_zero():
@@ -417,7 +486,7 @@ class RadicalFraction:
         return None
 
     def to_decimal(self, prec: int = 50) -> Decimal:
-        """High-precision Decimal evaluation for strict sign/order determination."""
+        """High-precision Decimal evaluation for approximate representation."""
         if self.is_zero():
             return Decimal(0)
         getcontext().prec = prec
@@ -566,8 +635,11 @@ class SafeNumericEvaluator(ast.NodeVisitor):
                 raise ZeroDivisionError(
                     "Division by zero in AST evaluation (0 to non-positive power)"
                 )
-            if left_dec < 0 and q % 2 == 0:
-                raise ValueError(f"Even root of negative number: {left_dec}")
+            left_sign = left.sign()
+            if left_sign == -1 and q % 2 == 0:
+                raise ValueError(f"Even root of negative number: {left}")
+            if left_sign is None and q % 2 == 0:
+                raise ValueError(f"Inconclusive sign for base of even root: {left}")
 
             # Half-integer exponent (q == 2) -> exact square root
             if q == 2:
@@ -609,15 +681,21 @@ class SafeNumericEvaluator(ast.NodeVisitor):
             func_name = node.func.id
             if func_name == "abs" and len(node.args) == 1:
                 abs_arg: RadicalFraction = self.visit(node.args[0])
-                if abs_arg.is_zero() or abs_arg.to_decimal() >= 0:
+                s = abs_arg.sign()
+                if s is None:
+                    raise ValueError("Cannot determine sign of expression inside abs")
+                if s >= 0:
                     return abs_arg
                 return -abs_arg
             if func_name == "sqrt" and len(node.args) == 1:
                 sqrt_arg: RadicalFraction = self.visit(node.args[0])
                 if sqrt_arg.is_zero():
                     return RadicalFraction({})
-                if sqrt_arg.to_decimal() < 0:
-                    raise ValueError(f"Square root of negative number: {sqrt_arg.to_decimal()}")
+                s = sqrt_arg.sign()
+                if s is None:
+                    raise ValueError("Cannot determine sign of radicand in sqrt")
+                if s < 0:
+                    raise ValueError(f"Square root of negative number: {sqrt_arg}")
                 arg_frac = sqrt_arg.to_fraction()
                 if arg_frac is not None:
                     return RadicalFraction.from_sqrt(arg_frac)
@@ -985,10 +1063,15 @@ def check_mathematical_invariants(
             if deg % 2 == 0:
                 rad_val = safe_eval_radical_expr(radicand_str)
                 if rad_val is not None:
-                    if rad_val.to_decimal() < 0:
+                    s = rad_val.sign()
+                    if s == -1:
                         errors.append(
                             f"Negative radicand in even root (index {deg}): radicand '{radicand_str}' "
-                            f"evaluates to {str(rad_val.to_decimal())} < 0."
+                            f"evaluates to negative."
+                        )
+                    elif s is None:
+                        errors.append(
+                            f"Uncomputable radicand sign in even root (index {deg}): '{radicand_str}' cannot be conclusively determined."
                         )
                 elif not _contains_algebraic_variables(radicand_str):
                     errors.append(
@@ -1002,9 +1085,14 @@ def check_mathematical_invariants(
             if arg_str:
                 arg_val = safe_eval_radical_expr(arg_str.strip())
                 if arg_val is not None:
-                    if arg_val.is_zero() or arg_val.to_decimal() <= 0:
+                    s = arg_val.sign()
+                    if s == -1 or s == 0:
                         errors.append(
-                            f"Logarithm argument must be strictly positive: argument '{arg_str}' evaluates to {str(arg_val.to_decimal())} <= 0."
+                            f"Logarithm argument must be strictly positive: argument '{arg_str}' evaluates to <= 0."
+                        )
+                    elif s is None:
+                        errors.append(
+                            f"Uncomputable logarithm argument sign: '{arg_str}' cannot be conclusively determined."
                         )
                 elif not _contains_algebraic_variables(arg_str):
                     errors.append(
@@ -1013,13 +1101,18 @@ def check_mathematical_invariants(
             if base_str:
                 base_val = safe_eval_radical_expr(base_str.strip())
                 if base_val is not None:
-                    if base_val.is_zero() or base_val.to_decimal() <= 0:
+                    s = base_val.sign()
+                    if s == -1 or s == 0:
                         errors.append(
-                            f"Logarithm base must be strictly positive: base '{base_str}' evaluates to {str(base_val.to_decimal())} <= 0."
+                            f"Logarithm base must be strictly positive: base '{base_str}' evaluates to <= 0."
                         )
                     elif (base_val - RadicalFraction.from_rational(Fraction(1))).is_zero():
                         errors.append(
                             f"Logarithm base cannot be equal to 1: base '{base_str}' evaluates to 1."
+                        )
+                    elif s is None:
+                        errors.append(
+                            f"Uncomputable logarithm base sign: '{base_str}' cannot be conclusively determined."
                         )
                 elif not _contains_algebraic_variables(base_str):
                     errors.append(f"Uncomputable logarithm base: '{base_str}' cannot be evaluated.")
@@ -1029,9 +1122,14 @@ def check_mathematical_invariants(
             if arg_str:
                 arg_val = safe_eval_radical_expr(arg_str.strip())
                 if arg_val is not None:
-                    if arg_val.is_zero() or arg_val.to_decimal() <= 0:
+                    s = arg_val.sign()
+                    if s == -1 or s == 0:
                         errors.append(
-                            f"Logarithm argument must be strictly positive: argument '{arg_str}' evaluates to {str(arg_val.to_decimal())} <= 0."
+                            f"Logarithm argument must be strictly positive: argument '{arg_str}' evaluates to <= 0."
+                        )
+                    elif s is None:
+                        errors.append(
+                            f"Uncomputable logarithm argument sign: '{arg_str}' cannot be conclusively determined."
                         )
                 elif not _contains_algebraic_variables(arg_str):
                     errors.append(

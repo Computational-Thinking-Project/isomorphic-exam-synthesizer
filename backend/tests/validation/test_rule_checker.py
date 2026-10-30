@@ -17,6 +17,7 @@ from app.services.validator.rule_checker import (
     evaluate_rule_fallback,
     extract_parameter_domains,
     safe_eval_numeric_expr,
+    safe_eval_radical_expr,
     validate_rule_variant,
 )
 from app.services.validator.sympy_evaluator import EvaluationResult, EvaluationStatus
@@ -1114,3 +1115,49 @@ class TestRuleCheckerReviewRegressionFixes:
         )
         assert res_small_zero.passed is False
         assert any("Zero denominator detected" in err for err in res_small_zero.errors)
+
+    def test_radical_sign_determination_f03(self):
+        # High-precision near-sqrt rational difference (F03)
+        q = "1.4142135623730950488016887242096980785696718753769"
+        assert Fraction(q) > 0 and Fraction(q) ** 2 < 2
+
+        # 1. q - sqrt(2) < 0: radicand is negative -> must fail invariant check
+        res_neg = check_mathematical_invariants(r"Tính \sqrt{" + q + r"-\sqrt{2}}")
+        assert res_neg.passed is False
+        assert any("Negative radicand" in err for err in res_neg.errors)
+
+        # 2. sqrt(2) - q > 0: radicand is positive -> must pass
+        res_pos = check_mathematical_invariants(r"Tính \sqrt{\sqrt{2}-" + q + r"}")
+        assert res_pos.passed is True
+
+        # 3. abs(q - sqrt(2)) > 0: must flip sign inside abs and pass
+        res_abs = check_mathematical_invariants(r"Tính \sqrt{abs(" + q + r"-\sqrt{2})}")
+        assert res_abs.passed is True
+
+        # 4. Logarithm argument domain with near-zero difference
+        res_log_neg = check_mathematical_invariants(r"Tính \ln(" + q + r"-\sqrt{2})")
+        assert res_log_neg.passed is False
+        assert any(
+            "Logarithm argument must be strictly positive" in err for err in res_log_neg.errors
+        )
+
+        res_log_pos = check_mathematical_invariants(r"Tính \ln(\sqrt{2}-" + q + r")")
+        assert res_log_pos.passed is True
+
+    def test_square_free_decomp_computational_budget_f04(self):
+        # 1. Huge integer below 10^18 must reject gracefully in controlled time (< 0.5s) without hanging (F04)
+        import time
+
+        t0 = time.time()
+        res = safe_eval_radical_expr("sqrt(999999999999999989)")
+        elapsed = time.time() - t0
+        assert res is None
+        assert elapsed < 1.0
+
+        # 2. Perfect squares up to 10^18 resolve in O(1)
+        assert safe_eval_numeric_expr("sqrt(1000000000000000000)") == 1000000000
+
+        # 3. Small square root continues to work perfectly
+        assert safe_eval_radical_expr("sqrt(2)") is not None
+        assert safe_eval_radical_expr("sqrt(18)").to_fraction() is None
+        assert safe_eval_radical_expr("sqrt(18) / sqrt(2)").to_fraction() == 3
