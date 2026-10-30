@@ -1,0 +1,2 @@
+# Keep the generated portable artifact byte-identical on every checkout.
+PREVIEW.html -text
