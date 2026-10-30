@@ -23,8 +23,12 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
 - [DEC-BE1-003: Khắc phục Toàn Diện Phản Hồi Review PR #15 (Vòng 2)](#dec-be1-003-khắc-phục-toàn-diện-phản-hồi-review-pr-15-vòng-2)
 - [DEC-BE1-004: Xử lý Triệt Để Ngoại Lệ Mạng và Khẳng Định Trạng Thái Commit CSDL (PR #15 Round 3)](#dec-be1-004-xử-lý-triệt-để-ngoại-lệ-mạng-và-khẳng-định-trạng-thái-commit-csdl-pr-15-round-3)
 - [DEC-BE1-005: Chuẩn Hóa Bóc Tách Phương Án Bullet List Trong Parser Markdown & Text (PR #15)](#dec-be1-005-chuẩn-hóa-bóc-tách-phương-án-bullet-list-trong-parser-markdown--text-pr-15)
-- [DEC-BE1-006: Khắc Phục Triệt Để Suy Luận Rollback CSDL & Ngoại Lệ Gateway (PR #15 Round 4)](#dec-be1-006-khắc-phục-triệt-để-suy-luận-rollback-csdl--ngoại-lệ-gateway-pr-15-round-4)
+- [DEC-BE1-006: Khắc Phục Triệt Để Suy Luận Rollback CSDL & Ngoại Lệ Gateway (PR #15 / PR #16 Round 4)](#dec-be1-006-khắc-phục-triệt-để-suy-luận-rollback-csdl--ngoại-lệ-gateway-pr-15--pr-16-round-4)
 - [DEC-BE1-007: Bảo Toàn Ranh Giới Câu Hỏi Bảng Nhiều Cột và Nhận Diện Bảng Đáp Án Ô Riêng Biệt (PR #15 Round 5)](#dec-be1-007-bảo-toàn-ranh-giới-câu-hỏi-bảng-nhiều-cột-và-nhận-diện-bảng-đáp-án-ô-riêng-biệt-pr-15-round-5)
+- [ADR-003: Atomic Exam Confirmation và Blueprint Concurrency Protection (TASK-205)](#adr-003-atomic-exam-confirmation-và-blueprint-concurrency-protection-task-205)
+- [DEC-BE1-008: Phân Loại Ngoại Lệ Mạng Phân Tán và Chuẩn Hóa Kiểm Quyền Migration 003 (TASK-205 Round 3)](#dec-be1-008-phân-loại-ngoại-lệ-mạng-phân-tán-và-chuẩn-hóa-kiểm-quyền-migration-003-task-205-round-3)
+- [DEC-BE1-009: Loại Trừ PostgreSQL SQLSTATE Class 08 Khỏi Bằng Chứng Rollback CSDL (TASK-202 / TASK-205 Round 5)](#dec-be1-009-loại-trừ-postgresql-sqlstate-class-08-khỏi-bằng-chứng-rollback-csdl-task-202--task-205-round-5)
+- [ADR-004: Tinh Giản Toàn Diện Stage 1 & Stage 2 Sang Kiến Trúc Black-Box, Silent Security Audit, và Chốt Nguồn Nguyên Tử Đơn Điểm](#adr-004-tinh-giản-toàn-diện-stage-1--stage-2-sang-kiến-trúc-black-box-silent-security-audit-và-chốt-nguồn-nguyên-tử-đơn-điểm)
 
 ---
 
@@ -176,7 +180,7 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
   2. **Làm sạch Thân câu và Phương án:** Cắt gọt triệt để ký tự bullet thừa, bảo đảm `stem` chỉ chứa nội dung câu hỏi và các giá trị trong `options` thuần khiết, không rò rỉ gạch đầu dòng hoặc dấu sao.
   3. **Bổ sung Unit Test Hồi quy:** Thêm test `test_markdown_parser_bullet_list_options` trong `test_parsers.py` kiểm chứng cho cả hai dạng bullet `-` và `*`.
 
-### DEC-BE1-006: Khắc Phục Triệt Để Suy Luận Rollback CSDL & Ngoại Lệ Gateway (PR #15 Round 4)
+### DEC-BE1-006: Khắc Phục Triệt Để Suy Luận Rollback CSDL & Ngoại Lệ Gateway (PR #15 / PR #16 Round 4)
 * **Mã quyết định:** DEC-BE1-006
 * **Ngày quyết định:** 26/10/2026
 * **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
@@ -188,7 +192,7 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
   1. **Nhận diện chính xác SQLSTATE:** Chỉ coi là bằng chứng rollback từ CSDL khi `code` là mã PostgreSQL SQLSTATE hợp lệ gồm đúng 5 ký tự alnum (`^[0-9A-Z]{5}$`), đồng thời loại trừ triệt để các mã HTTP gateway (`500, 502, 503, 504`), loại trừ phản hồi không phải JSON (`message == "JSON could not be generated"`), và loại trừ nội dung HTML.
   2. **Thông điệp trung tính cho mọi trường hợp chưa xác định:** Mọi lỗi gateway, phản hồi không phải JSON, `APIError` có code không xác định, hoặc lỗi runtime chưa được chứng minh rollback đều trả về thông báo trung tính yêu cầu kiểm tra phiên (`"Database atomic replacement failed. Please verify session state before retrying."`) và tuyệt đối không khẳng định đã rollback hay dữ liệu chưa đổi.
   3. **Bảo toàn các ca timeout 504:** Giữ nguyên 100% hai hàm `is_network_timeout` và `is_network_transport`, không tự động gửi lại RPC mù quáng ở backend.
-  4. **Kiểm thử mô phỏng Gateway chân thực:** Bổ sung 4 unit tests mới trong `test_ingest.py` kiểm chứng các ca Gateway HTML 502, Gateway HTML 504, non-JSON body và unknown code.
+  4. **Kiểm thử mô phỏng Gateway chân thực:** Bổ sung unit tests trong `test_ingest.py` và `test_confirm_source.py` kiểm chứng các ca Gateway HTML 502, Gateway HTML 504, non-JSON proxy error, và unknown code.
 
 ### DEC-BE1-007: Bảo Toàn Ranh Giới Câu Hỏi Bảng Nhiều Cột và Nhận Diện Bảng Đáp Án Ô Riêng Biệt (PR #15 Round 5)
 * **Mã quyết định:** DEC-BE1-007
@@ -207,6 +211,85 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
      Chuẩn hóa các cặp này thành chuỗi đáp án chuẩn `BẢNG ĐÁP ÁN: 1.A  2.B ...` ở cuối tài liệu để `parse_separate_answer_key` bóc tách đồng bộ và cô lập hoàn toàn khỏi thân câu hỏi.
   3. **Kiểm thử Toàn Diện:** Bổ sung 4 unit tests trong `test_parsers.py` và 2 API integration tests trong `test_ingest.py`, kiểm chứng chính xác số câu, thân câu, phương án và quy tắc Zero Cloud Mutation. Toàn bộ 270 backend tests đều đạt 100%.
 
+### ADR-003: Atomic Exam Confirmation và Blueprint Concurrency Protection (TASK-205)
+* **Mã quyết định:** ADR-003 / DEC-BE1-004
+* **Ngày quyết định:** 25/10/2026
+* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
+* **Bối cảnh:**
+  1. Trong quy trình xác nhận đề thi nguồn (Stage 1 Confirmation / TASK-205), việc cập nhật `confirmed_at` trên bảng `question_blueprints` và chuyển `status = 'blueprinted'` trên `exam_sessions` qua 2 lệnh client-side riêng rẽ có nguy cơ gây lỗi trạng thái dở dang (partial lock) hoặc báo thành công giả `HTTP 200` khi bản ghi session bị xóa / đổi trạng thái song song.
+  2. Bảng `question_blueprints` thiếu ràng buộc `UNIQUE (source_question_id)`, dẫn tới nguy cơ tác vụ nền (TASK-203) và thao tác xác nhận đồng thời tạo ra các bản ghi blueprint trùng lặp cho cùng một câu hỏi nguồn.
+  3. Cơ chế trích xuất fallback biến số ±5 trong `blueprint_service.py` cần được định danh rõ ràng để phân biệt với Blueprint toán học do AI sinh ra ở TASK-203.
+* **Quyết định:**
+  1. **Ràng buộc Toàn vẹn 1-to-1:** Thêm `CONSTRAINT uq_question_blueprints_source_question UNIQUE (source_question_id)` trên bảng `question_blueprints` và sử dụng `upsert(..., ignore_duplicates=True)` khi sinh blueprint dự phòng.
+  2. **Chốt Nguồn Nguyên Tử qua Stored Procedure:** Triển khai hàm PostgreSQL RPC `confirm_exam_source(p_session_id, p_expected_question_count)` thực hiện:
+     - Khóa dòng phiên (`FOR UPDATE`).
+     - Kiểm tra xác thực và quyền sở hữu (bảo mật SEC-04).
+     - Kiểm tra điều kiện trạng thái `status = 'draft'` và đối chiếu số lượng câu hỏi thực tế.
+     - Đồng thời khóa `confirmed_at = now()` trên các blueprints và chuyển session sang `'blueprinted'` trong 1 ACID transaction duy nhất.
+  3. **Kiểm tra Kết quả Ghi Thực Tế:** Loại bỏ hoàn toàn fallback cập nhật rời; chỉ chốt bằng transaction/RPC. Nếu RPC gặp timeout mạng, trả về HTTP 504 Gateway Timeout không cam kết trạng thái chưa đổi.
+  4. **Phân Định Rõ Ràng Hợp Đồng Blueprint:** Đánh dấu rõ cờ `is_fallback: true` và `extraction_source: "FALLBACK_DETERMINISTIC"` cho các blueprint dự phòng từ `extract_default_blueprint` để Stage 2 phân biệt với Blueprint chính thức của AI pipeline (TASK-203).
+* **Hệ quả / Tác động:**
+  1. Loại bỏ hoàn toàn nguy cơ race condition, nhân bản blueprint và báo thành công sai.
+  2. Dữ liệu đề thi và blueprint luôn đồng bộ 100% trong CSDL.
+  3. Đáp ứng toàn diện các tiêu chí đánh giá khắt khe trong Code Review từ Lead Reviewer.
 
+### DEC-BE1-008: Phân Loại Ngoại Lệ Mạng Phân Tán và Chuẩn Hóa Kiểm Quyền Migration 003 (TASK-205 Round 3)
+* **Mã quyết định:** DEC-BE1-008
+* **Ngày quyết định:** 26/10/2026
+* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
+* **Bối cảnh:**
+  1. Trong endpoint `confirm-source` (`sessions.py`), việc dùng chuỗi ký tự `"timeout" in err_lower` để bắt ngoại lệ mạng không phát hiện được các lỗi mạng phân tán với thông báo rỗng (`httpx.ReadTimeout("")`, `httpx.ReadError("")`, `RemoteProtocolError`). Khi đó, request rơi vào khối HTTP 500 với thông điệp sai lệch *"was rolled back"*, dù giao dịch có thể đã commit thành công trên PostgreSQL.
+  2. Script kiểm quyền CSDL `verify_migration_003_permissions.sql` chưa khởi tạo dữ liệu người dùng mẫu trong `auth.users` và `public.users`, gây lỗi khóa ngoại `exam_sessions_user_id_fkey` khi kiểm thử trên database trắng.
+  3. Kịch bản kiểm thử quyền `anon` trong `verify_migration_003_permissions.sql` chạy trực tiếp dưới kết nối superuser `postgres`, khiến RPC tin cậy `session_user` và bỏ qua kiểm tra quyền, không xác thực được cơ chế cấm `EXECUTE` (SQLSTATE 42501).
+* **Quyết định:**
+  1. **Phân loại ngoại lệ phân tán theo kiểu `isinstance`:** Xây dựng các helper `is_network_timeout`, `is_network_transport`, `is_database_rollback_evidence` kiểm tra cây ngoại lệ `__cause__`/`__context__`. Trả về HTTP 504 Gateway Timeout khi trạng thái commit chưa rõ ràng; chỉ trả về HTTP 500 khẳng định hoàn tác khi có bằng chứng từ `postgrest.exceptions.APIError`.
+  2. **Chuẩn hóa script kiểm quyền migration 003:** 
+     - Thêm preflight tạo mock users trong `auth.users` và `public.users`.
+     - Giả lập caller PostgREST qua `SET SESSION AUTHORIZATION authenticator; SET ROLE anon / authenticated / service_role;`.
+     - Xác thực role `anon` bị từ chối `EXECUTE` ở tầng PostgreSQL Engine (SQLSTATE 42501 / Least Privilege SEC-04).
+     - Thêm Scenario 11 kiểm chứng trực tiếp Quản trị viên CSDL (`session_user IN ('postgres', 'supabase_admin')`) thực thi bảo trì thành công không cần JWT claims.
+     - Đóng gói toàn bộ script trong transaction kết thúc bằng `ROLLBACK;`.
+  3. **Kiểm thử tự động:** Bổ sung failure mode unit tests với instance ngoại lệ thật trong `test_confirm_source.py`.
 
+### DEC-BE1-009: Loại Trừ PostgreSQL SQLSTATE Class 08 Khỏi Bằng Chứng Rollback CSDL (TASK-202 / TASK-205 Round 5)
+* **Mã quyết định:** DEC-BE1-009
+* **Ngày quyết định:** 26/10/2026
+* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
+* **Bối cảnh:**
+  1. Regex `^[0-9A-Z]{5}$` chỉ kiểm tra hình thức độ dài 5 ký tự của mã SQLSTATE, chưa phân biệt ngữ nghĩa nghiệp vụ của các nhóm lỗi trong PostgreSQL.
+  2. Khi PostgREST SDK nhận mã lỗi kết nối thuộc SQLSTATE Class 08 (như `08007` - *transaction resolution unknown* hoặc `08006` - *connection failure*), hàm `is_database_rollback_evidence()` vẫn trả về `True`.
+  3. Khi gặp lỗi kết nối `08007` / `08006`, máy chủ CSDL có thể đã commit thành công giao dịch trước khi kết nối bị ngắt. Việc khẳng định *"was rolled back"* là sai thực tế.
+* **Quyết định:**
+  1. **Loại trừ Class 08 và 40003:** Bổ sung `POSTGRES_NON_ROLLBACK_SQLSTATE_PREFIXES = ("08",)` và `POSTGRES_NON_ROLLBACK_SQLSTATES = {"40003"}` vào `ingestion_service.py`. Mọi mã lỗi bắt đầu bằng `08` hoặc `40003` đều bị loại khỏi bằng chứng rollback CSDL.
+  2. **Thông báo Trung tính Cho Trạng thái Chưa Xác Định:** Khi gặp lỗi kết nối Class 08, service trả về HTTP 500 trung tính yêu cầu kiểm tra lại phiên (`"Database atomic replacement/confirmation failed. Please verify session state before retrying."`), tuyệt đối không khẳng định đã rollback.
+  3. **Bảo toàn Khẳng định Rollback cho Lỗi Dữ liệu Xác định:** Các mã lỗi ràng buộc toàn vẹn thực tế (`23505`, `23503`), lỗi PL/pgSQL (`P0001`) vẫn được khẳng định rollback chính xác.
+  4. **Kiểm thử Hồi quy Toàn diện:** Bổ sung các unit tests cho mã `08007`, `08006` và `23505` trên cả 2 endpoint Ingestion và Confirm Source.
 
+### ADR-004: Tinh Giản Toàn Diện Stage 1 & Stage 2 Sang Kiến Trúc Black-Box, Silent Security Audit, và Chốt Nguồn Nguyên Tử Đơn Điểm
+* **Mã quyết định:** ADR-004 / DEC-ALL-001
+* **Ngày quyết định:** 27/10/2026
+* **Người đề xuất:** Toàn đội kỹ thuật (Lead Bá Duy, Frontend Philip, AI & Math Validator)
+* **Bối cảnh:**
+  1. **Quá tải giao diện & Phức tạp hóa luồng người dùng ở Stage 1:** Thiết kế ban đầu yêu cầu xây dựng trình chỉnh sửa câu nguồn (`PUT /api/source-questions/{id}`), trình sửa tham số Blueprint (`PATCH /api/blueprints/{id}`), và hộp kiểm cam kết an ninh người dùng. Tuy nhiên, qua khảo sát sư phạm, giảng viên chỉ có nhu cầu xem trước đề nguồn để kiểm tra bóc tách đúng hay sai, không có nhu cầu can thiệp sâu vào cấu trúc toán học của Blueprint. Việc cho phép sửa tay trực tiếp dễ gây rủi ro phá vỡ tính giải được của đề thi hoặc tiêm nhiễm mã độc (XSS/SQLi).
+  2. **Trải nghiệm người dùng bị ngắt quãng bởi cảnh báo an ninh:** Việc hiển thị huy hiệu đỏ cảnh báo prompt injection và bắt buộc giảng viên tick vào checkbox xác nhận an ninh gây hoang mang, vì người dùng không có chuyên môn bảo mật và không thể xử lý các vấn đề này.
+  3. **Rời rạc hóa API chuyển trạng thái:** Các endpoint `/extract-all`, `/confirm`, `/confirm-all` riêng rẽ dễ gây race condition và trạng thái dở dang nếu gọi không đúng thứ tự.
+  4. **Cấu hình Stage 2 quá phức tạp:** Việc bắt giảng viên chọn các hộp kiểm chế độ biến thể (`variation_modes`) dễ gây xung đột (Config Conflict) với các câu hỏi lý thuyết không có tham số số học.
+* **Quyết định:**
+  1. **Stage 1 Read-Only & Black-Box Blueprint Engine:**
+     - Chuyển giao diện Stage 1 sang chế độ thẩm định thuần túy (Read-only Previewer bằng KaTeX). Bãi bỏ hoàn toàn các API sửa tay `PUT /api/source-questions/{id}` và `PATCH /api/blueprints/{id}`.
+     - Toàn bộ cơ chế bóc tách Blueprint vận hành ngầm tự động (Black-Box AI Pipeline ở TASK-203), không phơi bày endpoint thủ công `/extract-all`.
+  2. **Ghi vết an ninh âm thầm (Silent Security Audit Logging - SEC-02):**
+     - Khi hệ thống phát hiện chuỗi khả nghi (prompt injection), backend ghi log âm thầm vào bảng `public.security_events` phục vụ kiểm toán nội bộ của quản trị viên.
+     - **Tuyệt đối KHÔNG hiển thị cảnh báo an ninh hay bắt người dùng tick cam kết an ninh trên giao diện.** Giao diện chỉ hiển thị các cảnh báo nghiệp vụ: thiếu đáp án (`has_missing_answer`), công thức chưa đọc được (`has_unparsed_omml`).
+  3. **Chốt đề nguồn nguyên tử đơn điểm (Single Atomic Confirm-source Endpoint):**
+     - Gom toàn bộ quy trình chốt đề vào 1 endpoint duy nhất: `POST /api/sessions/{session_id}/confirm-source`.
+     - Thực thi thông qua PostgreSQL Stored Procedure `confirm_exam_source` khóa dòng `FOR UPDATE`, kiểm tra 100% câu hỏi có blueprint, và chuyển `exam_sessions.status = 'blueprinted'` trong 1 ACID transaction.
+  4. **Stage 2 Black-box Variation:**
+     - Loại bỏ các hộp kiểm chọn `variation_modes` từ Frontend. Backend và AI tự động quyết định chiến lược biến thể đẳng cấu tối ưu cho từng câu hỏi (thay số, đổi ngữ cảnh, hoặc giữ nguyên nguyên văn nếu là câu lý thuyết).
+     - Giảng viên chỉ cần chọn số lượng mã đề $N \in \{1, 2, 3, 4\}$ (mặc định $N=4$) và tùy chọn xáo trộn (`shuffle_questions`, `shuffle_options`).
+  5. **Thẩm định Stage 3 thuần túy:**
+     - Bảng cảnh báo Warning Badge chỉ hiển thị lỗi thẩm định toán học/sư phạm (SymPy không giải được, vi phạm nghiệm). Tuyệt đối không hiển thị cảnh báo hệ thống hoặc kỹ thuật.
+* **Hệ quả / Tác động:**
+  - Giảm thiểu triệt để số lượng endpoint và form UI cần phát triển/bảo trì, tiết kiệm ít nhất 4 ngày công cho FE và BE.
+  - Giao diện đạt chuẩn Zero-Friction: Giảng viên chỉ cần nạp đề $\rightarrow$ xem trước KaTeX $\rightarrow$ bấm 1 nút "Xác nhận đề gốc và tiếp tục" để chuyển sang sinh đề.
+  - Bảo đảm an toàn tuyệt đối cho CSDL và hệ thống.

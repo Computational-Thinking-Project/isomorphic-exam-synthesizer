@@ -246,6 +246,34 @@ class IngestSuccessResponse(BaseModel):
     questions: List[Dict[str, Any]] = Field(
         default_factory=list, description="Danh sách câu hỏi nguồn đã lưu"
     )
+class ConfirmSourceRequest(BaseModel):
+    """Payload xác nhận đề nguồn và chuyển sang Stage 2 (TASK-205).
+
+    Per ADR-004 (Silent Security Audit): The `acknowledged_security_warnings` field is
+    deprecated and IGNORED. Security warnings are logged silently on the backend for
+    admin audit. The UI no longer exposes a security acknowledgment checkbox. Clients
+    may omit this field or send any value without affecting the outcome.
+    """
+
+    acknowledged_security_warnings: bool = Field(
+        default=False,
+        description=(
+            "[DEPRECATED per ADR-004] Previously required to acknowledge SEC-02 security warnings. "
+            "Now ignored — security events are logged silently for admin audit. "
+            "Field kept for backward compatibility; any value sent has no effect."
+        ),
+    )
+
+
+class ConfirmSourceResponse(BaseModel):
+    """Phản hồi thành công từ endpoint confirm-source (TASK-205)."""
+
+    session_id: str = Field(..., description="Mã phiên làm việc")
+    status: Literal["blueprinted"] = "blueprinted"
+    confirmed_at: str = Field(..., description="Thời điểm xác nhận (ISO8601)")
+    total_questions: int = Field(..., description="Tổng câu nguồn đã khóa")
+    total_blueprints: int = Field(..., description="Tổng blueprints tương ứng")
+    message: str = "Source confirmed and blueprints locked successfully"
 
 
 # Re-export validator schemas for convenient consumption across services and routes
@@ -270,6 +298,8 @@ __all__ = [
     "IngestValidationErrorResponse",
     "ParsedQuestionItem",
     "IngestSuccessResponse",
+    "ConfirmSourceRequest",
+    "ConfirmSourceResponse",
     "CheckResult",
     "ValidationReport",
 ]
