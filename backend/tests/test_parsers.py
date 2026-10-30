@@ -662,13 +662,14 @@ def test_markdown_parser_rejects_empty_option_content():
     """Suggestion 2: Markdown parser rejects option A with empty content."""
     from fastapi import HTTPException
 
-    md_text = """### Câu 1: Cho biểu thức sau
-A. 
-B. 2
-C. 3
-D. 4
-ĐÁP ÁN: 1.B
-"""
+    md_text = (
+        "### Câu 1: Cho biểu thức sau\n"
+        "A. \n"
+        "B. 2\n"
+        "C. 3\n"
+        "D. 4\n"
+        "ĐÁP ÁN: 1.B\n"
+    )
     questions, errors = parse_markdown(md_text)
     assert any(e.question_no == 1 and e.error_type == "INVALID_FORMAT" for e in errors)
     with pytest.raises(HTTPException) as exc_info:
@@ -1026,7 +1027,7 @@ def test_docx_table_answer_key_with_colons_and_trailing_empty_cell():
 
 def test_extract_options_probability_formulas_not_treated_as_labels():
     """Regression test: P(A), P(B), P(C), P(D) must never be misidentified as option labels.
-    
+
     Verifies that option contents are completely preserved and not truncated to '= 0.1$'.
     """
     from app.services.parser.utils import extract_options_from_text
@@ -1161,7 +1162,7 @@ def test_option_extraction_linear_complexity_scalability():
     # Pathological input with 40 option clusters
     text = "A. a B. b C. c D. d " * 40
     t0 = time.perf_counter()
-    res = extract_options_from_text(text)
+    _ = extract_options_from_text(text)
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
     # Must complete comfortably under 100ms in any environment

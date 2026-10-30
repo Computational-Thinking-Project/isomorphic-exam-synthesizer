@@ -282,15 +282,15 @@ def test_ingest_text_empty_option_content_returns_422_no_rpc_no_storage(
         mock_status,
     ]
 
-    raw_text = """### Câu 1: Tìm x biết x > 0:
-A. 
-B. 2
-C. 3
-D. 4
-
-BẢNG ĐÁP ÁN:
-1.B
-"""
+    raw_text = (
+        "### Câu 1: Tìm x biết x > 0:\n"
+        "A. \n"
+        "B. 2\n"
+        "C. 3\n"
+        "D. 4\n\n"
+        "BẢNG ĐÁP ÁN:\n"
+        "1.B\n"
+    )
     with (
         patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
         patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
