@@ -1,12 +1,19 @@
 const pendingDestinations = new Set([
-  'blueprinted', 'configured', 'generating', 'partial_generated',
-  'generated', 'reviewed', 'approved', 'exported', 'failed',
+  'partial_generated',
+  'generated',
+  'reviewed',
+  'approved',
+  'exported',
+  'failed',
 ]);
 
 // Only connect destinations whose screen and contract have been handed over.
 export function sessionDestination(session) {
   if (session.status === 'draft') {
     return { path: `/session/${encodeURIComponent(session.id)}/stage1`, notice: '' };
+  }
+  if (['blueprinted', 'configured', 'generating'].includes(session.status)) {
+    return { path: `/session/${encodeURIComponent(session.id)}/stage2`, notice: '' };
   }
   return {
     path: null,

@@ -120,7 +120,9 @@ class ReviewRepository:
         # Fetch current peer variants of other versions in same session
         peers_res = (
             self.db.table("version_questions")
-            .select("id, content, options, correct_key, exam_versions!inner(session_id)")
+            .select(
+                "id, source_question_id, content, options, correct_key, exam_versions!inner(session_id)"
+            )
             .eq("source_question_id", source_id)
             .eq("is_current", True)
             .eq("exam_versions.session_id", session_id)
@@ -249,11 +251,9 @@ class ReviewRepository:
             "correct_key": new_data["correct_key"],
             "solution_md": new_data.get("solution_md"),
             "canonical_question_no": old_q_snapshot.get("canonical_question_no", 1),
-            "canonical_options": old_q_snapshot.get("canonical_options") or new_data["options"],
-            "canonical_correct_key": old_q_snapshot.get("canonical_correct_key")
-            or new_data["correct_key"],
-            "canonical_solution_md": old_q_snapshot.get("canonical_solution_md")
-            or new_data.get("solution_md"),
+            "canonical_options": list(new_data["options"]),
+            "canonical_correct_key": str(new_data["correct_key"]).strip().upper(),
+            "canonical_solution_md": new_data.get("solution_md"),
             "status": "pending_review",
             "is_current": True,
             "is_reverted": False,
@@ -314,6 +314,7 @@ class ReviewRepository:
         regeneration_id: UUID,
         error_msg: str,
         user_id: str,
+        actual_calls_dispatched: int = 1,
     ) -> bool:
         """Idempotent emergency rollback: resets question to pending_review and refunds quota."""
         str_regen_id = str(regeneration_id)
@@ -345,22 +346,24 @@ class ReviewRepository:
         if len(upd_rows) != 1:
             return False
 
-        # Refund 3 quota calls
-        s_res = (
-            self.db.table("exam_sessions")
-            .select("gemini_review_calls")
-            .eq("id", session_id)
-            .execute()
-        )
-        s_rows = _get_rows(s_res)
-        if s_rows:
-            calls = int(s_rows[0].get("gemini_review_calls", 0) or 0)
-            self.db.table("exam_sessions").update(
-                {
-                    "gemini_review_calls": max(0, calls - MAX_AI_CALLS_PER_REJECT),
-                    "updated_at": _now_iso(),
-                }
-            ).eq("id", session_id).execute()
+        # Refund unused quota calls (dispatched calls remain charged)
+        refund = max(0, MAX_AI_CALLS_PER_REJECT - actual_calls_dispatched)
+        if refund > 0:
+            s_res = (
+                self.db.table("exam_sessions")
+                .select("gemini_review_calls")
+                .eq("id", session_id)
+                .execute()
+            )
+            s_rows = _get_rows(s_res)
+            if s_rows:
+                calls = int(s_rows[0].get("gemini_review_calls", 0) or 0)
+                self.db.table("exam_sessions").update(
+                    {
+                        "gemini_review_calls": max(0, calls - refund),
+                        "updated_at": _now_iso(),
+                    }
+                ).eq("id", session_id).execute()
 
         # Audit log
         self.db.table("review_logs").insert(
@@ -370,7 +373,7 @@ class ReviewRepository:
                 "user_id": user_id,
                 "action_type": "REJECT_FAILED",
                 "reason": error_msg[:500],
-                "api_calls_used": 0,
+                "api_calls_used": actual_calls_dispatched,
                 "created_at": _now_iso(),
             }
         ).execute()
@@ -561,10 +564,7 @@ class ReviewRepository:
                     "session_id", session_id
                 ).execute()
                 s_res = (
-                    self.db.table("exam_sessions")
-                    .select("status")
-                    .eq("id", session_id)
-                    .execute()
+                    self.db.table("exam_sessions").select("status").eq("id", session_id).execute()
                 )
                 s_rows = _get_rows(s_res)
                 if s_rows and s_rows[0].get("status") == "reviewed":
@@ -648,15 +648,19 @@ class ReviewRepository:
             "can_finalize": can_finalize,
         }
 
-    async def recover_stale_questions(self) -> int:
+    async def recover_stale_questions(
+        self, session_id: Optional[str] = None, actor_user_id: Optional[str] = None
+    ) -> int:
         """Scan and recover questions stuck in 'regenerating' for longer than 3 minutes."""
         now_dt = datetime.now(timezone.utc)
-        vq_res = (
+        query = (
             self.db.table("version_questions")
             .select("id, updated_at, exam_versions!inner(session_id)")
             .eq("status", "regenerating")
-            .execute()
         )
+        if session_id:
+            query = query.eq("exam_versions.session_id", session_id)
+        vq_res = query.execute()
         stale_rows = _get_rows(vq_res)
         recovered = 0
 
@@ -701,27 +705,31 @@ class ReviewRepository:
                         # Refund 3 calls
                         s_res = (
                             self.db.table("exam_sessions")
-                            .select("gemini_review_calls")
+                            .select("gemini_review_calls, user_id")
                             .eq("id", s_id)
                             .execute()
                         )
                         s_rows = _get_rows(s_res)
+                        effective_user_id = actor_user_id
                         if s_rows:
                             calls = int(s_rows[0].get("gemini_review_calls", 0) or 0)
+                            if not effective_user_id:
+                                effective_user_id = s_rows[0].get("user_id")
                             self.db.table("exam_sessions").update(
                                 {"gemini_review_calls": max(0, calls - MAX_AI_CALLS_PER_REJECT)}
                             ).eq("id", s_id).execute()
 
-                        self.db.table("review_logs").insert(
-                            {
-                                "session_id": s_id,
-                                "version_question_id": q_id,
-                                "user_id": "00000000-0000-0000-0000-000000000000",
-                                "action_type": "REJECT_FAILED",
-                                "reason": "STALE_TIMEOUT",
-                                "created_at": _now_iso(),
-                            }
-                        ).execute()
+                        if effective_user_id:
+                            self.db.table("review_logs").insert(
+                                {
+                                    "session_id": s_id,
+                                    "version_question_id": q_id,
+                                    "user_id": effective_user_id,
+                                    "action_type": "REJECT_FAILED",
+                                    "reason": "STALE_TIMEOUT",
+                                    "created_at": _now_iso(),
+                                }
+                            ).execute()
                         recovered += 1
 
         return recovered

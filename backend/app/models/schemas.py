@@ -389,3 +389,40 @@ class AnswersMatrixResponse(BaseModel):
         ..., description="Danh sách đáp án từng câu hỏi cho tất cả mã đề"
     )
 
+
+# Re-export validator schemas for convenient consumption across services and routes
+from app.services.validator.base import CheckResult, ValidationReport  # noqa: E402
+
+__all__ = [
+    "SourceQuestion",
+    "GeneratedVariant",
+    "GenerateRequest",
+    "RegenerateQuestionRequest",
+    "ExamDraftPackage",
+    "CurrentUser",
+    "UserProfile",
+    "SessionCreate",
+    "SessionUpdate",
+    "SessionCloneRequest",
+    "SessionItem",
+    "SessionListResponse",
+    "SessionDetailResponse",
+    "IngestTextRequest",
+    "ParserErrorItem",
+    "IngestValidationErrorResponse",
+    "ParsedQuestionItem",
+    "IngestSuccessResponse",
+    "ConfirmSourceRequest",
+    "ConfirmSourceResponse",
+    "ReserveResult",
+    "ReviewActionResponse",
+    "RegeneratedQuestionResponse",
+    "ReviewProgressResponse",
+    "ErrorDetailResponse",
+    "ReviewDomainException",
+    "FinalizeApproveResponse",
+    "MatrixItem",
+    "AnswersMatrixResponse",
+    "CheckResult",
+    "ValidationReport",
+]

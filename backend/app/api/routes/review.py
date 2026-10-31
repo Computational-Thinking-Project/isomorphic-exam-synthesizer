@@ -8,6 +8,7 @@ Exposes:
 """
 
 import logging
+from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, Depends, status
 from supabase import Client
@@ -24,6 +25,15 @@ from app.services.review.service import ReviewService
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def get_ai_generator() -> Optional[Callable[..., Any]]:
+    """Dependency provider for AI variant regeneration adapter (TASK-304).
+
+    Returns None if not configured in production, raising HTTP 503 rather than fabricating mock data.
+    Tests can override this dependency with an explicit mock fixture.
+    """
+    return None
 
 
 @router.post(
@@ -61,12 +71,13 @@ async def reject_question_endpoint(
     version_question_id: str,
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
+    ai_generator: Optional[Callable[..., Any]] = Depends(get_ai_generator),
 ) -> RegeneratedQuestionResponse:
     """Reject question variant and trigger targeted regeneration."""
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
     assert_ownership("version_questions", version_question_id, current_user.id, db=db)
 
-    service = ReviewService(db)
+    service = ReviewService(db, ai_generator=ai_generator)
     return await service.reject_question(session_id, version_question_id, current_user.id)
 
 
@@ -105,4 +116,4 @@ async def get_review_progress_endpoint(
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
 
     service = ReviewService(db)
-    return await service.get_progress(session_id)
+    return await service.get_progress(session_id, current_user.id)

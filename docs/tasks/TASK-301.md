@@ -3,9 +3,9 @@
 - **Nguồn giao việc:** [W3_ASSIGNMENT.md](W3_ASSIGNMENT.md) (v2.1; 28/10/2026), [w3.md](../../w3.md)
 - **Phụ trách:** Duy (`johannguyen015` — Lead); Hùng (`benalexx007` — Contributor)
 - **Reviewer:** Hùng (`benalexx007` — đã chốt)
-- **Repo/nhánh:** `feat/duy-task-301-review-lifecycle-api`; PR: [Draft PR URL](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/new/feat/duy-task-301-review-lifecycle-api)
+- **Repo/nhánh:** `feat/duy-task-301-review-lifecycle-api`; PR: [#28](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28)
 - **Hạn đợt:** tối thứ 3 03/11/2026; **ETA task:** Thứ 7 31/10/2026 (Duy xác nhận)
-- **Phiên bản:** v6.0 (Production-Grade & Merge-Ready)
+- **Phiên bản:** v6.1 (Remediation Plan: [TASK-301_REMEDIATION_PLAN.md](TASK-301_REMEDIATION_PLAN.md))
 
 ---
 
