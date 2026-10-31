@@ -1,3 +1,10 @@
+## DEC-DAT-W3-307: Boundary bundler và dependency template
+
+- Ngày/người: 29/10/2026 — Đạt. ZIP theo phản hồi Duy tại PR #27.
+- Triển khai: typed display snapshot, Jinja2 XeLaTeX/Markdown, ZIP bytes + SHA-256, không DB/AI/cloud. Thêm Jinja2/MarkupSafe vào dependency lock cho Docker hiện hành.
+- Boundary/bytes/giới hạn cần owner Duy/Tâm/Hùng xác nhận khi ráp; không sửa API/SQL của owner khác. [Handoff](export-w3-bundler.md).
+- Chưa nghiệm thu: XeLaTeX compile/layout và E2E snapshot/PDF/Storage thật.
+
 ## 24/10/2026 — AI W2 (thay đổi cục bộ, chưa merge)
 
 Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical core dùng chung CLI/backend, generator theo Blueprint kèm lời giải, bounded validation/retry, resume/callback và lifecycle. [Chi tiết và giới hạn nghiệm thu](ai-w2-integration.md). Chưa tích hợp routes/DB/SSE/UI W2; chưa nghiệm thu Docker/live API.
