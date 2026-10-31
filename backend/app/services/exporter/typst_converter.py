@@ -59,8 +59,13 @@ def latex_math_to_typst(math_str: str) -> str:
     - \\left, \\right delimiters -> standard brackets
     - Common LaTeX symbols, arrows, relations, and Greek letters -> Typst equivalents
     - Grouped superscripts / subscripts: ^{...} -> ^(...), _{...} -> _(...)
+    - Security: neutralizes '#' in math mode to prevent Typst code injection
     """
     s = math_str.strip()
+
+    # 0. Security neutralization of '#' in math mode (F03)
+    # Typst enters code mode on '#'. LaTeX math does not execute code; verbatim string quotes prevent execution.
+    s = s.replace(r"\#", '"#"').replace("#", '"#"')
 
     # 1. Convert \\text{...} -> "..."
     while re.search(r"\\text\s*\{", s):
@@ -123,38 +128,38 @@ def latex_math_to_typst(math_str: str) -> str:
         inner, end_idx = _extract_balanced_braces(s, m.end() - 1)
         s = s[: m.start()] + f"_({latex_math_to_typst(inner)})" + s[end_idx:]
 
-    # 6. Standard math symbols & relations
+    # 6. Standard math symbols & relations (F02: match LaTeX control word boundary (?![a-zA-Z]) and enforce whitespace separation)
     replacements = [
-        (r"\\le\b", "<="),
-        (r"\\leq\b", "<="),
-        (r"\\ge\b", ">="),
-        (r"\\geq\b", ">="),
-        (r"\\ne\b", "!="),
-        (r"\\neq\b", "!="),
-        (r"\\approx\b", "approx"),
-        (r"\\cdot\b", " dot "),
-        (r"\\times\b", " times "),
-        (r"\\pm\b", "plus.minus"),
-        (r"\\mp\b", "minus.plus"),
-        (r"\\infty\b", "infinity"),
-        (r"\\implies\b", "=>"),
-        (r"\\Rightarrow\b", "=>"),
-        (r"\\iff\b", "<=>"),
-        (r"\\Leftrightarrow\b", "<=>"),
-        (r"\\rightarrow\b", "->"),
-        (r"\\to\b", "->"),
-        (r"\\in\b", "in"),
-        (r"\\notin\b", "not in"),
-        (r"\\subset\b", "subset"),
-        (r"\\cup\b", "union"),
-        (r"\\cap\b", "sect"),
-        (r"\\emptyset\b", "emptyset"),
+        (r"\s*\\notin(?![a-zA-Z])\s*", " not in "),
+        (r"\s*\\in(?![a-zA-Z])\s*", " in "),
+        (r"\s*\\leq(?![a-zA-Z])\s*", " <= "),
+        (r"\s*\\le(?![a-zA-Z])\s*", " <= "),
+        (r"\s*\\geq(?![a-zA-Z])\s*", " >= "),
+        (r"\s*\\ge(?![a-zA-Z])\s*", " >= "),
+        (r"\s*\\neq(?![a-zA-Z])\s*", " != "),
+        (r"\s*\\ne(?![a-zA-Z])\s*", " != "),
+        (r"\s*\\approx(?![a-zA-Z])\s*", " approx "),
+        (r"\s*\\cdot(?![a-zA-Z])\s*", " dot "),
+        (r"\s*\\times(?![a-zA-Z])\s*", " times "),
+        (r"\s*\\pm(?![a-zA-Z])\s*", " plus.minus "),
+        (r"\s*\\mp(?![a-zA-Z])\s*", " minus.plus "),
+        (r"\s*\\infty(?![a-zA-Z])\s*", " infinity "),
+        (r"\s*\\implies(?![a-zA-Z])\s*", " => "),
+        (r"\s*\\Rightarrow(?![a-zA-Z])\s*", " => "),
+        (r"\s*\\iff(?![a-zA-Z])\s*", " <=> "),
+        (r"\s*\\Leftrightarrow(?![a-zA-Z])\s*", " <=> "),
+        (r"\s*\\rightarrow(?![a-zA-Z])\s*", " -> "),
+        (r"\s*\\to(?![a-zA-Z])\s*", " -> "),
+        (r"\s*\\subset(?![a-zA-Z])\s*", " subset "),
+        (r"\s*\\cup(?![a-zA-Z])\s*", " union "),
+        (r"\s*\\cap(?![a-zA-Z])\s*", " sect "),
+        (r"\s*\\emptyset(?![a-zA-Z])\s*", " emptyset "),
     ]
 
     for pat, rep in replacements:
         s = re.sub(pat, rep, s)
 
-    # 7. Common Greek letters
+    # 7. Common Greek letters (with LaTeX word boundary (?![a-zA-Z]))
     greek = [
         "alpha",
         "beta",
@@ -173,23 +178,29 @@ def latex_math_to_typst(math_str: str) -> str:
         "Omega",
     ]
     for g in greek:
-        s = re.sub(rf"\\{g}\b", g, s)
+        s = re.sub(rf"\s*\\{g}(?![a-zA-Z])\s*", f" {g} ", s)
 
-    # 8. Functions
+    # 8. Functions (with LaTeX word boundary (?![a-zA-Z]))
     functions = ["sin", "cos", "tan", "cot", "ln", "log", "lim", "exp", "min", "max"]
     for fn in functions:
-        s = re.sub(rf"\\{fn}\b", fn, s)
+        s = re.sub(rf"\s*\\{fn}(?![a-zA-Z])\s*", f" {fn} ", s)
 
     return s
 
 
 def escape_typst_text(text: str) -> str:
     """
-    Escape special Typst markup characters (#, @, $) in plain text blocks.
+    Escape special Typst markup characters (#, @, $, \\) in plain text blocks (F03).
+    Escapes backslash first so pre-existing backslashes cannot unescape subsequent escapes.
     """
-    # Escape # and @ so they are not parsed as function calls or citations
-    escaped = text.replace("#", r"\#").replace("@", r"\@")
-    # Escape stray dollar signs that are not math delimiters
+    if not text:
+        return ""
+    # 1. Escape backslash first
+    escaped = text.replace("\\", "\\\\")
+    # 2. Escape # and @ so they are not parsed as function calls or citations
+    escaped = escaped.replace("#", r"\#").replace("@", r"\@")
+    # 3. Escape stray dollar signs that are not math delimiters
+    escaped = escaped.replace("$", r"\$")
     return escaped
 
 

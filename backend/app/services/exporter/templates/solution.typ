@@ -1,7 +1,7 @@
 // Solution Paper Template in Typst (TASK-306)
 // Compiles A4 Vietnamese answer matrix table and step-by-step solutions.
 
-#set document(title: [Hướng dẫn giải và Bảng đáp án], author: [Hệ thống Isomorphic Exam Synthesizer])
+#set document(title: [Hướng dẫn giải và Bảng đáp án], author: "Isomorphic Exam Synthesizer")
 #set page(
   paper: "a4",
   margin: (top: 2cm, bottom: 2cm, left: 2cm, right: 2cm),

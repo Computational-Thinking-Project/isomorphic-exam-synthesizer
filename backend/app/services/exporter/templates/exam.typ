@@ -1,7 +1,7 @@
 // Exam Paper Template in Typst (TASK-306)
 // Compiles A4 Vietnamese standardized multiple-choice examination papers.
 
-#set document(title: [Đề thi trắc nghiệm], author: [Hệ thống Isomorphic Exam Synthesizer])
+#set document(title: [Đề thi trắc nghiệm], author: "Isomorphic Exam Synthesizer")
 #set page(
   paper: "a4",
   margin: (top: 2cm, bottom: 2cm, left: 2cm, right: 2cm),

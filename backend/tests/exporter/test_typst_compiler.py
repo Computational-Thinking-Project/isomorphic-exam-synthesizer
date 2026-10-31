@@ -4,8 +4,8 @@ Unit Test Suite for Typst Subprocess PDF Compiler Engine (TASK-306).
 Verifies:
 1. Standardized PDF filename generator conforming to W3_ASSIGNMENT.md#L41.
 2. Compiler error sanitization (preventing sensitive OS path disclosure).
-3. LaTeX-to-Typst math syntax converter.
-4. Markdown-to-Typst markup converter with math boundary preservation.
+3. LaTeX-to-Typst math syntax converter (including control word boundary (?![a-zA-Z])).
+4. Markdown-to-Typst markup converter with math boundary preservation and code injection escaping.
 5. TypstCompiler subprocess runner:
    - Successful compilation with magic byte validation (b"%PDF-").
    - Strict 30s timeout enforcement (TypstTimeoutError).
@@ -13,10 +13,16 @@ Verifies:
    - Corrupted non-PDF output rejection.
    - Missing binary detection (TypstNotFoundError).
    - Subprocess safety verification (shell=False).
-6. Document layout renderers (exam and solution documents).
+   - Output filename isolation and directory traversal rejection (F04).
+6. Document layout renderers:
+   - Exam paper document with string author metadata (F01).
+   - Solution paper document with string author metadata (F01).
+   - Cross-version answers matrix document (Contract Q2).
+   - Persisted question model adapter (Contract Q1).
 7. Real CLI compilation integration test (conditionally executed if typst binary is present).
 """
 
+import os
 import subprocess
 from unittest.mock import patch
 
@@ -81,7 +87,6 @@ class TestSanitizeCompilerError:
 
 class TestLatexMathToTypstConverter:
     def test_fractions_conversion(self):
-        # Simple fraction
         assert latex_math_to_typst(r"\frac{1}{2}") == "((1)/(2))"
         assert latex_math_to_typst(r"\dfrac{x + 1}{x - 1}") == "((x + 1)/(x - 1))"
 
@@ -107,9 +112,11 @@ class TestLatexMathToTypstConverter:
     def test_greek_letters_and_functions(self):
         latex = r"\sin(\alpha) + \cos(\pi) + \ln(x) = \Delta"
         converted = latex_math_to_typst(latex)
-        assert "sin(alpha)" in converted
-        assert "cos(pi)" in converted
-        assert "ln(x)" in converted
+        assert "sin" in converted
+        assert "alpha" in converted
+        assert "cos" in converted
+        assert "pi" in converted
+        assert "ln" in converted
         assert "Delta" in converted
 
     def test_bracket_removal(self):
@@ -150,6 +157,177 @@ class TestConvertMarkdownToTypst:
         assert escape_typst_text("") == ""
 
 
+class TestReviewerFindingsF01ToF04:
+    def test_f01_author_metadata_is_string(self):
+        """F01: Typst 0.11.1 requires author to be a string or array of strings, not content."""
+        compiler = TypstCompiler()
+        exam_typst = compiler.render_exam_document("101", [])
+        assert 'author: "Isomorphic Exam Synthesizer"' in exam_typst
+        assert "author: [" not in exam_typst
+
+        sol_typst = compiler.render_solution_document("101", [])
+        assert 'author: "Isomorphic Exam Synthesizer"' in sol_typst
+        assert "author: [" not in sol_typst
+
+        matrix_typst = compiler.render_answers_matrix_document([])
+        assert 'author: "Isomorphic Exam Synthesizer"' in matrix_typst
+
+    def test_f01_template_files_author_is_string(self):
+        """F01: templates/exam.typ and templates/solution.typ must not use [content] for author."""
+        templates_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            "app",
+            "services",
+            "exporter",
+            "templates",
+        )
+        exam_path = os.path.join(templates_dir, "exam.typ")
+        sol_path = os.path.join(templates_dir, "solution.typ")
+
+        if os.path.exists(exam_path):
+            with open(exam_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                assert 'author: "Isomorphic Exam Synthesizer"' in content
+                assert "author: [" not in content
+
+        if os.path.exists(sol_path):
+            with open(sol_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                assert 'author: "Isomorphic Exam Synthesizer"' in content
+                assert "author: [" not in content
+
+    def test_f02_latex_control_word_boundary_adjacent_tokens(self):
+        """F02: Regex must match control word boundaries (?![a-zA-Z]) and preserve token separation."""
+        # 1. \pm followed immediately by digit 2
+        res1 = convert_markdown_to_typst(r"$x=\pm2$")
+        assert "plus.minus 2" in res1
+        assert "pm2" not in res1
+
+        # 2. \in preceded immediately by variable x and followed by [
+        res2 = convert_markdown_to_typst(r"$x\in[0;1]$")
+        assert "x in [0;1]" in res2
+        assert "xin" not in res2
+
+        # 3. \le followed immediately by digits
+        res3 = convert_markdown_to_typst(r"$x\le10$")
+        assert "<= 10" in res3
+
+        # 4. Function followed immediately by digit
+        res4 = convert_markdown_to_typst(r"$\sin2x$")
+        assert "sin 2x" in res4
+
+        # 5. Greek letter preceded immediately by coefficient
+        res5 = convert_markdown_to_typst(r"$2\alpha$")
+        assert "2 alpha" in res5
+
+    def test_f03_typst_code_injection_prevention_prose(self):
+        """F03: Backslash followed by # in prose must not execute code."""
+        prose = "\\" + '#panic("REVIEW_MARKER")'
+        converted = convert_markdown_to_typst(prose)
+        # Pre-existing backslash is escaped to \\ and hash is escaped to \#
+        # In memory: converted starts with r"\\\#" (literal \\ followed by \#)
+        assert converted.startswith("\\\\\\#")
+        # Ensure # is escaped so Typst treats it as text, not code invocation
+        assert r"\#panic" in converted
+
+    def test_f03_typst_code_injection_prevention_math(self):
+        """F03: # in math mode must be neutralized so Typst does not execute embedded code."""
+        math_content = '$#panic("REVIEW_MARKER")$'
+        converted = convert_markdown_to_typst(math_content)
+        # Hash is converted to string literal "#" in Typst math mode
+        assert '"#"' in converted
+        # Must not contain unquoted #panic
+        assert "$#panic" not in converted
+        assert "$ #panic" not in converted
+
+    def test_f03_metadata_code_injection_prevention(self):
+        """F03: Metadata titles with quotes and code markers must be escaped."""
+        compiler = TypstCompiler()
+        malicious_title = 'Exam " #panic("PWN") \\'
+        exam_typst = compiler.render_exam_document("101", [], exam_title=malicious_title)
+        # Quotes and backslashes in title must be escaped inside string literal
+        assert 'title: "Exam \\" #panic(\\"PWN\\") \\\\"' in exam_typst
+        # In document body, the display title must escape # to \#
+        assert r"\#panic" in exam_typst
+
+    def test_f04_compile_document_output_filename_validation(self):
+        """F04: Reject absolute paths, directory traversal, and non-pdf filenames."""
+        compiler = TypstCompiler()
+        with patch.object(compiler, "is_available", return_value=True):
+            # Absolute paths
+            with pytest.raises(ValueError, match="path separators"):
+                compiler.compile_document("= Doc", output_filename="/tmp/evil.pdf")
+
+            with pytest.raises(ValueError, match="path separators"):
+                compiler.compile_document("= Doc", output_filename="C:\\evil.pdf")
+
+            # Directory traversal
+            with pytest.raises(ValueError, match="path separators|traversal"):
+                compiler.compile_document("= Doc", output_filename="../evil.pdf")
+
+            with pytest.raises(ValueError, match="path separators"):
+                compiler.compile_document("= Doc", output_filename="evidence/escaped-output.pdf")
+
+            # Non-pdf filenames
+            with pytest.raises(ValueError, match="must end with '.pdf'"):
+                compiler.compile_document("= Doc", output_filename="evil.exe")
+
+            with pytest.raises(ValueError, match="must be a non-empty string"):
+                compiler.compile_document("= Doc", output_filename="")
+
+
+class TestPersistedDataAdapterAndAnswersMatrix:
+    def test_persisted_keys_adapter_in_exam_renderer(self):
+        """Contract Q1: Accepts persisted question models with question_no, stem, canonical_options."""
+        compiler = TypstCompiler()
+        questions = [
+            {
+                "question_no": 1,
+                "stem": "Phương trình $x+1=0$ có nghiệm là:",
+                "canonical_options": ["-1", "1", "2", "3"],
+            }
+        ]
+        typst = compiler.render_exam_document("101", questions)
+        assert "*Câu 1:*" in typst
+        assert "$x+1=0$" in typst
+        assert "*A.* -1" in typst
+
+    def test_persisted_keys_adapter_in_solution_renderer(self):
+        """Contract Q1: Accepts persisted question models with correct_key and canonical_solution_md."""
+        compiler = TypstCompiler()
+        questions = [
+            {
+                "question_no": 1,
+                "correct_key": "B",
+                "stem": "Cho $x=2$.",
+                "canonical_solution_md": "Lời giải chi tiết: chọn B.",
+            }
+        ]
+        typst = compiler.render_solution_document("101", questions)
+        assert "*Câu 1 (Đáp án B):*" in typst
+        assert "Lời giải chi tiết: chọn B." in typst
+
+    def test_render_answers_matrix_document(self):
+        """Contract Q2: Callable render_answers_matrix_document produces cross-version answers matrix."""
+        compiler = TypstCompiler()
+        versions = [
+            {
+                "version_code": "101",
+                "answer_keys": {1: "A", 2: "B", 3: "C", 4: "D"},
+            },
+            {
+                "version_code": "102",
+                "answer_keys": {1: "B", 2: "C", 3: "D", 4: "A"},
+            },
+        ]
+        typst = compiler.render_answers_matrix_document(versions)
+        assert 'author: "Isomorphic Exam Synthesizer"' in typst
+        assert "Mã 101" in typst
+        assert "Mã 102" in typst
+        assert "Câu 1" in typst
+        assert "Câu 4" in typst
+
+
 class TestTypstCompilerSubprocess:
     @patch("shutil.which")
     def test_is_available_checks_path(self, mock_which):
@@ -170,9 +348,7 @@ class TestTypstCompilerSubprocess:
     @patch("shutil.which", return_value="/usr/local/bin/typst")
     @patch("subprocess.run")
     def test_compile_successful_pdf(self, mock_run, mock_which):
-        # Simulate successful compilation and mock valid PDF bytes
         def fake_run(cmd, **kwargs):
-            # Verify subprocess security constraints
             assert kwargs.get("shell") is False
             assert kwargs.get("timeout") == 30.0
             out_file = cmd[3]
