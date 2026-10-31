@@ -114,6 +114,14 @@ class ReviewService:
                 404, "ERR_QUESTION_NOT_FOUND", "Câu hỏi không tồn tại trong phiên thi này"
             )
 
+        # F04: Ensure AI generator is configured before changing question state or reserving quota
+        if self.ai_generator is None:
+            raise ReviewDomainException(
+                503,
+                "ERR_AI_SERVICE_UNAVAILABLE",
+                "Dịch vụ AI sinh câu hỏi biến thể chưa được cấu hình hoặc tạm thời không khả dụng",
+            )
+
         session_uuid = UUID(session_id)
         regeneration_id = uuid4()
         lock = session_lock_registry.get_lock(session_uuid)
@@ -151,7 +159,7 @@ class ReviewService:
         # ------------------------------------------------------------------
         # Phase 2: AI Execution (OUTSIDE LOCK, OUTSIDE DB CONNECTION)
         # ------------------------------------------------------------------
-        generator = self.ai_generator or self._default_ai_generator
+        generator = self.ai_generator
         try:
             ai_result = await asyncio.wait_for(
                 generator(
@@ -168,13 +176,16 @@ class ReviewService:
             logger.error(
                 "AI Variant generation failed or timed out for question %s: %s", question_id, exc
             )
-            # Immediate Emergency Rollback: Refund 3 calls & Reset question status
+            # F07: Track actual dispatched calls (default 1 if dispatch attempted)
+            dispatched = getattr(exc, "api_calls_count", getattr(exc, "dispatched_calls", 1))
+            # Immediate Emergency Rollback: Refund unused calls & Reset question status
             await self.repo.emergency_rollback_tx(
                 session_id=session_id,
                 old_question_id=question_id,
                 regeneration_id=regeneration_id,
                 error_msg=str(exc),
                 user_id=user_id,
+                actual_calls_dispatched=dispatched,
             )
             status_code = 504 if isinstance(exc, asyncio.TimeoutError) else 502
             err_code = (
@@ -315,8 +326,13 @@ class ReviewService:
             updated_at=str(res.get("updated_at", "")),
         )
 
-    async def get_progress(self, session_id: str) -> ReviewProgressResponse:
-        """Read-only progress retrieval with accurate multi-version calculations."""
+    async def get_progress(
+        self, session_id: str, user_id: Optional[str] = None
+    ) -> ReviewProgressResponse:
+        """Progress retrieval with automatic stale recovery and multi-version calculations."""
+        # F06: Automatically recover any question stuck in regenerating > 3 mins for this session
+        if user_id:
+            await self.repo.recover_stale_questions(session_id=session_id, actor_user_id=user_id)
         # Read-only calculation
         data = await self.repo.get_review_progress_data(session_id)
         return ReviewProgressResponse(**data)

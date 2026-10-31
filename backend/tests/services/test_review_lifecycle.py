@@ -24,6 +24,7 @@ Implements 18 critical test cases:
 import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -396,9 +397,9 @@ async def test_emergency_rollback_after_network_partition():
     assert exc_info.value.status_code == 500
     assert exc_info.value.error_code == "ERR_DB_PERSISTENCE_FAILED"
 
-    # Verify quota returned to 0 (TX1 added 3, emergency rollback refunded 3)
+    # Verify quota charges 1 dispatched call (TX1 added 4, emergency rollback refunded 3 unused)
     session_row = state["exam_sessions"][0]
-    assert session_row["gemini_review_calls"] == 0
+    assert session_row["gemini_review_calls"] == 1
 
     # Verify old question reverted to pending_review
     q_row = state["version_questions"][0]
@@ -537,7 +538,7 @@ async def test_reserve_at_calls_27_blocked():
     q_id = "vq-001"
     state = _setup_standard_session_state(session_id, user_id, question_id=q_id, gemini_calls=27)
     db = MockSupabaseClient(state)
-    service = ReviewService(db)
+    service = ReviewService(db, ai_generator=AsyncMock())
 
     with pytest.raises(ReviewDomainException) as exc_info:
         await service.reject_question(session_id, q_id, user_id)
@@ -559,7 +560,7 @@ async def test_revert_never_regenerated_question():
         session_id, user_id, question_id=q_id, regenerated_from_id=None, is_reverted=False
     )
     db = MockSupabaseClient(state)
-    service = ReviewService(db)
+    service = ReviewService(db, ai_generator=AsyncMock())
 
     with pytest.raises(ReviewDomainException) as exc_info:
         await service.revert_question(session_id, q_id, user_id)
@@ -649,8 +650,8 @@ async def test_ai_timeout_immediate_rollback():
     assert exc_info.value.status_code == 504
     assert exc_info.value.error_code == "ERR_AI_TIMEOUT"
 
-    # Verify quota rolled back to 0
-    assert state["exam_sessions"][0]["gemini_review_calls"] == 0
+    # Verify quota charges 1 dispatched call (TX1 added 4, emergency rollback refunded 3 unused)
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 1
     # Verify status reverted to pending_review
     assert state["version_questions"][0]["status"] == "pending_review"
 
@@ -857,3 +858,109 @@ async def test_reject_or_revert_unsets_is_finalized():
     assert state["exam_versions"][0]["is_finalized"] is False
     # Check session was demoted to generated
     assert state["exam_sessions"][0]["status"] == "generated"
+
+
+@pytest.mark.asyncio
+async def test_f03_canonical_answers_independent_from_rejected_candidate():
+    """Finding F03: Regenerated variant must snapshot its own canonical options, key and solution."""
+    session_id = "00000000-0000-0000-0000-000000000019"
+    user_id = "user-123"
+    q_id = "vq-001"
+    # Old candidate has roots ±3 (key A)
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id)
+    # Old question has old canonical values
+    state["version_questions"][0]["canonical_options"] = [
+        "A. x=±3",
+        "B. x=3",
+        "C. x=-3",
+        "D. Vô nghiệm",
+    ]
+    state["version_questions"][0]["canonical_correct_key"] = "A"
+    state["version_questions"][0]["canonical_solution_md"] = "Giải ra x=±3, chọn A."
+
+    db = MockSupabaseClient(state)
+
+    # New candidate from AI has roots ±5 (key C)
+    async def ai_gen_roots_5(**kwargs):
+        return {
+            "content": "Giải phương trình x^2 - 25 = 0.",
+            "options": ["A. x=±1", "B. x=5", "C. x=±5", "D. Vô nghiệm"],
+            "correct_key": "C",
+            "solution_md": "x^2 = 25 => x = ±5. Đáp án C.",
+            "validation_report": {"is_valid": True, "math_verified": True},
+            "api_calls_count": 1,
+        }
+
+    service = ReviewService(db, ai_generator=ai_gen_roots_5)
+    resp = await service.reject_question(session_id, q_id, user_id)
+
+    assert resp.status == "pending_review"
+    # Find newly created version question
+    new_q = [q for q in state["version_questions"] if q["is_current"] is True][0]
+    # F03 check: Canonical options MUST be from new AI output, NOT old candidate!
+    assert new_q["canonical_options"] == ["A. x=±1", "B. x=5", "C. x=±5", "D. Vô nghiệm"]
+    assert new_q["canonical_correct_key"] == "C"
+    assert new_q["canonical_solution_md"] == "x^2 = 25 => x = ±5. Đáp án C."
+
+
+@pytest.mark.asyncio
+async def test_f04_production_reject_without_ai_adapter_returns_503():
+    """Finding F04: Reject without configured AI adapter raises 503 before locking DB or touching quota."""
+    session_id = "00000000-0000-0000-0000-000000000020"
+    user_id = "user-123"
+    q_id = "vq-001"
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id)
+    db = MockSupabaseClient(state)
+
+    # ReviewService with NO ai_generator configured
+    service = ReviewService(db, ai_generator=None)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.reject_question(session_id, q_id, user_id)
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.error_code == "ERR_AI_SERVICE_UNAVAILABLE"
+
+    # Verify DB was NOT mutated: question still pending_review, quota untouched
+    assert state["version_questions"][0]["status"] == "pending_review"
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 0
+
+
+@pytest.mark.asyncio
+async def test_f06_stale_recovery_with_caller_user_id():
+    """Finding F06: Stale recovery automatically runs on get_progress and records caller user_id."""
+    from datetime import timedelta
+
+    session_id = "00000000-0000-0000-0000-000000000021"
+    caller_user_id = "caller-user-789"
+    q_id = "vq-stale"
+    state = _setup_standard_session_state(
+        session_id,
+        caller_user_id,
+        question_id=q_id,
+        question_status="regenerating",
+        gemini_calls=4,
+    )
+    # Set updated_at to 4 minutes in the past (> 3 mins threshold)
+    stale_time = (datetime.now(timezone.utc) - timedelta(minutes=4)).isoformat()
+    state["version_questions"][0]["updated_at"] = stale_time
+
+    db = MockSupabaseClient(state)
+    service = ReviewService(db)
+
+    # Calling get_progress triggers stale recovery
+    progress = await service.get_progress(session_id, user_id=caller_user_id)
+    assert progress.required_count == 1
+
+    # Question must be recovered to pending_review
+    assert state["version_questions"][0]["status"] == "pending_review"
+
+    # F06 check: review_logs MUST contain caller_user_id, NEVER 00000000-0000-0000-0000-000000000000
+    stale_logs = [
+        log
+        for log in db.call_log
+        if log["table"] == "review_logs" and log["payload"]["action_type"] == "REJECT_FAILED"
+    ]
+    assert len(stale_logs) == 1
+    assert stale_logs[0]["payload"]["user_id"] == caller_user_id
+    assert stale_logs[0]["payload"]["reason"] == "STALE_TIMEOUT"
