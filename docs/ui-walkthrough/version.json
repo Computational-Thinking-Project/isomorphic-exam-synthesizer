@@ -1,21 +1,21 @@
 {
-  "packageId": "UI-WALKTHROUGH-20261030",
-  "packagedDate": "2026-10-30",
+  "packageId": "UI-WALKTHROUGH-20261031",
+  "packagedDate": "2026-10-31",
   "timezone": "Asia/Bangkok",
   "kind": "Portable prepared UI, not integrated product or AI output",
-  "branch": "feat/ui-ux-integration",
-  "repositoryBaseAtPackaging": "813f4976ac95a336eed8f71ec77b3426eef6edf5",
+  "branch": "fix/ui-ux-integration",
+  "repositoryBaseAtPackaging": "aa7312c1550b74802527e545e598bb584476cc84",
   "artifact": {
     "file": "PREVIEW.html",
-    "bytes": 2746995,
-    "sha256": "b24f43f83013dfea2d164b96f99193634609b8280b4fba7cb2a627fb758872b9",
+    "bytes": 2746522,
+    "sha256": "c1d8e8adf947a5cf5b869b455dd4724e9cb31c1919689057195ae5fdfa1ad333",
     "sourceWorkspaceRelativePath": "project/ui-draft/redesign/PREVIEW.html",
-    "sourceDateFromReview": "2026-10-30",
+    "sourceDateFromReview": "2026-10-31",
     "sourceCommit": null,
     "sourceCommitNote": "ui-draft is outside the product Git repository; repositoryBaseAtPackaging is not the artifact source commit",
     "built": [
-      "index-5UxxvQ3V.css",
-      "index-Bbcu_oXc.js"
+      "index-CLKoZODR.css",
+      "index-DG0MLSY1.js"
     ],
     "selfContained": true,
     "thirdPartyNoticesEmbedded": true,
@@ -58,19 +58,31 @@
     "S05": "Automatic sample simulation; count/readiness separate; no live AI or autoapproval",
     "W3ToW5": "Separate prepared checkpoint, same tab until approve; reload resets fixture",
     "persistence": "Tab memory only",
-    "realPDFExport": false
+    "realPDFExport": false,
+    "S00ToS01": "CTA ends with S00; no CTA ghost on S01; logo/slogan450ms, card300ms with delay130ms",
+    "regenerate": "Finite offsets1..8 relative to source seed, skip current and same-source other-code question content; retain question and notify if pool unavailable"
   },
   "checks": {
-    "staticPackageVerification": "passed: hash/bytes/links/resources/license notices/Git attributes/ignore/scope; no native browser",
+    "staticPackageVerification": "passed: source/dist/package bytes and hash, relative links/checkpoints, embedded resources/notices, Git -text and raw blob, five-file scope and diff --check",
     "nativeChrome": "not run",
     "keyboardFocusScroll": "not run",
-    "rehearsal": "not run"
+    "rehearsal": "not run",
+    "sourceChecks": {
+      "date": "2026-10-31",
+      "focused": 18,
+      "s06Regression": 28,
+      "algebraRegression": 37,
+      "result": "passed in ui-draft; not rerun during copy",
+      "scope": "Data/reducer/hook/React elements; motion scheduling mocked, no native frames",
+      "typeScript": "passed in source build",
+      "build": "passed in ui-draft,1613 modules"
+    }
   },
   "publicationAtPreparation": {
     "committed": false,
     "pushed": false,
     "packageCommit": null,
-    "note": "Historical preparation status; verify the actual remote commit contains this folder before teammates pull"
+    "note": "Preparation snapshot before the user-authorized commit; inspect git log for the resulting package commit. No push authorized in this task."
   },
   "limits": [
     "No real auth/upload/parser/AI/server persistence/PDF",
