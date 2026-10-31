@@ -178,6 +178,11 @@ class ReviewRepository:
     ) -> ReserveResult:
         """Atomic reservation of quota (+4) and marking question as 'regenerating' (TX1)."""
         session_meta = await self.get_session_status_and_quota(session_id)
+        if str(session_meta.get("status", "")).lower() in ("approved", "exported"):
+            raise ReviewDomainException(
+                423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
+            )
+
         current_calls = int(session_meta.get("gemini_review_calls", 0) or 0)
 
         if current_calls + MAX_AI_CALLS_PER_REJECT > MAX_SESSION_REVIEW_QUOTA:
@@ -248,6 +253,21 @@ class ReviewRepository:
         existing_rows = _get_rows(existing)
         if existing_rows:
             return existing_rows[0]
+
+        # Guard against post-approval race (F01): ensure session wasn't approved while AI was running
+        s_res = (
+            self.db.table("exam_sessions")
+            .select("status")
+            .eq("id", session_id)
+            .limit(1)
+            .execute()
+        )
+        s_rows = _get_rows(s_res)
+        if s_rows and str(s_rows[0].get("status", "")).lower() in ("approved", "exported"):
+            logger.warning("TX2 aborted: session %s is locked (status=%s)", session_id, s_rows[0].get("status"))
+            raise ReviewDomainException(
+                423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
+            )
 
         # Step 1: Update old question is_current = False, status = 'rejected'
         upd_old = (
@@ -418,6 +438,20 @@ class ReviewRepository:
         self, session_id: str, question_id: str, user_id: str
     ) -> Dict[str, Any]:
         """Approve a question variant (idempotent if already approved)."""
+        # Guard: Session must not be approved/exported (F01)
+        s_res = (
+            self.db.table("exam_sessions")
+            .select("status")
+            .eq("id", session_id)
+            .limit(1)
+            .execute()
+        )
+        s_rows = _get_rows(s_res)
+        if s_rows and str(s_rows[0].get("status", "")).lower() in ("approved", "exported"):
+            raise ReviewDomainException(
+                423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
+            )
+
         q_res = (
             self.db.table("version_questions")
             .select("id, status, is_current, is_reverted, updated_at")
@@ -475,6 +509,20 @@ class ReviewRepository:
         self, session_id: str, question_id: str, user_id: str
     ) -> Dict[str, Any]:
         """Revert question to pristine source content (idempotent if already reverted)."""
+        # Guard: Session must not be approved/exported (F01)
+        s_res = (
+            self.db.table("exam_sessions")
+            .select("status")
+            .eq("id", session_id)
+            .limit(1)
+            .execute()
+        )
+        s_rows = _get_rows(s_res)
+        if s_rows and str(s_rows[0].get("status", "")).lower() in ("approved", "exported"):
+            raise ReviewDomainException(
+                423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
+            )
+
         q_res = (
             self.db.table("version_questions")
             .select(

@@ -88,6 +88,9 @@ class MockTableQueryBuilder:
         self.limit_val = n
         return self
 
+    def order(self, field: str, *args: Any, **kwargs: Any) -> "MockTableQueryBuilder":
+        return self
+
     def _matches(self, row: Dict[str, Any]) -> bool:
         for field, op, val in self.filters:
             actual = None

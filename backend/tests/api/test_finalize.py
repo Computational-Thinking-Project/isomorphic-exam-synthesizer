@@ -34,8 +34,11 @@ from app.models.schemas import (
     MatrixItem,
     ReviewDomainException,
 )
+from app.services.finalize.repository import FinalizeRepository
 from app.services.finalize.service import FinalizeService
+from app.services.review.repository import ReviewRepository
 from app.services.review.service import ReviewService
+from tests.services.test_review_lifecycle import MockSupabaseClient
 
 MOCK_SESSION_ID = "00000000-0000-0000-0000-000000000001"
 MOCK_QUESTION_ID = "11111111-1111-1111-1111-111111111111"
@@ -379,5 +382,286 @@ async def test_finalize_service_happy_path_unit():
     assert res.status == "approved"
     assert res.approved_at == "2026-10-30T01:30:00Z"
     mock_repo.update_session_approved.assert_called_once_with(
-        MOCK_SESSION_ID, allowed_statuses=["reviewed", "generated"]
+        MOCK_SESSION_ID, expected_updated_at=None, allowed_statuses=["reviewed"]
     )
+
+
+# ==============================================================================
+# 6. Reviewer Findings Regression Tests (F01, F02, F03)
+# ==============================================================================
+
+
+@pytest.mark.asyncio
+async def test_f01_interleaving_mutation_prevents_approval():
+    """F01: When another worker mutates session state before update, approve_session fails."""
+    initial_updated_at = "2026-10-30T00:00:00+00:00"
+    db_state = {
+        "exam_sessions": [
+            {
+                "id": MOCK_SESSION_ID,
+                "status": "reviewed",
+                "updated_at": initial_updated_at,
+                "user_id": MOCK_USER_ID,
+            }
+        ],
+        "exam_versions": [
+            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+        ],
+        "source_questions": [
+            {"id": "s-1", "session_id": MOCK_SESSION_ID}
+        ],
+        "version_questions": [
+            {
+                "id": "q-1",
+                "version_id": "v-101",
+                "source_question_id": "s-1",
+                "status": "approved",
+                "is_current": True,
+            }
+        ],
+    }
+    client = MockSupabaseClient(db_state)
+    repo = FinalizeRepository(client)
+    service = FinalizeService(client, repo=repo)
+
+    # Interleaving hook: before update_session_approved executes, simulate another worker
+    # rejecting a question, changing session status to 'generated' and updating updated_at
+    original_update = repo.update_session_approved
+
+    async def hooked_update(session_id, expected_updated_at=None, allowed_statuses=None):
+        # Worker B mutates in the background
+        db_state["exam_sessions"][0]["status"] = "generated"
+        db_state["exam_sessions"][0]["updated_at"] = "2026-10-30T00:01:00+00:00"
+        return await original_update(
+            session_id, expected_updated_at=expected_updated_at, allowed_statuses=allowed_statuses
+        )
+
+    repo.update_session_approved = hooked_update
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.approve_session(MOCK_SESSION_ID, MOCK_USER_ID)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INVALID_SESSION_STATE"
+    # Session must NOT have been approved
+    assert db_state["exam_sessions"][0]["status"] == "generated"
+
+
+@pytest.mark.asyncio
+async def test_f01_post_approval_mutations_blocked():
+    """F01: Mutations on already approved session are blocked at DB level with HTTP 423."""
+    db_state = {
+        "exam_sessions": [
+            {
+                "id": MOCK_SESSION_ID,
+                "status": "approved",
+                "gemini_review_calls": 5,
+                "user_id": MOCK_USER_ID,
+            }
+        ],
+        "version_questions": [
+            {
+                "id": MOCK_QUESTION_ID,
+                "version_id": "v-101",
+                "source_question_id": "s-1",
+                "status": "approved",
+                "is_current": True,
+                "is_reverted": False,
+                "regenerated_from_id": "old-q",
+            }
+        ],
+    }
+    client = MockSupabaseClient(db_state)
+    review_repo = ReviewRepository(client)
+
+    # 1. Accept must be rejected
+    with pytest.raises(ReviewDomainException) as exc_accept:
+        await review_repo.accept_question_tx(MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID)
+    assert exc_accept.value.status_code == 423
+    assert exc_accept.value.error_code == "ERR_SESSION_LOCKED"
+
+    # 2. Revert must be rejected
+    with pytest.raises(ReviewDomainException) as exc_revert:
+        await review_repo.atomic_revert_tx(MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID)
+    assert exc_revert.value.status_code == 423
+    assert exc_revert.value.error_code == "ERR_SESSION_LOCKED"
+
+    # 3. Reserve quota / reject phase 1 must be rejected
+    with pytest.raises(ReviewDomainException) as exc_reserve:
+        await review_repo.reserve_max_quota_and_start_regenerating(MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID)
+    assert exc_reserve.value.status_code == 423
+    assert exc_reserve.value.error_code == "ERR_SESSION_LOCKED"
+
+
+@pytest.mark.asyncio
+async def test_f02_missing_current_question_for_a_version_aborts_approval():
+    """F02: Reject approval when a version is missing an active approved variant for a source question."""
+    db_state = {
+        "exam_sessions": [
+            {"id": MOCK_SESSION_ID, "status": "reviewed", "user_id": MOCK_USER_ID}
+        ],
+        "exam_versions": [
+            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True},
+            {"id": "v-102", "session_id": MOCK_SESSION_ID, "version_code": "102", "is_finalized": True},
+        ],
+        "source_questions": [
+            {"id": "s-1", "session_id": MOCK_SESSION_ID}
+        ],
+        "version_questions": [
+            # Version 101 has current approved question for s-1
+            {
+                "id": "q-101",
+                "version_id": "v-101",
+                "source_question_id": "s-1",
+                "status": "approved",
+                "is_current": True,
+            },
+            # Version 102 only has historical is_current=False row, no active replacement
+            {
+                "id": "q-102-old",
+                "version_id": "v-102",
+                "source_question_id": "s-1",
+                "status": "approved",
+                "is_current": False,
+            },
+        ],
+    }
+    client = MockSupabaseClient(db_state)
+    repo = FinalizeRepository(client)
+    service = FinalizeService(client, repo=repo)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.approve_session(MOCK_SESSION_ID, MOCK_USER_ID)
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.error_code == "ERR_NOT_ALL_QUESTIONS_APPROVED"
+    assert "chưa được thẩm định phê duyệt hoặc bị thiếu" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_f03_partial_answer_keys_missing_version_raises_409():
+    """F03: If answer_keys is partially populated (missing a version), raise 409."""
+    db_state = {
+        "exam_sessions": [
+            {"id": MOCK_SESSION_ID, "status": "approved", "user_id": MOCK_USER_ID}
+        ],
+        "exam_versions": [
+            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101"},
+            {"id": "v-102", "session_id": MOCK_SESSION_ID, "version_code": "102"},
+        ],
+        "source_questions": [
+            {"id": "s-1", "session_id": MOCK_SESSION_ID}
+        ],
+        "answer_keys": [
+            # Only version 101 has an answer key record; version 102 is missing!
+            {"version_id": "v-101", "question_no": 1, "correct_option": "B"}
+        ],
+    }
+    client = MockSupabaseClient(db_state)
+    repo = FinalizeRepository(client)
+    service = FinalizeService(client, repo=repo)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_answers_matrix(MOCK_SESSION_ID, MOCK_USER_ID)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+
+
+@pytest.mark.asyncio
+async def test_f03_partial_answer_keys_missing_question_raises_409():
+    """F03: If answer_keys is missing a question for one version, raise 409."""
+    db_state = {
+        "exam_sessions": [
+            {"id": MOCK_SESSION_ID, "status": "approved", "user_id": MOCK_USER_ID}
+        ],
+        "exam_versions": [
+            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101"},
+            {"id": "v-102", "session_id": MOCK_SESSION_ID, "version_code": "102"},
+        ],
+        "source_questions": [
+            {"id": "s-1", "session_id": MOCK_SESSION_ID},
+            {"id": "s-2", "session_id": MOCK_SESSION_ID},
+        ],
+        "answer_keys": [
+            {"version_id": "v-101", "question_no": 1, "correct_option": "A"},
+            {"version_id": "v-101", "question_no": 2, "correct_option": "B"},
+            # Version 102 only has question 1, missing question 2!
+            {"version_id": "v-102", "question_no": 1, "correct_option": "C"},
+        ],
+    }
+    client = MockSupabaseClient(db_state)
+    repo = FinalizeRepository(client)
+    service = FinalizeService(client, repo=repo)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_answers_matrix(MOCK_SESSION_ID, MOCK_USER_ID)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+
+
+@pytest.mark.asyncio
+async def test_f03_complete_answer_keys_success():
+    """F03: When answer_keys is complete across all versions and questions, matrix returns normally."""
+    db_state = {
+        "exam_sessions": [
+            {"id": MOCK_SESSION_ID, "status": "approved", "user_id": MOCK_USER_ID}
+        ],
+        "exam_versions": [
+            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101"},
+            {"id": "v-102", "session_id": MOCK_SESSION_ID, "version_code": "102"},
+        ],
+        "source_questions": [
+            {"id": "s-1", "session_id": MOCK_SESSION_ID},
+            {"id": "s-2", "session_id": MOCK_SESSION_ID},
+        ],
+        "answer_keys": [
+            {"version_id": "v-101", "question_no": 1, "correct_option": "A"},
+            {"version_id": "v-101", "question_no": 2, "correct_option": "B"},
+            {"version_id": "v-102", "question_no": 1, "correct_option": "C"},
+            {"version_id": "v-102", "question_no": 2, "correct_option": "D"},
+        ],
+    }
+    client = MockSupabaseClient(db_state)
+    repo = FinalizeRepository(client)
+    service = FinalizeService(client, repo=repo)
+
+    res = await service.get_answers_matrix(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert res.total_questions == 2
+    assert res.version_codes == ["101", "102"]
+    assert res.matrix[0].question_no == 1
+    assert res.matrix[0].answers == {"101": "A", "102": "C"}
+    assert res.matrix[1].question_no == 2
+    assert res.matrix[1].answers == {"101": "B", "102": "D"}
+
+
+@pytest.mark.asyncio
+async def test_f03_empty_answer_keys_fallback_to_version_questions():
+    """F03: When answer_keys is empty, safely fallback to version_questions."""
+    db_state = {
+        "exam_sessions": [
+            {"id": MOCK_SESSION_ID, "status": "approved", "user_id": MOCK_USER_ID}
+        ],
+        "exam_versions": [
+            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101"},
+            {"id": "v-102", "session_id": MOCK_SESSION_ID, "version_code": "102"},
+        ],
+        "source_questions": [
+            {"id": "s-1", "session_id": MOCK_SESSION_ID}
+        ],
+        "answer_keys": [],
+        "version_questions": [
+            {"version_id": "v-101", "question_no": 1, "correct_key": "A", "is_current": True},
+            {"version_id": "v-102", "question_no": 1, "correct_key": "C", "is_current": True},
+        ],
+    }
+    client = MockSupabaseClient(db_state)
+    repo = FinalizeRepository(client)
+    service = FinalizeService(client, repo=repo)
+
+    res = await service.get_answers_matrix(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert res.total_questions == 1
+    assert res.version_codes == ["101", "102"]
+    assert res.matrix[0].answers == {"101": "A", "102": "C"}
+
