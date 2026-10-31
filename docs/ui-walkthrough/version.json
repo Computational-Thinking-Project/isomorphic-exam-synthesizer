@@ -1,0 +1,81 @@
+{
+  "packageId": "UI-WALKTHROUGH-20261030",
+  "packagedDate": "2026-10-30",
+  "timezone": "Asia/Bangkok",
+  "kind": "Portable prepared UI, not integrated product or AI output",
+  "branch": "feat/ui-ux-integration",
+  "repositoryBaseAtPackaging": "813f4976ac95a336eed8f71ec77b3426eef6edf5",
+  "artifact": {
+    "file": "PREVIEW.html",
+    "bytes": 2746995,
+    "sha256": "b24f43f83013dfea2d164b96f99193634609b8280b4fba7cb2a627fb758872b9",
+    "sourceWorkspaceRelativePath": "project/ui-draft/redesign/PREVIEW.html",
+    "sourceDateFromReview": "2026-10-30",
+    "sourceCommit": null,
+    "sourceCommitNote": "ui-draft is outside the product Git repository; repositoryBaseAtPackaging is not the artifact source commit",
+    "built": [
+      "index-5UxxvQ3V.css",
+      "index-Bbcu_oXc.js"
+    ],
+    "selfContained": true,
+    "thirdPartyNoticesEmbedded": true,
+    "rebuiltDuringPackaging": false
+  },
+  "checkpoints": [
+    {
+      "label": "Start",
+      "screen": "S00",
+      "state": "success"
+    },
+    {
+      "label": "W1 source",
+      "screen": "S03",
+      "state": "empty"
+    },
+    {
+      "label": "W2 config",
+      "screen": "S04",
+      "state": "success"
+    },
+    {
+      "label": "Backup ready",
+      "screen": "S05",
+      "state": "ready",
+      "prepared": true
+    },
+    {
+      "label": "W3-W5 correction",
+      "screen": "S06",
+      "state": "presenter-issue",
+      "prepared": true,
+      "selectQuestion": "Cau 3",
+      "sourceId": "G03",
+      "code": "101",
+      "otherApprovalsPreloaded": 9
+    }
+  ],
+  "behavior": {
+    "S05": "Automatic sample simulation; count/readiness separate; no live AI or autoapproval",
+    "W3ToW5": "Separate prepared checkpoint, same tab until approve; reload resets fixture",
+    "persistence": "Tab memory only",
+    "realPDFExport": false
+  },
+  "checks": {
+    "staticPackageVerification": "passed: hash/bytes/links/resources/license notices/Git attributes/ignore/scope; no native browser",
+    "nativeChrome": "not run",
+    "keyboardFocusScroll": "not run",
+    "rehearsal": "not run"
+  },
+  "publicationAtPreparation": {
+    "committed": false,
+    "pushed": false,
+    "packageCommit": null,
+    "note": "Historical preparation status; verify the actual remote commit contains this folder before teammates pull"
+  },
+  "limits": [
+    "No real auth/upload/parser/AI/server persistence/PDF",
+    "Prepared example is not actual AI or teacher approval evidence",
+    "No equivalent difficulty/coverage/accuracy/time-saving claims",
+    "Native file access restriction remains; no server/CDP/alternate-surface workaround"
+  ]
+}

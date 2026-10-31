@@ -351,3 +351,38 @@ class ReviewDomainException(HTTPException):
     def __init__(self, status_code: int, error_code: str, detail: str) -> None:
         super().__init__(status_code=status_code, detail=detail)
         self.error_code = error_code
+
+
+# Re-export validator schemas for convenient consumption across services and routes
+from app.services.validator.base import CheckResult, ValidationReport  # noqa: E402
+
+__all__ = [
+    "SourceQuestion",
+    "GeneratedVariant",
+    "GenerateRequest",
+    "RegenerateQuestionRequest",
+    "ExamDraftPackage",
+    "CurrentUser",
+    "UserProfile",
+    "SessionCreate",
+    "SessionUpdate",
+    "SessionCloneRequest",
+    "SessionItem",
+    "SessionListResponse",
+    "SessionDetailResponse",
+    "IngestTextRequest",
+    "ParserErrorItem",
+    "IngestValidationErrorResponse",
+    "ParsedQuestionItem",
+    "IngestSuccessResponse",
+    "ConfirmSourceRequest",
+    "ConfirmSourceResponse",
+    "ReserveResult",
+    "ReviewActionResponse",
+    "RegeneratedQuestionResponse",
+    "ReviewProgressResponse",
+    "ErrorDetailResponse",
+    "ReviewDomainException",
+    "CheckResult",
+    "ValidationReport",
+]
