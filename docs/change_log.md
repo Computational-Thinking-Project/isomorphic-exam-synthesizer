@@ -293,3 +293,9 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
   - Giảm thiểu triệt để số lượng endpoint và form UI cần phát triển/bảo trì, tiết kiệm ít nhất 4 ngày công cho FE và BE.
   - Giao diện đạt chuẩn Zero-Friction: Giảng viên chỉ cần nạp đề $\rightarrow$ xem trước KaTeX $\rightarrow$ bấm 1 nút "Xác nhận đề gốc và tiếp tục" để chuyển sang sinh đề.
   - Bảo đảm an toàn tuyệt đối cho CSDL và hệ thống.
+# DEC-DAT-W3-304: Adapter sinh lại từng câu cho review API
+
+- Ngày/người: 29/10/2026 — Đạt; triển khai theo phản hồi Duy trên PR #26.
+- Quyết định: không text giáo viên; đầu vào snapshot in-memory + canonical Blueprint/hash xác nhận, dùng lại GenerationService. Pydantic result có report trung thực và api_calls_count; mock chỉ inject tường minh.
+- Phạm vi: models/targeted.py, generation/targeted_service.py, giới hạn 2 math retries trong trần 4 attempts ở đường targeted. Không đổi DB/endpoints hoặc sửa nhánh Duy.
+- Tích hợp: [handoff](ai-w3-targeted-regeneration.md). Reservation 3 calls và snapshot mapper trong PR #28 còn cần owner đồng bộ; chưa coi E2E hoàn tất.
