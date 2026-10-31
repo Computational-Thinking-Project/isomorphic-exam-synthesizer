@@ -258,6 +258,13 @@ class TestReviewerFindingsF01ToF04:
         assert "'bold'" not in source
         assert 'weight: "bold"' in source
 
+    def test_f06_decimal_coefficients_preserved_with_parentheses(self):
+        """F06: Decimal numbers preceding parentheses must not be corrupted by method call filter."""
+        assert convert_markdown_to_typst("$0.5(x+1)$") == "$0.5(x+1)$"
+        assert convert_markdown_to_typst("$1.25(x-2)$") == "$1.25(x-2)$"
+        assert convert_markdown_to_typst("$0.5 (x + 1)$") == "$0.5 (x + 1)$"
+        assert convert_markdown_to_typst("$3.14159(r^2)$") == "$3.14159(r^2)$"
+
     def test_f03_metadata_code_injection_prevention(self):
         """F03: Metadata titles with quotes and code markers must be escaped."""
         compiler = TypstCompiler()
@@ -560,4 +567,18 @@ class TestRealTypstIntegration:
             f"{convert_markdown_to_typst(payload)}\n"
         )
         pdf_bytes = compiler.compile_document(source, "f03_test.pdf")
+        assert pdf_bytes.startswith(PDF_MAGIC_BYTES)
+
+    def test_real_typst_compile_f06_decimal_expressions(self):
+        compiler = TypstCompiler()
+        if not compiler.is_available():
+            pytest.skip("Typst CLI is not installed on host PATH; skipping real compile test.")
+
+        payload = "$0.5(x+1) + 1.25(x-2) = 0$"
+        source = (
+            '#set page(paper: "a4")\n'
+            "= Test F06 Decimal Expressions\n"
+            f"{convert_markdown_to_typst(payload)}\n"
+        )
+        pdf_bytes = compiler.compile_document(source, "f06_test.pdf")
         assert pdf_bytes.startswith(PDF_MAGIC_BYTES)

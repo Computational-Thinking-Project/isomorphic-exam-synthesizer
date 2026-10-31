@@ -63,13 +63,14 @@ def latex_math_to_typst(math_str: str) -> str:
     """
     s = math_str.strip()
 
-    # 0. Security neutralization of '#' and code triggers in math mode (F03)
+    # 0. Security neutralization of '#' and code triggers in math mode (F03, F06)
     # In Typst math mode, the hash symbol is represented by the symbol identifier 'hash'.
     # We neutralize '\#' and '#' to ' hash ', ensuring no literal '#' ever enters math mode.
-    # Additionally strip method calls (\.\w+\s*\() and code keywords (panic, eval, assert).
+    # Strip method calls (\.[a-zA-Z_]\w*\s*\() without corrupting decimal numbers (e.g. 0.5(x+1)),
+    # and strip code keywords (panic, eval, assert).
     s = re.sub(r"\\#", " hash ", s)
     s = re.sub(r"#", " hash ", s)
-    s = re.sub(r"\.\w+\s*\(", " ", s)
+    s = re.sub(r"\.[a-zA-Z_]\w*\s*\(", " ", s)
     s = re.sub(r"\b(?:panic|eval|assert)\b", " ", s)
 
     # 1. Convert \\text{...} -> "..."

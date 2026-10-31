@@ -62,3 +62,9 @@
   - **Resolution:** Changed all single quotes to double quotes `#text(weight: "bold")` across table headers and row items in `typst_compiler.py`.
   - **Evidence:** Added unit test `test_f05_answers_matrix_uses_double_quotes_for_bold` and real compile test `test_real_typst_compile_answers_matrix_document`.
 
+
+### 7. Review Findings Resolution (Round 3)
+- **F06 (Preserve Decimal Coefficients Preceding Parentheses in Math):**
+  - **Issue:** The regex `r"\.\w+\s*\("` used in Round 2 to neutralize method calls also matched digits (`\w` matches `[a-zA-Z0-9_]`), corrupting decimal numbers followed by parentheses like `$0.5(x+1)$` into `$0 x+1)$`.
+  - **Resolution:** Refined the method call regex to `r"\.[a-zA-Z_]\w*\s*\("`. Valid method identifiers must begin with an ASCII letter or underscore, ensuring decimal coefficients (e.g. `0.5(x+1)`, `1.25(x-2)`, `3.14159(r^2)`) are strictly preserved while chained method invocations (e.g. `.replace(`, `.eval(`, `.map(`) remain completely neutralized.
+  - **Evidence:** Added unit regression test `test_f06_decimal_coefficients_preserved_with_parentheses` and integration compile test `test_real_typst_compile_f06_decimal_expressions`.
