@@ -3,7 +3,7 @@
 - Nguồn giao việc: [docs/planning.md#task-303](../planning.md) (commit 506384b; 28/10/2026).
 - Phụ trách: Tâm (`@AI-WFox`); reviewer: Duy (`@johannguyen015` — đề xuất).
 - Repo/nhánh: `isomorphic-exam-synthesizer` / `feat/tam-task-303-fisher-yates-shuffler`; PR: [#24](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/24).
-- Hạn đạt: tối thứ 3 03/11/2026; ETA task: Chủ Nhật 01/11/2026 (Tâm tự xác nhận, bàn giao trước sáng thứ 2 02/11/2026 cho Duy làm TASK-305).
+- Hạn đạt: tối thứ 3 03/11/2026; ETA task: Hoàn thành phần Core Service Shuffler (sẵn sàng bàn giao cho Duy tích hợp TASK-305).
 
 ## Mình cần làm gì?
 
@@ -54,20 +54,30 @@
 - Lịch có khả thi không? Hoàn toàn khả thi vì logic Fisher-Yates thuần thuật toán toán học và test in-memory có thể triển khai độc lập trước khi DB migration hoàn tất.
 - Quyết định đã thống nhất: Canonical Invariant là bắt buộc, không được mutate in-place dữ liệu `canonical_*`.
 
-## Kế hoạch tự kiểm
+## Kế hoạch tự kiểm và kết quả thực tế
 
-- Tình huống thành công:
-  - Shuffle cùng một seed ra cùng kết quả 100%.
-  - Shuffle nhiều lần trên cùng dữ liệu không làm mất dữ liệu canonical gốc.
-  - `solution_md` được cập nhật chính xác nhãn đáp án mới.
-- Tình huống lỗi:
-  - Phiên chưa `reviewed` (chưa đủ 100% approved) bị chặn với HTTP 400 Bad Request.
-  - User không phải chủ sở hữu bị chặn với HTTP 403 Forbidden.
-- Môi trường: Pytest local, in-memory fixtures. Chưa thể kiểm với DB thật cho tới khi migration hoàn tất.
+- [x] Lệnh kiểm: `pytest backend/tests/shuffler/test_shuffler.py -v`
+- [x] Kết quả: 23/23 passed (100% green trong 0.20s).
+- [x] Lệnh kiểm linter: `ruff check backend/app/services/shuffler/ backend/tests/shuffler/`
+- [x] Kết quả: All checks passed.
+- [x] Lệnh kiểm format: `ruff format --check backend/app/services/shuffler/ backend/tests/shuffler/`
+- [x] Kết quả: 4 files already formatted.
+- [x] Lệnh kiểm typecheck: `mypy backend/app/services/shuffler/ --ignore-missing-imports`
+- [x] Kết quả: Success: no issues found in 3 source files.
+
+Tình huống đã kiểm thử:
+- [x] Tính xác định (Deterministic Idempotence): Cùng seed luôn tạo ra thứ tự câu hỏi và hoán vị đáp án bất biến 100%. Các phiên bản khác nhau có seed khác nhau.
+- [x] Bảo vệ dữ liệu gốc (Canonical Invariant): Đọc trực tiếp từ `canonical_*`, không mutate in-place dữ liệu đầu vào.
+- [x] Đồng bộ nhãn đáp án giải thích (`solution_md`): Tự động đồng bộ các mẫu chỉ dẫn tiếng Việt ("Đáp án A:", "Chọn A", "Phương án đúng: A", v.v.) sang nhãn mới, bảo toàn biến số toán học và hình học (tam giác ABC, đỉnh A).
+- [x] Tạo đầy đủ bản ghi `answer_keys` và ma trận `permutations` (JSONB) cho database.
+- [x] Payload phản hồi phiên bản khớp 100% chuẩn hợp đồng `w3.md#L316`.
 
 ## Bàn giao – điền theo kết quả thực tế
 
-- PR/commit/output: PR [#24](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/24) (Draft plan-only).
-- Đã làm / đã kiểm: Kế hoạch triển khai Template M2, câu hỏi contract cho Hùng và Duy.
-- Đã chấp nhận: Chờ review từ Duy (`@johannguyen015`).
-- Còn chờ/bước tiếp: Phản hồi từ Hùng và Duy trên PR #24; bắt đầu triển khai code và unit test từ thứ 6.
+- PR/commit/output: PR [#24](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/24).
+- Đã làm / đã kiểm:
+  - Triển khai `backend/app/services/shuffler/schemas.py`: Pydantic models cho OrderingPreferences, CanonicalQuestionInput, ShuffledQuestionOutput, AnswerKeyRecord, VersionShuffleResult, FinalizeShuffleResponse.
+  - Triển khai `backend/app/services/shuffler/service.py`: Thuật toán Fisher-Yates, sinh seed xác định SHA-256, đồng bộ solution text regex tiếng Việt, tạo ma trận hoán vị và bản ghi answer_keys.
+  - Triển khai `backend/tests/shuffler/test_shuffler.py`: 23 test cases bao phủ toàn bộ chức năng, tính xác định, bất biến canonical, và edge cases.
+- Đã chấp nhận: Sẵn sàng để Duy (`@johannguyen015`) kết nối endpoint `POST /api/sessions/{session_id}/finalize/shuffle` trong TASK-305.
+- Còn chờ/bước tiếp: Duy review PR #24 và tích hợp endpoint.
