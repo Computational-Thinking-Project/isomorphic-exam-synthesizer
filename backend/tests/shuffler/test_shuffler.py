@@ -17,7 +17,10 @@ import copy
 import random
 from typing import List
 
+import pytest
+
 from app.services.shuffler.schemas import (
+    AnswerKeyRecord,
     CanonicalQuestionInput,
     FinalizeShuffleResponse,
     OrderingPreferences,
@@ -371,6 +374,8 @@ class TestAnswerKeysAndPermutationsAudit:
         assert len(res.answer_keys) == len(res.questions)
         for ans_key, out_q in zip(res.answer_keys, res.questions):
             assert ans_key.version_id == "ver-uuid-101"
+            assert ans_key.display_no == out_q.display_no
+            assert ans_key.display_correct_key == out_q.display_correct_key
             assert ans_key.question_no == out_q.display_no
             assert ans_key.correct_option == out_q.display_correct_key
             assert ans_key.canonical_question_no == out_q.canonical_question_no
@@ -472,3 +477,111 @@ class TestEdgeCases:
         assert q.canonical_options == ["A1", "B1", "C1", "D1"]
         assert q.canonical_correct_key == "B"
         assert q.canonical_question_no == 1
+
+
+class TestReviewerFindingsF01ToF03:
+    """Regression tests for reviewer findings F01, F02, F03 (Round 1 from Duy)."""
+
+    def test_f01_sync_solution_text_excludes_math_equations(self):
+        """F01: Mathematical equations and assignments (e.g. 'Vậy: A = 5') must not be replaced."""
+        # 1. Equality / assignment: Vậy: A = 5 must NOT change to Vậy: C = 5
+        text_eq = "Từ hệ thức lượng trong tam giác, ta có Vậy: A = 5."
+        assert (
+            sync_solution_text(text_eq, "A", "C")
+            == "Từ hệ thức lượng trong tam giác, ta có Vậy: A = 5."
+        )
+
+        # 2. Inequality / comparison: Suy ra: A > 0 must NOT change
+        text_ineq = "Suy ra: A > 0 và B < 10."
+        assert sync_solution_text(text_ineq, "A", "C") == "Suy ra: A > 0 và B < 10."
+
+        # 3. Set membership: Do đó: A \in (0, 1) must NOT change
+        text_set = r"Do đó: A \in (0, 1)"
+        assert sync_solution_text(text_set, "A", "C") == r"Do đó: A \in (0, 1)"
+
+        # 4. Arithmetic addition: Vậy: A + B = 10 must NOT change
+        text_add = "Vậy: A + B = 10"
+        assert sync_solution_text(text_add, "A", "C") == "Vậy: A + B = 10"
+
+        # 5. True conclusion answer selections: Vậy: A. and Do đó: A must be synchronized
+        text_valid1 = "Vậy: A."
+        assert sync_solution_text(text_valid1, "A", "C") == "Vậy: C."
+
+        text_valid2 = "Do đó: A"
+        assert sync_solution_text(text_valid2, "A", "C") == "Do đó: C"
+
+        text_valid3 = "Kết luận: **A**"
+        assert sync_solution_text(text_valid3, "A", "C") == "Kết luận: **C**"
+
+        text_valid4 = "Vậy ta chọn A."
+        assert sync_solution_text(text_valid4, "A", "C") == "Vậy ta chọn C."
+
+    def test_f02_answer_key_record_schema_and_alias_compatibility(self):
+        """F02: AnswerKeyRecord must support both W3 contract and legacy schema baseline via aliases."""
+        # W3 contract creation: display_no and display_correct_key
+        rec1 = AnswerKeyRecord(
+            version_id="ver-101",
+            display_no=1,
+            display_correct_key="B",
+            canonical_question_no=3,
+        )
+        assert rec1.display_no == 1
+        assert rec1.display_correct_key == "B"
+        # Backward-compatible attribute access
+        assert rec1.question_no == 1
+        assert rec1.correct_option == "B"
+
+        # Legacy baseline creation via alias: question_no and correct_option
+        rec2 = AnswerKeyRecord(
+            version_id="ver-102",
+            question_no=2,
+            correct_option="D",
+            canonical_question_no=4,
+        )
+        assert rec2.display_no == 2
+        assert rec2.display_correct_key == "D"
+        assert rec2.question_no == 2
+        assert rec2.correct_option == "D"
+
+        # Serialization checks
+        dump_standard = rec1.model_dump()
+        assert "display_no" in dump_standard
+        assert "display_correct_key" in dump_standard
+
+        dump_aliased = rec1.model_dump(by_alias=True)
+        assert "question_no" in dump_aliased
+        assert "correct_option" in dump_aliased
+
+    def test_f03_strict_validation_for_canonical_correct_key(self):
+        """F03: canonical_correct_key must be strictly validated as Literal['A', 'B', 'C', 'D'] with no silent fallback."""
+        from pydantic import ValidationError
+
+        # Invalid key in CanonicalQuestionInput raises ValidationError
+        with pytest.raises(ValidationError):
+            CanonicalQuestionInput(
+                canonical_question_no=1,
+                content="Test question",
+                canonical_options=["A", "B", "C", "D"],
+                canonical_correct_key="E",  # Invalid
+            )
+
+        with pytest.raises(ValidationError):
+            CanonicalQuestionInput(
+                canonical_question_no=1,
+                content="Test question",
+                canonical_options=["A", "B", "C", "D"],
+                canonical_correct_key="INVALID",
+            )
+
+        # Legacy raw dict input with invalid key raises ValueError instead of silent fallback to 'A'
+        invalid_dict = [
+            {
+                "canonical_question_no": 1,
+                "content": "Test",
+                "options": ["1", "2", "3", "4"],
+                "correct_key": "X",
+            }
+        ]
+        with pytest.raises(ValueError) as exc_info:
+            shuffle_exam_version("sess-err", 1, invalid_dict)
+        assert "Invalid canonical_correct_key" in str(exc_info.value)

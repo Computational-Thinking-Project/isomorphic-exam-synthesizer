@@ -98,11 +98,15 @@ def sync_solution_text(
     c_k = re.escape(canonical_key.strip().upper())
     d_k = display_key.strip().upper()
 
+    # Operator exclusion: Ensure conclusion/keyword letter is not followed by math relations/operators
+    # such as '=', '!=', '<', '>', '<=', '>=', '\le', '\ge', '\in', '\notin', '+', '-', '*', '/' (F01).
+    op_exclusion = r"(?!\s*(?:[=!<>]|<=|>=|!=|==|\\le|\\ge|\\in|\\notin|[\+\-\*/\\~]))"
+
     # Pattern 1: Keywords like Đáp án / Phương án / Câu trả lời / Chọn
     # Prefix allows optional: đúng, cần chọn, là, colon, period, whitespace
     # Wrapper allows markdown, LaTeX \\textbf, brackets, parentheses
     pattern_keyword = re.compile(
-        rf"(?i)(\b(?:đáp\s+án|phương\s+án|câu\s+trả\s+lời|chọn(?:\s+đáp\s+án|\s+phương\s+án)?)(?:\s+đúng|\s+cần\s+chọn)?(?:\s+là)?\s*[:\.]?\s*)([\*_\[\(]*(?:\\textbf\{{)?)({c_k})((?:\}})?[\*_\]\)]*)(?=[\s\.,;:\n\)]|$)"
+        rf"(?i)(\b(?:đáp\s+án|phương\s+án|câu\s+trả\s+lời|chọn(?:\s+đáp\s+án|\s+phương\s+án)?)(?:\s+đúng|\s+cần\s+chọn)?(?:\s+là)?\s*[:\.]?\s*)([\*_\[\(]*(?:\\textbf\{{)?)({c_k})((?:\}})?[\*_\]\)]*)(?=[\s\.,;:\n\)]|$){op_exclusion}"
     )
 
     def _replace_keyword(match: re.Match[str]) -> str:
@@ -115,7 +119,7 @@ def sync_solution_text(
 
     # Pattern 2: Conclusion sentences: Kết luận: A / Suy ra: A / Do đó: A / Vậy: A
     pattern_conclusion = re.compile(
-        rf"(?i)(\b(?:kết\s+luận|suy\s+ra|do\s+đó|vậy)\s*[:]\s*)([\*_\[\(]*(?:\\textbf\{{)?)({c_k})((?:\}})?[\*_\]\)]*)(?=[\s\.,;:\n\)]|$)"
+        rf"(?i)(\b(?:kết\s+luận|suy\s+ra|do\s+đó|vậy)\s*[:]\s*)([\*_\[\(]*(?:\\textbf\{{)?)({c_k})((?:\}})?[\*_\]\)]*)(?=[\s\.,;:\n\)]|$){op_exclusion}"
     )
     synced = pattern_conclusion.sub(_replace_keyword, synced)
 
@@ -134,7 +138,15 @@ def _normalize_question_input(
     if "canonical_options" not in data and "options" in data:
         data["canonical_options"] = data["options"]
     if "canonical_correct_key" not in data:
-        data["canonical_correct_key"] = data.get("correct_key") or data.get("correct_answer", "A")
+        raw_key = data.get("correct_key") or data.get("correct_answer")
+        if not raw_key:
+            raise ValueError("Missing canonical_correct_key in question input.")
+        raw_key_str = str(raw_key).strip().upper()
+        if raw_key_str not in ("A", "B", "C", "D"):
+            raise ValueError(
+                f"Invalid canonical_correct_key '{raw_key_str}'. Must be one of ['A', 'B', 'C', 'D']."
+            )
+        data["canonical_correct_key"] = raw_key_str
     if "canonical_question_no" not in data:
         data["canonical_question_no"] = data.get("question_no", 1)
     if "canonical_solution_md" not in data:
@@ -219,7 +231,9 @@ def shuffle_exam_version(
         if canon_key in labels:
             canon_idx = labels.index(canon_key)
         else:
-            canon_idx = 0
+            raise ValueError(
+                f"Invalid canonical_correct_key '{canon_key}'. Must be one of {labels}."
+            )
 
         if prefs.shuffle_options:
             # Permute indices [0, 1, 2, 3] with deterministic RNG
@@ -266,8 +280,8 @@ def shuffle_exam_version(
         # Answer key record for public.answer_keys table
         ans_key = AnswerKeyRecord(
             version_id=version_id,
-            question_no=display_no,
-            correct_option=display_key,
+            display_no=display_no,
+            display_correct_key=display_key,
             canonical_question_no=q_in.canonical_question_no,
         )
         answer_keys.append(ans_key)

@@ -10,9 +10,9 @@ Defines data contracts for:
 6. API response models conforming to w3.md#L316 contract.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class OrderingPreferences(BaseModel):
@@ -51,7 +51,7 @@ class CanonicalQuestionInput(BaseModel):
         max_length=4,
         description="List of exactly 4 canonical option strings in A, B, C, D order",
     )
-    canonical_correct_key: str = Field(
+    canonical_correct_key: Literal["A", "B", "C", "D"] = Field(
         ..., description="Canonical correct option letter: 'A', 'B', 'C', or 'D'"
     )
     canonical_solution_md: Optional[str] = Field(
@@ -117,16 +117,40 @@ class ShuffledQuestionOutput(BaseModel):
 
 
 class AnswerKeyRecord(BaseModel):
-    """Record destined for public.answer_keys table."""
+    """
+    Record destined for public.answer_keys table.
+    Supports both W3 specification fields (display_no, display_correct_key)
+    and legacy schema baseline fields (question_no, correct_option) via aliases.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
 
     version_id: Optional[str] = None
-    question_no: int = Field(..., description="Display question number in the version (1..N)")
-    correct_option: str = Field(
-        ..., description="Display correct answer letter ('A', 'B', 'C', 'D')"
+    display_no: int = Field(
+        ...,
+        validation_alias=AliasChoices("display_no", "question_no"),
+        serialization_alias="question_no",
+        description="Display question number in the version (1..N), aliased as question_no",
+    )
+    display_correct_key: str = Field(
+        ...,
+        validation_alias=AliasChoices("display_correct_key", "correct_option"),
+        serialization_alias="correct_option",
+        description="Display correct answer letter ('A', 'B', 'C', 'D'), aliased as correct_option",
     )
     canonical_question_no: int = Field(
         ..., description="Reference back to canonical question number"
     )
+
+    @property
+    def question_no(self) -> int:
+        """Backward-compatible attribute access for legacy callers."""
+        return self.display_no
+
+    @property
+    def correct_option(self) -> str:
+        """Backward-compatible attribute access for legacy callers."""
+        return self.display_correct_key
 
 
 class VersionShuffleResult(BaseModel):
