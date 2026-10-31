@@ -7,9 +7,11 @@ Exports:
 - Isolated process runner with hard timeout (process_runner)
 - SymPy Mathematical Evaluator (VAL-03 / TASK-107b)
 - Rule-based fallback checker and math invariants (VAL-04 / TASK-107c)
+- Validation Aggregator & ValidationReport Schema (VAL-05 / TASK-107d)
 """
 
-from app.services.validator.base import CheckResult
+from app.services.validator.aggregator import validate_question, validate_variant
+from app.services.validator.base import CheckResult, ValidationReport
 from app.services.validator.logic_checker import (
     are_expressions_equivalent,
     check_designated_answer,
@@ -82,4 +84,7 @@ __all__ = [
     "validate_rule_variant",
     "safe_eval_numeric_expr",
     "extract_parameter_domains",
+    "ValidationReport",
+    "validate_question",
+    "validate_variant",
 ]
