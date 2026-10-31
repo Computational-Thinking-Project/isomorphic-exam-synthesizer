@@ -47,8 +47,8 @@
 
 | Cần ai/task nào | Câu hỏi/input cụ thể | Cần trước | ETA bên cung cấp xác nhận | Phần làm ngay/chờ | Link trả lời/contract |
 |---|---|---|---|---|---|
-| Hùng (`@benalexx007` - TASK-302) | Cấu trúc JSONB cụ thể của `canonical_options` là list các chuỗi `["A...", "B..."]` hay object `{"A": "...", ...}`? | Sáng thứ 6 30/10 | Chiều thứ 5 29/10 | Làm ngay với adapter hỗ trợ cả 2 dạng | Chờ giải đáp trên Draft PR |
-| Duy (`@johannguyen015` - TASK-305) | Response của `POST /finalize/shuffle` trả về permutation list hay object map theo question_id? | Sáng thứ 6 30/10 | Chiều thứ 5 29/10 | Làm ngay với schema pydantic | Chờ giải đáp trên Draft PR |
+| Hùng (`@benalexx007` - TASK-302) | Cấu trúc JSONB cụ thể của `canonical_options` là list các chuỗi `["A...", "B..."]` hay object `{"A": "...", ...}`? | Sáng thứ 6 30/10 | Chiều thứ 5 29/10 | Resolved | [docs/tasks/TASK-303_ANSWERS.md](TASK-303_ANSWERS.md) (Mảng 4 chuỗi `["A...", "B...", "C...", "D..."]` theo `generation.py#L37`) |
+| Duy (`@johannguyen015` - TASK-305) | Response của `POST /finalize/shuffle` trả về permutation list hay object map theo question_id? | Sáng thứ 6 30/10 | Chiều thứ 5 29/10 | Resolved | [docs/tasks/TASK-303_ANSWERS.md](TASK-303_ANSWERS.md) (Metadata version theo `w3.md#L316`; ma trận lưu DB `answer_keys`) |
 
 - Output mình cần giao cho task sau: Bàn giao API `POST /finalize/shuffle`, service xáo trộn và bảng `answer_keys` cho Duy (`TASK-305`) trước sáng thứ 2 02/11/2026.
 - Lịch có khả thi không? Hoàn toàn khả thi vì logic Fisher-Yates thuần thuật toán toán học và test in-memory có thể triển khai độc lập trước khi DB migration hoàn tất.
