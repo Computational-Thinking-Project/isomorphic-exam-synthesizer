@@ -34,7 +34,7 @@ import ast
 import logging
 import math
 import re
-from decimal import Decimal, InvalidOperation, getcontext
+from decimal import Decimal, InvalidOperation, localcontext
 from fractions import Fraction
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -464,17 +464,32 @@ class RadicalFraction:
         if all(c < 0 for c in self.terms.values()):
             return -1
 
-        for prec in (100, 250):
-            getcontext().prec = prec
-            total = Decimal(0)
-            for d, c in self.terms.items():
-                dec_c = Decimal(c.numerator) / Decimal(c.denominator)
-                total += dec_c if d == 1 else dec_c * Decimal(d).sqrt()
-            margin = Decimal(len(self.terms) * 10) * (Decimal(10) ** (-prec + 10))
-            if total > margin:
-                return 1
-            if total < -margin:
-                return -1
+        # Multi-term precision schedule adapting to coefficient magnitude (F03).
+        # Ensures rounding error does not exceed margin by computing rigorous error bounds
+        # scaled by term magnitudes (sum |T_i|) and precision.
+        max_coeff_digits = max(
+            len(str(abs(c.numerator))) + len(str(c.denominator)) for c in self.terms.values()
+        )
+        p_start = max(100, max_coeff_digits + 50)
+        precisions = [p_start, p_start * 2, p_start * 4]
+
+        for prec in precisions:
+            if prec > 1200:
+                break
+            with localcontext() as ctx:
+                ctx.prec = prec
+                total = Decimal(0)
+                s_abs = Decimal(0)
+                for d, c in self.terms.items():
+                    dec_c = Decimal(c.numerator) / Decimal(c.denominator)
+                    term = dec_c if d == 1 else dec_c * Decimal(d).sqrt()
+                    total += term
+                    s_abs += abs(term)
+                err_bound = Decimal(len(self.terms) * 100) * s_abs * (Decimal(10) ** (-prec))
+                if total > err_bound:
+                    return 1
+                if total < -err_bound:
+                    return -1
         return None
 
     def to_fraction(self) -> Optional[Fraction]:
@@ -489,15 +504,16 @@ class RadicalFraction:
         """High-precision Decimal evaluation for approximate representation."""
         if self.is_zero():
             return Decimal(0)
-        getcontext().prec = prec
-        total = Decimal(0)
-        for d, c in self.terms.items():
-            dec_c = Decimal(c.numerator) / Decimal(c.denominator)
-            if d == 1:
-                total += dec_c
-            else:
-                total += dec_c * Decimal(d).sqrt()
-        return total
+        with localcontext() as ctx:
+            ctx.prec = prec
+            total = Decimal(0)
+            for d, c in self.terms.items():
+                dec_c = Decimal(c.numerator) / Decimal(c.denominator)
+                if d == 1:
+                    total += dec_c
+                else:
+                    total += dec_c * Decimal(d).sqrt()
+            return total
 
     def __neg__(self) -> "RadicalFraction":
         return RadicalFraction({d: -c for d, c in self.terms.items()})

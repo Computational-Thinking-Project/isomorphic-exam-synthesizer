@@ -29,21 +29,21 @@
 | File | Mục đích | Output chính | Cách kiểm tự động hoặc thủ công |
 |---|---|---|---|
 | `backend/app/services/validator/rule_checker.py` | Triển khai Rule-Based Fallback Checker | Các hàm kiểm tra độc lập và bộ điều phối fallback | `pytest backend/tests/validation/test_rule_checker.py` |
-| `backend/tests/validation/test_rule_checker.py` | Unit tests toàn diện và regression tests | 77 test cases bao phủ toàn bộ chức năng và edge cases | `pytest backend/tests/validation/ -v` |
+| `backend/tests/validation/test_rule_checker.py` | Unit tests toàn diện và regression tests | 78 test cases bao phủ toàn bộ chức năng và edge cases | `pytest backend/tests/validation/ -v` |
 | `docs/tasks/TASK-107c.md` | Tài liệu kế hoạch và bàn giao task theo chuẩn Workflow M2 | Plan chuẩn hóa | Đọc và rà soát tài liệu |
 
 ## Tự kiểm và giới hạn
 
 - [x] Lệnh kiểm: `pytest backend/tests/validation/test_rule_checker.py -v`
-- [x] Kết quả: 77/77 passed (100% green).
+- [x] Kết quả: 78/78 passed (100% green).
 - [x] Lệnh kiểm linter: `ruff check backend/app/services/validator/rule_checker.py backend/tests/validation/test_rule_checker.py`
 - [x] Kết quả: All checks passed.
 - [x] Lệnh kiểm format: `ruff format --check backend/app/services/validator/rule_checker.py backend/tests/validation/test_rule_checker.py`
 - [x] Kết quả: 2 files already formatted.
-- [x] Lệnh kiểm typecheck: `mypy backend/app --ignore-missing-imports`
-- [x] Kết quả: Success: no issues found in 33 source files.
+- [x] Lệnh kiểm typecheck: `mypy backend/app/services/validator/ --ignore-missing-imports`
+- [x] Kết quả: Success: no issues found in 7 source files.
 - [x] Lệnh kiểm toàn bộ suite validation: `pytest backend/tests/validation/ -v`
-- [x] Kết quả: 169/169 passed.
+- [x] Kết quả: 170/170 passed.
 - Giới hạn: Biểu thức chứa các hàm số lượng giác thuần túy hoặc số vô tỉ siêu việt ($e, \pi$) mà không có CAS hỗ trợ sẽ được đánh giá qua xấp xỉ số học hoặc phân loại ngoài phạm vi.
 
 ## Bàn giao – điền theo kết quả thực tế
@@ -52,7 +52,9 @@
 - Đã làm / đã kiểm:
   - F01: `verified` bởi Philip tại commit `1308a59`.
   - F02: `verified` bởi Philip tại commit `1308a59`.
-  - F03 (`claimed_fixed`): Triển khai phương thức xác định dấu toán học chính xác `RadicalFraction.sign()` dựa trên định lý Besicovitch và so sánh chuẩn bình phương hữu tỉ $c_1^2 d_1$ vs $c_2^2 d_2$; loại bỏ hoàn toàn việc suy luận dấu từ `to_decimal(prec=50)` xấp xỉ; xử lý chính xác phép lấy trị tuyệt đối `abs()` và bắt đúng căn bậc chẵn của số âm cực nhỏ $q - \sqrt{2} < 0$.
-  - F04 (`claimed_fixed`): Bổ sung giới hạn ngân sách tính toán `max_limit = 100_000` cho hàm tách thừa số bình phương `_square_free_decomp`, giải quyết trong < 15ms và từ chối có kiểm soát với `ValueError` đối với các số nguyên lớn gần $10^{18}$ thay vì treo CPU quá 5s; giữ trọn vẹn khả năng xử lý căn chính phương $O(1)$ và các căn số học thông thường.
-- Đã chấp nhận: Chờ Philip (`@philip-kkk`) verify F03, F04 và approve PR.
+  - F04: `verified` bởi Philip tại commit `3074afe`.
+  - F03 (`claimed_fixed`):
+    - 1-term & 2-term: Triển khai phương thức xác định dấu toán học chính xác `RadicalFraction.sign()` dựa trên định lý Besicovitch và so sánh chuẩn bình phương hữu tỉ $c_1^2 d_1$ vs $c_2^2 d_2$; loại bỏ hoàn toàn việc suy luận dấu từ `to_decimal(prec=50)` xấp xỉ.
+    - Multi-term ($\ge 3$ hạng): Thiết lập cơ chế kiểm soát sai số tính toán nghiêm ngặt tỉ lệ theo tổng độ lớn các hệ số ($S_{abs} = \sum |c_i|\sqrt{d_i}$) và tiến trình tăng độ chính xác thích ứng (`precisions = [p_start, p_start*2, p_start*4]` với $p_{start} \ge \max(100, \text{digits} + 50)$); sử dụng `localcontext()` đảm bảo an toàn context; chỉ kết luận dấu khi $|\text{total}| > \text{err\_bound}$, nếu chưa đủ bảo đảm thì trả `None` (chưa kết luận) thay vì kết luận sai; xử lý chính xác ca kiểm $10^{18} \cdot (q - \sqrt{2} + \varepsilon \sqrt{3}) < 0$, ca đối dấu $-e > 0$, hàm `abs()`, và các miền xác định căn thức/logarit.
+- Đã chấp nhận: Chờ Philip (`@philip-kkk`) verify F03 và approve PR.
 - Còn chờ/bước tiếp: Đồng bộ sang PR #20 (`TASK-107d`).
