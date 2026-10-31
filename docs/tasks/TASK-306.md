@@ -54,8 +54,8 @@
 
 | Cần ai/task nào | Câu hỏi/input cụ thể | Cần trước | ETA bên cung cấp xác nhận | Phần làm ngay/chờ | Link trả lời/contract |
 |---|---|---|---|---|---|
-| Duy (`@johannguyen015` - Leader & Docker setup) | Môi trường Docker dev/staging đã cài đặt sẵn binary Typst CLI chưa, hay cần bổ sung Typst vào `Dockerfile`? | Sáng thứ 6 30/10 | Chiều thứ 5 29/10 | Viết mock runner fallback nếu thiếu binary | Chờ giải đáp trên Draft PR |
-| Đạt (`@dat-001` - TASK-307) | Định dạng tên file PDF xuất bản mong muốn là gì (ví dụ: `De_thi_{session_id}_{version_code}.pdf`)? | Sáng thứ 6 30/10 | Chiều thứ 5 29/10 | Chuẩn hóa hàm generate filename | Chờ giải đáp trên Draft PR |
+| Duy (`@johannguyen015` - Leader & Docker setup) | Môi trường Docker dev/staging đã cài đặt sẵn binary Typst CLI chưa, hay cần bổ sung Typst vào `Dockerfile`? | Sáng thứ 6 30/10 | Chiều thứ 5 29/10 | Resolved | [docs/tasks/TASK-306_ANSWERS.md](TASK-306_ANSWERS.md) (Typst v0.11.1 đã cài tại `/usr/local/bin/typst`) |
+| Đạt (`@dat-001` - TASK-307) | Định dạng tên file PDF xuất bản mong muốn là gì (ví dụ: `De_thi_{session_id}_{version_code}.pdf`)? | Sáng thứ 6 30/10 | Chiều thứ 5 29/10 | Resolved | [docs/tasks/TASK-306_ANSWERS.md](TASK-306_ANSWERS.md) (`exam_{code}.pdf`, `answers_matrix.pdf`, `solutions_{code}.pdf`) |
 
 - Output mình cần giao cho task sau: Service `TypstCompiler` và hàm compile PDF cho Đạt (`TASK-307`) tích hợp vào Export Center trước thứ 3 03/11/2026.
 - Lịch có khả thi không? Hoàn toàn khả thi, logic biên dịch độc lập và mockable 100% trong môi trường CI.
