@@ -2,6 +2,8 @@
 -- Isomorphic Exam Synthesizer - Database Initialization Schema (TASK-002)
 -- Targets: PostgreSQL 15+ on Supabase (Region: Southeast Asia / Singapore)
 -- Features: 10 Tables, Strict Relational RLS, Google OAuth Trigger, Invariant Index
+-- After initialization, apply backend/migrations in order. Migration 006 installs
+-- canonical immutability and legacy/display answer-key compatibility triggers.
 -- ==============================================================================
 
 -- ------------------------------------------------------------------------------
@@ -147,12 +149,14 @@ CREATE TABLE IF NOT EXISTS public.version_questions (
   is_current BOOLEAN NOT NULL DEFAULT TRUE,
   regenerated_from_id UUID REFERENCES public.version_questions(id) ON DELETE SET NULL,
   is_reverted BOOLEAN NOT NULL DEFAULT FALSE,
+  regeneration_id UUID NULL,
   validation_report JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Invariant Constraint: At any time, exactly one current record exists per version/source pair
+-- At most one current record per version/source pair; atomic lifecycle RPCs must
+-- additionally ensure that replacement failures do not leave zero current rows.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_single_current_version_question 
   ON public.version_questions (version_id, source_question_id) 
   WHERE is_current = TRUE;
@@ -163,6 +167,9 @@ CREATE TABLE IF NOT EXISTS public.answer_keys (
   version_id UUID NOT NULL REFERENCES public.exam_versions(id) ON DELETE CASCADE,
   question_no INT NOT NULL,
   correct_option TEXT NOT NULL,
+  display_no INT NOT NULL,
+  display_correct_key TEXT NOT NULL,
+  canonical_question_no INT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -170,9 +177,17 @@ CREATE TABLE IF NOT EXISTS public.answer_keys (
 CREATE TABLE IF NOT EXISTS public.review_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   version_question_id UUID NOT NULL REFERENCES public.version_questions(id) ON DELETE CASCADE,
+  session_id UUID NOT NULL REFERENCES public.exam_sessions(id) ON DELETE CASCADE,
+  -- Nullable storage permits unknown historical actors on upgraded databases.
+  -- Fresh databases have no such history: the CHECK below requires an actor.
+  -- Migration 006 uses CHECK ... NOT VALID to retain pre-existing NULLs only.
+  user_id UUID REFERENCES public.users(id),
   action_type public.review_action_type NOT NULL,
   reason TEXT,
   latency_ms INT,
+  api_calls_used INT,
+  regenerated_from_id UUID REFERENCES public.version_questions(id),
+  CONSTRAINT ck_review_logs_actor_required CHECK (user_id IS NOT NULL),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
