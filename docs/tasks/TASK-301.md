@@ -26,7 +26,7 @@
 | Endpoint | Session `generating` | Session `generated` / `reviewed` | Session `approved` / `exported` |
 |---|---|---|---|
 | `POST .../accept` | `HTTP 409 Conflict` | ✅ Cho phép duyệt độc lập | `HTTP 423 Locked` |
-| `POST .../reject` | `HTTP 409 Conflict` | ✅ Cho phép xử lý (nếu quota còn đủ $\ge 3$) | `HTTP 423 Locked` |
+| `POST .../reject` | `HTTP 409 Conflict` | ✅ Cho phép xử lý (nếu quota còn đủ $\ge 4$) | `HTTP 423 Locked` |
 | `POST .../revert` | `HTTP 409 Conflict` | ✅ Cho phép xử lý độc lập | `HTTP 423 Locked` |
 | `GET .../progress`| ✅ Trả về tiến độ | ✅ Trả về tiến độ (Read-only) | ✅ Trả về tiến độ (Read-only) |
 
@@ -36,7 +36,7 @@
 | Hành động | Câu `is_current = false` | Câu `pending_review` (`is_current=true`) | Câu `regenerating` (`is_current=true`) | Câu `approved` (`is_current=true`) |
 |---|---|---|---|---|
 | **Accept** | `HTTP 400 Bad Request` | ✅ Chuyển `approved` (`rowcount=1`) | `HTTP 409 Conflict` | `HTTP 200 OK` (Idempotent) |
-| **Reject** | `HTTP 400 Bad Request` | ✅ Reserve 3 calls & Kích hoạt 2-TX | `HTTP 409 Conflict` | ✅ Cho phép reject lại (hạ shuffle) |
+| **Reject** | `HTTP 400 Bad Request` | ✅ Reserve 4 calls & Kích hoạt 2-TX | `HTTP 409 Conflict` | ✅ Cho phép reject lại (hạ shuffle) |
 | **Revert** | `HTTP 400 Bad Request` | ✅ Nếu đã từng biến thể $\rightarrow$ Revert; Nếu chưa từng biến thể $\rightarrow$ `HTTP 400` | `HTTP 409 Conflict` | ✅ Nếu đã là bản revert $\rightarrow$ `HTTP 200` Idempotent |
 
 ---
@@ -50,10 +50,10 @@
   - SELECT theo `regeneration_id`: nếu đã tồn tại $\rightarrow$ trả về kết quả cũ (idempotent, không insert/refund lần 2).
   - UPDATE câu cũ `status = 'rejected'` với điều kiện `status = 'regenerating'`: chỉ tiếp tục nếu `rowcount == 1`.
   - INSERT câu mới mang `regeneration_id`, kế thừa đầy đủ `source_question_id`, `version_id`.
-  - Refund phần dư `3 - actual_calls` và ghi log `review_logs` (`action_type = 'REJECT'`).
+  - Refund phần dư `4 - actual_calls` và ghi log `review_logs` (`action_type = 'REJECT'`).
 - **Emergency Rollback (`emergency_rollback_tx`):**
   - SELECT theo `regeneration_id`: nếu câu mới đã commit $\rightarrow$ return `False` ngay (không refund, không đổi trạng thái).
-  - UPDATE câu cũ `status = 'pending_review'` với điều kiện `status = 'regenerating'`: chỉ khi `rowcount == 1` mới trừ quota -3 và ghi log `REJECT_FAILED`.
+  - UPDATE câu cũ `status = 'pending_review'` với điều kiện `status = 'regenerating'`: chỉ khi `rowcount == 1` mới hoàn quota (tối đa 4 - actual_dispatched) và ghi log `REJECT_FAILED`.
 
 ### 3.2. Công Thức `required_count` Đa Version Bất Biến
 ```sql

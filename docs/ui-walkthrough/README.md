@@ -1,10 +1,10 @@
 # UI walkthrough — exam mirror
 
-**Bản portable 30/10/2026**, dùng cho Full flow v3. Mở [launcher](index.html) hoặc [PREVIEW.html](PREVIEW.html) bằng Chrome sau khi lấy file về máy. Không cần npm, Docker, API key hoặc server. GitHub chỉ hiển thị nội dung HTML; không chạy demo ngay trong trang xem file GitHub.
+**Bản portable 31/10/2026**, dùng cho Full flow v3. Mở [launcher](index.html) hoặc [PREVIEW.html](PREVIEW.html) bằng Chrome sau khi lấy file về máy. Không cần npm, Docker, API key hoặc server. GitHub chỉ hiển thị nội dung HTML; không chạy demo ngay trong trang xem file GitHub.
 
 ## Lấy gói về máy
 
-Gói nằm trên nhánh `feat/ui-ux-integration`, đường dẫn `docs/ui-walkthrough/`. Trong clone hiện có, kiểm `git status` trước. Nếu có thay đổi chưa lưu hoặc nhánh local phân kỳ, dừng cập nhật và giữ công việc của mình; không dùng reset/force để lấy demo.
+Gói nằm trên nhánh `fix/ui-ux-integration`, đường dẫn `docs/ui-walkthrough/`. Trong clone hiện có, kiểm `git status` trước. Nếu có thay đổi chưa lưu hoặc nhánh local phân kỳ, dừng cập nhật và giữ công việc của mình; không dùng reset/force để lấy demo.
 
 ```sh
 git fetch origin
@@ -13,26 +13,26 @@ git fetch origin
 Nếu chưa có local branch:
 
 ```sh
-git switch --track -c feat/ui-ux-integration origin/feat/ui-ux-integration
+git switch --track -c fix/ui-ux-integration origin/fix/ui-ux-integration
 ```
 
 Nếu đã có local branch:
 
 ```sh
-git switch feat/ui-ux-integration
-git pull --ff-only origin feat/ui-ux-integration
+git switch fix/ui-ux-integration
+git pull --ff-only origin fix/ui-ux-integration
 ```
 
 Mở `docs/ui-walkthrough/index.html` bằng Chrome từ trình quản lý file. Nếu chỉ chia sẻ lại file, giữ nguyên cả thư mục nhỏ này để các liên kết tương đối vẫn dùng được. Riêng PREVIEW.html tự chứa toàn bộ app và có thể mở độc lập.
 
-**Phát hành:** lúc chuẩn bị gói ngày30/10, các file mới còn local, chưa commit/push. Thành viên chỉ pull được sau khi chủ nhánh đã publish commit chứa thư mục này. Không coi nhánh đã tồn tại trên remote là gói mới đã có trên remote.
+**Phát hành:** bản sửa31/10 được chuẩn bị trên nhánh `fix/ui-ux-integration`. Kiểm commit trên remote chứa đúng SHA256 ở mục dưới trước khi pull; lần cập nhật này chưa push. Không coi gói30/10 đã merge qua PR34 là gói đã chứa hai fix mới.
 
 ## Bản và nguồn
 
 - Nguồn artifact: `project/ui-draft/redesign/PREVIEW.html` ở workspace thiết kế, không phải bản build của frontend sản phẩm.
-- 2.746.995 bytes; SHA256 `b24f43f83013dfea2d164b96f99193634609b8280b4fba7cb2a627fb758872b9`.
-- CSS `index-5UxxvQ3V.css`, JS `index-Bbcu_oXc.js` đã nhúng. Font, artwork, app và third-party notices được giữ nguyên.
-- Nền repo khi đóng gói: `813f4976ac95a336eed8f71ec77b3426eef6edf5`. Đây là base repo chứa gói, không phải commit tạo artifact ui-draft.
+- 2.746.522 bytes; SHA256 `c1d8e8adf947a5cf5b869b455dd4724e9cb31c1919689057195ae5fdfa1ad333`.
+- CSS `index-CLKoZODR.css`, JS `index-DG0MLSY1.js` đã nhúng. Font, artwork, app và third-party notices được giữ nguyên.
+- Nền repo khi đóng gói: `aa7312c1550b74802527e545e598bb584476cc84`. Đây là base repo chứa gói, không phải commit tạo artifact ui-draft.
 - [version.json](version.json) giữ nguồn/hash/trạng thái kiểm. Quy tắc Git trong thư mục giữ nguyên bytes PREVIEW, không tự chuyển CRLF/LF.
 
 Kiểm file sau khi pull bằng PowerShell, không cần chạy ứng dụng:
@@ -41,6 +41,12 @@ Kiểm file sau khi pull bằng PowerShell, không cần chạy ứng dụng:
 Get-Item ./docs/ui-walkthrough/PREVIEW.html | Select-Object Length
 Get-FileHash ./docs/ui-walkthrough/PREVIEW.html -Algorithm SHA256
 ```
+
+## Hai thay đổi ngày31/10
+
+- S00→S01: CTA của S00 không còn được dựng lại trên màn đăng nhập. Chuyển động logo/slogan và login card giữ timing cũ.
+- S06 Tạo lại: tham số dùng cửa sổ offset1–8 so với seed nguồn, tránh đề trùng câu hiện tại hoặc mã khác cùng nguồn. Hết ứng viên thì giữ nguyên câu và báo rõ; không tăng số không giới hạn. Sinh ban đầu và ca Presenter giữ nguyên.
+- Đây là giới hạn số của demo, không chứng minh độ khó tương đương. Với nguồn stress, cửa sổ là tương đối với seed nguồn.
 
 ## Walkthrough trực tiếp
 

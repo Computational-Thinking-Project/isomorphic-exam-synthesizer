@@ -98,7 +98,7 @@ class ReviewRepository:
         # Fetch source question
         sq_res = (
             self.db.table("source_questions")
-            .select("id, raw_content, options, correct_key, solution_md")
+            .select("*")
             .eq("id", source_id)
             .limit(1)
             .execute()
@@ -106,10 +106,44 @@ class ReviewRepository:
         sq_rows = _get_rows(sq_res)
         source = sq_rows[0] if sq_rows else {}
 
+        # Canonicalize source snapshot and attach content_hash & aliases for AI regenerator (TASK-304)
+        if source:
+            raw_opts = source.get("options")
+            if isinstance(raw_opts, dict):
+                options_list = [str(raw_opts.get(k, "")) for k in ("A", "B", "C", "D")]
+            elif isinstance(raw_opts, list):
+                options_list = [str(x) for x in raw_opts]
+            else:
+                options_list = []
+
+            source["options"] = options_list
+            source["question_text"] = source.get("raw_content", "")
+            source["correct_answer"] = str(source.get("correct_key", "A"))
+            source["solution"] = source.get("solution_md") or ""
+
+            if "content_hash" not in source:
+                try:
+                    from app.models.schemas import SourceQuestion
+                    from app.services.blueprint.adapters import source_to_item
+                    from app.services.blueprint.service import source_fingerprint
+
+                    sq_obj = SourceQuestion.model_validate(
+                        {
+                            "id": str(source.get("id", "")),
+                            "question_text": source.get("raw_content", ""),
+                            "options": options_list,
+                            "correct_answer": str(source.get("correct_key", "A")),
+                            "solution": source.get("solution_md") or "",
+                        }
+                    )
+                    source["content_hash"] = source_fingerprint([source_to_item(sq_obj)])
+                except Exception:
+                    source["content_hash"] = ""
+
         # Fetch blueprint
         bp_res = (
             self.db.table("question_blueprints")
-            .select("id, source_question_id, variables, domains, invariants, variation_modes")
+            .select("*")
             .eq("source_question_id", source_id)
             .limit(1)
             .execute()
@@ -142,7 +176,7 @@ class ReviewRepository:
     async def reserve_max_quota_and_start_regenerating(
         self, session_id: str, question_id: str, user_id: str
     ) -> ReserveResult:
-        """Atomic reservation of quota (+3) and marking question as 'regenerating' (TX1)."""
+        """Atomic reservation of quota (+4) and marking question as 'regenerating' (TX1)."""
         session_meta = await self.get_session_status_and_quota(session_id)
         current_calls = int(session_meta.get("gemini_review_calls", 0) or 0)
 
@@ -181,7 +215,7 @@ class ReviewRepository:
         if len(upd_rows) != 1:
             return ReserveResult.QUESTION_BUSY
 
-        # Update session quota (+3)
+        # Update session quota (+4)
         self.db.table("exam_sessions").update(
             {
                 "gemini_review_calls": current_calls + MAX_AI_CALLS_PER_REJECT,
@@ -702,7 +736,7 @@ class ReviewRepository:
                     )
                     upd_rows = _get_rows(upd)
                     if upd_rows:
-                        # Refund 3 calls
+                        # Refund MAX_AI_CALLS_PER_REJECT calls
                         s_res = (
                             self.db.table("exam_sessions")
                             .select("gemini_review_calls, user_id")
