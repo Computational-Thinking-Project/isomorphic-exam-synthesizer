@@ -1144,6 +1144,54 @@ class TestRuleCheckerReviewRegressionFixes:
         res_log_pos = check_mathematical_invariants(r"Tính \ln(\sqrt{2}-" + q + r")")
         assert res_log_pos.passed is True
 
+    def test_multi_term_radical_sign_determination_f03_round8(self):
+        # 3-term radical with large coefficients and near-zero cancellation (F03 Round 8)
+        import math
+
+        n = math.isqrt(2 * 10**200)
+        q = str(n)[0] + "." + str(n)[1:]
+        eps = "0." + "0" * 101 + "1"
+
+        assert Fraction(q) > 0
+        assert (Fraction(q) + 2 * Fraction(eps)) ** 2 < 2
+
+        e = "1000000000000000000*(" + q + "-sqrt(2)+" + eps + "*sqrt(3))"
+        value = safe_eval_radical_expr(e)
+        assert value is not None
+        assert value.sign() == -1
+
+        # Even root of negative 3-term expression must fail
+        result = check_mathematical_invariants(r"Tính \sqrt{" + e + "}")
+        assert result.passed is False
+        assert result.status == "failed"
+        assert any("Negative radicand in even root" in err for err in result.errors)
+
+        # abs(e) must invert the negative expression
+        abs_val = safe_eval_radical_expr("abs(" + e + ")")
+        assert abs_val is not None
+        assert abs_val.terms != value.terms
+        assert abs_val.sign() == 1
+
+        # Positive counter-case: -e > 0 must pass
+        neg_e = "-1000000000000000000*(" + q + "-sqrt(2)+" + eps + "*sqrt(3))"
+        val_neg = safe_eval_radical_expr(neg_e)
+        assert val_neg is not None
+        assert val_neg.sign() == 1
+
+        res_neg = check_mathematical_invariants(r"Tính \sqrt{" + neg_e + "}")
+        assert res_neg.passed is True
+        assert res_neg.status == "verified"
+
+        # Logarithm domain invariant checks with 3-term expression
+        res_ln_neg = check_mathematical_invariants(r"Tính \ln(" + e + ")")
+        assert res_ln_neg.passed is False
+        assert any(
+            "Logarithm argument must be strictly positive" in err for err in res_ln_neg.errors
+        )
+
+        res_ln_pos = check_mathematical_invariants(r"Tính \ln(" + neg_e + ")")
+        assert res_ln_pos.passed is True
+
     def test_square_free_decomp_computational_budget_f04(self):
         # 1. Huge integer below 10^18 must reject gracefully in controlled time (< 0.5s) without hanging (F04)
         import time
