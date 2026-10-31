@@ -3,7 +3,7 @@
 - Nguồn giao việc: [docs/planning.md#task-306a](../planning.md) (commit 506384b; 28/10/2026).
 - Phụ trách: Tâm (`@AI-WFox`); reviewer: Duy (`@johannguyen015` — đề xuất) / Đạt (`@dat-001` — cross-review).
 - Repo/nhánh: `isomorphic-exam-synthesizer` / `feat/tam-task-306-typst-compiler-engine`; PR: [#25](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/25).
-- Hạn đạt: tối thứ 3 03/11/2026; ETA task: Thứ 2 02/11/2026 (Tâm tự xác nhận, bàn giao trước thứ 3 03/11/2026 cho TASK-307 Export Center).
+- Hạn đạt: tối thứ 3 03/11/2026; ETA task: Hoàn thành Typst Compiler Engine (sẵn sàng bàn giao cho Đạt tích hợp TASK-307).
 
 ## Mình cần làm gì?
 
@@ -61,21 +61,35 @@
 - Lịch có khả thi không? Hoàn toàn khả thi, logic biên dịch độc lập và mockable 100% trong môi trường CI.
 - Quyết định đã thống nhất: Bắt buộc `shell=False`, timeout 30s và kiểm tra magic bytes `%PDF-`.
 
-## Kế hoạch tự kiểm
+## Kế hoạch tự kiểm và kết quả thực tế
 
-- Tình huống thành công:
-  - Biên dịch template hợp lệ trả về bytes file PDF có `%PDF-` ở đầu.
-  - Văn bản tiếng Việt có dấu không bị lỗi font hay vỡ ký tự.
-  - Công thức toán học LaTeX được chuyển đổi chính xác sang cú pháp Typst.
-- Tình huống lỗi:
-  - Lỗi cú pháp Typst trả về `TypstCompilationError` với thông báo đã được lọc đường dẫn nhạy cảm.
-  - Lệnh chạy quá 30 giây kích hoạt `TypstTimeoutError` và tiến trình con bị terminate sạch sẽ.
-  - Typst CLI chưa cài đặt kích hoạt `TypstNotFoundError` rõ ràng.
-- Môi trường: Pytest local với mock `subprocess.run` và kiểm thử thực tế với Typst CLI local nếu có.
+- [x] Lệnh kiểm: `pytest backend/tests/exporter/test_typst_compiler.py -v`
+- [x] Kết quả: 26 passed, 1 skipped (test compile thực tế chỉ chạy khi có Typst binary local) trong 0.11s.
+- [x] Lệnh kiểm linter: `ruff check backend/app/services/exporter/ backend/tests/exporter/`
+- [x] Kết quả: All checks passed.
+- [x] Lệnh kiểm format: `ruff format --check backend/app/services/exporter/ backend/tests/exporter/`
+- [x] Kết quả: 5 files already formatted.
+- [x] Lệnh kiểm typecheck: `mypy backend/app/services/exporter/ --ignore-missing-imports`
+- [x] Kết quả: Success: no issues found in 4 source files.
+
+Tình huống đã kiểm thử:
+- [x] Chuẩn hóa tên file PDF theo đúng hợp đồng: `exam_{code}.pdf`, `answers_matrix.pdf`, `solutions_{code}.pdf`.
+- [x] An toàn subprocess: luôn gọi với `shell=False`, cô lập thư mục tạm `TemporaryDirectory`.
+- [x] Giới hạn timeout thực thi: 30s timeout kích hoạt `TypstTimeoutError`.
+- [x] Xử lý lỗi cú pháp và làm sạch đường dẫn nhạy cảm của hệ điều hành (`TypstCompilationError`).
+- [x] Xác thực Magic Bytes: kiểm tra 4 bytes đầu `%PDF-`, từ chối file hỏng hoặc HTML giả mạo.
+- [x] Báo lỗi rõ ràng khi thiếu binary Typst (`TypstNotFoundError`).
+- [x] Bộ chuyển đổi nội dung toán học LaTeX sang Typst: phân số lồng, căn thức, ký tự Hy Lạp, hàm số, dấu ngoặc.
+- [x] Layout templates: Đề thi chuẩn A4 tiếng Việt và Bảng đáp án + lời giải chi tiết.
 
 ## Bàn giao – điền theo kết quả thực tế
 
-- PR/commit/output: PR [#25](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/25) (Draft plan-only).
-- Đã làm / đã kiểm: Kế hoạch triển khai Template M2, câu hỏi môi trường Docker cho Duy và naming format cho Đạt.
-- Đã chấp nhận: Chờ review từ Duy (`@johannguyen015`) và Đạt (`@dat-001`).
-- Còn chờ/bước tiếp: Mở Draft PR, chờ phản hồi câu hỏi môi trường Docker, bắt đầu triển khai code từ thứ 6.
+- PR/commit/output: PR [#25](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/25).
+- Đã làm / đã kiểm:
+  - Triển khai `backend/app/services/exporter/exceptions.py`: `TypstCompilationError`, `TypstTimeoutError`, `TypstNotFoundError`.
+  - Triển khai `backend/app/services/exporter/typst_converter.py`: Chuyển đổi LaTeX math và markdown sang Typst, escape ký tự đặc biệt `#`, `@`.
+  - Triển khai `backend/app/services/exporter/templates/`: `exam.typ` và `solution.typ` tiếng Việt chuẩn A4.
+  - Triển khai `backend/app/services/exporter/typst_compiler.py`: Subprocess runner an toàn với timeout 30s, magic bytes validation `%PDF-`, sanitize error paths, render helpers.
+  - Triển khai `backend/tests/exporter/test_typst_compiler.py`: 27 test cases kiểm thử mock subprocess, timeout, magic bytes, converter, và renderers.
+- Đã chấp nhận: Sẵn sàng để Đạt (`@dat-001`) sử dụng cho Export Center (TASK-307).
+- Còn chờ/bước tiếp: Đạt và Duy review PR #25.

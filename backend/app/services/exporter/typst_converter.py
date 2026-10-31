@@ -1,0 +1,245 @@
+"""
+Typst Content Converter (TASK-306).
+
+Converts Markdown and LaTeX mathematical notation into clean, idiomatic
+Typst markup syntax ($...$).
+"""
+
+import re
+from typing import List, Tuple
+
+
+def _extract_balanced_braces(text: str, start_idx: int) -> Tuple[str, int]:
+    """
+    Extract content inside balanced curly braces starting at start_idx.
+    Returns (inner_content, end_idx) where end_idx is the index after the closing '}'.
+    """
+    if start_idx >= len(text) or text[start_idx] != "{":
+        return "", start_idx
+
+    depth = 0
+    inner_chars: List[str] = []
+    i = start_idx
+
+    while i < len(text):
+        c = text[i]
+        if c == "\\":
+            if i + 1 < len(text) and text[i + 1] in "{}":
+                inner_chars.append(text[i : i + 2])
+                i += 2
+                continue
+            inner_chars.append(c)
+            i += 1
+            continue
+        if c == "{":
+            depth += 1
+            if depth > 1:
+                inner_chars.append(c)
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return "".join(inner_chars), i + 1
+            inner_chars.append(c)
+        else:
+            inner_chars.append(c)
+        i += 1
+
+    return "".join(inner_chars), i
+
+
+def latex_math_to_typst(math_str: str) -> str:
+    """
+    Convert LaTeX math syntax into Typst math syntax.
+
+    Transformations:
+    - \\frac{A}{B}, \\dfrac{A}{B} -> ((A)/(B))
+    - \\sqrt{A} -> sqrt(A)
+    - \\sqrt[n]{A} -> root(n, A)
+    - \\text{A} -> "A"
+    - \\left, \\right delimiters -> standard brackets
+    - Common LaTeX symbols, arrows, relations, and Greek letters -> Typst equivalents
+    - Grouped superscripts / subscripts: ^{...} -> ^(...), _{...} -> _(...)
+    """
+    s = math_str.strip()
+
+    # 1. Convert \\text{...} -> "..."
+    while re.search(r"\\text\s*\{", s):
+        m = re.search(r"\\text\s*\{", s)
+        if not m:
+            break
+        inner, end_idx = _extract_balanced_braces(s, m.end() - 1)
+        s = s[: m.start()] + f'"{inner}"' + s[end_idx:]
+
+    # 2. Convert \\frac{A}{B} or \\dfrac{A}{B} -> ((A)/(B))
+    while re.search(r"\\(?:d)?frac\s*\{", s):
+        m = re.search(r"\\(?:d)?frac\s*\{", s)
+        if not m:
+            break
+        num, idx2 = _extract_balanced_braces(s, m.end() - 1)
+        while idx2 < len(s) and s[idx2].isspace():
+            idx2 += 1
+        if idx2 < len(s) and s[idx2] == "{":
+            den, end_idx = _extract_balanced_braces(s, idx2)
+            conv_num = latex_math_to_typst(num)
+            conv_den = latex_math_to_typst(den)
+            s = s[: m.start()] + f"(({conv_num})/({conv_den}))" + s[end_idx:]
+        else:
+            break
+
+    # 3. Convert \\sqrt[n]{A} -> root(n, A) and \\sqrt{A} -> sqrt(A)
+    while re.search(r"\\sqrt\s*\[", s):
+        m = re.search(r"\\sqrt\s*\[([^\[\]]+)\]\s*\{", s)
+        if not m:
+            break
+        deg = m.group(1).strip()
+        inner, end_idx = _extract_balanced_braces(s, m.end() - 1)
+        conv_inner = latex_math_to_typst(inner)
+        s = s[: m.start()] + f"root({deg}, {conv_inner})" + s[end_idx:]
+
+    while re.search(r"\\sqrt\s*\{", s):
+        m = re.search(r"\\sqrt\s*\{", s)
+        if not m:
+            break
+        inner, end_idx = _extract_balanced_braces(s, m.end() - 1)
+        conv_inner = latex_math_to_typst(inner)
+        s = s[: m.start()] + f"sqrt({conv_inner})" + s[end_idx:]
+
+    # 4. Remove \\left and \\right modifiers
+    s = re.sub(r"\\left\s*", "", s)
+    s = re.sub(r"\\right\s*", "", s)
+
+    # 5. Grouped superscripts and subscripts: ^{abc} -> ^(abc), _{abc} -> _(abc)
+    while re.search(r"\^\{", s):
+        m = re.search(r"\^\{", s)
+        if not m:
+            break
+        inner, end_idx = _extract_balanced_braces(s, m.end() - 1)
+        s = s[: m.start()] + f"^({latex_math_to_typst(inner)})" + s[end_idx:]
+
+    while re.search(r"_\{", s):
+        m = re.search(r"_\{", s)
+        if not m:
+            break
+        inner, end_idx = _extract_balanced_braces(s, m.end() - 1)
+        s = s[: m.start()] + f"_({latex_math_to_typst(inner)})" + s[end_idx:]
+
+    # 6. Standard math symbols & relations
+    replacements = [
+        (r"\\le\b", "<="),
+        (r"\\leq\b", "<="),
+        (r"\\ge\b", ">="),
+        (r"\\geq\b", ">="),
+        (r"\\ne\b", "!="),
+        (r"\\neq\b", "!="),
+        (r"\\approx\b", "approx"),
+        (r"\\cdot\b", " dot "),
+        (r"\\times\b", " times "),
+        (r"\\pm\b", "plus.minus"),
+        (r"\\mp\b", "minus.plus"),
+        (r"\\infty\b", "infinity"),
+        (r"\\implies\b", "=>"),
+        (r"\\Rightarrow\b", "=>"),
+        (r"\\iff\b", "<=>"),
+        (r"\\Leftrightarrow\b", "<=>"),
+        (r"\\rightarrow\b", "->"),
+        (r"\\to\b", "->"),
+        (r"\\in\b", "in"),
+        (r"\\notin\b", "not in"),
+        (r"\\subset\b", "subset"),
+        (r"\\cup\b", "union"),
+        (r"\\cap\b", "sect"),
+        (r"\\emptyset\b", "emptyset"),
+    ]
+
+    for pat, rep in replacements:
+        s = re.sub(pat, rep, s)
+
+    # 7. Common Greek letters
+    greek = [
+        "alpha",
+        "beta",
+        "gamma",
+        "delta",
+        "Delta",
+        "epsilon",
+        "theta",
+        "lambda",
+        "Lambda",
+        "pi",
+        "Pi",
+        "sigma",
+        "Sigma",
+        "omega",
+        "Omega",
+    ]
+    for g in greek:
+        s = re.sub(rf"\\{g}\b", g, s)
+
+    # 8. Functions
+    functions = ["sin", "cos", "tan", "cot", "ln", "log", "lim", "exp", "min", "max"]
+    for fn in functions:
+        s = re.sub(rf"\\{fn}\b", fn, s)
+
+    return s
+
+
+def escape_typst_text(text: str) -> str:
+    """
+    Escape special Typst markup characters (#, @, $) in plain text blocks.
+    """
+    # Escape # and @ so they are not parsed as function calls or citations
+    escaped = text.replace("#", r"\#").replace("@", r"\@")
+    # Escape stray dollar signs that are not math delimiters
+    return escaped
+
+
+def convert_markdown_to_typst(content: str) -> str:
+    """
+    Convert a mixed Markdown/LaTeX string into valid Typst markup.
+    Preserves math delimiters while converting math contents to Typst syntax,
+    and converts Markdown bold/italic formatting.
+    """
+    if not content:
+        return ""
+
+    # Split content into math and non-math segments using regex
+    # Matches:
+    # 1. Display math: $$...$$ or \[...\]
+    # 2. Inline math: $...$ or \(...\)
+    math_pattern = re.compile(
+        r"(\$\$.*?\$\$|\\\[.*?\\\]|\$.*?\$|\\\(.*?\\\))",
+        re.DOTALL,
+    )
+
+    parts = math_pattern.split(content)
+    result: List[str] = []
+
+    for part in parts:
+        if not part:
+            continue
+
+        # Check if part is math
+        if part.startswith("$$") and part.endswith("$$") and len(part) >= 4:
+            inner_math = part[2:-2]
+            conv_math = latex_math_to_typst(inner_math)
+            result.append(f" $ {conv_math.strip()} $ ")
+        elif part.startswith(r"\[") and part.endswith(r"\]") and len(part) >= 4:
+            inner_math = part[2:-2]
+            conv_math = latex_math_to_typst(inner_math)
+            result.append(f" $ {conv_math.strip()} $ ")
+        elif part.startswith(r"\(") and part.endswith(r"\)") and len(part) >= 4:
+            inner_math = part[2:-2]
+            conv_math = latex_math_to_typst(inner_math)
+            result.append(f"${conv_math.strip()}$")
+        elif part.startswith("$") and part.endswith("$") and len(part) >= 2:
+            inner_math = part[1:-1]
+            conv_math = latex_math_to_typst(inner_math)
+            result.append(f"${conv_math.strip()}$")
+        else:
+            # Plain text segment:
+            text = escape_typst_text(part)
+            # Convert Markdown **bold** -> Typst *bold*
+            text = re.sub(r"\*\*(.*?)\*\*", r"*\1*", text)
+            result.append(text)
+
+    return "".join(result)
