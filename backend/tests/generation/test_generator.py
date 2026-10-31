@@ -1,5 +1,6 @@
 import pytest
-from app.models.schemas import SourceQuestion, ExamDraftPackage, GeneratedVariant
+
+from app.models.schemas import ExamDraftPackage, GeneratedVariant, SourceQuestion
 from app.services.ai.mock_client import MockGeminiClient
 from app.services.generation.generator import (
     VariantGenerator,

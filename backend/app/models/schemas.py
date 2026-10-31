@@ -1,5 +1,7 @@
+from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
+from fastapi import HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -246,6 +248,8 @@ class IngestSuccessResponse(BaseModel):
     questions: List[Dict[str, Any]] = Field(
         default_factory=list, description="Danh sách câu hỏi nguồn đã lưu"
     )
+
+
 class ConfirmSourceRequest(BaseModel):
     """Payload xác nhận đề nguồn và chuyển sang Stage 2 (TASK-205).
 
@@ -276,6 +280,116 @@ class ConfirmSourceResponse(BaseModel):
     message: str = "Source confirmed and blueprints locked successfully"
 
 
+# ------------------------------------------------------------------------------
+# Stage 3: Review Lifecycle & Invariants Models (TASK-301)
+# ------------------------------------------------------------------------------
+
+
+class ReserveResult(str, Enum):
+    """Kết quả dự trữ hạn mức và khóa trạng thái câu hỏi khi reject."""
+
+    OK = "OK"
+    QUOTA_EXHAUSTED = "QUOTA_EXHAUSTED"
+    QUESTION_BUSY = "QUESTION_BUSY"
+    QUESTION_NOT_FOUND = "QUESTION_NOT_FOUND"
+    QUESTION_NOT_CURRENT = "QUESTION_NOT_CURRENT"
+
+
+class ReviewActionResponse(BaseModel):
+    """Phản hồi sau thao tác Accept hoặc Revert trên một câu hỏi (TASK-301)."""
+
+    question_id: str = Field(..., description="Mã định danh câu hỏi hiện hành")
+    session_id: str = Field(..., description="Mã phiên làm việc")
+    status: str = Field(..., description="Trạng thái câu hỏi ('approved', 'pending_review', v.v.)")
+    is_current: bool = Field(True, description="Đánh dấu câu hỏi là bản ghi hiện hành")
+    is_reverted: bool = Field(False, description="Đánh dấu câu hỏi đã được hoàn nguyên về gốc")
+    updated_at: str = Field(..., description="Thời điểm cập nhật trạng thái (ISO8601)")
+
+
+class RegeneratedQuestionResponse(BaseModel):
+    """Phản hồi câu hỏi biến thể mới sau khi từ chối (Reject & Regenerate)."""
+
+    question_id: str = Field(..., description="Mã định danh của biến thể mới")
+    regenerated_from_id: str = Field(..., description="Mã định danh câu cũ bị thay thế")
+    status: str = Field("pending_review", description="Trạng thái của biến thể mới")
+    content: str = Field(..., description="Nội dung câu hỏi biến thể mới (LaTeX)")
+    options: List[str] = Field(
+        ..., min_length=4, max_length=4, description="4 phương án A, B, C, D"
+    )
+    correct_key: str = Field(..., description="Chữ cái đáp án đúng ('A', 'B', 'C', 'D')")
+    solution_md: Optional[str] = Field(None, description="Lời giải chi tiết mới")
+    validation_report: Optional[Dict[str, Any]] = Field(
+        default=None, description="Báo cáo kiểm định toán học on-the-fly"
+    )
+
+
+class ReviewProgressResponse(BaseModel):
+    """Thống kê tiến độ thẩm định của phiên làm việc (TASK-301)."""
+
+    session_id: str = Field(..., description="Mã phiên làm việc")
+    required_count: int = Field(..., description="Tổng số vị trí câu hỏi cần thẩm định")
+    current_count: int = Field(..., description="Tổng số câu hiện hành đang hiển thị")
+    approved_count: int = Field(..., description="Số câu hiện hành đã được duyệt (approved)")
+    regenerating_count: int = Field(..., description="Số câu đang trong tiến trình sinh lại")
+    unapproved_question_ids: List[str] = Field(
+        default_factory=list, description="Danh sách mã câu hỏi hiện hành chưa được duyệt"
+    )
+    is_complete: bool = Field(..., description="Đã duyệt đủ 100% câu hỏi hiện hành")
+    can_finalize: bool = Field(..., description="Đủ điều kiện để xáo trộn (shuffle) và phê duyệt")
+
+
+class ErrorDetailResponse(BaseModel):
+    """Cấu trúc lỗi chuẩn hóa của hệ thống."""
+
+    error_code: str = Field(..., description="Mã lỗi hệ thống định danh")
+    detail: str = Field(..., description="Mô tả chi tiết lỗi")
+
+
+class ReviewDomainException(HTTPException):
+    """Ngoại lệ nghiệp vụ riêng cho Review Lifecycle."""
+
+    def __init__(self, status_code: int, error_code: str, detail: str) -> None:
+        super().__init__(status_code=status_code, detail=detail)
+        self.error_code = error_code
+
+
+# ---------------------------------------------------------------------------
+# Finalize & Content Lock Schemas (TASK-305)
+# ---------------------------------------------------------------------------
+
+
+class FinalizeApproveResponse(BaseModel):
+    """Phản hồi phê duyệt phiên làm việc thành công (TASK-305)."""
+
+    session_id: str = Field(..., description="Mã phiên làm việc (UUID)")
+    status: str = Field("approved", description="Trạng thái phiên làm việc sau khi duyệt")
+    approved_at: str = Field(..., description="Thời điểm phê duyệt phiên làm việc (ISO8601)")
+    message: str = Field(..., description="Thông báo kết quả phê duyệt")
+
+
+class MatrixItem(BaseModel):
+    """Một dòng trong ma trận đáp án tương ứng với số thứ tự câu hỏi sau hoán vị."""
+
+    question_no: int = Field(..., ge=1, description="Số thứ tự câu hỏi trong đề thi (1..N)")
+    answers: Dict[str, str] = Field(
+        ...,
+        description="Bảng tra đáp án của câu hỏi theo từng mã đề (ví dụ: {'101': 'A', '102': 'C'})",
+    )
+
+
+class AnswersMatrixResponse(BaseModel):
+    """Ma trận đối soát đáp án của toàn bộ phiên đề (TASK-305)."""
+
+    session_id: str = Field(..., description="Mã phiên làm việc (UUID)")
+    total_questions: int = Field(..., ge=0, description="Tổng số câu hỏi trong ma trận")
+    version_codes: List[str] = Field(
+        ..., description="Danh sách các mã đề thi đã được sắp xếp (ví dụ: ['101', '102', '103', '104'])"
+    )
+    matrix: List[MatrixItem] = Field(
+        ..., description="Danh sách đáp án từng câu hỏi cho tất cả mã đề"
+    )
+
+
 # Re-export validator schemas for convenient consumption across services and routes
 from app.services.validator.base import CheckResult, ValidationReport  # noqa: E402
 
@@ -300,6 +414,15 @@ __all__ = [
     "IngestSuccessResponse",
     "ConfirmSourceRequest",
     "ConfirmSourceResponse",
+    "ReserveResult",
+    "ReviewActionResponse",
+    "RegeneratedQuestionResponse",
+    "ReviewProgressResponse",
+    "ErrorDetailResponse",
+    "ReviewDomainException",
+    "FinalizeApproveResponse",
+    "MatrixItem",
+    "AnswersMatrixResponse",
     "CheckResult",
     "ValidationReport",
 ]
