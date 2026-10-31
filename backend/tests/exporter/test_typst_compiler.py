@@ -234,11 +234,29 @@ class TestReviewerFindingsF01ToF04:
         """F03: # in math mode must be neutralized so Typst does not execute embedded code."""
         math_content = '$#panic("REVIEW_MARKER")$'
         converted = convert_markdown_to_typst(math_content)
-        # Hash is converted to string literal "#" in Typst math mode
-        assert '"#"' in converted
-        # Must not contain unquoted #panic
-        assert "$#panic" not in converted
-        assert "$ #panic" not in converted
+        # Hash is converted to symbol 'hash' and code keywords are stripped
+        assert "#" not in converted
+        assert "panic" not in converted
+
+    def test_f03_method_chaining_code_injection_prevention_math(self):
+        """F03: Chained method calls on escaped hash in math must not execute code."""
+        payload = r'$\#.replace("", panic("REVIEW_MARKER"))$'
+        source = convert_markdown_to_typst(payload)
+        assert "#" not in source
+        assert "panic" not in source
+        assert ".replace" not in source
+
+    def test_f05_answers_matrix_uses_double_quotes_for_bold(self):
+        """F05: Typst requires double quotes for string literals; single quotes 'bold' cause compile error."""
+        compiler = TypstCompiler()
+        source = compiler.render_answers_matrix_document(
+            [
+                {"version_code": "101", "answer_keys": {1: "A", 2: "C"}},
+                {"version_code": "102", "answer_keys": {1: "B", 2: "D"}},
+            ]
+        )
+        assert "'bold'" not in source
+        assert 'weight: "bold"' in source
 
     def test_f03_metadata_code_injection_prevention(self):
         """F03: Metadata titles with quotes and code markers must be escaped."""
@@ -492,4 +510,54 @@ class TestRealTypstIntegration:
 
         pdf_bytes = compiler.compile_document(minimal_content, output_filename="test_real.pdf")
         assert len(pdf_bytes) > 0
+        assert pdf_bytes.startswith(PDF_MAGIC_BYTES)
+
+    def test_real_typst_compile_full_exam_and_solution_documents(self):
+        compiler = TypstCompiler()
+        if not compiler.is_available():
+            pytest.skip("Typst CLI is not installed on host PATH; skipping real compile test.")
+
+        questions = [
+            {
+                "display_no": 1,
+                "display_correct_key": "C",
+                "content": r"Cho phương trình $x^2 - 4 = 0$ và $x \in [0; 2]$. Tìm $x = \pm 2$.",
+                "options": ["$x = 2$", "$x = -2$", "$x = \\pm 2$", "$x = 0$"],
+                "solution_md": r"Phương trình có 2 nghiệm $x = \pm 2$. Do $x \in [0; 2]$, chọn C: $x = 2$.",
+            }
+        ]
+        exam_src = compiler.render_exam_document("101", questions)
+        exam_pdf = compiler.compile_document(exam_src, "exam_101.pdf")
+        assert exam_pdf.startswith(PDF_MAGIC_BYTES)
+
+        sol_src = compiler.render_solution_document("101", questions)
+        sol_pdf = compiler.compile_document(sol_src, "solutions_101.pdf")
+        assert sol_pdf.startswith(PDF_MAGIC_BYTES)
+
+    def test_real_typst_compile_answers_matrix_document(self):
+        compiler = TypstCompiler()
+        if not compiler.is_available():
+            pytest.skip("Typst CLI is not installed on host PATH; skipping real compile test.")
+
+        versions = [
+            {"version_code": "101", "answer_keys": {1: "A", 2: "C", 3: "B", 4: "D"}},
+            {"version_code": "102", "answer_keys": {1: "B", 2: "D", 3: "A", 4: "C"}},
+            {"version_code": "103", "answer_keys": {1: "C", 2: "A", 3: "D", 4: "B"}},
+        ]
+        matrix_src = compiler.render_answers_matrix_document(versions)
+        matrix_pdf = compiler.compile_document(matrix_src, "answers_matrix.pdf")
+        assert matrix_pdf.startswith(PDF_MAGIC_BYTES)
+
+    def test_real_typst_compile_f03_neutralized_payload(self):
+        compiler = TypstCompiler()
+        if not compiler.is_available():
+            pytest.skip("Typst CLI is not installed on host PATH; skipping real compile test.")
+
+        payload = r'$\#.replace("", panic("REVIEW_MARKER"))$'
+        source = (
+            '#set page(paper: "a4")\n'
+            "= Test F03 Neutralization\n"
+            f"{convert_markdown_to_typst(payload)}\n"
+        )
+        pdf_bytes = compiler.compile_document(source, "f03_test.pdf")
         assert pdf_bytes.startswith(PDF_MAGIC_BYTES)

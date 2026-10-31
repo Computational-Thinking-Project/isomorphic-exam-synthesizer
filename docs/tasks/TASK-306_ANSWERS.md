@@ -49,3 +49,16 @@
   - In math: Neutralized `#` to string literals `"#"` to prevent Typst math mode from executing embedded code (e.g. `$#panic(...)$`).
   - In metadata: Sanitized quotes and code markers in document titles and version codes.
 - **F04 (Output filename containment):** Strictly validated `output_filename` before compilation: rejected absolute paths, directory traversal (`..`), path separators (`/`, `\\`), and non-`.pdf` extensions; asserted resolved paths stay within temporary directory.
+
+### 6. Review Findings Resolution (Round 2)
+- **F03 (Typst code injection prevention via math mode & method chaining):**
+  - **Issue:** Method calls on quoted hash `$\#.replace("", panic("REVIEW_MARKER"))$` resulted in consecutive replacement `""#""`, allowing chained method `.replace("", panic(...))` to trigger `panic`.
+  - **Resolution:**
+    - In `latex_math_to_typst`, neutralized `\#` and `#` to the official Typst math symbol `" hash "`. No literal `#` character ever reaches the Typst math parser, preventing entry into Typst code evaluation mode.
+    - Added regex filtering to strip arbitrary chained method invocations `re.sub(r"\.\w+\s*\(", " ", s)` and execution keywords `re.sub(r"\b(?:panic|eval|assert)\b", " ", s)` within math segments.
+  - **Evidence:** Added unit test `test_f03_method_chaining_code_injection_prevention_math` and real compile test `test_real_typst_compile_f03_neutralized_payload`.
+- **F05 (Answers matrix string literals syntax):**
+  - **Issue:** Single quotes in `#text(weight: 'bold')` inside `render_answers_matrix_document` caused Typst 0.11.1 syntax error (`the character ' is not valid in code`).
+  - **Resolution:** Changed all single quotes to double quotes `#text(weight: "bold")` across table headers and row items in `typst_compiler.py`.
+  - **Evidence:** Added unit test `test_f05_answers_matrix_uses_double_quotes_for_bold` and real compile test `test_real_typst_compile_answers_matrix_document`.
+

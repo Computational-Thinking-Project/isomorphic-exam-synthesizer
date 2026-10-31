@@ -497,14 +497,14 @@ class TypstCompiler:
         col_specs = ["1.2fr"] + ["1fr"] * num_v
         cols_str = f"({', '.join(col_specs)})"
 
-        headers = ["[#text(weight: 'bold')[Câu]]"] + [
-            f"[#text(weight: 'bold')[Mã {escape_typst_text(vc)}]]" for vc, _ in version_data
+        headers = ['[#text(weight: "bold")[Câu]]'] + [
+            f'[#text(weight: "bold")[Mã {escape_typst_text(vc)}]]' for vc, _ in version_data
         ]
         table_rows = [", ".join(headers)]
 
         # Build rows for each question
         for q_i in range(1, max_q_num + 1):
-            row_items = [f"[#text(weight: 'bold')[Câu {q_i}]]"]
+            row_items = [f'[#text(weight: "bold")[Câu {q_i}]]']
             for _, q_map in version_data:
                 k = q_map.get(q_i, "-")
                 row_items.append(f"[{escape_typst_text(k)}]")
