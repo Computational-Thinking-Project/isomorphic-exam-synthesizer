@@ -964,3 +964,25 @@ async def test_f06_stale_recovery_with_caller_user_id():
     assert len(stale_logs) == 1
     assert stale_logs[0]["payload"]["user_id"] == caller_user_id
     assert stale_logs[0]["payload"]["reason"] == "STALE_TIMEOUT"
+
+
+@pytest.mark.asyncio
+async def test_source_snapshot_provides_content_hash_and_aliases_for_task_304():
+    """Verify get_question_snapshot populates content_hash and adapter aliases for TASK-304."""
+    session_id = "00000000-0000-0000-0000-000000000022"
+    user_id = "user-123"
+    q_id = "vq-hash-test"
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id)
+    db = MockSupabaseClient(state)
+
+    repo = ReviewRepository(db)
+    snapshot = await repo.get_question_snapshot(q_id)
+
+    source = snapshot["source"]
+    assert "content_hash" in source
+    assert len(source["content_hash"]) == 64  # Valid sha256 hex digest
+    assert source["question_text"] == "Câu 1: Giải phương trình $x^2 - 4 = 0$"
+    assert source["correct_answer"] == "A"
+    assert isinstance(source["options"], list)
+    assert len(source["options"]) == 4
+
