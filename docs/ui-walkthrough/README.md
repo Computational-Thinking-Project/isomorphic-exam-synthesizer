@@ -25,14 +25,14 @@ git pull --ff-only origin feat/ui-ux-demo
 
 Mở `docs/ui-walkthrough/index.html` bằng Chrome từ trình quản lý file. Nếu chỉ chia sẻ lại file, giữ nguyên cả thư mục nhỏ này để các liên kết tương đối vẫn dùng được. Riêng PREVIEW.html tự chứa toàn bộ app và có thể mở độc lập.
 
-**Phát hành:** bản demo liên tục01/11 được chuẩn bị trên nhánh `feat/ui-ux-demo`, chưa commit/push trong lượt cập nhật này. Kiểm commit remote chứa đúng hash trước khi pull; bản31/10 chưa có bước chuẩn bị S06 tự động này.
+**Phát hành:** lúc đóng gói phần toast S06 ngày01/11, bản mới còn local trên `feat/ui-ux-demo`, chưa commit/push. Commit23d0df9 đã publish chứa demo liên tục nhưng chưa có phần toast. Kiểm hash ở mục dưới để lấy đúng bản; việc nhánh đã có trên remote không chứng minh refresh local đã được publish.
 
 ## Bản và nguồn
 
 - Nguồn artifact: `project/ui-draft/redesign/PREVIEW.html` ở workspace thiết kế, không phải bản build của frontend sản phẩm.
-- 2.748.189 bytes; SHA256 `32b508cbccf75d93697d68c466d210723f61482cc70e81731f5fe98bb5b3a54e`.
-- CSS `index-CLKoZODR.css`, JS `index-DSwc8nZV.js` đã nhúng. Font, artwork, app và third-party notices được giữ nguyên.
-- Nền repo khi đóng gói: `a57079caa8bcb165744722f2af9d02d47b51df78`. Đây là base repo chứa gói, không phải commit tạo artifact ui-draft.
+- 2.753.320 bytes; SHA256 `1595c91959d86d79b801f666774da65098ef76f10c505d88d349d1c1fac4f25f`.
+- CSS `index-BlIqFpK7.css`, JS `index-CPqoFfY9.js` đã nhúng. Font, artwork, app và third-party notices được giữ nguyên.
+- Nền repo khi đóng gói: `23d0df9e0f19f2c2c5b656b53838c6971696fe62`. Đây là base repo chứa gói, không phải commit tạo artifact ui-draft.
 - [version.json](version.json) giữ nguồn/hash/trạng thái kiểm. Quy tắc Git trong thư mục giữ nguyên bytes PREVIEW, không tự chuyển CRLF/LF.
 
 Kiểm file sau khi pull bằng PowerShell, không cần chạy ứng dụng:
@@ -47,6 +47,12 @@ Get-FileHash ./docs/ui-walkthrough/PREVIEW.html -Algorithm SHA256
 - S00→S01: CTA của S00 không còn được dựng lại trên màn đăng nhập. Chuyển động logo/slogan và login card giữ timing cũ.
 - S06 Tạo lại: tham số dùng cửa sổ offset1–8 so với seed nguồn, tránh đề trùng câu hiện tại hoặc mã khác cùng nguồn. Hết ứng viên thì giữ nguyên câu và báo rõ; không tăng số không giới hạn. Sinh ban đầu và ca Presenter giữ nguyên.
 - Đây là giới hạn số của demo, không chứng minh độ khó tương đương. Với nguồn stress, cửa sổ là tương đối với seed nguồn.
+
+## Thông báo S06 và vùng đọc
+
+Các banner lớn trên trang S06 được chuyển thành toast góc trên phải, dưới header/preview bar. Mỗi toast tự ẩn sau5giây từ lúc hiển thị; tối đa2toast cùng lúc, có nút đóng. Chuyển câu/revision loại thông báo cặp cũ; render lại không phát lại. Toast không chiếm chiều cao layout, hai panel sử dụng phần chiều cao còn lại và cuộn nội bộ.
+
+Badge trạng thái và các nút phục hồi vẫn hiện sau khi toast hết. Tự ẩn thông báo không xóa lỗi hoặc mở khóa duyệt. Lỗi tại trường editor và cảnh báo trong popup đáp án giữ tại chỗ. Reduced motion tắt animation; chỉ phục hồi focus nếu phần tử đang focus nằm trong toast bị đóng/ẩn.
 
 ## Walkthrough trực tiếp
 
@@ -87,7 +93,7 @@ Nguồn ca này: `x²−5x+6=0`; mã101: `x²−7x+12=0`; mã102: `x²−9x+20=0
 
 ## Kiểm đã làm và còn chờ
 
-Gói được kiểm tĩnh về bytes/hash nguồn–đích, tài nguyên nhúng, licenses, liên kết tương đối, Git attributes/ignore và phạm vi diff. Không build lại hoặc chạy test frontend/backend sản phẩm. Kiểm source01/11 gồm23ca reducer/event-wiring,28hồi quy S06 và37kiểm Đại số, cùng TypeScript/build. Đây không phải native pass của gói chia sẻ.
+Gói được kiểm tĩnh về bytes/hash nguồn–đích, tài nguyên nhúng, licenses, liên kết tương đối, Git attributes/ignore và phạm vi diff. Không build lại hoặc chạy test frontend/backend sản phẩm. Kiểm source01/11 gồm18ca toast/timer/hook,30hồi quy S06,37kiểm Đại số và23ca demo liên tục;40markup màn khác giữ nguyên, TypeScript/build qua. Đây không phải native pass của gói chia sẻ.
 
 | Smoke test trực tiếp trên Chrome | Kết quả lúc đóng gói |
 |---|---|
@@ -96,6 +102,7 @@ Gói được kiểm tĩnh về bytes/hash nguồn–đích, tài nguyên nhúng
 | W3 duplicate warning và chặn approve | Chưa kiểm |
 | W4 sửa B/lưu/stale/9/10 | Chưa kiểm |
 | W5 review lại/approve trực tiếp/10/10 | Chưa kiểm |
+| Toast5giây, vị trí, focus và vùng đọc S06 | Chưa kiểm native |
 | Tab/Enter/Esc/focus, scroll và công thức | Chưa kiểm |
 
 Người trực tiếp chạy ghi browser/version, ngày, viewport/zoom, actual và lỗi trước khi xác nhận sẵn sàng demo. Công cụ trước bị chặn PREVIEWfile://; không dùng server, localhost, CDP hoặc surface khác để vượt chặn. Không có yêu cầu ảnh/video bắt buộc cho hướng walkthrough live này.
