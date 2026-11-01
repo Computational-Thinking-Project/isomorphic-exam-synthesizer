@@ -1,10 +1,10 @@
 # UI walkthrough — exam mirror
 
-**Bản portable 31/10/2026**, dùng cho Full flow v3. Mở [launcher](index.html) hoặc [PREVIEW.html](PREVIEW.html) bằng Chrome sau khi lấy file về máy. Không cần npm, Docker, API key hoặc server. GitHub chỉ hiển thị nội dung HTML; không chạy demo ngay trong trang xem file GitHub.
+**Bản portable 01/11/2026**, dùng cho Full flow v3. Mở [launcher](index.html) hoặc [PREVIEW.html](PREVIEW.html) bằng Chrome sau khi lấy file về máy. Không cần npm, Docker, API key hoặc server. GitHub chỉ hiển thị nội dung HTML; không chạy demo ngay trong trang xem file GitHub.
 
 ## Lấy gói về máy
 
-Gói nằm trên nhánh `fix/ui-ux-integration`, đường dẫn `docs/ui-walkthrough/`. Trong clone hiện có, kiểm `git status` trước. Nếu có thay đổi chưa lưu hoặc nhánh local phân kỳ, dừng cập nhật và giữ công việc của mình; không dùng reset/force để lấy demo.
+Gói nằm trên nhánh `feat/ui-ux-demo`, đường dẫn `docs/ui-walkthrough/`. Trong clone hiện có, kiểm `git status` trước. Nếu có thay đổi chưa lưu hoặc nhánh local phân kỳ, dừng cập nhật và giữ công việc của mình; không dùng reset/force để lấy demo.
 
 ```sh
 git fetch origin
@@ -13,26 +13,26 @@ git fetch origin
 Nếu chưa có local branch:
 
 ```sh
-git switch --track -c fix/ui-ux-integration origin/fix/ui-ux-integration
+git switch --track -c feat/ui-ux-demo origin/feat/ui-ux-demo
 ```
 
 Nếu đã có local branch:
 
 ```sh
-git switch fix/ui-ux-integration
-git pull --ff-only origin fix/ui-ux-integration
+git switch feat/ui-ux-demo
+git pull --ff-only origin feat/ui-ux-demo
 ```
 
 Mở `docs/ui-walkthrough/index.html` bằng Chrome từ trình quản lý file. Nếu chỉ chia sẻ lại file, giữ nguyên cả thư mục nhỏ này để các liên kết tương đối vẫn dùng được. Riêng PREVIEW.html tự chứa toàn bộ app và có thể mở độc lập.
 
-**Phát hành:** bản sửa31/10 được chuẩn bị trên nhánh `fix/ui-ux-integration`. Kiểm commit trên remote chứa đúng SHA256 ở mục dưới trước khi pull; lần cập nhật này chưa push. Không coi gói30/10 đã merge qua PR34 là gói đã chứa hai fix mới.
+**Phát hành:** bản demo liên tục01/11 được chuẩn bị trên nhánh `feat/ui-ux-demo`, chưa commit/push trong lượt cập nhật này. Kiểm commit remote chứa đúng hash trước khi pull; bản31/10 chưa có bước chuẩn bị S06 tự động này.
 
 ## Bản và nguồn
 
 - Nguồn artifact: `project/ui-draft/redesign/PREVIEW.html` ở workspace thiết kế, không phải bản build của frontend sản phẩm.
-- 2.746.522 bytes; SHA256 `c1d8e8adf947a5cf5b869b455dd4724e9cb31c1919689057195ae5fdfa1ad333`.
-- CSS `index-CLKoZODR.css`, JS `index-DG0MLSY1.js` đã nhúng. Font, artwork, app và third-party notices được giữ nguyên.
-- Nền repo khi đóng gói: `aa7312c1550b74802527e545e598bb584476cc84`. Đây là base repo chứa gói, không phải commit tạo artifact ui-draft.
+- 2.748.189 bytes; SHA256 `32b508cbccf75d93697d68c466d210723f61482cc70e81731f5fe98bb5b3a54e`.
+- CSS `index-CLKoZODR.css`, JS `index-DSwc8nZV.js` đã nhúng. Font, artwork, app và third-party notices được giữ nguyên.
+- Nền repo khi đóng gói: `a57079caa8bcb165744722f2af9d02d47b51df78`. Đây là base repo chứa gói, không phải commit tạo artifact ui-draft.
 - [version.json](version.json) giữ nguồn/hash/trạng thái kiểm. Quy tắc Git trong thư mục giữ nguyên bytes PREVIEW, không tự chuyển CRLF/LF.
 
 Kiểm file sau khi pull bằng PowerShell, không cần chạy ứng dụng:
@@ -56,13 +56,21 @@ Mở S00 từ launcher. Login/Library là giao diện demo, không OAuth thật.
 
 ### W2: cấu hình và tiến trình
 
-S04 nhập **2**, xác nhận **5 câu/mã × 2 mã = 10 biến thể**, bấm **Tạo biến thể** và xác nhận. S05 tự nhận kết quả mô phỏng, đủ số rồi readiness mới bật **Bắt đầu duyệt**. Không cần sửa query để chạy và không tự sang S06 hoặc auto-approve. Tiến trình này không phải AI latency hoặc thời gian tiết kiệm đã đo.
+S04 nhập **2**, xác nhận **5 câu/mã × 2 mã = 10 biến thể**, bấm **Tạo biến thể** và xác nhận. S05 tự nhận kết quả mô phỏng, đủ số rồi readiness mới bật **Bắt đầu duyệt**. Không cần sửa query để chạy. Trong S05 không tự duyệt hoặc tự chuyển màn. Khi đủ readiness, bấm Bắt đầu duyệt để vào S06. Tiến trình này không phải AI latency hoặc thời gian tiết kiệm đã đo.
 
 Nếu cần phục hồi, mở checkpoint **S05 ready** từ launcher và giới thiệu đây là trạng thái chuẩn bị sẵn. Mở liên kết sẽ tạo lại state trong tab; không nhận là tiếp tục job trước đó.
 
+### S05→S06: chuẩn bị ca demo một lần
+
+Với bộ mẫu Đại số5câu×2mã101/102 còn nguyên, bấm **Bắt đầu duyệt** sẽ đánh dấu duyệt sẵn9biến thể và chọn **Câu3/mã101** có lỗi B=C. Câu1,2,4,5 đã duyệt ở cả hai mã; Câu3/mã102 cũng đã duyệt. Đây là dữ liệu trình diễn chuẩn bị tại thời điểm chuyển màn, không phải AI tự duyệt hoặc giáo viên vừa thao tác đủ9lần. Trên S05/S06 có thông báo về bước chuẩn bị này.
+
+Giữ nguồn, cấu hình và tiến trình đã chạy; không mở URL/reset sang bộ đề khác. Preset chỉ áp một lần mỗi lượt tạo và không ghi đè câu đã sửa khi quay lại màn. N khác2, stress, nguồn/biến thể đã chỉnh hoặc dữ liệu lỗi không tự áp preset. Tạo lượt mới/nạp mẫu mới xóa cờ và thông báo demo cũ.
+
 ### W3→W5: phát hiện lỗi, sửa và duyệt
 
-Từ launcher, mở **Ca sửa chuẩn bị sẵn — S06**, chọn **Câu 3**, giữ **mã101**. Giới thiệu rõ đã đổi sang prepared correction checkpoint có **9 approval nạp sẵn**, không phải toàn bộ luồng trước vừa sinh và duyệt liên tục.
+Luồng chính đi thẳng từ S05: S06 đã chọn **Câu3/mã101**, counter9/10. Nói rõ đây là prepared review case có9approval được chuẩn bị tự động cho demo. Không cần mở URL riêng hoặc chọn lại câu.
+
+Link **Dự phòng · S06** trong launcher chỉ dùng khi cần phục hồi; mở link sẽ nạp fixture riêng và phải giới thiệu lượt mới. Câu3/mã101 được chọn sẵn ở checkpoint này.
 
 1. **W3:** B=C=`{3;4}`, counter9/10. Mở **Kiểm tra đáp án**, đối chiếu cảnh báo trùng và trạng thái chặn duyệt. Đóng popup rồi mở **Chỉnh sửa**.
 2. **W4:** sửa riêng B thành `{2;6}`. Giữ C=`{3;4}`, key và lời giải. Chọn checkbox đối chiếu trong editor rồi **Lưu thay đổi**. Notice stale cho biết kết quả kiểm cũ hết hiệu lực; chưa approve và vẫn9/10.
@@ -73,13 +81,13 @@ Nguồn ca này: `x²−5x+6=0`; mã101: `x²−7x+12=0`; mã102: `x²−9x+20=0
 ## Reset và xử lý gián đoạn
 
 - Trong W3→W5, giữ cùng tab và không reload, đổi scenario hoặc bấm Tạo lại. Reload sẽ nạp lại fixture, mất phần vừa sửa.
-- Nếu làm nhầm, về launcher rồi mở lại ca S06, chọn Câu3/101. Nói rõ bắt đầu lượt mới; không ghép hai lượt thành một run.
+- Nếu làm nhầm, về launcher rồi mở lại ca S06 dự phòng. Nói rõ bắt đầu lượt mới; không ghép hai lượt thành một run.
 - Nếu S05 hoặc một thao tác lỗi, ghi actual và chuyển checkpoint đã chuẩn bị nếu dùng được; không nói bước lỗi đã đạt. Không có checkpoint sau lưu/approve được tạo giả để bỏ qua lỗi.
 - Ưu tiên light, Chrome desktop, zoom100%; ghi viewport thực khi diễn tập. S07/S08 nằm trong app nhưng ngoài chuỗi chính của launcher; S07 còn provisional, dark experimental.
 
 ## Kiểm đã làm và còn chờ
 
-Gói được kiểm tĩnh về bytes/hash nguồn–đích, tài nguyên nhúng, licenses, liên kết tương đối, Git attributes/ignore và phạm vi diff. Không build lại hoặc chạy test frontend/backend sản phẩm. Các báo cáo source ui-draft trước đó không tự là native pass của gói chia sẻ này.
+Gói được kiểm tĩnh về bytes/hash nguồn–đích, tài nguyên nhúng, licenses, liên kết tương đối, Git attributes/ignore và phạm vi diff. Không build lại hoặc chạy test frontend/backend sản phẩm. Kiểm source01/11 gồm23ca reducer/event-wiring,28hồi quy S06 và37kiểm Đại số, cùng TypeScript/build. Đây không phải native pass của gói chia sẻ.
 
 | Smoke test trực tiếp trên Chrome | Kết quả lúc đóng gói |
 |---|---|
