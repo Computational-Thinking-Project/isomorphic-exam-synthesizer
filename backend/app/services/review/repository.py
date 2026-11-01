@@ -72,14 +72,48 @@ class ReviewRepository:
 
         Conforms strictly to TASK-304 AttemptPermit schema and Stage 3 review RPC contract.
         Enforces:
-        - Atomic replay detection via DB ledger (review_attempts table)
+        - Primary path: Atomic single-transaction PostgreSQL RPC review_acquire_attempt (TASK-302 contract)
+        - Fallback path: Atomic conditional CAS increment (UPDATE ... WHERE gemini_review_calls == current_calls)
+        - Durable attempt ledger (review_attempts table)
+        - Atomic replay detection (unique attempt_id)
         - Operation attempt ceiling (MAX_AI_CALLS_PER_REJECT = 4)
         - Session review quota ceiling (MAX_SESSION_REVIEW_QUOTA = 30)
-        - Conditional atomic quota increment without upfront reservation
         """
         str_op_id = str(operation_id)
         str_att_id = str(attempt_id)
 
+        # 1. Primary Path: Stored procedure RPC review_acquire_attempt (TASK-302 contract)
+        if callable(getattr(self.db, "rpc", None)):
+            try:
+                rpc_res = self.db.rpc(
+                    "review_acquire_attempt",
+                    {"p_operation_id": str_op_id, "p_attempt_id": str_att_id},
+                ).execute()
+                rpc_data = rpc_res.data
+                if isinstance(rpc_data, list) and rpc_data:
+                    rpc_data = rpc_data[0]
+                if isinstance(rpc_data, dict) and "dispatch_permitted" in rpc_data:
+                    ret_sid = str(rpc_data.get("session_id", "") or "")
+                    if ret_sid:
+                        self._operation_sessions[operation_id] = ret_sid
+                    return AttemptPermit(
+                        operation_id=UUID(str(rpc_data.get("operation_id", operation_id))),
+                        attempt_id=UUID(str(rpc_data.get("attempt_id", attempt_id))),
+                        dispatch_permitted=bool(rpc_data.get("dispatch_permitted", False)),
+                        calls_used=int(rpc_data.get("calls_used", 0)),
+                        remaining_calls=int(rpc_data.get("remaining_calls", 0)),
+                        replayed=bool(rpc_data.get("replayed", False)),
+                    )
+            except ConnectionError:
+                raise
+            except Exception as exc:
+                # In offline/mock mode or when RPC is not installed on DB, fall back to atomic CAS adapter
+                logger.debug(
+                    "RPC review_acquire_attempt returned %s; utilizing atomic CAS adapter fallback",
+                    exc,
+                )
+
+        # 2. Fallback Path: Atomic CAS Adapter with Durable Ledger
         # Resolve session_id: 1) local registration hint, 2) prior review_attempts, 3) active regenerating question
         session_id = self._operation_sessions.get(operation_id, "")
         if not session_id:
@@ -111,7 +145,7 @@ class ReviewRepository:
                 if session_id:
                     self._operation_sessions[operation_id] = session_id
 
-        # Step 1: Atomic Replay Check via DB Ledger
+        # Step 1: Atomic Replay Check via DB Ledger (insert requested attempt record)
         ins_res = (
             self.db.table("review_attempts")
             .insert(
@@ -119,7 +153,7 @@ class ReviewRepository:
                     "attempt_id": str_att_id,
                     "operation_id": str_op_id,
                     "session_id": session_id,
-                    "status": "granted",
+                    "status": "requested",
                     "created_at": _now_iso(),
                 }
             )
@@ -173,13 +207,13 @@ class ReviewRepository:
                 replayed=False,
             )
 
-        # Step 3: Check Session Quota Ceiling & Atomic Conditional Increment
+        # Step 3: Check Session Quota Ceiling & Atomic Conditional CAS Increment
         current_calls = 0
         if session_id:
             session_meta = await self.get_session_status_and_quota(session_id)
             current_calls = int(session_meta.get("gemini_review_calls", 0) or 0)
 
-        if current_calls + 1 > MAX_SESSION_REVIEW_QUOTA:
+        if current_calls >= MAX_SESSION_REVIEW_QUOTA:
             # Session quota exhausted (30 calls reached)
             self.db.table("review_attempts").update({"status": "denied"}).eq(
                 "attempt_id", str_att_id
@@ -193,15 +227,48 @@ class ReviewRepository:
                 replayed=False,
             )
 
-        # Increment session counter atomically
+        # Increment session counter atomically using CAS (.eq("gemini_review_calls", current_calls))
         new_calls = current_calls + 1
+        upd_rows = []
         if session_id:
-            self.db.table("exam_sessions").update(
-                {
-                    "gemini_review_calls": new_calls,
-                    "updated_at": _now_iso(),
-                }
-            ).eq("id", session_id).execute()
+            upd_res = (
+                self.db.table("exam_sessions")
+                .update(
+                    {
+                        "gemini_review_calls": new_calls,
+                        "updated_at": _now_iso(),
+                    }
+                )
+                .eq("id", session_id)
+                .eq("gemini_review_calls", current_calls)
+                .execute()
+            )
+            upd_rows = _get_rows(upd_res)
+
+        if not upd_rows and session_id:
+            # CAS failed: another concurrent worker incremented quota during our check
+            self.db.table("review_attempts").update({"status": "denied"}).eq(
+                "attempt_id", str_att_id
+            ).execute()
+            latest_calls = MAX_SESSION_REVIEW_QUOTA
+            try:
+                latest_meta = await self.get_session_status_and_quota(session_id)
+                latest_calls = int(latest_meta.get("gemini_review_calls", 0) or 0)
+            except Exception:
+                pass
+            return AttemptPermit(
+                operation_id=operation_id,
+                attempt_id=attempt_id,
+                dispatch_permitted=False,
+                calls_used=min(MAX_SESSION_REVIEW_QUOTA, max(0, latest_calls)),
+                remaining_calls=max(0, MAX_SESSION_REVIEW_QUOTA - latest_calls),
+                replayed=False,
+            )
+
+        # CAS succeeded: commit status 'granted'
+        self.db.table("review_attempts").update({"status": "granted"}).eq(
+            "attempt_id", str_att_id
+        ).execute()
 
         return AttemptPermit(
             operation_id=operation_id,
@@ -405,6 +472,9 @@ class ReviewRepository:
         ).eq("id", session_id).execute()
 
         return ReserveResult.OK
+
+    # Contract alias matching TASK-302 / TASK-305 RPC nomenclature
+    reserve_regeneration = reserve_max_quota_and_start_regenerating
 
     async def complete_regeneration_tx(
         self,

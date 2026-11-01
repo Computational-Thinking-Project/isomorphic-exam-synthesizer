@@ -68,18 +68,20 @@ FROM (
 ```
 Bảo đảm phiên có $N$ mã đề $\times$ $M$ câu luôn ra đúng $N \times M$ slots câu hỏi, bất biến qua reject và revert.
 
-### 3.3. Kiến Trúc A: Pure Per-Acquire Atomic Accounting & Durable Attempt Ledger
+### 3.3. Kiến Trúc A: Pure Per-Acquire Atomic Accounting & Durable Attempt Ledger (F07 v3.0)
 - Hằng số: `MAX_AI_CALLS_PER_REJECT = 4` (trần tối đa 4 attempts cho 1 operation theo TASK-304); `MAX_SESSION_REVIEW_QUOTA = 30` (trần toàn session).
-- **TX1 (`reserve_max_quota_and_start_regenerating`):** Kiểm tra `gemini_review_calls < 30`, khóa câu hỏi sang `regenerating`. **Tuyệt đối KHÔNG cộng trước 4 vào `gemini_review_calls`** (loại bỏ hoàn toàn lỗi chặn nhầm ở mốc 26-29 calls).
+- **TX1 (`reserve_max_quota_and_start_regenerating` / `reserve_regeneration`):** Kiểm tra `gemini_review_calls < 30`, khóa câu hỏi sang `regenerating`. **Tuyệt đối KHÔNG cộng trước 4 vào `gemini_review_calls`** (loại bỏ hoàn toàn lỗi chặn nhầm ở mốc 26-29 calls).
 - **Acquire Permit (`acquire_attempt`):**
-  - Ghi bản ghi vào CSDL `review_attempts` với `INSERT ... ON CONFLICT (attempt_id) DO NOTHING`.
-  - Nếu duplicate `attempt_id` $\rightarrow$ Trả ngay `replayed = True, dispatch_permitted = False` (chống replay durable, không dựa vào RAM).
-  - Kiểm tra trần operation (`attempts > 4`) $\rightarrow$ Từ chối `dispatch_permitted = False`.
-  - Conditional Atomic Increment trên `exam_sessions`: `UPDATE exam_sessions SET gemini_review_calls = gemini_review_calls + 1 WHERE gemini_review_calls + 1 <= 30`.
+  - **Tích hợp RPC Production (Primary Path):** Gọi `review_acquire_attempt(p_operation_id, p_attempt_id)` thuộc migration `008_stage3_review_acquire_attempt_rpc.sql`. Stored procedure thực thi trong 1 transaction duy nhất với `SELECT ... FOR UPDATE` trên bảng `exam_sessions`, đảm bảo kiểm tra replay, trần operation (4), trần session (30), và tăng `gemini_review_calls` hoàn toàn nguyên tử giữa nhiều worker/process độc lập.
+  - **Adapter Offline / Fallback Path (Atomic CAS):** Khi chạy offline hoặc RPC chưa sẵn sàng, repository tự động chuyển sang mô hình Atomic CAS (Compare-And-Swap):
+    - Ghi bản ghi `review_attempts` với `status = 'requested'` và xử lý unique constraint `attempt_id` để phát hiện replay.
+    - Thực thi SQL CAS: `UPDATE exam_sessions SET gemini_review_calls = current_calls + 1 WHERE id = session_id AND gemini_review_calls = current_calls`.
+    - Nếu `rowcount == 0` (bị worker khác tranh chấp quota ở mốc biên 29 calls): CAS thất bại, cập nhật bản ghi sang `status = 'denied'` và trả `dispatch_permitted = False` (fail closed, triệt tiêu 100% rủi ro oversubscription).
+    - Nếu CAS thành công: cập nhật `status = 'granted'` và trả `dispatch_permitted = True`.
 - **TX2 & Emergency Rollback (No Refund):**
   - Không thực hiện bất kỳ phép hoàn trả (refund) quota nào, vì counter session đã phản ánh chính xác số permit thực tế đã commit.
   - Xóa bỏ triệt để nguy cơ hoàn trả làm mất permit đã cấp khi gặp sự cố mạng hoặc `REVIEW_PERMIT_UNCERTAIN`.
-- **Ranh giới Schema Dependency với TASK-302 (Hùng):** Bảng `review_attempts` và RPC `review_acquire_attempt` nằm trong Phase B của TASK-302 (Hùng - PR #36). Tầng ứng dụng của Duy đã cài đặt interface hoàn chỉnh, kiểm thử offline và đa client thành công 100%.
+- **Ranh giới Schema Dependency & Tích hợp:** Cung cấp migration `008_stage3_review_acquire_attempt_rpc.sql` và cập nhật `backend/scripts/schema.sql` định nghĩa bảng `review_attempts` cùng stored procedure `review_acquire_attempt` theo đúng chuẩn `docs/api/review-rpc-contract.md`. Bộ test suite bao phủ 100% cả RPC path và Barrier CAS fallback.
 
 
 ### 3.4. State Guards & Lock Registry

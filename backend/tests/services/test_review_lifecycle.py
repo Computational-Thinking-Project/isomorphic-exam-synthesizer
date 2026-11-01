@@ -208,6 +208,180 @@ class MockTableQueryBuilder:
             return MockExecutionResult([])
 
 
+class MockRpcQueryBuilder:
+    """Fluent mock builder simulating PostgREST RPC executions in-memory."""
+
+    def __init__(
+        self,
+        fn_name: str,
+        params: Dict[str, Any],
+        db_state: Dict[str, List[Dict[str, Any]]],
+        call_log: List[Dict[str, Any]],
+    ) -> None:
+        self.fn_name = fn_name
+        self.params = params
+        self.db_state = db_state
+        self.call_log = call_log
+
+    def execute(self) -> MockExecutionResult:
+        with _GLOBAL_MOCK_LOCK:
+            self.call_log.append(
+                {
+                    "op": "rpc",
+                    "fn": self.fn_name,
+                    "params": dict(self.params),
+                }
+            )
+            if self.fn_name == "review_acquire_attempt":
+                str_op_id = str(self.params.get("p_operation_id", ""))
+                str_att_id = str(self.params.get("p_attempt_id", ""))
+
+                # Resolve session_id
+                session_id = ""
+                attempts = self.db_state.setdefault("review_attempts", [])
+                for a in attempts:
+                    if str(a.get("operation_id")) == str_op_id:
+                        session_id = str(a.get("session_id", ""))
+                        if session_id:
+                            break
+                if not session_id:
+                    for vq in self.db_state.get("version_questions", []):
+                        if str(vq.get("regeneration_id", "")) == str_op_id or vq.get("status") == "regenerating":
+                            for ev in self.db_state.get("exam_versions", []):
+                                if str(ev.get("id")) == str(vq.get("version_id")):
+                                    session_id = str(ev.get("session_id", ""))
+                                    break
+                            if session_id:
+                                break
+                if not session_id:
+                    sessions = self.db_state.get("exam_sessions", [])
+                    if sessions:
+                        session_id = str(sessions[0].get("id", ""))
+
+                s_row = next(
+                    (s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == session_id),
+                    None,
+                )
+                if not s_row:
+                    return MockExecutionResult(
+                        [
+                            {
+                                "operation_id": str_op_id,
+                                "attempt_id": str_att_id,
+                                "dispatch_permitted": False,
+                                "calls_used": 0,
+                                "remaining_calls": 0,
+                                "session_id": session_id,
+                                "session_status": "",
+                                "replayed": False,
+                            }
+                        ]
+                    )
+
+                curr_calls = int(s_row.get("gemini_review_calls", 0) or 0)
+                s_status = str(s_row.get("status", ""))
+
+                # Replay check
+                found = next((a for a in attempts if str(a.get("attempt_id")) == str_att_id), None)
+                if found:
+                    return MockExecutionResult(
+                        [
+                            {
+                                "operation_id": str_op_id,
+                                "attempt_id": str_att_id,
+                                "dispatch_permitted": False,
+                                "calls_used": min(30, curr_calls),
+                                "remaining_calls": max(0, 30 - curr_calls),
+                                "session_id": session_id,
+                                "session_status": s_status,
+                                "replayed": True,
+                            }
+                        ]
+                    )
+
+                # Operation ceiling check (max 4 per reject operation)
+                op_attempts = [a for a in attempts if str(a.get("operation_id")) == str_op_id]
+                if len(op_attempts) >= 4:
+                    attempts.append(
+                        {
+                            "attempt_id": str_att_id,
+                            "operation_id": str_op_id,
+                            "session_id": session_id,
+                            "status": "denied",
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+                    return MockExecutionResult(
+                        [
+                            {
+                                "operation_id": str_op_id,
+                                "attempt_id": str_att_id,
+                                "dispatch_permitted": False,
+                                "calls_used": min(30, curr_calls),
+                                "remaining_calls": max(0, 30 - curr_calls),
+                                "session_id": session_id,
+                                "session_status": s_status,
+                                "replayed": False,
+                            }
+                        ]
+                    )
+
+                # Session quota check (max 30 per session)
+                if curr_calls >= 30:
+                    attempts.append(
+                        {
+                            "attempt_id": str_att_id,
+                            "operation_id": str_op_id,
+                            "session_id": session_id,
+                            "status": "denied",
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+                    return MockExecutionResult(
+                        [
+                            {
+                                "operation_id": str_op_id,
+                                "attempt_id": str_att_id,
+                                "dispatch_permitted": False,
+                                "calls_used": 30,
+                                "remaining_calls": 0,
+                                "session_id": session_id,
+                                "session_status": s_status,
+                                "replayed": False,
+                            }
+                        ]
+                    )
+
+                # Grant attempt atomically in single transaction
+                s_row["gemini_review_calls"] = curr_calls + 1
+                s_row["updated_at"] = datetime.now(timezone.utc).isoformat()
+                attempts.append(
+                    {
+                        "attempt_id": str_att_id,
+                        "operation_id": str_op_id,
+                        "session_id": session_id,
+                        "status": "granted",
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+                return MockExecutionResult(
+                    [
+                        {
+                            "operation_id": str_op_id,
+                            "attempt_id": str_att_id,
+                            "dispatch_permitted": True,
+                            "calls_used": curr_calls + 1,
+                            "remaining_calls": 30 - (curr_calls + 1),
+                            "session_id": session_id,
+                            "session_status": s_status,
+                            "replayed": False,
+                        }
+                    ]
+                )
+
+            return MockExecutionResult([])
+
+
 class MockSupabaseClient:
     """Mock Supabase client providing stateful in-memory tables and query call logs."""
 
@@ -217,6 +391,9 @@ class MockSupabaseClient:
 
     def table(self, table_name: str) -> MockTableQueryBuilder:
         return MockTableQueryBuilder(table_name, self.state, self.call_log)
+
+    def rpc(self, fn_name: str, params: Optional[Dict[str, Any]] = None) -> MockRpcQueryBuilder:
+        return MockRpcQueryBuilder(fn_name, params or {}, self.state, self.call_log)
 
 
 def _setup_standard_session_state(
@@ -1564,10 +1741,11 @@ async def test_f07_db_unavailable_fail_closed():
     repo.register_operation(op_id, session_id)
 
     # Simulate DB disconnection
-    def broken_table(name: str):
+    def broken_call(*args: Any, **kwargs: Any):
         raise ConnectionError("DB connection refused")
 
-    db.table = broken_table  # type: ignore
+    db.table = broken_call  # type: ignore
+    db.rpc = broken_call  # type: ignore
 
     with pytest.raises(ConnectionError):
         await repo.acquire_attempt(op_id, uuid4())
@@ -1608,3 +1786,99 @@ async def test_f07_service_maps_all_permit_error_codes():
 
         assert exc_info.value.status_code == expected_status, f"Failed mapping for {err_code}"
         assert exc_info.value.error_code == expected_domain_code, f"Failed error code for {err_code}"
+
+
+@pytest.mark.asyncio
+async def test_f07_concurrent_barrier_at_29_only_one_granted():
+    """Reproduces reviewer F07 condition: Two concurrent callers at quota 29.
+    Both read quota=29 at a synchronization barrier.
+    With atomic CAS, exactly ONE permit is granted and the second is denied.
+    Final session quota reaches 30, and review_attempts records 1 granted and 1 denied.
+    """
+    session_id = "00000000-0000-0000-0000-000000000108"
+    user_id = "teacher-108"
+    shared_state = _setup_standard_session_state(session_id, user_id, gemini_calls=29)
+
+    db_a = MockSupabaseClient(shared_state)
+    repo_a = ReviewRepository(db_a)
+
+    db_b = MockSupabaseClient(shared_state)
+    repo_b = ReviewRepository(db_b)
+
+    op_a = uuid4()
+    op_b = uuid4()
+    repo_a.register_operation(op_a, session_id)
+    repo_b.register_operation(op_b, session_id)
+
+    att_a = uuid4()
+    att_b = uuid4()
+
+    # Disable rpc to test the table CAS fallback path specifically under barrier
+    db_a.rpc = None  # type: ignore
+    db_b.rpc = None  # type: ignore
+
+    barrier = asyncio.Barrier(2)
+    orig_get_quota = ReviewRepository.get_session_status_and_quota
+
+    async def hooked_get_quota(self_repo: ReviewRepository, sid: str) -> Dict[str, Any]:
+        res = await orig_get_quota(self_repo, sid)
+        # Synchronize at barrier after reading quota 29 so both see current_calls=29
+        await barrier.wait()
+        return res
+
+    repo_a.get_session_status_and_quota = lambda sid: hooked_get_quota(repo_a, sid)  # type: ignore
+    repo_b.get_session_status_and_quota = lambda sid: hooked_get_quota(repo_b, sid)  # type: ignore
+
+    permits = await asyncio.gather(
+        repo_a.acquire_attempt(op_a, att_a),
+        repo_b.acquire_attempt(op_b, att_b),
+    )
+
+    granted = [p for p in permits if p.dispatch_permitted is True]
+    denied = [p for p in permits if p.dispatch_permitted is False]
+
+    # Exactly 1 permit granted, 1 denied!
+    assert len(granted) == 1, f"Expected 1 permit granted, got {len(granted)}"
+    assert len(denied) == 1, f"Expected 1 permit denied, got {len(denied)}"
+    assert shared_state["exam_sessions"][0]["gemini_review_calls"] == 30
+
+    # Verify attempt ledger in DB has 1 granted and 1 denied
+    attempts = shared_state["review_attempts"]
+    assert len([a for a in attempts if a["status"] == "granted"]) == 1
+    assert len([a for a in attempts if a["status"] == "denied"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_f07_rpc_concurrency_at_29_only_one_granted():
+    """Verify that under PostgreSQL RPC review_acquire_attempt, two concurrent acquisitions
+    at quota 29 atomically grant exactly 1 permit and deny 1 permit in a single transaction."""
+    session_id = "00000000-0000-0000-0000-000000000109"
+    user_id = "teacher-109"
+    shared_state = _setup_standard_session_state(session_id, user_id, gemini_calls=29)
+
+    db_a = MockSupabaseClient(shared_state)
+    repo_a = ReviewRepository(db_a)
+
+    db_b = MockSupabaseClient(shared_state)
+    repo_b = ReviewRepository(db_b)
+
+    op_a = uuid4()
+    op_b = uuid4()
+    repo_a.register_operation(op_a, session_id)
+    repo_b.register_operation(op_b, session_id)
+
+    att_a = uuid4()
+    att_b = uuid4()
+
+    permits = await asyncio.gather(
+        repo_a.acquire_attempt(op_a, att_a),
+        repo_b.acquire_attempt(op_b, att_b),
+    )
+
+    granted = [p for p in permits if p.dispatch_permitted is True]
+    denied = [p for p in permits if p.dispatch_permitted is False]
+
+    assert len(granted) == 1
+    assert len(denied) == 1
+    assert shared_state["exam_sessions"][0]["gemini_review_calls"] == 30
+
