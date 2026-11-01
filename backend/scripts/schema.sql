@@ -41,7 +41,8 @@ DO $$ BEGIN
     'ACCEPT',
     'REJECT',
     'REVERT',
-    'REJECT_FAILED'
+    'REJECT_FAILED',
+    'APPROVE_ALL'
   );
 EXCEPTION
   WHEN duplicate_object THEN null;
@@ -169,7 +170,9 @@ CREATE TABLE IF NOT EXISTS public.answer_keys (
 -- Table 9: Review Logs (Audit trail of teacher review decisions)
 CREATE TABLE IF NOT EXISTS public.review_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  version_question_id UUID NOT NULL REFERENCES public.version_questions(id) ON DELETE CASCADE,
+  session_id UUID REFERENCES public.exam_sessions(id) ON DELETE CASCADE,
+  version_question_id UUID REFERENCES public.version_questions(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
   action_type public.review_action_type NOT NULL,
   reason TEXT,
   latency_ms INT,
@@ -615,6 +618,16 @@ GRANT EXECUTE ON FUNCTION public.confirm_exam_source(UUID, INT, BOOLEAN, TIMESTA
 
 
 -- Migration 007: Finalize & Content Lock Stored Procedure RPC (TASK-305)
+-- Schema adjustments for APPROVE_ALL session-level audit logging (F12)
+DO $$ BEGIN
+  ALTER TYPE public.review_action_type ADD VALUE IF NOT EXISTS 'APPROVE_ALL';
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+ALTER TABLE public.review_logs ALTER COLUMN version_question_id DROP NOT NULL;
+ALTER TABLE public.review_logs ADD COLUMN IF NOT EXISTS session_id UUID REFERENCES public.exam_sessions(id) ON DELETE CASCADE;
+ALTER TABLE public.review_logs ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES public.users(id) ON DELETE SET NULL;
 -- Purpose: Atomically lock exam session, verify all Stage 3 invariants,
 -- enforce Cartesian version x question completeness, transition session status to 'approved',
 -- stamp approved_at, and record APPROVE_ALL audit log in a single ACID transaction.
@@ -671,10 +684,8 @@ BEGIN
     RAISE EXCEPTION 'ERR_SESSION_NOT_FOUND' USING ERRCODE = 'P0002';
   END IF;
 
-  -- 3. Verify user ownership authorization (unless service_role)
-  IF v_caller_id IS NOT NULL 
-     AND v_session.user_id IS DISTINCT FROM v_caller_id 
-     AND v_role != 'service_role' THEN
+  -- 3. Verify user ownership authorization (unless service_role) (F14)
+  IF v_role != 'service_role' AND (v_caller_id IS NULL OR v_session.user_id IS DISTINCT FROM v_caller_id) THEN
     RAISE EXCEPTION 'ERR_UNAUTHORIZED' USING ERRCODE = '42501';
   END IF;
 

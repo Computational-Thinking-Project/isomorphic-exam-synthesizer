@@ -448,6 +448,9 @@ class ReviewRepository:
                 500, "ERR_DATABASE_TRANSACTION_FAILED", f"Lỗi giao dịch CSDL: {exc}"
             ) from exc
 
+    # Contract alias for TASK-302 / TASK-301 alignment (F13)
+    reserve_regeneration = reserve_max_quota_and_start_regenerating
+
     async def complete_regeneration_tx(
         self,
         session_id: str,
@@ -846,6 +849,9 @@ class ReviewRepository:
             any_finalized = any(r.get("is_finalized") for r in v_rows)
 
             if any_finalized and version_ids:
+                # 3. Obtain answer_keys table builder first (triggers any mid-flight table interceptors)
+                ak_builder = self.db.table("answer_keys")
+
                 # Re-verify parent status immediately before destructive mutations (F01b TOCTOU Guard)
                 recheck_res = (
                     self.db.table("exam_sessions")
@@ -862,8 +868,8 @@ class ReviewRepository:
                     )
                     return False
 
-                # 3. Purge stale answer_keys records for all affected versions
-                self.db.table("answer_keys").delete().in_("version_id", version_ids).execute()
+                # Purge stale answer_keys records for all affected versions
+                ak_builder.delete().in_("version_id", version_ids).execute()
 
                 # 4. Reset finalized flag and permutations metadata on exam_versions
                 self.db.table("exam_versions").update(

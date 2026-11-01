@@ -3,6 +3,17 @@
 -- enforce Cartesian version x question completeness, transition session status to 'approved',
 -- stamp approved_at, and record APPROVE_ALL audit log in a single ACID transaction.
 
+-- Schema adjustments for APPROVE_ALL session-level audit logging (F12)
+DO $$ BEGIN
+  ALTER TYPE public.review_action_type ADD VALUE IF NOT EXISTS 'APPROVE_ALL';
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+ALTER TABLE public.review_logs ALTER COLUMN version_question_id DROP NOT NULL;
+ALTER TABLE public.review_logs ADD COLUMN IF NOT EXISTS session_id UUID REFERENCES public.exam_sessions(id) ON DELETE CASCADE;
+ALTER TABLE public.review_logs ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES public.users(id) ON DELETE SET NULL;
+
 -- Drop previous overload if exists
 DROP FUNCTION IF EXISTS public.finalize_approve_session(UUID, UUID, TIMESTAMPTZ);
 DROP FUNCTION IF EXISTS public.finalize_approve_session(UUID, TIMESTAMPTZ);
@@ -55,10 +66,8 @@ BEGIN
     RAISE EXCEPTION 'ERR_SESSION_NOT_FOUND' USING ERRCODE = 'P0002';
   END IF;
 
-  -- 3. Verify user ownership authorization (unless service_role)
-  IF v_caller_id IS NOT NULL 
-     AND v_session.user_id IS DISTINCT FROM v_caller_id 
-     AND v_role != 'service_role' THEN
+  -- 3. Verify user ownership authorization (unless service_role) (F14)
+  IF v_role != 'service_role' AND (v_caller_id IS NULL OR v_session.user_id IS DISTINCT FROM v_caller_id) THEN
     RAISE EXCEPTION 'ERR_UNAUTHORIZED' USING ERRCODE = '42501';
   END IF;
 

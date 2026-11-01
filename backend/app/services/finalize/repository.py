@@ -317,10 +317,10 @@ class FinalizeRepository:
             if q_numbers:
                 expected_q_count = max(q_numbers)
 
-        # 3. Attempt reading from answer_keys
+        # 3. Attempt reading from answer_keys (with display_no / display_correct_key alias compatibility for TASK-303/302, F15)
         ak_builder = (
             self.db.table("answer_keys")
-            .select("version_id, question_no, correct_option")
+            .select("*")
             .in_("version_id", version_ids)
         )
         if hasattr(ak_builder, "order"):
@@ -331,12 +331,12 @@ class FinalizeRepository:
         normalized_rows: List[Dict[str, Any]] = []
 
         if ak_rows:
-            # Check completeness across all versions and questions (F03)
+            # Check completeness across all versions and questions (F03 / F15)
             ak_versions = {str(r.get("version_id", "")) for r in ak_rows}
             ak_q_numbers = {
-                int(r.get("question_no", 0))
+                int(r["question_no"] if r.get("question_no") is not None else r.get("display_no", 0))
                 for r in ak_rows
-                if r.get("question_no") is not None
+                if r.get("question_no") is not None or r.get("display_no") is not None
             }
             if expected_q_count == 0 and ak_q_numbers:
                 expected_q_count = max(ak_q_numbers)
@@ -347,7 +347,10 @@ class FinalizeRepository:
                 for q_no in range(1, expected_q_count + 1)
             }
             actual_pairs = {
-                (str(r.get("version_id", "")), int(r.get("question_no", 0)))
+                (
+                    str(r.get("version_id", "")),
+                    int(r["question_no"] if r.get("question_no") is not None else r.get("display_no", 0)),
+                )
                 for r in ak_rows
             }
             missing_pairs = expected_pairs - actual_pairs
@@ -376,11 +379,13 @@ class FinalizeRepository:
             for r in ak_rows:
                 v_code = version_id_to_code.get(str(r.get("version_id", "")))
                 if v_code:
+                    q_no = r["question_no"] if r.get("question_no") is not None else r.get("display_no", 0)
+                    ans = str(r.get("correct_option") or r.get("display_correct_key") or "").strip().upper()
                     normalized_rows.append(
                         {
                             "version_code": v_code,
-                            "question_no": int(r.get("question_no", 0)),
-                            "answer": str(r.get("correct_option", "")).strip().upper(),
+                            "question_no": int(q_no),
+                            "answer": ans,
                         }
                     )
             return version_codes, normalized_rows
