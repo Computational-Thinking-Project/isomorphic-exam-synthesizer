@@ -1,21 +1,21 @@
 {
-  "packageId": "UI-WALKTHROUGH-20261031",
-  "packagedDate": "2026-10-31",
+  "packageId": "UI-WALKTHROUGH-20261101",
+  "packagedDate": "2026-11-01",
   "timezone": "Asia/Bangkok",
   "kind": "Portable prepared UI, not integrated product or AI output",
-  "branch": "fix/ui-ux-integration",
-  "repositoryBaseAtPackaging": "aa7312c1550b74802527e545e598bb584476cc84",
+  "branch": "feat/ui-ux-demo",
+  "repositoryBaseAtPackaging": "a57079caa8bcb165744722f2af9d02d47b51df78",
   "artifact": {
     "file": "PREVIEW.html",
-    "bytes": 2746522,
-    "sha256": "c1d8e8adf947a5cf5b869b455dd4724e9cb31c1919689057195ae5fdfa1ad333",
+    "bytes": 2748189,
+    "sha256": "32b508cbccf75d93697d68c466d210723f61482cc70e81731f5fe98bb5b3a54e",
     "sourceWorkspaceRelativePath": "project/ui-draft/redesign/PREVIEW.html",
-    "sourceDateFromReview": "2026-10-31",
+    "sourceDateFromReview": "2026-11-01",
     "sourceCommit": null,
     "sourceCommitNote": "ui-draft is outside the product Git repository; repositoryBaseAtPackaging is not the artifact source commit",
     "built": [
       "index-CLKoZODR.css",
-      "index-DG0MLSY1.js"
+      "index-DSwc8nZV.js"
     ],
     "selfContained": true,
     "thirdPartyNoticesEmbedded": true,
@@ -44,7 +44,7 @@
       "prepared": true
     },
     {
-      "label": "W3-W5 correction",
+      "label": "Backup correction checkpoint",
       "screen": "S06",
       "state": "presenter-issue",
       "prepared": true,
@@ -56,33 +56,36 @@
   ],
   "behavior": {
     "S05": "Automatic sample simulation; count/readiness separate; no live AI or autoapproval",
-    "W3ToW5": "Separate prepared checkpoint, same tab until approve; reload resets fixture",
+    "W3ToW5": "Primary path: click Begin review in S05 prepares9 approvals and G03/101 duplicate case once, without replacing source/config/progress. Existing S06 link is a backup checkpoint.",
     "persistence": "Tab memory only",
     "realPDFExport": false,
     "S00ToS01": "CTA ends with S00; no CTA ghost on S01; logo/slogan450ms, card300ms with delay130ms",
-    "regenerate": "Finite offsets1..8 relative to source seed, skip current and same-source other-code question content; retain question and notify if pool unavailable"
+    "regenerate": "Finite offsets1..8 relative to source seed, skip current and same-source other-code question content; retain question and notify if pool unavailable",
+    "reviewDemoEligibility": "Canonical5x2 pristine sample, ready, no prior approval/edit/copy marks; not a title-only match. New load/start clears marker; revisiting does not reseed.",
+    "reviewDemoSelection": "G03/101 on primary transition and direct presenter-issue backup; other diagnostics unchanged"
   },
   "checks": {
-    "staticPackageVerification": "passed: source/dist/package bytes and hash, relative links/checkpoints, embedded resources/notices, Git -text and raw blob, five-file scope and diff --check",
+    "staticPackageVerification": "passed: source/dist/package hash, relative links, embedded notices/resources, -text, five-file scope, diff --check; no native Chrome",
     "nativeChrome": "not run",
     "keyboardFocusScroll": "not run",
     "rehearsal": "not run",
     "sourceChecks": {
-      "date": "2026-10-31",
-      "focused": 18,
+      "date": "2026-11-01",
+      "focused": 23,
       "s06Regression": 28,
       "algebraRegression": 37,
-      "result": "passed in ui-draft; not rerun during copy",
-      "scope": "Data/reducer/hook/React elements; motion scheduling mocked, no native frames",
-      "typeScript": "passed in source build",
-      "build": "passed in ui-draft,1613 modules"
+      "legacyFixtureComparisons": 48,
+      "result": "passed in ui-draft",
+      "scope": "Reducer and React element/event wiring, no native browser",
+      "typeScript": "passed",
+      "build": "passed,1613 modules"
     }
   },
   "publicationAtPreparation": {
     "committed": false,
     "pushed": false,
     "packageCommit": null,
-    "note": "Preparation snapshot before the user-authorized commit; inspect git log for the resulting package commit. No push authorized in this task."
+    "note": "Local preparation only; no commit/push in this task"
   },
   "limits": [
     "No real auth/upload/parser/AI/server persistence/PDF",
