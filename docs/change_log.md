@@ -1,3 +1,7 @@
+## 01/11/2026 — TASK-304: permit bền vững tại boundary dispatch (Draft)
+
+Adapter real nhận operation_id và callback trả AttemptPermit, dùng hook gateway hiện có cho mỗi attempt/retry/repair. Không còn fallback local-only cho review production. DB ledger quyết toán; count adapter chỉ là acknowledged grants, không tự refund khi timeout/cancel hoặc mất response. [Handoff và giới hạn](ai-w3-targeted-regeneration.md), [điều phối #36](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6551270882). Đã triển khai phía adapter; RPC/wrapper/E2E còn phụ thuộc Hùng/Duy, shared contract chưa coi đã được mọi owner chấp nhận.
+
 ## 24/10/2026 — AI W2 (thay đổi cục bộ, chưa merge)
 
 Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical core dùng chung CLI/backend, generator theo Blueprint kèm lời giải, bounded validation/retry, resume/callback và lifecycle. [Chi tiết và giới hạn nghiệm thu](ai-w2-integration.md). Chưa tích hợp routes/DB/SSE/UI W2; chưa nghiệm thu Docker/live API.
@@ -293,3 +297,9 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
   - Giảm thiểu triệt để số lượng endpoint và form UI cần phát triển/bảo trì, tiết kiệm ít nhất 4 ngày công cho FE và BE.
   - Giao diện đạt chuẩn Zero-Friction: Giảng viên chỉ cần nạp đề $\rightarrow$ xem trước KaTeX $\rightarrow$ bấm 1 nút "Xác nhận đề gốc và tiếp tục" để chuyển sang sinh đề.
   - Bảo đảm an toàn tuyệt đối cho CSDL và hệ thống.
+# DEC-DAT-W3-304: Adapter sinh lại từng câu cho review API
+
+- Ngày/người: 29/10/2026 — Đạt; triển khai theo phản hồi Duy trên PR #26.
+- Quyết định: không text giáo viên; đầu vào snapshot in-memory + canonical Blueprint/hash xác nhận, dùng lại GenerationService. Pydantic result có report trung thực và api_calls_count; mock chỉ inject tường minh.
+- Phạm vi: models/targeted.py, generation/targeted_service.py, giới hạn 2 math retries trong trần 4 attempts ở đường targeted. Không đổi DB/endpoints hoặc sửa nhánh Duy.
+- Tích hợp: [handoff](ai-w3-targeted-regeneration.md). Reservation 3 calls và snapshot mapper trong PR #28 còn cần owner đồng bộ; chưa coi E2E hoàn tất.
