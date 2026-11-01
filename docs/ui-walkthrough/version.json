@@ -1,0 +1,93 @@
+{
+  "packageId": "UI-WALKTHROUGH-20261031",
+  "packagedDate": "2026-10-31",
+  "timezone": "Asia/Bangkok",
+  "kind": "Portable prepared UI, not integrated product or AI output",
+  "branch": "fix/ui-ux-integration",
+  "repositoryBaseAtPackaging": "aa7312c1550b74802527e545e598bb584476cc84",
+  "artifact": {
+    "file": "PREVIEW.html",
+    "bytes": 2746522,
+    "sha256": "c1d8e8adf947a5cf5b869b455dd4724e9cb31c1919689057195ae5fdfa1ad333",
+    "sourceWorkspaceRelativePath": "project/ui-draft/redesign/PREVIEW.html",
+    "sourceDateFromReview": "2026-10-31",
+    "sourceCommit": null,
+    "sourceCommitNote": "ui-draft is outside the product Git repository; repositoryBaseAtPackaging is not the artifact source commit",
+    "built": [
+      "index-CLKoZODR.css",
+      "index-DG0MLSY1.js"
+    ],
+    "selfContained": true,
+    "thirdPartyNoticesEmbedded": true,
+    "rebuiltDuringPackaging": false
+  },
+  "checkpoints": [
+    {
+      "label": "Start",
+      "screen": "S00",
+      "state": "success"
+    },
+    {
+      "label": "W1 source",
+      "screen": "S03",
+      "state": "empty"
+    },
+    {
+      "label": "W2 config",
+      "screen": "S04",
+      "state": "success"
+    },
+    {
+      "label": "Backup ready",
+      "screen": "S05",
+      "state": "ready",
+      "prepared": true
+    },
+    {
+      "label": "W3-W5 correction",
+      "screen": "S06",
+      "state": "presenter-issue",
+      "prepared": true,
+      "selectQuestion": "Cau 3",
+      "sourceId": "G03",
+      "code": "101",
+      "otherApprovalsPreloaded": 9
+    }
+  ],
+  "behavior": {
+    "S05": "Automatic sample simulation; count/readiness separate; no live AI or autoapproval",
+    "W3ToW5": "Separate prepared checkpoint, same tab until approve; reload resets fixture",
+    "persistence": "Tab memory only",
+    "realPDFExport": false,
+    "S00ToS01": "CTA ends with S00; no CTA ghost on S01; logo/slogan450ms, card300ms with delay130ms",
+    "regenerate": "Finite offsets1..8 relative to source seed, skip current and same-source other-code question content; retain question and notify if pool unavailable"
+  },
+  "checks": {
+    "staticPackageVerification": "passed: source/dist/package bytes and hash, relative links/checkpoints, embedded resources/notices, Git -text and raw blob, five-file scope and diff --check",
+    "nativeChrome": "not run",
+    "keyboardFocusScroll": "not run",
+    "rehearsal": "not run",
+    "sourceChecks": {
+      "date": "2026-10-31",
+      "focused": 18,
+      "s06Regression": 28,
+      "algebraRegression": 37,
+      "result": "passed in ui-draft; not rerun during copy",
+      "scope": "Data/reducer/hook/React elements; motion scheduling mocked, no native frames",
+      "typeScript": "passed in source build",
+      "build": "passed in ui-draft,1613 modules"
+    }
+  },
+  "publicationAtPreparation": {
+    "committed": false,
+    "pushed": false,
+    "packageCommit": null,
+    "note": "Preparation snapshot before the user-authorized commit; inspect git log for the resulting package commit. No push authorized in this task."
+  },
+  "limits": [
+    "No real auth/upload/parser/AI/server persistence/PDF",
+    "Prepared example is not actual AI or teacher approval evidence",
+    "No equivalent difficulty/coverage/accuracy/time-saving claims",
+    "Native file access restriction remains; no server/CDP/alternate-surface workaround"
+  ]
+}

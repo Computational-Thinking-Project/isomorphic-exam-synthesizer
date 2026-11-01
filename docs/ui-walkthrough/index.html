@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>exam mirror — UI walkthrough</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f7f8fa; color: #252629; font: 1rem/1.6 system-ui, sans-serif; }
+    main { max-width: 850px; margin: 0 auto; padding: 36px 24px; }
+    h1 { line-height: 1.2; } h2 { font-size: 1.2rem; }
+    section { background: white; border: 1px solid #dce1e8; border-radius: 16px; padding: 20px; margin: 20px 0; }
+    a { color: #234c76; text-underline-offset: 3px; }
+    a:focus-visible { outline: 3px solid #886600; outline-offset: 4px; }
+    li { margin: 12px 0; } .start { display: inline-block; padding: 12px 20px; background: #f7d354; border-radius: 10px; color: #252629; font-weight: 650; }
+    small { color: #536171; } code { overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>exam mirror — UI walkthrough</h1>
+  <p>Bản portable 31/10/2026 · dữ liệu mẫu · mở trực tiếp bằng Chrome. Không cần server, Node hoặc Docker.</p>
+  <p><a class="start" href="PREVIEW.html?screen=S00&amp;state=success&amp;view=clean&amp;theme=light">Bắt đầu từ S00</a></p>
+  <section aria-labelledby="checkpoints">
+    <h2 id="checkpoints">Điểm vào khi trình bày</h2>
+    <ol>
+      <li><a href="PREVIEW.html?screen=S03&amp;state=empty&amp;view=clean&amp;theme=light">W1 · Nguồn mẫu — S03 empty</a><br><small>Bấm Xem dữ liệu mẫu, xác nhận toàn bộ đề rồi Tiếp theo.</small></li>
+      <li><a href="PREVIEW.html?screen=S04&amp;state=success&amp;view=clean&amp;theme=light">W2 · Cấu hình — S04</a><br><small>Nhập N=2, Tạo biến thể; S05 tự tiến bằng kết quả mô phỏng, readiness tách riêng.</small></li>
+      <li><a href="PREVIEW.html?screen=S05&amp;state=ready&amp;view=clean&amp;theme=light">Dự phòng · S05 ready chuẩn bị sẵn</a><br><small>Mở checkpoint riêng; không nhận đây là job AI vừa chạy xong.</small></li>
+      <li><a href="PREVIEW.html?screen=S06&amp;state=presenter-issue&amp;view=clean&amp;theme=light">W3→W5 · Ca sửa chuẩn bị sẵn — S06</a><br><small>Chọn Câu 3, mã 101. Có 9 approval nạp sẵn. Giữ cùng tab từ phát hiện lỗi đến duyệt, không reload.</small></li>
+    </ol>
+  </section>
+  <section aria-labelledby="limits">
+    <h2 id="limits">Cách dùng và giới hạn</h2>
+    <p>Nhấn liên kết sẽ mở trạng thái mới trong tab hiện tại. Back hoặc reload không khôi phục phần vừa sửa; hãy bắt đầu lại checkpoint nếu cần reset.</p>
+    <p>Đây là preview thiết kế có tương tác và state trong bộ nhớ tab. Chưa có đăng nhập, upload/parser, AI, lưu server hoặc xuất PDF thật. Gói này chưa được kiểm thao tác trực tiếp trên Chrome.</p>
+    <p><a href="README.md">Runbook và cách lấy nhánh</a> · <a href="version.json">Phiên bản / SHA256 / trạng thái kiểm</a></p>
+  </section>
+  <p><small>App, font, artwork và thông báo licenses nằm trong PREVIEW.html. Không dùng trạng thái mẫu làm bằng chứng output AI hoặc teacher approval thật.</small></p>
+</main>
+</body>
+</html>
