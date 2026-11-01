@@ -141,6 +141,7 @@ class FinalizeService:
                 session_id,
                 expected_updated_at=last_updated_at,
                 allowed_statuses=allowed_statuses,
+                user_id=user_id,
             )
 
             # If update returned None, check if race occurred and it got approved concurrently

@@ -211,6 +211,104 @@ class MockTableQueryBuilder:
             return MockExecutionResult([])
 
 
+class MockRpcQueryBuilder:
+    """Fluent mock builder simulating PostgreSQL RPC Stored Procedure executions."""
+
+    def __init__(
+        self,
+        function_name: str,
+        params: Dict[str, Any],
+        db_state: Dict[str, List[Dict[str, Any]]],
+        call_log: List[Dict[str, Any]],
+    ) -> None:
+        self.function_name = function_name
+        self.params = params or {}
+        self.db_state = db_state
+        self.call_log = call_log
+
+    def execute(self) -> MockExecutionResult:
+        with _GLOBAL_MOCK_LOCK:
+            self.call_log.append(
+                {"op": "rpc", "function": self.function_name, "params": dict(self.params)}
+            )
+
+            if self.function_name == "finalize_approve_session":
+                session_id = str(self.params.get("p_session_id", ""))
+                user_id = str(self.params.get("p_user_id", ""))
+                sessions = self.db_state.get("exam_sessions", [])
+                s_row = next((s for s in sessions if str(s.get("id")) == session_id), None)
+                if not s_row:
+                    raise RuntimeError("ERR_SESSION_NOT_FOUND")
+
+                status = str(s_row.get("status", "")).lower()
+                if status == "approved":
+                    return MockExecutionResult(
+                        [
+                            {
+                                "status": "approved",
+                                "session_id": session_id,
+                                "approved_at": s_row.get("approved_at"),
+                            }
+                        ]
+                    )
+                if status not in ("reviewed", "generated"):
+                    raise RuntimeError("ERR_INVALID_SESSION_STATE")
+
+                # Optimistic locking check against concurrent mutation
+                exp_updated = self.params.get("p_expected_updated_at")
+                if exp_updated and s_row.get("updated_at") != exp_updated:
+                    raise RuntimeError("ERR_INVALID_SESSION_STATE")
+
+                # Check question and version status invariants inside lock
+                vqs = self.db_state.get("version_questions", [])
+                evs = self.db_state.get("exam_versions", [])
+                session_v_ids = {
+                    str(v.get("id")) for v in evs if str(v.get("session_id")) == session_id
+                }
+
+                unfinalized = [
+                    v
+                    for v in evs
+                    if str(v.get("session_id")) == session_id and not v.get("is_finalized")
+                ]
+                if unfinalized:
+                    raise RuntimeError("ERR_VERSIONS_NOT_FINALIZED")
+
+                session_qs = [
+                    q
+                    for q in vqs
+                    if str(q.get("version_id")) in session_v_ids and q.get("is_current")
+                ]
+                if not session_qs:
+                    raise RuntimeError("ERR_NOT_ALL_QUESTIONS_APPROVED")
+                if any(str(q.get("status")).lower() == "regenerating" for q in session_qs):
+                    raise RuntimeError("ERR_QUESTION_REGENERATING")
+                if any(str(q.get("status")).lower() != "approved" for q in session_qs):
+                    raise RuntimeError("ERR_NOT_ALL_QUESTIONS_APPROVED")
+
+                # Atomic mutation
+                now_str = _now_iso()
+                s_row["status"] = "approved"
+                s_row["approved_at"] = now_str
+                s_row["updated_at"] = now_str
+
+                logs = self.db_state.setdefault("review_logs", [])
+                logs.append(
+                    {
+                        "session_id": session_id,
+                        "user_id": user_id,
+                        "action_type": "APPROVE_ALL",
+                        "reason": "Session finalized and locked",
+                        "created_at": now_str,
+                    }
+                )
+                return MockExecutionResult(
+                    [{"status": "approved", "approved_at": now_str, "session_id": session_id}]
+                )
+
+            return MockExecutionResult([])
+
+
 class MockSupabaseClient:
     """Mock Supabase client providing stateful in-memory tables and query call logs."""
 
@@ -220,6 +318,11 @@ class MockSupabaseClient:
 
     def table(self, table_name: str) -> MockTableQueryBuilder:
         return MockTableQueryBuilder(table_name, self.state, self.call_log)
+
+    def rpc(
+        self, function_name: str, params: Optional[Dict[str, Any]] = None
+    ) -> MockRpcQueryBuilder:
+        return MockRpcQueryBuilder(function_name, params or {}, self.state, self.call_log)
 
 
 def _setup_standard_session_state(

@@ -156,17 +156,62 @@ class FinalizeRepository:
         session_id: str,
         expected_updated_at: Optional[str] = None,
         allowed_statuses: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Atomically transition session status to 'approved' and record approved_at.
 
-        Guards against TOCTOU race (F01) by enforcing transition only from allowed_statuses (default ['reviewed'])
-        and optionally matching expected_updated_at.
+        RPC-First with Fallback (Contract with TASK-302 Phase B):
+        - Attempts PostgreSQL Stored Procedure `finalize_approve_session` for strict cross-table ACID isolation.
+        - Falls back to optimistic lock table query if RPC function is not yet deployed on database.
 
         Returns updated row dict if successful, or None if condition not met (e.g. status changed).
         """
         if allowed_statuses is None:
             allowed_statuses = ["reviewed"]
 
+        # 1. Try DB RPC Stored Procedure if available (TASK-302 Phase B contract)
+        if hasattr(self.db, "rpc"):
+            try:
+                rpc_res = self.db.rpc(
+                    "finalize_approve_session",
+                    {
+                        "p_session_id": session_id,
+                        "p_user_id": user_id,
+                        "p_expected_updated_at": expected_updated_at,
+                    },
+                ).execute()
+                rpc_data = getattr(rpc_res, "data", None)
+                if isinstance(rpc_data, dict) and rpc_data.get("status") == "approved":
+                    return rpc_data
+                if isinstance(rpc_data, list) and rpc_data and rpc_data[0].get("status") == "approved":
+                    return rpc_data[0]
+            except Exception as exc:
+                err_msg = str(exc)
+                from app.models.schemas import ReviewDomainException
+
+                if "ERR_SESSION_LOCKED" in err_msg:
+                    raise ReviewDomainException(
+                        423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
+                    ) from exc
+                if "ERR_QUESTION_REGENERATING" in err_msg:
+                    raise ReviewDomainException(
+                        409, "ERR_QUESTION_REGENERATING", "Còn câu hỏi đang trong tiến trình sinh lại bởi AI"
+                    ) from exc
+                if "ERR_NOT_ALL_QUESTIONS_APPROVED" in err_msg:
+                    raise ReviewDomainException(
+                        400, "ERR_NOT_ALL_QUESTIONS_APPROVED", "Còn câu hỏi chưa được thẩm định phê duyệt"
+                    ) from exc
+                if "ERR_VERSIONS_NOT_FINALIZED" in err_msg:
+                    raise ReviewDomainException(
+                        400, "ERR_VERSIONS_NOT_FINALIZED", "Còn phiên bản đề thi chưa hoàn tất hoán vị"
+                    ) from exc
+                if "ERR_INVALID_SESSION_STATE" in err_msg:
+                    raise ReviewDomainException(
+                        409, "ERR_INVALID_SESSION_STATE", "Trạng thái phiên đề đã thay đổi hoặc không hợp lệ"
+                    ) from exc
+                logger.debug("RPC finalize_approve_session not available, using table query fallback: %s", exc)
+
+        # 2. Table query fallback with optimistic concurrency guard
         now_str = _now_iso()
         query = (
             self.db.table("exam_sessions")

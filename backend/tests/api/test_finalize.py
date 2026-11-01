@@ -382,7 +382,7 @@ async def test_finalize_service_happy_path_unit():
     assert res.status == "approved"
     assert res.approved_at == "2026-10-30T01:30:00Z"
     mock_repo.update_session_approved.assert_called_once_with(
-        MOCK_SESSION_ID, expected_updated_at=None, allowed_statuses=["reviewed"]
+        MOCK_SESSION_ID, expected_updated_at=None, allowed_statuses=["reviewed"], user_id=MOCK_USER_ID
     )
 
 
@@ -428,12 +428,12 @@ async def test_f01_interleaving_mutation_prevents_approval():
     # rejecting a question, changing session status to 'generated' and updating updated_at
     original_update = repo.update_session_approved
 
-    async def hooked_update(session_id, expected_updated_at=None, allowed_statuses=None):
+    async def hooked_update(session_id, expected_updated_at=None, allowed_statuses=None, **kwargs):
         # Worker B mutates in the background
         db_state["exam_sessions"][0]["status"] = "generated"
         db_state["exam_sessions"][0]["updated_at"] = "2026-10-30T00:01:00+00:00"
         return await original_update(
-            session_id, expected_updated_at=expected_updated_at, allowed_statuses=allowed_statuses
+            session_id, expected_updated_at=expected_updated_at, allowed_statuses=allowed_statuses, **kwargs
         )
 
     repo.update_session_approved = hooked_update
@@ -736,4 +736,86 @@ async def test_f03_empty_answer_keys_fallback_to_version_questions():
     assert res.total_questions == 1
     assert res.version_codes == ["101", "102"]
     assert res.matrix[0].answers == {"101": "A", "102": "C"}
+
+
+# ==============================================================================
+# 7. RPC Transaction & Crash Safety Tests (F01 Architectural Fix)
+# ==============================================================================
+
+
+@pytest.mark.asyncio
+async def test_f01_rpc_transaction_happy_path_approves_and_locks():
+    """F01: Approval via RPC Stored Procedure atomically transitions session to approved."""
+    db_state = {
+        "exam_sessions": [
+            {
+                "id": MOCK_SESSION_ID,
+                "status": "reviewed",
+                "updated_at": "2026-10-30T00:00:00+00:00",
+                "user_id": MOCK_USER_ID,
+            }
+        ],
+        "exam_versions": [
+            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+        ],
+        "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
+        "version_questions": [
+            {
+                "id": "q-1",
+                "version_id": "v-101",
+                "source_question_id": "s-1",
+                "status": "approved",
+                "is_current": True,
+            }
+        ],
+        "review_logs": [],
+    }
+    client = MockSupabaseClient(db_state)
+    repo = FinalizeRepository(client)
+    service = FinalizeService(client, repo=repo)
+
+    res = await service.approve_session(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert res.status == "approved"
+    assert db_state["exam_sessions"][0]["status"] == "approved"
+    assert any(log["action_type"] == "APPROVE_ALL" for log in db_state["review_logs"])
+
+
+@pytest.mark.asyncio
+async def test_f01_rpc_transaction_prevents_crash_failure_window():
+    """F01: When question is regenerating, RPC atomically rejects approval without partial state."""
+    db_state = {
+        "exam_sessions": [
+            {
+                "id": MOCK_SESSION_ID,
+                "status": "reviewed",
+                "updated_at": "2026-10-30T00:00:00+00:00",
+                "user_id": MOCK_USER_ID,
+            }
+        ],
+        "exam_versions": [
+            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+        ],
+        "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
+        "version_questions": [
+            {
+                "id": "q-1",
+                "version_id": "v-101",
+                "source_question_id": "s-1",
+                "status": "regenerating",  # Child question is actively mutating
+                "is_current": True,
+            }
+        ],
+        "review_logs": [],
+    }
+    client = MockSupabaseClient(db_state)
+    repo = FinalizeRepository(client)
+    service = FinalizeService(client, repo=repo)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.approve_session(MOCK_SESSION_ID, MOCK_USER_ID)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_QUESTION_REGENERATING"
+    # Session must remain reviewed, never locked while child question is mutating
+    assert db_state["exam_sessions"][0]["status"] == "reviewed"
 

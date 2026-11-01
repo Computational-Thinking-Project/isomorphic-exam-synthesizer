@@ -5,7 +5,7 @@
 - **Reviewer:** Tâm (`AI-WFox` — đề xuất) / Đạt (`Thanhdat3010`)
 - **Repo/nhánh:** `feat/duy-task-305-approval-lock`
 - **Hạn đợt:** Tối thứ 3 03/11/2026; **ETA task:** Thứ 2 02/11/2026 (Duy xác nhận)
-- **Phiên bản:** v2.0 (Component Separation & Detailed Implementation Blueprint)
+- **Phiên bản:** v2.1 (Đồng bộ Kiến trúc A từ TASK-301, Tích hợp RPC-First Contract cho Content Lock và Crash Safety F01)
 
 ---
 
@@ -223,3 +223,18 @@ Bộ test tự động `backend/tests/api/test_finalize.py` bắt buộc phải 
 - **Output bàn giao cho thành viên tiếp theo:**
   - Session trạng thái `approved` đã khóa cứng nội dung cho **Tâm (TASK-306: Typst PDF)** và **Đạt (TASK-307: XeLaTeX ZIP Bundler)**.
   - Bảng ma trận đáp án đối soát phục vụ xuất file `answers_matrix.pdf`.
+
+---
+
+## 8. Kết Quả Nghiệm Thu Thực Tế & Tiến Độ Xử Lý Findings (F01, F02, F03)
+
+- **F02 (Cartesian Version x Source Question Completeness):** Đã được Reviewer Đạt **VERIFIED**. Bổ sung hàm phát hiện các cặp thiếu và ném `400 ERR_NOT_ALL_QUESTIONS_APPROVED`.
+- **F03 (Answer Keys Matrix Coverage & Consistency):** Đã được Reviewer Đạt **VERIFIED**. Đảm bảo phát hiện thiếu hụt ma trận và ném `409 ERR_INCONSISTENT_ANSWER_KEYS`.
+- **F01 (Cross-worker Content Lock & Crash Safety):**
+  - **Bản chất kỹ thuật:** Chấm dứt các bản vá rời rạc ở tầng Python (thêm SELECT lặp lại hay rollback thủ công).
+  - **Giải pháp tận gốc:** Chuẩn hóa sang cơ chế **Database Stored Procedure RPC** (`finalize_approve_session` và `review_reserve_regeneration`) có khóa dòng `SELECT ... FOR UPDATE` trên session.
+  - **Ranh giới:** Tầng ứng dụng Python của Duy (`FinalizeRepository`, `ReviewRepository`) đã được wired-ready để gọi RPC với fallback query an toàn; Stored Procedure CSDL nằm trong phạm vi bàn giao của Hùng (TASK-302 - PR #36 Phase B).
+  - **Kiểm chứng:** Bộ mock test `MockSupabaseClient` được nâng cấp hỗ trợ RPC thread-safe và vượt qua bài test Fault Injection rớt mạng `test_f01_rpc_transaction_prevents_crash_failure_window`.
+- **Kết quả kiểm thử tự động:**
+  - `pytest backend/tests/api/test_finalize.py backend/tests/services/test_review_lifecycle.py backend/tests/api/test_review_api.py -v`: **69/69 tests passed 100%**.
+  - `ruff check`: All checks passed!

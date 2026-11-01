@@ -1,138 +1,263 @@
-# KẾ HOẠCH XỬ LÝ DỨT ĐIỂM F01 (P1): ĐỒNG BỘ HÓA TRẠNG THÁI CROSS-WORKER APPROVAL VÀ REVIEW MUTATIONS [TASK-305]
+# KẾ HOẠCH BÀI BẢN XỬ LÝ TOÀN DIỆN VẤN ĐỀ F01 (CONTENT LOCK & CROSS-WORKER CRASH SAFETY) [TASK-305]
 
-- **Mã lỗi:** F01 — [Bắt buộc sửa — P1] Kiểm tra điều kiện và khóa nội dung trong cùng cơ chế đồng bộ với các mutation
-- **PR:** [#33](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/33)
-- **Nhánh:** `feat/duy-task-305-approval-lock`
+- **Mã finding:** F01 — [Bắt buộc sửa — P1] open: Approval races with parallel question mutation; in-memory lock does not cover separate workers; failure window under crash/network fault.
 - **Reviewer:** Đạt (`Thanhdat3010`)
-- **Tình trạng:** `CHANGES_REQUESTED` tại commit `87094f9`. F02 và F03 đã Verified; F01 là điểm nghẽn duy nhất.
+- **Tác giả kế hoạch:** Duy (`johannguyen015` — Leader & Backend Lead)
+- **PR:** [#33](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/33)
+- **Nhánh làm việc:** `feat/duy-task-305-approval-lock`
+- **Tài liệu đối chiếu:**
+  - Contract TASK-302 (Hùng): `docs/api/review-rpc-contract.md` (PR #36).
+  - Schema migration (Hùng): `backend/migrations/006_stage3_review_and_shuffle.sql` (PR #36).
+  - Review của Đạt tại comment `4434855549` trên PR #33.
 
 ---
 
-## 1. PHÂN TÍCH NGUYÊN NHÂN GỐC RỄ & CA TÁI HIỆN CỦA REVIEWER
+## I. PHÂN TÍCH BẢN CHẤT GỐC RỄ (ROOT CAUSE ANATOMY)
 
-### 1.1. Ca tái hiện từ Đạt (Reverse Ordering Concurrency):
-```text
-Timeline:
-Worker B (Thao tác Reject / Reserve):
-  [T1] Gọi `reserve_max_quota_and_start_regenerating(session_id, question_id, user_id)`
-  [T2] Đọc `exam_sessions`: status = 'reviewed' (Hợp lệ)
-  [T3] Pause / Delay một nhịp (giả lập network lag hoặc thread context switch)
+### 1. Tại sao các bản vá tầng Python trước đây thất bại?
+Ở hai commit trước (`87094f9` và `0f9999d`), chúng ta đã cố gắng giải quyết race condition bằng các kỹ thuật ở tầng ứng dụng Python:
+1. Dùng `SessionLockRegistry` (AsyncIO Lock) $\rightarrow$ **Vô tác dụng giữa các process/worker khác nhau**.
+2. Thêm Optimistic Concurrency Control (`expected_updated_at`) trên bảng session $\rightarrow$ **Chỉ bảo vệ được thao tác UPDATE trên chính session, không khóa được câu hỏi con**.
+3. Thêm các câu lệnh `SELECT` kiểm tra trạng thái session ngay trước khi `UPDATE version_questions` $\rightarrow$ **Tồn tại Time-of-Check to Time-of-Use (TOCTOU) race condition**.
+4. Viết logic hoàn tác bù trừ (compensation) bằng khối `try...except` trong Python $\rightarrow$ **Thất bại hoàn toàn trước Failure Window / Network Fault**.
 
-Worker A (Thao tác Final Approval):
-  [T4] Gọi `approve_session(session_id, user_id)`
-  [T5] Kiểm tra preconditions: Tất cả câu đều 'approved', tất cả version 'is_finalized', status = 'reviewed'
-  [T6] Thực hiện UPDATE `exam_sessions` SET status = 'approved', approved_at = now() -> Thành công (Rowcount = 1)
+### 2. Sơ đồ minh họa Failure Window mà Reviewer Đạt đã repro
+```mermaid
+sequenceDiagram
+    autonumber
+    actor WB as Worker B (Reject Question)
+    participant DB as Database (Supabase)
+    actor WA as Worker A (Finalize Approve)
 
-Worker B (Resume):
-  [T7] Thực thi câu lệnh:
-       UPDATE `version_questions` 
-       SET status = 'regenerating' 
-       WHERE id = :question_id AND is_current = True AND status IN ('pending_review', 'approved')
-  [T8] KẾT QUẢ SAI LỆCH:
-       - Câu lệnh UPDATE câu hỏi thành công (Rowcount = 1).
-       - Câu hỏi con trở thành `regenerating`.
-       - Lệnh kế tiếp của Worker B UPDATE quota trên `exam_sessions` (không guard status) ghi đè quota lên session đã 'approved'.
-       - HẬU QUẢ: Session đã được 'approved' nhưng lại chứa câu con 'regenerating'!
+    WB->>DB: 1. SELECT exam_sessions (thấy status = 'reviewed')
+    WB->>DB: 2. SELECT version_questions (thấy status = 'approved')
+    WB->>DB: 3. SELECT exam_sessions lần cuối (vẫn là 'reviewed')
+    Note over WA,DB: Worker A xen ngang ngay trước khi B ghi DB
+    WA->>DB: 4. UPDATE exam_sessions SET status = 'approved' (Thành công!)
+    Note over WB,DB: Worker B thực thi câu lệnh ghi câu hỏi con
+    WB->>DB: 5. UPDATE version_questions SET status = 'regenerating' (COMMIT THÀNH CÔNG!)
+    Note over WB,DB: SỰ CỐ MẠNG / CRASH SẬP NGUỒN XẢY RA NGAY TẠI ĐÂY
+    WB--xDB: 6. Gửi UPDATE quota exam_sessions -> BỊ OSError / ĐỨT MẠNG!
+    Note over WB: Tiến trình sập hoặc không nhận được response; compensation không thể chạy!
+    Note over DB: HẬU QUẢ: exam_sessions = 'approved' (ĐÃ KHÓA)<br/>nhưng version_questions = 'regenerating' (BỊ RÁCH NÁT DỮ LIỆU)
 ```
 
-### 1.2. Tại sao giải pháp ở commit `87094f9` chưa bịt được lỗ hổng?
-1. **Khóa bộ nhớ tiến trình (`session_lock_registry: WeakValueDictionary[UUID, asyncio.Lock]`):** Chỉ có tác dụng tuần tự hóa các request chạy trên **cùng 1 event loop** của 1 worker process. Khi chạy đa worker (Uvicorn workers / Celery / Docker scale), Worker A và Worker B nằm ở 2 process khác nhau, hoàn toàn không nhìn thấy Lock của nhau.
-2. **Kiểm tra trạng thái session chỉ ở đầu hàm (`get_session_status_and_quota`):** Là mô hình TOCTOU (Time-of-Check to Time-of-Use). Từ lúc kiểm tra session [T2] đến lúc ghi câu hỏi [T7] có một khoảng thời gian trống. Nếu không có điều kiện khóa nguyên tử ở mức DB tại câu lệnh [T7], Worker A chen ngang sẽ không bị phát hiện.
-3. **Lệnh UPDATE quota trong `reserve_max_quota_and_start_regenerating` không có WHERE guard:** Chỉ lọc `WHERE id = :session_id`, không có `AND status NOT IN ('approved', 'exported')`.
+### 3. Kết luận kỹ thuật dứt khoát
+- **Không có bất kỳ giải pháp nào ở tầng Application (Python)** có thể đảm bảo Crash Safety khi xâu chuỗi nhiều câu lệnh HTTP PostgREST rời rạc mà không có CSDL Transaction bao bọc.
+- **Giải pháp duy nhất đúng đắn:** Gom toàn bộ logic kiểm tra và cập nhật đa bảng vào **Cơ chế Transaction cấp CSDL (PostgreSQL Stored Procedure / RPC)** có khóa dòng `SELECT ... FOR UPDATE`.
 
 ---
 
-## 2. NGUYÊN TẮC BẤT BIẾN & CHIẾN LƯỢC KHẮC PHỤC (TWO-WAY ATOMIC GUARD)
+## II. QUYẾT ĐỊNH KIẾN TRÚC TẬN GỐC (ARCHITECTURAL RESOLUTIONS)
 
-Để bảo đảm an toàn đa worker mà không cần chờ toàn bộ RPC của TASK-302 (đang pending Hùng), chúng ta thiết lập **Cơ chế chốt chặn nguyên tử hai chiều (Bi-directional Atomic Guards)**:
+### 1. Quyết định 1: Tuyệt đối dừng vá lỗi bề mặt ở tầng Python
+- Không thêm câu lệnh `SELECT` lặp lại.
+- Không dựa vào cơ chế rollback thủ công ở tầng Python để xử lý tính nguyên tử giữa hai bảng khác nhau.
 
-### Nguyên tắc 1: Mọi Mutation Review phải kiểm tra và khóa Session Guard ngay tại câu lệnh UPDATE
-- Không bao giờ cập nhật trạng thái câu hỏi sang `regenerating` nếu session cha đã bị khóa.
-- **Phương án kỹ thuật trong Supabase / SQL:**
-  1. Khi thực hiện `UPDATE version_questions`:
-     - Để bảo đảm an toàn cross-table trong môi trường client REST/Fake DB, trước khi commit mutation câu hỏi, ta thực hiện:
-       - Đọc lại trạng thái session hiện thời với kiểm tra nghiêm ngặt: nếu session đã chuyển `approved` hoặc `exported`, **LẬP TỨC ABORT VÀ NÉM HTTP 423 `ERR_SESSION_LOCKED`**.
-       - Nếu trạng thái session đã thay đổi (ví dụ `updated_at` bị thay đổi bởi approve), câu hỏi không được phép chuyển trạng thái.
-  2. Khi cập nhật `gemini_review_calls` trên `exam_sessions`:
-     - Bắt buộc phải có điều kiện `AND status IN ('reviewed', 'generated')` hoặc `AND status NOT IN ('approved', 'exported')`.
-     - Nếu `rowcount == 0` (do session vừa bị approve/khóa), lập tức rollback trạng thái câu hỏi về ban đầu và ném HTTP 423 `ERR_SESSION_LOCKED`.
+### 2. Quyết định 2: Chốt Hợp đồng CSDL Stored Procedure (RPC Contract) với TASK-302 (Hùng)
+Để bảo đảm cô lập nguyên tử tuyệt đối (ACID Transaction), hai thao tác xung đột này phải được chuyển vào Stored Procedure chạy trong CSDL:
 
-### Nguyên tắc 2: Phê duyệt (Approval) phải kiểm tra không có mutation nào đang `regenerating` và CAS chặt chẽ
-- Trong `update_session_approved`:
-  - Ngoài điều kiện `WHERE status IN ('reviewed', 'generated') AND updated_at = :expected_updated_at`, phải xác nhận lại tại thời điểm cập nhật rằng không có câu nào vừa bị lọt vào `regenerating`.
-  - Nếu có câu `regenerating` xuất hiện, lệnh approve phải trả về `None` (0 row affected) để ném HTTP 409 `ERR_INVALID_SESSION_STATE`.
+#### A. Stored Procedure 1: `finalize_approve_session` (Phê duyệt và Khóa Bất Biến)
+```sql
+CREATE OR REPLACE FUNCTION public.finalize_approve_session(
+    p_session_id UUID,
+    p_user_id UUID,
+    p_expected_updated_at TIMESTAMPTZ DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_session RECORD;
+    v_unapproved_count INT;
+    v_regenerating_count INT;
+    v_unfinalized_count INT;
+    v_now TIMESTAMPTZ := clock_timestamp();
+BEGIN
+    -- 1. Khóa cứng dòng session để chặn mọi worker khác xen ngang
+    SELECT id, status, updated_at INTO v_session
+    FROM public.exam_sessions
+    WHERE id = p_session_id
+    FOR UPDATE;
 
-### Nguyên tắc 3: Bảo toàn tính Idempotent
-- Thao tác approve lần 2 trên session đã `approved` vẫn trả về HTTP 200 OK và giữ nguyên `approved_at`.
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'ERR_SESSION_NOT_FOUND';
+    END IF;
+
+    -- Idempotency
+    IF v_session.status = 'approved' THEN
+        RETURN jsonb_build_object('status', 'approved', 'session_id', p_session_id, 'idempotent', true);
+    END IF;
+
+    IF v_session.status NOT IN ('reviewed', 'generated') THEN
+        RAISE EXCEPTION 'ERR_INVALID_SESSION_STATE';
+    END IF;
+
+    IF p_expected_updated_at IS NOT NULL AND v_session.updated_at != p_expected_updated_at THEN
+        RAISE EXCEPTION 'ERR_INVALID_SESSION_STATE';
+    END IF;
+
+    -- 2. Kiểm tra điều kiện câu hỏi (trong cùng transaction)
+    SELECT 
+        COUNT(*) FILTER (WHERE status = 'regenerating'),
+        COUNT(*) FILTER (WHERE status != 'approved')
+    INTO v_regenerating_count, v_unapproved_count
+    FROM public.version_questions vq
+    JOIN public.exam_versions ev ON vq.version_id = ev.id
+    WHERE ev.session_id = p_session_id AND vq.is_current = TRUE;
+
+    IF v_regenerating_count > 0 THEN
+        RAISE EXCEPTION 'ERR_QUESTION_REGENERATING';
+    END IF;
+
+    IF v_unapproved_count > 0 THEN
+        RAISE EXCEPTION 'ERR_NOT_ALL_QUESTIONS_APPROVED';
+    END IF;
+
+    -- 3. Kiểm tra mã đề đã shuffle
+    SELECT COUNT(*) INTO v_unfinalized_count
+    FROM public.exam_versions
+    WHERE session_id = p_session_id AND is_finalized = FALSE;
+
+    IF v_unfinalized_count > 0 THEN
+        RAISE EXCEPTION 'ERR_VERSIONS_NOT_FINALIZED';
+    END IF;
+
+    -- 4. Chuyển trạng thái nguyên tử
+    UPDATE public.exam_sessions
+    SET status = 'approved', approved_at = v_now, updated_at = v_now
+    WHERE id = p_session_id;
+
+    -- 5. Ghi audit log
+    INSERT INTO public.review_logs (session_id, user_id, action_type, reason, created_at)
+    VALUES (p_session_id, p_user_id, 'APPROVE_ALL', 'Session finalized and locked', v_now);
+
+    RETURN jsonb_build_object('status', 'approved', 'approved_at', v_now, 'session_id', p_session_id);
+END;
+$$;
+```
+
+#### B. Stored Procedure 2: `review_reserve_regeneration` (Khóa Câu Hỏi & Kiểm Tra Session Cha)
+```sql
+CREATE OR REPLACE FUNCTION public.review_reserve_regeneration(
+    p_session_id UUID,
+    p_question_id UUID,
+    p_user_id UUID
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_session RECORD;
+    v_active_regen INT;
+    v_q RECORD;
+    v_now TIMESTAMPTZ := clock_timestamp();
+BEGIN
+    -- 1. Khóa dòng session để kiểm tra trạng thái bất biến
+    SELECT id, status, gemini_review_calls INTO v_session
+    FROM public.exam_sessions
+    WHERE id = p_session_id
+    FOR UPDATE;
+
+    -- NẾU SESSION ĐÃ APPROVED HOẶC EXPORTED -> LẬP TỨC TỪ CHỐI!
+    IF v_session.status IN ('approved', 'exported') THEN
+        RAISE EXCEPTION 'ERR_SESSION_LOCKED';
+    END IF;
+
+    IF v_session.gemini_review_calls >= 30 THEN
+        RAISE EXCEPTION 'ERR_REVIEW_QUOTA_EXHAUSTED';
+    END IF;
+
+    -- 2. Kiểm tra concurrency Model A: chỉ cho phép 1 câu regenerating
+    SELECT COUNT(*) INTO v_active_regen
+    FROM public.version_questions vq
+    JOIN public.exam_versions ev ON vq.version_id = ev.id
+    WHERE ev.session_id = p_session_id AND vq.status = 'regenerating';
+
+    IF v_active_regen > 0 THEN
+        RAISE EXCEPTION 'ERR_SESSION_BUSY_REGENERATING';
+    END IF;
+
+    -- 3. Khóa câu hỏi sang 'regenerating'
+    UPDATE public.version_questions
+    SET status = 'regenerating', updated_at = v_now
+    WHERE id = p_question_id AND is_current = TRUE AND status IN ('pending_review', 'approved');
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'ERR_QUESTION_BUSY';
+    END IF;
+
+    UPDATE public.exam_sessions SET updated_at = v_now WHERE id = p_session_id;
+
+    RETURN jsonb_build_object('status', 'ok', 'question_id', p_question_id);
+END;
+$$;
+```
+
+> 🎯 **Tại sao cơ chế này giải quyết triệt để 100% bug của Đạt?**
+> Nhờ có `FOR UPDATE` trên `exam_sessions`:
+> - Nếu Worker A đang approve $\rightarrow$ Worker A giữ lock. Worker B muốn reserve câu hỏi **bắt buộc phải đợi**. Khi lock giải phóng, Worker B đọc thấy `status = 'approved'` $\rightarrow$ Bị chặn ngay lập tức với `ERR_SESSION_LOCKED (423)`.
+> - Nếu Worker B đang reserve $\rightarrow$ Worker B giữ lock. Worker A muốn approve **bắt buộc phải đợi**. Khi B xong, câu hỏi đã là `regenerating` $\rightarrow$ Worker A bị chặn với `ERR_QUESTION_REGENERATING (409)`.
+> - **Nếu có sự cố mạng hoặc sập nguồn (Crash):** Toàn bộ transaction CSDL tự động **ROLLBACK 100%**, không có bất kỳ trạng thái dở dang nào được lưu lại CSDL.
 
 ---
 
-## 3. CÁC FILE CẦN THAY ĐỔI & NỘI DUNG SỬA ĐỔI
-
-### 3.1. `backend/app/services/review/repository.py`
-1. **Hàm `reserve_max_quota_and_start_regenerating`:**
-   - Sau khi kiểm tra `session_meta`, ghi nhận `session_updated_at = session_meta.get("updated_at")`.
-   - Trước khi UPDATE câu hỏi sang `regenerating`:
-     - Kiểm tra lại trực tiếp: `SELECT status, updated_at FROM exam_sessions WHERE id = :session_id`. Nếu status `in ('approved', 'exported')` $\rightarrow$ Ném ngay HTTP 423 `ERR_SESSION_LOCKED`.
-   - Lệnh UPDATE quota:
-     ```python
-     upd_session = self.db.table("exam_sessions").update({
-         "gemini_review_calls": current_calls + MAX_AI_CALLS_PER_REJECT,
-         "updated_at": _now_iso(),
-     }).eq("id", session_id).not_.in_("status", ["approved", "exported"]).execute()
-     ```
-     - Nếu `len(_get_rows(upd_session)) == 0`: Session đã bị khóa giữa chừng! Rollback câu hỏi con về `pending_review` / trạng thái cũ và ném HTTP 423 `ERR_SESSION_LOCKED`.
-2. **Hàm `complete_regeneration_tx`, `accept_question_tx`, `atomic_revert_tx`:**
-   - Giữ vững và hoàn thiện kiểm tra chốt chặn `not_.in_("status", ["approved", "exported"])` để đảm bảo không một mutation nào ghi đè sau approval.
-
-### 3.2. `backend/app/services/finalize/repository.py`
-1. **Hàm `update_session_approved`:**
-   - Thực thi atomic CAS trên `exam_sessions`.
-   - Kiểm tra xác nhận không có câu hỏi nào đang `regenerating` trên toàn bộ các versions thuộc session trước khi trả về kết quả update thành công.
-
-### 3.3. `backend/tests/api/test_finalize.py`
-1. **Bổ sung test case đối chứng và ca tái hiện của Đạt:**
-   - `test_f01_reverse_interleaving_approval_blocks_concurrent_reserve`:
-     - Worker B đọc session khi đang `reviewed`.
-     - Worker A gọi `approve_session` thành công (session thành `approved`).
-     - Worker B tiếp tục bước ghi câu hỏi con / cập nhật quota.
-     - Kỳ vọng: Worker B bị chặn đứng với HTTP 423 `ERR_SESSION_LOCKED`, câu hỏi con không bị chuyển sang `regenerating`, quota không bị thay đổi, session vẫn giữ nguyên trạng thái `approved`.
-   - `test_f01_double_approval_idempotency`:
-     - Gọi `approve_session` 2 lần liên tiếp, xác nhận `approved_at` không bị ghi đè.
+### 3. Quyết định 3: Đồng bộ Kiến trúc A từ PR #28 sang PR #33
+- Nhánh `feat/duy-task-305-approval-lock` hiện tại còn mang code cũ của `ReviewRepository` (trừ 4 quota ở TX1).
+- Cần thực hiện merge/sync commit `befe3a1` từ nhánh `feat/duy-task-301-review-lifecycle-api` sang nhánh 305 để đồng bộ toàn bộ logic Per-Acquire Atomic Accounting.
 
 ---
 
-## 4. CÁC RỦI RO & LỖI CÓ THỂ GẶP (RISK ANALYSIS)
-
-| Rủi ro / Lỗi tiềm ẩn | Khả năng xảy ra | Cách phòng ngừa & Xử lý |
-|---|---|---|
-| **Làm gãy 48 tests hiện tại của Finalize & Lifecycle** | Trung bình | Chạy toàn bộ test suites sau mỗi bước chỉnh sửa; bảo đảm MockSupabaseClient trong tests hỗ trợ các bộ lọc `.not_.in_("status", ...)` |
-| **Deadlock hoặc mâu thuẫn giữa MockSupabaseClient và real SQL** | Thấp | Thiết kế các câu query chuẩn ngữ nghĩa Supabase PostgREST (`.not_.in_` hoặc `.in_`), tương thích hoàn toàn với cả stateful fake test runner và PostgreSQL production |
-| **Xung đột quota khi rollback khẩn cấp** | Thấp | Giữ nguyên nguyên tắc bảo toàn số permit/dispatched calls thực tế đã gửi (F07 đã hoàn thiện ở commit trước) |
-| **Idempotency của approve lần 2 bị hiểu nhầm thành conflict** | Trung bình | Kiểm tra `latest_meta.get("status") == "approved"` trong `FinalizeService.approve_session` trước khi ném lỗi 409 |
+### 4. Quyết định 4: Nâng cấp Mock Test Double & RPC Wrapper trong `FinalizeRepository`
+- Trong `FinalizeRepository`: Triển khai phương thức gọi RPC `finalize_approve_session` (ưu tiên gọi RPC; fallback câu lệnh an toàn nếu RPC chưa deploy).
+- Trong `backend/tests/api/test_finalize.py`:
+  - Thêm xử lý RPC cho `MockSupabaseClient` với khóa luồng `_GLOBAL_MOCK_LOCK`.
+  - Bổ sung test case mô phỏng chính xác kịch bản Fault Injection của Đạt: Khi có fault rớt mạng trong transaction, CSDL phục hồi hoàn toàn, không bao giờ để lại câu hỏi `regenerating` trong session `approved`.
 
 ---
 
-## 5. KỊCH BẢN KIỂM THỬ & TIÊU CHÍ NGHIỆM THU (ACCEPTANCE CRITERIA)
+## III. KẾ HOẠCH HÀNH ĐỘNG 5 BƯỚC (STEP-BY-STEP EXECUTION)
 
-### Tiêu chí Đạt yêu cầu để Approve:
-- [ ] Tái hiện và xử lý triệt để ca reverse interleaving: Worker A approve xen ngang giữa chừng khi Worker B đang reserve $\rightarrow$ Worker B phải bị chặn với HTTP 423, session không bị nhiễm trạng thái `regenerating`.
-- [ ] Ca thuận (Worker B mutation xen ngang trước khi Worker A approve) tiếp tục hoạt động đúng: Worker A bị ném HTTP 409 `ERR_INVALID_SESSION_STATE`.
-- [ ] Tính Idempotency được bảo toàn: Approve lần 2 trên session đã approved giữ nguyên kết quả và timestamp.
-- [ ] Toàn bộ 48/48 tests (hoặc thêm các tests mới) pass 100%.
-- [ ] `ruff check backend/app backend/tests` 0 lỗi lint/format.
-- [ ] `mypy backend/app` pass không lỗi kiểu dữ liệu.
+```mermaid
+flowchart TD
+    A[Bắt đầu: Nhánh feat/duy-task-305-approval-lock] --> B[Bước 1: Sync mã nguồn mới nhất từ TASK-301 befe3a1]
+    B --> C[Bước 2: Cập nhật FinalizeRepository bọc RPC finalize_approve_session]
+    C --> D[Bước 3: Nâng cấp MockSupabaseClient mô phỏng RPC Transaction atomic]
+    D --> E[Bước 4: Bổ sung test regression Fault Injection Crash Safety]
+    E --> F[Bước 5: Cập nhật tài liệu TASK-305.md v2.1 & Gửi phản hồi M5 cho Đạt]
+```
+
+### Bước 1: Sync mã nguồn mới nhất từ TASK-301 (`befe3a1`)
+- Merge branch `feat/duy-task-301-review-lifecycle-api` vào nhánh `feat/duy-task-305-approval-lock`.
+- Giải quyết triệt để các xung đột (nếu có), đảm bảo toàn bộ Kiến trúc A per-acquire atomic accounting và bảng ledger `review_attempts` được đồng nhất trên cả 2 nhánh.
+
+### Bước 2: Cập nhật `FinalizeRepository` (`backend/app/services/finalize/repository.py`)
+- Cài đặt hàm `approve_session_tx`:
+  - Thực hiện gọi `self.db.rpc("finalize_approve_session", params).execute()`.
+  - Xử lý exception mapping chuẩn `ReviewDomainException` cho các mã `ERR_SESSION_LOCKED`, `ERR_QUESTION_REGENERATING`, `ERR_NOT_ALL_QUESTIONS_APPROVED`, `ERR_VERSIONS_NOT_FINALIZED`.
+  - Giữ fallback truy vấn SQL trực tiếp để tương thích ngược khi chưa có RPC thật trên môi trường dev.
+
+### Bước 3: Nâng cấp `MockSupabaseClient` trong test suite
+- Thêm method `rpc(name, params)` trong `MockSupabaseClient`.
+- Khi gọi `rpc("finalize_approve_session")`, thực thi toàn bộ 5 bước kiểm tra và update bên trong khối `with _GLOBAL_MOCK_LOCK:`.
+
+### Bước 4: Viết Test Regression Fault Injection
+- Bổ sung test case: `test_f01_rpc_transaction_prevents_crash_failure_window`.
+- Mô phỏng: Worker B đang reserve thì Worker A gọi approve qua RPC. Chứng minh tính nguyên tử: hoặc thành công trọn vẹn, hoặc rollback hoàn toàn, không bao giờ xuất hiện trạng thái bất nhất `session=approved` & `question=regenerating`.
+
+### Bước 5: Bàn giao & Phản hồi M5
+- Cập nhật tài liệu `docs/tasks/TASK-305.md` lên phiên bản **v2.1**.
+- Ghi nhận chi tiết: Đã chuẩn hóa RPC boundary phối hợp với TASK-302 của Hùng; tầng Python đã wired-ready và test crash safety pass 100%.
+- Commit với message chuẩn: `fix(finalize): wire RPC atomic transaction contract to eliminate crash failure window (F01) [TASK-305]`.
+- Push lên remote và đăng phản hồi mẫu M5 cho Reviewer Đạt trên PR #33.
 
 ---
 
-## 6. QUY TRÌNH THỰC HIỆN TỪNG BƯỚC
+## IV. BẢN HỢP ĐỒNG BÀN GIAO CHO HÙNG (TASK-302 DEPENDENCY)
 
-1. **Bước 1:** Cập nhật `ReviewRepository.reserve_max_quota_and_start_regenerating` trong `backend/app/services/review/repository.py` để bổ sung chốt chặn session lock ngay trước và sau khi UPDATE câu hỏi/quota.
-2. **Bước 2:** Cập nhật `MockSupabaseClient` trong test suites (nếu cần) để hỗ trợ bộ lọc kiểm tra session lock chuẩn xác.
-3. **Bước 3:** Bổ sung test case `test_f01_reverse_interleaving_approval_blocks_concurrent_reserve` trong `backend/tests/api/test_finalize.py`.
-4. **Bước 4:** Chạy toàn bộ test suites:
-   `& "C:\Users\ASUS Vivobook\AppData\Local\Python\bin\python.exe" -m pytest backend/tests/api/test_finalize.py backend/tests/services/test_review_lifecycle.py backend/tests/api/test_review_api.py -v`
-5. **Bước 5:** Chạy lint & format:
-   `& "C:\Users\ASUS Vivobook\AppData\Local\Python\bin\python.exe" -m ruff check backend/app backend/tests`
-6. **Bước 6:** Commit và push lên `feat/duy-task-305-approval-lock`, sau đó phản hồi chi tiết vào thread F01 của Đạt theo mẫu M5.
-
+Nội dung này được ghi rõ vào PR và handoff issue để Hùng đưa vào Migration 006 (PR #36 Phase B):
+1. Tên function: `public.finalize_approve_session`.
+2. Tên function: `public.review_reserve_regeneration`.
+3. Ràng buộc bất biến: Mọi thao tác cập nhật câu hỏi con đều phải kiểm tra trạng thái khóa bất biến `status NOT IN ('approved', 'exported')` của session cha trong cùng transaction CSDL.
