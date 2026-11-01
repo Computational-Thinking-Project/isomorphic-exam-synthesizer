@@ -1,11 +1,13 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
-from app.api.routes import health, sessions, users
+from app.api.routes import health, review, sessions, users
 from app.core.config import settings
 from app.core.cors import register_cors
 from app.core.rate_limit import register_rate_limiter
+from app.models.schemas import ReviewDomainException
 from app.services.ai.runtime import AIRuntime
 
 
@@ -16,6 +18,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await app.state.ai_services.aclose()
+
 
 app = FastAPI(
     title="Isomorphic Exam Synthesizer API",
@@ -29,7 +32,19 @@ app = FastAPI(
 register_rate_limiter(app)
 register_cors(app)
 
+
+@app.exception_handler(ReviewDomainException)
+async def review_domain_exception_handler(
+    request: Request, exc: ReviewDomainException
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error_code": exc.error_code, "detail": exc.detail},
+    )
+
+
 # Include Routers
 app.include_router(health.router)
 app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(sessions.router, prefix="/api/sessions", tags=["Sessions"])
+app.include_router(review.router, prefix="/api/sessions", tags=["Review"])
