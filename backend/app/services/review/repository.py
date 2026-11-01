@@ -207,6 +207,24 @@ class ReviewRepository:
         if q_row.get("status") == "regenerating":
             return ReserveResult.QUESTION_BUSY
 
+        # Re-check session status and CAS guard against concurrent final approval (F01)
+        latest_s_res = (
+            self.db.table("exam_sessions")
+            .select("id, status, gemini_review_calls")
+            .eq("id", session_id)
+            .limit(1)
+            .execute()
+        )
+        latest_s_rows = _get_rows(latest_s_res)
+        if not latest_s_rows or str(latest_s_rows[0].get("status", "")).lower() in ("approved", "exported"):
+            raise ReviewDomainException(
+                423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
+            )
+
+        latest_calls = int(latest_s_rows[0].get("gemini_review_calls", 0) or 0)
+        if latest_calls + MAX_AI_CALLS_PER_REJECT > MAX_SESSION_REVIEW_QUOTA:
+            return ReserveResult.QUOTA_EXHAUSTED
+
         # Update question status to regenerating
         upd_q = (
             self.db.table("version_questions")
@@ -220,13 +238,28 @@ class ReviewRepository:
         if len(upd_rows) != 1:
             return ReserveResult.QUESTION_BUSY
 
-        # Update session quota (+4)
-        self.db.table("exam_sessions").update(
-            {
-                "gemini_review_calls": current_calls + MAX_AI_CALLS_PER_REJECT,
-                "updated_at": _now_iso(),
-            }
-        ).eq("id", session_id).execute()
+        # Update session quota with status check to ensure session was not approved concurrently
+        upd_s = (
+            self.db.table("exam_sessions")
+            .update(
+                {
+                    "gemini_review_calls": latest_calls + MAX_AI_CALLS_PER_REJECT,
+                    "updated_at": _now_iso(),
+                }
+            )
+            .eq("id", session_id)
+            .in_("status", ["reviewed", "generated"])
+            .execute()
+        )
+        upd_s_rows = _get_rows(upd_s)
+        if len(upd_s_rows) != 1:
+            # Session was locked/approved concurrently! Roll back the question status immediately (F01)
+            self.db.table("version_questions").update(
+                {"status": q_row.get("status", "pending_review"), "updated_at": _now_iso()}
+            ).eq("id", question_id).execute()
+            raise ReviewDomainException(
+                423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
+            )
 
         return ReserveResult.OK
 

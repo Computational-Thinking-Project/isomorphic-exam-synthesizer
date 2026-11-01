@@ -494,6 +494,78 @@ async def test_f01_post_approval_mutations_blocked():
 
 
 @pytest.mark.asyncio
+async def test_f01_reverse_interleaving_approval_blocks_concurrent_reserve():
+    """F01: When approval happens after worker reads session but before writing child question, reserve is aborted."""
+    db_state = {
+        "exam_sessions": [
+            {
+                "id": MOCK_SESSION_ID,
+                "status": "reviewed",
+                "gemini_review_calls": 2,
+                "user_id": MOCK_USER_ID,
+                "updated_at": "2026-10-30T00:00:00+00:00",
+            }
+        ],
+        "exam_versions": [
+            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+        ],
+        "source_questions": [
+            {"id": "s-1", "session_id": MOCK_SESSION_ID}
+        ],
+        "version_questions": [
+            {
+                "id": MOCK_QUESTION_ID,
+                "version_id": "v-101",
+                "source_question_id": "s-1",
+                "status": "approved",
+                "is_current": True,
+            }
+        ],
+    }
+    client = MockSupabaseClient(db_state)
+    review_repo = ReviewRepository(client)
+
+    # Simulate Worker B starting reserve_max_quota_and_start_regenerating:
+    # Hook into db.table("version_questions").select to simulate Worker A approving the session
+    # after Worker B's initial read of session_meta but right when Worker B checks question state.
+    original_table = client.table
+
+    def hooked_table(name: str):
+        builder = original_table(name)
+        if name == "version_questions":
+            orig_select = builder.select
+
+            def hooked_select(*args, **kwargs):
+                # Worker A approves session concurrently!
+                db_state["exam_sessions"][0]["status"] = "approved"
+                db_state["exam_sessions"][0]["approved_at"] = "2026-10-30T00:05:00+00:00"
+                db_state["exam_sessions"][0]["updated_at"] = "2026-10-30T00:05:00+00:00"
+                return orig_select(*args, **kwargs)
+
+            builder.select = hooked_select
+        return builder
+
+    client.table = hooked_table
+
+    # Worker B calls reserve: must be blocked with HTTP 423 ERR_SESSION_LOCKED
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await review_repo.reserve_max_quota_and_start_regenerating(
+            MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID
+        )
+
+    assert exc_info.value.status_code == 423
+    assert exc_info.value.error_code == "ERR_SESSION_LOCKED"
+
+    # Invariants verification:
+    # 1. Question MUST remain 'approved' (never converted to 'regenerating')
+    assert db_state["version_questions"][0]["status"] == "approved"
+    # 2. Session quota must remain untouched (still 2)
+    assert db_state["exam_sessions"][0]["gemini_review_calls"] == 2
+    # 3. Session status remains 'approved'
+    assert db_state["exam_sessions"][0]["status"] == "approved"
+
+
+@pytest.mark.asyncio
 async def test_f02_missing_current_question_for_a_version_aborts_approval():
     """F02: Reject approval when a version is missing an active approved variant for a source question."""
     db_state = {
