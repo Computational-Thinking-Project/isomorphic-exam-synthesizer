@@ -275,8 +275,12 @@ class FinalizeRepository:
         if not version_rows:
             return [], []
 
-        # Sort version codes naturally
-        version_rows.sort(key=lambda x: str(x.get("version_code", "")))
+        # Natural sort version codes (F06: e.g. '1', '2', '10' instead of '1', '10', '2')
+        def _natural_key(row: Dict[str, Any]) -> tuple[int, Any]:
+            code = str(row.get("version_code", ""))
+            return (0, int(code)) if code.isdigit() else (1, code)
+
+        version_rows.sort(key=_natural_key)
         version_codes = [str(v["version_code"]) for v in version_rows]
         version_id_to_code = {str(v["id"]): str(v["version_code"]) for v in version_rows}
         version_ids = list(version_id_to_code.keys())

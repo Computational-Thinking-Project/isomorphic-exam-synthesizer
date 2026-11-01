@@ -331,7 +331,8 @@ class ReviewService:
 
         assert created_q is not None
 
-        # Phase 4: Invalidate shuffle if already finalized (Best-effort)
+        # Phase 4: Invalidate shuffle if already finalized (Best-effort fallback until TX2 RPC integration)
+        # Protected by Fail-Safe Immutability Guard in repository (F01 v3.0)
         await self.repo.invalidate_shuffle_if_finalized(session_id)
 
         return RegeneratedQuestionResponse(
@@ -386,8 +387,8 @@ class ReviewService:
             )
 
         res = await self.repo.atomic_revert_tx(session_id, question_id, user_id)
-        # Invalidate shuffle if session was finalized
-        await self.repo.invalidate_shuffle_if_finalized(session_id)
+        # Note (F01 v3.0): Shuffle invalidation is handled atomically inside review_revert_question RPC.
+        # No naked post-RPC invalidation is performed at service level to eliminate secondary mutation surface.
 
         return ReviewActionResponse(
             question_id=str(res["id"]),

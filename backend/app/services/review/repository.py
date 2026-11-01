@@ -777,9 +777,42 @@ class ReviewRepository:
 
     async def invalidate_shuffle_if_finalized(self, session_id: str) -> bool:
         """Reset is_finalized, clear shuffle_seed/permutations, purge stale answer_keys,
-        and demote session status from 'reviewed' to 'generated' (Contract with Hùng).
+        and demote session status from 'reviewed' to 'generated'.
+
+        FAIL-SAFE & CONTENT IMMUTABILITY GUARD (F01 v3.0 / TASK-305):
+        - Strictly forbids mutation if parent session status IN ('approved', 'exported').
+        - Only executes DELETE/UPDATE when parent session is in ('reviewed', 'generated').
+        - Idempotent and thread-safe against late interleaving writes.
         """
         try:
+            # 1. Guard: Check parent session status first to enforce Content Immutability
+            s_res = (
+                self.db.table("exam_sessions")
+                .select("status")
+                .eq("id", session_id)
+                .limit(1)
+                .execute()
+            )
+            s_rows = _get_rows(s_res)
+            if not s_rows:
+                logger.warning("invalidate_shuffle: Session %s not found", session_id)
+                return False
+
+            session_status = str(s_rows[0].get("status", "")).lower()
+
+            # IMMUTABILITY LOCK: Approved/Exported sessions are permanently read-only!
+            if session_status in ("approved", "exported"):
+                logger.warning(
+                    "CRITICAL: Blocked attempt to invalidate shuffle on immutable session %s (status: %s)",
+                    session_id,
+                    session_status,
+                )
+                return False
+
+            if session_status not in ("reviewed", "generated"):
+                return False
+
+            # 2. Check finalized versions
             v_res = (
                 self.db.table("exam_versions")
                 .select("id, is_finalized")
@@ -791,10 +824,10 @@ class ReviewRepository:
             any_finalized = any(r.get("is_finalized") for r in v_rows)
 
             if any_finalized and version_ids:
-                # 1. Purge stale answer_keys records for all affected versions
+                # 3. Purge stale answer_keys records for all affected versions
                 self.db.table("answer_keys").delete().in_("version_id", version_ids).execute()
 
-                # 2. Reset finalized flag and permutations metadata on exam_versions
+                # 4. Reset finalized flag and permutations metadata on exam_versions
                 self.db.table("exam_versions").update(
                     {
                         "is_finalized": False,
@@ -804,12 +837,8 @@ class ReviewRepository:
                     }
                 ).eq("session_id", session_id).execute()
 
-                # 3. Demote session status from 'reviewed' to 'generated'
-                s_res = (
-                    self.db.table("exam_sessions").select("status").eq("id", session_id).execute()
-                )
-                s_rows = _get_rows(s_res)
-                if s_rows and s_rows[0].get("status") == "reviewed":
+                # 5. Demote session status from 'reviewed' to 'generated'
+                if session_status == "reviewed":
                     self.db.table("exam_sessions").update(
                         {
                             "status": "generated",
@@ -817,6 +846,7 @@ class ReviewRepository:
                         }
                     ).eq("id", session_id).execute()
                 return True
+            return True
         except Exception as exc:
             logger.warning(
                 "invalidate_shuffle_if_finalized error for session %s: %s", session_id, exc

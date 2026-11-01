@@ -451,6 +451,30 @@ class MockRpcQueryBuilder:
                     }
                 )
 
+                # Atomic Shuffle Invalidation contract (F01 v3.0 / TASK-302 Phase B)
+                evs = self.db_state.get("exam_versions", [])
+                session_evs = [v for v in evs if str(v.get("session_id")) == session_id]
+                session_v_ids = {str(v.get("id")) for v in session_evs}
+                any_finalized = any(v.get("is_finalized") for v in session_evs)
+
+                if any_finalized and session_v_ids:
+                    # 1. Purge answer_keys for versions of this session
+                    self.db_state["answer_keys"] = [
+                        ak
+                        for ak in self.db_state.get("answer_keys", [])
+                        if str(ak.get("version_id")) not in session_v_ids
+                    ]
+                    # 2. Reset finalized flag and permutations metadata on versions
+                    for v in session_evs:
+                        v["is_finalized"] = False
+                        v["shuffle_seed"] = None
+                        v["permutations"] = None
+                        v["updated_at"] = now_time
+
+                    # 3. Demote session status if currently reviewed
+                    if str(s_row.get("status", "")).lower() == "reviewed":
+                        s_row["status"] = "generated"
+
                 return MockExecutionResult([new_q])
 
             return MockExecutionResult([])
@@ -1861,3 +1885,177 @@ async def test_f07_service_maps_all_permit_error_codes():
 
         assert exc_info.value.status_code == expected_status, f"Failed mapping for {err_code}"
         assert exc_info.value.error_code == expected_domain_code, f"Failed error code for {err_code}"
+
+
+# ---------------------------------------------------------------------------
+# Adversarial Tests (Finding F01 v3.0, F05, F06)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_f01_late_invalidation_cannot_corrupt_approved_session():
+    """F01 Adversarial (Finding F01 v3.0 by @Thanhdat3010):
+    Prove that a late invalidation call from an asynchronous/lagged worker
+    CANNOT delete answer_keys or demote is_finalized flag of an approved session.
+    """
+    from app.services.finalize.service import FinalizeService
+
+    session_id = str(uuid4())
+    v1_id, v2_id = str(uuid4()), str(uuid4())
+    teacher_id = str(uuid4())
+
+    db_state = {
+        "exam_sessions": [
+            {
+                "id": session_id,
+                "status": "reviewed",
+                "gemini_review_calls": 0,
+                "updated_at": _now_iso(),
+            }
+        ],
+        "exam_versions": [
+            {"id": v1_id, "session_id": session_id, "version_code": "101", "is_finalized": True, "shuffle_seed": 111},
+            {"id": v2_id, "session_id": session_id, "version_code": "102", "is_finalized": True, "shuffle_seed": 222},
+        ],
+        "answer_keys": [
+            {"id": str(uuid4()), "version_id": v1_id, "question_no": 1, "correct_option": "A"},
+            {"id": str(uuid4()), "version_id": v2_id, "question_no": 1, "correct_option": "B"},
+        ],
+        "source_questions": [
+            {"id": "src-1", "session_id": session_id, "raw_content": "Source Q", "options": ["A", "B", "C", "D"], "correct_key": "A"}
+        ],
+        "version_questions": [
+            {
+                "id": "vq-001",
+                "version_id": v1_id,
+                "source_question_id": "src-1",
+                "question_no": 1,
+                "is_current": True,
+                "status": "approved",
+                "regenerated_from_id": "vq-prev",
+            },
+            {
+                "id": "vq-002",
+                "version_id": v2_id,
+                "source_question_id": "src-1",
+                "question_no": 1,
+                "is_current": True,
+                "status": "approved",
+                "regenerated_from_id": None,
+            },
+        ],
+        "review_logs": [],
+    }
+
+    client = MockSupabaseClient(db_state)
+    review_repo = ReviewRepository(client)
+    finalize_service = FinalizeService(client)
+
+    # Step 1: Worker B executes atomic revert on vq-001
+    revert_res = await review_repo.atomic_revert_tx(session_id, "vq-001", teacher_id)
+    assert revert_res is not None
+    # Atomic RPC invalidates previous shuffle
+    assert db_state["exam_versions"][0]["is_finalized"] is False
+    assert len(db_state["answer_keys"]) == 0
+    assert db_state["exam_sessions"][0]["status"] == "generated"
+
+    # Step 2: Worker C executes fresh shuffle (TASK-303)
+    fresh_ak_1 = {"id": str(uuid4()), "version_id": v1_id, "question_no": 1, "correct_option": "C"}
+    fresh_ak_2 = {"id": str(uuid4()), "version_id": v2_id, "question_no": 1, "correct_option": "D"}
+    db_state["answer_keys"] = [fresh_ak_1, fresh_ak_2]
+    db_state["exam_versions"][0]["is_finalized"] = True
+    db_state["exam_versions"][0]["shuffle_seed"] = 99999
+    db_state["exam_versions"][1]["is_finalized"] = True
+    db_state["exam_sessions"][0]["status"] = "reviewed"
+    db_state["exam_sessions"][0]["updated_at"] = _now_iso()
+
+    # Step 3: Worker A approves session via finalize_approve_session RPC
+    approve_res = await finalize_service.approve_session(session_id, user_id=teacher_id)
+    assert approve_res.status == "approved"
+    assert db_state["exam_sessions"][0]["status"] == "approved"
+
+    # Step 4: Worker B (late arrival from async lag / network jitter) executes late invalidation
+    late_res = await review_repo.invalidate_shuffle_if_finalized(session_id)
+
+    # Invariant Assertions:
+    # 1. Late invalidation must be blocked by Immutability Guard (NO-OP returns False)
+    assert late_res is False, "Late invalidation MUST return False and NO-OP on approved session"
+
+    # 2. Fresh answer_keys are completely preserved
+    current_keys = db_state.get("answer_keys", [])
+    assert len(current_keys) == 2, "Fresh answer_keys must NOT be deleted by late invalidation!"
+    assert any(k["id"] == fresh_ak_1["id"] for k in current_keys)
+    assert any(k["id"] == fresh_ak_2["id"] for k in current_keys)
+
+    # 3. is_finalized flag remains True for all versions
+    assert all(v["is_finalized"] is True for v in db_state["exam_versions"])
+
+    # 4. Session status remains approved
+    assert db_state["exam_sessions"][0]["status"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_revert_question_service_does_not_perform_naked_post_rpc_invalidation():
+    """F01 Verification: ReviewService.revert_question delegates invalidation strictly
+    to atomic RPC and does NOT call repository invalidate_shuffle_if_finalized after RPC.
+    """
+    from unittest.mock import patch
+
+    session_id = "00000000-0000-0000-0000-000000000120"
+    user_id = "teacher-120"
+    q_id = "vq-regen-120"
+
+    state = _setup_standard_session_state(
+        session_id, user_id, question_id=q_id, regenerated_from_id="vq-orig-120"
+    )
+    db = MockSupabaseClient(state)
+    service = ReviewService(db)
+
+    with patch.object(
+        service.repo, "invalidate_shuffle_if_finalized", wraps=service.repo.invalidate_shuffle_if_finalized
+    ) as spy_invalidate:
+        res = await service.revert_question(session_id, q_id, user_id)
+        assert res.is_reverted is True
+        assert spy_invalidate.call_count == 0, "invalidate_shuffle_if_finalized must NOT be called after RPC in revert_question!"
+
+
+@pytest.mark.asyncio
+async def test_f05_approve_session_invalid_uuid_raises_400():
+    """F05 Edge Case: Malformed session_id raises HTTP 400 ERR_INVALID_SESSION_ID instead of 500."""
+    from app.services.finalize.service import FinalizeService
+
+    client = MockSupabaseClient({})
+    finalize_service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await finalize_service.approve_session("not-a-valid-uuid", "user-123")
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.error_code == "ERR_INVALID_SESSION_ID"
+
+
+@pytest.mark.asyncio
+async def test_f06_matrix_natural_sorts_version_codes():
+    """F06 Edge Case: Multi-digit version codes are sorted naturally (1, 2, 10 instead of 1, 10, 2)."""
+    from app.services.finalize.repository import FinalizeRepository
+
+    session_id = "00000000-0000-0000-0000-000000000130"
+    db_state = {
+        "exam_sessions": [{"id": session_id, "status": "approved"}],
+        "exam_versions": [
+            {"id": "v-1", "session_id": session_id, "version_code": "1"},
+            {"id": "v-10", "session_id": session_id, "version_code": "10"},
+            {"id": "v-2", "session_id": session_id, "version_code": "2"},
+        ],
+        "source_questions": [{"id": "s-1", "session_id": session_id}],
+        "answer_keys": [
+            {"version_id": "v-1", "question_no": 1, "correct_option": "A"},
+            {"version_id": "v-2", "question_no": 1, "correct_option": "B"},
+            {"version_id": "v-10", "question_no": 1, "correct_option": "C"},
+        ],
+    }
+    client = MockSupabaseClient(db_state)
+    repo = FinalizeRepository(client)
+
+    version_codes, rows = await repo.fetch_matrix_raw(session_id)
+    assert version_codes == ["1", "2", "10"], f"Expected natural sort ['1', '2', '10'], got {version_codes}"

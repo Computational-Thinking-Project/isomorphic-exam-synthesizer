@@ -49,7 +49,16 @@ class FinalizeService:
            - 100% current questions approved and no missing pairs across all versions (400 ERR_NOT_ALL_QUESTIONS_APPROVED)
         5. Atomic state update to 'approved' serialized via session_lock_registry and optimistic lock
         """
-        session_uuid = UUID(session_id)
+        # Edge case guard (F05): Validate UUID format to prevent unhandled ValueError 500
+        try:
+            session_uuid = UUID(session_id)
+        except (ValueError, AttributeError) as exc:
+            raise ReviewDomainException(
+                400,
+                "ERR_INVALID_SESSION_ID",
+                f"Mã phiên làm việc '{session_id}' không đúng định dạng UUID",
+            ) from exc
+
         lock = session_lock_registry.get_lock(session_uuid)
 
         async with lock:
