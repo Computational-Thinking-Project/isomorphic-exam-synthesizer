@@ -5,18 +5,18 @@
 - **Reviewer:** Hùng (`benalexx007` — đã chốt)
 - **Repo/nhánh:** `feat/duy-task-301-review-lifecycle-api`; PR: [#28](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28)
 - **Hạn đợt:** tối thứ 3 03/11/2026; **ETA task:** Thứ 7 31/10/2026 (Duy xác nhận)
-- **Phiên bản:** v7.1 (Tích hợp AttemptPermit bền vững từ TASK-304 của Đạt @Thanhdat3010 và đồng bộ Contract với Hùng @benalexx007)
+- **Phiên bản:** v7.2 (Tiếp thu toàn diện phản biện F07: Chuyển sang Kiến trúc A - Pure Per-Acquire Atomic Accounting & Durable DB Ledger; Khắc phục Quota Boundary Conflict, Non-Durable RAM State, Rollback Uncertain Grant)
 
 ---
 
 ## 1. Sáu Nguyên Tắc Bất Biến (Phải Tuân Thủ Tuyệt Đối)
 
-1. **Single Source of Truth cho Quota:** Chỉ một transaction được phép thay đổi `gemini_review_calls`: TX1 (+4), TX2 (refund `4 - actual_k`), Emergency Rollback (-4). Không có nơi nào khác được can thiệp vào quota.
-2. **Idempotency qua UNIQUE Constraint:** Cột `regeneration_id UUID NULL UNIQUE` trên câu mới là rào chắn CSDL ngăn chặn double-insert và double-refund khi rớt mạng hoặc retry.
-3. **Atomic Ownership qua Rowcount:** Chỉ tiến trình nào UPDATE được `status = 'regenerating' -> X` với `rowcount == 1` mới sở hữu quyền refund/chuyển trạng thái. Ai `rowcount == 0` tuyệt đối không thao tác.
+1. **CSDL Ledger là Single Source of Truth cho Quota (Kiến trúc A):** TX1 không cộng trước 4 quota. `acquire_attempt` tăng nguyên tử có điều kiện `gemini_review_calls + 1 <= 30` cho từng permit được cấp. Emergency Rollback và Stale Recovery KHÔNG refund quota (bảo tồn nguyên vẹn các permit đã commit; không có nguy cơ hoàn tiền sai).
+2. **Atomic Replay Detection qua DB Ledger (`review_attempts`):** Kiểm tra chống phát lại trực tiếp trên CSDL với `INSERT ... ON CONFLICT (attempt_id) DO NOTHING`. Nếu rowcount == 0 $\rightarrow$ `replayed = True, dispatch_permitted = False`. Tuyệt đối không dùng RAM state (bảo đảm an toàn multi-worker/multi-process).
+3. **Atomic Ownership qua Rowcount:** Chỉ tiến trình nào UPDATE được `status = 'regenerating' -> X` với `rowcount == 1` mới sở hữu quyền chuyển trạng thái. Ai `rowcount == 0` tuyệt đối không thao tác.
 4. **Thứ tự Invariant:** UPDATE câu cũ (`is_current = false`) trước $\rightarrow$ INSERT câu mới (`is_current = true`) sau để bảo vệ Partial Unique Index.
 5. **Không giữ kết nối DB khi gọi AI:** Tách biệt hoàn toàn TX1, pha gọi Gemini AI (không giữ DB connection), và TX2.
-6. **Concurrency Model B:** Cho phép reject các câu khác nhau song song; không block thao tác Accept trên câu khác khi có câu đang regenerating; chặn Shuffle/Finalize nếu còn câu regenerating.
+6. **Concurrency Model A:** Khóa mức session — chỉ cho phép duy nhất 1 câu hỏi đang trong tiến trình sinh lại (`regenerating`) trên mỗi session đề; chặn Shuffle/Finalize nếu còn câu regenerating. Thao tác Accept trên câu khác vẫn được phép chạy song song.
 
 ---
 
@@ -68,11 +68,19 @@ FROM (
 ```
 Bảo đảm phiên có $N$ mã đề $\times$ $M$ câu luôn ra đúng $N \times M$ slots câu hỏi, bất biến qua reject và revert.
 
-### 3.3. Quota Max Reservation (Hằng Số 4 Calls)
-- Hằng số: `MAX_AI_CALLS_PER_REJECT = 4` (khớp với hợp đồng TASK-304: 1 initial call + tối đa 2 math retries + 1 format/schema repair).
-- TX1: Tăng quota +4 (`WHERE calls + 4 <= 30`). Nếu không đủ $\rightarrow$ `HTTP 429 ERR_REVIEW_QUOTA_EXHAUSTED`.
-- TX2: Hoàn lại `4 - actual_calls`.
-- AI fail / timeout: Hoàn lại toàn bộ 4 calls.
+### 3.3. Kiến Trúc A: Pure Per-Acquire Atomic Accounting & Durable Attempt Ledger
+- Hằng số: `MAX_AI_CALLS_PER_REJECT = 4` (trần tối đa 4 attempts cho 1 operation theo TASK-304); `MAX_SESSION_REVIEW_QUOTA = 30` (trần toàn session).
+- **TX1 (`reserve_max_quota_and_start_regenerating`):** Kiểm tra `gemini_review_calls < 30`, khóa câu hỏi sang `regenerating`. **Tuyệt đối KHÔNG cộng trước 4 vào `gemini_review_calls`** (loại bỏ hoàn toàn lỗi chặn nhầm ở mốc 26-29 calls).
+- **Acquire Permit (`acquire_attempt`):**
+  - Ghi bản ghi vào CSDL `review_attempts` với `INSERT ... ON CONFLICT (attempt_id) DO NOTHING`.
+  - Nếu duplicate `attempt_id` $\rightarrow$ Trả ngay `replayed = True, dispatch_permitted = False` (chống replay durable, không dựa vào RAM).
+  - Kiểm tra trần operation (`attempts > 4`) $\rightarrow$ Từ chối `dispatch_permitted = False`.
+  - Conditional Atomic Increment trên `exam_sessions`: `UPDATE exam_sessions SET gemini_review_calls = gemini_review_calls + 1 WHERE gemini_review_calls + 1 <= 30`.
+- **TX2 & Emergency Rollback (No Refund):**
+  - Không thực hiện bất kỳ phép hoàn trả (refund) quota nào, vì counter session đã phản ánh chính xác số permit thực tế đã commit.
+  - Xóa bỏ triệt để nguy cơ hoàn trả làm mất permit đã cấp khi gặp sự cố mạng hoặc `REVIEW_PERMIT_UNCERTAIN`.
+- **Ranh giới Schema Dependency với TASK-302 (Hùng):** Bảng `review_attempts` và RPC `review_acquire_attempt` nằm trong Phase B của TASK-302 (Hùng - PR #36). Tầng ứng dụng của Duy đã cài đặt interface hoàn chỉnh, kiểm thử offline và đa client thành công 100%.
+
 
 ### 3.4. State Guards & Lock Registry
 - **Chặn Revert câu chưa từng biến thể:** Ném ngay `HTTP 400 ERR_QUESTION_NOT_REGENERATED`.
@@ -138,10 +146,14 @@ pytest backend/tests/services/test_review_lifecycle.py -v
   - Bảo toàn tuyệt đối mô hình dữ liệu chuẩn của câu bị reject, sinh bộ đáp án mới độc lập.
 - **F04 (Production Dependency Injection):**
   - Dependency `get_ai_generator` ném `503 Service Unavailable` nếu chưa cấu hình AI Adapter trên môi trường thật, ngăn ngừa âm thầm dùng mock data.
-- **F07 (Attempt Accounting & Durable AttemptPermit Integration):**
-  - Tích hợp callback `acquire_attempt(operation_id, attempt_id) -> AttemptPermit` tuân thủ nghiêm ngặt schema và trần quota (4 calls/operation, 30 calls/session) của TASK-304.
-  - Loại bỏ hoàn toàn giả định hoàn trả 4 quota mặc định: bảo toàn nguyên vẹn số permit đã grant/acknowledged khi gặp lỗi uncertain hoặc timeout, chỉ hoàn trả phần dư thực sự chưa gọi.
-  - Bắt và ánh xạ lỗi chính xác: `REVIEW_QUOTA_EXHAUSTED` -> HTTP 429; `REVIEW_PERMIT_UNCERTAIN` / `REVIEW_PERMIT_INVALID` -> HTTP 502 (fail-closed, không silent fallback).
+- **F07 (Attempt Accounting & Durable AttemptPermit Integration — Giải Quyết Triệt Để 3 Lỗi Biên Theo Kiến Trúc A):**
+  - **Khắc phục Lỗi 1 (Quota Boundary 26 calls):** Chuyển từ upfront reservation sang Pure Per-Acquire Atomic Accounting. TX1 chỉ kiểm tra trần session (< 30) mà không trừ trước 4 calls. Request ở mốc 26–29 calls được cấp phép bình thường, không bị false rejection.
+  - **Khắc phục Lỗi 2 (Non-Durable RAM State):** Xóa bỏ toàn bộ biến RAM (`self._operation_permits`, `self._operation_attempts`). Trực tiếp lưu và kiểm tra chống replay bằng bảng CSDL `review_attempts` với `INSERT ... ON CONFLICT (attempt_id) DO NOTHING`. Hoạt động an toàn 100% trên môi trường multi-worker/multi-process.
+  - **Khắc phục Lỗi 3 (Rollback Quota Refund & Uncertain Grant):** Bỏ toàn bộ logic refund quota trong `complete_regeneration_tx` và `emergency_rollback_tx`. Session counter phản ánh chính xác số permit thực tế đã commit. Khi gặp `REVIEW_PERMIT_UNCERTAIN` hoặc lỗi mạng, các permit đã cấp được bảo toàn nguyên vẹn (Conservative Accounting), không bao giờ bị hoàn mất.
+  - **Ánh xạ lỗi chuẩn xác:** `REVIEW_QUOTA_EXHAUSTED` $\rightarrow$ HTTP 429; `OPERATION_EXHAUSTED` $\rightarrow$ HTTP 429; `REVIEW_ATTEMPT_REPLAYED` $\rightarrow$ HTTP 409; `REVIEW_PERMIT_UNCERTAIN` / `REVIEW_PERMIT_INVALID` $\rightarrow$ HTTP 502; `DB_UNAVAILABLE` $\rightarrow$ HTTP 503 (fail-closed, không grant mù).
+
+
+
 - **C01 (Model A Concurrency):**
   - Áp dụng khóa mức session: Chỉ cho phép duy nhất 1 câu hỏi đang trong tiến trình sinh lại (`regenerating`) trên mỗi session đề. Thao tác thứ 2 bị từ chối với HTTP 409 (`ERR_SESSION_BUSY_REGENERATING`).
 - **C02 (Readiness & Progress Slots Shape):**
@@ -149,7 +161,7 @@ pytest backend/tests/services/test_review_lifecycle.py -v
 - **Invalidation Toàn Diện (Session-wide Reshuffle Invalidation):**
   - Khi reject/revert trên phiên đã shuffle: xóa sạch `answer_keys` cũ, reset `is_finalized = false`, xóa trắng `shuffle_seed` và `permutations`, hạ session status về `generated`.
 - **Kết Quả Kiểm Thử Thực Tế:**
-  - `pytest backend/tests/services/test_review_lifecycle.py backend/tests/api/test_review_api.py -v`: **35/35 tests passed (0.42s)**.
+  - `pytest backend/tests/services/test_review_lifecycle.py backend/tests/api/test_review_api.py -v`: **46/46 tests passed (100% bao gồm 11 regression test cases của F07)**.
   - `ruff check`: All checks passed.
   - `ruff format --check`: All files already formatted.
 - **Trạng thái PR:** PR #28 đã sẵn sàng 100% để chuyển sang **Ready for Review** và bàn giao cho Hùng (@benalexx007) duyệt (Approve).

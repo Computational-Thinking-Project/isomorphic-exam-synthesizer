@@ -214,19 +214,44 @@ class ReviewService:
             )
 
             exc_msg = str(exc)
-            if "REVIEW_QUOTA_EXHAUSTED" in exc_msg or getattr(exc, "code", "") == "REVIEW_QUOTA_EXHAUSTED":
+            exc_code = getattr(exc, "code", "")
+            if "REVIEW_QUOTA_EXHAUSTED" in exc_msg or exc_code == "REVIEW_QUOTA_EXHAUSTED":
                 raise ReviewDomainException(
                     429,
                     "ERR_REVIEW_QUOTA_EXHAUSTED",
                     "Đã dùng hết 30 lượt AI sinh lại của buổi review",
                 ) from exc
             if (
+                "OPERATION_EXHAUSTED" in exc_msg
+                or exc_code == "OPERATION_EXHAUSTED"
+                or "REVIEW_ATTEMPT_EXHAUSTED" in exc_msg
+                or exc_code == "REVIEW_ATTEMPT_EXHAUSTED"
+            ):
+                raise ReviewDomainException(
+                    429,
+                    "ERR_OPERATION_QUOTA_EXHAUSTED",
+                    "Đã vượt quá số lần thử sinh lại tối đa cho thao tác này (tối đa 4 lần)",
+                ) from exc
+            if "REVIEW_ATTEMPT_REPLAYED" in exc_msg or exc_code == "REVIEW_ATTEMPT_REPLAYED":
+                raise ReviewDomainException(
+                    409,
+                    "ERR_ATTEMPT_REPLAYED",
+                    "Attempt ID đã được sử dụng hoặc bị trùng lặp",
+                ) from exc
+            if (
+                "DB_UNAVAILABLE" in exc_msg
+                or exc_code == "DB_UNAVAILABLE"
+            ):
+                raise ReviewDomainException(
+                    503,
+                    "ERR_AI_GATEWAY_PERMIT_FAILURE",
+                    "Hệ thống cơ sở dữ liệu tạm thời không khả dụng",
+                ) from exc
+            if (
                 "REVIEW_PERMIT_UNCERTAIN" in exc_msg
-                or getattr(exc, "code", "") == "REVIEW_PERMIT_UNCERTAIN"
+                or exc_code == "REVIEW_PERMIT_UNCERTAIN"
                 or "REVIEW_PERMIT_INVALID" in exc_msg
-                or getattr(exc, "code", "") == "REVIEW_PERMIT_INVALID"
-                or "REVIEW_ATTEMPT_REPLAYED" in exc_msg
-                or getattr(exc, "code", "") == "REVIEW_ATTEMPT_REPLAYED"
+                or exc_code == "REVIEW_PERMIT_INVALID"
             ):
                 raise ReviewDomainException(
                     502,

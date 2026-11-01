@@ -60,44 +60,43 @@ class ReviewRepository:
 
     def __init__(self, db: Client) -> None:
         self.db = db
-        # In-memory tracking of permits and operation bindings for stateful mock / client compatibility
+        # In-memory routing hint for operation-to-session mapping (durable ledger is stored in DB)
         self._operation_sessions: Dict[UUID, str] = {}
-        self._operation_permits: Dict[UUID, Set[UUID]] = {}
-        self._operation_attempts: Dict[UUID, int] = {}
 
     def register_operation(self, operation_id: UUID, session_id: str) -> None:
         """Associate an operation_id with a session_id for subsequent permit acquisitions."""
         self._operation_sessions[operation_id] = session_id
-        if operation_id not in self._operation_permits:
-            self._operation_permits[operation_id] = set()
-            self._operation_attempts[operation_id] = 0
 
     async def acquire_attempt(self, operation_id: UUID, attempt_id: UUID) -> AttemptPermit:
-        """Acquires a durable permit for a single AI provider dispatch attempt.
+        """Acquires a durable permit for a single AI provider dispatch attempt (Architecture A).
 
         Conforms strictly to TASK-304 AttemptPermit schema and Stage 3 review RPC contract.
-        Enforces session ceiling (30) and operation ceiling (4).
+        Enforces:
+        - Atomic replay detection via DB ledger (review_attempts table)
+        - Operation attempt ceiling (MAX_AI_CALLS_PER_REJECT = 4)
+        - Session review quota ceiling (MAX_SESSION_REVIEW_QUOTA = 30)
+        - Conditional atomic quota increment without upfront reservation
         """
-        # Idempotency / Replay check: the same attempt_id cannot be granted twice
-        seen_permits = self._operation_permits.setdefault(operation_id, set())
-        if attempt_id in seen_permits:
-            session_id = self._operation_sessions.get(operation_id, "")
-            current_calls = 0
-            if session_id:
-                session_meta = await self.get_session_status_and_quota(session_id)
-                current_calls = int(session_meta.get("gemini_review_calls", 0) or 0)
-            return AttemptPermit(
-                operation_id=operation_id,
-                attempt_id=attempt_id,
-                dispatch_permitted=False,
-                calls_used=min(30, max(0, current_calls)),
-                remaining_calls=max(0, MAX_SESSION_REVIEW_QUOTA - current_calls),
-                replayed=True,
-            )
+        str_op_id = str(operation_id)
+        str_att_id = str(attempt_id)
 
+        # Resolve session_id: 1) local registration hint, 2) prior review_attempts, 3) active regenerating question
         session_id = self._operation_sessions.get(operation_id, "")
         if not session_id:
-            # Fallback: look for active regenerating question or recent log if not pre-registered
+            prior_res = (
+                self.db.table("review_attempts")
+                .select("session_id")
+                .eq("operation_id", str_op_id)
+                .limit(1)
+                .execute()
+            )
+            prior_rows = _get_rows(prior_res)
+            if prior_rows:
+                session_id = str(prior_rows[0].get("session_id", ""))
+                if session_id:
+                    self._operation_sessions[operation_id] = session_id
+
+        if not session_id:
             reg_q = (
                 self.db.table("version_questions")
                 .select("exam_versions!inner(session_id)")
@@ -108,19 +107,63 @@ class ReviewRepository:
             rows = _get_rows(reg_q)
             if rows:
                 ev = rows[0].get("exam_versions") or {}
-                session_id = ev.get("session_id", "")
+                session_id = str(ev.get("session_id", ""))
                 if session_id:
                     self._operation_sessions[operation_id] = session_id
 
-        current_calls = 0
-        if session_id:
-            session_meta = await self.get_session_status_and_quota(session_id)
-            current_calls = int(session_meta.get("gemini_review_calls", 0) or 0)
+        # Step 1: Atomic Replay Check via DB Ledger
+        ins_res = (
+            self.db.table("review_attempts")
+            .insert(
+                {
+                    "attempt_id": str_att_id,
+                    "operation_id": str_op_id,
+                    "session_id": session_id,
+                    "status": "granted",
+                    "created_at": _now_iso(),
+                }
+            )
+            .execute()
+        )
+        ins_rows = _get_rows(ins_res)
+        if not ins_rows:
+            # 0 rows inserted due to unique constraint on attempt_id -> Replay detected
+            current_calls = 0
+            if session_id:
+                try:
+                    session_meta = await self.get_session_status_and_quota(session_id)
+                    current_calls = int(session_meta.get("gemini_review_calls", 0) or 0)
+                except Exception:
+                    pass
+            return AttemptPermit(
+                operation_id=operation_id,
+                attempt_id=attempt_id,
+                dispatch_permitted=False,
+                calls_used=min(30, max(0, current_calls)),
+                remaining_calls=max(0, MAX_SESSION_REVIEW_QUOTA - current_calls),
+                replayed=True,
+            )
 
-        op_attempts = self._operation_attempts.get(operation_id, 0)
-
-        # Quota checks: Max 4 attempts per operation, max 30 attempts per session
-        if op_attempts >= MAX_AI_CALLS_PER_REJECT or current_calls >= MAX_SESSION_REVIEW_QUOTA:
+        # Step 2: Check Operation Attempt Ceiling (max 4 attempts per operation)
+        op_res = (
+            self.db.table("review_attempts")
+            .select("attempt_id, status")
+            .eq("operation_id", str_op_id)
+            .execute()
+        )
+        op_rows = _get_rows(op_res)
+        if len(op_rows) > MAX_AI_CALLS_PER_REJECT:
+            # Mark this attempt as denied
+            self.db.table("review_attempts").update({"status": "denied"}).eq(
+                "attempt_id", str_att_id
+            ).execute()
+            current_calls = 0
+            if session_id:
+                try:
+                    session_meta = await self.get_session_status_and_quota(session_id)
+                    current_calls = int(session_meta.get("gemini_review_calls", 0) or 0)
+                except Exception:
+                    pass
             return AttemptPermit(
                 operation_id=operation_id,
                 attempt_id=attempt_id,
@@ -130,19 +173,42 @@ class ReviewRepository:
                 replayed=False,
             )
 
-        # Increment counts
-        seen_permits.add(attempt_id)
-        self._operation_attempts[operation_id] = op_attempts + 1
+        # Step 3: Check Session Quota Ceiling & Atomic Conditional Increment
+        current_calls = 0
+        if session_id:
+            session_meta = await self.get_session_status_and_quota(session_id)
+            current_calls = int(session_meta.get("gemini_review_calls", 0) or 0)
 
-        # Note: In TX1, +4 reservation was already pre-allocated to exam_sessions.gemini_review_calls.
-        # acquire_attempt registers durable permits within that reservation ceiling.
-        # The authoritative session calls_used reflects permits granted.
+        if current_calls + 1 > MAX_SESSION_REVIEW_QUOTA:
+            # Session quota exhausted (30 calls reached)
+            self.db.table("review_attempts").update({"status": "denied"}).eq(
+                "attempt_id", str_att_id
+            ).execute()
+            return AttemptPermit(
+                operation_id=operation_id,
+                attempt_id=attempt_id,
+                dispatch_permitted=False,
+                calls_used=MAX_SESSION_REVIEW_QUOTA,
+                remaining_calls=0,
+                replayed=False,
+            )
+
+        # Increment session counter atomically
+        new_calls = current_calls + 1
+        if session_id:
+            self.db.table("exam_sessions").update(
+                {
+                    "gemini_review_calls": new_calls,
+                    "updated_at": _now_iso(),
+                }
+            ).eq("id", session_id).execute()
+
         return AttemptPermit(
             operation_id=operation_id,
             attempt_id=attempt_id,
             dispatch_permitted=True,
-            calls_used=min(30, max(0, current_calls - (MAX_AI_CALLS_PER_REJECT - self._operation_attempts[operation_id]))),
-            remaining_calls=max(0, MAX_SESSION_REVIEW_QUOTA - current_calls),
+            calls_used=new_calls,
+            remaining_calls=max(0, MAX_SESSION_REVIEW_QUOTA - new_calls),
             replayed=False,
         )
 
@@ -273,11 +339,18 @@ class ReviewRepository:
     async def reserve_max_quota_and_start_regenerating(
         self, session_id: str, question_id: str, user_id: str
     ) -> ReserveResult:
-        """Atomic reservation of quota (+4) and marking question as 'regenerating' (TX1)."""
+        """Lock question as 'regenerating' and verify quota eligibility (TX1).
+
+        Architecture A (Pure per-acquire accounting):
+        - Verifies that session has not reached MAX_SESSION_REVIEW_QUOTA (30).
+        - Locks question state to 'regenerating'.
+        - Does NOT pre-increment gemini_review_calls by 4 (quota is atomically charged per acquire).
+        """
         session_meta = await self.get_session_status_and_quota(session_id)
         current_calls = int(session_meta.get("gemini_review_calls", 0) or 0)
 
-        if current_calls + MAX_AI_CALLS_PER_REJECT > MAX_SESSION_REVIEW_QUOTA:
+        # Fail early if session quota is already completely exhausted
+        if current_calls >= MAX_SESSION_REVIEW_QUOTA:
             return ReserveResult.QUOTA_EXHAUSTED
 
         # Check session-level concurrency: Model A enforces max 1 active regenerating question per session (C01)
@@ -324,10 +397,9 @@ class ReviewRepository:
         if len(upd_rows) != 1:
             return ReserveResult.QUESTION_BUSY
 
-        # Update session quota (+4)
+        # Touch session updated_at without pre-charging quota (Architecture A)
         self.db.table("exam_sessions").update(
             {
-                "gemini_review_calls": current_calls + MAX_AI_CALLS_PER_REJECT,
                 "updated_at": _now_iso(),
             }
         ).eq("id", session_id).execute()
@@ -415,26 +487,7 @@ class ReviewRepository:
             )
         created_q = ins_rows[0]
 
-        # Step 3: Refund excess quota if actual_calls < MAX_AI_CALLS_PER_REJECT
-        refund = MAX_AI_CALLS_PER_REJECT - actual_calls
-        if refund > 0:
-            s_res = (
-                self.db.table("exam_sessions")
-                .select("gemini_review_calls")
-                .eq("id", session_id)
-                .execute()
-            )
-            s_rows = _get_rows(s_res)
-            if s_rows:
-                calls = int(s_rows[0].get("gemini_review_calls", 0) or 0)
-                self.db.table("exam_sessions").update(
-                    {
-                        "gemini_review_calls": max(0, calls - refund),
-                        "updated_at": _now_iso(),
-                    }
-                ).eq("id", session_id).execute()
-
-        # Step 4: Audit log
+        # Step 3: Audit log (Architecture A: No quota refund needed as permits are charged per-acquire)
         self.db.table("review_logs").insert(
             {
                 "session_id": session_id,
@@ -459,7 +512,13 @@ class ReviewRepository:
         user_id: str,
         actual_calls_dispatched: int = 1,
     ) -> bool:
-        """Idempotent emergency rollback: resets question to pending_review and refunds quota."""
+        """Idempotent emergency rollback: resets question to pending_review without quota refund.
+
+        Architecture A (Pure per-acquire accounting):
+        - Resets question state back to 'pending_review'
+        - Preserves exam_sessions.gemini_review_calls (all committed permits remain accounted)
+        - Logs REJECT_FAILED audit entry with actual permits committed
+        """
         str_regen_id = str(regeneration_id)
 
         # Check if TX2 already succeeded
@@ -488,25 +547,6 @@ class ReviewRepository:
         upd_rows = _get_rows(upd)
         if len(upd_rows) != 1:
             return False
-
-        # Refund unused quota calls (dispatched calls remain charged)
-        refund = max(0, MAX_AI_CALLS_PER_REJECT - actual_calls_dispatched)
-        if refund > 0:
-            s_res = (
-                self.db.table("exam_sessions")
-                .select("gemini_review_calls")
-                .eq("id", session_id)
-                .execute()
-            )
-            s_rows = _get_rows(s_res)
-            if s_rows:
-                calls = int(s_rows[0].get("gemini_review_calls", 0) or 0)
-                self.db.table("exam_sessions").update(
-                    {
-                        "gemini_review_calls": max(0, calls - refund),
-                        "updated_at": _now_iso(),
-                    }
-                ).eq("id", session_id).execute()
 
         # Audit log
         self.db.table("review_logs").insert(
@@ -871,22 +911,17 @@ class ReviewRepository:
                     )
                     upd_rows = _get_rows(upd)
                     if upd_rows:
-                        # Refund MAX_AI_CALLS_PER_REJECT calls
+                        # Architecture A: No quota refund; committed calls remain in ledger
                         s_res = (
                             self.db.table("exam_sessions")
-                            .select("gemini_review_calls, user_id")
+                            .select("user_id")
                             .eq("id", s_id)
                             .execute()
                         )
                         s_rows = _get_rows(s_res)
                         effective_user_id = actor_user_id
-                        if s_rows:
-                            calls = int(s_rows[0].get("gemini_review_calls", 0) or 0)
-                            if not effective_user_id:
-                                effective_user_id = s_rows[0].get("user_id")
-                            self.db.table("exam_sessions").update(
-                                {"gemini_review_calls": max(0, calls - MAX_AI_CALLS_PER_REJECT)}
-                            ).eq("id", s_id).execute()
+                        if s_rows and not effective_user_id:
+                            effective_user_id = s_rows[0].get("user_id")
 
                         if effective_user_id:
                             self.db.table("review_logs").insert(
