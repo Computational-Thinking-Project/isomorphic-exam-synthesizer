@@ -33,6 +33,7 @@ from app.models.schemas import (
     CurrentUser,
     FinalizeApproveResponse,
     MatrixItem,
+    ReserveResult,
     ReviewDomainException,
 )
 from app.services.finalize.repository import FinalizeRepository
@@ -1021,5 +1022,175 @@ async def test_f01_strict_fail_closed_when_reserve_rpc_missing_or_timeouts():
     assert exc_info.value.status_code == 504
     assert exc_info.value.error_code == "ERR_UPSTREAM_TIMEOUT"
     assert db_state["version_questions"][0]["status"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_f01_interleaved_revert_blocked_when_session_approved():
+    """F01 Adversarial: Interleaved Revert cannot swap approved variant to source in approved session.
+
+    Adversarial sequence:
+    1. Session is 'reviewed', version is finalized, question is an approved variant regenerated from source.
+    2. Worker B reads session state and prepares to Revert.
+    3. Worker A commits finalize_approve_session via RPC -> session.status = 'approved'.
+    4. Worker B calls atomic_revert_tx.
+    5. Verification: Worker B is rejected with HTTP 423 ERR_SESSION_LOCKED.
+       The approved question variant remains active (is_current=True).
+       Zero source questions are inserted. Content Immutability is 100% preserved.
+    """
+    db_state = {
+        "exam_sessions": [
+            {
+                "id": MOCK_SESSION_ID,
+                "status": "reviewed",
+                "gemini_review_calls": 2,
+                "user_id": MOCK_USER_ID,
+                "updated_at": "2026-10-30T00:00:00+00:00",
+            }
+        ],
+        "exam_versions": [
+            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+        ],
+        "source_questions": [
+            {
+                "id": "s-1",
+                "raw_content": "Câu 1: Câu hỏi gốc",
+                "options": ["A", "B", "C", "D"],
+                "correct_key": "A",
+                "solution_md": "Lời giải gốc",
+                "session_id": MOCK_SESSION_ID,
+            }
+        ],
+        "version_questions": [
+            {
+                "id": MOCK_QUESTION_ID,
+                "version_id": "v-101",
+                "source_question_id": "s-1",
+                "status": "approved",
+                "is_current": True,
+                "is_reverted": False,
+                "regenerated_from_id": "vq-prev-001",
+                "content": "Câu 1: Biến thể đã phê duyệt",
+            }
+        ],
+        "review_logs": [],
+    }
+    client = MockSupabaseClient(db_state)
+    finalize_service = FinalizeService(client)
+    review_repo = ReviewRepository(client)
+
+    # 1. Worker A calls finalize_approve_session RPC and commits
+    approve_res = await finalize_service.approve_session(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert approve_res.status == "approved"
+    assert db_state["exam_sessions"][0]["status"] == "approved"
+
+    # 2. Worker B attempts to revert question inside approved session
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await review_repo.atomic_revert_tx(MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID)
+
+    assert exc_info.value.status_code == 423
+    assert exc_info.value.error_code == "ERR_SESSION_LOCKED"
+
+    # 3. Content Immutability Invariant verification:
+    # Approved variant MUST remain untouched
+    assert len(db_state["version_questions"]) == 1
+    assert db_state["version_questions"][0]["id"] == MOCK_QUESTION_ID
+    assert db_state["version_questions"][0]["is_current"] is True
+    assert db_state["version_questions"][0]["content"] == "Câu 1: Biến thể đã phê duyệt"
+
+
+@pytest.mark.asyncio
+async def test_f04_reservation_rpc_denied_or_empty_fails_closed():
+    """F04 Adversarial: Reservation RPC empty, denied or malformed responses fail closed (no blind OK)."""
+    db_state = {
+        "exam_sessions": [
+            {
+                "id": MOCK_SESSION_ID,
+                "status": "reviewed",
+                "gemini_review_calls": 5,
+                "user_id": MOCK_USER_ID,
+                "updated_at": "2026-10-30T00:00:00+00:00",
+            }
+        ],
+        "exam_versions": [
+            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+        ],
+        "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
+        "version_questions": [
+            {
+                "id": MOCK_QUESTION_ID,
+                "version_id": "v-101",
+                "source_question_id": "s-1",
+                "status": "approved",
+                "is_current": True,
+            }
+        ],
+    }
+    client = MockSupabaseClient(db_state)
+    repo = ReviewRepository(client)
+
+    # Ca 1: RPC returns None -> raises 500 ERR_DATABASE_TRANSACTION_FAILED
+    def rpc_returns_none(name: str, params: Optional[Dict[str, Any]] = None):
+        class NoneBuilder:
+            def execute(self):
+                class Res:
+                    data = None
+
+                return Res()
+
+        return NoneBuilder()
+
+    client.rpc = rpc_returns_none  # type: ignore
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await repo.reserve_max_quota_and_start_regenerating(MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.error_code == "ERR_DATABASE_TRANSACTION_FAILED"
+
+    # Ca 2: RPC returns empty list [] -> raises 500
+    def rpc_returns_empty(name: str, params: Optional[Dict[str, Any]] = None):
+        class EmptyBuilder:
+            def execute(self):
+                class Res:
+                    data = []
+
+                return Res()
+
+        return EmptyBuilder()
+
+    client.rpc = rpc_returns_empty  # type: ignore
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await repo.reserve_max_quota_and_start_regenerating(MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.error_code == "ERR_DATABASE_TRANSACTION_FAILED"
+
+    # Ca 3: RPC returns {"status": "denied"} -> returns ReserveResult.QUOTA_EXHAUSTED
+    def rpc_returns_denied(name: str, params: Optional[Dict[str, Any]] = None):
+        class DeniedBuilder:
+            def execute(self):
+                class Res:
+                    data = {"status": "denied", "error_code": "ERR_REVIEW_QUOTA_EXHAUSTED"}
+
+                return Res()
+
+        return DeniedBuilder()
+
+    client.rpc = rpc_returns_denied  # type: ignore
+    res = await repo.reserve_max_quota_and_start_regenerating(MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID)
+    assert res == ReserveResult.QUOTA_EXHAUSTED
+
+    # Ca 4: Integration with ReviewService: When denied, AI generator is NEVER dispatched
+    generator_called = False
+
+    async def fake_generator(**kwargs: Any):
+        nonlocal generator_called
+        generator_called = True
+        return {}
+
+    service = ReviewService(client, ai_generator=fake_generator)
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.reject_question(MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.error_code == "ERR_REVIEW_QUOTA_EXHAUSTED"
+    assert generator_called is False  # AI Generator was NEVER invoked!
+
 
 

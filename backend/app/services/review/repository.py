@@ -367,11 +367,30 @@ class ReviewRepository:
                 },
             ).execute()
             rpc_data = getattr(rpc_res, "data", None)
-            if isinstance(rpc_data, dict) and rpc_data.get("status") == "ok":
+            payload: Optional[Dict[str, Any]] = None
+            if isinstance(rpc_data, dict):
+                payload = rpc_data
+            elif isinstance(rpc_data, list) and len(rpc_data) > 0 and isinstance(rpc_data[0], dict):
+                payload = rpc_data[0]
+
+            # 1. Whitelist validation: ONLY return OK if payload explicitly has status == "ok"
+            if payload is not None and str(payload.get("status", "")).lower() == "ok":
                 return ReserveResult.OK
-            if isinstance(rpc_data, list) and rpc_data and rpc_data[0].get("status") == "ok":
-                return ReserveResult.OK
-            return ReserveResult.OK
+
+            # 2. Parse explicit denial responses
+            if payload is not None:
+                st = str(payload.get("status", "")).lower()
+                err = str(payload.get("error_code", "")).lower()
+                if st == "denied" or "quota" in st or "quota" in err:
+                    return ReserveResult.QUOTA_EXHAUSTED
+                if "busy" in st or "busy" in err:
+                    return ReserveResult.QUESTION_BUSY
+
+            # 3. Strict Fail-Closed: Empty, malformed, or unverified response MUST raise
+            logger.critical("RPC review_reserve_regeneration returned invalid, denied or empty response: %s", rpc_data)
+            raise ReviewDomainException(
+                500, "ERR_DATABASE_TRANSACTION_FAILED", f"Phản hồi giao dịch CSDL không hợp lệ hoặc bị từ chối: {rpc_data}"
+            )
         except ReviewDomainException:
             raise
         except Exception as exc:
@@ -669,127 +688,92 @@ class ReviewRepository:
     async def atomic_revert_tx(
         self, session_id: str, question_id: str, user_id: str
     ) -> Dict[str, Any]:
-        """Revert question to pristine source content (idempotent if already reverted)."""
-        # Guard: Session must not be approved/exported (F01)
-        s_res = (
-            self.db.table("exam_sessions")
-            .select("status")
-            .eq("id", session_id)
-            .limit(1)
-            .execute()
-        )
-        s_rows = _get_rows(s_res)
-        if s_rows and str(s_rows[0].get("status", "")).lower() in ("approved", "exported"):
+        """Revert question to pristine source content via atomic RPC boundary (idempotent if already reverted).
+
+        Enforces Content Immutability & Fail-Closed policy (F01 / TASK-302 Phase B):
+        - Calls PostgreSQL Stored Procedure `review_revert_question` for atomic cross-table locking.
+        - Locks parent row `exam_sessions` using `SELECT ... FOR UPDATE` before mutating child question.
+        - Rejects with HTTP 423 ERR_SESSION_LOCKED if session has been approved or exported.
+        - Deactivates current variant and inserts source variant in the same DB transaction.
+        - Strict Fail-Closed: fails closed on missing RPC (503), permission denied (500), or timeout (504).
+        """
+        if not hasattr(self.db, "rpc"):
             raise ReviewDomainException(
-                423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
+                503, "ERR_REVERT_UNAVAILABLE", "Hệ thống CSDL không hỗ trợ RPC giao dịch hoàn nguyên"
             )
 
-        q_res = (
-            self.db.table("version_questions")
-            .select(
-                "id, version_id, source_question_id, question_no, is_current, is_reverted, regenerated_from_id, status"
-            )
-            .eq("id", question_id)
-            .limit(1)
-            .execute()
-        )
-        q_rows = _get_rows(q_res)
-        if not q_rows:
-            raise ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Question not found")
-        q = q_rows[0]
+        try:
+            rpc_res = self.db.rpc(
+                "review_revert_question",
+                {
+                    "p_session_id": session_id,
+                    "p_question_id": question_id,
+                    "p_user_id": user_id,
+                },
+            ).execute()
+            rpc_data = getattr(rpc_res, "data", None)
+            payload: Optional[Dict[str, Any]] = None
+            if isinstance(rpc_data, dict):
+                payload = rpc_data
+            elif isinstance(rpc_data, list) and len(rpc_data) > 0 and isinstance(rpc_data[0], dict):
+                payload = rpc_data[0]
 
-        if not q.get("is_current"):
-            raise ReviewDomainException(400, "ERR_QUESTION_NOT_CURRENT", "Question is not active")
+            if payload is not None and (payload.get("status") == "ok" or "id" in payload or payload.get("is_reverted")):
+                return payload
 
-        if q.get("status") == "regenerating":
+            logger.critical("RPC review_revert_question returned empty or malformed payload: %s", rpc_data)
             raise ReviewDomainException(
-                409, "ERR_QUESTION_BUSY", "Question is currently regenerating"
+                500, "ERR_DATABASE_TRANSACTION_FAILED", f"Phản hồi RPC hoàn nguyên không hợp lệ: {rpc_data}"
             )
+        except ReviewDomainException:
+            raise
+        except Exception as exc:
+            err_msg = str(exc)
 
-        # Guard: question never regenerated cannot be reverted
-        if q.get("regenerated_from_id") is None and not q.get("is_reverted"):
+            # 1. Domain invariant mappings
+            if "ERR_SESSION_LOCKED" in err_msg:
+                raise ReviewDomainException(
+                    423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
+                ) from exc
+            if "ERR_QUESTION_NOT_FOUND" in err_msg:
+                raise ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Question not found") from exc
+            if "ERR_QUESTION_NOT_CURRENT" in err_msg:
+                raise ReviewDomainException(400, "ERR_QUESTION_NOT_CURRENT", "Question is not active") from exc
+            if "ERR_QUESTION_BUSY" in err_msg:
+                raise ReviewDomainException(409, "ERR_QUESTION_BUSY", "Question is currently regenerating") from exc
+            if "ERR_QUESTION_NOT_REGENERATED" in err_msg:
+                raise ReviewDomainException(
+                    400, "ERR_QUESTION_NOT_REGENERATED", "Cannot revert original question that has never been regenerated"
+                ) from exc
+            if "ERR_SOURCE_QUESTION_NOT_FOUND" in err_msg:
+                raise ReviewDomainException(404, "ERR_SOURCE_QUESTION_NOT_FOUND", "Source question not found") from exc
+            if "ERR_SESSION_NOT_FOUND" in err_msg:
+                raise ReviewDomainException(404, "ERR_SESSION_NOT_FOUND", f"Session '{session_id}' không tồn tại") from exc
+
+            # 2. Strict Fail-Closed Infrastructure & Transport Exceptions
+            if "PGRST202" in err_msg or "Could not find the function" in err_msg:
+                logger.critical("RPC review_revert_question missing in database schema (PGRST202): %s", exc)
+                raise ReviewDomainException(
+                    503, "ERR_REVERT_UNAVAILABLE", "Hệ thống giao dịch hoàn nguyên chưa sẵn sàng trên CSDL (PGRST202)"
+                ) from exc
+            if "42501" in err_msg or "permission denied" in err_msg:
+                logger.critical("Database permission denied for review_revert_question (42501): %s", exc)
+                raise ReviewDomainException(
+                    500, "ERR_DATABASE_PERMISSION_DENIED", "Không có quyền thực thi thủ tục hoàn nguyên CSDL"
+                ) from exc
+            if isinstance(exc, (TimeoutError, ConnectionError, OSError)) or any(
+                term in err_msg.lower()
+                for term in ("timeout", "clientconnectorerror", "connection reset", "connection refused", "connection error")
+            ):
+                logger.error("Upstream timeout or connection drop during review_revert_question: %s", exc)
+                raise ReviewDomainException(
+                    504, "ERR_UPSTREAM_TIMEOUT", "Mất kết nối với dịch vụ giao dịch CSDL trong quá trình hoàn nguyên"
+                ) from exc
+
+            logger.critical("RPC review_revert_question unexpected error: %s", exc, exc_info=True)
             raise ReviewDomainException(
-                400,
-                "ERR_QUESTION_NOT_REGENERATED",
-                "Cannot revert original question that has never been regenerated",
-            )
-
-        # Idempotent: already reverted
-        if q.get("is_reverted"):
-            return q
-
-        # Fetch source question
-        source_id = str(q.get("source_question_id", ""))
-        sq_res = (
-            self.db.table("source_questions").select("*").eq("id", source_id).limit(1).execute()
-        )
-        sq_rows = _get_rows(sq_res)
-        if not sq_rows:
-            raise ReviewDomainException(
-                404, "ERR_SOURCE_QUESTION_NOT_FOUND", "Source question not found"
-            )
-        src = sq_rows[0]
-
-        now_time = _now_iso()
-
-        # Step 1: Deactivate current version question
-        upd_old = (
-            self.db.table("version_questions")
-            .update({"is_current": False, "updated_at": now_time})
-            .eq("id", question_id)
-            .eq("is_current", True)
-            .execute()
-        )
-        upd_old_rows = _get_rows(upd_old)
-        if len(upd_old_rows) != 1:
-            raise ReviewDomainException(
-                409, "ERR_CONCURRENT_MODIFICATION", "Concurrent modification during revert"
-            )
-
-        # Step 2: Insert new copy from source
-        new_id = str(uuid4())
-        new_payload = {
-            "id": new_id,
-            "version_id": q["version_id"],
-            "source_question_id": src["id"],
-            "question_no": q.get("question_no", 1),
-            "content": src.get("raw_content", ""),
-            "options": src.get("options", []),
-            "correct_key": src.get("correct_key", "A"),
-            "solution_md": src.get("solution_md"),
-            "canonical_question_no": q.get("question_no", 1),
-            "canonical_options": src.get("options", []),
-            "canonical_correct_key": src.get("correct_key", "A"),
-            "canonical_solution_md": src.get("solution_md"),
-            "status": "approved",
-            "is_current": True,
-            "is_reverted": True,
-            "regenerated_from_id": q["id"],
-            "regeneration_id": None,
-            "created_at": now_time,
-            "updated_at": now_time,
-        }
-        ins_res = self.db.table("version_questions").insert(new_payload).execute()
-        ins_rows = _get_rows(ins_res)
-        if not ins_rows:
-            raise ReviewDomainException(
-                500, "ERR_REVERT_INSERT_FAILED", "Failed to insert reverted question"
-            )
-        created_q = ins_rows[0]
-
-        # Step 3: Audit log
-        self.db.table("review_logs").insert(
-            {
-                "session_id": session_id,
-                "version_question_id": new_id,
-                "user_id": user_id,
-                "action_type": "REVERT",
-                "reason": None,
-                "created_at": now_time,
-            }
-        ).execute()
-
-        return created_q
+                500, "ERR_DATABASE_TRANSACTION_FAILED", f"Lỗi giao dịch hoàn nguyên CSDL: {exc}"
+            ) from exc
 
     async def invalidate_shuffle_if_finalized(self, session_id: str) -> bool:
         """Reset is_finalized, clear shuffle_seed/permutations, purge stale answer_keys,

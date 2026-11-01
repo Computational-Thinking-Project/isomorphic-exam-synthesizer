@@ -236,5 +236,5 @@ Bộ test tự động `backend/tests/api/test_finalize.py` bắt buộc phải 
   - **Ranh giới:** Tầng ứng dụng Python của Duy (`FinalizeRepository`, `ReviewRepository`) loại bỏ toàn bộ fallback âm thầm, thiết lập chính sách Strict Fail-Closed (503 khi thiếu RPC, 504 khi timeout). Migration Stored Procedure DDL nằm trong phạm vi bàn giao của Hùng (TASK-302 - PR #36 Phase B). Chi tiết xem tại [PLAN_FIX_F01_TASK305.md](PLAN_FIX_F01_TASK305.md) v2.2.
   - **Kiểm chứng:** Bộ mock test `MockSupabaseClient` được nâng cấp hỗ trợ RPC thread-safe và kiểm chứng bộ 3 bài test: Controlled Interleaving Repro, Fault Injection Crash Safety và Strict Fail-Closed.
 - **Kết quả kiểm thử tự động:**
-  - `pytest backend/tests/api/test_finalize.py backend/tests/services/test_review_lifecycle.py backend/tests/api/test_review_api.py -v`: **73/73 tests passed 100%**.
+  - `pytest backend/tests/api/test_finalize.py backend/tests/services/test_review_lifecycle.py backend/tests/api/test_review_api.py -v`: **75/75 tests passed 100%**.
   - `ruff check`: All checks passed!

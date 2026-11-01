@@ -229,7 +229,7 @@ class MockRpcQueryBuilder:
     def execute(self) -> MockExecutionResult:
         with _GLOBAL_MOCK_LOCK:
             self.call_log.append(
-                {"op": "rpc", "function": self.function_name, "params": dict(self.params)}
+                {"op": "rpc", "table": None, "function": self.function_name, "params": dict(self.params)}
             )
 
             if self.function_name == "finalize_approve_session":
@@ -364,6 +364,94 @@ class MockRpcQueryBuilder:
                         }
                     ]
                 )
+
+            if self.function_name == "review_revert_question":
+                session_id = str(self.params.get("p_session_id", ""))
+                question_id = str(self.params.get("p_question_id", ""))
+                user_id = str(self.params.get("p_user_id", ""))
+
+                sessions = self.db_state.get("exam_sessions", [])
+                s_row = next((s for s in sessions if str(s.get("id")) == session_id), None)
+                if not s_row:
+                    raise RuntimeError("ERR_SESSION_NOT_FOUND")
+
+                status = str(s_row.get("status", "")).lower()
+                if status in ("approved", "exported"):
+                    raise RuntimeError("ERR_SESSION_LOCKED")
+
+                vqs = self.db_state.get("version_questions", [])
+                q_row = next((q for q in vqs if str(q.get("id")) == question_id), None)
+                if not q_row:
+                    raise RuntimeError("ERR_QUESTION_NOT_FOUND")
+
+                if not q_row.get("is_current"):
+                    raise RuntimeError("ERR_QUESTION_NOT_CURRENT")
+
+                if str(q_row.get("status", "")).lower() == "regenerating":
+                    raise RuntimeError("ERR_QUESTION_BUSY")
+
+                # Guard: question never regenerated cannot be reverted
+                if q_row.get("regenerated_from_id") is None and not q_row.get("is_reverted"):
+                    raise RuntimeError("ERR_QUESTION_NOT_REGENERATED")
+
+                # Idempotent: already reverted
+                if q_row.get("is_reverted"):
+                    return MockExecutionResult([q_row])
+
+                source_id = str(q_row.get("source_question_id", ""))
+                sources = self.db_state.get("source_questions", [])
+                src_row = next((s for s in sources if str(s.get("id")) == source_id), None)
+                if not src_row:
+                    raise RuntimeError("ERR_SOURCE_QUESTION_NOT_FOUND")
+
+                now_time = _now_iso()
+                q_row["is_current"] = False
+                q_row["updated_at"] = now_time
+
+                new_id = str(uuid4())
+                new_q = {
+                    "id": new_id,
+                    "version_id": q_row["version_id"],
+                    "source_question_id": src_row["id"],
+                    "question_no": q_row.get("question_no", 1),
+                    "content": src_row.get("raw_content", ""),
+                    "options": src_row.get("options", []),
+                    "correct_key": src_row.get("correct_key", "A"),
+                    "solution_md": src_row.get("solution_md"),
+                    "canonical_question_no": q_row.get("question_no", 1),
+                    "canonical_options": src_row.get("options", []),
+                    "canonical_correct_key": src_row.get("correct_key", "A"),
+                    "canonical_solution_md": src_row.get("solution_md"),
+                    "status": "approved",
+                    "is_current": True,
+                    "is_reverted": True,
+                    "regenerated_from_id": q_row["id"],
+                    "regeneration_id": None,
+                    "created_at": now_time,
+                    "updated_at": now_time,
+                }
+                vqs.append(new_q)
+                s_row["updated_at"] = now_time
+
+                audit_entry = {
+                    "session_id": session_id,
+                    "version_question_id": new_id,
+                    "user_id": user_id,
+                    "action_type": "REVERT",
+                    "reason": None,
+                    "created_at": now_time,
+                }
+                logs = self.db_state.setdefault("review_logs", [])
+                logs.append(audit_entry)
+                self.call_log.append(
+                    {
+                        "op": "insert",
+                        "table": "review_logs",
+                        "payload": audit_entry,
+                    }
+                )
+
+                return MockExecutionResult([new_q])
 
             return MockExecutionResult([])
 

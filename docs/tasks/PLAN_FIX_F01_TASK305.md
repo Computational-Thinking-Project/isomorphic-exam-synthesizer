@@ -6,8 +6,8 @@
 - **Tác giả kế hoạch:** Duy (`johannguyen015` — Leader & Backend Lead)
 - **PR:** [#33](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/33)
 - **Nhánh làm việc:** `feat/duy-task-305-approval-lock`
-- **Phiên bản kế hoạch:** v2.2 — Definitive Two-Way Concurrency & Strict Fail-Closed Architecture
-- **Ngày lập:** 01/11/2026
+- **Phiên bản kế hoạch:** v2.3 — Full Mutation Surface (Revert & Reject) & Strict Whitelist Verification (F01 & F04)
+- **Ngày lập:** 01/11/2026 (Cập nhật sau review commit ee33736)
 - **Tài liệu đối chiếu:**
   - Contract TASK-302 (Hùng): `docs/api/review-rpc-contract.md` (PR #36).
   - Schema migration (Hùng): `backend/migrations/006_stage3_review_and_shuffle.sql` (PR #36).
@@ -437,20 +437,19 @@ graph TD
 - [x] Bổ sung khối bắt lỗi `PGRST202` $\rightarrow$ ném `ReviewDomainException(503, "ERR_FINALIZATION_UNAVAILABLE", "Hệ thống giao dịch chốt đề chưa sẵn sàng trên CSDL (PGRST202)")`.
 - [x] Bổ sung khối bắt lỗi Timeout / Network error $\rightarrow$ ném `ReviewDomainException(504, "ERR_UPSTREAM_TIMEOUT", "Mất kết nối với dịch vụ giao dịch CSDL trong quá trình chốt đề")`.
 
-### Bước 3: Đối xứng hóa ranh giới tại `ReviewRepository`
+### Bước 3: Đối xứng hóa toàn bộ bề mặt đột biến tại `ReviewRepository` & Xử lý F04
 - **File:** `backend/app/services/review/repository.py`
-- [x] Refactor `reserve_max_quota_and_start_regenerating`:
-  - Gọi RPC `review_reserve_regeneration(p_session_id, p_question_id, p_user_id, p_operation_id)`.
-  - Loại bỏ các câu lệnh query rời rạc và khối compensation rollback ở tầng Python.
-  - Xử lý mã lỗi trả về chuẩn xác theo Ma trận ánh xạ lỗi (Fail-Closed).
+- [x] Sửa F04: Triệt tiêu hoàn toàn `return ReserveResult.OK` mặc định, thực thi whitelist validation chặt chẽ (chỉ chấp nhận `status == 'ok'`). Mọi response `None`, `[]`, `{}` hoặc malformed đều ném 500 Fail-Closed.
+- [x] Bịt kín F01 nhánh Reject: Gọi RPC `review_reserve_regeneration(p_session_id, p_question_id, p_user_id, p_operation_id)`.
+- [x] Bịt kín F01 nhánh Revert: Gọi RPC `review_revert_question(p_session_id, p_question_id, p_user_id)` có khóa dòng `SELECT ... FOR UPDATE` trên session, loại bỏ 100% việc tráo đổi câu hỏi sau khi session đã `approved`.
 
-### Bước 4: Nâng cấp Stateful Test Harness & Viết Test Mới
+### Bước 4: Nâng cấp Stateful Test Harness & Viết Test Đối Kháng Mới
 - **File:** `backend/tests/api/test_finalize.py`, `backend/tests/services/test_review_lifecycle.py`
-- [x] Thêm xử lý RPC `review_reserve_regeneration` trong `MockSupabaseClient` (thread-safe với row lock).
-- [x] Viết test interleaving chặn đứng Worker B khi Worker A đã Approve (`test_f01_controlled_interleaving_blocks_worker_b_and_prevents_corrupt_state`).
-- [x] Viết test kiểm tra Fail-Closed khi RPC gặp lỗi vắng mặt `PGRST202` hoặc connection timeout (`test_f01_strict_fail_closed_when_finalize_rpc_missing_pgrst202`, `test_f01_strict_fail_closed_when_finalize_rpc_timeouts`, `test_f01_strict_fail_closed_when_reserve_rpc_missing_or_timeouts`).
+- [x] Thêm xử lý RPC `review_reserve_regeneration` và `review_revert_question` trong `MockSupabaseClient` (thread-safe với row lock).
+- [x] Viết test đối kháng F01 Revert: `test_f01_interleaved_revert_blocked_when_session_approved` (chặn đứng Worker B Revert khi Worker A đã Approve, câu hỏi giữ nguyên variant đã duyệt).
+- [x] Viết test đối kháng F04: `test_f04_reservation_rpc_denied_or_empty_fails_closed` (xác nhận RPC trả `denied`, `None`, `[]` đều fail-closed, AI Generator KHÔNG BAO GIỜ được gọi).
 
 ### Bước 5: Kiểm định Hồi quy & Phản hồi M5 cho Reviewer Đạt
-- [x] Chạy kiểm thử toàn bộ test suite: **73/73 tests passed 100%**.
+- [x] Chạy kiểm thử toàn bộ test suite: **75/75 tests passed 100%**.
 - [x] Kiểm tra linting và typing: `ruff check` và `mypy` đạt 0 lỗi.
-- [x] Soạn thảo phản hồi mẫu M5 trên PR #33 đối chiếu chi tiết từng điểm phản biện của Đạt.
+- [x] Soạn thảo phản hồi mẫu M5 trên PR #33 đối chiếu chi tiết việc đóng toàn bộ bề mặt đột biến và sửa dứt điểm F04.
