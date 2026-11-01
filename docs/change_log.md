@@ -1,3 +1,7 @@
+## 01/11/2026 — TASK-304: permit bền vững tại boundary dispatch (Draft)
+
+Adapter real nhận operation_id và callback trả AttemptPermit, dùng hook gateway hiện có cho mỗi attempt/retry/repair. Không còn fallback local-only cho review production. DB ledger quyết toán; count adapter chỉ là acknowledged grants, không tự refund khi timeout/cancel hoặc mất response. [Handoff và giới hạn](ai-w3-targeted-regeneration.md), [điều phối #36](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6551270882). Đã triển khai phía adapter; RPC/wrapper/E2E còn phụ thuộc Hùng/Duy, shared contract chưa coi đã được mọi owner chấp nhận.
+
 ## 24/10/2026 — AI W2 (thay đổi cục bộ, chưa merge)
 
 Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical core dùng chung CLI/backend, generator theo Blueprint kèm lời giải, bounded validation/retry, resume/callback và lifecycle. [Chi tiết và giới hạn nghiệm thu](ai-w2-integration.md). Chưa tích hợp routes/DB/SSE/UI W2; chưa nghiệm thu Docker/live API.

@@ -13,6 +13,7 @@ from app.models.targeted import RegeneratedVariantResult
 from app.services.blueprint.adapters import prepare_sources
 from app.services.blueprint.common import canonical
 from app.services.blueprint.service import source_fingerprint
+from app.services.generation.attempts import AttemptPermit
 from app.services.generation.service import GenerationService
 from app.services.generation.targeted_service import (
     TargetedGenerationError,
@@ -44,7 +45,16 @@ def handoff():
     gateway = SimpleNamespace(model="offline", generate_content=AsyncMock(side_effect=generate))
     validator = SimpleNamespace(validate=AsyncMock(side_effect=validate))
     question_id = str(uuid4())
+    grants = []
+
+    async def acquire(operation_id, attempt_id):
+        grants.append(attempt_id)
+        return AttemptPermit(operation_id=operation_id, attempt_id=attempt_id,
+                             dispatch_permitted=True, calls_used=len(grants),
+                             remaining_calls=30-len(grants), replayed=False)
+
     args = dict(
+        operation_id=uuid4(), acquire_attempt=acquire,
         session_id=str(uuid4()), question_id=question_id,
         source_snapshot={**source.model_dump(), "content_hash": source_fingerprint(prepare_sources([source]))},
         blueprint=data["blueprint"], current_variant={
@@ -52,7 +62,7 @@ def handoff():
             "content": data["candidates"][0]["question_text"], "options": data["candidates"][0]["options"],
         }, peer_variants=[],
     )
-    return SimpleNamespace(args=args, responses=responses, data=data, gateway=gateway, validator=validator,
+    return SimpleNamespace(args=args, responses=responses, data=data, gateway=gateway, validator=validator, grants=grants,
                            adapter=TargetedRegenerator(GenerationService(gateway, validator)))
 
 
@@ -148,3 +158,28 @@ def test_result_schema_rejects_bad_key_or_duplicate_options():
     fields.update(correct_key="A", options=["1", " 1 ", "3", "4"])
     with pytest.raises(ValidationError):
         RegeneratedVariantResult(**fields)
+
+
+@pytest.mark.asyncio
+async def test_live_adapter_requires_permit_dependency_before_dispatch(handoff):
+    handoff.args.pop("acquire_attempt")
+    with pytest.raises(TargetedGenerationError) as exc:
+        await handoff.adapter(**handoff.args)
+    assert exc.value.code == "REVIEW_PERMIT_REQUIRED"
+    assert exc.value.api_calls_count == 0
+    handoff.gateway.generate_content.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_denied_permit_does_not_consume_candidate_or_retry(handoff):
+    async def deny(op, attempt):
+        return AttemptPermit(operation_id=op, attempt_id=attempt,
+                             dispatch_permitted=False, calls_used=30,
+                             remaining_calls=0, replayed=False)
+    handoff.args["acquire_attempt"] = AsyncMock(side_effect=deny)
+    with pytest.raises(TargetedGenerationError) as exc:
+        await handoff.adapter(**handoff.args)
+    assert exc.value.code == "REVIEW_QUOTA_EXHAUSTED"
+    assert exc.value.api_calls_count == 0
+    assert len(handoff.responses) == 1
+    handoff.args["acquire_attempt"].assert_awaited_once()

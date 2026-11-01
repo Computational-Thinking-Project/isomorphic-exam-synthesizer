@@ -1,6 +1,6 @@
 """Database-free review adapter. Inject TargetedRegenerator into ReviewService.
 
-The caller owns durable reservation, ownership, atomic persistence and refunds.
+The caller owns durable permits, ownership, atomic persistence and recovery.
 This adapter never substitutes a fixture when credentials or canonical input fail.
 """
 
@@ -13,9 +13,10 @@ from pydantic import ValidationError
 
 from app.models.schemas import SourceQuestion
 from app.models.targeted import RegeneratedVariantResult, TargetedValidationReport
-from app.services.ai.gateway import RequestBudget, RequestContext
+from app.services.ai.gateway import RequestContext
 from app.services.blueprint.adapters import normalized_text
 from app.services.blueprint.common import ToolError
+from app.services.generation.attempts import AcquireAttempt, DurableAttemptBudget
 from app.services.generation.service import GenerationService, fingerprint
 
 
@@ -56,11 +57,15 @@ class TargetedRegenerator:
         self, session_id: UUID | str, question_id: UUID | str,
         source_snapshot: dict[str, Any], blueprint: dict[str, Any],
         current_variant: dict[str, Any], peer_variants: list[dict[str, Any]],
+        *, operation_id: UUID | str | None = None, acquire_attempt: AcquireAttempt | None = None,
     ) -> RegeneratedVariantResult:
-        budget = RequestBudget(self.max_api_calls)
+        budget: DurableAttemptBudget | None = None
         try:
             UUID(str(session_id))
             UUID(str(question_id))
+            if operation_id is None or not callable(acquire_attempt):
+                raise TargetedGenerationError("REVIEW_PERMIT_REQUIRED")
+            budget = DurableAttemptBudget(self.max_api_calls, UUID(str(operation_id)), acquire_attempt)
             source = SourceQuestion.model_validate({
                 "id": str(source_snapshot["id"]),
                 "question_text": source_snapshot.get("question_text", source_snapshot.get("raw_content", source_snapshot.get("raw_text"))),
@@ -99,19 +104,20 @@ class TargetedRegenerator:
         except TargetedGenerationError:
             raise
         except ToolError as exc:
-            raise TargetedGenerationError(exc.code, budget.used) from None
+            raise TargetedGenerationError(exc.code, budget.used if budget else 0) from None
         except (ValueError, KeyError, TypeError, ValidationError):
-            raise TargetedGenerationError("REGENERATION_INPUT_INVALID", budget.used) from None
+            raise TargetedGenerationError("REGENERATION_INPUT_INVALID", budget.used if budget else 0) from None
         except asyncio.CancelledError:
-            # Cancellation must propagate. Caller must settle its durable reservation.
+            # Cancellation must propagate. Caller reconciles the durable ledger.
             raise
         except Exception:
-            raise TargetedGenerationError("GENERATION_INTERNAL", budget.used) from None
+            raise TargetedGenerationError("GENERATION_INTERNAL", budget.used if budget else 0) from None
 
 
 async def mock_regenerate_question_variant(
     session_id: UUID | str, question_id: UUID | str, source_snapshot: dict[str, Any],
     blueprint: dict[str, Any], current_variant: dict[str, Any], peer_variants: list[dict[str, Any]],
+    *, operation_id: UUID | str | None = None, acquire_attempt: AcquireAttempt | None = None,
 ) -> dict[str, Any]:
     """Explicit integration fixture: no Gemini calls, no mathematical verification."""
     return RegeneratedVariantResult(

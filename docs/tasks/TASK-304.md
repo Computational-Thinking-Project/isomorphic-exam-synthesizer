@@ -1,6 +1,6 @@
 # TASK-304 — Plan và bàn giao: Targeted Regeneration
 
-- Trạng thái: **Draft — đã triển khai adapter/schema/mock và đang tự kiểm**, ngày 29/10/2026; chưa tích hợp DB thật. Đạt yêu cầu triển khai ngay trong phiên này.
+- Trạng thái: **Draft — adapter/schema/mock và durable-permit hook đã triển khai**, cập nhật 01/11/2026; chưa tích hợp DB thật, chưa review độc lập.
 - Nguồn: W3_ASSIGNMENT.md v2.1 (28/10/2026) và w3.md do Đạt cung cấp ngoài repo. Bản v2.1 chưa có đường dẫn GitHub được xác minh; chờ Duy cung cấp nguồn chung. Không dùng bản W3 cũ làm assignment v2.1.
 - Owner: Trương Thành Đạt (`Thanhdat3010`); reviewer: Tâm (`AI-WFox`), **đề xuất**, chưa coi đã nhận review.
 - Nhánh: `feat/dat-task-304-targeted-regeneration`, target `dev`; baseline `dc62d3c1d8616316771f8c1dc5a8a1ab56a2ff8c`.
@@ -64,10 +64,19 @@ Duy đã giải đáp tại [PR #26](https://github.com/Computational-Thinking-P
 - Regression AI/validator/Blueprint, Ruff/Mypy; CI/Docker trên head cuối. Live smoke tách khỏi unit tests, ghi model/prompt/calls, không log key.
 - Integration với Duy: không giữ DB connection lúc gọi Gemini; timeout/cancel/failure giữ câu cũ; revision race/uniqueness và durable quota thuộc kiểm thử BE, không nhận đã kiểm bằng unit AI.
 
+## Cập nhật kế hoạch 01/11 — quota theo từng dispatch
+
+- Input đã đọc: PR #36 `467461b` và phản hồi Duy về 30/session, 4/operation, Model A, retain uncertain charge. Đạt đã giao shape callback trên #36; shared RPC contract còn chờ Hùng cập nhật.
+- Đã triển khai `generation/attempts.py`: typed AttemptPermit + DurableAttemptBudget, tái sử dụng hook RequestContext hiện có; real targeted callable nhận operation_id/acquire_attempt và từ chối thiếu dependency. Không sửa gateway, migration hoặc repository của thành viên khác.
+- Tự kiểm: grant/deny/replay/ID mismatch/malformed/unknown response, retry/repair, cancellation/deadline; count giữ conservative, không tự refund. Các kết quả cuối theo PR body/head bàn giao.
+- Handoff adapter trong ngày 01/11. Hùng cung cấp RPC ledger; Duy nối wrapper sau khi nhận RPC (ETA Duy: trong 24h sau bàn giao RPC). Không biến ETA thành bằng chứng đã tích hợp.
+- Còn làm sau input: nối Reject endpoint với wrapper thật, kiểm quota/session nhiều worker, cancellation/recovery/late completion và bảo toàn câu cũ; đây là E2E phối hợp TASK-301/302/304. Xem [handoff](../ai-w3-targeted-regeneration.md).
+- Trước Ready: đồng bộ dev hiện tại và giải quyết report/validator contract trên nhánh mình, có review độc lập và CI head cuối; không tự sửa nhánh thành viên khác. Các nhận xét baseline/ngày 29/10 phía trên là lịch sử.
+
 ## Bàn giao — trạng thái thực tế
 
 - Đã làm: `RegeneratedVariantResult`, callable `TargetedRegenerator`, mock tách biệt, adapter snapshot tái sử dụng GenerationService/gateway/validator. Không nhận prompt giáo viên; không giữ DB connection.
 - Đã kiểm: regression AI/schema/mock/quota/duplicate/mapping; kết quả và head cụ thể trong PR body.
-- Chưa làm/chưa kiểm: DB thật, live Gemini W3, aggregator #20 chưa merge, durable quota/cancellation của BE và E2E reject.
-- Duy PR #28 hiện giữ chỗ 3 calls và chưa load canonical Blueprint/hash/source ID của peers; xem handoff. Không dùng fixture/mock thay chứng nhận tích hợp.
+- Chưa kiểm: DB quota thật, wrapper service-role, recovery và E2E reject. Không dùng fixture/mock thay chứng nhận tích hợp.
+- Nhận xét giữ chỗ 3 calls ở bản #28 ngày 29/10 là lịch sử; policy tích hợp mới là permit từng attempt trong DB. Handoff không có quyền tự triển khai RPC thay Hùng hoặc lifecycle thay Duy.
 - Chưa có reviewer xác minh hoặc GitHub Approve.
