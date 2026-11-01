@@ -1,25 +1,25 @@
 {
-  "packageId": "UI-WALKTHROUGH-20261101",
+  "packageId": "UI-WALKTHROUGH-20261101-S06-REGENERATE-ONLY",
   "packagedDate": "2026-11-01",
   "timezone": "Asia/Bangkok",
-  "kind": "Portable prepared UI, not integrated product or AI output",
+  "kind": "Portable UI with sample data; not integrated product or AI output",
   "branch": "feat/ui-ux-demo",
-  "repositoryBaseAtPackaging": "a57079caa8bcb165744722f2af9d02d47b51df78",
+  "repositoryBaseAtPackaging": "6fef4e1f3f6aa830a8d965369d5ec8b00476dcb9",
   "artifact": {
     "file": "PREVIEW.html",
-    "bytes": 2748189,
-    "sha256": "32b508cbccf75d93697d68c466d210723f61482cc70e81731f5fe98bb5b3a54e",
+    "bytes": 2752027,
+    "sha256": "13543c80074d7eaf17072892e392ffa3bed952275da6feef76ee2efb2b4a9dc1",
     "sourceWorkspaceRelativePath": "project/ui-draft/redesign/PREVIEW.html",
     "sourceDateFromReview": "2026-11-01",
     "sourceCommit": null,
-    "sourceCommitNote": "ui-draft is outside the product Git repository; repositoryBaseAtPackaging is not the artifact source commit",
+    "sourceCommitNote": "ui-draft lives outside the product Git repository; repositoryBaseAtPackaging is not the artifact source commit",
     "built": [
-      "index-CLKoZODR.css",
-      "index-DSwc8nZV.js"
+      "index-WFK8JX_V.css",
+      "index-BGqR_Xk3.js"
     ],
     "selfContained": true,
     "thirdPartyNoticesEmbedded": true,
-    "rebuiltDuringPackaging": false
+    "rebuiltDuringPackaging": true
   },
   "checkpoints": [
     {
@@ -38,59 +38,66 @@
       "state": "success"
     },
     {
-      "label": "Backup ready",
+      "label": "Backup generation",
       "screen": "S05",
-      "state": "ready",
+      "state": "success",
       "prepared": true
     },
     {
-      "label": "Backup correction checkpoint",
+      "label": "Backup review, all received and zero approvals",
       "screen": "S06",
-      "state": "presenter-issue",
+      "state": "success",
       "prepared": true,
-      "selectQuestion": "Cau 3",
-      "sourceId": "G03",
+      "selectQuestion": "Cau 1",
+      "sourceId": "G01",
       "code": "101",
-      "otherApprovalsPreloaded": 9
+      "otherApprovalsPreloaded": 0
     }
   ],
   "behavior": {
-    "S05": "Automatic sample simulation; count/readiness separate; no live AI or autoapproval",
-    "W3ToW5": "Primary path: click Begin review in S05 prepares9 approvals and G03/101 duplicate case once, without replacing source/config/progress. Existing S06 link is a backup checkpoint.",
+    "S05": "Enable Begin review after at least one valid received source-code pair. Do not wait for all QxN or readiness. No automatic navigation or approval.",
+    "S05ToS06": "Shared scheduler continues without restarting its outstanding timer. New run selects question1/code101 with zero approvals. Question3/code101 intentionally has duplicate B=C content as a demo issue; no preapproved Presenter preset.",
+    "S06Loading": "Per selected code, active spinner/pending clock/failed icon in clickable cells and tabs. Selected active or pending pair displays right-panel skeleton; source stays visible. Unreceived variant content/key/steps are hidden.",
+    "recovery": "Continue healthy queued pairs after a failure; retry only failed pairs with run/pair/revision guards. Shared pause/resume. New run resets selection/pause; stale callbacks and unmount leases are guarded.",
+    "review": "S06 is read-only with no edit/save/attestation/dirty guard. Current approvals and regenerated content survive other receipts. Approval selects next unapproved source, keeps code, never auto S07.",
+    "finalization": "All received valid pairs plus readiness, all current approvals and current copy marks are still required.",
+    "S06Notifications": "Body-portal toasts under header, max2 visible/5000ms each, dismiss/dedupe/scope cleanup. Modal errors and persistent recovery controls remain; no editor warnings.",
+    "S00ToS01": "CTA ends with S00; no CTA ghost on S01; logo/slogan450ms, card300ms with delay130ms",
+    "regenerate": "One confirmed Tạo lại content action: received/missing/excluded pair uses bounded sample replacement, failed pair enqueues scoped retry. Active/pending/permanent sample failure/snapshot/offline/conflict blocked. Lock/run/pair/source+variant revision guards, unmount cleanup, acknowledgement/rejection handling. Regenerated pair stays unapproved, copy marks invalidated. Finite offsets1..8, no duplicate current/same-source other-code content.",
     "persistence": "Tab memory only",
     "realPDFExport": false,
-    "S00ToS01": "CTA ends with S00; no CTA ghost on S01; logo/slogan450ms, card300ms with delay130ms",
-    "regenerate": "Finite offsets1..8 relative to source seed, skip current and same-source other-code question content; retain question and notify if pool unavailable",
-    "reviewDemoEligibility": "Canonical5x2 pristine sample, ready, no prior approval/edit/copy marks; not a title-only match. New load/start clears marker; revisiting does not reseed.",
-    "reviewDemoSelection": "G03/101 on primary transition and direct presenter-issue backup; other diagnostics unchanged"
+    "defaultContentIssue": "G03/101 intentionally has B=C, source/key/steps intact, check=issue, no preapproval. Content error after receipt, not failed job. Regenerate, reopen answers/steps and explicitly approve; no manual editing or reseeding on revisit."
   },
   "checks": {
-    "staticPackageVerification": "passed: source/dist/package hash, relative links, embedded notices/resources, -text, five-file scope, diff --check; no native Chrome",
+    "staticPackageVerification": "See local verification report; source/dist/package bytes and hash checked; native Chrome not run",
     "nativeChrome": "not run",
     "keyboardFocusScroll": "not run",
     "rehearsal": "not run",
     "sourceChecks": {
       "date": "2026-11-01",
-      "focused": 23,
-      "s06Regression": 28,
-      "algebraRegression": 37,
-      "legacyFixtureComparisons": 48,
+      "regenerateOnlyFocused": 26,
+      "progressiveReview": 27,
+      "s06Regression": 29,
+      "algebraRegression": 36,
+      "toastRegression": 14,
+      "total": 132,
       "result": "passed in ui-draft",
-      "scope": "Reducer and React element/event wiring, no native browser",
+      "scope": "Fake timers, reducers/selectors, in-memory hooks, React element/static markup; not native Chrome or real AI. Scheduler regressions use a controlled clean-content fixture; focused cases cover actual B=C→regenerate→approve. Obsolete edit/save/stale assertions removed, not claimed passing.",
       "typeScript": "passed",
-      "build": "passed,1613 modules"
+      "build": "passed,1620 modules"
     }
   },
   "publicationAtPreparation": {
     "committed": false,
     "pushed": false,
     "packageCommit": null,
-    "note": "Local preparation only; no commit/push in this task"
+    "note": "Regenerate-only refresh is local working changes based on6fef4e1; no commit/push for this refresh."
   },
   "limits": [
     "No real auth/upload/parser/AI/server persistence/PDF",
-    "Prepared example is not actual AI or teacher approval evidence",
+    "Prepared fixtures are not real AI output or teacher approvals",
     "No equivalent difficulty/coverage/accuracy/time-saving claims",
-    "Native file access restriction remains; no server/CDP/alternate-surface workaround"
+    "Native file access restriction remains; no server/CDP/alternate-surface workaround",
+    "Legacy presenter-issue remains only an explicit QA diagnostic, outside launcher and normal flow"
   ]
 }

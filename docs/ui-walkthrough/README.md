@@ -1,10 +1,10 @@
 # UI walkthrough — exam mirror
 
-**Bản portable 01/11/2026**, dùng cho Full flow v3. Mở [launcher](index.html) hoặc [PREVIEW.html](PREVIEW.html) bằng Chrome sau khi lấy file về máy. Không cần npm, Docker, API key hoặc server. GitHub chỉ hiển thị nội dung HTML; không chạy demo ngay trong trang xem file GitHub.
+**Bản portable 01/11/2026 — duyệt trong lúc tạo.** Mở [launcher](index.html) hoặc [PREVIEW.html](PREVIEW.html) bằng Chrome sau khi lấy về máy. Không cần npm, Docker, API key hoặc server. GitHub chỉ hiển thị nội dung HTML, không chạy demo ngay trong trang xem file.
 
 ## Lấy gói về máy
 
-Gói nằm trên nhánh `feat/ui-ux-demo`, đường dẫn `docs/ui-walkthrough/`. Trong clone hiện có, kiểm `git status` trước. Nếu có thay đổi chưa lưu hoặc nhánh local phân kỳ, dừng cập nhật và giữ công việc của mình; không dùng reset/force để lấy demo.
+Gói nằm trên nhánh `feat/ui-ux-demo`, đường dẫn `docs/ui-walkthrough/`. Trong clone hiện có, kiểm `git status` trước. Nếu có thay đổi chưa lưu hoặc nhánh local phân kỳ, giữ công việc của mình; không dùng reset/force để lấy demo.
 
 ```sh
 git fetch origin
@@ -23,83 +23,93 @@ git switch feat/ui-ux-demo
 git pull --ff-only origin feat/ui-ux-demo
 ```
 
-Mở `docs/ui-walkthrough/index.html` bằng Chrome từ trình quản lý file. Nếu chỉ chia sẻ lại file, giữ nguyên cả thư mục nhỏ này để các liên kết tương đối vẫn dùng được. Riêng PREVIEW.html tự chứa toàn bộ app và có thể mở độc lập.
+Mở `docs/ui-walkthrough/index.html` bằng Chrome từ trình quản lý file. Giữ nguyên cả thư mục nếu chia sẻ lại để các liên kết tương đối vẫn dùng được. Riêng PREVIEW.html tự chứa toàn bộ app, font, artwork và notices, có thể mở độc lập.
 
-**Phát hành:** bản demo liên tục01/11 được chuẩn bị trên nhánh `feat/ui-ux-demo`, chưa commit/push trong lượt cập nhật này. Kiểm commit remote chứa đúng hash trước khi pull; bản31/10 chưa có bước chuẩn bị S06 tự động này.
+**Mốc đóng gói:** refresh S06 chỉ Tạo lại được chuẩn bị từ `6fef4e1`, lúc đóng gói chưa commit/push. Xem lịch sử nhánh để xác định trạng thái công bố sau đó; kiểm hash để phân biệt với bản cũ còn editor.
 
 ## Bản và nguồn
 
-- Nguồn artifact: `project/ui-draft/redesign/PREVIEW.html` ở workspace thiết kế, không phải bản build của frontend sản phẩm.
-- 2.748.189 bytes; SHA256 `32b508cbccf75d93697d68c466d210723f61482cc70e81731f5fe98bb5b3a54e`.
-- CSS `index-CLKoZODR.css`, JS `index-DSwc8nZV.js` đã nhúng. Font, artwork, app và third-party notices được giữ nguyên.
-- Nền repo khi đóng gói: `a57079caa8bcb165744722f2af9d02d47b51df78`. Đây là base repo chứa gói, không phải commit tạo artifact ui-draft.
-- [version.json](version.json) giữ nguồn/hash/trạng thái kiểm. Quy tắc Git trong thư mục giữ nguyên bytes PREVIEW, không tự chuyển CRLF/LF.
+- Nguồn: `project/ui-draft/redesign/PREVIEW.html` ở workspace thiết kế, không phải build frontend sản phẩm.
+- 2.752.027 bytes; SHA256 `13543c80074d7eaf17072892e392ffa3bed952275da6feef76ee2efb2b4a9dc1`.
+- CSS `index-WFK8JX_V.css`, JS `index-BGqR_Xk3.js` đã nhúng cùng font, artwork và third-party notices.
+- Nền repo khi đóng gói: `6fef4e1f3f6aa830a8d965369d5ec8b00476dcb9`; đây không phải source commit của artifact ui-draft.
+- [version.json](version.json) ghi nguồn/hash/trạng thái kiểm. `.gitattributes` giữ nguyên bytes PREVIEW, không tự chuyển CRLF/LF.
 
-Kiểm file sau khi pull bằng PowerShell, không cần chạy ứng dụng:
+Kiểm file bằng PowerShell:
 
 ```powershell
 Get-Item ./docs/ui-walkthrough/PREVIEW.html | Select-Object Length
 Get-FileHash ./docs/ui-walkthrough/PREVIEW.html -Algorithm SHA256
 ```
 
-## Hai thay đổi ngày31/10
+## Walkthrough hiện hành
 
-- S00→S01: CTA của S00 không còn được dựng lại trên màn đăng nhập. Chuyển động logo/slogan và login card giữ timing cũ.
-- S06 Tạo lại: tham số dùng cửa sổ offset1–8 so với seed nguồn, tránh đề trùng câu hiện tại hoặc mã khác cùng nguồn. Hết ứng viên thì giữ nguyên câu và báo rõ; không tăng số không giới hạn. Sinh ban đầu và ca Presenter giữ nguyên.
-- Đây là giới hạn số của demo, không chứng minh độ khó tương đương. Với nguồn stress, cửa sổ là tương đối với seed nguồn.
+### S00 → S03: nguồn
 
-## Walkthrough trực tiếp
+Mở S00 từ launcher. Login/Library là giao diện demo. Tạo phiên mới hoặc dùng checkpoint S03 empty; bấm **Xem dữ liệu mẫu**, đọc đề, **Xác nhận toàn bộ đề**, rồi **Tiếp theo**. Chọn file chỉ dùng tên file, không upload/parse nội dung.
 
-### S00 → W1: nguồn
+### S04 → S05: vào duyệt ngay khi có kết quả
 
-Mở S00 từ launcher. Login/Library là giao diện demo, không OAuth thật. Có thể dùng checkpoint W1 để vào S03 empty; bấm **Xem dữ liệu mẫu**, chọn Câu 3 để đọc, **Xác nhận toàn bộ đề** rồi **Tiếp theo**. Chọn file nếu có chỉ dùng tên file, không upload hoặc parse nội dung.
+Nhập **2**, xác nhận **5 câu/mã × 2 mã = 10 biến thể**, bấm **Tạo biến thể** và xác nhận. S05 bắt đầu ở 0/10 rồi tự nhận từng cặp câu–mã bằng bộ mô phỏng. Ngay khi có ít nhất một cặp hợp lệ đã nhận, nút **Bắt đầu duyệt** bật; không phải đợi đủ 10 hoặc readiness cả bộ. Màn không tự điều hướng.
 
-### W2: cấu hình và tiến trình
+Bấm vào ngay sau kết quả đầu tiên để thấy tiến trình tiếp tục tại S06. Tiến trình mẫu thường chạy khoảng 4,5 giây cho 10 cặp, rồi có một bước readiness riêng; đây là lịch timer trong source, chưa phải thời gian đo trên Chrome hoặc AI latency. Nếu đợi hết rồi mới bấm thì tất cả ô đã có nội dung, không còn skeleton.
 
-S04 nhập **2**, xác nhận **5 câu/mã × 2 mã = 10 biến thể**, bấm **Tạo biến thể** và xác nhận. S05 tự nhận kết quả mô phỏng, đủ số rồi readiness mới bật **Bắt đầu duyệt**. Không cần sửa query để chạy. Trong S05 không tự duyệt hoặc tự chuyển màn. Khi đủ readiness, bấm Bắt đầu duyệt để vào S06. Tiến trình này không phải AI latency hoặc thời gian tiết kiệm đã đo.
+### S06: duyệt từ Câu 1 trong khi phần còn lại tiếp tục tạo
 
-Nếu cần phục hồi, mở checkpoint **S05 ready** từ launcher và giới thiệu đây là trạng thái chuẩn bị sẵn. Mở liên kết sẽ tạo lại state trong tab; không nhận là tiếp tục job trước đó.
+Lượt tạo mới mở **Câu 1/mã 101**, **0/10 đã duyệt**. Không tự duyệt sẵn 9 câu. Riêng **Câu 3/mã 101 giữ lỗi nội dung B=C** để thử đối chiếu/Tạo lại/duyệt; các cặp khác vẫn tạo bình thường. Đây là lỗi nội dung mẫu đã nhận, không phải job tạo thất bại. Bộ mô phỏng nằm ở workflow chung, nên chuyển S05→S06 không khởi động lại lượt tạo hoặc hủy timer đang chờ.
 
-### S05→S06: chuẩn bị ca demo một lần
+- Ô câu và tab mã hiển thị biểu tượng đang tạo, chờ lượt hoặc lỗi theo đúng cặp đang chọn. Vẫn bấm chọn được ô đang tải.
+- Cặp đang tạo/chờ lượt hiển thị skeleton ở panel biến thể bên phải; đề nguồn vẫn đọc được bên trái. Chưa hiện đề biến thể, phương án, key hoặc lời giải trước khi nhận kết quả.
+- Khi đúng cặp nhận xong, skeleton đổi thành nội dung mà không đổi câu/mã đang chọn. Tạo lại và Kiểm tra đáp án khóa khi cặp còn tải.
+- Với cặp đã nhận: mở **Kiểm tra đáp án**, đối chiếu rồi **Duyệt biến thể**. Sau khi model ghi nhận đúng revision, popup đóng, chọn câu chưa duyệt tiếp theo theo thứ tự nguồn và giữ mã. Câu tiếp theo còn tải thì hiện skeleton, không bỏ qua.
+- Hết câu của mã hiện tại, tự chọn mã khác để tiếp tục. S06 không tự chuyển S07.
+- S06 chỉ đọc, không còn Chỉnh sửa, editor, Lưu/Hủy hoặc checkbox đối chiếu. **Tạo lại** là thao tác thay nội dung duy nhất, có xác nhận đúng cặp. Kết quả mới vẫn chưa duyệt và phải kiểm tra lại; nhận nền không ghi đè nội dung hoặc approval hiện có.
 
-Với bộ mẫu Đại số5câu×2mã101/102 còn nguyên, bấm **Bắt đầu duyệt** sẽ đánh dấu duyệt sẵn9biến thể và chọn **Câu3/mã101** có lỗi B=C. Câu1,2,4,5 đã duyệt ở cả hai mã; Câu3/mã102 cũng đã duyệt. Đây là dữ liệu trình diễn chuẩn bị tại thời điểm chuyển màn, không phải AI tự duyệt hoặc giáo viên vừa thao tác đủ9lần. Trên S05/S06 có thông báo về bước chuẩn bị này.
+**Rà bộ đề** vẫn cần toàn bộ cặp hợp lệ đã nhận, readiness và đủ approval hiện hành. **Chốt cả bộ** còn cần rà đủ hai loại bản của mọi mã ở revision hiện tại. Bật nút vào S06 sớm không làm nhẹ các gate này.
 
-Giữ nguồn, cấu hình và tiến trình đã chạy; không mở URL/reset sang bộ đề khác. Preset chỉ áp một lần mỗi lượt tạo và không ghi đè câu đã sửa khi quay lại màn. N khác2, stress, nguồn/biến thể đã chỉnh hoặc dữ liệu lỗi không tự áp preset. Tạo lượt mới/nạp mẫu mới xóa cờ và thông báo demo cũ.
+### Ca lỗi nội dung mặc định ở Câu 3/mã 101
 
-### W3→W5: phát hiện lỗi, sửa và duyệt
+Sau khi nhận Câu 3, B=C=`{3;4}` và duyệt bị chặn. Đóng popup đáp án nếu đang mở, bấm **Tạo lại**, xác nhận đúng Câu 3/mã 101. Kết quả mới có đề/phương án/key/steps đi cùng revision mới, chưa được duyệt. Mở **Kiểm tra đáp án** để đối chiếu lại rồi **Duyệt biến thể**. Không còn bước sửa B, lưu editor hoặc checkbox. Tạo lại không tự approve hoặc nạp 9 approval. Đi lại giữa S05/S06 không chèn lỗi lại; lượt tạo mới/reload fixture mới khôi phục B=C. Đây là ca UI cố ý chuẩn bị, không phải output/lỗi AI thật.
 
-Luồng chính đi thẳng từ S05: S06 đã chọn **Câu3/mã101**, counter9/10. Nói rõ đây là prepared review case có9approval được chuẩn bị tự động cho demo. Không cần mở URL riêng hoặc chọn lại câu.
+### Lỗi, tạm dừng và thử lại
 
-Link **Dự phòng · S06** trong launcher chỉ dùng khi cần phục hồi; mở link sẽ nạp fixture riêng và phải giới thiệu lượt mới. Câu3/mã101 được chọn sẵn ở checkpoint này.
+Cặp tạo thất bại có badge và dùng cùng nút **Tạo lại** với xác nhận để enqueue đúng phần lỗi; các cặp khỏe còn chờ tiếp tục chạy. Thử lại chỉ enqueue phần lỗi, giữ nội dung/approval đã có. Cặp không có mẫu phù hợp với nguồn đã sửa không tự thay bằng câu khác; cần xử lý nguồn hoặc tạo lại phù hợp.
 
-1. **W3:** B=C=`{3;4}`, counter9/10. Mở **Kiểm tra đáp án**, đối chiếu cảnh báo trùng và trạng thái chặn duyệt. Đóng popup rồi mở **Chỉnh sửa**.
-2. **W4:** sửa riêng B thành `{2;6}`. Giữ C=`{3;4}`, key và lời giải. Chọn checkbox đối chiếu trong editor rồi **Lưu thay đổi**. Notice stale cho biết kết quả kiểm cũ hết hiệu lực; chưa approve và vẫn9/10.
-3. **W5:** mở **Kiểm tra đáp án** lại, đọc B mới, key C và steps `(x−3)(x−4)=0`, nghiệm3hoặc4. Bấm **Duyệt biến thể** trực tiếp, không popup approve thứ hai. Sau khi model nhận đúng approval, popup đóng và counter10/10. Dừng ở S06; không tuyên bố đã chốt hoặc xuất PDF.
+Trong `view=review`, công cụ S05 cho tạm dừng/nhận mẫu/làm lỗi thủ công. Trạng thái tạm dừng theo sang S06; bấm **Tiếp tục tạo** để chạy tiếp. Lượt tạo mới reset pause và chọn Câu 1/mã 101. Callback của lượt/revision cũ bị chặn. Rời workflow dừng timer; quay lại tiếp tục phiên trong bộ nhớ, không có job server chạy nền.
 
-Nguồn ca này: `x²−5x+6=0`; mã101: `x²−7x+12=0`; mã102: `x²−9x+20=0`. Key theo option ID, không theo chữ C bất biến sau trộn. Chuỗi prepared có expected v2→v3 khi lưu; không hứa có badge version trên main panel. Approve v3 không chạy lại math validator và check có thể vẫn stale.
+### Thông báo và Tạo lại
 
-## Reset và xử lý gián đoạn
+S06 dùng toast góc trên phải dưới header/preview bar, tối đa 2 cùng lúc, tự ẩn sau 5 giây từ lúc hiện. Toast không chiếm chiều cao hai panel. Badge và nút phục hồi vẫn giữ; hết toast không xóa lỗi hoặc mở khóa duyệt. Lỗi trong popup đáp án hoặc xác nhận Tạo lại giữ tại chỗ. Reduced motion tắt animation, không dừng job mô phỏng.
 
-- Trong W3→W5, giữ cùng tab và không reload, đổi scenario hoặc bấm Tạo lại. Reload sẽ nạp lại fixture, mất phần vừa sửa.
-- Nếu làm nhầm, về launcher rồi mở lại ca S06 dự phòng. Nói rõ bắt đầu lượt mới; không ghép hai lượt thành một run.
-- Nếu S05 hoặc một thao tác lỗi, ghi actual và chuyển checkpoint đã chuẩn bị nếu dùng được; không nói bước lỗi đã đạt. Không có checkpoint sau lưu/approve được tạo giả để bỏ qua lỗi.
-- Ưu tiên light, Chrome desktop, zoom100%; ghi viewport thực khi diễn tập. S07/S08 nằm trong app nhưng ngoài chuỗi chính của launcher; S07 còn provisional, dark experimental.
+Tạo lại vẫn hỏi xác nhận, dùng cửa sổ offset 1–8 so với seed nguồn và tránh nội dung trùng cặp hiện tại/mã khác cùng nguồn. Hết ứng viên thì giữ nguyên câu và báo rõ. S00→S01 giữ bản sửa CTA không xuất hiện muộn trên login. Không suy độ khó tương đương từ giới hạn số của demo.
+
+## Checkpoint và reset
+
+- Luồng chính: S00/S03 → S04 → S05 → S06. Giữ cùng tab, không reload để giữ tiến trình/nội dung hiện hành.
+- Dự phòng S05 success nạp một phần kết quả mẫu rồi tiếp tục chạy; không phải tiếp tục job cũ.
+- Dự phòng S06 success đã nhận đủ mẫu, 0/10 approval, chọn Câu 1. Muốn thấy loading/skeleton phải tạo lượt mới từ S04.
+- `presenter-issue` chỉ còn là fixture QA cũ gọi tường minh, ngoài launcher và luồng chính. Các cue Full flow v3 về Câu 3/9 approval không còn mô tả bản này; chưa cập nhật Docs/deck Presenter.
+- Reload hoặc mở checkpoint sẽ tạo fixture mới, mất state vừa thao tác. Back không phục hồi run. Nếu thao tác lỗi, ghi actual; không ghép hai checkpoint thành một run.
+- Ưu tiên light, desktop Chrome, zoom 100%; S07 provisional, dark experimental.
 
 ## Kiểm đã làm và còn chờ
 
-Gói được kiểm tĩnh về bytes/hash nguồn–đích, tài nguyên nhúng, licenses, liên kết tương đối, Git attributes/ignore và phạm vi diff. Không build lại hoặc chạy test frontend/backend sản phẩm. Kiểm source01/11 gồm23ca reducer/event-wiring,28hồi quy S06 và37kiểm Đại số, cùng TypeScript/build. Đây không phải native pass của gói chia sẻ.
+Source: **26 ca regenerate-only + 27 ca progressive + 29 ca approval S06 + 36 ca Đại số + 14 ca toast = 132 ca qua**, TypeScript/build qua (1620 modules). Đã bỏ/cập nhật kiểm edit/save/stale vì tính năng bị gỡ; không nhận bộ kiểm cũ vẫn nguyên vẹn. Các ca scheduler dùng fixture sạch tường minh; focused cases kiểm default B=C→Tạo lại→approve. Fake timers/hooks/React element/static markup không phải browser pass. SSR có cảnh báo useLayoutEffect, không dùng để nghiệm thu visual.
 
-| Smoke test trực tiếp trên Chrome | Kết quả lúc đóng gói |
+Gói chia sẻ được kiểm bytes/hash nguồn–dist–repo, tài nguyên/licenses nhúng, liên kết tương đối, Git attributes và phạm vi diff. Không chạy test hoặc build sản phẩm/backend.
+
+| Kiểm trực tiếp Chrome cần làm | Trạng thái |
 |---|---|
-| Mở từ folder mới, S00 đọc được font/artwork | Chưa kiểm |
-| S04→S05 tự tiến, readiness riêng, nút vào S06 | Chưa kiểm |
-| W3 duplicate warning và chặn approve | Chưa kiểm |
-| W4 sửa B/lưu/stale/9/10 | Chưa kiểm |
-| W5 review lại/approve trực tiếp/10/10 | Chưa kiểm |
-| Tab/Enter/Esc/focus, scroll và công thức | Chưa kiểm |
+| Mở file ở folder mới, font/artwork/công thức | Chưa kiểm |
+| S04→S05, mở duyệt sau cặp đầu, progress tiếp tục ở S06 | Chưa kiểm |
+| Click ô/tab còn tải, spinner/clock/skeleton rồi hiện nội dung | Chưa kiểm |
+| Tạo lại/xác nhận/review/approve khi các cặp khác đang nhận | Chưa kiểm |
+| Lỗi/thử lại, pause/resume và gate Rà bộ đề | Chưa kiểm |
+| Toast 5 giây/vị trí/focus, Tab/Enter/Esc, scroll/overflow/zoom 200% | Chưa kiểm |
+| Reduced motion và Designer/user nghiệm thu | Chưa kiểm |
 
-Người trực tiếp chạy ghi browser/version, ngày, viewport/zoom, actual và lỗi trước khi xác nhận sẵn sàng demo. Công cụ trước bị chặn PREVIEWfile://; không dùng server, localhost, CDP hoặc surface khác để vượt chặn. Không có yêu cầu ảnh/video bắt buộc cho hướng walkthrough live này.
+Người trực tiếp chạy ghi ngày, bản/hash, browser/version, viewport/zoom, actual và lỗi. Công cụ trước bị chặn PREVIEW file://; không dùng server, localhost, CDP hoặc surface khác để vượt chặn. Hướng walkthrough live không bắt buộc ảnh/video.
 
 ## Giới hạn tuyên bố
 
-Đây là preview thiết kế bằng dữ liệu mẫu và state trong bộ nhớ tab. Chưa auth/upload/parser/AI/lưu server/xuất PDF thật. Không gọi ca chuẩn bị là output AI hoặc teacher approval thực; không suy độ khó tương đương, coverage toàn Đại số, accuracy hay time saving từ ví dụ. Giữ thông báo licenses nhúng khi phân phối lại PREVIEW.
+Preview dùng dữ liệu mẫu và bộ nhớ tab, chưa auth/upload/parser/AI/lưu server/PDF thật. Không dùng fixture làm output AI hoặc approval giáo viên thật; không suy coverage toàn Đại số, comparable difficulty, accuracy hay thời gian tiết kiệm. Không tạo file giả đuôi PDF. Giữ notices nhúng khi phân phối lại.
