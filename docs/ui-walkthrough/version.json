@@ -1,21 +1,21 @@
 {
-  "packageId": "UI-WALKTHROUGH-20261101-DEFAULT-CONTENT-ISSUE",
+  "packageId": "UI-WALKTHROUGH-20261101-S06-REGENERATE-ONLY",
   "packagedDate": "2026-11-01",
   "timezone": "Asia/Bangkok",
   "kind": "Portable UI with sample data; not integrated product or AI output",
   "branch": "feat/ui-ux-demo",
-  "repositoryBaseAtPackaging": "879319fa3fac30c89f7f504ef185ab4f6cb912b0",
+  "repositoryBaseAtPackaging": "6fef4e1f3f6aa830a8d965369d5ec8b00476dcb9",
   "artifact": {
     "file": "PREVIEW.html",
-    "bytes": 2758050,
-    "sha256": "33b8fafa8b7dad3fdc50d7580783d53e29d07879379d5c1c8756607dbf758cc8",
+    "bytes": 2752027,
+    "sha256": "13543c80074d7eaf17072892e392ffa3bed952275da6feef76ee2efb2b4a9dc1",
     "sourceWorkspaceRelativePath": "project/ui-draft/redesign/PREVIEW.html",
     "sourceDateFromReview": "2026-11-01",
     "sourceCommit": null,
     "sourceCommitNote": "ui-draft lives outside the product Git repository; repositoryBaseAtPackaging is not the artifact source commit",
     "built": [
       "index-WFK8JX_V.css",
-      "index-DvC3dO1A.js"
+      "index-BGqR_Xk3.js"
     ],
     "selfContained": true,
     "thirdPartyNoticesEmbedded": true,
@@ -59,14 +59,14 @@
     "S05ToS06": "Shared scheduler continues without restarting its outstanding timer. New run selects question1/code101 with zero approvals. Question3/code101 intentionally has duplicate B=C content as a demo issue; no preapproved Presenter preset.",
     "S06Loading": "Per selected code, active spinner/pending clock/failed icon in clickable cells and tabs. Selected active or pending pair displays right-panel skeleton; source stays visible. Unreceived variant content/key/steps are hidden.",
     "recovery": "Continue healthy queued pairs after a failure; retry only failed pairs with run/pair/revision guards. Shared pause/resume. New run resets selection/pause; stale callbacks and unmount leases are guarded.",
-    "review": "Current-pair edits/approval survive other receipts. Approval moves to next unapproved source, including pending or failed pair, keeps code. No automatic S07.",
+    "review": "S06 is read-only with no edit/save/attestation/dirty guard. Current approvals and regenerated content survive other receipts. Approval selects next unapproved source, keeps code, never auto S07.",
     "finalization": "All received valid pairs plus readiness, all current approvals and current copy marks are still required.",
-    "S06Notifications": "Nonmodal body-portal toasts under header/previewbar, max2 visible,5000ms each from promotion, dismiss/dedup/scope cleanup. Modal/editor errors and persistent recovery actions remain.",
+    "S06Notifications": "Body-portal toasts under header, max2 visible/5000ms each, dismiss/dedupe/scope cleanup. Modal errors and persistent recovery controls remain; no editor warnings.",
     "S00ToS01": "CTA ends with S00; no CTA ghost on S01; logo/slogan450ms, card300ms with delay130ms",
-    "regenerate": "Finite offsets1..8 relative to source seed; skip current/same-source other-code content; retain question and notify if unavailable",
+    "regenerate": "One confirmed Tạo lại content action: received/missing/excluded pair uses bounded sample replacement, failed pair enqueues scoped retry. Active/pending/permanent sample failure/snapshot/offline/conflict blocked. Lock/run/pair/source+variant revision guards, unmount cleanup, acknowledgement/rejection handling. Regenerated pair stays unapproved, copy marks invalidated. Finite offsets1..8, no duplicate current/same-source other-code content.",
     "persistence": "Tab memory only",
     "realPDFExport": false,
-    "defaultContentIssue": "G03/101 only: duplicate B=C, key/steps/source unchanged, check=issue. This is a received content issue, not a failed generation job. Other pairs continue. Correct B/save/stale/reinspect/approve or regenerate this pair; no reseeding when returning to S06."
+    "defaultContentIssue": "G03/101 intentionally has B=C, source/key/steps intact, check=issue, no preapproval. Content error after receipt, not failed job. Regenerate, reopen answers/steps and explicitly approve; no manual editing or reseeding on revisit."
   },
   "checks": {
     "staticPackageVerification": "See local verification report; source/dist/package bytes and hash checked; native Chrome not run",
@@ -75,23 +75,23 @@
     "rehearsal": "not run",
     "sourceChecks": {
       "date": "2026-11-01",
-      "progressiveReview": 29,
-      "s06Regression": 30,
-      "algebraRegression": 37,
-      "toastRegression": 16,
+      "regenerateOnlyFocused": 26,
+      "progressiveReview": 27,
+      "s06Regression": 29,
+      "algebraRegression": 36,
+      "toastRegression": 14,
+      "total": 132,
       "result": "passed in ui-draft",
-      "scope": "Fake timers, reducers/selectors, in-memory hooks, React element/static markup. Not native Chrome, DOM geometry, visual motion or real AI.",
+      "scope": "Fake timers, reducers/selectors, in-memory hooks, React element/static markup; not native Chrome or real AI. Scheduler regressions use a controlled clean-content fixture; focused cases cover actual B=C→regenerate→approve. Obsolete edit/save/stale assertions removed, not claimed passing.",
       "typeScript": "passed",
-      "build": "passed,1619 modules",
-      "defaultContentIssue": 10,
-      "progressiveReviewScope": "29 scheduler regressions use an explicitly cleaned content fixture; 10 new cases cover the actual default B=C full flow."
+      "build": "passed,1620 modules"
     }
   },
   "publicationAtPreparation": {
     "committed": false,
     "pushed": false,
     "packageCommit": null,
-    "note": "Progressive review plus default B=C refresh remains local only, uncommitted/unpushed. HEAD879319f is the previous local toast commit; origin23d0df9 contains neither refresh."
+    "note": "Regenerate-only refresh is local working changes based on6fef4e1; no commit/push for this refresh."
   },
   "limits": [
     "No real auth/upload/parser/AI/server persistence/PDF",
