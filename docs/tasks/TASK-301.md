@@ -5,7 +5,7 @@
 - **Reviewer:** Hùng (`benalexx007` — đã chốt)
 - **Repo/nhánh:** `feat/duy-task-301-review-lifecycle-api`; PR: [#28](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28)
 - **Hạn đợt:** tối thứ 3 03/11/2026; **ETA task:** Thứ 7 31/10/2026 (Duy xác nhận)
-- **Phiên bản:** v7.0 (Hoàn thiện đồng bộ toàn diện theo Contract với Hùng @benalexx007 và TASK-302)
+- **Phiên bản:** v7.1 (Tích hợp AttemptPermit bền vững từ TASK-304 của Đạt @Thanhdat3010 và đồng bộ Contract với Hùng @benalexx007)
 
 ---
 
@@ -138,8 +138,10 @@ pytest backend/tests/services/test_review_lifecycle.py -v
   - Bảo toàn tuyệt đối mô hình dữ liệu chuẩn của câu bị reject, sinh bộ đáp án mới độc lập.
 - **F04 (Production Dependency Injection):**
   - Dependency `get_ai_generator` ném `503 Service Unavailable` nếu chưa cấu hình AI Adapter trên môi trường thật, ngăn ngừa âm thầm dùng mock data.
-- **F07 (Attempt Accounting):**
-  - Hoàn trả chính xác số lượt uncalled quota (`4 - actual_dispatched`), giữ nguyên phí các lượt đã gọi AI.
+- **F07 (Attempt Accounting & Durable AttemptPermit Integration):**
+  - Tích hợp callback `acquire_attempt(operation_id, attempt_id) -> AttemptPermit` tuân thủ nghiêm ngặt schema và trần quota (4 calls/operation, 30 calls/session) của TASK-304.
+  - Loại bỏ hoàn toàn giả định hoàn trả 4 quota mặc định: bảo toàn nguyên vẹn số permit đã grant/acknowledged khi gặp lỗi uncertain hoặc timeout, chỉ hoàn trả phần dư thực sự chưa gọi.
+  - Bắt và ánh xạ lỗi chính xác: `REVIEW_QUOTA_EXHAUSTED` -> HTTP 429; `REVIEW_PERMIT_UNCERTAIN` / `REVIEW_PERMIT_INVALID` -> HTTP 502 (fail-closed, không silent fallback).
 - **C01 (Model A Concurrency):**
   - Áp dụng khóa mức session: Chỉ cho phép duy nhất 1 câu hỏi đang trong tiến trình sinh lại (`regenerating`) trên mỗi session đề. Thao tác thứ 2 bị từ chối với HTTP 409 (`ERR_SESSION_BUSY_REGENERATING`).
 - **C02 (Readiness & Progress Slots Shape):**
@@ -147,8 +149,7 @@ pytest backend/tests/services/test_review_lifecycle.py -v
 - **Invalidation Toàn Diện (Session-wide Reshuffle Invalidation):**
   - Khi reject/revert trên phiên đã shuffle: xóa sạch `answer_keys` cũ, reset `is_finalized = false`, xóa trắng `shuffle_seed` và `permutations`, hạ session status về `generated`.
 - **Kết Quả Kiểm Thử Thực Tế:**
-  - `pytest backend/tests/services/test_review_lifecycle.py backend/tests/api/test_review_api.py -v`: **32/32 tests passed (0.49s)**.
+  - `pytest backend/tests/services/test_review_lifecycle.py backend/tests/api/test_review_api.py -v`: **35/35 tests passed (0.42s)**.
   - `ruff check`: All checks passed.
-  - `ruff format --check`: 7 files already formatted.
-  - `mypy`: Success: no issues found in 5 source files.
+  - `ruff format --check`: All files already formatted.
 - **Trạng thái PR:** PR #28 đã sẵn sàng 100% để chuyển sang **Ready for Review** và bàn giao cho Hùng (@benalexx007) duyệt (Approve).

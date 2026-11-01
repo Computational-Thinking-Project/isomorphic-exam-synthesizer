@@ -1164,3 +1164,119 @@ async def test_audit_log_user_id_never_null():
         assert log_entry.get("user_id") is not None
         assert log_entry.get("user_id") == user_id
         assert len(str(log_entry.get("user_id"))) > 0
+
+
+@pytest.mark.asyncio
+async def test_reject_passes_operation_id_and_acquires_permit():
+    """Verify reject_question passes operation_id and callable acquire_attempt conforming to TASK-304."""
+    session_id = "00000000-0000-0000-0000-000000000027"
+    user_id = "teacher-uuid-permit-test"
+    q_id = "vq-permit-check"
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id)
+    db = MockSupabaseClient(state)
+
+    passed_kwargs = {}
+
+    async def _mock_ai(**kwargs: Any) -> Dict[str, Any]:
+        passed_kwargs.update(kwargs)
+        op_id = kwargs.get("operation_id")
+        acquire_cb = kwargs.get("acquire_attempt")
+        assert op_id is not None
+        assert callable(acquire_cb)
+
+        # Simulate adapter requesting a permit before dispatch
+        attempt_id = uuid4()
+        permit = await acquire_cb(op_id, attempt_id)
+        assert permit.operation_id == op_id
+        assert permit.attempt_id == attempt_id
+        assert permit.dispatch_permitted is True
+        assert permit.replayed is False
+        assert permit.calls_used >= 1
+
+        return {
+            "content": "Permit-tested STEM",
+            "stem_latex": "Permit-tested STEM",
+            "options": ["1", "2", "3", "4"],
+            "correct_key": "B",
+            "solution_md": "Permit Sol",
+            "validation_report": {"is_valid": True},
+            "api_calls_count": 1,
+        }
+
+    service = ReviewService(db, ai_generator=_mock_ai)
+    resp = await service.reject_question(session_id, q_id, user_id)
+
+    assert resp.status == "pending_review"
+    assert "operation_id" in passed_kwargs
+    assert "acquire_attempt" in passed_kwargs
+
+
+@pytest.mark.asyncio
+async def test_reject_denied_permit_raises_429_exhausted():
+    """Verify reject stops immediately and raises 429 when attempt permit is denied due to quota."""
+    session_id = "00000000-0000-0000-0000-000000000028"
+    user_id = "teacher-uuid-denied-test"
+    q_id = "vq-permit-denied"
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id)
+    db = MockSupabaseClient(state)
+
+    async def _mock_exhausted_ai(**kwargs: Any) -> Dict[str, Any]:
+        op_id = kwargs.get("operation_id")
+        acquire_cb = kwargs.get("acquire_attempt")
+        permit = await acquire_cb(op_id, uuid4())
+
+        class MockTargetedError(RuntimeError):
+            code = "REVIEW_QUOTA_EXHAUSTED"
+            api_calls_count = 0
+
+        if not permit.dispatch_permitted:
+            raise MockTargetedError("REVIEW_QUOTA_EXHAUSTED")
+        return {}
+
+    # Pre-exhaust quota to 30
+    state["exam_sessions"][0]["gemini_review_calls"] = 26
+    service = ReviewService(db, ai_generator=_mock_exhausted_ai)
+
+    # In TX1, 26 + 4 <= 30 passes reserve. Then in AI execution, acquire_attempt sees session limit
+    # or simulated denial and adapter raises REVIEW_QUOTA_EXHAUSTED.
+    state["exam_sessions"][0]["gemini_review_calls"] = 30  # Simulate concurrent depletion
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.reject_question(session_id, q_id, user_id)
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.error_code == "ERR_REVIEW_QUOTA_EXHAUSTED"
+
+
+@pytest.mark.asyncio
+async def test_reject_uncertain_permit_retains_charge_and_fails_502():
+    """Verify uncertain/invalid permit raises 502 and retains acknowledged charges without over-refunding."""
+    session_id = "00000000-0000-0000-0000-000000000029"
+    user_id = "teacher-uuid-uncertain-test"
+    q_id = "vq-permit-uncertain"
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id)
+    db = MockSupabaseClient(state)
+
+    async def _mock_uncertain_ai(**kwargs: Any) -> Dict[str, Any]:
+        op_id = kwargs.get("operation_id")
+        acquire_cb = kwargs.get("acquire_attempt")
+
+        # First attempt is granted
+        permit1 = await acquire_cb(op_id, uuid4())
+        assert permit1.dispatch_permitted is True
+
+        class MockUncertainError(RuntimeError):
+            code = "REVIEW_PERMIT_UNCERTAIN"
+            api_calls_count = 1  # 1 permit was acknowledged before uncertain failure
+
+        raise MockUncertainError("REVIEW_PERMIT_UNCERTAIN")
+
+    service = ReviewService(db, ai_generator=_mock_uncertain_ai)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.reject_question(session_id, q_id, user_id)
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.error_code == "ERR_AI_GATEWAY_PERMIT_FAILURE"
+
+    # Verify that the 1 acknowledged permit remains charged in session quota
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 1

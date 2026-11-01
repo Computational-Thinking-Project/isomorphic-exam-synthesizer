@@ -67,8 +67,20 @@ class ReviewService:
         blueprint: Dict[str, Any],
         current_variant: Dict[str, Any],
         peer_variants: list[Dict[str, Any]],
+        *,
+        operation_id: Optional[UUID] = None,
+        acquire_attempt: Optional[Callable[..., Any]] = None,
     ) -> Dict[str, Any]:
         """Default mock/fallback AI generator for regeneration outside DB."""
+        # If permit callback is supplied, simulate 1 permit acquisition
+        calls_used = 1
+        if operation_id and callable(acquire_attempt):
+            try:
+                permit = await acquire_attempt(operation_id, uuid4())
+                calls_used = 1 if getattr(permit, "dispatch_permitted", True) else 0
+            except Exception:
+                calls_used = 1
+
         # Simulated regeneration result conforming to contract
         options = current_variant.get("options") or ["A. 1", "B. 2", "C. 3", "D. 4"]
         stem = current_variant.get("content") or "Biến thể câu hỏi mới (được sinh lại)"
@@ -81,7 +93,7 @@ class ReviewService:
             "correct_key": correct_key,
             "solution_md": "**Lời giải chi tiết mới:**\nCác bước giải bài toán biến thể đã được kiểm định.",
             "validation_report": {"is_valid": True, "math_verified": True},
-            "api_calls_count": 1,
+            "api_calls_count": calls_used,
         }
 
     async def check_session_guards(self, session_id: str) -> Dict[str, Any]:
@@ -123,8 +135,12 @@ class ReviewService:
             )
 
         session_uuid = UUID(session_id)
-        regeneration_id = uuid4()
+        operation_id = uuid4()
+        regeneration_id = operation_id
         lock = session_lock_registry.get_lock(session_uuid)
+
+        # Register operation binding in repository for permit callback accounting
+        self.repo.register_operation(operation_id, session_id)
 
         # ------------------------------------------------------------------
         # Phase 1: Short DB TX 1 (Reserve Quota & Lock Question State)
@@ -175,6 +191,8 @@ class ReviewService:
                     blueprint=snapshot["blueprint"],
                     current_variant=snapshot["variant"],
                     peer_variants=snapshot["peers"],
+                    operation_id=operation_id,
+                    acquire_attempt=self.repo.acquire_attempt,
                 ),
                 timeout=45.0,
             )
@@ -182,8 +200,9 @@ class ReviewService:
             logger.error(
                 "AI Variant generation failed or timed out for question %s: %s", question_id, exc
             )
-            # F07: Track actual dispatched calls (default 1 if dispatch attempted)
-            dispatched = getattr(exc, "api_calls_count", getattr(exc, "dispatched_calls", 1))
+            # F07: Track actual acknowledged permits / dispatched calls (default 1 for provider/timeout exception unless explicitly 0)
+            default_calls = 1 if isinstance(exc, (asyncio.TimeoutError, TimeoutError)) else 0
+            dispatched = getattr(exc, "api_calls_count", getattr(exc, "dispatched_calls", default_calls))
             # Immediate Emergency Rollback: Refund unused calls & Reset question status
             await self.repo.emergency_rollback_tx(
                 session_id=session_id,
@@ -193,6 +212,28 @@ class ReviewService:
                 user_id=user_id,
                 actual_calls_dispatched=dispatched,
             )
+
+            exc_msg = str(exc)
+            if "REVIEW_QUOTA_EXHAUSTED" in exc_msg or getattr(exc, "code", "") == "REVIEW_QUOTA_EXHAUSTED":
+                raise ReviewDomainException(
+                    429,
+                    "ERR_REVIEW_QUOTA_EXHAUSTED",
+                    "Đã dùng hết 30 lượt AI sinh lại của buổi review",
+                ) from exc
+            if (
+                "REVIEW_PERMIT_UNCERTAIN" in exc_msg
+                or getattr(exc, "code", "") == "REVIEW_PERMIT_UNCERTAIN"
+                or "REVIEW_PERMIT_INVALID" in exc_msg
+                or getattr(exc, "code", "") == "REVIEW_PERMIT_INVALID"
+                or "REVIEW_ATTEMPT_REPLAYED" in exc_msg
+                or getattr(exc, "code", "") == "REVIEW_ATTEMPT_REPLAYED"
+            ):
+                raise ReviewDomainException(
+                    502,
+                    "ERR_AI_GATEWAY_PERMIT_FAILURE",
+                    "Không thể xác thực giấy phép gọi AI với hệ thống",
+                ) from exc
+
             status_code = 504 if isinstance(exc, asyncio.TimeoutError) else 502
             err_code = (
                 "ERR_AI_TIMEOUT"

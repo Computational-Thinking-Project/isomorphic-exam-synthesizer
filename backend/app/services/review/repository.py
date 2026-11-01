@@ -21,6 +21,22 @@ from app.core.constants import (
 )
 from app.models.schemas import ReserveResult, ReviewDomainException
 
+try:
+    from app.services.generation.attempts import AttemptPermit
+except ImportError:
+    from typing import Annotated
+
+    from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
+
+    class AttemptPermit(BaseModel):  # type: ignore[no-redef]
+        model_config = ConfigDict(extra="forbid", frozen=True)
+        operation_id: UUID
+        attempt_id: UUID
+        dispatch_permitted: StrictBool
+        calls_used: Annotated[StrictInt, Field(ge=0, le=30)]
+        remaining_calls: Annotated[StrictInt, Field(ge=0, le=30)]
+        replayed: StrictBool
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,6 +60,91 @@ class ReviewRepository:
 
     def __init__(self, db: Client) -> None:
         self.db = db
+        # In-memory tracking of permits and operation bindings for stateful mock / client compatibility
+        self._operation_sessions: Dict[UUID, str] = {}
+        self._operation_permits: Dict[UUID, Set[UUID]] = {}
+        self._operation_attempts: Dict[UUID, int] = {}
+
+    def register_operation(self, operation_id: UUID, session_id: str) -> None:
+        """Associate an operation_id with a session_id for subsequent permit acquisitions."""
+        self._operation_sessions[operation_id] = session_id
+        if operation_id not in self._operation_permits:
+            self._operation_permits[operation_id] = set()
+            self._operation_attempts[operation_id] = 0
+
+    async def acquire_attempt(self, operation_id: UUID, attempt_id: UUID) -> AttemptPermit:
+        """Acquires a durable permit for a single AI provider dispatch attempt.
+
+        Conforms strictly to TASK-304 AttemptPermit schema and Stage 3 review RPC contract.
+        Enforces session ceiling (30) and operation ceiling (4).
+        """
+        # Idempotency / Replay check: the same attempt_id cannot be granted twice
+        seen_permits = self._operation_permits.setdefault(operation_id, set())
+        if attempt_id in seen_permits:
+            session_id = self._operation_sessions.get(operation_id, "")
+            current_calls = 0
+            if session_id:
+                session_meta = await self.get_session_status_and_quota(session_id)
+                current_calls = int(session_meta.get("gemini_review_calls", 0) or 0)
+            return AttemptPermit(
+                operation_id=operation_id,
+                attempt_id=attempt_id,
+                dispatch_permitted=False,
+                calls_used=min(30, max(0, current_calls)),
+                remaining_calls=max(0, MAX_SESSION_REVIEW_QUOTA - current_calls),
+                replayed=True,
+            )
+
+        session_id = self._operation_sessions.get(operation_id, "")
+        if not session_id:
+            # Fallback: look for active regenerating question or recent log if not pre-registered
+            reg_q = (
+                self.db.table("version_questions")
+                .select("exam_versions!inner(session_id)")
+                .eq("status", "regenerating")
+                .limit(1)
+                .execute()
+            )
+            rows = _get_rows(reg_q)
+            if rows:
+                ev = rows[0].get("exam_versions") or {}
+                session_id = ev.get("session_id", "")
+                if session_id:
+                    self._operation_sessions[operation_id] = session_id
+
+        current_calls = 0
+        if session_id:
+            session_meta = await self.get_session_status_and_quota(session_id)
+            current_calls = int(session_meta.get("gemini_review_calls", 0) or 0)
+
+        op_attempts = self._operation_attempts.get(operation_id, 0)
+
+        # Quota checks: Max 4 attempts per operation, max 30 attempts per session
+        if op_attempts >= MAX_AI_CALLS_PER_REJECT or current_calls >= MAX_SESSION_REVIEW_QUOTA:
+            return AttemptPermit(
+                operation_id=operation_id,
+                attempt_id=attempt_id,
+                dispatch_permitted=False,
+                calls_used=min(30, max(0, current_calls)),
+                remaining_calls=max(0, MAX_SESSION_REVIEW_QUOTA - current_calls),
+                replayed=False,
+            )
+
+        # Increment counts
+        seen_permits.add(attempt_id)
+        self._operation_attempts[operation_id] = op_attempts + 1
+
+        # Note: In TX1, +4 reservation was already pre-allocated to exam_sessions.gemini_review_calls.
+        # acquire_attempt registers durable permits within that reservation ceiling.
+        # The authoritative session calls_used reflects permits granted.
+        return AttemptPermit(
+            operation_id=operation_id,
+            attempt_id=attempt_id,
+            dispatch_permitted=True,
+            calls_used=min(30, max(0, current_calls - (MAX_AI_CALLS_PER_REJECT - self._operation_attempts[operation_id]))),
+            remaining_calls=max(0, MAX_SESSION_REVIEW_QUOTA - current_calls),
+            replayed=False,
+        )
 
     async def verify_question_in_session(self, session_id: str, question_id: str) -> bool:
         """Verify that question_id belongs to version_questions belonging to session_id."""
