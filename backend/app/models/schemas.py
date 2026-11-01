@@ -2,7 +2,7 @@ from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class SourceQuestion(BaseModel):
@@ -291,8 +291,27 @@ class ReserveResult(str, Enum):
     OK = "OK"
     QUOTA_EXHAUSTED = "QUOTA_EXHAUSTED"
     QUESTION_BUSY = "QUESTION_BUSY"
+    SESSION_BUSY = "SESSION_BUSY"
     QUESTION_NOT_FOUND = "QUESTION_NOT_FOUND"
     QUESTION_NOT_CURRENT = "QUESTION_NOT_CURRENT"
+
+
+class ReviewErrorCode:
+    """Standard domain error codes conforming to Stage 3 review RPC contract."""
+
+    REVIEW_NOT_FOUND = "REVIEW_NOT_FOUND"
+    REVIEW_BUSY = "REVIEW_BUSY"
+    REVIEW_STALE = "REVIEW_STALE"
+    REVIEW_IDEMPOTENCY_CONFLICT = "REVIEW_IDEMPOTENCY_CONFLICT"
+    REVIEW_LOCKED = "REVIEW_LOCKED"
+    REVIEW_QUOTA_EXHAUSTED = "REVIEW_QUOTA_EXHAUSTED"
+    REVIEW_INVALID_PAYLOAD = "REVIEW_INVALID_PAYLOAD"
+    REVIEW_SOURCE_MISMATCH = "REVIEW_SOURCE_MISMATCH"
+    REVIEW_AI_UNAVAILABLE = "REVIEW_AI_UNAVAILABLE"
+    REVIEW_PERMIT_REQUIRED = "REVIEW_PERMIT_REQUIRED"
+    REVIEW_PERMIT_INVALID = "REVIEW_PERMIT_INVALID"
+    REVIEW_PERMIT_UNCERTAIN = "REVIEW_PERMIT_UNCERTAIN"
+    REVIEW_ATTEMPT_REPLAYED = "REVIEW_ATTEMPT_REPLAYED"
 
 
 class ReviewActionResponse(BaseModel):
@@ -324,18 +343,82 @@ class RegeneratedQuestionResponse(BaseModel):
 
 
 class ReviewProgressResponse(BaseModel):
-    """Thống kê tiến độ thẩm định của phiên làm việc (TASK-301)."""
+    """Thống kê tiến độ thẩm định của phiên làm việc (TASK-301 & TASK-302 Contract)."""
 
     session_id: str = Field(..., description="Mã phiên làm việc")
-    required_count: int = Field(..., description="Tổng số vị trí câu hỏi cần thẩm định")
-    current_count: int = Field(..., description="Tổng số câu hiện hành đang hiển thị")
-    approved_count: int = Field(..., description="Số câu hiện hành đã được duyệt (approved)")
-    regenerating_count: int = Field(..., description="Số câu đang trong tiến trình sinh lại")
+
+    # Contract fields aligned with TASK-302 RPC contract & Migration 006
+    expected_slots: int = Field(0, description="Tổng số vị trí câu hỏi cần có (N mã đề x M câu)")
+    current_slots: int = Field(
+        0, description="Tổng số câu hiện hành đang hiển thị (is_current=True)"
+    )
+    approved_slots: int = Field(0, description="Số câu hiện hành đã được duyệt (status='approved')")
+    regenerating_slots: int = Field(0, description="Số câu đang trong tiến trình sinh lại")
+    missing_slots: int = Field(0, description="Số vị trí câu hỏi còn thiếu chưa được sinh")
+    duplicate_slots: int = Field(0, description="Số vị trí câu hỏi bị dư hoặc trùng lặp")
+    ready: bool = Field(False, description="Đủ điều kiện sẵn sàng shuffle và finalize")
+
+    # Backward-compatible fields for existing frontend and test callers
+    required_count: int = Field(0, description="Alias tương thích ngược của expected_slots")
+    current_count: int = Field(0, description="Alias tương thích ngược của current_slots")
+    approved_count: int = Field(0, description="Alias tương thích ngược của approved_slots")
+    regenerating_count: int = Field(0, description="Alias tương thích ngược của regenerating_slots")
     unapproved_question_ids: List[str] = Field(
         default_factory=list, description="Danh sách mã câu hỏi hiện hành chưa được duyệt"
     )
-    is_complete: bool = Field(..., description="Đã duyệt đủ 100% câu hỏi hiện hành")
-    can_finalize: bool = Field(..., description="Đủ điều kiện để xáo trộn (shuffle) và phê duyệt")
+    is_complete: bool = Field(False, description="Đã duyệt đủ 100% câu hỏi hiện hành")
+    can_finalize: bool = Field(False, description="Alias tương thích ngược của ready")
+
+    @model_validator(mode="before")
+    @classmethod
+    def sync_contract_and_legacy_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # Sync expected_slots <-> required_count
+            if "expected_slots" not in data and "required_count" in data:
+                data["expected_slots"] = data["required_count"]
+            elif "required_count" not in data and "expected_slots" in data:
+                data["required_count"] = data["expected_slots"]
+
+            # Sync current_slots <-> current_count
+            if "current_slots" not in data and "current_count" in data:
+                data["current_slots"] = data["current_count"]
+            elif "current_count" not in data and "current_slots" in data:
+                data["current_count"] = data["current_slots"]
+
+            # Sync approved_slots <-> approved_count
+            if "approved_slots" not in data and "approved_count" in data:
+                data["approved_slots"] = data["approved_count"]
+            elif "approved_count" not in data and "approved_slots" in data:
+                data["approved_count"] = data["approved_slots"]
+
+            # Sync regenerating_slots <-> regenerating_count
+            if "regenerating_slots" not in data and "regenerating_count" in data:
+                data["regenerating_slots"] = data["regenerating_count"]
+            elif "regenerating_count" not in data and "regenerating_slots" in data:
+                data["regenerating_count"] = data["regenerating_slots"]
+
+            # Sync ready <-> can_finalize
+            if "ready" not in data and "can_finalize" in data:
+                data["ready"] = data["can_finalize"]
+            elif "can_finalize" not in data and "ready" in data:
+                data["can_finalize"] = data["ready"]
+
+            if "missing_slots" not in data:
+                exp = int(data.get("expected_slots", 0) or 0)
+                cur = int(data.get("current_slots", 0) or 0)
+                data["missing_slots"] = max(0, exp - cur)
+
+            if "duplicate_slots" not in data:
+                exp = int(data.get("expected_slots", 0) or 0)
+                cur = int(data.get("current_slots", 0) or 0)
+                data["duplicate_slots"] = max(0, cur - exp)
+
+            if "is_complete" not in data:
+                exp = int(data.get("expected_slots", 0) or 0)
+                cur = int(data.get("current_slots", 0) or 0)
+                app = int(data.get("approved_slots", 0) or 0)
+                data["is_complete"] = bool(exp > 0 and cur == exp and app == exp)
+        return data
 
 
 class ErrorDetailResponse(BaseModel):
@@ -415,6 +498,7 @@ __all__ = [
     "ConfirmSourceRequest",
     "ConfirmSourceResponse",
     "ReserveResult",
+    "ReviewErrorCode",
     "ReviewActionResponse",
     "RegeneratedQuestionResponse",
     "ReviewProgressResponse",

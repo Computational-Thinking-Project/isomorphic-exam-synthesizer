@@ -22,6 +22,7 @@ Implements 18 critical test cases:
 """
 
 import asyncio
+import threading
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock
@@ -29,9 +30,11 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.models.schemas import ReserveResult, ReviewDomainException
-from app.services.review.repository import ReviewRepository
+from app.models.schemas import ReserveResult, ReviewDomainException, ReviewProgressResponse
+from app.services.review.repository import ReviewRepository, _now_iso
 from app.services.review.service import ReviewService, session_lock_registry
+
+_GLOBAL_MOCK_LOCK = threading.RLock()
 
 
 class MockExecutionResult:
@@ -72,6 +75,10 @@ class MockTableQueryBuilder:
         self.payload = values
         return self
 
+    def delete(self) -> "MockTableQueryBuilder":
+        self.op = "delete"
+        return self
+
     def eq(self, field: str, val: Any) -> "MockTableQueryBuilder":
         self.filters.append((field, "eq", val))
         return self
@@ -104,6 +111,12 @@ class MockTableQueryBuilder:
                         curr = None
                         break
                 actual = curr
+                if actual is None and field == "exam_versions.session_id":
+                    v_id = row.get("version_id")
+                    for v in self.db_state.get("exam_versions", []):
+                        if str(v.get("id")) == str(v_id):
+                            actual = v.get("session_id")
+                            break
             else:
                 actual = row.get(field)
 
@@ -120,56 +133,82 @@ class MockTableQueryBuilder:
         return True
 
     def execute(self) -> MockExecutionResult:
-        rows = self.db_state.setdefault(self.table_name, [])
+        with _GLOBAL_MOCK_LOCK:
+            rows = self.db_state.setdefault(self.table_name, [])
 
-        if self.op == "select":
-            matched = [r for r in rows if self._matches(r)]
-            if self.limit_val is not None:
-                matched = matched[: self.limit_val]
-            self.call_log.append(
-                {
-                    "op": "select",
-                    "table": self.table_name,
-                    "filters": list(self.filters),
-                    "count": len(matched),
-                }
-            )
-            return MockExecutionResult(matched)
+            if self.op == "select":
+                matched = [r for r in rows if self._matches(r)]
+                if self.limit_val is not None:
+                    matched = matched[: self.limit_val]
+                self.call_log.append(
+                    {
+                        "op": "select",
+                        "table": self.table_name,
+                        "filters": list(self.filters),
+                        "count": len(matched),
+                    }
+                )
+                return MockExecutionResult(matched)
 
-        elif self.op == "update":
-            updated = []
-            for r in rows:
-                if self._matches(r):
-                    r.update(self.payload)
-                    updated.append(dict(r))
-            self.call_log.append(
-                {
-                    "op": "update",
-                    "table": self.table_name,
-                    "payload": dict(self.payload),
-                    "filters": list(self.filters),
-                    "count": len(updated),
-                }
-            )
-            return MockExecutionResult(updated)
+            elif self.op == "update":
+                updated = []
+                for r in rows:
+                    if self._matches(r):
+                        r.update(self.payload)
+                        updated.append(dict(r))
+                self.call_log.append(
+                    {
+                        "op": "update",
+                        "table": self.table_name,
+                        "payload": dict(self.payload),
+                        "filters": list(self.filters),
+                        "count": len(updated),
+                    }
+                )
+                return MockExecutionResult(updated)
 
-        elif self.op == "insert":
-            to_insert = self.payload if isinstance(self.payload, list) else [self.payload]
-            inserted = []
-            for item in to_insert:
-                item_copy = dict(item)
-                rows.append(item_copy)
-                inserted.append(item_copy)
-            self.call_log.append(
-                {
-                    "op": "insert",
-                    "table": self.table_name,
-                    "payload": inserted[0] if len(inserted) == 1 else inserted,
-                }
-            )
-            return MockExecutionResult(inserted)
+            elif self.op == "insert":
+                to_insert = self.payload if isinstance(self.payload, list) else [self.payload]
+                inserted = []
+                # Unique constraint enforcement for table simulation (e.g. attempt_id on review_attempts)
+                for item in to_insert:
+                    item_copy = dict(item)
+                    if self.table_name == "review_attempts":
+                        att_id = str(item_copy.get("attempt_id", ""))
+                        if att_id and any(str(r.get("attempt_id", "")) == att_id for r in rows):
+                            # ON CONFLICT DO NOTHING: skip inserting duplicate attempt_id
+                            continue
+                    rows.append(item_copy)
+                    inserted.append(item_copy)
+                self.call_log.append(
+                    {
+                        "op": "insert",
+                        "table": self.table_name,
+                        "payload": inserted[0] if len(inserted) == 1 else inserted,
+                    }
+                )
+                return MockExecutionResult(inserted)
 
-        return MockExecutionResult([])
+            elif self.op == "delete":
+                remaining = []
+                deleted = []
+                for r in rows:
+                    if self._matches(r):
+                        deleted.append(dict(r))
+                    else:
+                        remaining.append(r)
+                self.db_state[self.table_name] = remaining
+                self.call_log.append(
+                    {
+                        "op": "delete",
+                        "table": self.table_name,
+                        "filters": list(self.filters),
+                        "count": len(deleted),
+                    }
+                )
+                return MockExecutionResult(deleted)
+
+            return MockExecutionResult([])
 
 
 class MockSupabaseClient:
@@ -312,7 +351,7 @@ async def test_tx2_retry_idempotency():
     session_id = "00000000-0000-0000-0000-000000000002"
     user_id = "user-123"
     q_id = "vq-001"
-    state = _setup_standard_session_state(session_id, user_id, question_id=q_id, gemini_calls=4)
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id, gemini_calls=1)
     # Set status to regenerating (simulating TX1 has completed)
     state["version_questions"][0]["status"] = "regenerating"
     db = MockSupabaseClient(state)
@@ -334,13 +373,13 @@ async def test_tx2_retry_idempotency():
         old_q_snapshot=old_snapshot,
         new_data=new_data,
         regeneration_id=regen_id,
-        actual_calls=1,  # 4 - 1 = 3 calls refund
+        actual_calls=1,
         user_id=user_id,
     )
     assert res1 is not None
     assert str(res1["regeneration_id"]) == str(regen_id)
 
-    # Check quota after Call 1: 4 - 3 = 1
+    # Check quota after Call 1: Architecture A retains 1 committed call
     session_row = state["exam_sessions"][0]
     assert session_row["gemini_review_calls"] == 1
     insert_count_after_call1 = len(
@@ -364,13 +403,12 @@ async def test_tx2_retry_idempotency():
         [c for c in db.call_log if c["op"] == "insert" and c["table"] == "version_questions"]
     )
     assert insert_count_after_call2 == 1
-    # Verify quota was not refunded a second time
     assert session_row["gemini_review_calls"] == 1
 
 
 @pytest.mark.asyncio
 async def test_emergency_rollback_after_network_partition():
-    """Test 3: AI succeeds but TX2 retry exhausted -> Emergency Rollback refunds 3 calls and resets question."""
+    """Test 3: AI succeeds but TX2 retry exhausted -> Emergency Rollback retains committed calls and resets question."""
     session_id = "00000000-0000-0000-0000-000000000003"
     user_id = "user-123"
     q_id = "vq-001"
@@ -378,6 +416,10 @@ async def test_emergency_rollback_after_network_partition():
     db = MockSupabaseClient(state)
 
     async def mock_ai_generator(**kwargs):
+        op_id = kwargs.get("operation_id")
+        acquire_cb = kwargs.get("acquire_attempt")
+        if op_id and callable(acquire_cb):
+            await acquire_cb(op_id, uuid4())
         return {
             "content": "Câu mới",
             "options": ["A. 1", "B. 2", "C. 3", "D. 4"],
@@ -400,7 +442,7 @@ async def test_emergency_rollback_after_network_partition():
     assert exc_info.value.status_code == 500
     assert exc_info.value.error_code == "ERR_DB_PERSISTENCE_FAILED"
 
-    # Verify quota charges 1 dispatched call (TX1 added 4, emergency rollback refunded 3 unused)
+    # Verify quota charges 1 dispatched call (Architecture A does not refund committed permit)
     session_row = state["exam_sessions"][0]
     assert session_row["gemini_review_calls"] == 1
 
@@ -451,7 +493,7 @@ async def test_emergency_rollback_cannot_double_refund():
 
 @pytest.mark.asyncio
 async def test_stale_guard_cannot_double_refund_tx2():
-    """Test 5: Stale guard checks rowcount; if row was already modified, does not refund."""
+    """Test 5: Stale guard checks rowcount; resets status without corrupting quota."""
     session_id = "00000000-0000-0000-0000-000000000005"
     user_id = "user-123"
     q_id = "vq-001"
@@ -465,14 +507,15 @@ async def test_stale_guard_cannot_double_refund_tx2():
     # First run of stale recovery recovers 1 item
     recovered = await repo.recover_stale_questions()
     assert recovered == 1
-    assert state["exam_sessions"][0]["gemini_review_calls"] == 0
+    # Architecture A: committed quota is retained
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 3
     assert state["version_questions"][0]["status"] == "pending_review"
 
     # Second concurrent or repeated run finds status is pending_review (not regenerating)
     recovered_again = await repo.recover_stale_questions()
     assert recovered_again == 0
-    # Quota stays 0, no double decrement below 0
-    assert state["exam_sessions"][0]["gemini_review_calls"] == 0
+    # Quota stays 3
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 3
 
 
 @pytest.mark.asyncio
@@ -518,7 +561,7 @@ async def test_multi_version_required_count_invariant():
 
 @pytest.mark.asyncio
 async def test_reserve_at_calls_26():
-    """Test 7: At 26 calls, reserving 4 calls reaches 30 <= 30 (Allowed)."""
+    """Test 7: At 26 calls, TX1 permits reservation without pre-incrementing quota."""
     session_id = "00000000-0000-0000-0000-000000000007"
     user_id = "user-123"
     q_id = "vq-001"
@@ -528,18 +571,24 @@ async def test_reserve_at_calls_26():
 
     res = await repo.reserve_max_quota_and_start_regenerating(session_id, q_id, user_id)
     assert res == ReserveResult.OK
-    # Quota incremented to 30
-    assert state["exam_sessions"][0]["gemini_review_calls"] == 30
+    # Quota remains 26 in TX1 (Architecture A pure per-acquire)
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 26
     assert state["version_questions"][0]["status"] == "regenerating"
+
+    # Subsequent acquire_attempt increments quota to 27
+    permit = await repo.acquire_attempt(uuid4(), uuid4())
+    assert permit.dispatch_permitted is True
+    assert permit.calls_used == 27
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 27
 
 
 @pytest.mark.asyncio
-async def test_reserve_at_calls_27_blocked():
-    """Test 8: At 27 calls, reserving 4 calls would exceed 30 (27 + 4 = 31 > 30) -> 429 Error."""
+async def test_reserve_at_calls_30_blocked():
+    """Test 8: At 30 calls, session quota is fully exhausted -> 429 Error at TX1."""
     session_id = "00000000-0000-0000-0000-000000000008"
     user_id = "user-123"
     q_id = "vq-001"
-    state = _setup_standard_session_state(session_id, user_id, question_id=q_id, gemini_calls=27)
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id, gemini_calls=30)
     db = MockSupabaseClient(state)
     service = ReviewService(db, ai_generator=AsyncMock())
 
@@ -548,8 +597,8 @@ async def test_reserve_at_calls_27_blocked():
 
     assert exc_info.value.status_code == 429
     assert exc_info.value.error_code == "ERR_REVIEW_QUOTA_EXHAUSTED"
-    # Quota remained 27
-    assert state["exam_sessions"][0]["gemini_review_calls"] == 27
+    # Quota remained 30
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 30
 
 
 @pytest.mark.asyncio
@@ -643,6 +692,10 @@ async def test_ai_timeout_immediate_rollback():
     db = MockSupabaseClient(state)
 
     async def timeout_ai(**kwargs):
+        op_id = kwargs.get("operation_id")
+        acquire_cb = kwargs.get("acquire_attempt")
+        if op_id and callable(acquire_cb):
+            await acquire_cb(op_id, uuid4())
         raise asyncio.TimeoutError("Gemini call timed out after 45s")
 
     service = ReviewService(db, ai_generator=timeout_ai)
@@ -653,7 +706,7 @@ async def test_ai_timeout_immediate_rollback():
     assert exc_info.value.status_code == 504
     assert exc_info.value.error_code == "ERR_AI_TIMEOUT"
 
-    # Verify quota charges 1 dispatched call (TX1 added 4, emergency rollback refunded 3 unused)
+    # Verify quota charges 1 committed call (retained after rollback)
     assert state["exam_sessions"][0]["gemini_review_calls"] == 1
     # Verify status reverted to pending_review
     assert state["version_questions"][0]["status"] == "pending_review"
@@ -989,3 +1042,572 @@ async def test_source_snapshot_provides_content_hash_and_aliases_for_task_304():
     assert isinstance(source["options"], list)
     assert len(source["options"]) == 4
 
+
+@pytest.mark.asyncio
+async def test_invalidation_clears_shuffle_seed_permutations_and_answer_keys():
+    """Verify invalidation clears shuffle_seed, permutations, and purges answer_keys (Contract with Hùng)."""
+    session_id = "00000000-0000-0000-0000-000000000023"
+    user_id = "user-123"
+    state = _setup_standard_session_state(session_id, user_id, session_status="reviewed")
+    v_id = state["exam_versions"][0]["id"]
+    state["exam_versions"][0]["is_finalized"] = True
+    state["exam_versions"][0]["shuffle_seed"] = "seed-hash-123"
+    state["exam_versions"][0]["permutations"] = {"question_order": [1, 2, 3]}
+
+    # Add dummy answer keys
+    state["answer_keys"] = [
+        {"id": "ak-1", "version_id": v_id, "display_no": 1, "display_correct_key": "B"},
+        {"id": "ak-2", "version_id": v_id, "display_no": 2, "display_correct_key": "D"},
+    ]
+
+    db = MockSupabaseClient(state)
+    repo = ReviewRepository(db)
+
+    invalidated = await repo.invalidate_shuffle_if_finalized(session_id)
+    assert invalidated is True
+
+    # Check version fields reset
+    version = state["exam_versions"][0]
+    assert version["is_finalized"] is False
+    assert version["shuffle_seed"] is None
+    assert version["permutations"] is None
+
+    # Check answer_keys purged
+    assert len(state["answer_keys"]) == 0
+
+    # Check session demoted to generated
+    assert state["exam_sessions"][0]["status"] == "generated"
+
+
+@pytest.mark.asyncio
+async def test_session_level_single_active_regeneration_concurrency():
+    """Verify Model A concurrency: only 1 active regenerating question per session (C01)."""
+    session_id = "00000000-0000-0000-0000-000000000024"
+    user_id = "user-123"
+    state = _setup_standard_session_state(
+        session_id, user_id, question_id="vq-active-regen", question_status="regenerating"
+    )
+
+    # Add a second question in the same session
+    v_id = state["exam_versions"][0]["id"]
+    state["version_questions"].append(
+        {
+            "id": "vq-second-q",
+            "version_id": v_id,
+            "source_question_id": "sq-123",
+            "question_no": 2,
+            "content": "Question 2",
+            "options": ["A", "B", "C", "D"],
+            "correct_key": "B",
+            "status": "pending_review",
+            "is_current": True,
+            "is_reverted": False,
+            "regenerated_from_id": None,
+            "regeneration_id": None,
+            "exam_versions": {"session_id": session_id, "is_finalized": False},
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+        }
+    )
+
+    db = MockSupabaseClient(state)
+    repo = ReviewRepository(db)
+
+    # Attempting to reserve quota for second question must return SESSION_BUSY
+    res = await repo.reserve_max_quota_and_start_regenerating(session_id, "vq-second-q", user_id)
+    assert res == ReserveResult.SESSION_BUSY
+
+    # Service call must raise ReviewDomainException 409 ERR_SESSION_BUSY_REGENERATING
+    service = ReviewService(db, ai_generator=lambda **kw: {})
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.reject_question(session_id, "vq-second-q", user_id)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_SESSION_BUSY_REGENERATING"
+
+
+@pytest.mark.asyncio
+async def test_progress_extended_contract_fields_and_slots():
+    """Verify ReviewProgressResponse satisfies both TASK-302 RPC contract and legacy fields (C02)."""
+    session_id = "00000000-0000-0000-0000-000000000025"
+    user_id = "user-123"
+    state = _setup_standard_session_state(
+        session_id, user_id, question_id="vq-slot-1", question_status="approved"
+    )
+    db = MockSupabaseClient(state)
+    repo = ReviewRepository(db)
+
+    data = await repo.get_review_progress_data(session_id)
+    assert data["expected_slots"] == 1
+    assert data["current_slots"] == 1
+    assert data["approved_slots"] == 1
+    assert data["regenerating_slots"] == 0
+    assert data["missing_slots"] == 0
+    assert data["duplicate_slots"] == 0
+    assert data["ready"] is True
+
+    # Test Pydantic model serialization & backward compatibility
+    resp = ReviewProgressResponse(**data)
+    assert resp.expected_slots == resp.required_count == 1
+    assert resp.current_slots == resp.current_count == 1
+    assert resp.approved_slots == resp.approved_count == 1
+    assert resp.ready == resp.can_finalize is True
+
+
+@pytest.mark.asyncio
+async def test_audit_log_user_id_never_null():
+    """Verify that all review_logs entries strictly record valid user_id (Migration 006 compliance)."""
+    session_id = "00000000-0000-0000-0000-000000000026"
+    user_id = "teacher-uuid-456"
+    q_id = "vq-audit-check"
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id)
+    db = MockSupabaseClient(state)
+
+    async def _mock_ai(**kw: Any) -> Dict[str, Any]:
+        return {
+            "content": "New STEM",
+            "stem_latex": "New STEM",
+            "options": ["1", "2", "3", "4"],
+            "correct_key": "C",
+            "solution_md": "Sol",
+            "validation_report": {"is_valid": True},
+            "api_calls_count": 1,
+        }
+
+    service = ReviewService(db, ai_generator=_mock_ai)
+
+    # 1. Accept action
+    await service.accept_question(session_id, q_id, user_id)
+
+    # 2. Reject action
+    rej_resp = await service.reject_question(session_id, q_id, user_id)
+
+    # 3. Revert action
+    await service.revert_question(session_id, rej_resp.question_id, user_id)
+
+    # Verify all review_logs in state
+    logs = state.get("review_logs", [])
+    assert len(logs) >= 3
+    for log_entry in logs:
+        assert log_entry.get("user_id") is not None
+        assert log_entry.get("user_id") == user_id
+        assert len(str(log_entry.get("user_id"))) > 0
+
+
+@pytest.mark.asyncio
+async def test_reject_passes_operation_id_and_acquires_permit():
+    """Verify reject_question passes operation_id and callable acquire_attempt conforming to TASK-304."""
+    session_id = "00000000-0000-0000-0000-000000000027"
+    user_id = "teacher-uuid-permit-test"
+    q_id = "vq-permit-check"
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id)
+    db = MockSupabaseClient(state)
+
+    passed_kwargs = {}
+
+    async def _mock_ai(**kwargs: Any) -> Dict[str, Any]:
+        passed_kwargs.update(kwargs)
+        op_id = kwargs.get("operation_id")
+        acquire_cb = kwargs.get("acquire_attempt")
+        assert op_id is not None
+        assert callable(acquire_cb)
+
+        # Simulate adapter requesting a permit before dispatch
+        attempt_id = uuid4()
+        permit = await acquire_cb(op_id, attempt_id)
+        assert permit.operation_id == op_id
+        assert permit.attempt_id == attempt_id
+        assert permit.dispatch_permitted is True
+        assert permit.replayed is False
+        assert permit.calls_used >= 1
+
+        return {
+            "content": "Permit-tested STEM",
+            "stem_latex": "Permit-tested STEM",
+            "options": ["1", "2", "3", "4"],
+            "correct_key": "B",
+            "solution_md": "Permit Sol",
+            "validation_report": {"is_valid": True},
+            "api_calls_count": 1,
+        }
+
+    service = ReviewService(db, ai_generator=_mock_ai)
+    resp = await service.reject_question(session_id, q_id, user_id)
+
+    assert resp.status == "pending_review"
+    assert "operation_id" in passed_kwargs
+    assert "acquire_attempt" in passed_kwargs
+
+
+@pytest.mark.asyncio
+async def test_reject_denied_permit_raises_429_exhausted():
+    """Verify reject stops immediately and raises 429 when attempt permit is denied due to quota."""
+    session_id = "00000000-0000-0000-0000-000000000028"
+    user_id = "teacher-uuid-denied-test"
+    q_id = "vq-permit-denied"
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id)
+    db = MockSupabaseClient(state)
+
+    async def _mock_exhausted_ai(**kwargs: Any) -> Dict[str, Any]:
+        op_id = kwargs.get("operation_id")
+        acquire_cb = kwargs.get("acquire_attempt")
+        permit = await acquire_cb(op_id, uuid4())
+
+        class MockTargetedError(RuntimeError):
+            code = "REVIEW_QUOTA_EXHAUSTED"
+            api_calls_count = 0
+
+        if not permit.dispatch_permitted:
+            raise MockTargetedError("REVIEW_QUOTA_EXHAUSTED")
+        return {}
+
+    # Pre-exhaust quota to 30
+    state["exam_sessions"][0]["gemini_review_calls"] = 26
+    service = ReviewService(db, ai_generator=_mock_exhausted_ai)
+
+    # In TX1, 26 + 4 <= 30 passes reserve. Then in AI execution, acquire_attempt sees session limit
+    # or simulated denial and adapter raises REVIEW_QUOTA_EXHAUSTED.
+    state["exam_sessions"][0]["gemini_review_calls"] = 30  # Simulate concurrent depletion
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.reject_question(session_id, q_id, user_id)
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.error_code == "ERR_REVIEW_QUOTA_EXHAUSTED"
+
+
+@pytest.mark.asyncio
+async def test_reject_uncertain_permit_retains_charge_and_fails_502():
+    """Verify uncertain/invalid permit raises 502 and retains acknowledged charges without over-refunding."""
+    session_id = "00000000-0000-0000-0000-000000000029"
+    user_id = "teacher-uuid-uncertain-test"
+    q_id = "vq-permit-uncertain"
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id)
+    db = MockSupabaseClient(state)
+
+    async def _mock_uncertain_ai(**kwargs: Any) -> Dict[str, Any]:
+        op_id = kwargs.get("operation_id")
+        acquire_cb = kwargs.get("acquire_attempt")
+
+        # First attempt is granted
+        permit1 = await acquire_cb(op_id, uuid4())
+        assert permit1.dispatch_permitted is True
+
+        class MockUncertainError(RuntimeError):
+            code = "REVIEW_PERMIT_UNCERTAIN"
+            api_calls_count = 1  # 1 permit was acknowledged before uncertain failure
+
+        raise MockUncertainError("REVIEW_PERMIT_UNCERTAIN")
+
+    service = ReviewService(db, ai_generator=_mock_uncertain_ai)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.reject_question(session_id, q_id, user_id)
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.error_code == "ERR_AI_GATEWAY_PERMIT_FAILURE"
+
+    # Verify that the 1 acknowledged permit remains charged in session quota
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 1
+
+
+# ==============================================================================
+# F07 Comprehensive Regression Test Suite (Architecture A - 11 Tests)
+# ==============================================================================
+
+
+@pytest.mark.asyncio
+async def test_f07_quota_boundary_at_26_allows_valid_attempt():
+    """1. Verify at session quota 26, attempt 1 is granted with calls_used=27 (No false denial at boundary)."""
+    session_id = "00000000-0000-0000-0000-000000000101"
+    user_id = "teacher-101"
+    state = _setup_standard_session_state(session_id, user_id, gemini_calls=26)
+    db = MockSupabaseClient(state)
+    repo = ReviewRepository(db)
+
+    op_id = uuid4()
+    repo.register_operation(op_id, session_id)
+
+    att_1 = uuid4()
+    permit = await repo.acquire_attempt(op_id, att_1)
+    assert permit.dispatch_permitted is True
+    assert permit.replayed is False
+    assert permit.calls_used == 27
+    assert permit.remaining_calls == 3
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 27
+
+
+@pytest.mark.asyncio
+async def test_f07_operation_exhausted_after_4_attempts():
+    """2. Verify within a single operation, attempts 1-4 are granted, attempt 5 is denied."""
+    session_id = "00000000-0000-0000-0000-000000000102"
+    user_id = "teacher-102"
+    state = _setup_standard_session_state(session_id, user_id, gemini_calls=10)
+    db = MockSupabaseClient(state)
+    repo = ReviewRepository(db)
+
+    op_id = uuid4()
+    repo.register_operation(op_id, session_id)
+
+    # 4 attempts granted
+    for i in range(1, 5):
+        p = await repo.acquire_attempt(op_id, uuid4())
+        assert p.dispatch_permitted is True
+        assert p.replayed is False
+        assert p.calls_used == 10 + i
+
+    # 5th attempt denied (operation exhausted)
+    p5 = await repo.acquire_attempt(op_id, uuid4())
+    assert p5.dispatch_permitted is False
+    assert p5.replayed is False
+    assert p5.calls_used == 14
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 14
+
+
+@pytest.mark.asyncio
+async def test_f07_session_exhausted_at_30_denied():
+    """3. Verify when session calls reached 30, subsequent acquire is denied."""
+    session_id = "00000000-0000-0000-0000-000000000103"
+    user_id = "teacher-103"
+    state = _setup_standard_session_state(session_id, user_id, gemini_calls=30)
+    db = MockSupabaseClient(state)
+    repo = ReviewRepository(db)
+
+    op_id = uuid4()
+    repo.register_operation(op_id, session_id)
+
+    permit = await repo.acquire_attempt(op_id, uuid4())
+    assert permit.dispatch_permitted is False
+    assert permit.replayed is False
+    assert permit.calls_used == 30
+    assert permit.remaining_calls == 0
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 30
+
+
+@pytest.mark.asyncio
+async def test_f07_replay_across_separate_clients_same_db():
+    """4. Verify replay detection works across separate repository instances sharing underlying DB state."""
+    session_id = "00000000-0000-0000-0000-000000000104"
+    user_id = "teacher-104"
+    shared_state = _setup_standard_session_state(session_id, user_id, gemini_calls=5)
+
+    db_client_a = MockSupabaseClient(shared_state)
+    repo_a = ReviewRepository(db_client_a)
+
+    db_client_b = MockSupabaseClient(shared_state)
+    repo_b = ReviewRepository(db_client_b)
+
+    op_id = uuid4()
+    att_id = uuid4()
+    repo_a.register_operation(op_id, session_id)
+
+    # Worker A acquires permit
+    permit_a = await repo_a.acquire_attempt(op_id, att_id)
+    assert permit_a.dispatch_permitted is True
+    assert permit_a.replayed is False
+    assert permit_a.calls_used == 6
+
+    # Worker B tries to acquire with same attempt_id (Worker B does NOT have RAM state from Worker A)
+    permit_b = await repo_b.acquire_attempt(op_id, att_id)
+    assert permit_b.dispatch_permitted is False
+    assert permit_b.replayed is True
+    assert permit_b.calls_used == 6
+
+
+@pytest.mark.asyncio
+async def test_f07_concurrent_same_attempt_id_only_one_granted():
+    """5. Race condition: Two concurrent acquires with identical attempt_id -> exactly one granted."""
+    session_id = "00000000-0000-0000-0000-000000000105"
+    user_id = "teacher-105"
+    shared_state = _setup_standard_session_state(session_id, user_id, gemini_calls=12)
+
+    db_a = MockSupabaseClient(shared_state)
+    repo_a = ReviewRepository(db_a)
+
+    db_b = MockSupabaseClient(shared_state)
+    repo_b = ReviewRepository(db_b)
+
+    op_id = uuid4()
+    repo_a.register_operation(op_id, session_id)
+    repo_b.register_operation(op_id, session_id)
+
+    same_attempt = uuid4()
+    permits = await asyncio.gather(
+        repo_a.acquire_attempt(op_id, same_attempt),
+        repo_b.acquire_attempt(op_id, same_attempt),
+    )
+
+    granted = [p for p in permits if p.dispatch_permitted is True]
+    replayed = [p for p in permits if p.replayed is True]
+
+    assert len(granted) == 1
+    assert len(replayed) == 1
+    assert shared_state["exam_sessions"][0]["gemini_review_calls"] == 13
+
+
+@pytest.mark.asyncio
+async def test_f07_concurrent_two_ops_at_26_no_oversubscribe():
+    """6. Concurrency: Two operations at session=26 running 4 attempts each cannot exceed 30 calls."""
+    session_id = "00000000-0000-0000-0000-000000000106"
+    user_id = "teacher-106"
+    shared_state = _setup_standard_session_state(session_id, user_id, gemini_calls=26)
+
+    db = MockSupabaseClient(shared_state)
+    repo = ReviewRepository(db)
+
+    op_a = uuid4()
+    op_b = uuid4()
+    repo.register_operation(op_a, session_id)
+    repo.register_operation(op_b, session_id)
+
+    async def run_op(op_id: UUID) -> List[Any]:
+        res = []
+        for _ in range(4):
+            p = await repo.acquire_attempt(op_id, uuid4())
+            res.append(p)
+        return res
+
+    results = await asyncio.gather(run_op(op_a), run_op(op_b))
+    all_permits = results[0] + results[1]
+    granted = [p for p in all_permits if p.dispatch_permitted is True]
+
+    # Exactly 4 permits should be granted to reach 30 (26 + 4 = 30)
+    assert len(granted) == 4
+    assert shared_state["exam_sessions"][0]["gemini_review_calls"] == 30
+
+
+@pytest.mark.asyncio
+async def test_f07_rollback_zero_committed_permits():
+    """7. Failure before any permit is acquired -> rollback leaves session quota completely untouched."""
+    session_id = "00000000-0000-0000-0000-000000000107"
+    user_id = "teacher-107"
+    q_id = "vq-001"
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id, gemini_calls=15)
+    db = MockSupabaseClient(state)
+
+    async def failing_ai_without_permit(**kwargs: Any) -> Dict[str, Any]:
+        raise RuntimeError("Immediate pre-dispatch error")
+
+    service = ReviewService(db, ai_generator=failing_ai_without_permit)
+    with pytest.raises(ReviewDomainException):
+        await service.reject_question(session_id, q_id, user_id)
+
+    # Session calls remains exactly 15 (no subtraction, no addition)
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 15
+    assert state["version_questions"][0]["status"] == "pending_review"
+
+
+@pytest.mark.asyncio
+async def test_f07_rollback_retains_committed_permits():
+    """8. AI fails after 2 permits granted -> rollback retains 2 committed permits, does not refund."""
+    session_id = "00000000-0000-0000-0000-000000000108"
+    user_id = "teacher-108"
+    q_id = "vq-001"
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id, gemini_calls=5)
+    db = MockSupabaseClient(state)
+
+    async def ai_fails_after_2_permits(**kwargs: Any) -> Dict[str, Any]:
+        op_id = kwargs["operation_id"]
+        acquire_cb = kwargs["acquire_attempt"]
+        # Acquire 2 permits
+        p1 = await acquire_cb(op_id, uuid4())
+        assert p1.dispatch_permitted is True
+        p2 = await acquire_cb(op_id, uuid4())
+        assert p2.dispatch_permitted is True
+
+        class MockAdapterError(RuntimeError):
+            code = "REVIEW_PERMIT_UNCERTAIN"
+            api_calls_count = 2
+
+        raise MockAdapterError("Uncertain connection after 2 permits")
+
+    service = ReviewService(db, ai_generator=ai_fails_after_2_permits)
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.reject_question(session_id, q_id, user_id)
+
+    assert exc_info.value.status_code == 502
+    # 5 + 2 = 7; quota retains both committed permits
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 7
+    assert state["version_questions"][0]["status"] == "pending_review"
+
+
+@pytest.mark.asyncio
+async def test_f07_rollback_idempotent():
+    """9. Emergency rollback called twice with same parameters is idempotent and does not alter quota."""
+    session_id = "00000000-0000-0000-0000-000000000109"
+    user_id = "teacher-109"
+    q_id = "vq-001"
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id, gemini_calls=8)
+    state["version_questions"][0]["status"] = "regenerating"
+    db = MockSupabaseClient(state)
+    repo = ReviewRepository(db)
+
+    regen_id = uuid4()
+    # First rollback: succeeds
+    rb1 = await repo.emergency_rollback_tx(session_id, q_id, regen_id, "Error 1", user_id, 1)
+    assert rb1 is True
+    assert state["version_questions"][0]["status"] == "pending_review"
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 8
+
+    # Second rollback: status is already pending_review, returns False
+    rb2 = await repo.emergency_rollback_tx(session_id, q_id, regen_id, "Error 2", user_id, 1)
+    assert rb2 is False
+    assert state["version_questions"][0]["status"] == "pending_review"
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 8
+
+
+@pytest.mark.asyncio
+async def test_f07_db_unavailable_fail_closed():
+    """10. Database connection failure during acquire fails closed (raises, no blind permit granted)."""
+    session_id = "00000000-0000-0000-0000-000000000110"
+    user_id = "teacher-110"
+    state = _setup_standard_session_state(session_id, user_id, gemini_calls=10)
+    db = MockSupabaseClient(state)
+    repo = ReviewRepository(db)
+
+    op_id = uuid4()
+    repo.register_operation(op_id, session_id)
+
+    # Simulate DB disconnection
+    def broken_table(name: str):
+        raise ConnectionError("DB connection refused")
+
+    db.table = broken_table  # type: ignore
+
+    with pytest.raises(ConnectionError):
+        await repo.acquire_attempt(op_id, uuid4())
+
+    # Session calls remains unchanged (not granted)
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 10
+
+
+@pytest.mark.asyncio
+async def test_f07_service_maps_all_permit_error_codes():
+    """11. Verify Service properly maps adapter exception codes to correct HTTP domain errors."""
+    session_id = "00000000-0000-0000-0000-000000000111"
+    user_id = "teacher-111"
+
+    error_mappings = [
+        ("REVIEW_QUOTA_EXHAUSTED", 429, "ERR_REVIEW_QUOTA_EXHAUSTED"),
+        ("OPERATION_EXHAUSTED", 429, "ERR_OPERATION_QUOTA_EXHAUSTED"),
+        ("REVIEW_ATTEMPT_REPLAYED", 409, "ERR_ATTEMPT_REPLAYED"),
+        ("REVIEW_PERMIT_UNCERTAIN", 502, "ERR_AI_GATEWAY_PERMIT_FAILURE"),
+        ("REVIEW_PERMIT_INVALID", 502, "ERR_AI_GATEWAY_PERMIT_FAILURE"),
+        ("DB_UNAVAILABLE", 503, "ERR_AI_GATEWAY_PERMIT_FAILURE"),
+    ]
+
+    for err_code, expected_status, expected_domain_code in error_mappings:
+        q_id = f"vq-{err_code.lower()}"
+        state = _setup_standard_session_state(session_id, user_id, question_id=q_id)
+        db = MockSupabaseClient(state)
+
+        class CustomAdapterError(RuntimeError):
+            code = err_code
+
+        async def _failing_ai(**kwargs: Any):
+            raise CustomAdapterError(f"Simulated {err_code}")
+
+        service = ReviewService(db, ai_generator=_failing_ai)
+        with pytest.raises(ReviewDomainException) as exc_info:
+            await service.reject_question(session_id, q_id, user_id)
+
+        assert exc_info.value.status_code == expected_status, f"Failed mapping for {err_code}"
+        assert exc_info.value.error_code == expected_domain_code, f"Failed error code for {err_code}"
