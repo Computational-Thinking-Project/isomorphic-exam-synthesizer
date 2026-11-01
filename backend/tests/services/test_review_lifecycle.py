@@ -29,8 +29,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.models.schemas import ReserveResult, ReviewDomainException
-from app.services.review.repository import ReviewRepository
+from app.models.schemas import ReserveResult, ReviewDomainException, ReviewProgressResponse
+from app.services.review.repository import ReviewRepository, _now_iso
 from app.services.review.service import ReviewService, session_lock_registry
 
 
@@ -72,6 +72,10 @@ class MockTableQueryBuilder:
         self.payload = values
         return self
 
+    def delete(self) -> "MockTableQueryBuilder":
+        self.op = "delete"
+        return self
+
     def eq(self, field: str, val: Any) -> "MockTableQueryBuilder":
         self.filters.append((field, "eq", val))
         return self
@@ -101,6 +105,12 @@ class MockTableQueryBuilder:
                         curr = None
                         break
                 actual = curr
+                if actual is None and field == "exam_versions.session_id":
+                    v_id = row.get("version_id")
+                    for v in self.db_state.get("exam_versions", []):
+                        if str(v.get("id")) == str(v_id):
+                            actual = v.get("session_id")
+                            break
             else:
                 actual = row.get(field)
 
@@ -165,6 +175,25 @@ class MockTableQueryBuilder:
                 }
             )
             return MockExecutionResult(inserted)
+
+        elif self.op == "delete":
+            remaining = []
+            deleted = []
+            for r in rows:
+                if self._matches(r):
+                    deleted.append(dict(r))
+                else:
+                    remaining.append(r)
+            self.db_state[self.table_name] = remaining
+            self.call_log.append(
+                {
+                    "op": "delete",
+                    "table": self.table_name,
+                    "filters": list(self.filters),
+                    "count": len(deleted),
+                }
+            )
+            return MockExecutionResult(deleted)
 
         return MockExecutionResult([])
 
@@ -986,3 +1015,152 @@ async def test_source_snapshot_provides_content_hash_and_aliases_for_task_304():
     assert isinstance(source["options"], list)
     assert len(source["options"]) == 4
 
+
+@pytest.mark.asyncio
+async def test_invalidation_clears_shuffle_seed_permutations_and_answer_keys():
+    """Verify invalidation clears shuffle_seed, permutations, and purges answer_keys (Contract with Hùng)."""
+    session_id = "00000000-0000-0000-0000-000000000023"
+    user_id = "user-123"
+    state = _setup_standard_session_state(session_id, user_id, session_status="reviewed")
+    v_id = state["exam_versions"][0]["id"]
+    state["exam_versions"][0]["is_finalized"] = True
+    state["exam_versions"][0]["shuffle_seed"] = "seed-hash-123"
+    state["exam_versions"][0]["permutations"] = {"question_order": [1, 2, 3]}
+
+    # Add dummy answer keys
+    state["answer_keys"] = [
+        {"id": "ak-1", "version_id": v_id, "display_no": 1, "display_correct_key": "B"},
+        {"id": "ak-2", "version_id": v_id, "display_no": 2, "display_correct_key": "D"},
+    ]
+
+    db = MockSupabaseClient(state)
+    repo = ReviewRepository(db)
+
+    invalidated = await repo.invalidate_shuffle_if_finalized(session_id)
+    assert invalidated is True
+
+    # Check version fields reset
+    version = state["exam_versions"][0]
+    assert version["is_finalized"] is False
+    assert version["shuffle_seed"] is None
+    assert version["permutations"] is None
+
+    # Check answer_keys purged
+    assert len(state["answer_keys"]) == 0
+
+    # Check session demoted to generated
+    assert state["exam_sessions"][0]["status"] == "generated"
+
+
+@pytest.mark.asyncio
+async def test_session_level_single_active_regeneration_concurrency():
+    """Verify Model A concurrency: only 1 active regenerating question per session (C01)."""
+    session_id = "00000000-0000-0000-0000-000000000024"
+    user_id = "user-123"
+    state = _setup_standard_session_state(
+        session_id, user_id, question_id="vq-active-regen", question_status="regenerating"
+    )
+
+    # Add a second question in the same session
+    v_id = state["exam_versions"][0]["id"]
+    state["version_questions"].append(
+        {
+            "id": "vq-second-q",
+            "version_id": v_id,
+            "source_question_id": "sq-123",
+            "question_no": 2,
+            "content": "Question 2",
+            "options": ["A", "B", "C", "D"],
+            "correct_key": "B",
+            "status": "pending_review",
+            "is_current": True,
+            "is_reverted": False,
+            "regenerated_from_id": None,
+            "regeneration_id": None,
+            "exam_versions": {"session_id": session_id, "is_finalized": False},
+            "created_at": _now_iso(),
+            "updated_at": _now_iso(),
+        }
+    )
+
+    db = MockSupabaseClient(state)
+    repo = ReviewRepository(db)
+
+    # Attempting to reserve quota for second question must return SESSION_BUSY
+    res = await repo.reserve_max_quota_and_start_regenerating(session_id, "vq-second-q", user_id)
+    assert res == ReserveResult.SESSION_BUSY
+
+    # Service call must raise ReviewDomainException 409 ERR_SESSION_BUSY_REGENERATING
+    service = ReviewService(db, ai_generator=lambda **kw: {})
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.reject_question(session_id, "vq-second-q", user_id)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_SESSION_BUSY_REGENERATING"
+
+
+@pytest.mark.asyncio
+async def test_progress_extended_contract_fields_and_slots():
+    """Verify ReviewProgressResponse satisfies both TASK-302 RPC contract and legacy fields (C02)."""
+    session_id = "00000000-0000-0000-0000-000000000025"
+    user_id = "user-123"
+    state = _setup_standard_session_state(
+        session_id, user_id, question_id="vq-slot-1", question_status="approved"
+    )
+    db = MockSupabaseClient(state)
+    repo = ReviewRepository(db)
+
+    data = await repo.get_review_progress_data(session_id)
+    assert data["expected_slots"] == 1
+    assert data["current_slots"] == 1
+    assert data["approved_slots"] == 1
+    assert data["regenerating_slots"] == 0
+    assert data["missing_slots"] == 0
+    assert data["duplicate_slots"] == 0
+    assert data["ready"] is True
+
+    # Test Pydantic model serialization & backward compatibility
+    resp = ReviewProgressResponse(**data)
+    assert resp.expected_slots == resp.required_count == 1
+    assert resp.current_slots == resp.current_count == 1
+    assert resp.approved_slots == resp.approved_count == 1
+    assert resp.ready == resp.can_finalize is True
+
+
+@pytest.mark.asyncio
+async def test_audit_log_user_id_never_null():
+    """Verify that all review_logs entries strictly record valid user_id (Migration 006 compliance)."""
+    session_id = "00000000-0000-0000-0000-000000000026"
+    user_id = "teacher-uuid-456"
+    q_id = "vq-audit-check"
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id)
+    db = MockSupabaseClient(state)
+
+    async def _mock_ai(**kw: Any) -> Dict[str, Any]:
+        return {
+            "content": "New STEM",
+            "stem_latex": "New STEM",
+            "options": ["1", "2", "3", "4"],
+            "correct_key": "C",
+            "solution_md": "Sol",
+            "validation_report": {"is_valid": True},
+            "api_calls_count": 1,
+        }
+
+    service = ReviewService(db, ai_generator=_mock_ai)
+
+    # 1. Accept action
+    await service.accept_question(session_id, q_id, user_id)
+
+    # 2. Reject action
+    rej_resp = await service.reject_question(session_id, q_id, user_id)
+
+    # 3. Revert action
+    await service.revert_question(session_id, rej_resp.question_id, user_id)
+
+    # Verify all review_logs in state
+    logs = state.get("review_logs", [])
+    assert len(logs) >= 3
+    for log_entry in logs:
+        assert log_entry.get("user_id") is not None
+        assert log_entry.get("user_id") == user_id
+        assert len(str(log_entry.get("user_id"))) > 0

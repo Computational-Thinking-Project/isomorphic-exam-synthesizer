@@ -5,7 +5,7 @@
 - **Reviewer:** Hùng (`benalexx007` — đã chốt)
 - **Repo/nhánh:** `feat/duy-task-301-review-lifecycle-api`; PR: [#28](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28)
 - **Hạn đợt:** tối thứ 3 03/11/2026; **ETA task:** Thứ 7 31/10/2026 (Duy xác nhận)
-- **Phiên bản:** v6.1 (Remediation Plan: [TASK-301_REMEDIATION_PLAN.md](TASK-301_REMEDIATION_PLAN.md))
+- **Phiên bản:** v7.0 (Hoàn thiện đồng bộ toàn diện theo Contract với Hùng @benalexx007 và TASK-302)
 
 ---
 
@@ -124,3 +124,31 @@ ruff check backend/app/services/review backend/app/api/routes/review.py
 mypy backend/app/services/review --strict
 pytest backend/tests/services/test_review_lifecycle.py -v
 ```
+
+
+---
+
+## 7. Bàn Giao & Kết Quả Thực Tế — Đồng Bộ Hóa Toàn Diện Với Hùng (TASK-302)
+
+- **F01/F02/F05/F06 (Reservation, Candidate Payload & Strict Audit Actor):**
+  - Đảm bảo snapshot canonical độc lập khi AI sinh biến thể mới.
+  - Toàn bộ thao tác ghi log `review_logs` luôn kèm `user_id` xác thực (tuân thủ `CHECK (user_id IS NOT NULL)` của Migration 006).
+  - Tự động thu hồi câu treo `regenerating > 3 phút` (Stale Recovery) khi gọi endpoint tiến độ review.
+- **F03 (Canonical Invariance):**
+  - Bảo toàn tuyệt đối mô hình dữ liệu chuẩn của câu bị reject, sinh bộ đáp án mới độc lập.
+- **F04 (Production Dependency Injection):**
+  - Dependency `get_ai_generator` ném `503 Service Unavailable` nếu chưa cấu hình AI Adapter trên môi trường thật, ngăn ngừa âm thầm dùng mock data.
+- **F07 (Attempt Accounting):**
+  - Hoàn trả chính xác số lượt uncalled quota (`4 - actual_dispatched`), giữ nguyên phí các lượt đã gọi AI.
+- **C01 (Model A Concurrency):**
+  - Áp dụng khóa mức session: Chỉ cho phép duy nhất 1 câu hỏi đang trong tiến trình sinh lại (`regenerating`) trên mỗi session đề. Thao tác thứ 2 bị từ chối với HTTP 409 (`ERR_SESSION_BUSY_REGENERATING`).
+- **C02 (Readiness & Progress Slots Shape):**
+  - Mở rộng `ReviewProgressResponse` với các trường slot chuẩn hóa: `expected_slots`, `current_slots`, `approved_slots`, `regenerating_slots`, `missing_slots`, `duplicate_slots`, `ready`. Duy trì 100% backward compatibility cho frontend.
+- **Invalidation Toàn Diện (Session-wide Reshuffle Invalidation):**
+  - Khi reject/revert trên phiên đã shuffle: xóa sạch `answer_keys` cũ, reset `is_finalized = false`, xóa trắng `shuffle_seed` và `permutations`, hạ session status về `generated`.
+- **Kết Quả Kiểm Thử Thực Tế:**
+  - `pytest backend/tests/services/test_review_lifecycle.py backend/tests/api/test_review_api.py -v`: **32/32 tests passed (0.49s)**.
+  - `ruff check`: All checks passed.
+  - `ruff format --check`: 7 files already formatted.
+  - `mypy`: Success: no issues found in 5 source files.
+- **Trạng thái PR:** PR #28 đã sẵn sàng 100% để chuyển sang **Ready for Review** và bàn giao cho Hùng (@benalexx007) duyệt (Approve).

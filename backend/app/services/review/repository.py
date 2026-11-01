@@ -97,11 +97,7 @@ class ReviewRepository:
 
         # Fetch source question
         sq_res = (
-            self.db.table("source_questions")
-            .select("*")
-            .eq("id", source_id)
-            .limit(1)
-            .execute()
+            self.db.table("source_questions").select("*").eq("id", source_id).limit(1).execute()
         )
         sq_rows = _get_rows(sq_res)
         source = sq_rows[0] if sq_rows else {}
@@ -182,6 +178,18 @@ class ReviewRepository:
 
         if current_calls + MAX_AI_CALLS_PER_REJECT > MAX_SESSION_REVIEW_QUOTA:
             return ReserveResult.QUOTA_EXHAUSTED
+
+        # Check session-level concurrency: Model A enforces max 1 active regenerating question per session (C01)
+        active_regen = (
+            self.db.table("version_questions")
+            .select("id, exam_versions!inner(session_id)")
+            .eq("status", "regenerating")
+            .eq("exam_versions.session_id", session_id)
+            .limit(1)
+            .execute()
+        )
+        if len(_get_rows(active_regen)) > 0:
+            return ReserveResult.SESSION_BUSY
 
         # Check question state
         q_res = (
@@ -583,20 +591,35 @@ class ReviewRepository:
         return created_q
 
     async def invalidate_shuffle_if_finalized(self, session_id: str) -> bool:
-        """Reset is_finalized to False on versions and demote session from 'reviewed' to 'generated'."""
+        """Reset is_finalized, clear shuffle_seed/permutations, purge stale answer_keys,
+        and demote session status from 'reviewed' to 'generated' (Contract with Hùng).
+        """
         try:
             v_res = (
                 self.db.table("exam_versions")
                 .select("id, is_finalized")
                 .eq("session_id", session_id)
-                .eq("is_finalized", True)
                 .execute()
             )
             v_rows = _get_rows(v_res)
-            if v_rows:
-                self.db.table("exam_versions").update({"is_finalized": False}).eq(
-                    "session_id", session_id
-                ).execute()
+            version_ids = [str(r["id"]) for r in v_rows if r.get("id")]
+            any_finalized = any(r.get("is_finalized") for r in v_rows)
+
+            if any_finalized and version_ids:
+                # 1. Purge stale answer_keys records for all affected versions
+                self.db.table("answer_keys").delete().in_("version_id", version_ids).execute()
+
+                # 2. Reset finalized flag and permutations metadata on exam_versions
+                self.db.table("exam_versions").update(
+                    {
+                        "is_finalized": False,
+                        "shuffle_seed": None,
+                        "permutations": None,
+                        "updated_at": _now_iso(),
+                    }
+                ).eq("session_id", session_id).execute()
+
+                # 3. Demote session status from 'reviewed' to 'generated'
                 s_res = (
                     self.db.table("exam_sessions").select("status").eq("id", session_id).execute()
                 )
@@ -671,8 +694,19 @@ class ReviewRepository:
             and session_status in ("generated", "reviewed")
         )
 
+        missing_slots = max(0, required_count - current_count)
+        duplicate_slots = max(0, current_count - required_count)
+        ready = can_finalize
+
         return {
             "session_id": session_id,
+            "expected_slots": required_count,
+            "current_slots": current_count,
+            "approved_slots": approved_count,
+            "regenerating_slots": regenerating_count,
+            "missing_slots": missing_slots,
+            "duplicate_slots": duplicate_slots,
+            "ready": ready,
             "required_count": required_count,
             "current_count": current_count,
             "approved_count": approved_count,

@@ -145,6 +145,12 @@ class ReviewService:
                     "ERR_QUESTION_BUSY",
                     "Câu hỏi đang trong tiến trình sinh lại",
                 )
+            if reserve_res == ReserveResult.SESSION_BUSY:
+                raise ReviewDomainException(
+                    409,
+                    "ERR_SESSION_BUSY_REGENERATING",
+                    "Phiên đề đang có một câu hỏi khác trong tiến trình sinh lại (Model A concurrency)",
+                )
             if reserve_res == ReserveResult.QUESTION_NOT_CURRENT:
                 raise ReviewDomainException(
                     400,
