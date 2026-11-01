@@ -1,6 +1,8 @@
+from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from fastapi import HTTPException
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class SourceQuestion(BaseModel):
@@ -246,6 +248,8 @@ class IngestSuccessResponse(BaseModel):
     questions: List[Dict[str, Any]] = Field(
         default_factory=list, description="Danh sách câu hỏi nguồn đã lưu"
     )
+
+
 class ConfirmSourceRequest(BaseModel):
     """Payload xác nhận đề nguồn và chuyển sang Stage 2 (TASK-205).
 
@@ -276,6 +280,199 @@ class ConfirmSourceResponse(BaseModel):
     message: str = "Source confirmed and blueprints locked successfully"
 
 
+# ------------------------------------------------------------------------------
+# Stage 3: Review Lifecycle & Invariants Models (TASK-301)
+# ------------------------------------------------------------------------------
+
+
+class ReserveResult(str, Enum):
+    """Kết quả dự trữ hạn mức và khóa trạng thái câu hỏi khi reject."""
+
+    OK = "OK"
+    QUOTA_EXHAUSTED = "QUOTA_EXHAUSTED"
+    QUESTION_BUSY = "QUESTION_BUSY"
+    SESSION_BUSY = "SESSION_BUSY"
+    QUESTION_NOT_FOUND = "QUESTION_NOT_FOUND"
+    QUESTION_NOT_CURRENT = "QUESTION_NOT_CURRENT"
+
+
+class ReviewErrorCode:
+    """Standard domain error codes conforming to Stage 3 review RPC contract."""
+
+    REVIEW_NOT_FOUND = "REVIEW_NOT_FOUND"
+    REVIEW_BUSY = "REVIEW_BUSY"
+    REVIEW_STALE = "REVIEW_STALE"
+    REVIEW_IDEMPOTENCY_CONFLICT = "REVIEW_IDEMPOTENCY_CONFLICT"
+    REVIEW_LOCKED = "REVIEW_LOCKED"
+    REVIEW_QUOTA_EXHAUSTED = "REVIEW_QUOTA_EXHAUSTED"
+    REVIEW_INVALID_PAYLOAD = "REVIEW_INVALID_PAYLOAD"
+    REVIEW_SOURCE_MISMATCH = "REVIEW_SOURCE_MISMATCH"
+    REVIEW_AI_UNAVAILABLE = "REVIEW_AI_UNAVAILABLE"
+    REVIEW_PERMIT_REQUIRED = "REVIEW_PERMIT_REQUIRED"
+    REVIEW_PERMIT_INVALID = "REVIEW_PERMIT_INVALID"
+    REVIEW_PERMIT_UNCERTAIN = "REVIEW_PERMIT_UNCERTAIN"
+    REVIEW_ATTEMPT_REPLAYED = "REVIEW_ATTEMPT_REPLAYED"
+
+
+class ReviewActionResponse(BaseModel):
+    """Phản hồi sau thao tác Accept hoặc Revert trên một câu hỏi (TASK-301)."""
+
+    question_id: str = Field(..., description="Mã định danh câu hỏi hiện hành")
+    session_id: str = Field(..., description="Mã phiên làm việc")
+    status: str = Field(..., description="Trạng thái câu hỏi ('approved', 'pending_review', v.v.)")
+    is_current: bool = Field(True, description="Đánh dấu câu hỏi là bản ghi hiện hành")
+    is_reverted: bool = Field(False, description="Đánh dấu câu hỏi đã được hoàn nguyên về gốc")
+    updated_at: str = Field(..., description="Thời điểm cập nhật trạng thái (ISO8601)")
+
+
+class RegeneratedQuestionResponse(BaseModel):
+    """Phản hồi câu hỏi biến thể mới sau khi từ chối (Reject & Regenerate)."""
+
+    question_id: str = Field(..., description="Mã định danh của biến thể mới")
+    regenerated_from_id: str = Field(..., description="Mã định danh câu cũ bị thay thế")
+    status: str = Field("pending_review", description="Trạng thái của biến thể mới")
+    content: str = Field(..., description="Nội dung câu hỏi biến thể mới (LaTeX)")
+    options: List[str] = Field(
+        ..., min_length=4, max_length=4, description="4 phương án A, B, C, D"
+    )
+    correct_key: str = Field(..., description="Chữ cái đáp án đúng ('A', 'B', 'C', 'D')")
+    solution_md: Optional[str] = Field(None, description="Lời giải chi tiết mới")
+    validation_report: Optional[Dict[str, Any]] = Field(
+        default=None, description="Báo cáo kiểm định toán học on-the-fly"
+    )
+
+
+class ReviewProgressResponse(BaseModel):
+    """Thống kê tiến độ thẩm định của phiên làm việc (TASK-301 & TASK-302 Contract)."""
+
+    session_id: str = Field(..., description="Mã phiên làm việc")
+
+    # Contract fields aligned with TASK-302 RPC contract & Migration 006
+    expected_slots: int = Field(0, description="Tổng số vị trí câu hỏi cần có (N mã đề x M câu)")
+    current_slots: int = Field(
+        0, description="Tổng số câu hiện hành đang hiển thị (is_current=True)"
+    )
+    approved_slots: int = Field(0, description="Số câu hiện hành đã được duyệt (status='approved')")
+    regenerating_slots: int = Field(0, description="Số câu đang trong tiến trình sinh lại")
+    missing_slots: int = Field(0, description="Số vị trí câu hỏi còn thiếu chưa được sinh")
+    duplicate_slots: int = Field(0, description="Số vị trí câu hỏi bị dư hoặc trùng lặp")
+    ready: bool = Field(False, description="Đủ điều kiện sẵn sàng shuffle và finalize")
+
+    # Backward-compatible fields for existing frontend and test callers
+    required_count: int = Field(0, description="Alias tương thích ngược của expected_slots")
+    current_count: int = Field(0, description="Alias tương thích ngược của current_slots")
+    approved_count: int = Field(0, description="Alias tương thích ngược của approved_slots")
+    regenerating_count: int = Field(0, description="Alias tương thích ngược của regenerating_slots")
+    unapproved_question_ids: List[str] = Field(
+        default_factory=list, description="Danh sách mã câu hỏi hiện hành chưa được duyệt"
+    )
+    is_complete: bool = Field(False, description="Đã duyệt đủ 100% câu hỏi hiện hành")
+    can_finalize: bool = Field(False, description="Alias tương thích ngược của ready")
+
+    @model_validator(mode="before")
+    @classmethod
+    def sync_contract_and_legacy_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # Sync expected_slots <-> required_count
+            if "expected_slots" not in data and "required_count" in data:
+                data["expected_slots"] = data["required_count"]
+            elif "required_count" not in data and "expected_slots" in data:
+                data["required_count"] = data["expected_slots"]
+
+            # Sync current_slots <-> current_count
+            if "current_slots" not in data and "current_count" in data:
+                data["current_slots"] = data["current_count"]
+            elif "current_count" not in data and "current_slots" in data:
+                data["current_count"] = data["current_slots"]
+
+            # Sync approved_slots <-> approved_count
+            if "approved_slots" not in data and "approved_count" in data:
+                data["approved_slots"] = data["approved_count"]
+            elif "approved_count" not in data and "approved_slots" in data:
+                data["approved_count"] = data["approved_slots"]
+
+            # Sync regenerating_slots <-> regenerating_count
+            if "regenerating_slots" not in data and "regenerating_count" in data:
+                data["regenerating_slots"] = data["regenerating_count"]
+            elif "regenerating_count" not in data and "regenerating_slots" in data:
+                data["regenerating_count"] = data["regenerating_slots"]
+
+            # Sync ready <-> can_finalize
+            if "ready" not in data and "can_finalize" in data:
+                data["ready"] = data["can_finalize"]
+            elif "can_finalize" not in data and "ready" in data:
+                data["can_finalize"] = data["ready"]
+
+            if "missing_slots" not in data:
+                exp = int(data.get("expected_slots", 0) or 0)
+                cur = int(data.get("current_slots", 0) or 0)
+                data["missing_slots"] = max(0, exp - cur)
+
+            if "duplicate_slots" not in data:
+                exp = int(data.get("expected_slots", 0) or 0)
+                cur = int(data.get("current_slots", 0) or 0)
+                data["duplicate_slots"] = max(0, cur - exp)
+
+            if "is_complete" not in data:
+                exp = int(data.get("expected_slots", 0) or 0)
+                cur = int(data.get("current_slots", 0) or 0)
+                app = int(data.get("approved_slots", 0) or 0)
+                data["is_complete"] = bool(exp > 0 and cur == exp and app == exp)
+        return data
+
+
+class ErrorDetailResponse(BaseModel):
+    """Cấu trúc lỗi chuẩn hóa của hệ thống."""
+
+    error_code: str = Field(..., description="Mã lỗi hệ thống định danh")
+    detail: str = Field(..., description="Mô tả chi tiết lỗi")
+
+
+class ReviewDomainException(HTTPException):
+    """Ngoại lệ nghiệp vụ riêng cho Review Lifecycle."""
+
+    def __init__(self, status_code: int, error_code: str, detail: str) -> None:
+        super().__init__(status_code=status_code, detail=detail)
+        self.error_code = error_code
+
+
+# ---------------------------------------------------------------------------
+# Finalize & Content Lock Schemas (TASK-305)
+# ---------------------------------------------------------------------------
+
+
+class FinalizeApproveResponse(BaseModel):
+    """Phản hồi phê duyệt phiên làm việc thành công (TASK-305)."""
+
+    session_id: str = Field(..., description="Mã phiên làm việc (UUID)")
+    status: str = Field("approved", description="Trạng thái phiên làm việc sau khi duyệt")
+    approved_at: str = Field(..., description="Thời điểm phê duyệt phiên làm việc (ISO8601)")
+    message: str = Field(..., description="Thông báo kết quả phê duyệt")
+
+
+class MatrixItem(BaseModel):
+    """Một dòng trong ma trận đáp án tương ứng với số thứ tự câu hỏi sau hoán vị."""
+
+    question_no: int = Field(..., ge=1, description="Số thứ tự câu hỏi trong đề thi (1..N)")
+    answers: Dict[str, str] = Field(
+        ...,
+        description="Bảng tra đáp án của câu hỏi theo từng mã đề (ví dụ: {'101': 'A', '102': 'C'})",
+    )
+
+
+class AnswersMatrixResponse(BaseModel):
+    """Ma trận đối soát đáp án của toàn bộ phiên đề (TASK-305)."""
+
+    session_id: str = Field(..., description="Mã phiên làm việc (UUID)")
+    total_questions: int = Field(..., ge=0, description="Tổng số câu hỏi trong ma trận")
+    version_codes: List[str] = Field(
+        ..., description="Danh sách các mã đề thi đã được sắp xếp (ví dụ: ['101', '102', '103', '104'])"
+    )
+    matrix: List[MatrixItem] = Field(
+        ..., description="Danh sách đáp án từng câu hỏi cho tất cả mã đề"
+    )
+
+
 # Re-export validator schemas for convenient consumption across services and routes
 from app.services.validator.base import CheckResult, ValidationReport  # noqa: E402
 
@@ -300,6 +497,16 @@ __all__ = [
     "IngestSuccessResponse",
     "ConfirmSourceRequest",
     "ConfirmSourceResponse",
+    "ReserveResult",
+    "ReviewErrorCode",
+    "ReviewActionResponse",
+    "RegeneratedQuestionResponse",
+    "ReviewProgressResponse",
+    "ErrorDetailResponse",
+    "ReviewDomainException",
+    "FinalizeApproveResponse",
+    "MatrixItem",
+    "AnswersMatrixResponse",
     "CheckResult",
     "ValidationReport",
 ]
