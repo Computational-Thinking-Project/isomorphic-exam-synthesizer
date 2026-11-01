@@ -30,8 +30,8 @@ Mở `docs/ui-walkthrough/index.html` bằng Chrome từ trình quản lý file.
 ## Bản và nguồn
 
 - Nguồn: `project/ui-draft/redesign/PREVIEW.html` ở workspace thiết kế, không phải build frontend sản phẩm.
-- 2.757.820 bytes; SHA256 `cdebc94e3ccdf4803ca3a7e0e2e640252b06e6154506326a0cb0f0fe92e3d22d`.
-- CSS `index-WFK8JX_V.css`, JS `index-BPJlEeuH.js` đã nhúng cùng font, artwork và third-party notices.
+- 2.758.050 bytes; SHA256 `cdebc94e3ccdf4803ca3a7e0e2e640252b06e6154506326a0cb0f0fe92e3d22d`.
+- CSS `index-WFK8JX_V.css`, JS `index-DvC3dO1A.js` đã nhúng cùng font, artwork và third-party notices.
 - Nền repo khi đóng gói: `879319fa3fac30c89f7f504ef185ab4f6cb912b0`; đây không phải source commit của artifact ui-draft.
 - [version.json](version.json) ghi nguồn/hash/trạng thái kiểm. `.gitattributes` giữ nguyên bytes PREVIEW, không tự chuyển CRLF/LF.
 
@@ -56,7 +56,7 @@ Bấm vào ngay sau kết quả đầu tiên để thấy tiến trình tiếp t
 
 ### S06: duyệt từ Câu 1 trong khi phần còn lại tiếp tục tạo
 
-Lượt tạo mới mở **Câu 1/mã 101**, **0/10 đã duyệt**. Không tự duyệt sẵn 9 câu và không tự chèn lỗi B=C theo Presenter nữa. Bộ mô phỏng nằm ở workflow chung, nên chuyển S05→S06 không khởi động lại lượt tạo hoặc hủy timer đang chờ.
+Lượt tạo mới mở **Câu 1/mã 101**, **0/10 đã duyệt**. Không tự duyệt sẵn 9 câu. Riêng **Câu 3/mã 101 giữ lỗi nội dung B=C** để thử đối chiếu/sửa/duyệt; các cặp khác vẫn tạo bình thường. Đây là lỗi nội dung mẫu đã nhận, không phải job tạo thất bại. Bộ mô phỏng nằm ở workflow chung, nên chuyển S05→S06 không khởi động lại lượt tạo hoặc hủy timer đang chờ.
 
 - Ô câu và tab mã hiển thị biểu tượng đang tạo, chờ lượt hoặc lỗi theo đúng cặp đang chọn. Vẫn bấm chọn được ô đang tải.
 - Cặp đang tạo/chờ lượt hiển thị skeleton ở panel biến thể bên phải; đề nguồn vẫn đọc được bên trái. Chưa hiện đề biến thể, phương án, key hoặc lời giải trước khi nhận kết quả.
@@ -66,6 +66,10 @@ Lượt tạo mới mở **Câu 1/mã 101**, **0/10 đã duyệt**. Không tự 
 - Sửa/lưu vẫn cần checkbox đối chiếu; trạng thái kiểm cũ hết hiệu lực, phải review lại và duyệt revision mới. Kết quả tới từ cặp khác không ghi đè bản sửa hoặc approval hiện có.
 
 **Rà bộ đề** vẫn cần toàn bộ cặp hợp lệ đã nhận, readiness và đủ approval hiện hành. **Chốt cả bộ** còn cần rà đủ hai loại bản của mọi mã ở revision hiện tại. Bật nút vào S06 sớm không làm nhẹ các gate này.
+
+### Ca lỗi nội dung mặc định ở Câu 3/mã 101
+
+Sau khi nhận Câu 3, B=C=`{3;4}` và duyệt bị chặn. Mở Chỉnh sửa, đổi riêng B thành `{2;6}`, giữ C/key/lời giải, tick đối chiếu và Lưu thay đổi. Nội dung chuyển sang kiểm cũ hết hiệu lực; mở Kiểm tra đáp án lại rồi Duyệt biến thể. Có thể chọn Tạo lại để thay đúng cặp bằng mẫu hợp lệ. Sửa/tạo lại không tự đánh dấu duyệt hoặc nạp 9 approval. Đi lại giữa S05/S06 không chèn lỗi lại; tạo lượt mới hoặc reload fixture mới khôi phục ca lỗi mặc định. Đây là dữ liệu cố ý chuẩn bị cho UI, không phải lỗi/output AI thật.
 
 ### Lỗi, tạm dừng và thử lại
 
@@ -90,7 +94,7 @@ Tạo lại vẫn hỏi xác nhận, dùng cửa sổ offset 1–8 so với seed
 
 ## Kiểm đã làm và còn chờ
 
-Source: **29 ca progressive review + 30 ca S06 + 37 ca Đại số + 16 ca toast = 112 ca qua**, TypeScript/build qua (1619 modules). Các ca dùng fake timer, hook trong bộ nhớ và React element/static markup; không phải pass thao tác hay hình học trên browser. SSR có cảnh báo useLayoutEffect; không dùng SSR để nghiệm thu toast/animation.
+Source: **10 ca default B=C + 29 ca progressive review + 30 ca S06 + 37 ca Đại số + 16 ca toast = 122 ca qua**, TypeScript/build qua (1619 modules). 29 ca scheduler dùng fixture nội dung sạch tường minh; 10 ca mới kiểm luồng thực có B=C, sửa/stale/approve và Tạo lại. Các ca dùng fake timer, hook trong bộ nhớ và React element/static markup; không phải pass thao tác hay hình học trên browser. SSR có cảnh báo useLayoutEffect; không dùng SSR để nghiệm thu toast/animation.
 
 Gói chia sẻ được kiểm bytes/hash nguồn–dist–repo, tài nguyên/licenses nhúng, liên kết tương đối, Git attributes và phạm vi diff. Không chạy test hoặc build sản phẩm/backend.
 

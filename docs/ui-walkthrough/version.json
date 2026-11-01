@@ -1,5 +1,5 @@
 {
-  "packageId": "UI-WALKTHROUGH-20261101-PROGRESSIVE-REVIEW",
+  "packageId": "UI-WALKTHROUGH-20261101-DEFAULT-CONTENT-ISSUE",
   "packagedDate": "2026-11-01",
   "timezone": "Asia/Bangkok",
   "kind": "Portable UI with sample data; not integrated product or AI output",
@@ -7,15 +7,15 @@
   "repositoryBaseAtPackaging": "879319fa3fac30c89f7f504ef185ab4f6cb912b0",
   "artifact": {
     "file": "PREVIEW.html",
-    "bytes": 2757820,
-    "sha256": "cdebc94e3ccdf4803ca3a7e0e2e640252b06e6154506326a0cb0f0fe92e3d22d",
+    "bytes": 2758050,
+    "sha256": "33b8fafa8b7dad3fdc50d7580783d53e29d07879379d5c1c8756607dbf758cc8",
     "sourceWorkspaceRelativePath": "project/ui-draft/redesign/PREVIEW.html",
     "sourceDateFromReview": "2026-11-01",
     "sourceCommit": null,
     "sourceCommitNote": "ui-draft lives outside the product Git repository; repositoryBaseAtPackaging is not the artifact source commit",
     "built": [
       "index-WFK8JX_V.css",
-      "index-BPJlEeuH.js"
+      "index-DvC3dO1A.js"
     ],
     "selfContained": true,
     "thirdPartyNoticesEmbedded": true,
@@ -56,7 +56,7 @@
   ],
   "behavior": {
     "S05": "Enable Begin review after at least one valid received source-code pair. Do not wait for all QxN or readiness. No automatic navigation or approval.",
-    "S05ToS06": "Shared sample scheduler continues without restarting its outstanding timer. Normal new run selects question1/code101 with zero approvals; no Presenter preset or injected duplicate.",
+    "S05ToS06": "Shared scheduler continues without restarting its outstanding timer. New run selects question1/code101 with zero approvals. Question3/code101 intentionally has duplicate B=C content as a demo issue; no preapproved Presenter preset.",
     "S06Loading": "Per selected code, active spinner/pending clock/failed icon in clickable cells and tabs. Selected active or pending pair displays right-panel skeleton; source stays visible. Unreceived variant content/key/steps are hidden.",
     "recovery": "Continue healthy queued pairs after a failure; retry only failed pairs with run/pair/revision guards. Shared pause/resume. New run resets selection/pause; stale callbacks and unmount leases are guarded.",
     "review": "Current-pair edits/approval survive other receipts. Approval moves to next unapproved source, including pending or failed pair, keeps code. No automatic S07.",
@@ -65,7 +65,8 @@
     "S00ToS01": "CTA ends with S00; no CTA ghost on S01; logo/slogan450ms, card300ms with delay130ms",
     "regenerate": "Finite offsets1..8 relative to source seed; skip current/same-source other-code content; retain question and notify if unavailable",
     "persistence": "Tab memory only",
-    "realPDFExport": false
+    "realPDFExport": false,
+    "defaultContentIssue": "G03/101 only: duplicate B=C, key/steps/source unchanged, check=issue. This is a received content issue, not a failed generation job. Other pairs continue. Correct B/save/stale/reinspect/approve or regenerate this pair; no reseeding when returning to S06."
   },
   "checks": {
     "staticPackageVerification": "See local verification report; source/dist/package bytes and hash checked; native Chrome not run",
@@ -81,14 +82,16 @@
       "result": "passed in ui-draft",
       "scope": "Fake timers, reducers/selectors, in-memory hooks, React element/static markup. Not native Chrome, DOM geometry, visual motion or real AI.",
       "typeScript": "passed",
-      "build": "passed,1619 modules"
+      "build": "passed,1619 modules",
+      "defaultContentIssue": 10,
+      "progressiveReviewScope": "29 scheduler regressions use an explicitly cleaned content fixture; 10 new cases cover the actual default B=C full flow."
     }
   },
   "publicationAtPreparation": {
     "committed": false,
     "pushed": false,
     "packageCommit": null,
-    "note": "Progressive review refresh is local only. Prior879319f toast commit remains local/ahead1 of origin23d0df9; neither that commit nor the remote contains this progressive refresh."
+    "note": "Progressive review plus default B=C refresh remains local only, uncommitted/unpushed. HEAD879319f is the previous local toast commit; origin23d0df9 contains neither refresh."
   },
   "limits": [
     "No real auth/upload/parser/AI/server persistence/PDF",
