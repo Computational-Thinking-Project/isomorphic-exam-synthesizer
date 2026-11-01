@@ -29,7 +29,7 @@
 
 | Lượt / file dự kiến | Mục đích / output | Input / cách kiểm |
 |---|---|---|
-| 1. Contract trong tài liệu owner thống nhất + fixture/mock | Chốt input/output và lỗi cho Duy | Source snapshot, reason, retry/quota và report mapping |
+| 1. Contract trong tài liệu owner thống nhất + fixture/mock | Chốt input/output và lỗi cho Duy | Source snapshot, binary reject, retry/quota và report mapping |
 | 2. `generation/targeted_service.py` nếu cần adapter | Wrapper mỏng dùng GenerationService, không DB connection | Test input/output, preserve input, không nhân logic orchestration |
 | 3. `generation/service.py`, `generation/prompts.py` | Reason theo contract trong giới hạn Blueprint; giữ bounded retry/repair và peer exclusion | Test prompt injection, reason trái Blueprint, schema, duplicate |
 | 4. Adapter validator trong targeted service hoặc `validator/pipeline.py` | Tích hợp aggregator sau #19/#20; giữ solution consistency và unknown | Tâm xác nhận contract; bounded execution/deadline, không blocking event loop |
@@ -58,7 +58,7 @@ Duy đã giải đáp tại [PR #26](https://github.com/Computational-Thinking-P
 
 ## Kế hoạch tự kiểm
 
-- Schema/options/key/solution mapping; reason không vượt Blueprint; không mutate source/Blueprint/previous/peers.
+- Schema/options/key/solution mapping; không nhận prompt/lý do tự do của giáo viên; không mutate source/Blueprint/previous/peers.
 - Duplicate source/previous/peer, đảo options, bounded exhaustion; retry/repair và reservation tính từng provider attempt.
 - Deadline, quota hết, provider lỗi, cancellation; failed/unknown/unsupported đúng semantics; không biến rule-only thành math proof.
 - Regression AI/validator/Blueprint, Ruff/Mypy; CI/Docker trên head cuối. Live smoke tách khỏi unit tests, ghi model/prompt/calls, không log key.
@@ -71,7 +71,7 @@ Duy đã giải đáp tại [PR #26](https://github.com/Computational-Thinking-P
 - Tự kiểm: grant/deny/replay/ID mismatch/malformed/unknown response, retry/repair, cancellation/deadline; count giữ conservative, không tự refund. Các kết quả cuối theo PR body/head bàn giao.
 - Handoff adapter trong ngày 01/11. Hùng cung cấp RPC ledger; Duy nối wrapper sau khi nhận RPC (ETA Duy: trong 24h sau bàn giao RPC). Không biến ETA thành bằng chứng đã tích hợp.
 - Còn làm sau input: nối Reject endpoint với wrapper thật, kiểm quota/session nhiều worker, cancellation/recovery/late completion và bảo toàn câu cũ; đây là E2E phối hợp TASK-301/302/304. Xem [handoff](../ai-w3-targeted-regeneration.md).
-- Trước Ready: đồng bộ dev hiện tại và giải quyết report/validator contract trên nhánh mình, có review độc lập và CI head cuối; không tự sửa nhánh thành viên khác. Các nhận xét baseline/ngày 29/10 phía trên là lịch sử.
+- Đã đồng bộ `origin/dev` tại `1199fc8` (01/11), gồm rule fallback, aggregator và TASK-303; merge sạch trên nhánh TASK-304. CandidateValidator hiện có vẫn là adapter async của generator; việc có aggregator trong dev không tự chứng nhận đã đổi sang contract report đó. Trước Ready cần review độc lập và CI head cuối; không tự sửa nhánh thành viên khác. Các nhận xét baseline/ngày 29/10 phía trên là lịch sử.
 
 ## Bàn giao — trạng thái thực tế
 
