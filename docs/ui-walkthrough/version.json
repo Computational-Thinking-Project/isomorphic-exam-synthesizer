@@ -1,25 +1,25 @@
 {
-  "packageId": "UI-WALKTHROUGH-20261101-S06-TOAST",
+  "packageId": "UI-WALKTHROUGH-20261101-PROGRESSIVE-REVIEW",
   "packagedDate": "2026-11-01",
   "timezone": "Asia/Bangkok",
-  "kind": "Portable prepared UI, not integrated product or AI output",
+  "kind": "Portable UI with sample data; not integrated product or AI output",
   "branch": "feat/ui-ux-demo",
-  "repositoryBaseAtPackaging": "23d0df9e0f19f2c2c5b656b53838c6971696fe62",
+  "repositoryBaseAtPackaging": "879319fa3fac30c89f7f504ef185ab4f6cb912b0",
   "artifact": {
     "file": "PREVIEW.html",
-    "bytes": 2753320,
-    "sha256": "1595c91959d86d79b801f666774da65098ef76f10c505d88d349d1c1fac4f25f",
+    "bytes": 2757820,
+    "sha256": "cdebc94e3ccdf4803ca3a7e0e2e640252b06e6154506326a0cb0f0fe92e3d22d",
     "sourceWorkspaceRelativePath": "project/ui-draft/redesign/PREVIEW.html",
     "sourceDateFromReview": "2026-11-01",
     "sourceCommit": null,
-    "sourceCommitNote": "ui-draft is outside the product Git repository; repositoryBaseAtPackaging is not the artifact source commit",
+    "sourceCommitNote": "ui-draft lives outside the product Git repository; repositoryBaseAtPackaging is not the artifact source commit",
     "built": [
-      "index-BlIqFpK7.css",
-      "index-CPqoFfY9.js"
+      "index-WFK8JX_V.css",
+      "index-BPJlEeuH.js"
     ],
     "selfContained": true,
     "thirdPartyNoticesEmbedded": true,
-    "rebuiltDuringPackaging": false
+    "rebuiltDuringPackaging": true
   },
   "checkpoints": [
     {
@@ -38,61 +38,63 @@
       "state": "success"
     },
     {
-      "label": "Backup ready",
+      "label": "Backup generation",
       "screen": "S05",
-      "state": "ready",
+      "state": "success",
       "prepared": true
     },
     {
-      "label": "Backup correction checkpoint",
+      "label": "Backup review, all received and zero approvals",
       "screen": "S06",
-      "state": "presenter-issue",
+      "state": "success",
       "prepared": true,
-      "selectQuestion": "Cau 3",
-      "sourceId": "G03",
+      "selectQuestion": "Cau 1",
+      "sourceId": "G01",
       "code": "101",
-      "otherApprovalsPreloaded": 9
+      "otherApprovalsPreloaded": 0
     }
   ],
   "behavior": {
-    "S05": "Automatic sample simulation; count/readiness separate; no live AI or autoapproval",
-    "W3ToW5": "Primary path: click Begin review in S05 prepares9 approvals and G03/101 duplicate case once, without replacing source/config/progress. Existing S06 link is a backup checkpoint.",
-    "persistence": "Tab memory only",
-    "realPDFExport": false,
+    "S05": "Enable Begin review after at least one valid received source-code pair. Do not wait for all QxN or readiness. No automatic navigation or approval.",
+    "S05ToS06": "Shared sample scheduler continues without restarting its outstanding timer. Normal new run selects question1/code101 with zero approvals; no Presenter preset or injected duplicate.",
+    "S06Loading": "Per selected code, active spinner/pending clock/failed icon in clickable cells and tabs. Selected active or pending pair displays right-panel skeleton; source stays visible. Unreceived variant content/key/steps are hidden.",
+    "recovery": "Continue healthy queued pairs after a failure; retry only failed pairs with run/pair/revision guards. Shared pause/resume. New run resets selection/pause; stale callbacks and unmount leases are guarded.",
+    "review": "Current-pair edits/approval survive other receipts. Approval moves to next unapproved source, including pending or failed pair, keeps code. No automatic S07.",
+    "finalization": "All received valid pairs plus readiness, all current approvals and current copy marks are still required.",
+    "S06Notifications": "Nonmodal body-portal toasts under header/previewbar, max2 visible,5000ms each from promotion, dismiss/dedup/scope cleanup. Modal/editor errors and persistent recovery actions remain.",
     "S00ToS01": "CTA ends with S00; no CTA ghost on S01; logo/slogan450ms, card300ms with delay130ms",
-    "regenerate": "Finite offsets1..8 relative to source seed, skip current and same-source other-code question content; retain question and notify if pool unavailable",
-    "reviewDemoEligibility": "Canonical5x2 pristine sample, ready, no prior approval/edit/copy marks; not a title-only match. New load/start clears marker; revisiting does not reseed.",
-    "reviewDemoSelection": "G03/101 on primary transition and direct presenter-issue backup; other diagnostics unchanged",
-    "S06Notifications": "Nonmodal body-portal toasts under header/previewbar, max2 visible,5000ms each from promotion, dismiss/dedup/scope cleanup. Modal/editor errors and persistent recovery actions remain; expiry never changes gates."
+    "regenerate": "Finite offsets1..8 relative to source seed; skip current/same-source other-code content; retain question and notify if unavailable",
+    "persistence": "Tab memory only",
+    "realPDFExport": false
   },
   "checks": {
-    "staticPackageVerification": "passed: source/dist/package bytes/hash, relative links, embedded resources/notices, -text, four-file scope and diff --check; native Chrome not run",
+    "staticPackageVerification": "See local verification report; source/dist/package bytes and hash checked; native Chrome not run",
     "nativeChrome": "not run",
     "keyboardFocusScroll": "not run",
     "rehearsal": "not run",
     "sourceChecks": {
       "date": "2026-11-01",
-      "toastFocused": 18,
+      "progressiveReview": 29,
       "s06Regression": 30,
       "algebraRegression": 37,
-      "continuousDemoRegression": 23,
+      "toastRegression": 16,
       "result": "passed in ui-draft",
-      "scope": "Fake timers, queue/selectors, mocked portal/hooks and React/static markup; not native Chrome",
-      "otherScreenMarkupComparisons": 40,
+      "scope": "Fake timers, reducers/selectors, in-memory hooks, React element/static markup. Not native Chrome, DOM geometry, visual motion or real AI.",
       "typeScript": "passed",
-      "build": "passed,1617 modules"
+      "build": "passed,1619 modules"
     }
   },
   "publicationAtPreparation": {
     "committed": false,
     "pushed": false,
     "packageCommit": null,
-    "note": "S06 toast refresh is local only; prior23d0df9 publication does not contain this refresh"
+    "note": "Progressive review refresh is local only. Prior879319f toast commit remains local/ahead1 of origin23d0df9; neither that commit nor the remote contains this progressive refresh."
   },
   "limits": [
     "No real auth/upload/parser/AI/server persistence/PDF",
-    "Prepared example is not actual AI or teacher approval evidence",
+    "Prepared fixtures are not real AI output or teacher approvals",
     "No equivalent difficulty/coverage/accuracy/time-saving claims",
-    "Native file access restriction remains; no server/CDP/alternate-surface workaround"
+    "Native file access restriction remains; no server/CDP/alternate-surface workaround",
+    "Legacy presenter-issue remains only an explicit QA diagnostic, outside launcher and normal flow"
   ]
 }
