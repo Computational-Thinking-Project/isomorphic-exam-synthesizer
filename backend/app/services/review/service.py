@@ -29,6 +29,11 @@ from app.services.review.repository import ReviewRepository
 logger = logging.getLogger(__name__)
 
 
+def _now_iso() -> str:
+    """Return current UTC timestamp in ISO-8601 format."""
+    return datetime.now(timezone.utc).isoformat()
+
+
 class SessionLockRegistry:
     """Registry maintaining per-session asyncio locks with automatic garbage collection."""
 
@@ -391,12 +396,12 @@ class ReviewService:
         # No naked post-RPC invalidation is performed at service level to eliminate secondary mutation surface.
 
         return ReviewActionResponse(
-            question_id=str(res["id"]),
+            question_id=str(res.get("question_id") or res.get("id", question_id)),
             session_id=session_id,
             status=str(res.get("status", "approved")),
             is_current=bool(res.get("is_current", True)),
             is_reverted=bool(res.get("is_reverted", True)),
-            updated_at=str(res.get("updated_at", "")),
+            updated_at=str(res.get("updated_at") or _now_iso()),
         )
 
     async def get_progress(

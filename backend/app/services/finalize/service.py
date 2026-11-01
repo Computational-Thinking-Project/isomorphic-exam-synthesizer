@@ -123,10 +123,11 @@ class FinalizeService:
                     f"Còn {regenerating_count} câu hỏi đang trong tiến trình sinh lại bởi AI",
                 )
 
-            # 4c. Check all questions approved and no missing pairs across versions (F02)
+            # 4c. Check all questions approved and no missing pairs across versions (F02 / F08)
             unapproved_count = stats.get("unapproved_count", 0)
             total_questions = stats.get("total_questions", 0)
-            missing_pairs_count = stats.get("missing_pairs_count", 0)
+            truly_missing_count = stats.get("truly_missing_count", 0)
+            total_defective_count = stats.get("total_defective_count", unapproved_count + truly_missing_count)
 
             if total_questions == 0:
                 raise ReviewDomainException(
@@ -134,22 +135,17 @@ class FinalizeService:
                     "ERR_NOT_ALL_QUESTIONS_APPROVED",
                     "Phiên đề chưa có câu hỏi nào để phê duyệt",
                 )
-            if unapproved_count > 0 or missing_pairs_count > 0:
-                count = unapproved_count + missing_pairs_count
+            if total_defective_count > 0:
                 raise ReviewDomainException(
                     400,
                     "ERR_NOT_ALL_QUESTIONS_APPROVED",
-                    f"Còn {count} câu hỏi chưa được thẩm định phê duyệt hoặc bị thiếu trong các mã đề",
+                    f"Còn {total_defective_count} câu hỏi chưa được thẩm định phê duyệt hoặc bị thiếu trong các mã đề",
                 )
 
-            # Step 5: Atomic update with optimistic lock (F01)
-            # Only allow transitioning from current_status (e.g. 'reviewed' or 'generated')
-            # and matching last_updated_at if available
-            allowed_statuses = [current_status] if current_status == "reviewed" else ["reviewed", "generated"]
+            # Step 5: Atomic update with optimistic lock (F01 / F10)
             updated_row = await self.repo.update_session_approved(
                 session_id,
                 expected_updated_at=last_updated_at,
-                allowed_statuses=allowed_statuses,
                 user_id=user_id,
             )
 
@@ -190,6 +186,16 @@ class FinalizeService:
 
         Returns a sorted matrix of answers per question_no across all version_codes.
         """
+        # Edge case guard (F09): Validate UUID format to prevent unhandled ValueError 500
+        try:
+            UUID(session_id)
+        except (ValueError, AttributeError) as exc:
+            raise ReviewDomainException(
+                400,
+                "ERR_INVALID_SESSION_ID",
+                f"Mã phiên làm việc '{session_id}' không đúng định dạng UUID",
+            ) from exc
+
         # Step 1: Check session existence
         session_meta = await self.repo.get_session_meta(session_id)
         if not session_meta:

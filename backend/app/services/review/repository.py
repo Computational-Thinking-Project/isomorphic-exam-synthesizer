@@ -357,14 +357,18 @@ class ReviewRepository:
             )
 
         try:
+            rpc_payload: Dict[str, Any] = {
+                "p_session_id": session_id,
+                "p_question_id": question_id,
+                "p_operation_id": str(operation_id) if operation_id else None,
+            }
+            # Include p_user_id only if supported by caller/legacy mock
+            if user_id:
+                rpc_payload["p_user_id"] = user_id
+
             rpc_res = self.db.rpc(
                 "review_reserve_regeneration",
-                {
-                    "p_session_id": session_id,
-                    "p_question_id": question_id,
-                    "p_user_id": user_id,
-                    "p_operation_id": str(operation_id) if operation_id else None,
-                },
+                rpc_payload,
             ).execute()
             rpc_data = getattr(rpc_res, "data", None)
             payload: Optional[Dict[str, Any]] = None
@@ -373,9 +377,11 @@ class ReviewRepository:
             elif isinstance(rpc_data, list) and len(rpc_data) > 0 and isinstance(rpc_data[0], dict):
                 payload = rpc_data[0]
 
-            # 1. Whitelist validation: ONLY return OK if payload explicitly has status == "ok"
-            if payload is not None and str(payload.get("status", "")).lower() == "ok":
-                return ReserveResult.OK
+            # 1. Whitelist validation: Accept status == "ok" OR standard TASK-302 contract payload (F07)
+            if payload is not None:
+                st = str(payload.get("status", "")).lower()
+                if st == "ok" or (payload.get("operation_id") and payload.get("expires_at")):
+                    return ReserveResult.OK
 
             # 2. Parse explicit denial responses
             if payload is not None:
@@ -686,15 +692,20 @@ class ReviewRepository:
         return upd_rows[0]
 
     async def atomic_revert_tx(
-        self, session_id: str, question_id: str, user_id: str
+        self,
+        session_id: str,
+        question_id: str,
+        user_id: str,
+        action_id: Optional[UUID] = None,
     ) -> Dict[str, Any]:
         """Revert question to pristine source content via atomic RPC boundary (idempotent if already reverted).
 
-        Enforces Content Immutability & Fail-Closed policy (F01 / TASK-302 Phase B):
+        Enforces Content Immutability & Fail-Closed policy (F01 / TASK-302 Phase B / F07):
         - Calls PostgreSQL Stored Procedure `review_revert_question` for atomic cross-table locking.
         - Locks parent row `exam_sessions` using `SELECT ... FOR UPDATE` before mutating child question.
         - Rejects with HTTP 423 ERR_SESSION_LOCKED if session has been approved or exported.
         - Deactivates current variant and inserts source variant in the same DB transaction.
+        - Conforms to TASK-302 RPC contract: passes p_action_id for idempotent retry safety.
         - Strict Fail-Closed: fails closed on missing RPC (503), permission denied (500), or timeout (504).
         """
         if not hasattr(self.db, "rpc"):
@@ -703,13 +714,18 @@ class ReviewRepository:
             )
 
         try:
+            str_action_id = str(action_id or uuid4())
+            rpc_payload: Dict[str, Any] = {
+                "p_session_id": session_id,
+                "p_question_id": question_id,
+                "p_action_id": str_action_id,
+            }
+            if user_id:
+                rpc_payload["p_user_id"] = user_id
+
             rpc_res = self.db.rpc(
                 "review_revert_question",
-                {
-                    "p_session_id": session_id,
-                    "p_question_id": question_id,
-                    "p_user_id": user_id,
-                },
+                rpc_payload,
             ).execute()
             rpc_data = getattr(rpc_res, "data", None)
             payload: Optional[Dict[str, Any]] = None
@@ -718,7 +734,13 @@ class ReviewRepository:
             elif isinstance(rpc_data, list) and len(rpc_data) > 0 and isinstance(rpc_data[0], dict):
                 payload = rpc_data[0]
 
-            if payload is not None and (payload.get("status") == "ok" or "id" in payload or payload.get("is_reverted")):
+            if payload is not None and (
+                payload.get("status") == "ok"
+                or "id" in payload
+                or payload.get("is_reverted")
+                or "question_id" in payload
+                or "previous_question_id" in payload
+            ):
                 return payload
 
             logger.critical("RPC review_revert_question returned empty or malformed payload: %s", rpc_data)
@@ -824,6 +846,22 @@ class ReviewRepository:
             any_finalized = any(r.get("is_finalized") for r in v_rows)
 
             if any_finalized and version_ids:
+                # Re-verify parent status immediately before destructive mutations (F01b TOCTOU Guard)
+                recheck_res = (
+                    self.db.table("exam_sessions")
+                    .select("status")
+                    .eq("id", session_id)
+                    .limit(1)
+                    .execute()
+                )
+                recheck_rows = _get_rows(recheck_res)
+                if recheck_rows and str(recheck_rows[0].get("status", "")).lower() in ("approved", "exported"):
+                    logger.warning(
+                        "CRITICAL: Blocked mid-flight invalidation on concurrently locked session %s",
+                        session_id,
+                    )
+                    return False
+
                 # 3. Purge stale answer_keys records for all affected versions
                 self.db.table("answer_keys").delete().in_("version_id", version_ids).execute()
 
@@ -837,14 +875,14 @@ class ReviewRepository:
                     }
                 ).eq("session_id", session_id).execute()
 
-                # 5. Demote session status from 'reviewed' to 'generated'
+                # 5. Demote session status from 'reviewed' to 'generated' with atomic status guard (F01b)
                 if session_status == "reviewed":
                     self.db.table("exam_sessions").update(
                         {
                             "status": "generated",
                             "updated_at": _now_iso(),
                         }
-                    ).eq("id", session_id).execute()
+                    ).eq("id", session_id).eq("status", "reviewed").execute()
                 return True
             return True
         except Exception as exc:

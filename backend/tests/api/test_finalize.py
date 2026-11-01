@@ -384,7 +384,7 @@ async def test_finalize_service_happy_path_unit():
     assert res.status == "approved"
     assert res.approved_at == "2026-10-30T01:30:00Z"
     mock_repo.update_session_approved.assert_called_once_with(
-        MOCK_SESSION_ID, expected_updated_at=None, allowed_statuses=["reviewed"], user_id=MOCK_USER_ID
+        MOCK_SESSION_ID, expected_updated_at=None, user_id=MOCK_USER_ID
     )
 
 
@@ -430,12 +430,12 @@ async def test_f01_interleaving_mutation_prevents_approval():
     # rejecting a question, changing session status to 'generated' and updating updated_at
     original_update = repo.update_session_approved
 
-    async def hooked_update(session_id, expected_updated_at=None, allowed_statuses=None, **kwargs):
+    async def hooked_update(session_id, expected_updated_at=None, **kwargs):
         # Worker B mutates in the background
         db_state["exam_sessions"][0]["status"] = "generated"
         db_state["exam_sessions"][0]["updated_at"] = "2026-10-30T00:01:00+00:00"
         return await original_update(
-            session_id, expected_updated_at=expected_updated_at, allowed_statuses=allowed_statuses, **kwargs
+            session_id, expected_updated_at=expected_updated_at, **kwargs
         )
 
     repo.update_session_approved = hooked_update
@@ -1191,6 +1191,76 @@ async def test_f04_reservation_rpc_denied_or_empty_fails_closed():
     assert exc_info.value.status_code == 429
     assert exc_info.value.error_code == "ERR_REVIEW_QUOTA_EXHAUSTED"
     assert generator_called is False  # AI Generator was NEVER invoked!
+
+
+@pytest.mark.asyncio
+async def test_f08_error_message_reports_exact_unapproved_count():
+    """F08 Precision: If exactly 1 question is unapproved, error message reports 'Còn 1 câu hỏi...', not '2'."""
+    db_state = {
+        "exam_sessions": [
+            {"id": MOCK_SESSION_ID, "status": "reviewed", "user_id": MOCK_USER_ID, "updated_at": "2026-11-01T00:00:00Z"}
+        ],
+        "exam_versions": [
+            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True},
+        ],
+        "source_questions": [
+            {"id": "s-1", "session_id": MOCK_SESSION_ID},
+        ],
+        "version_questions": [
+            {
+                "id": "q-1",
+                "version_id": "v-101",
+                "source_question_id": "s-1",
+                "status": "pending_review",
+                "is_current": True,
+            },
+        ],
+    }
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.approve_session(MOCK_SESSION_ID, MOCK_USER_ID)
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.error_code == "ERR_NOT_ALL_QUESTIONS_APPROVED"
+    assert "Còn 1 câu hỏi chưa được thẩm định phê duyệt" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_f09_matrix_endpoint_invalid_uuid_raises_400():
+    """F09 Edge Case: Calling get_answers_matrix with malformed session_id raises 400 ERR_INVALID_SESSION_ID."""
+    client = MockSupabaseClient({})
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_answers_matrix("malformed-session-uuid", MOCK_USER_ID)
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.error_code == "ERR_INVALID_SESSION_ID"
+
+
+@pytest.mark.asyncio
+async def test_f11_matrix_normalizes_lowercase_and_whitespace_keys():
+    """F11 Data Normalization: fetch_matrix_raw normalizes lowercase and padded answer keys to uppercase clean characters."""
+    session_id = "00000000-0000-0000-0000-000000000999"
+    db_state = {
+        "exam_sessions": [{"id": session_id, "status": "approved"}],
+        "exam_versions": [
+            {"id": "v-1", "session_id": session_id, "version_code": "101"},
+        ],
+        "source_questions": [{"id": "s-1", "session_id": session_id}],
+        "answer_keys": [
+            {"version_id": "v-1", "question_no": 1, "correct_option": "  a  "},
+        ],
+    }
+    client = MockSupabaseClient(db_state)
+    repo = FinalizeRepository(client)
+
+    _, rows = await repo.fetch_matrix_raw(session_id)
+    assert len(rows) == 1
+    assert rows[0]["answer"] == "A", f"Expected normalized 'A', got {rows[0]['answer']!r}"
+
 
 
 

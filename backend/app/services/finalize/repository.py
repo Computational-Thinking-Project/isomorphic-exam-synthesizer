@@ -128,11 +128,13 @@ class FinalizeRepository:
         unapproved_count = 0
         regenerating_count = 0
         active_approved_pairs = set()
+        present_current_pairs = set()
 
         for q in q_rows:
             st = str(q.get("status", "")).lower()
             v_id = str(q.get("version_id", ""))
             s_id = str(q.get("source_question_id", ""))
+            present_current_pairs.add((v_id, s_id))
             if st == "regenerating":
                 regenerating_count += 1
             if st == "approved":
@@ -141,7 +143,10 @@ class FinalizeRepository:
                 unapproved_count += 1
 
         missing_pairs = required_pairs - active_approved_pairs
+        truly_missing_pairs = required_pairs - present_current_pairs
         missing_pairs_count = len(missing_pairs)
+        truly_missing_count = len(truly_missing_pairs)
+        total_defective_count = len(missing_pairs)
 
         return {
             "total_versions": total_versions,
@@ -150,6 +155,8 @@ class FinalizeRepository:
             "unapproved_count": unapproved_count,
             "regenerating_count": regenerating_count,
             "missing_pairs_count": missing_pairs_count,
+            "truly_missing_count": truly_missing_count,
+            "total_defective_count": total_defective_count,
             "source_questions_count": len(all_source_ids),
         }
 
@@ -157,7 +164,6 @@ class FinalizeRepository:
         self,
         session_id: str,
         expected_updated_at: Optional[str] = None,
-        allowed_statuses: Optional[List[str]] = None,
         user_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Atomically transition session status to 'approved' and record approved_at.
@@ -374,7 +380,7 @@ class FinalizeRepository:
                         {
                             "version_code": v_code,
                             "question_no": int(r.get("question_no", 0)),
-                            "answer": str(r.get("correct_option", "")),
+                            "answer": str(r.get("correct_option", "")).strip().upper(),
                         }
                     )
             return version_codes, normalized_rows
@@ -432,7 +438,7 @@ class FinalizeRepository:
                     {
                         "version_code": v_code,
                         "question_no": int(r.get("question_no", 0)),
-                        "answer": str(r.get("correct_key", "")),
+                        "answer": str(r.get("correct_key", "")).strip().upper(),
                     }
                 )
 

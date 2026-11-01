@@ -361,6 +361,8 @@ class MockRpcQueryBuilder:
                             "question_id": question_id,
                             "session_id": session_id,
                             "operation_id": operation_id,
+                            "expires_at": now_str,
+                            "max_attempts": 4,
                         }
                     ]
                 )
@@ -411,6 +413,8 @@ class MockRpcQueryBuilder:
                 new_id = str(uuid4())
                 new_q = {
                     "id": new_id,
+                    "question_id": new_id,
+                    "previous_question_id": question_id,
                     "version_id": q_row["version_id"],
                     "source_question_id": src_row["id"],
                     "question_no": q_row.get("question_no", 1),
@@ -2059,3 +2063,105 @@ async def test_f06_matrix_natural_sorts_version_codes():
 
     version_codes, rows = await repo.fetch_matrix_raw(session_id)
     assert version_codes == ["1", "2", "10"], f"Expected natural sort ['1', '2', '10'], got {version_codes}"
+
+
+@pytest.mark.asyncio
+async def test_f01b_invalidation_demote_blocked_by_status_guard():
+    """F01b TOCTOU Race: Prove that if a session transitions to 'approved' mid-flight,
+    invalidate_shuffle_if_finalized CANNOT demote it to 'generated' or delete its answer_keys.
+    """
+    session_id = str(uuid4())
+    v1_id = str(uuid4())
+    db_state = {
+        "exam_sessions": [
+            {
+                "id": session_id,
+                "status": "reviewed",
+                "gemini_review_calls": 0,
+                "updated_at": _now_iso(),
+            }
+        ],
+        "exam_versions": [
+            {"id": v1_id, "session_id": session_id, "version_code": "101", "is_finalized": True},
+        ],
+        "answer_keys": [
+            {"id": str(uuid4()), "version_id": v1_id, "question_no": 1, "correct_option": "A"},
+        ],
+    }
+    client = MockSupabaseClient(db_state)
+    repo = ReviewRepository(client)
+
+    orig_table = client.table
+
+    def intercepting_table(tbl_name: str):
+        builder = orig_table(tbl_name)
+        # Simulate mid-flight interleaving: session gets approved concurrently
+        if tbl_name == "answer_keys":
+            db_state["exam_sessions"][0]["status"] = "approved"
+        return builder
+
+    client.table = intercepting_table  # type: ignore
+
+    res = await repo.invalidate_shuffle_if_finalized(session_id)
+    assert res is False, "Mid-flight invalidation must be aborted once session is approved"
+    assert db_state["exam_sessions"][0]["status"] == "approved", "Approved status must NOT be demoted to generated!"
+    assert len(db_state["answer_keys"]) == 1, "Answer keys must NOT be deleted!"
+
+
+@pytest.mark.asyncio
+async def test_f07_revert_and_reserve_compatible_with_task302_contract():
+    """F07 Contract Alignment: Prove that ReviewRepository accepts pure TASK-302 contract
+    RPC signatures and response payloads (without requiring legacy 'status: ok' field).
+    """
+    session_id = str(uuid4())
+    q_id = str(uuid4())
+    op_id = uuid4()
+    act_id = uuid4()
+
+    client = MockSupabaseClient({})
+
+    def task302_rpc(name: str, params: Optional[Dict[str, Any]] = None):
+        class ContractBuilder:
+            def execute(self):
+                if name == "review_reserve_regeneration":
+                    # Returns pure entity payload: operation_id, question_id, expires_at, max_attempts, snapshot
+                    return MockExecutionResult(
+                        [
+                            {
+                                "operation_id": str(op_id),
+                                "question_id": q_id,
+                                "expires_at": _now_iso(),
+                                "max_attempts": 4,
+                                "snapshot": {"source": {}},
+                            }
+                        ]
+                    )
+                if name == "review_revert_question":
+                    # Returns pure entity payload: previous_question_id, question_id, invalidated_version_ids, progress
+                    return MockExecutionResult(
+                        [
+                            {
+                                "previous_question_id": q_id,
+                                "question_id": str(uuid4()),
+                                "invalidated_version_ids": [],
+                                "progress": {"ready": False},
+                            }
+                        ]
+                    )
+                raise RuntimeError(f"Unknown RPC {name}")
+
+        return ContractBuilder()
+
+    client.rpc = task302_rpc  # type: ignore
+    repo = ReviewRepository(client)
+
+    # Reserve test: must succeed with ReserveResult.OK
+    reserve_res = await repo.reserve_regeneration(session_id, q_id, "user-1", operation_id=op_id)
+    assert reserve_res == ReserveResult.OK, "Pure TASK-302 reservation payload must be accepted as ReserveResult.OK"
+
+    # Revert test: must succeed and return payload with question_id
+    revert_res = await repo.atomic_revert_tx(session_id, q_id, "user-1", action_id=act_id)
+    assert revert_res is not None
+    assert "question_id" in revert_res
+    assert "previous_question_id" in revert_res
+

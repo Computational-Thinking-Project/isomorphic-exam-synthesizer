@@ -226,10 +226,28 @@ Bộ test tự động `backend/tests/api/test_finalize.py` bắt buộc phải 
 
 ---
 
-## 8. Kết Quả Nghiệm Thu Thực Tế & Tiến Độ Xử Lý Findings (F01, F02, F03)
+## 8. Kết Quả Nghiệm Thu Thực Tế & Tiến Độ Xử Lý Findings (F01 - F11)
 
 - **F02 (Cartesian Version x Source Question Completeness):** Đã được Reviewer Đạt **VERIFIED**. Bổ sung hàm phát hiện các cặp thiếu và ném `400 ERR_NOT_ALL_QUESTIONS_APPROVED`.
 - **F03 (Answer Keys Matrix Coverage & Consistency):** Đã được Reviewer Đạt **VERIFIED**. Đảm bảo phát hiện thiếu hụt ma trận và ném `409 ERR_INCONSISTENT_ANSWER_KEYS`.
+- **F04 (Reservation Fail-Closed Validation):** Đã được Reviewer Đạt **VERIFIED**.
+- **F05 (Malformed UUID session_id on approve):** Đã khắc phục với guard `try: UUID(session_id)`.
+- **F06 (Natural Sort Version Codes):** Đã khắc phục với hàm `_natural_key`.
+- **F01 (Missing finalize_approve_session SQL DDL Migration):** 
+  - Đã triển khai migration `backend/migrations/007_finalize_approve_session_rpc.sql` và đồng bộ vào `backend/scripts/schema.sql`.
+  - Stored procedure thực thi dưới quyền `SECURITY DEFINER`, khóa dòng `SELECT ... FOR UPDATE`, kiểm tra nghiêm ngặt 4 tiền điều kiện và cập nhật nguyên tử `status = 'approved'` cùng audit log `APPROVE_ALL`.
+- **F01b (TOCTOU Invalidation Demote Race Guard):**
+  - Bổ sung điều kiện `.eq("status", "reviewed")` và recheck guard tại `ReviewRepository.invalidate_shuffle_if_finalized`.
+- **F07 (Cross-branch RPC Contract Alignment):**
+  - Đồng bộ tham số `p_action_id` và parser payload của `atomic_revert_tx` và `reserve_regeneration` khớp 100% với `docs/api/review-rpc-contract.md`.
+- **F08 (Precondition Double-Counting Fix):**
+  - Tách bạch `unapproved_count` và `truly_missing_count`.
+- **F09 (UUID Guard on get_answers_matrix):**
+  - Bổ sung guard xác thực UUID `ERR_INVALID_SESSION_ID` tại `FinalizeService.get_answers_matrix`.
+- **F10 (Dead Code Removal):**
+  - Xóa bỏ tham số thừa `allowed_statuses` khỏi `update_session_approved`.
+- **F11 (Answer Key Normalization):**
+  - Chuẩn hóa `.strip().upper()` trong `FinalizeRepository.fetch_matrix_raw`.
 - **F01 (Cross-worker Content Lock & Crash Safety):**
   - **Bản chất kỹ thuật:** Chấm dứt triệt để các bản vá rời rạc ở tầng Python và loại bỏ hoàn toàn Silent Query Fallback (vi phạm Fail-Closed).
   - **Giải pháp tận gốc:** Chuẩn hóa sang cơ chế **Database Stored Procedure RPC Hai Đầu Đối Xứng** (`finalize_approve_session` và `review_reserve_regeneration`) có khóa dòng `SELECT ... FOR UPDATE` trên `exam_sessions`.
