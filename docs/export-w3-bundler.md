@@ -4,6 +4,30 @@ Owner: Đạt. [Duy đã chốt tên file và lịch input](https://github.com/C
 
 ## Gọi hàm
 
+Luồng tích hợp compiler đã merge từ TASK-306:
+
+    import asyncio
+    from app.services.exporter.bundle_models import ApprovedExportSnapshot
+    from app.services.exporter.export_pipeline import build_compiled_bundle
+
+    snapshot = ApprovedExportSnapshot.model_validate(locked_display_snapshot)
+    artifact = await asyncio.to_thread(build_compiled_bundle, snapshot)
+    # Upload artifact.data sau khi hàm thành công.
+
+`build_compiled_bundle(snapshot, *, compiler=None)` là hàm đồng bộ, trả `BundleArtifact`.
+Có thể truyền `TypstCompiler(binary_path=...)` qua keyword `compiler`. Hàm xác thực
+snapshot trước khi compile, dựng exam/solutions theo từng mã và một answers_matrix
+từ chính options/key/solution hiển thị đó, rồi gọi bundler hiện có. Typst CLI phải
+có trên PATH hoặc cấu hình binary_path; timeout hiện có là 30 giây/file. Với N mã
+đề có 2*N+1 lượt compile tuần tự; API cần chạy ngoài event loop và cấu hình job
+timeout tương ứng, không coi timeout 30 giây là giới hạn của toàn ZIP.
+
+Không trả ZIP thiếu khi compiler lỗi. `TypstNotFoundError`, `TypstCompilationError`,
+`TypstTimeoutError`, `BundleBuildError` và `ValidationError` truyền về caller;
+TASK-308 quyết định response/job status, cleanup và retry/idempotency theo contract
+của owner. Tempfile do compiler tự dọn; pipeline chỉ giữ PDF/ZIP bytes trong bộ nhớ.
+Giữ nguyên `build_bundle` cho caller đã có PDF:
+
     from app.services.exporter.bundle_models import ApprovedExportSnapshot
     from app.services.exporter.bundle_builder import build_bundle
 
@@ -11,7 +35,7 @@ Owner: Đạt. [Duy đã chốt tên file và lịch input](https://github.com/C
     artifact = build_bundle(snapshot, pdf_artifacts)
     # Hùng upload artifact.data; metadata filename/content_type/size_bytes/sha256.
 
-Hàm đồng bộ, API có thể gọi qua asyncio.to_thread để ZIP không chiếm event loop. Không đọc DB, không gọi Gemini, không upload, không tạo tempfile. Input bytes do caller sở hữu; output bytes bất biến, không có cleanup ngầm. Không thay đổi exporter/__init__.py hoặc API/migration của thành viên khác.
+`build_bundle` đồng bộ, API có thể gọi qua asyncio.to_thread để ZIP không chiếm event loop. Không đọc DB, không gọi Gemini, không upload, không tạo tempfile. Input bytes do caller sở hữu; output bytes bất biến, không có cleanup ngầm. Không thay đổi exporter/__init__.py hoặc API/migration của thành viên khác.
 
 ## Boundary snapshot — chờ ghép mapper của owner
 
@@ -60,7 +84,13 @@ Lỗi BundleBuildError.code: EXPORT_PDF_MANIFEST_MISMATCH, EXPORT_PDF_INVALID, E
 
 ## Trạng thái kiểm
 
-Cập nhật 01/11: PR #25 `b5fa40f` đã được review/Approve với 44 tests có Typst thật; service trả bytes và có renderer exam/solution/cross-version matrix. Đây là đầu vào có thể tích hợp sau khi đồng bộ code, chưa chứng nhận PDF đã cùng approved snapshot/revision của bundler. PR #33 còn race approval/mutation F01; dữ liệu thật theo ETA Duy chiều 02/11 vẫn là dependency. Đối soát cuối phải dùng key/options/solution hiển thị sau shuffle trên cùng input cho PDF/TeX/MD, rồi kiểm Storage/download với Hùng. Giới hạn size/metadata ở trên còn chờ owner Storage xác nhận.
+Cập nhật 01/11: đã merge `dev` tại `a57079c` vào nhánh TASK-307, gồm PR #24/#25.
+Pipeline compiler → bundler hiện dùng cùng validated snapshot cho PDF/TeX/MD và
+ma trận đa mã; có regression hai mã khác thứ tự options/key/solution, lỗi compiler,
+snapshot chưa approved và PDF không hợp lệ, cùng test compile Typst thật.
+Đây là tích hợp module với fixture, chưa phải snapshot từ DB thật. PR #33 còn
+race approval/mutation F01; dữ liệu thật theo ETA Duy chiều 02/11 vẫn là dependency.
+Storage/download và size limits còn cần owner Hùng xác nhận.
 
 - Pytest kiểm manifest, shuffle mapping, PDF bytes, UTF-8, escape/math, schema, filenames, giới hạn, archive deterministic.
 - Jinja2/MarkupSafe khóa trong requirements.lock cho Docker Python 3.11/Linux. Template trong backend/ nên Docker COPY hiện hành đưa vào image, không cần đổi Dockerfile.

@@ -80,6 +80,9 @@ Duy đã chốt ZIP/filenames và input approved thật chiều 02/11 tại [PR 
 
 ## Bàn giao — trạng thái thực tế
 
+- Cập nhật 01/11: đã merge `dev` `a57079c`, tích hợp compiler đã merge của Tâm qua `exporter/export_pipeline.py`. Hùng có thể gọi `build_compiled_bundle(snapshot)` ngoài event loop để nhận `BundleArtifact`; giữ `build_bundle(snapshot, pdfs)` nếu đã có PDF. Một validated display snapshot cung cấp cả 2*N+1 PDF, matrix, TeX và Markdown, lỗi compiler không trả archive thiếu. Không thêm route/DB/cloud/dependency/Docker mới.
+- Tests bổ sung dùng hai mã với options/key/solution khác nhau; kiểm snapshot trước compile, lỗi compile dừng luồng, PDF sai bị từ chối và compile Typst thật. Kết quả cuối được ghi trên PR theo đúng head sau push.
+- Đầu vào còn thiếu để nghiệm thu: snapshot đã khóa thực từ Duy/TASK-305 (F01 #33), contract Storage/size limits và download E2E với Hùng/TASK-308. TASK-308 là bên nhận ZIP, không phải điều kiện để hoàn thành module bundler.
 - Đã làm: boundary models, Jinja2 XeLaTeX template, Markdown, ZIP in-memory và metadata; Jinja2/MarkupSafe trong requirements/lock. Không đổi Dockerfile/package __init__ chung.
 - Đã kiểm bổ sung 31/10: **25 exporter tests đạt, gồm compile XeLaTeX thật**, trên code `03cb057`. TinyTeX portable v2026.10; bản demo 4 câu/3 trang đã được render PNG và xem toàn bộ, không thấy thiếu ký tự/công thức hoặc tràn lề. Hai câu demo lấy từ smoke Gemini TASK-304; snapshot approved vẫn là fixture local. Xem [handoff](../export-w3-bundler.md).
 - Ruff/Mypy/pip check và full regression của lượt triển khai trước nằm trong PR body; không coi đó là kết quả chạy lại của lượt chỉ kiểm compile này.

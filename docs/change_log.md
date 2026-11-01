@@ -1,5 +1,6 @@
 ## DEC-DAT-W3-307: Boundary bundler và dependency template
 
+- Cập nhật 01/11/2026 — Đạt: tích hợp Typst compiler đã merge từ TASK-306 qua `build_compiled_bundle`. Một validated display snapshot cấp dữ liệu cho toàn bộ PDF/ma trận/TeX/Markdown trước khi đóng ZIP; tái sử dụng `build_bundle`, lỗi compiler không trả gói thiếu. Không thêm DB/API/cloud/dependency/Docker. Kiểm tích hợp module bằng fixture, snapshot đã khóa và Storage E2E vẫn pending; [interface/handoff](export-w3-bundler.md).
 - Ngày/người: 29/10/2026 — Đạt. ZIP theo phản hồi Duy tại PR #27.
 - Triển khai: typed display snapshot, Jinja2 XeLaTeX/Markdown, ZIP bytes + SHA-256, không DB/AI/cloud. Thêm Jinja2/MarkupSafe vào dependency lock cho Docker hiện hành.
 - Boundary/bytes/giới hạn cần owner Duy/Tâm/Hùng xác nhận khi ráp; không sửa API/SQL của owner khác. [Handoff](export-w3-bundler.md).
