@@ -68,11 +68,20 @@ Các đề xuất chưa là quyết định đã chốt. Reviewer Tâm mới ở
 
 ## Quyết định sau phản hồi Duy
 
+### Cập nhật 01/11/2026
+
+- TASK-306 PR #25 tại `b5fa40f` đã được Đạt review/Approve sau khi F01–F06 được xác minh: 44 exporter tests có CLI Typst 0.11.1 thật pass. Chưa coi đã merge, có snapshot approved thật hoặc hoàn tất E2E.
+- Interface đã có: `TypstCompiler.compile_document(source, output_filename) -> bytes`, `render_exam_document`, `render_solution_document`, `render_answers_matrix_document`. Phải dùng cùng snapshot/revision của bundler và đủ manifest 2*N+1 PDF; không giữ Path trong temp sau return. Renderer matrix nhận version_code + answer_keys, mapper lấy key hiển thị đúng mã.
+- PR #33 TASK-305 `87094f9`: F02/F03 đã verified; F01 race approval/mutation đa worker còn open, liên quan boundary RPC TASK-302. Không dùng unit fixture như bằng chứng dữ liệu đã khóa bất biến thật.
+- Tiếp theo: giữ implementation fixture độc lập; khi code #25 được tích hợp vào nhánh mình, kiểm output PDF/TeX/MD cùng input, content/options/key/solution và encoding. Chờ Duy giao approved snapshot chiều 02/11 theo ETA đã báo, rồi chạy integration. Không copy code nhánh Tâm vào bundler.
+- Hùng TASK-308 cần xác nhận bytes/metadata/error/size limits trong handoff trước ghép Storage. Giao interface/ZIP fixture hiện có; Signed URL/download E2E chờ Storage thật. Không tự triển khai phần cloud thay owner.
+
 Duy đã chốt ZIP/filenames và input approved thật chiều 02/11 tại [PR #27](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/27#issuecomment-6485753431). Xem [handoff bundler](../export-w3-bundler.md) cho typed boundary/bytes/lỗi/giới hạn. Các câu hỏi phía trên giữ lịch sử plan; chưa coi schema snapshot/PDF/Storage đã được mọi owner chấp nhận.
 
 ## Bàn giao — trạng thái thực tế
 
 - Đã làm: boundary models, Jinja2 XeLaTeX template, Markdown, ZIP in-memory và metadata; Jinja2/MarkupSafe trong requirements/lock. Không đổi Dockerfile/package __init__ chung.
-- Đã kiểm: 24 exporter tests đạt; 1 compile test skip vì thiếu XeLaTeX. Ruff/Mypy/pip check đạt. Kết quả full regression/head trong PR body.
-- Chưa kiểm: XeLaTeX compile/layout, dữ liệu approved/PDF thật, mapper DB, E2E Storage/Signed URL. PDF fixture không chứng nhận renderer của Tâm.
+- Đã kiểm bổ sung 31/10: **25 exporter tests đạt, gồm compile XeLaTeX thật**, trên code `03cb057`. TinyTeX portable v2026.10; bản demo 4 câu/3 trang đã được render PNG và xem toàn bộ, không thấy thiếu ký tự/công thức hoặc tràn lề. Hai câu demo lấy từ smoke Gemini TASK-304; snapshot approved vẫn là fixture local. Xem [handoff](../export-w3-bundler.md).
+- Ruff/Mypy/pip check và full regression của lượt triển khai trước nằm trong PR body; không coi đó là kết quả chạy lại của lượt chỉ kiểm compile này.
+- Chưa kiểm: dữ liệu approved/PDF thật của các owner, mapper DB, E2E Storage/Signed URL. PDF compile bằng XeLaTeX không chứng nhận renderer Typst của Tâm.
 - Chưa có reviewer xác minh/GitHub Approve; giữ Draft cho phần phụ thuộc thiếu.

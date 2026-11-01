@@ -60,7 +60,10 @@ Lỗi BundleBuildError.code: EXPORT_PDF_MANIFEST_MISMATCH, EXPORT_PDF_INVALID, E
 
 ## Trạng thái kiểm
 
+Cập nhật 01/11: PR #25 `b5fa40f` đã được review/Approve với 44 tests có Typst thật; service trả bytes và có renderer exam/solution/cross-version matrix. Đây là đầu vào có thể tích hợp sau khi đồng bộ code, chưa chứng nhận PDF đã cùng approved snapshot/revision của bundler. PR #33 còn race approval/mutation F01; dữ liệu thật theo ETA Duy chiều 02/11 vẫn là dependency. Đối soát cuối phải dùng key/options/solution hiển thị sau shuffle trên cùng input cho PDF/TeX/MD, rồi kiểm Storage/download với Hùng. Giới hạn size/metadata ở trên còn chờ owner Storage xác nhận.
+
 - Pytest kiểm manifest, shuffle mapping, PDF bytes, UTF-8, escape/math, schema, filenames, giới hạn, archive deterministic.
 - Jinja2/MarkupSafe khóa trong requirements.lock cho Docker Python 3.11/Linux. Template trong backend/ nên Docker COPY hiện hành đưa vào image, không cần đổi Dockerfile.
-- Local thiếu XeLaTeX: compile test skip. Chưa chứng nhận layout tiếng Việt/công thức dài; cần compile và xem PDF trước nghiệm thu.
+- Kiểm bổ sung ngày 31/10/2026 trên code PR #27 `03cb057`: dùng TinyTeX portable v2026.10 / XeTeX 0.999998. Toàn bộ suite exporter đạt **25 passed**, bao gồm compile XeLaTeX thật, không skip. Bản demo 4 câu (2 fixture và 2 kết quả Gemini thật của TASK-304) biên dịch thành PDF 3 trang; đã render PNG và xem cả 3 trang, không thấy thiếu ký tự tiếng Việt/công thức hoặc tràn lề. Đây là snapshot fixture ở boundary, không phải session đã được duyệt qua API thật.
+- Thiết lập kiểm trên Windows: TinyTeX portable cần cấu hình fontconfig trỏ đúng thư mục font sau khi giải nén; đường dẫn workspace có dấu cần alias ASCII tạm thời. Không đổi PATH toàn máy, Dockerfile hoặc dependency của ứng dụng. Binary/compiler chỉ nằm trong thư mục artifact local, không phải dependency runtime của bundler.
 - Chưa có approved snapshot/PDF thật/Storage Signed URL. E2E chờ TASK-305/306/308 và review.
