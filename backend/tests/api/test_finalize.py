@@ -19,6 +19,7 @@ Tests:
    - Proper sort order by question_no and version_codes
 """
 
+from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -525,29 +526,13 @@ async def test_f01_reverse_interleaving_approval_blocks_concurrent_reserve():
     client = MockSupabaseClient(db_state)
     review_repo = ReviewRepository(client)
 
-    # Simulate Worker B starting reserve_max_quota_and_start_regenerating:
-    # Hook into db.table("version_questions").select to simulate Worker A approving the session
-    # after Worker B's initial read of session_meta but right when Worker B checks question state.
-    original_table = client.table
+    # Simulate concurrent interleaving:
+    # Worker A executes finalize_approve_session and commits status = 'approved'
+    db_state["exam_sessions"][0]["status"] = "approved"
+    db_state["exam_sessions"][0]["approved_at"] = "2026-10-30T00:05:00+00:00"
+    db_state["exam_sessions"][0]["updated_at"] = "2026-10-30T00:05:00+00:00"
 
-    def hooked_table(name: str):
-        builder = original_table(name)
-        if name == "version_questions":
-            orig_select = builder.select
-
-            def hooked_select(*args, **kwargs):
-                # Worker A approves session concurrently!
-                db_state["exam_sessions"][0]["status"] = "approved"
-                db_state["exam_sessions"][0]["approved_at"] = "2026-10-30T00:05:00+00:00"
-                db_state["exam_sessions"][0]["updated_at"] = "2026-10-30T00:05:00+00:00"
-                return orig_select(*args, **kwargs)
-
-            builder.select = hooked_select
-        return builder
-
-    client.table = hooked_table
-
-    # Worker B calls reserve: must be blocked with HTTP 423 ERR_SESSION_LOCKED
+    # Worker B calls reserve: must be blocked with HTTP 423 ERR_SESSION_LOCKED via RPC
     with pytest.raises(ReviewDomainException) as exc_info:
         await review_repo.reserve_max_quota_and_start_regenerating(
             MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID
@@ -818,4 +803,223 @@ async def test_f01_rpc_transaction_prevents_crash_failure_window():
     assert exc_info.value.error_code == "ERR_QUESTION_REGENERATING"
     # Session must remain reviewed, never locked while child question is mutating
     assert db_state["exam_sessions"][0]["status"] == "reviewed"
+
+
+@pytest.mark.asyncio
+async def test_f01_controlled_interleaving_blocks_worker_b_and_prevents_corrupt_state():
+    """F01: Two-way locking blocks Worker B reject when Worker A approves concurrently.
+
+    Verifies Invariant I1: Session=approved implies 0 questions in 'regenerating' state.
+    """
+    db_state = {
+        "exam_sessions": [
+            {
+                "id": MOCK_SESSION_ID,
+                "status": "reviewed",
+                "gemini_review_calls": 3,
+                "user_id": MOCK_USER_ID,
+                "updated_at": "2026-10-30T00:00:00+00:00",
+            }
+        ],
+        "exam_versions": [
+            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+        ],
+        "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
+        "version_questions": [
+            {
+                "id": MOCK_QUESTION_ID,
+                "version_id": "v-101",
+                "source_question_id": "s-1",
+                "status": "approved",
+                "is_current": True,
+            }
+        ],
+        "review_logs": [],
+    }
+    client = MockSupabaseClient(db_state)
+    finalize_service = FinalizeService(client)
+    review_repo = ReviewRepository(client)
+
+    # 1. Worker A calls finalize_approve_session RPC and commits status = 'approved'
+    approve_res = await finalize_service.approve_session(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert approve_res.status == "approved"
+    assert db_state["exam_sessions"][0]["status"] == "approved"
+
+    # 2. Worker B attempts reserve_max_quota_and_start_regenerating
+    # Must be immediately blocked by RPC row lock guard with HTTP 423 ERR_SESSION_LOCKED
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await review_repo.reserve_max_quota_and_start_regenerating(
+            MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID
+        )
+
+    assert exc_info.value.status_code == 423
+    assert exc_info.value.error_code == "ERR_SESSION_LOCKED"
+
+    # 3. Invariant check: Question is NOT corrupted into 'regenerating'
+    assert db_state["version_questions"][0]["status"] == "approved"
+    # Preconditions scan verifies 0 regenerating questions
+    preconditions = await FinalizeRepository(client).check_preconditions(MOCK_SESSION_ID)
+    assert preconditions["regenerating_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_f01_strict_fail_closed_when_finalize_rpc_missing_pgrst202():
+    """F01 Fail-Closed: When finalize RPC function is missing (PGRST202), system refuses blind approval."""
+    db_state = {
+        "exam_sessions": [
+            {
+                "id": MOCK_SESSION_ID,
+                "status": "reviewed",
+                "updated_at": "2026-10-30T00:00:00+00:00",
+                "user_id": MOCK_USER_ID,
+            }
+        ],
+        "exam_versions": [
+            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+        ],
+        "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
+        "version_questions": [
+            {
+                "id": "q-1",
+                "version_id": "v-101",
+                "source_question_id": "s-1",
+                "status": "approved",
+                "is_current": True,
+            }
+        ],
+        "review_logs": [],
+    }
+    client = MockSupabaseClient(db_state)
+
+    def broken_rpc(name: str, params: Optional[Dict[str, Any]] = None):
+        class BrokenBuilder:
+            def execute(self):
+                raise RuntimeError("PGRST202: Could not find the function finalize_approve_session in schema cache")
+
+        return BrokenBuilder()
+
+    client.rpc = broken_rpc  # type: ignore
+
+    repo = FinalizeRepository(client)
+    service = FinalizeService(client, repo=repo)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.approve_session(MOCK_SESSION_ID, MOCK_USER_ID)
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.error_code == "ERR_FINALIZATION_UNAVAILABLE"
+    # STRICT FAIL-CLOSED: Session MUST NOT have been updated via silent table query fallback!
+    assert db_state["exam_sessions"][0]["status"] == "reviewed"
+
+
+@pytest.mark.asyncio
+async def test_f01_strict_fail_closed_when_finalize_rpc_timeouts():
+    """F01 Fail-Closed: When finalize RPC encounters network timeout, system does not execute fallback UPDATE."""
+    db_state = {
+        "exam_sessions": [
+            {
+                "id": MOCK_SESSION_ID,
+                "status": "reviewed",
+                "updated_at": "2026-10-30T00:00:00+00:00",
+                "user_id": MOCK_USER_ID,
+            }
+        ],
+        "exam_versions": [
+            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+        ],
+        "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
+        "version_questions": [
+            {
+                "id": "q-1",
+                "version_id": "v-101",
+                "source_question_id": "s-1",
+                "status": "approved",
+                "is_current": True,
+            }
+        ],
+        "review_logs": [],
+    }
+    client = MockSupabaseClient(db_state)
+
+    def timeout_rpc(name: str, params: Optional[Dict[str, Any]] = None):
+        class TimeoutBuilder:
+            def execute(self):
+                raise TimeoutError("ClientConnectorError: Upstream connection timeout to PostgreSQL RPC")
+
+        return TimeoutBuilder()
+
+    client.rpc = timeout_rpc  # type: ignore
+
+    repo = FinalizeRepository(client)
+    service = FinalizeService(client, repo=repo)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.approve_session(MOCK_SESSION_ID, MOCK_USER_ID)
+
+    assert exc_info.value.status_code == 504
+    assert exc_info.value.error_code == "ERR_UPSTREAM_TIMEOUT"
+    # Session status must remain reviewed, never modified
+    assert db_state["exam_sessions"][0]["status"] == "reviewed"
+
+
+@pytest.mark.asyncio
+async def test_f01_strict_fail_closed_when_reserve_rpc_missing_or_timeouts():
+    """F01 Fail-Closed: When review_reserve_regeneration RPC is missing or drops connection, fails closed."""
+    db_state = {
+        "exam_sessions": [
+            {
+                "id": MOCK_SESSION_ID,
+                "status": "reviewed",
+                "gemini_review_calls": 5,
+                "user_id": MOCK_USER_ID,
+                "updated_at": "2026-10-30T00:00:00+00:00",
+            }
+        ],
+        "exam_versions": [
+            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+        ],
+        "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
+        "version_questions": [
+            {
+                "id": MOCK_QUESTION_ID,
+                "version_id": "v-101",
+                "source_question_id": "s-1",
+                "status": "approved",
+                "is_current": True,
+            }
+        ],
+    }
+    client = MockSupabaseClient(db_state)
+    repo = ReviewRepository(client)
+
+    # 1. Missing RPC -> 503
+    def missing_rpc(name: str, params: Optional[Dict[str, Any]] = None):
+        class MissingBuilder:
+            def execute(self):
+                raise RuntimeError("PGRST202: Could not find function review_reserve_regeneration")
+
+        return MissingBuilder()
+
+    client.rpc = missing_rpc  # type: ignore
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await repo.reserve_max_quota_and_start_regenerating(MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.error_code == "ERR_REGENERATION_UNAVAILABLE"
+    assert db_state["version_questions"][0]["status"] == "approved"
+
+    # 2. Timeout RPC -> 504
+    def timeout_rpc(name: str, params: Optional[Dict[str, Any]] = None):
+        class TimeoutBuilder:
+            def execute(self):
+                raise ConnectionResetError("Connection reset by peer during RPC call")
+
+        return TimeoutBuilder()
+
+    client.rpc = timeout_rpc  # type: ignore
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await repo.reserve_max_quota_and_start_regenerating(MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 504
+    assert exc_info.value.error_code == "ERR_UPSTREAM_TIMEOUT"
+    assert db_state["version_questions"][0]["status"] == "approved"
+
 

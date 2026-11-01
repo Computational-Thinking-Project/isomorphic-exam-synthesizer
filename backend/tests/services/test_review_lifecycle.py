@@ -306,6 +306,65 @@ class MockRpcQueryBuilder:
                     [{"status": "approved", "approved_at": now_str, "session_id": session_id}]
                 )
 
+            if self.function_name == "review_reserve_regeneration":
+                session_id = str(self.params.get("p_session_id", ""))
+                question_id = str(self.params.get("p_question_id", ""))
+                user_id = str(self.params.get("p_user_id", ""))
+                operation_id = self.params.get("p_operation_id")
+
+                sessions = self.db_state.get("exam_sessions", [])
+                s_row = next((s for s in sessions if str(s.get("id")) == session_id), None)
+                if not s_row:
+                    raise RuntimeError("ERR_SESSION_NOT_FOUND")
+
+                status = str(s_row.get("status", "")).lower()
+                if status in ("approved", "exported"):
+                    raise RuntimeError("ERR_SESSION_LOCKED")
+
+                gemini_calls = int(s_row.get("gemini_review_calls", 0) or 0)
+                if gemini_calls >= 30:
+                    raise RuntimeError("ERR_REVIEW_QUOTA_EXHAUSTED")
+
+                vqs = self.db_state.get("version_questions", [])
+                evs = self.db_state.get("exam_versions", [])
+                session_v_ids = {
+                    str(v.get("id")) for v in evs if str(v.get("session_id")) == session_id
+                }
+
+                # Model A concurrency: max 1 active regenerating question per session
+                active_regen = [
+                    q
+                    for q in vqs
+                    if (not session_v_ids or str(q.get("version_id")) in session_v_ids)
+                    and str(q.get("status")).lower() == "regenerating"
+                ]
+                if active_regen:
+                    raise RuntimeError("ERR_SESSION_BUSY_REGENERATING")
+
+                q_row = next((q for q in vqs if str(q.get("id")) == question_id), None)
+                if not q_row:
+                    raise RuntimeError("ERR_QUESTION_NOT_FOUND")
+                if not q_row.get("is_current"):
+                    raise RuntimeError("ERR_QUESTION_NOT_CURRENT")
+                if str(q_row.get("status", "")).lower() == "regenerating":
+                    raise RuntimeError("ERR_QUESTION_BUSY")
+
+                now_str = _now_iso()
+                q_row["status"] = "regenerating"
+                q_row["updated_at"] = now_str
+                s_row["updated_at"] = now_str
+
+                return MockExecutionResult(
+                    [
+                        {
+                            "status": "ok",
+                            "question_id": question_id,
+                            "session_id": session_id,
+                            "operation_id": operation_id,
+                        }
+                    ]
+                )
+
             return MockExecutionResult([])
 
 

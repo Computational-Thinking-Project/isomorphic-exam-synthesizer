@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 
 from supabase import Client
 
+from app.models.schemas import ReviewDomainException
+
 logger = logging.getLogger(__name__)
 
 
@@ -160,77 +162,91 @@ class FinalizeRepository:
     ) -> Optional[Dict[str, Any]]:
         """Atomically transition session status to 'approved' and record approved_at.
 
-        RPC-First with Fallback (Contract with TASK-302 Phase B):
-        - Attempts PostgreSQL Stored Procedure `finalize_approve_session` for strict cross-table ACID isolation.
-        - Falls back to optimistic lock table query if RPC function is not yet deployed on database.
+        Strict Fail-Closed Transactional Contract (TASK-305 & TASK-302 Phase B):
+        - Enforces strict cross-table ACID isolation via PostgreSQL Stored Procedure `finalize_approve_session`.
+        - Locks parent row `exam_sessions` using `SELECT ... FOR UPDATE` before verifying question invariants.
+        - Strict Fail-Closed Policy: NO table query fallback is permitted under any circumstances.
+          If RPC is unavailable (PGRST202), missing permissions (42501), or encounters an upstream timeout,
+          it raises typed domain exceptions immediately, preventing un-isolated blind approvals.
 
-        Returns updated row dict if successful, or None if condition not met (e.g. status changed).
+        Returns updated row dict if successful, or raises typed ReviewDomainException.
         """
-        if allowed_statuses is None:
-            allowed_statuses = ["reviewed"]
-
-        # 1. Try DB RPC Stored Procedure if available (TASK-302 Phase B contract)
-        if hasattr(self.db, "rpc"):
-            try:
-                rpc_res = self.db.rpc(
-                    "finalize_approve_session",
-                    {
-                        "p_session_id": session_id,
-                        "p_user_id": user_id,
-                        "p_expected_updated_at": expected_updated_at,
-                    },
-                ).execute()
-                rpc_data = getattr(rpc_res, "data", None)
-                if isinstance(rpc_data, dict) and rpc_data.get("status") == "approved":
-                    return rpc_data
-                if isinstance(rpc_data, list) and rpc_data and rpc_data[0].get("status") == "approved":
-                    return rpc_data[0]
-            except Exception as exc:
-                err_msg = str(exc)
-                from app.models.schemas import ReviewDomainException
-
-                if "ERR_SESSION_LOCKED" in err_msg:
-                    raise ReviewDomainException(
-                        423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
-                    ) from exc
-                if "ERR_QUESTION_REGENERATING" in err_msg:
-                    raise ReviewDomainException(
-                        409, "ERR_QUESTION_REGENERATING", "Còn câu hỏi đang trong tiến trình sinh lại bởi AI"
-                    ) from exc
-                if "ERR_NOT_ALL_QUESTIONS_APPROVED" in err_msg:
-                    raise ReviewDomainException(
-                        400, "ERR_NOT_ALL_QUESTIONS_APPROVED", "Còn câu hỏi chưa được thẩm định phê duyệt"
-                    ) from exc
-                if "ERR_VERSIONS_NOT_FINALIZED" in err_msg:
-                    raise ReviewDomainException(
-                        400, "ERR_VERSIONS_NOT_FINALIZED", "Còn phiên bản đề thi chưa hoàn tất hoán vị"
-                    ) from exc
-                if "ERR_INVALID_SESSION_STATE" in err_msg:
-                    raise ReviewDomainException(
-                        409, "ERR_INVALID_SESSION_STATE", "Trạng thái phiên đề đã thay đổi hoặc không hợp lệ"
-                    ) from exc
-                logger.debug("RPC finalize_approve_session not available, using table query fallback: %s", exc)
-
-        # 2. Table query fallback with optimistic concurrency guard
-        now_str = _now_iso()
-        query = (
-            self.db.table("exam_sessions")
-            .update(
-                {
-                    "status": "approved",
-                    "approved_at": now_str,
-                    "updated_at": now_str,
-                }
+        if not hasattr(self.db, "rpc"):
+            raise ReviewDomainException(
+                503, "ERR_FINALIZATION_UNAVAILABLE", "Hệ thống CSDL không hỗ trợ RPC giao dịch chốt đề"
             )
-            .eq("id", session_id)
-            .in_("status", allowed_statuses)
-        )
-        if expected_updated_at is not None:
-            query = query.eq("updated_at", expected_updated_at)
 
-        res = query.execute()
-        rows = _get_rows(res)
-        return rows[0] if rows else None
+        try:
+            rpc_res = self.db.rpc(
+                "finalize_approve_session",
+                {
+                    "p_session_id": session_id,
+                    "p_user_id": user_id,
+                    "p_expected_updated_at": expected_updated_at,
+                },
+            ).execute()
+            rpc_data = getattr(rpc_res, "data", None)
+            if isinstance(rpc_data, dict) and rpc_data.get("status") == "approved":
+                return rpc_data
+            if isinstance(rpc_data, list) and rpc_data and rpc_data[0].get("status") == "approved":
+                return rpc_data[0]
+            return None
+        except ReviewDomainException:
+            raise
+        except Exception as exc:
+            err_msg = str(exc)
+
+            # 1. Domain invariant exceptions from Stored Procedure
+            if "ERR_SESSION_LOCKED" in err_msg:
+                raise ReviewDomainException(
+                    423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
+                ) from exc
+            if "ERR_QUESTION_REGENERATING" in err_msg:
+                raise ReviewDomainException(
+                    409, "ERR_QUESTION_REGENERATING", "Còn câu hỏi đang trong tiến trình sinh lại bởi AI"
+                ) from exc
+            if "ERR_NOT_ALL_QUESTIONS_APPROVED" in err_msg:
+                raise ReviewDomainException(
+                    400, "ERR_NOT_ALL_QUESTIONS_APPROVED", "Còn câu hỏi chưa được thẩm định phê duyệt"
+                ) from exc
+            if "ERR_VERSIONS_NOT_FINALIZED" in err_msg:
+                raise ReviewDomainException(
+                    400, "ERR_VERSIONS_NOT_FINALIZED", "Còn phiên bản đề thi chưa hoàn tất hoán vị"
+                ) from exc
+            if "ERR_INVALID_SESSION_STATE" in err_msg:
+                raise ReviewDomainException(
+                    409, "ERR_INVALID_SESSION_STATE", "Trạng thái phiên đề đã thay đổi hoặc không hợp lệ"
+                ) from exc
+            if "ERR_SESSION_NOT_FOUND" in err_msg:
+                raise ReviewDomainException(
+                    404, "ERR_SESSION_NOT_FOUND", f"Phiên đề '{session_id}' không tồn tại"
+                ) from exc
+
+            # 2. Strict Fail-Closed Infrastructure & Transport Exceptions
+            if "PGRST202" in err_msg or "Could not find the function" in err_msg:
+                logger.critical("RPC finalize_approve_session missing in database schema (PGRST202): %s", exc)
+                raise ReviewDomainException(
+                    503, "ERR_FINALIZATION_UNAVAILABLE", "Hệ thống giao dịch chốt đề chưa sẵn sàng trên CSDL (PGRST202)"
+                ) from exc
+            if "42501" in err_msg or "permission denied" in err_msg:
+                logger.critical("Database permission denied for finalize_approve_session (42501): %s", exc)
+                raise ReviewDomainException(
+                    500, "ERR_DATABASE_PERMISSION_DENIED", "Không có quyền thực thi thủ tục phê duyệt CSDL"
+                ) from exc
+            if isinstance(exc, (TimeoutError, ConnectionError, OSError)) or any(
+                term in err_msg.lower()
+                for term in ("timeout", "clientconnectorerror", "connection reset", "connection refused", "connection error")
+            ):
+                logger.error("Upstream timeout or connection drop during finalize_approve_session: %s", exc)
+                raise ReviewDomainException(
+                    504, "ERR_UPSTREAM_TIMEOUT", "Mất kết nối với dịch vụ giao dịch CSDL trong quá trình chốt đề"
+                ) from exc
+
+            # 3. Catch-all: Fail-closed on any unexpected database error
+            logger.critical("RPC finalize_approve_session unexpected error: %s", exc, exc_info=True)
+            raise ReviewDomainException(
+                500, "ERR_DATABASE_TRANSACTION_FAILED", f"Lỗi giao dịch phê duyệt CSDL: {exc}"
+            ) from exc
 
     async def fetch_matrix_raw(
         self, session_id: str

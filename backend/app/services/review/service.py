@@ -147,7 +147,7 @@ class ReviewService:
         # ------------------------------------------------------------------
         async with lock:
             reserve_res = await self.repo.reserve_max_quota_and_start_regenerating(
-                session_id, question_id, user_id
+                session_id, question_id, user_id, operation_id=operation_id
             )
             if reserve_res == ReserveResult.QUOTA_EXHAUSTED:
                 raise ReviewDomainException(

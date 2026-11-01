@@ -231,10 +231,10 @@ Bộ test tự động `backend/tests/api/test_finalize.py` bắt buộc phải 
 - **F02 (Cartesian Version x Source Question Completeness):** Đã được Reviewer Đạt **VERIFIED**. Bổ sung hàm phát hiện các cặp thiếu và ném `400 ERR_NOT_ALL_QUESTIONS_APPROVED`.
 - **F03 (Answer Keys Matrix Coverage & Consistency):** Đã được Reviewer Đạt **VERIFIED**. Đảm bảo phát hiện thiếu hụt ma trận và ném `409 ERR_INCONSISTENT_ANSWER_KEYS`.
 - **F01 (Cross-worker Content Lock & Crash Safety):**
-  - **Bản chất kỹ thuật:** Chấm dứt các bản vá rời rạc ở tầng Python (thêm SELECT lặp lại hay rollback thủ công).
-  - **Giải pháp tận gốc:** Chuẩn hóa sang cơ chế **Database Stored Procedure RPC** (`finalize_approve_session` và `review_reserve_regeneration`) có khóa dòng `SELECT ... FOR UPDATE` trên session.
-  - **Ranh giới:** Tầng ứng dụng Python của Duy (`FinalizeRepository`, `ReviewRepository`) đã được wired-ready để gọi RPC với fallback query an toàn; Stored Procedure CSDL nằm trong phạm vi bàn giao của Hùng (TASK-302 - PR #36 Phase B).
-  - **Kiểm chứng:** Bộ mock test `MockSupabaseClient` được nâng cấp hỗ trợ RPC thread-safe và vượt qua bài test Fault Injection rớt mạng `test_f01_rpc_transaction_prevents_crash_failure_window`.
+  - **Bản chất kỹ thuật:** Chấm dứt triệt để các bản vá rời rạc ở tầng Python và loại bỏ hoàn toàn Silent Query Fallback (vi phạm Fail-Closed).
+  - **Giải pháp tận gốc:** Chuẩn hóa sang cơ chế **Database Stored Procedure RPC Hai Đầu Đối Xứng** (`finalize_approve_session` và `review_reserve_regeneration`) có khóa dòng `SELECT ... FOR UPDATE` trên `exam_sessions`.
+  - **Ranh giới:** Tầng ứng dụng Python của Duy (`FinalizeRepository`, `ReviewRepository`) loại bỏ toàn bộ fallback âm thầm, thiết lập chính sách Strict Fail-Closed (503 khi thiếu RPC, 504 khi timeout). Migration Stored Procedure DDL nằm trong phạm vi bàn giao của Hùng (TASK-302 - PR #36 Phase B). Chi tiết xem tại [PLAN_FIX_F01_TASK305.md](PLAN_FIX_F01_TASK305.md) v2.2.
+  - **Kiểm chứng:** Bộ mock test `MockSupabaseClient` được nâng cấp hỗ trợ RPC thread-safe và kiểm chứng bộ 3 bài test: Controlled Interleaving Repro, Fault Injection Crash Safety và Strict Fail-Closed.
 - **Kết quả kiểm thử tự động:**
-  - `pytest backend/tests/api/test_finalize.py backend/tests/services/test_review_lifecycle.py backend/tests/api/test_review_api.py -v`: **69/69 tests passed 100%**.
+  - `pytest backend/tests/api/test_finalize.py backend/tests/services/test_review_lifecycle.py backend/tests/api/test_review_api.py -v`: **73/73 tests passed 100%**.
   - `ruff check`: All checks passed!

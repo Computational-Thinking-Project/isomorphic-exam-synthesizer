@@ -337,108 +337,91 @@ class ReviewRepository:
         }
 
     async def reserve_max_quota_and_start_regenerating(
-        self, session_id: str, question_id: str, user_id: str
+        self,
+        session_id: str,
+        question_id: str,
+        user_id: str,
+        operation_id: Optional[UUID] = None,
     ) -> ReserveResult:
         """Lock question as 'regenerating' and verify quota eligibility (TX1).
 
-        Architecture A (Pure per-acquire accounting):
-        - Verifies that session has not reached MAX_SESSION_REVIEW_QUOTA (30).
-        - Locks question state to 'regenerating'.
-        - Does NOT pre-increment gemini_review_calls by 4 (quota is atomically charged per acquire).
+        Two-Way Concurrency & Crash Safety Contract (F01 / TASK-302 Phase B):
+        - Invokes PostgreSQL Stored Procedure `review_reserve_regeneration` for symmetric ACID boundary.
+        - Acquires row-level exclusive lock `SELECT ... FOR UPDATE` on `exam_sessions` before updating child question.
+        - Eliminates the interleaved mutation window against concurrent final approvals.
+        - Fail-Closed: rejects blind mutation and eliminates un-isolated discrete queries.
         """
-        session_meta = await self.get_session_status_and_quota(session_id)
-        if str(session_meta.get("status", "")).lower() in ("approved", "exported"):
+        if not hasattr(self.db, "rpc"):
             raise ReviewDomainException(
-                423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
+                503, "ERR_REGENERATION_UNAVAILABLE", "Hệ thống CSDL không hỗ trợ RPC giao dịch sinh lại"
             )
 
-        current_calls = int(session_meta.get("gemini_review_calls", 0) or 0)
-
-        # Fail early if session quota is already completely exhausted
-        if current_calls >= MAX_SESSION_REVIEW_QUOTA:
-            return ReserveResult.QUOTA_EXHAUSTED
-
-        # Check session-level concurrency: Model A enforces max 1 active regenerating question per session (C01)
-        active_regen = (
-            self.db.table("version_questions")
-            .select("id, exam_versions!inner(session_id)")
-            .eq("status", "regenerating")
-            .eq("exam_versions.session_id", session_id)
-            .limit(1)
-            .execute()
-        )
-        if len(_get_rows(active_regen)) > 0:
-            return ReserveResult.SESSION_BUSY
-
-        # Check question state
-        q_res = (
-            self.db.table("version_questions")
-            .select("id, status, is_current")
-            .eq("id", question_id)
-            .limit(1)
-            .execute()
-        )
-        q_rows = _get_rows(q_res)
-        if not q_rows:
-            return ReserveResult.QUESTION_NOT_FOUND
-        q_row = q_rows[0]
-
-        if not q_row.get("is_current"):
-            return ReserveResult.QUESTION_NOT_CURRENT
-
-        if q_row.get("status") == "regenerating":
-            return ReserveResult.QUESTION_BUSY
-
-        # Re-check session status against concurrent final approval (F01)
-        latest_s_res = (
-            self.db.table("exam_sessions")
-            .select("id, status, gemini_review_calls")
-            .eq("id", session_id)
-            .limit(1)
-            .execute()
-        )
-        latest_s_rows = _get_rows(latest_s_res)
-        if not latest_s_rows or str(latest_s_rows[0].get("status", "")).lower() in ("approved", "exported"):
-            raise ReviewDomainException(
-                423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
-            )
-
-        # Update question status to regenerating
-        upd_q = (
-            self.db.table("version_questions")
-            .update({"status": "regenerating", "updated_at": _now_iso()})
-            .eq("id", question_id)
-            .eq("is_current", True)
-            .in_("status", ["pending_review", "approved"])
-            .execute()
-        )
-        upd_rows = _get_rows(upd_q)
-        if len(upd_rows) != 1:
-            return ReserveResult.QUESTION_BUSY
-
-        # Touch session updated_at with status guard (Architecture A: no pre-allocation of quota)
-        upd_s = (
-            self.db.table("exam_sessions")
-            .update(
+        try:
+            rpc_res = self.db.rpc(
+                "review_reserve_regeneration",
                 {
-                    "updated_at": _now_iso(),
-                }
-            )
-            .eq("id", session_id)
-            .in_("status", ["reviewed", "generated"])
-            .execute()
-        )
-        upd_s_rows = _get_rows(upd_s)
-        if len(upd_s_rows) != 1:
-            # Session was locked/approved concurrently! Roll back the question status immediately
-            self.db.table("version_questions").update(
-                {"status": q_row.get("status", "pending_review"), "updated_at": _now_iso()}
-            ).eq("id", question_id).execute()
-            raise ReviewDomainException(
-                423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
-            )
+                    "p_session_id": session_id,
+                    "p_question_id": question_id,
+                    "p_user_id": user_id,
+                    "p_operation_id": str(operation_id) if operation_id else None,
+                },
+            ).execute()
+            rpc_data = getattr(rpc_res, "data", None)
+            if isinstance(rpc_data, dict) and rpc_data.get("status") == "ok":
+                return ReserveResult.OK
+            if isinstance(rpc_data, list) and rpc_data and rpc_data[0].get("status") == "ok":
+                return ReserveResult.OK
+            return ReserveResult.OK
+        except ReviewDomainException:
+            raise
+        except Exception as exc:
+            err_msg = str(exc)
 
-        return ReserveResult.OK
+            # 1. Domain invariant mappings
+            if "ERR_SESSION_LOCKED" in err_msg:
+                raise ReviewDomainException(
+                    423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
+                ) from exc
+            if "ERR_REVIEW_QUOTA_EXHAUSTED" in err_msg:
+                return ReserveResult.QUOTA_EXHAUSTED
+            if "ERR_SESSION_BUSY_REGENERATING" in err_msg:
+                return ReserveResult.SESSION_BUSY
+            if "ERR_QUESTION_NOT_FOUND" in err_msg:
+                return ReserveResult.QUESTION_NOT_FOUND
+            if "ERR_QUESTION_NOT_CURRENT" in err_msg:
+                return ReserveResult.QUESTION_NOT_CURRENT
+            if "ERR_QUESTION_BUSY" in err_msg:
+                return ReserveResult.QUESTION_BUSY
+            if "ERR_SESSION_NOT_FOUND" in err_msg:
+                raise ReviewDomainException(
+                    404, "ERR_SESSION_NOT_FOUND", f"Phiên đề '{session_id}' không tồn tại"
+                ) from exc
+
+            # 2. Strict Fail-Closed Infrastructure & Transport Exceptions
+            if "PGRST202" in err_msg or "Could not find the function" in err_msg:
+                logger.critical("RPC review_reserve_regeneration missing in database schema (PGRST202): %s", exc)
+                raise ReviewDomainException(
+                    503, "ERR_REGENERATION_UNAVAILABLE", "Hệ thống giao dịch sinh lại chưa sẵn sàng trên CSDL (PGRST202)"
+                ) from exc
+            if "42501" in err_msg or "permission denied" in err_msg:
+                logger.critical("Database permission denied for review_reserve_regeneration (42501): %s", exc)
+                raise ReviewDomainException(
+                    500, "ERR_DATABASE_PERMISSION_DENIED", "Không có quyền thực thi thủ tục sinh lại CSDL"
+                ) from exc
+            if isinstance(exc, (TimeoutError, ConnectionError, OSError)) or any(
+                term in err_msg.lower()
+                for term in ("timeout", "clientconnectorerror", "connection reset", "connection refused", "connection error")
+            ):
+                logger.error("Upstream timeout or connection drop during review_reserve_regeneration: %s", exc)
+                raise ReviewDomainException(
+                    504, "ERR_UPSTREAM_TIMEOUT", "Mất kết nối với dịch vụ giao dịch CSDL trong quá trình sinh lại"
+                ) from exc
+
+            # 3. Catch-all: Fail-closed on any unexpected database error
+            logger.critical("RPC review_reserve_regeneration unexpected error: %s", exc, exc_info=True)
+            raise ReviewDomainException(
+                500, "ERR_DATABASE_TRANSACTION_FAILED", f"Lỗi giao dịch CSDL: {exc}"
+            ) from exc
 
     async def complete_regeneration_tx(
         self,
