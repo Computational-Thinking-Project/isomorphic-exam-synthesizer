@@ -1,6 +1,6 @@
 # UI walkthrough — exam mirror
 
-**Bản portable 02/11/2026 — thao tác trong popup S06.** Mở [launcher](index.html) hoặc [PREVIEW.html](PREVIEW.html) bằng Chrome sau khi lấy về máy. Không cần npm, Docker, API key hoặc server. GitHub chỉ hiển thị nội dung HTML, không chạy demo ngay trong trang xem file.
+**Bản portable 02/11/2026 — nhấn đáp án S03/S06, giữ thao tác trong popup S06.** Mở [launcher](index.html) hoặc [PREVIEW.html](PREVIEW.html) bằng Chrome sau khi lấy về máy. Không cần npm, Docker, API key hoặc server. GitHub chỉ hiển thị nội dung HTML, không chạy demo ngay trong trang xem file.
 
 ## Lấy gói về máy
 
@@ -25,14 +25,14 @@ git pull --ff-only origin fix/ui-ux-demo
 
 Mở `docs/ui-walkthrough/index.html` bằng Chrome từ trình quản lý file. Giữ nguyên cả thư mục nếu chia sẻ lại để các liên kết tương đối vẫn dùng được. Riêng PREVIEW.html tự chứa toàn bộ app, font, artwork và notices, có thể mở độc lập.
 
-**Mốc đóng gói:** bản popup S06 chuẩn bị trên `fix/ui-ux-demo` từ `ada2963`, chưa commit/push trong lượt này. Kiểm hash để nhận đúng bản.
+**Mốc đóng gói:** bản nhấn đáp án chuẩn bị trên `fix/ui-ux-demo` từ `5448939`. Đây là thông tin lúc chuẩn bị commit; lịch sử Git và remote cho biết commit/push thực tế. Kiểm hash để nhận đúng bản.
 
 ## Bản và nguồn
 
 - Nguồn: `project/ui-draft/redesign/PREVIEW.html` ở workspace thiết kế, không phải build frontend sản phẩm.
-- 2.754.938 bytes; SHA256 `ca2e3d9efd5c76911c1903b8090b3c4ad5a2bbe9e55eef9574a8c78e0cd305e5`.
-- CSS `index-Dgyjw04J.css`, JS `index-_7p9qpiX.js` đã nhúng cùng font, artwork và third-party notices.
-- Nền repo khi đóng gói: `ada29633b721765a3e0eaae5f8accfb908e48bd8`; đây không phải source commit của artifact ui-draft.
+- 2.756.069 bytes; SHA256 `876cd1e5e32c40468747ac7ed370036b7d48ce169ccbddcbac6bbfa86a8faeaa`.
+- CSS `index-D1aTjqmo.css`, JS `index-BKFN3kae.js` đã nhúng cùng font, artwork và third-party notices.
+- Nền repo khi đóng gói: `5448939c5719c36b766ec38aa3c32181cc115d5f`; đây không phải source commit của artifact ui-draft.
 - [version.json](version.json) ghi nguồn/hash/trạng thái kiểm. `.gitattributes` giữ nguyên bytes PREVIEW, không tự chuyển CRLF/LF.
 
 Kiểm file bằng PowerShell:
@@ -47,6 +47,8 @@ Get-FileHash ./docs/ui-walkthrough/PREVIEW.html -Algorithm SHA256
 ### S00 → S03: nguồn
 
 Mở S00 từ launcher. Login/Library là giao diện demo. Tạo phiên mới hoặc dùng checkpoint S03 empty; bấm **Xem dữ liệu mẫu**, đọc đề, **Xác nhận toàn bộ đề**, rồi **Tiếp theo**. Chọn file chỉ dùng tên file, không upload/parse nội dung.
+
+Trong **Bản đọc S03** và **hai panel S06**, phương án mang khóa đáp án có nền xanh lam xám nhẹ, viền navy và nhãn chữ **Đáp án**. Nhãn theo option ID nên đi cùng phương án sau trộn, không cố định theo chữ A/B/C/D. Đây là khóa đang gán trong nội dung, không xác nhận đáp án đúng hoặc giáo viên đã duyệt; xanh lá vẫn dành cho **Đã duyệt**. Giấy nguồn và bản đề học sinh không hiện dấu đáp án. Popup giữ tóm tắt đáp án/lời giải hiện có.
 
 ### S04 → S05: vào duyệt ngay khi có kết quả
 
@@ -70,6 +72,8 @@ Lượt tạo mới mở **Câu 1/mã 101**, **0/10 đã duyệt**. Không tự 
 ### Ca lỗi nội dung mặc định ở Câu 3/mã 101
 
 Sau khi nhận Câu 3, B=C=`{3;4}` và duyệt bị chặn. Bấm **Kiểm tra đáp án**, đọc lỗi rồi **Tạo lại** ngay trong popup. Nội dung chuyển sang xác nhận **Tạo lại đúng cặp**, có **Hủy tạo lại**; không mở chồng dialog. Sau khi model nhận kết quả, popup vẫn mở và hiển thị đề/key/steps cùng revision mới, chưa được duyệt. Đọc lại ngay tại đó rồi **Duyệt biến thể**; duyệt đúng revision mới đóng popup/chuyển câu. Không tự approve hoặc nạp9approval. Đi lại giữa S05/S06 không seed lỗi lại; lượt mới/reload fixture mới khôi phục B=C. Đây là ca UI mẫu, không phải output AI thật.
+
+Ở hai panel, chỉ C mang key được nhấn **Đáp án** dù B trùng nội dung C; cảnh báo trùng và khóa duyệt vẫn giữ. Thiếu key, ID rỗng/trùng hoặc thứ tự phương án không hợp lệ không tạo marker giả.
 
 ### Lỗi, tạm dừng và thử lại
 
@@ -96,13 +100,16 @@ Tạo lại vẫn hỏi xác nhận, dùng cửa sổ offset 1–8 so với seed
 
 ## Kiểm đã làm và còn chờ
 
-Source: **30 ca popup +28 ca approval S06 +26 ca progressive +17 ca hook Tạo lại +36 ca Đại số +14 ca toast =151 ca qua**, cùng **40 so sánh markup các màn khác** giữ nguyên. TypeScript/build qua (1621 modules). Đã thay các kỳ vọng nút Tạo lại ngoài trang/popup xác nhận riêng theo flow mới. Fake timers/hooks/React element/handler checks không phải browser pass. SSR useLayoutEffect warnings không dùng để nghiệm thu visual.
+Lượt nhấn đáp án: **18 ca tập trung + 30 ca popup + 36 ca Đại số = 84 ca qua**, thêm **32 so sánh markup S04/S05/S07/S08** giữ nguyên. TypeScript/build qua (1621 modules). Kiểm key theo ID/sau trộn, B=C, ID không hợp lệ, MathML và bản học sinh không marker. Tương phản tính từ tokens light nội dung/nhãn 13.14:1/7.74:1, dark 13.51:1/8.33:1; chưa kiểm màu thực hoặc screen reader.
+
+Lượt popup trước đó có 151 ca và 40 so sánh markup qua; không nhận toàn bộ đã chạy lại cho bản này. Fake timers/hooks/React element/handler checks không phải browser pass. SSR useLayoutEffect warnings không dùng để nghiệm thu visual.
 
 Gói chia sẻ được kiểm bytes/hash nguồn–dist–repo, tài nguyên/licenses nhúng, liên kết tương đối, Git attributes và phạm vi diff. Không chạy test hoặc build sản phẩm/backend.
 
 | Kiểm trực tiếp Chrome cần làm | Trạng thái |
 |---|---|
 | Mở file ở folder mới, font/artwork/công thức | Chưa kiểm |
+| Nhãn/nền/viền đáp án, panel hẹp, công thức dài, screen reader | Chưa kiểm |
 | S04→S05, mở duyệt sau cặp đầu, progress tiếp tục ở S06 | Chưa kiểm |
 | Click ô/tab còn tải, spinner/clock/skeleton rồi hiện nội dung | Chưa kiểm |
 | Một popup: Tạo lại/xác nhận/kết quả mới/approve khi các cặp khác đang nhận | Chưa kiểm |

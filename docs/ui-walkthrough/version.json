@@ -1,25 +1,26 @@
 {
-  "packageId": "UI-WALKTHROUGH-20261102-S06-POPUP-ACTIONS-RIGHT",
+  "packageId": "UI-WALKTHROUGH-20261102-ANSWER-KEY-A",
   "packagedDate": "2026-11-02",
   "timezone": "Asia/Bangkok",
   "kind": "Portable UI with sample data; not integrated product or AI output",
   "branch": "fix/ui-ux-demo",
-  "repositoryBaseAtPackaging": "ada29633b721765a3e0eaae5f8accfb908e48bd8",
+  "repositoryBaseAtPackaging": "5448939c5719c36b766ec38aa3c32181cc115d5f",
   "artifact": {
     "file": "PREVIEW.html",
-    "bytes": 2754938,
-    "sha256": "ca2e3d9efd5c76911c1903b8090b3c4ad5a2bbe9e55eef9574a8c78e0cd305e5",
+    "bytes": 2756069,
+    "sha256": "876cd1e5e32c40468747ac7ed370036b7d48ce169ccbddcbac6bbfa86a8faeaa",
     "sourceWorkspaceRelativePath": "project/ui-draft/redesign/PREVIEW.html",
     "sourceDateFromReview": "2026-11-02",
     "sourceCommit": null,
     "sourceCommitNote": "ui-draft lives outside the product Git repository; repositoryBaseAtPackaging is not the artifact source commit",
     "built": [
-      "index-Dgyjw04J.css",
-      "index-_7p9qpiX.js"
+      "index-D1aTjqmo.css",
+      "index-BKFN3kae.js"
     ],
     "selfContained": true,
     "thirdPartyNoticesEmbedded": true,
-    "rebuiltDuringPackaging": true
+    "rebuiltDuringPackaging": false,
+    "buildNote": "Copied byte-for-byte from the checked ui-draft build of 2026-11-02; not rebuilt during publication."
   },
   "checkpoints": [
     {
@@ -67,14 +68,38 @@
     "persistence": "Tab memory only",
     "realPDFExport": false,
     "defaultContentIssue": "G03/101 B=C stays intentional with0approvals/Cau1 selected first. Inspect B=C, Tạo lại/confirm inside same popup, read new question/key/steps there, explicitly approve. No manual edit or reseeding on revisit.",
-    "S06Popup": "Main S06 has Kiểm tra đáp án entry; Tạo lại only inside the single inspection Modal, next to approval in a right-aligned group. No Quay lại. Header X/Esc/backdrop close and cancel unsubmitted intent; closing disabled only while regeneration is busy. Inline confirmation uses Hủy tạo lại/Tạo lại đúng cặp. Successful model acknowledgement refreshes the same popup to the exact new revision; user must read/approve explicitly. No nested dialog or autoapproval."
+    "S06Popup": "Main S06 has Kiểm tra đáp án entry; Tạo lại only inside the single inspection Modal, next to approval in a right-aligned group. No Quay lại. Header X/Esc/backdrop close and cancel unsubmitted intent; closing disabled only while regeneration is busy. Inline confirmation uses Hủy tạo lại/Tạo lại đúng cặp. Successful model acknowledgement refreshes the same popup to the exact new revision; user must read/approve explicitly. No nested dialog or autoapproval.",
+    "answerKeyHighlight": "Plan A in S03 reading view and both S06 panels: light blue-gray fill, navy left border and passive Đáp án label on the assigned option ID. Follows shuffled order. Missing/empty/duplicate IDs or invalid order do not invent a marker. Duplicate B=C content still marks only assigned C and keeps warning/approval block. Green approval is separate. Student/original papers have no answer markers; popup summary unchanged."
   },
   "checks": {
-    "staticPackageVerification": "See local verification report; source/dist/package bytes and hash checked; native Chrome not run",
+    "staticPackageVerification": "Source/dist/package bytes, SHA256, embedded resources/notices, relative links, Git attributes and staged scope checked before commit; native Chrome not run.",
     "nativeChrome": "not run",
     "keyboardFocusScroll": "not run",
     "rehearsal": "not run",
     "sourceChecks": {
+      "date": "2026-11-02",
+      "answerKeyFocused": 18,
+      "popupFocused": 30,
+      "algebraRegression": 36,
+      "total": 84,
+      "otherScreenMarkupComparisons": 32,
+      "result": "passed in ui-draft",
+      "scope": "Assigned-key/ID/order/audience/MathML checks, popup and algebra regression. SSR/fake hooks are not native Chrome QA. Other-screen markup comparisons cover S04/S05/S07/S08. Remaining earlier popup checks were not rerun.",
+      "typeScript": "passed",
+      "build": "passed,1621 modules",
+      "tokenContrast": {
+        "light": {
+          "text": 13.14,
+          "label": 7.74
+        },
+        "dark": {
+          "text": 13.51,
+          "label": 8.33
+        }
+      },
+      "accessibilityLimit": "Contrast is calculated from tokens; actual browser layout/colors and screen reader not checked. No full WCAG compliance claim."
+    },
+    "previousPopupChecks": {
       "date": "2026-11-02",
       "popupFocused": 30,
       "s06Regression": 28,
@@ -101,7 +126,7 @@
     "committed": false,
     "pushed": false,
     "packageCommit": null,
-    "note": "Popup-actions refresh is local onfix/ui-ux-demo based onada2963; no commit/push in this change."
+    "note": "Snapshot before the answer-key package commit on fix/ui-ux-demo based on5448939. Inspect Git history/remote for actual publication; this snapshot is not live status."
   },
   "limits": [
     "No real auth/upload/parser/AI/server persistence/PDF",
