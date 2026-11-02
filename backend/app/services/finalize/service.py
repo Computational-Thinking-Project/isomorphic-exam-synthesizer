@@ -88,7 +88,7 @@ class FinalizeService:
                 )
 
             # Step 3: Verify session status is allowed for approval
-            if current_status not in ("reviewed", "generated"):
+            if current_status != "reviewed":
                 raise ReviewDomainException(
                     409,
                     "ERR_INVALID_SESSION_STATE",

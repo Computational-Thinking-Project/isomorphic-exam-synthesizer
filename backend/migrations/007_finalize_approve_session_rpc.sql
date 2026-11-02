@@ -111,7 +111,7 @@ BEGIN
   END IF;
 
   -- 5. Session State Machine Guard: only 'reviewed' or 'generated' allowed
-  IF v_session.status NOT IN ('reviewed', 'generated') THEN
+  IF v_session.status != 'reviewed' THEN
     RAISE EXCEPTION 'ERR_INVALID_SESSION_STATE' USING ERRCODE = 'P0001';
   END IF;
 

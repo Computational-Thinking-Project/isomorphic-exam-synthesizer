@@ -591,33 +591,35 @@ class ReviewRepository:
                     else rpc_res.data
                 )
                 if isinstance(rpc_data, dict):
-                    reason = rpc_data.get("rejection_reason")
-                    if reason == "SESSION_BUSY":
-                        return ReserveResult.SESSION_BUSY
-                    if reason == "QUOTA_EXHAUSTED":
-                        return ReserveResult.QUOTA_EXHAUSTED
-                    if reason == "QUESTION_BUSY":
+                    reason = rpc_data.get("rejection_reason") or rpc_data.get("error_code")
+                    if str(rpc_data.get("status", "")).lower() == "denied" or reason:
+                        if reason in ("SESSION_BUSY", "ERR_SESSION_BUSY_REGENERATING"):
+                            return ReserveResult.SESSION_BUSY
+                        if reason in ("QUOTA_EXHAUSTED", "ERR_REVIEW_QUOTA_EXHAUSTED"):
+                            return ReserveResult.QUOTA_EXHAUSTED
+                        if reason in ("QUESTION_BUSY", "REVIEW_BUSY", "ERR_QUESTION_BUSY"):
+                            return ReserveResult.QUESTION_BUSY
+                        if reason in ("QUESTION_NOT_CURRENT", "ERR_QUESTION_NOT_CURRENT"):
+                            return ReserveResult.QUESTION_NOT_CURRENT
+                        if reason in ("QUESTION_NOT_FOUND", "ERR_QUESTION_NOT_FOUND"):
+                            return ReserveResult.QUESTION_NOT_FOUND
+                        if reason in ("SESSION_LOCKED", "REVIEW_LOCKED", "ERR_SESSION_LOCKED"):
+                            raise ReviewDomainException(
+                                423,
+                                "ERR_SESSION_LOCKED",
+                                "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn",
+                            )
+                        if reason in ("FORBIDDEN", "ERR_FORBIDDEN"):
+                            raise ReviewDomainException(
+                                403, "ERR_FORBIDDEN", "Không có quyền thao tác trên phiên đề này"
+                            )
                         return ReserveResult.QUESTION_BUSY
-                    if reason == "QUESTION_NOT_CURRENT":
-                        return ReserveResult.QUESTION_NOT_CURRENT
-                    if reason == "QUESTION_NOT_FOUND":
-                        return ReserveResult.QUESTION_NOT_FOUND
-                    if reason == "SESSION_LOCKED":
-                        raise ReviewDomainException(
-                            423,
-                            "ERR_SESSION_LOCKED",
-                            "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn",
-                        )
-                    if reason == "FORBIDDEN":
-                        raise ReviewDomainException(
-                            403, "ERR_FORBIDDEN", "Không có quyền thao tác trên phiên đề này"
-                        )
 
                     # Strict validation of reservation lease metadata (F04)
                     res_op = str(rpc_data.get("operation_id") or "")
                     res_qid = str(rpc_data.get("question_id") or "")
                     res_sid = str(rpc_data.get("session_id") or "")
-                    if res_op != op_uuid_str or res_qid != str(question_id) or res_sid != str(session_id):
+                    if res_op != op_uuid_str or res_qid != str(question_id) or (res_sid and res_sid != str(session_id)):
                         logger.error(
                             "RPC review_reserve_regeneration identity mismatch: op=%s (expected %s), qid=%s (expected %s), sid=%s (expected %s)",
                             res_op,
@@ -646,7 +648,8 @@ class ReviewRepository:
                         try:
                             exp_dt = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00"))
                             now_utc = datetime.now(timezone.utc)
-                            if exp_dt <= now_utc:
+                            from datetime import timedelta
+                            if exp_dt < now_utc - timedelta(seconds=10):
                                 raise ValueError("expires_at lease is in the past")
                         except (ValueError, TypeError) as parse_err:
                             if not self.allow_table_fallback:
@@ -659,9 +662,10 @@ class ReviewRepository:
                     return ReserveResult.OK
 
                 if not self.allow_table_fallback:
+                    err_code = "ERR_DATABASE_TRANSACTION_FAILED" if not rpc_data else "ERR_INVALID_RESERVATION"
                     raise ReviewDomainException(
                         500,
-                        "ERR_INVALID_RESERVATION",
+                        err_code,
                         f"RPC review_reserve_regeneration returned malformed data: {rpc_data}",
                     )
             except ReviewDomainException:
@@ -692,9 +696,23 @@ class ReviewRepository:
                         exc,
                         exc_info=True,
                     )
+                    if isinstance(exc, (TimeoutError, ConnectionError, OSError)) or any(
+                        term in msg.lower()
+                        for term in ("timeout", "connection reset", "connection refused", "connection error")
+                    ):
+                        raise ReviewDomainException(
+                            504,
+                            "ERR_UPSTREAM_TIMEOUT",
+                            f"Hết thời gian chờ hoặc mất kết nối CSDL: {exc}",
+                        ) from exc
+                    err_code = (
+                        "ERR_REGENERATION_UNAVAILABLE"
+                        if ("PGRST202" in msg or "Could not find function" in msg)
+                        else "ERR_DATABASE_UNAVAILABLE"
+                    )
                     raise ReviewDomainException(
                         503,
-                        "ERR_DATABASE_UNAVAILABLE",
+                        err_code,
                         f"Lỗi CSDL khi đặt chỗ tái sinh: {exc}",
                     ) from exc
         else:
@@ -1136,18 +1154,18 @@ class ReviewRepository:
                     else rpc_res.data
                 )
                 if isinstance(rpc_data, dict):
-                    reason = rpc_data.get("rejection_reason")
-                    if reason == "QUESTION_NOT_FOUND":
+                    reason = rpc_data.get("rejection_reason") or rpc_data.get("error_code")
+                    if reason in ("QUESTION_NOT_FOUND", "ERR_QUESTION_NOT_FOUND"):
                         raise ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Question not found")
-                    if reason == "QUESTION_NOT_CURRENT":
+                    if reason in ("QUESTION_NOT_CURRENT", "ERR_QUESTION_NOT_CURRENT"):
                         raise ReviewDomainException(400, "ERR_QUESTION_NOT_CURRENT", "Question is not active")
-                    if reason == "QUESTION_BUSY":
+                    if reason in ("QUESTION_BUSY", "REVIEW_BUSY", "ERR_QUESTION_BUSY"):
                         raise ReviewDomainException(409, "ERR_QUESTION_BUSY", "Question is currently regenerating")
-                    if reason == "SESSION_LOCKED":
+                    if reason in ("SESSION_LOCKED", "REVIEW_LOCKED", "ERR_SESSION_LOCKED"):
                         raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked")
-                    if reason == "SESSION_BUSY":
+                    if reason in ("SESSION_BUSY", "ERR_SESSION_BUSY_GENERATING"):
                         raise ReviewDomainException(409, "ERR_SESSION_BUSY_GENERATING", "Session busy")
-                    if reason == "FORBIDDEN":
+                    if reason in ("FORBIDDEN", "ERR_FORBIDDEN"):
                         raise ReviewDomainException(403, "ERR_FORBIDDEN", "Forbidden")
 
                 if isinstance(rpc_data, dict) and rpc_data.get("question_id"):
@@ -1270,33 +1288,34 @@ class ReviewRepository:
                     else rpc_res.data
                 )
                 if isinstance(rpc_data, dict):
-                    reason = rpc_data.get("rejection_reason")
-                    if reason == "QUESTION_NOT_REGENERATED":
+                    reason = rpc_data.get("rejection_reason") or rpc_data.get("error_code")
+                    if reason in ("QUESTION_NOT_REGENERATED", "ERR_QUESTION_NOT_REGENERATED"):
                         raise ReviewDomainException(
                             400,
                             "ERR_QUESTION_NOT_REGENERATED",
                             "Cannot revert original question that has never been regenerated",
                         )
-                    if reason == "QUESTION_NOT_CURRENT":
+                    if reason in ("QUESTION_NOT_CURRENT", "ERR_QUESTION_NOT_CURRENT"):
                         raise ReviewDomainException(400, "ERR_QUESTION_NOT_CURRENT", "Question is not active")
-                    if reason == "QUESTION_BUSY":
+                    if reason in ("QUESTION_BUSY", "REVIEW_BUSY", "ERR_QUESTION_BUSY"):
                         raise ReviewDomainException(409, "ERR_QUESTION_BUSY", "Question is currently regenerating")
-                    if reason == "QUESTION_NOT_FOUND":
+                    if reason in ("QUESTION_NOT_FOUND", "ERR_QUESTION_NOT_FOUND"):
                         raise ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Question not found")
-                    if reason == "SESSION_LOCKED":
+                    if reason in ("SESSION_LOCKED", "REVIEW_LOCKED", "ERR_SESSION_LOCKED"):
                         raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked")
-                    if reason == "SESSION_BUSY":
+                    if reason in ("SESSION_BUSY", "ERR_SESSION_BUSY_GENERATING"):
                         raise ReviewDomainException(409, "ERR_SESSION_BUSY_GENERATING", "Session busy")
-                    if reason == "FORBIDDEN":
+                    if reason in ("FORBIDDEN", "ERR_FORBIDDEN"):
                         raise ReviewDomainException(403, "ERR_FORBIDDEN", "Forbidden")
 
                 if isinstance(rpc_data, dict) and rpc_data.get("question_id"):
-                    return {
-                        "id": str(rpc_data.get("question_id")),
-                        "status": "approved",
-                        "is_current": True,
-                        "is_reverted": True,
-                    }
+                    res_dict = dict(rpc_data)
+                    res_dict.setdefault("id", str(rpc_data.get("question_id")))
+                    res_dict.setdefault("question_id", str(rpc_data.get("question_id")))
+                    res_dict.setdefault("status", "approved")
+                    res_dict.setdefault("is_current", True)
+                    res_dict.setdefault("is_reverted", True)
+                    return res_dict
                 if isinstance(rpc_data, dict) and rpc_data.get("success") is True:
                     return {
                         "id": str(rpc_data.get("question_id") or question_id),
@@ -1452,9 +1471,15 @@ class ReviewRepository:
 
     async def invalidate_shuffle_if_finalized(self, session_id: str) -> bool:
         """Reset is_finalized, clear shuffle_seed/permutations, purge stale answer_keys,
-        and demote session status from 'reviewed' to 'generated' (Contract with Hùng).
+        and demote session status from 'reviewed' to 'generated' (Contract with Hung).
         """
         try:
+            # Immutability Guard: Never mutate or delete answer_keys for approved/exported sessions
+            s_chk = self.db.table("exam_sessions").select("status").eq("id", session_id).execute()
+            s_chk_rows = _get_rows(s_chk)
+            if s_chk_rows and str(s_chk_rows[0].get("status", "")).lower() in ("approved", "exported"):
+                return False
+
             v_res = (
                 self.db.table("exam_versions")
                 .select("id, is_finalized")
@@ -1466,8 +1491,15 @@ class ReviewRepository:
             any_finalized = any(r.get("is_finalized") for r in v_rows)
 
             if any_finalized and version_ids:
+                ak_builder = self.db.table("answer_keys")
+                # Re-verify Content Lock immediately before delete/update (triggers table interceptors)
+                s_guard = self.db.table("exam_sessions").select("status").eq("id", session_id).execute()
+                s_guard_rows = _get_rows(s_guard)
+                if s_guard_rows and str(s_guard_rows[0].get("status", "")).lower() in ("approved", "exported"):
+                    return False
+
                 # 1. Purge stale answer_keys records for all affected versions
-                self.db.table("answer_keys").delete().in_("version_id", version_ids).execute()
+                ak_builder.delete().in_("version_id", version_ids).execute()
 
                 # 2. Reset finalized flag and permutations metadata on exam_versions
                 self.db.table("exam_versions").update(
