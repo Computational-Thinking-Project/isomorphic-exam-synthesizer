@@ -19,7 +19,11 @@ from app.core.constants import (
     MAX_SESSION_REVIEW_QUOTA,
     STALE_REGENERATION_TIMEOUT_SECONDS,
 )
-from app.models.schemas import ReserveResult, ReviewDomainException
+from app.models.schemas import (
+    ReserveResult,
+    ReviewAcquireUnavailableError,
+    ReviewDomainException,
+)
 
 try:
     from app.services.generation.attempts import AttemptPermit
@@ -58,8 +62,9 @@ def _get_rows(res: Any) -> List[Dict[str, Any]]:
 class ReviewRepository:
     """Data Access Object encapsulating database interactions for review decisions."""
 
-    def __init__(self, db: Client) -> None:
+    def __init__(self, db: Client, allow_table_fallback: bool = False) -> None:
         self.db = db
+        self.allow_table_fallback = allow_table_fallback
         # In-memory routing hint for operation-to-session mapping (durable ledger is stored in DB)
         self._operation_sessions: Dict[UUID, str] = {}
 
@@ -73,7 +78,10 @@ class ReviewRepository:
         Conforms strictly to TASK-304 AttemptPermit schema and Stage 3 review RPC contract.
         Enforces:
         - Primary path: Atomic single-transaction PostgreSQL RPC review_acquire_attempt (TASK-302 contract)
-        - Fallback path: Atomic conditional CAS increment (UPDATE ... WHERE gemini_review_calls == current_calls)
+        - Fail-closed in production: Any RPC error (missing function, permissions, network, malformed payload)
+          raises ReviewAcquireUnavailableError, preventing unauthorized AI dispatch and quota leakage.
+        - Test fallback path: Atomic conditional CAS increment (UPDATE ... WHERE gemini_review_calls == current_calls),
+          ONLY active when allow_table_fallback=True is explicitly configured.
         - Durable attempt ledger (review_attempts table)
         - Atomic replay detection (unique attempt_id)
         - Operation attempt ceiling (MAX_AI_CALLS_PER_REJECT = 4)
@@ -83,7 +91,8 @@ class ReviewRepository:
         str_att_id = str(attempt_id)
 
         # 1. Primary Path: Stored procedure RPC review_acquire_attempt (TASK-302 contract)
-        if callable(getattr(self.db, "rpc", None)):
+        has_rpc = callable(getattr(self.db, "rpc", None))
+        if has_rpc:
             try:
                 rpc_res = self.db.rpc(
                     "review_acquire_attempt",
@@ -104,13 +113,66 @@ class ReviewRepository:
                         remaining_calls=int(rpc_data.get("remaining_calls", 0)),
                         replayed=bool(rpc_data.get("replayed", False)),
                     )
-            except ConnectionError:
+                # Malformed RPC response
+                if not self.allow_table_fallback:
+                    logger.error(
+                        "RPC review_acquire_attempt returned malformed data (fail-closed): op=%s, att=%s, data=%s",
+                        str_op_id,
+                        str_att_id,
+                        rpc_data,
+                    )
+                    raise ReviewAcquireUnavailableError(
+                        f"RPC review_acquire_attempt returned malformed data: {rpc_data}",
+                        operation_id=operation_id,
+                        attempt_id=attempt_id,
+                    )
+            except ReviewAcquireUnavailableError:
+                raise
+            except ConnectionError as exc:
+                if not self.allow_table_fallback:
+                    logger.error(
+                        "RPC review_acquire_attempt connection error (fail-closed): op=%s, att=%s, error=%s",
+                        str_op_id,
+                        str_att_id,
+                        exc,
+                        exc_info=True,
+                    )
+                    raise ReviewAcquireUnavailableError(
+                        "Database connection error during review_acquire_attempt RPC",
+                        operation_id=operation_id,
+                        attempt_id=attempt_id,
+                    ) from exc
                 raise
             except Exception as exc:
-                # In offline/mock mode or when RPC is not installed on DB, fall back to atomic CAS adapter
+                if not self.allow_table_fallback:
+                    logger.error(
+                        "RPC review_acquire_attempt failed (fail-closed, no table fallback in production): op=%s, att=%s, error=%s",
+                        str_op_id,
+                        str_att_id,
+                        exc,
+                        exc_info=True,
+                    )
+                    raise ReviewAcquireUnavailableError(
+                        f"RPC review_acquire_attempt failed: {exc}",
+                        operation_id=operation_id,
+                        attempt_id=attempt_id,
+                    ) from exc
+
                 logger.debug(
-                    "RPC review_acquire_attempt returned %s; utilizing atomic CAS adapter fallback",
+                    "RPC review_acquire_attempt returned %s; utilizing atomic CAS adapter fallback (test mode)",
                     exc,
+                )
+        else:
+            if not self.allow_table_fallback:
+                logger.error(
+                    "Database client does not provide RPC interface (fail-closed): op=%s, att=%s",
+                    str_op_id,
+                    str_att_id,
+                )
+                raise ReviewAcquireUnavailableError(
+                    "Database client does not support RPC review_acquire_attempt",
+                    operation_id=operation_id,
+                    attempt_id=attempt_id,
                 )
 
         # 2. Fallback Path: Atomic CAS Adapter with Durable Ledger
@@ -404,13 +466,17 @@ class ReviewRepository:
         }
 
     async def reserve_max_quota_and_start_regenerating(
-        self, session_id: str, question_id: str, user_id: str
+        self,
+        session_id: str,
+        question_id: str,
+        user_id: str,
+        operation_id: Optional[UUID] = None,
     ) -> ReserveResult:
         """Lock question as 'regenerating' and verify quota eligibility (TX1).
 
         Architecture A (Pure per-acquire accounting):
         - Verifies that session has not reached MAX_SESSION_REVIEW_QUOTA (30).
-        - Locks question state to 'regenerating'.
+        - Locks question state to 'regenerating' and binds durable operation identity (TASK-302 contract).
         - Does NOT pre-increment gemini_review_calls by 4 (quota is atomically charged per acquire).
         """
         session_meta = await self.get_session_status_and_quota(session_id)
@@ -451,10 +517,17 @@ class ReviewRepository:
         if q_row.get("status") == "regenerating":
             return ReserveResult.QUESTION_BUSY
 
-        # Update question status to regenerating
+        # Update question status to regenerating and bind operation_id (TASK-302 durable identity)
+        upd_data: Dict[str, Any] = {
+            "status": "regenerating",
+            "updated_at": _now_iso(),
+        }
+        if operation_id:
+            upd_data["regeneration_id"] = str(operation_id)
+
         upd_q = (
             self.db.table("version_questions")
-            .update({"status": "regenerating", "updated_at": _now_iso()})
+            .update(upd_data)
             .eq("id", question_id)
             .eq("is_current", True)
             .in_("status", ["pending_review", "approved"])
@@ -488,11 +561,12 @@ class ReviewRepository:
         """Idempotent TX2: Deactivate old variant, insert new variant, adjust quota, and audit log."""
         str_regen_id = str(regeneration_id)
 
-        # Idempotency check: see if question with regeneration_id was already persisted
+        # Idempotency check: see if a replacement candidate was already created with regeneration_id
         existing = (
             self.db.table("version_questions")
             .select("*")
             .eq("regeneration_id", str_regen_id)
+            .neq("id", old_q_snapshot["id"])
             .limit(1)
             .execute()
         )
@@ -500,13 +574,14 @@ class ReviewRepository:
         if existing_rows:
             return existing_rows[0]
 
-        # Step 1: Update old question is_current = False, status = 'rejected'
+        # Step 1: Update old question is_current = False, status = 'rejected', clear regeneration_id
         upd_old = (
             self.db.table("version_questions")
             .update(
                 {
                     "is_current": False,
                     "status": "rejected",
+                    "regeneration_id": None,
                     "updated_at": _now_iso(),
                 }
             )
@@ -591,11 +666,12 @@ class ReviewRepository:
         """
         str_regen_id = str(regeneration_id)
 
-        # Check if TX2 already succeeded
+        # Check if TX2 already succeeded (new row with this regeneration_id)
         existing = (
             self.db.table("version_questions")
             .select("id")
             .eq("regeneration_id", str_regen_id)
+            .neq("id", old_question_id)
             .limit(1)
             .execute()
         )
@@ -606,10 +682,16 @@ class ReviewRepository:
             )
             return False
 
-        # Reset question state
+        # Reset question state and clear operation binding
         upd = (
             self.db.table("version_questions")
-            .update({"status": "pending_review", "updated_at": _now_iso()})
+            .update(
+                {
+                    "status": "pending_review",
+                    "regeneration_id": None,
+                    "updated_at": _now_iso(),
+                }
+            )
             .eq("id", old_question_id)
             .eq("status", "regenerating")
             .execute()

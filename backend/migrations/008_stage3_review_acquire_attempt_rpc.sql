@@ -1,6 +1,7 @@
 -- Migration 008: Stage 3 Review Attempt Ledger & review_acquire_attempt RPC
 -- Conforms strictly to review-rpc-contract.md (F07 resolution, TASK-301 / TASK-302 Phase B).
--- Provides single-transaction atomic permit acquisition, replay prevention, and quota accounting.
+-- Provides single-transaction atomic permit acquisition, replay prevention, operation binding, and quota accounting.
+-- NOTE: Dependent on TASK-302 Phase B (PR #36) schema foundation and requires acceptance/deploy before merge.
 
 BEGIN;
 
@@ -27,28 +28,75 @@ SET search_path = pg_catalog, public
 AS $$
 DECLARE
     v_session_id UUID;
+    v_question_id UUID;
+    v_question_status TEXT;
+    v_question_updated_at TIMESTAMPTZ;
     v_session_status TEXT;
     v_current_calls INT;
     v_attempt_status TEXT;
     v_op_attempts INT;
 BEGIN
-    -- Resolve session_id from review_attempts or active regenerating candidate
-    SELECT session_id INTO v_session_id
-    FROM public.review_attempts
-    WHERE operation_id = p_operation_id
+    -- Strict Operation Identity & Session Binding (TASK-302 contract)
+    -- Look up active candidate strictly by operation_id
+    SELECT v.session_id, q.id, q.status, q.updated_at
+    INTO v_session_id, v_question_id, v_question_status, v_question_updated_at
+    FROM public.version_questions q
+    JOIN public.exam_versions v ON v.id = q.version_id
+    WHERE q.regeneration_id = p_operation_id
+      AND q.is_current = TRUE
     LIMIT 1;
 
+    -- If not found on version_questions, check review_attempts ledger for prior acquired attempts
     IF v_session_id IS NULL THEN
-        SELECT v.session_id INTO v_session_id
-        FROM public.version_questions q
-        JOIN public.exam_versions v ON v.id = q.version_id
-        WHERE q.regeneration_id = p_operation_id OR (q.status = 'regenerating' AND q.is_current)
+        SELECT session_id INTO v_session_id
+        FROM public.review_attempts
+        WHERE operation_id = p_operation_id
         LIMIT 1;
     END IF;
 
+    -- Reject if operation does not exist or cannot be bound (Fail-closed)
     IF v_session_id IS NULL THEN
-        RAISE EXCEPTION 'TASK301: cannot resolve session_id for operation %', p_operation_id
-            USING ERRCODE = 'P0002';
+        RETURN jsonb_build_object(
+            'operation_id', p_operation_id,
+            'attempt_id', p_attempt_id,
+            'dispatch_permitted', false,
+            'calls_used', 0,
+            'remaining_calls', 0,
+            'session_id', NULL,
+            'session_status', 'not_found',
+            'replayed', false,
+            'rejection_reason', 'OPERATION_NOT_FOUND'
+        );
+    END IF;
+
+    -- Verify question is in active regenerating status
+    IF v_question_status IS NOT NULL AND v_question_status != 'regenerating' THEN
+        RETURN jsonb_build_object(
+            'operation_id', p_operation_id,
+            'attempt_id', p_attempt_id,
+            'dispatch_permitted', false,
+            'calls_used', 0,
+            'remaining_calls', 0,
+            'session_id', v_session_id,
+            'session_status', 'invalid_state',
+            'replayed', false,
+            'rejection_reason', 'OPERATION_INACTIVE'
+        );
+    END IF;
+
+    -- Check lease expiration (180-second stale timeout per TASK-302 contract)
+    IF v_question_updated_at IS NOT NULL AND v_question_updated_at < (NOW() - INTERVAL '180 seconds') THEN
+        RETURN jsonb_build_object(
+            'operation_id', p_operation_id,
+            'attempt_id', p_attempt_id,
+            'dispatch_permitted', false,
+            'calls_used', 0,
+            'remaining_calls', 0,
+            'session_id', v_session_id,
+            'session_status', 'expired',
+            'replayed', false,
+            'rejection_reason', 'OPERATION_EXPIRED'
+        );
     END IF;
 
     -- Lock session row atomically to prevent concurrent quota races across workers
@@ -59,8 +107,47 @@ BEGIN
     FOR UPDATE;
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'TASK301: session % not found', v_session_id
-            USING ERRCODE = 'P0002';
+        RETURN jsonb_build_object(
+            'operation_id', p_operation_id,
+            'attempt_id', p_attempt_id,
+            'dispatch_permitted', false,
+            'calls_used', 0,
+            'remaining_calls', 0,
+            'session_id', v_session_id,
+            'session_status', 'not_found',
+            'replayed', false,
+            'rejection_reason', 'SESSION_NOT_FOUND'
+        );
+    END IF;
+
+    -- Enforce session lock guard: reject approved or exported sessions
+    IF v_session_status IN ('approved', 'exported') THEN
+        RETURN jsonb_build_object(
+            'operation_id', p_operation_id,
+            'attempt_id', p_attempt_id,
+            'dispatch_permitted', false,
+            'calls_used', LEAST(30, GREATEST(0, v_current_calls)),
+            'remaining_calls', GREATEST(0, 30 - v_current_calls),
+            'session_id', v_session_id,
+            'session_status', v_session_status,
+            'replayed', false,
+            'rejection_reason', 'SESSION_LOCKED'
+        );
+    END IF;
+
+    -- Enforce session busy guard: reject if session is actively generating
+    IF v_session_status = 'generating' THEN
+        RETURN jsonb_build_object(
+            'operation_id', p_operation_id,
+            'attempt_id', p_attempt_id,
+            'dispatch_permitted', false,
+            'calls_used', LEAST(30, GREATEST(0, v_current_calls)),
+            'remaining_calls', GREATEST(0, 30 - v_current_calls),
+            'session_id', v_session_id,
+            'session_status', v_session_status,
+            'replayed', false,
+            'rejection_reason', 'SESSION_BUSY'
+        );
     END IF;
 
     -- Check replay on review_attempts ledger
@@ -77,7 +164,8 @@ BEGIN
             'remaining_calls', GREATEST(0, 30 - v_current_calls),
             'session_id', v_session_id,
             'session_status', v_session_status,
-            'replayed', true
+            'replayed', true,
+            'rejection_reason', 'ATTEMPT_REPLAYED'
         );
     END IF;
 
@@ -98,7 +186,8 @@ BEGIN
             'remaining_calls', GREATEST(0, 30 - v_current_calls),
             'session_id', v_session_id,
             'session_status', v_session_status,
-            'replayed', false
+            'replayed', false,
+            'rejection_reason', 'OPERATION_EXHAUSTED'
         );
     END IF;
 
@@ -115,7 +204,8 @@ BEGIN
             'remaining_calls', 0,
             'session_id', v_session_id,
             'session_status', v_session_status,
-            'replayed', false
+            'replayed', false,
+            'rejection_reason', 'QUOTA_EXHAUSTED'
         );
     END IF;
 

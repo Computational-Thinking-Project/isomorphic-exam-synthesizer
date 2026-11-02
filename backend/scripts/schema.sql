@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS public.version_questions (
   is_current BOOLEAN NOT NULL DEFAULT TRUE,
   regenerated_from_id UUID REFERENCES public.version_questions(id) ON DELETE SET NULL,
   is_reverted BOOLEAN NOT NULL DEFAULT FALSE,
+  regeneration_id UUID NULL,
   validation_report JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -157,22 +158,38 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_single_current_version_question
   ON public.version_questions (version_id, source_question_id) 
   WHERE is_current = TRUE;
 
+CREATE UNIQUE INDEX IF NOT EXISTS uq_version_questions_regeneration
+  ON public.version_questions (regeneration_id) WHERE regeneration_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_version_questions_stale_guard
+  ON public.version_questions (updated_at) WHERE status = 'regenerating';
+
 -- Table 8: Answer Keys (Matrix of correct options after shuffling)
 CREATE TABLE IF NOT EXISTS public.answer_keys (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   version_id UUID NOT NULL REFERENCES public.exam_versions(id) ON DELETE CASCADE,
   question_no INT NOT NULL,
   correct_option TEXT NOT NULL,
+  display_no INT NOT NULL,
+  display_correct_key TEXT NOT NULL,
+  canonical_question_no INT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_answer_keys_version_display
+  ON public.answer_keys (version_id, display_no);
 
 -- Table 9: Review Logs (Audit trail of teacher review decisions)
 CREATE TABLE IF NOT EXISTS public.review_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   version_question_id UUID NOT NULL REFERENCES public.version_questions(id) ON DELETE CASCADE,
+  session_id UUID NOT NULL REFERENCES public.exam_sessions(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES public.users(id),
   action_type public.review_action_type NOT NULL,
   reason TEXT,
   latency_ms INT,
+  api_calls_used INT,
+  regenerated_from_id UUID REFERENCES public.version_questions(id),
+  CONSTRAINT ck_review_logs_actor_required CHECK (user_id IS NOT NULL),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -639,29 +656,78 @@ SET search_path = pg_catalog, public
 AS $$
 DECLARE
     v_session_id UUID;
+    v_question_id UUID;
+    v_question_status TEXT;
+    v_question_updated_at TIMESTAMPTZ;
     v_session_status TEXT;
     v_current_calls INT;
     v_attempt_status TEXT;
     v_op_attempts INT;
 BEGIN
-    SELECT session_id INTO v_session_id
-    FROM public.review_attempts
-    WHERE operation_id = p_operation_id
+    -- Strict Operation Identity & Session Binding (TASK-302 contract)
+    -- Look up active candidate strictly by operation_id
+    SELECT v.session_id, q.id, q.status, q.updated_at
+    INTO v_session_id, v_question_id, v_question_status, v_question_updated_at
+    FROM public.version_questions q
+    JOIN public.exam_versions v ON v.id = q.version_id
+    WHERE q.regeneration_id = p_operation_id
+      AND q.is_current = TRUE
     LIMIT 1;
 
+    -- If not found on version_questions, check review_attempts ledger for prior acquired attempts
     IF v_session_id IS NULL THEN
-        SELECT v.session_id INTO v_session_id
-        FROM public.version_questions q
-        JOIN public.exam_versions v ON v.id = q.version_id
-        WHERE q.regeneration_id = p_operation_id OR (q.status = 'regenerating' AND q.is_current)
+        SELECT session_id INTO v_session_id
+        FROM public.review_attempts
+        WHERE operation_id = p_operation_id
         LIMIT 1;
     END IF;
 
+    -- Reject if operation does not exist or cannot be bound (Fail-closed)
     IF v_session_id IS NULL THEN
-        RAISE EXCEPTION 'TASK301: cannot resolve session_id for operation %', p_operation_id
-            USING ERRCODE = 'P0002';
+        RETURN jsonb_build_object(
+            'operation_id', p_operation_id,
+            'attempt_id', p_attempt_id,
+            'dispatch_permitted', false,
+            'calls_used', 0,
+            'remaining_calls', 0,
+            'session_id', NULL,
+            'session_status', 'not_found',
+            'replayed', false,
+            'rejection_reason', 'OPERATION_NOT_FOUND'
+        );
     END IF;
 
+    -- Verify question is in active regenerating status
+    IF v_question_status IS NOT NULL AND v_question_status != 'regenerating' THEN
+        RETURN jsonb_build_object(
+            'operation_id', p_operation_id,
+            'attempt_id', p_attempt_id,
+            'dispatch_permitted', false,
+            'calls_used', 0,
+            'remaining_calls', 0,
+            'session_id', v_session_id,
+            'session_status', 'invalid_state',
+            'replayed', false,
+            'rejection_reason', 'OPERATION_INACTIVE'
+        );
+    END IF;
+
+    -- Check lease expiration (180-second stale timeout per TASK-302 contract)
+    IF v_question_updated_at IS NOT NULL AND v_question_updated_at < (NOW() - INTERVAL '180 seconds') THEN
+        RETURN jsonb_build_object(
+            'operation_id', p_operation_id,
+            'attempt_id', p_attempt_id,
+            'dispatch_permitted', false,
+            'calls_used', 0,
+            'remaining_calls', 0,
+            'session_id', v_session_id,
+            'session_status', 'expired',
+            'replayed', false,
+            'rejection_reason', 'OPERATION_EXPIRED'
+        );
+    END IF;
+
+    -- Lock session row atomically to prevent concurrent quota races across workers
     SELECT status, gemini_review_calls
     INTO v_session_status, v_current_calls
     FROM public.exam_sessions
@@ -669,10 +735,50 @@ BEGIN
     FOR UPDATE;
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'TASK301: session % not found', v_session_id
-            USING ERRCODE = 'P0002';
+        RETURN jsonb_build_object(
+            'operation_id', p_operation_id,
+            'attempt_id', p_attempt_id,
+            'dispatch_permitted', false,
+            'calls_used', 0,
+            'remaining_calls', 0,
+            'session_id', v_session_id,
+            'session_status', 'not_found',
+            'replayed', false,
+            'rejection_reason', 'SESSION_NOT_FOUND'
+        );
     END IF;
 
+    -- Enforce session lock guard: reject approved or exported sessions
+    IF v_session_status IN ('approved', 'exported') THEN
+        RETURN jsonb_build_object(
+            'operation_id', p_operation_id,
+            'attempt_id', p_attempt_id,
+            'dispatch_permitted', false,
+            'calls_used', LEAST(30, GREATEST(0, v_current_calls)),
+            'remaining_calls', GREATEST(0, 30 - v_current_calls),
+            'session_id', v_session_id,
+            'session_status', v_session_status,
+            'replayed', false,
+            'rejection_reason', 'SESSION_LOCKED'
+        );
+    END IF;
+
+    -- Enforce session busy guard: reject if session is actively generating
+    IF v_session_status = 'generating' THEN
+        RETURN jsonb_build_object(
+            'operation_id', p_operation_id,
+            'attempt_id', p_attempt_id,
+            'dispatch_permitted', false,
+            'calls_used', LEAST(30, GREATEST(0, v_current_calls)),
+            'remaining_calls', GREATEST(0, 30 - v_current_calls),
+            'session_id', v_session_id,
+            'session_status', v_session_status,
+            'replayed', false,
+            'rejection_reason', 'SESSION_BUSY'
+        );
+    END IF;
+
+    -- Check replay on review_attempts ledger
     SELECT status INTO v_attempt_status
     FROM public.review_attempts
     WHERE attempt_id = p_attempt_id;
@@ -686,10 +792,12 @@ BEGIN
             'remaining_calls', GREATEST(0, 30 - v_current_calls),
             'session_id', v_session_id,
             'session_status', v_session_status,
-            'replayed', true
+            'replayed', true,
+            'rejection_reason', 'ATTEMPT_REPLAYED'
         );
     END IF;
 
+    -- Check operation attempt ceiling (max 4 attempts per reject operation)
     SELECT COUNT(*) INTO v_op_attempts
     FROM public.review_attempts
     WHERE operation_id = p_operation_id;
@@ -706,10 +814,12 @@ BEGIN
             'remaining_calls', GREATEST(0, 30 - v_current_calls),
             'session_id', v_session_id,
             'session_status', v_session_status,
-            'replayed', false
+            'replayed', false,
+            'rejection_reason', 'OPERATION_EXHAUSTED'
         );
     END IF;
 
+    -- Check session quota ceiling (max 30 attempts per session)
     IF v_current_calls >= 30 THEN
         INSERT INTO public.review_attempts (attempt_id, operation_id, session_id, status, created_at)
         VALUES (p_attempt_id, p_operation_id, v_session_id, 'denied', NOW());
@@ -722,10 +832,12 @@ BEGIN
             'remaining_calls', 0,
             'session_id', v_session_id,
             'session_status', v_session_status,
-            'replayed', false
+            'replayed', false,
+            'rejection_reason', 'QUOTA_EXHAUSTED'
         );
     END IF;
 
+    -- Increment session quota atomically and insert granted ledger entry
     UPDATE public.exam_sessions
     SET gemini_review_calls = v_current_calls + 1,
         updated_at = NOW()
@@ -747,6 +859,7 @@ BEGIN
 END;
 $$;
 
+-- Revoke public permissions, grant to service_role and authenticated
 REVOKE EXECUTE ON FUNCTION public.review_acquire_attempt(UUID, UUID) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.review_acquire_attempt(UUID, UUID) FROM anon;
 GRANT EXECUTE ON FUNCTION public.review_acquire_attempt(UUID, UUID) TO authenticated;

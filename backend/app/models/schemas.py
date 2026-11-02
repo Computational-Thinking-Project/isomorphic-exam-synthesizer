@@ -1,5 +1,6 @@
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
+from uuid import UUID
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -436,6 +437,29 @@ class ReviewDomainException(HTTPException):
         self.error_code = error_code
 
 
+class ReviewAcquireUnavailableError(ConnectionError):
+    """Raised when atomic permit acquisition via review_acquire_attempt RPC fails or is unavailable.
+
+    Enforces fail-closed semantics in production: no permit is granted and no AI call is dispatched.
+    Inherits from ConnectionError so transport error catchers also recognize unavailable state.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        operation_id: Optional[UUID] = None,
+        attempt_id: Optional[UUID] = None,
+        error_code: str = "ERR_AI_GATEWAY_PERMIT_FAILURE",
+        status_code: int = 503,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.operation_id = operation_id
+        self.attempt_id = attempt_id
+        self.error_code = error_code
+        self.status_code = status_code
+
+
 # Re-export validator schemas for convenient consumption across services and routes
 from app.services.validator.base import CheckResult, ValidationReport  # noqa: E402
 
@@ -467,6 +491,7 @@ __all__ = [
     "ReviewProgressResponse",
     "ErrorDetailResponse",
     "ReviewDomainException",
+    "ReviewAcquireUnavailableError",
     "CheckResult",
     "ValidationReport",
 ]

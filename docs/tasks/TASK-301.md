@@ -5,7 +5,7 @@
 - **Reviewer:** Hùng (`benalexx007` — đã chốt)
 - **Repo/nhánh:** `feat/duy-task-301-review-lifecycle-api`; PR: [#28](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28)
 - **Hạn đợt:** tối thứ 3 03/11/2026; **ETA task:** Thứ 7 31/10/2026 (Duy xác nhận)
-- **Phiên bản:** v7.2 (Tiếp thu toàn diện phản biện F07: Chuyển sang Kiến trúc A - Pure Per-Acquire Atomic Accounting & Durable DB Ledger; Khắc phục Quota Boundary Conflict, Non-Durable RAM State, Rollback Uncertain Grant)
+- **Phiên bản:** v7.3 (Tiếp thu toàn diện phản biện F07 của Đạt @Thanhdat3010: Khắc phục triệt để Production Fail-Closed, Lỗ hổng SP Migration 008, và Đồng bộ Durable Operation Identity với TASK-302 PR #36)
 
 ---
 
@@ -163,7 +163,7 @@ pytest backend/tests/services/test_review_lifecycle.py -v
 - **Invalidation Toàn Diện (Session-wide Reshuffle Invalidation):**
   - Khi reject/revert trên phiên đã shuffle: xóa sạch `answer_keys` cũ, reset `is_finalized = false`, xóa trắng `shuffle_seed` và `permutations`, hạ session status về `generated`.
 - **Kết Quả Kiểm Thử Thực Tế:**
-  - `pytest backend/tests/services/test_review_lifecycle.py backend/tests/api/test_review_api.py -v`: **46/46 tests passed (100% bao gồm 11 regression test cases của F07)**.
+  - `pytest backend/tests/services/test_review_lifecycle.py backend/tests/api/test_review_api.py -v`: **58/58 tests passed (100% bao gồm đầy đủ các test cases tái hiện lỗi của Đạt và verification contract)**.
   - `ruff check`: All checks passed.
   - `ruff format --check`: All files already formatted.
 - **Trạng thái PR:** PR #28 đã sẵn sàng 100% để chuyển sang **Ready for Review** và bàn giao cho Hùng (@benalexx007) duyệt (Approve).
