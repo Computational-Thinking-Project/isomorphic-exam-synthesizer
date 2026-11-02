@@ -275,3 +275,31 @@ class ConfirmSourceResponse(BaseModel):
     total_blueprints: int = Field(..., description="Tổng blueprints tương ứng")
     message: str = "Source confirmed and blueprints locked successfully"
 
+
+# Re-export validator schemas for convenient consumption across services and routes
+from app.services.validator.base import CheckResult, ValidationReport  # noqa: E402
+
+__all__ = [
+    "SourceQuestion",
+    "GeneratedVariant",
+    "GenerateRequest",
+    "RegenerateQuestionRequest",
+    "ExamDraftPackage",
+    "CurrentUser",
+    "UserProfile",
+    "SessionCreate",
+    "SessionUpdate",
+    "SessionCloneRequest",
+    "SessionItem",
+    "SessionListResponse",
+    "SessionDetailResponse",
+    "IngestTextRequest",
+    "ParserErrorItem",
+    "IngestValidationErrorResponse",
+    "ParsedQuestionItem",
+    "IngestSuccessResponse",
+    "ConfirmSourceRequest",
+    "ConfirmSourceResponse",
+    "CheckResult",
+    "ValidationReport",
+]
