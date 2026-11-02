@@ -2787,6 +2787,7 @@ async def test_f07_rollback_clears_regeneration_id():
 
 
 
+@pytest.mark.asyncio
 async def test_f01_late_invalidation_cannot_corrupt_approved_session():
     """F01 Adversarial (Finding F01 v3.0 by @Thanhdat3010):
     Prove that a late invalidation call from an asynchronous/lagged worker
