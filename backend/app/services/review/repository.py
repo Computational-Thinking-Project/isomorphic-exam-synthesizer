@@ -530,15 +530,15 @@ class ReviewRepository:
                 )
                 if isinstance(rpc_data, dict):
                     reason = rpc_data.get("rejection_reason") or rpc_data.get("error_code")
-                    if str(rpc_data.get("status", "")).lower() == "denied":
-                        if reason in ("SESSION_LOCKED", "REVIEW_LOCKED", "ERR_SESSION_LOCKED") or not reason:
-                            raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked")
-                    if reason in ("SESSION_LOCKED", "REVIEW_LOCKED", "ERR_SESSION_LOCKED"):
-                        raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked") or rpc_data.get("error_code")
-                    if str(rpc_data.get("status", "")).lower() == "denied" and not reason:
+                    status_flag = str(rpc_data.get("status", "")).lower()
+                    if status_flag == "denied" and not reason:
                         reason = "SESSION_LOCKED"
                     if reason in ("SESSION_LOCKED", "REVIEW_LOCKED", "ERR_SESSION_LOCKED"):
-                        raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked") or rpc_data.get("error_code")
+                        raise ReviewDomainException(
+                            423,
+                            "ERR_SESSION_LOCKED",
+                            "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn",
+                        )
                     status_flag = str(rpc_data.get("status", "")).lower()
                     if status_flag == "denied" or reason:
                         if reason in ("SESSION_BUSY", "ERR_SESSION_BUSY_REGENERATING"):
