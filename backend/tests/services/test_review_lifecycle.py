@@ -820,19 +820,81 @@ class MockRpcQueryBuilder:
                 })
                 return MockExecutionResult([{"success": True, "replayed": False, "question_id": new_id, "question_status": "approved", "status": "approved"}])
 
+            if self.fn_name == "review_get_progress":
+                sid = str(self.params.get("p_session_id", ""))
+                vqs = [
+                    vq for vq in self.db_state.get("version_questions", [])
+                    if vq.get("is_current", True)
+                ]
+                approved_c = sum(1 for vq in vqs if vq.get("status") == "approved")
+                regen_c = sum(1 for vq in vqs if vq.get("status") == "regenerating")
+                total_c = len(vqs)
+                expected_c = total_c if total_c > 0 else 1
+                ready_val = bool(expected_c > 0 and approved_c == expected_c and regen_c == 0)
+                return MockExecutionResult([{
+                    "session_id": sid,
+                    "session_status": "generated",
+                    "replayed": False,
+                    "progress": {
+                        "expected_slots": expected_c,
+                        "current_slots": total_c,
+                        "approved_slots": approved_c,
+                        "regenerating_slots": regen_c,
+                        "missing_slots": max(0, expected_c - total_c),
+                        "duplicate_slots": max(0, total_c - expected_c),
+                        "ready": ready_val,
+                    }
+                }])
+
             if self.fn_name == "review_recover_regeneration":
                 opid = str(self.params.get("p_operation_id", ""))
+                # Also settle operation in review_operations if present
+                for op in self.db_state.get("review_operations", []):
+                    if str(op.get("operation_id")) == opid:
+                        op["status"] = "recovered"
+
                 old_vq = next(
                     (vq for vq in self.db_state.get("version_questions", [])
-                     if str(vq.get("regeneration_id")) == opid and vq.get("status") == "regenerating"),
+                     if (str(vq.get("regeneration_id")) == opid or str(vq.get("id")) == opid) and vq.get("status") == "regenerating"),
                     None
                 )
                 if old_vq:
                     old_vq["status"] = "pending_review"
                     old_vq["regeneration_id"] = None
                     old_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
-                    return MockExecutionResult([{"recovered": True, "operation_status": "recovered", "question_id": old_vq.get("id")}])
-                return MockExecutionResult([{"recovered": False, "operation_status": "none"}])
+                    # Migration 006 inserts audit into review_logs on recovery
+                    audit_user_id = "00000000-0000-0000-0000-000000000001"
+                    for s in self.db_state.get("exam_sessions", []):
+                        if s.get("user_id"):
+                            audit_user_id = str(s["user_id"])
+                            break
+                    for op in self.db_state.get("review_operations", []):
+                        if str(op.get("operation_id")) == opid and op.get("actor_id"):
+                            audit_user_id = str(op["actor_id"])
+                            break
+
+                    log_entry = {
+                        "session_id": old_vq.get("exam_versions", {}).get("session_id") or (self.db_state.get("exam_sessions", [{}])[0].get("id", "")),
+                        "version_question_id": old_vq.get("id"),
+                        "user_id": audit_user_id,
+                        "action_type": "REJECT_FAILED",
+                        "reason": "STALE_TIMEOUT",
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                    self.db_state.setdefault("review_logs", []).append(log_entry)
+                    self.call_log.append({
+                        "op": "insert",
+                        "table": "review_logs",
+                        "payload": dict(log_entry),
+                    })
+                    return MockExecutionResult([{"recovered": True, "replayed": False, "operation_status": "recovered", "question_id": old_vq.get("id")}])
+
+                # Check if operation was already settled (idempotent replay)
+                for op in self.db_state.get("review_operations", []):
+                    if str(op.get("operation_id")) == opid and op.get("status") == "recovered":
+                        return MockExecutionResult([{"recovered": True, "replayed": True, "operation_status": "recovered"}])
+
+                return MockExecutionResult([{"recovered": False, "replayed": False, "operation_status": "none"}])
             if self.fn_name == "review_recover_stale":
                 sid = str(self.params.get("p_session_id", ""))
                 uid = str(self.params.get("p_caller_user_id", ""))

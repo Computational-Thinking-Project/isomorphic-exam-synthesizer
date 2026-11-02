@@ -112,9 +112,10 @@ async def get_review_progress_endpoint(
     session_id: str,
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
+    service_db: Client = Depends(get_service_db),
 ) -> ReviewProgressResponse:
     """Query current review progress metrics for the session."""
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
 
-    service = ReviewService(db)
+    service = ReviewService(db=db, service_db=service_db)
     return await service.get_progress(session_id, current_user.id)
