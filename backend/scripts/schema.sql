@@ -649,7 +649,6 @@ AS $$
 DECLARE
   v_session RECORD;
   v_caller_id UUID;
-  v_jwt_sub TEXT := NULLIF(current_setting('request.jwt.claim.sub', true), '');
   v_role TEXT := COALESCE(
     NULLIF(current_setting('request.jwt.claim.role', true), ''),
     CASE 
@@ -659,6 +658,7 @@ DECLARE
       ELSE ''
     END
   );
+  v_expected_versions INT;
   v_total_versions INT := 0;
   v_finalized_versions INT := 0;
   v_regenerating_count INT := 0;
@@ -666,11 +666,36 @@ DECLARE
   v_approved_current_q INT := 0;
   v_now TIMESTAMPTZ := clock_timestamp();
 BEGIN
-  -- 1. Resolve authenticated caller ID
-  IF v_jwt_sub IS NOT NULL AND v_jwt_sub ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
-    v_caller_id := v_jwt_sub::UUID;
+  -- 1. Resolve authenticated caller ID (F16 Actor Spoofing Fix)
+  -- For service_role: trust p_user_id or fallback to auth.uid() / JWT claims
+  -- For authenticated / client role: strictly resolve from auth.uid() or JWT sub, NEVER trust p_user_id
+  IF v_role = 'service_role' THEN
+    v_caller_id := COALESCE(
+      p_user_id,
+      auth.uid(),
+      CASE 
+        WHEN NULLIF(current_setting('request.jwt.claim.sub', true), '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        THEN NULLIF(current_setting('request.jwt.claim.sub', true), '')::UUID
+        WHEN NULLIF(current_setting('request.jwt.claims', true), '') IS NOT NULL 
+             AND (current_setting('request.jwt.claims', true)::jsonb ? 'sub')
+             AND (current_setting('request.jwt.claims', true)::jsonb->>'sub') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        THEN (current_setting('request.jwt.claims', true)::jsonb->>'sub')::UUID
+        ELSE NULL
+      END
+    );
   ELSE
-    v_caller_id := p_user_id;
+    v_caller_id := COALESCE(
+      auth.uid(),
+      CASE 
+        WHEN NULLIF(current_setting('request.jwt.claim.sub', true), '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        THEN NULLIF(current_setting('request.jwt.claim.sub', true), '')::UUID
+        WHEN NULLIF(current_setting('request.jwt.claims', true), '') IS NOT NULL 
+             AND (current_setting('request.jwt.claims', true)::jsonb ? 'sub')
+             AND (current_setting('request.jwt.claims', true)::jsonb->>'sub') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        THEN (current_setting('request.jwt.claims', true)::jsonb->>'sub')::UUID
+        ELSE NULL
+      END
+    );
   END IF;
 
   -- 2. Lock root tuple on exam_sessions exclusively
@@ -684,7 +709,7 @@ BEGIN
     RAISE EXCEPTION 'ERR_SESSION_NOT_FOUND' USING ERRCODE = 'P0002';
   END IF;
 
-  -- 3. Verify user ownership authorization (unless service_role) (F14)
+  -- 3. Verify user ownership authorization (unless service_role) (F14 & F16)
   IF v_role != 'service_role' AND (v_caller_id IS NULL OR v_session.user_id IS DISTINCT FROM v_caller_id) THEN
     RAISE EXCEPTION 'ERR_UNAUTHORIZED' USING ERRCODE = '42501';
   END IF;
@@ -711,12 +736,23 @@ BEGIN
     RAISE EXCEPTION 'ERR_INVALID_SESSION_STATE' USING ERRCODE = 'P0001';
   END IF;
 
-  -- 7. Exam Versions Invariant Guard (TASK-303):
-  -- Total versions must be > 0 and 100% of versions must have is_finalized = TRUE
+  -- 7. Exam Versions Invariant Guard (TASK-303 & F19):
+  -- 7a. Query configured expected n_versions from generation_configs
+  SELECT n_versions
+  INTO v_expected_versions
+  FROM public.generation_configs
+  WHERE session_id = p_session_id
+  LIMIT 1;
+
+  -- 7b. Total versions must match configured n_versions and 100% of versions must have is_finalized = TRUE
   SELECT count(*), count(*) FILTER (WHERE is_finalized IS TRUE)
   INTO v_total_versions, v_finalized_versions
   FROM public.exam_versions
   WHERE session_id = p_session_id;
+
+  IF v_expected_versions IS NOT NULL AND v_total_versions != v_expected_versions THEN
+    RAISE EXCEPTION 'ERR_VERSIONS_NOT_FINALIZED' USING ERRCODE = 'P0001';
+  END IF;
 
   IF v_total_versions = 0 OR v_finalized_versions < v_total_versions THEN
     RAISE EXCEPTION 'ERR_VERSIONS_NOT_FINALIZED' USING ERRCODE = 'P0001';
@@ -804,4 +840,3 @@ $$;
 -- Grant permissions for authenticated users and backend service role
 REVOKE EXECUTE ON FUNCTION public.finalize_approve_session(UUID, UUID, TIMESTAMPTZ) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.finalize_approve_session(UUID, UUID, TIMESTAMPTZ) TO authenticated, service_role;
-

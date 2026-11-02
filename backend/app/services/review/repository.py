@@ -377,20 +377,36 @@ class ReviewRepository:
             elif isinstance(rpc_data, list) and len(rpc_data) > 0 and isinstance(rpc_data[0], dict):
                 payload = rpc_data[0]
 
-            # 1. Whitelist validation: Accept status == "ok" OR standard TASK-302 contract payload (F07)
-            if payload is not None:
-                st = str(payload.get("status", "")).lower()
-                if st == "ok" or (payload.get("operation_id") and payload.get("expires_at")):
-                    return ReserveResult.OK
-
-            # 2. Parse explicit denial responses
+            # 1. Parse explicit denial or error responses FIRST (Strict Fail-Closed Policy - F04)
             if payload is not None:
                 st = str(payload.get("status", "")).lower()
                 err = str(payload.get("error_code", "")).lower()
-                if st == "denied" or "quota" in st or "quota" in err:
-                    return ReserveResult.QUOTA_EXHAUSTED
-                if "busy" in st or "busy" in err:
-                    return ReserveResult.QUESTION_BUSY
+
+                if st == "denied" or err:
+                    if "locked" in err or "locked" in st:
+                        raise ReviewDomainException(
+                            423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
+                        )
+                    if "quota" in st or "quota" in err:
+                        return ReserveResult.QUOTA_EXHAUSTED
+                    if "busy" in st or "busy" in err:
+                        return ReserveResult.QUESTION_BUSY
+                    if "not_found" in err or "not_found" in st:
+                        return ReserveResult.QUESTION_NOT_FOUND
+                    if "not_current" in err or "not_current" in st:
+                        return ReserveResult.QUESTION_NOT_CURRENT
+                    # Any other explicit denial
+                    raise ReviewDomainException(
+                        400, "ERR_RESERVATION_DENIED", f"Yêu cầu giữ chỗ sinh lại bị từ chối: {payload}"
+                    )
+
+                # 2. Strict Success Acceptance: Only when status == 'ok' AND no denial fields
+                if st == "ok":
+                    return ReserveResult.OK
+
+                # Allow pure TASK-302 contract payload (only when status is absent/empty and NOT denied, with no error_code)
+                if not st and payload.get("operation_id") and payload.get("expires_at"):
+                    return ReserveResult.OK
 
             # 3. Strict Fail-Closed: Empty, malformed, or unverified response MUST raise
             logger.critical("RPC review_reserve_regeneration returned invalid, denied or empty response: %s", rpc_data)
@@ -737,14 +753,39 @@ class ReviewRepository:
             elif isinstance(rpc_data, list) and len(rpc_data) > 0 and isinstance(rpc_data[0], dict):
                 payload = rpc_data[0]
 
-            if payload is not None and (
-                payload.get("status") == "ok"
-                or "id" in payload
-                or payload.get("is_reverted")
-                or "question_id" in payload
-                or "previous_question_id" in payload
-            ):
-                return payload
+            if payload is not None:
+                st = str(payload.get("status", "")).lower()
+                err = str(payload.get("error_code", "")).upper()
+
+                # 1. Parse denial/error payload FIRST (Strict Fail-Closed Policy - F17)
+                if st == "denied" or err:
+                    if "REVIEW_LOCKED" in err or "ERR_SESSION_LOCKED" in err or "LOCKED" in err:
+                        raise ReviewDomainException(
+                            423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
+                        )
+                    if "REVIEW_BUSY" in err or "ERR_QUESTION_BUSY" in err or "ERR_SESSION_BUSY" in err or "BUSY" in err:
+                        raise ReviewDomainException(
+                            409, "ERR_QUESTION_BUSY", "Câu hỏi đang trong tiến trình sinh lại bởi AI"
+                        )
+                    if "REVIEW_NOT_FOUND" in err or "ERR_QUESTION_NOT_FOUND" in err or "NOT_FOUND" in err:
+                        raise ReviewDomainException(
+                            404, "ERR_QUESTION_NOT_FOUND", "Không tìm thấy câu hỏi"
+                        )
+                    if "REVIEW_QUOTA_EXHAUSTED" in err:
+                        raise ReviewDomainException(
+                            429, "ERR_REVIEW_QUOTA_EXHAUSTED", "Hạn mức sinh lại câu hỏi đã hết"
+                        )
+                    raise ReviewDomainException(
+                        400, "ERR_REVERT_DENIED", f"Thao tác hoàn nguyên bị từ chối: {payload}"
+                    )
+
+                # 2. Strict Success Acceptance: Only when status == 'ok' or explicitly marked is_reverted
+                if st == "ok" or payload.get("is_reverted") is True:
+                    return payload
+
+                # Allow pure TASK-302 contract success payload (must have previous_question_id and question_id, NO error/denial)
+                if not st and not err and "previous_question_id" in payload and "question_id" in payload:
+                    return payload
 
             logger.critical("RPC review_revert_question returned empty or malformed payload: %s", rpc_data)
             raise ReviewDomainException(
@@ -868,6 +909,14 @@ class ReviewRepository:
                     )
                     return False
 
+                # Guard (F01 Root Cause): Strict status check before destructive mutations
+                if not recheck_rows or str(recheck_rows[0].get("status", "")).lower() not in ("reviewed", "generated"):
+                    logger.warning(
+                        "CRITICAL: Blocked invalidation on non-modifiable session %s",
+                        session_id,
+                    )
+                    return False
+
                 # Purge stale answer_keys records for all affected versions
                 ak_builder.delete().in_("version_id", version_ids).execute()
 
@@ -879,7 +928,7 @@ class ReviewRepository:
                         "permutations": None,
                         "updated_at": _now_iso(),
                     }
-                ).eq("session_id", session_id).execute()
+                ).eq("session_id", session_id).eq("is_finalized", True).execute()
 
                 # 5. Demote session status from 'reviewed' to 'generated' with atomic status guard (F01b)
                 if session_status == "reviewed":

@@ -21,6 +21,7 @@ Tests:
 
 from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -36,7 +37,7 @@ from app.models.schemas import (
     ReserveResult,
     ReviewDomainException,
 )
-from app.services.finalize.repository import FinalizeRepository
+from app.services.finalize.repository import FinalizeRepository, _now_iso
 from app.services.finalize.service import FinalizeService
 from app.services.review.repository import ReviewRepository
 from app.services.review.service import ReviewService
@@ -1260,6 +1261,162 @@ async def test_f11_matrix_normalizes_lowercase_and_whitespace_keys():
     _, rows = await repo.fetch_matrix_raw(session_id)
     assert len(rows) == 1
     assert rows[0]["answer"] == "A", f"Expected normalized 'A', got {rows[0]['answer']!r}"
+
+
+# ==============================================================================
+# Adversarial Root Cause Verification Tests (TASK-305 / Findings F16, F18, F19)
+# ==============================================================================
+
+
+def test_f18_adversarial_router_prevalidates_uuid_before_assert_ownership(
+    client: TestClient, mock_current_user: CurrentUser, auth_headers: dict
+):
+    """Test F18 Adversarial: Dùng TestClient gọi endpoint approve và matrix
+    với session_id = 'not-a-valid-uuid'.
+    Xác nhận: Trả về HTTP 400 ERR_INVALID_SESSION_ID ngay tại Router Dependency,
+    không query DB, không gọi assert_ownership, và không văng lỗi 500 do 22P02.
+    """
+    app.dependency_overrides[get_current_user] = lambda: mock_current_user
+    app.dependency_overrides[get_user_db] = lambda: MagicMock()
+
+    try:
+        with patch("app.api.routes.finalize.assert_ownership") as mock_assert:
+            # 1. Test POST /{session_id}/finalize/approve
+            res_approve = client.post(
+                "/api/sessions/not-a-valid-uuid/finalize/approve",
+                headers=auth_headers,
+            )
+            assert res_approve.status_code == 400, f"Expected 400, got {res_approve.status_code}: {res_approve.text}"
+            data_approve = res_approve.json()
+            assert data_approve.get("error_code") == "ERR_INVALID_SESSION_ID"
+            assert "not-a-valid-uuid" in data_approve.get("detail", "")
+            mock_assert.assert_not_called()
+
+            # 2. Test GET /{session_id}/finalize/matrix
+            res_matrix = client.get(
+                "/api/sessions/not-a-valid-uuid/finalize/matrix",
+                headers=auth_headers,
+            )
+            assert res_matrix.status_code == 400, f"Expected 400, got {res_matrix.status_code}: {res_matrix.text}"
+            data_matrix = res_matrix.json()
+            assert data_matrix.get("error_code") == "ERR_INVALID_SESSION_ID"
+            assert "not-a-valid-uuid" in data_matrix.get("detail", "")
+            mock_assert.assert_not_called()
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_f19_adversarial_approve_blocked_when_configured_versions_incomplete():
+    """Test F19 Adversarial: Thiết lập session có generation_configs.n_versions = 2
+    nhưng chỉ tạo 1 bản ghi exam_versions đã finalized (thiếu 1 phiên bản so với cấu hình).
+    Xác nhận: Gọi approve bị chặn với HTTP 400 ERR_VERSIONS_NOT_FINALIZED.
+    """
+    session_id = str(uuid4())
+    user_id = str(uuid4())
+    db_state = {
+        "exam_sessions": [
+            {
+                "id": session_id,
+                "user_id": user_id,
+                "status": "reviewed",
+                "updated_at": _now_iso(),
+            }
+        ],
+        "generation_configs": [
+            {
+                "id": str(uuid4()),
+                "session_id": session_id,
+                "n_versions": 2,  # Configured for 2 versions
+            }
+        ],
+        "exam_versions": [
+            {
+                "id": "v-1",
+                "session_id": session_id,
+                "version_code": "101",
+                "is_finalized": True,  # Only 1 version exists and is finalized
+            }
+        ],
+        "source_questions": [
+            {"id": "s-1", "session_id": session_id},
+        ],
+        "version_questions": [
+            {
+                "id": "q-1",
+                "version_id": "v-1",
+                "source_question_id": "s-1",
+                "status": "approved",
+                "is_current": True,
+            }
+        ],
+    }
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.approve_session(session_id, user_id)
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.error_code == "ERR_VERSIONS_NOT_FINALIZED"
+    assert "không khớp với cấu hình yêu cầu" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_f16_adversarial_actor_spoofing_prevented_in_rpc():
+    """Test F16 Adversarial: Giả lập request từ role 'authenticated' với User B
+    truyền tham số p_user_id = user_A nhằm duyệt đề thi của User A.
+    Xác nhận: Stored Procedure RPC bỏ qua p_user_id từ client, phát hiện caller ID
+    không khớp với owner của phiên đề, và ném lỗi 42501 ERR_UNAUTHORIZED.
+    Session A không bị duyệt.
+    """
+    session_id = str(uuid4())
+    user_a = str(uuid4())
+    user_b = str(uuid4())
+
+    db_state = {
+        "exam_sessions": [
+            {
+                "id": session_id,
+                "user_id": user_a,  # Owned by User A
+                "status": "reviewed",
+                "updated_at": _now_iso(),
+            }
+        ],
+        "generation_configs": [
+            {"session_id": session_id, "n_versions": 1}
+        ],
+        "exam_versions": [
+            {"id": "v-1", "session_id": session_id, "version_code": "101", "is_finalized": True}
+        ],
+        "source_questions": [
+            {"id": "s-1", "session_id": session_id}
+        ],
+        "version_questions": [
+            {"id": "q-1", "version_id": "v-1", "source_question_id": "s-1", "status": "approved", "is_current": True}
+        ],
+    }
+
+    # Authenticated client signed in as User B
+    client = MockSupabaseClient(db_state, auth_user_id=user_b, role="authenticated")
+    repo = FinalizeRepository(client)
+
+    # User B calls RPC but attempts to spoof caller by passing user_id=user_a
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await repo.finalize_approve_rpc(
+            session_id=session_id,
+            user_id=user_a,  # Spoofed user_id
+            expected_updated_at=None,
+        )
+
+    # Verify rejected with 403 / ERR_UNAUTHORIZED (42501)
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.error_code == "ERR_UNAUTHORIZED"
+
+    # Verify session A was NOT approved and remains in reviewed status
+    assert db_state["exam_sessions"][0]["status"] == "reviewed"
+    assert db_state["exam_sessions"][0].get("approved_at") is None
+
 
 
 

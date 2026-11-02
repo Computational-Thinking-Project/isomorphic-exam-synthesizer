@@ -336,9 +336,10 @@ class ReviewService:
 
         assert created_q is not None
 
-        # Phase 4: Invalidate shuffle if already finalized (Best-effort fallback until TX2 RPC integration)
-        # Protected by Fail-Safe Immutability Guard in repository (F01 v3.0)
-        await self.repo.invalidate_shuffle_if_finalized(session_id)
+        # Note (F01 Root Cause Elimination / TASK-302 PR #36):
+        # Shuffle invalidation (DELETE answer_keys, is_finalized=false, demoting session)
+        # is handled atomically inside TX2 CSDL RPC (review_complete_regeneration).
+        # Secondary mutation surface outside database transaction is completely eliminated.
 
         return RegeneratedQuestionResponse(
             question_id=str(created_q["id"]),

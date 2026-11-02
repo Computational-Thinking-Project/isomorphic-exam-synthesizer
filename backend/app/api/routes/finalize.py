@@ -6,6 +6,7 @@ Exposes:
 """
 
 import logging
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 from supabase import Client
@@ -15,12 +16,28 @@ from app.models.schemas import (
     AnswersMatrixResponse,
     CurrentUser,
     FinalizeApproveResponse,
+    ReviewDomainException,
 )
 from app.services.finalize.service import FinalizeService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def validate_session_uuid(session_id: str) -> str:
+    """Pre-validate session_id format to prevent PostgREST 22P02 unhandled HTTP 500 at assert_ownership (F18)."""
+    try:
+        val = UUID(session_id)
+        if str(val) != session_id.lower():
+            raise ValueError("UUID representation mismatch")
+    except (ValueError, AttributeError):
+        raise ReviewDomainException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            error_code="ERR_INVALID_SESSION_ID",
+            detail=f"Mã phiên làm việc '{session_id}' không đúng định dạng UUID",
+        )
+    return session_id
 
 
 @router.post(
@@ -35,7 +52,7 @@ router = APIRouter()
     ),
 )
 async def finalize_approve_endpoint(
-    session_id: str,
+    session_id: str = Depends(validate_session_uuid),
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
 ) -> FinalizeApproveResponse:
@@ -57,7 +74,7 @@ async def finalize_approve_endpoint(
     ),
 )
 async def finalize_matrix_endpoint(
-    session_id: str,
+    session_id: str = Depends(validate_session_uuid),
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
 ) -> AnswersMatrixResponse:

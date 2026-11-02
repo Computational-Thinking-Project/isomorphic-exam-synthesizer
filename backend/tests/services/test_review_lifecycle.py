@@ -220,11 +220,15 @@ class MockRpcQueryBuilder:
         params: Dict[str, Any],
         db_state: Dict[str, List[Dict[str, Any]]],
         call_log: List[Dict[str, Any]],
+        auth_user_id: Optional[str] = None,
+        role: str = "service_role",
     ) -> None:
         self.function_name = function_name
         self.params = params or {}
         self.db_state = db_state
         self.call_log = call_log
+        self.auth_user_id = auth_user_id
+        self.role = role
 
     def execute(self) -> MockExecutionResult:
         with _GLOBAL_MOCK_LOCK:
@@ -234,11 +238,20 @@ class MockRpcQueryBuilder:
 
             if self.function_name == "finalize_approve_session":
                 session_id = str(self.params.get("p_session_id", ""))
-                user_id = str(self.params.get("p_user_id", ""))
+                p_user_id = str(self.params.get("p_user_id", ""))
+
                 sessions = self.db_state.get("exam_sessions", [])
                 s_row = next((s for s in sessions if str(s.get("id")) == session_id), None)
                 if not s_row:
                     raise RuntimeError("ERR_SESSION_NOT_FOUND")
+
+                # F16 Actor Spoofing check: for authenticated users, p_user_id is ignored
+                if self.role == "service_role":
+                    caller_id = p_user_id or self.auth_user_id
+                else:
+                    caller_id = self.auth_user_id
+                    if not caller_id or str(s_row.get("user_id")) != caller_id:
+                        raise RuntimeError("42501: ERR_UNAUTHORIZED - caller is not owner of session")
 
                 status = str(s_row.get("status", "")).lower()
                 if status == "approved":
@@ -262,14 +275,22 @@ class MockRpcQueryBuilder:
                 # Check question and version status invariants inside lock
                 vqs = self.db_state.get("version_questions", [])
                 evs = self.db_state.get("exam_versions", [])
+                cfgs = self.db_state.get("generation_configs", [])
+                cfg_row = next((c for c in cfgs if str(c.get("session_id")) == session_id), None)
+                expected_n_versions = int(cfg_row["n_versions"]) if cfg_row and cfg_row.get("n_versions") is not None else None
+
+                session_versions = [v for v in evs if str(v.get("session_id")) == session_id]
+                if expected_n_versions is not None and len(session_versions) != expected_n_versions:
+                    raise RuntimeError("ERR_VERSIONS_NOT_FINALIZED")
+
                 session_v_ids = {
-                    str(v.get("id")) for v in evs if str(v.get("session_id")) == session_id
+                    str(v.get("id")) for v in session_versions
                 }
 
                 unfinalized = [
                     v
-                    for v in evs
-                    if str(v.get("session_id")) == session_id and not v.get("is_finalized")
+                    for v in session_versions
+                    if not v.get("is_finalized")
                 ]
                 if unfinalized:
                     raise RuntimeError("ERR_VERSIONS_NOT_FINALIZED")
@@ -296,7 +317,7 @@ class MockRpcQueryBuilder:
                 logs.append(
                     {
                         "session_id": session_id,
-                        "user_id": user_id,
+                        "user_id": caller_id or p_user_id,
                         "action_type": "APPROVE_ALL",
                         "reason": "Session finalized and locked",
                         "created_at": now_str,
@@ -487,9 +508,16 @@ class MockRpcQueryBuilder:
 class MockSupabaseClient:
     """Mock Supabase client providing stateful in-memory tables and query call logs."""
 
-    def __init__(self, initial_state: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> None:
+    def __init__(
+        self,
+        initial_state: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        auth_user_id: Optional[str] = None,
+        role: str = "service_role",
+    ) -> None:
         self.state: Dict[str, List[Dict[str, Any]]] = initial_state or {}
         self.call_log: List[Dict[str, Any]] = []
+        self.auth_user_id = auth_user_id
+        self.role = role
 
     def table(self, table_name: str) -> MockTableQueryBuilder:
         return MockTableQueryBuilder(table_name, self.state, self.call_log)
@@ -497,7 +525,14 @@ class MockSupabaseClient:
     def rpc(
         self, function_name: str, params: Optional[Dict[str, Any]] = None
     ) -> MockRpcQueryBuilder:
-        return MockRpcQueryBuilder(function_name, params or {}, self.state, self.call_log)
+        return MockRpcQueryBuilder(
+            function_name,
+            params or {},
+            self.state,
+            self.call_log,
+            auth_user_id=self.auth_user_id,
+            role=self.role,
+        )
 
 
 def _setup_standard_session_state(
@@ -2164,4 +2199,182 @@ async def test_f07_revert_and_reserve_compatible_with_task302_contract():
     assert revert_res is not None
     assert "question_id" in revert_res
     assert "previous_question_id" in revert_res
+
+
+# ==============================================================================
+# Adversarial Root Cause Verification Tests (TASK-305 / Findings F01, F04, F17)
+# ==============================================================================
+
+
+@pytest.mark.asyncio
+async def test_f01_adversarial_reject_cannot_destroy_concurrently_approved_session():
+    """Test F01 Adversarial: Tái hiện chính xác race condition của Reviewer:
+    Cho worker Reject chạy tới hoàn tất sinh câu hỏi; ngay trước khi hoàn tất,
+    một worker khác phê duyệt phiên đề (status -> 'approved').
+    Xác nhận: Do dòng gọi invalidate_shuffle_if_finalized ở tầng Python đã bị loại bỏ triệt để,
+    answer_keys của session đã approved không bị xóa, và exam_versions is_finalized không bị reset.
+    """
+    session_id = str(uuid4())
+    user_id = str(uuid4())
+    v1_id = str(uuid4())
+    s1_id = str(uuid4())
+    q1_id = str(uuid4())
+
+    db_state = {
+        "exam_sessions": [
+            {
+                "id": session_id,
+                "user_id": user_id,
+                "status": "reviewed",
+                "gemini_review_calls": 0,
+                "updated_at": _now_iso(),
+            }
+        ],
+        "exam_versions": [
+            {"id": v1_id, "session_id": session_id, "version_code": "101", "is_finalized": True},
+        ],
+        "source_questions": [
+            {"id": s1_id, "session_id": session_id},
+        ],
+        "version_questions": [
+            {
+                "id": q1_id,
+                "version_id": v1_id,
+                "source_question_id": s1_id,
+                "status": "pending_review",
+                "is_current": True,
+            }
+        ],
+        "answer_keys": [
+            {"id": str(uuid4()), "version_id": v1_id, "question_no": 1, "correct_option": "A"},
+        ],
+    }
+
+    client = MockSupabaseClient(db_state)
+    # Mock candidate regeneration from AI
+    mock_candidate = {
+        "stem_latex": "Tìm nghiệm $x$",
+        "options": ["1", "2", "3", "4"],
+        "correct_key": "B",
+        "solution_md": "Lời giải chi tiết",
+        "validation_report": {"syntax": "PASSED"},
+        "api_calls_count": 1,
+    }
+    mock_ai_gen = AsyncMock(return_value=mock_candidate)
+    service = ReviewService(client, ai_generator=mock_ai_gen)
+
+    # Simulate race condition: Session is approved concurrently right after TX2 persistence
+    orig_complete_tx = service.repo.complete_regeneration_tx
+
+    async def complete_tx_with_concurrent_approval(*args, **kwargs):
+        res = await orig_complete_tx(*args, **kwargs)
+        # Interleaving: Concurrent worker commits approval RPC
+        db_state["exam_sessions"][0]["status"] = "approved"
+        db_state["exam_sessions"][0]["approved_at"] = _now_iso()
+        return res
+
+    service.repo.complete_regeneration_tx = complete_tx_with_concurrent_approval  # type: ignore
+
+    # Execute reject_question
+    await service.reject_question(
+        session_id=session_id,
+        question_id=q1_id,
+        user_id=user_id,
+    )
+
+    # Invariants verification:
+    # 1. Answer keys MUST still exist and NOT be deleted
+    assert len(db_state["answer_keys"]) == 1, "CRITICAL: answer_keys were deleted after approval committed!"
+    # 2. exam_versions must remain finalized
+    assert db_state["exam_versions"][0]["is_finalized"] is True, "CRITICAL: is_finalized was reset after approval committed!"
+    # 3. Session status must remain approved
+    assert db_state["exam_sessions"][0]["status"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_f04_adversarial_denied_reservation_with_metadata_not_ok():
+    """Test F04 Adversarial: Mock RPC reservation trả payload từ chối có metadata
+    {'status':'denied','error_code':'REVIEW_BUSY','operation_id':uuid,'expires_at':time}.
+    Xác nhận: Hệ thống xử lý từ chối trước, không trả ReserveResult.OK, không dispatch AI.
+    """
+    session_id = str(uuid4())
+    q_id = str(uuid4())
+    op_id = uuid4()
+
+    client = MockSupabaseClient({})
+
+    def mock_denied_rpc(name: str, params: Optional[Dict[str, Any]] = None):
+        class DeniedBuilder:
+            def execute(self):
+                if name == "review_reserve_regeneration":
+                    return MockExecutionResult(
+                        [
+                            {
+                                "status": "denied",
+                                "error_code": "REVIEW_BUSY",
+                                "operation_id": str(op_id),
+                                "expires_at": _now_iso(),
+                            }
+                        ]
+                    )
+                raise RuntimeError(f"Unexpected RPC {name}")
+
+        return DeniedBuilder()
+
+    client.rpc = mock_denied_rpc  # type: ignore
+    repo = ReviewRepository(client)
+
+    # Must return ReserveResult.QUESTION_BUSY, NEVER ReserveResult.OK
+    reserve_res = await repo.reserve_max_quota_and_start_regenerating(
+        session_id=session_id,
+        question_id=q_id,
+        user_id="user-1",
+        operation_id=op_id,
+    )
+    assert reserve_res == ReserveResult.QUESTION_BUSY, f"Expected QUESTION_BUSY, got {reserve_res}"
+    assert reserve_res != ReserveResult.OK, "CRITICAL: Parser treated denied response with metadata as ReserveResult.OK!"
+
+
+@pytest.mark.asyncio
+async def test_f17_adversarial_denied_revert_with_question_id_raises_423():
+    """Test F17 Adversarial: Mock RPC revert trả payload từ chối
+    {'status':'denied','question_id':qid,'error_code':'REVIEW_LOCKED'}.
+    Xác nhận: Hệ thống ném HTTP 423 ERR_SESSION_LOCKED, tuyệt đối không trả HTTP 200 is_reverted=True.
+    """
+    session_id = str(uuid4())
+    q_id = str(uuid4())
+
+    client = MockSupabaseClient({})
+
+    def mock_locked_rpc(name: str, params: Optional[Dict[str, Any]] = None):
+        class LockedBuilder:
+            def execute(self):
+                if name == "review_revert_question":
+                    return MockExecutionResult(
+                        [
+                            {
+                                "status": "denied",
+                                "question_id": q_id,
+                                "error_code": "REVIEW_LOCKED",
+                            }
+                        ]
+                    )
+                raise RuntimeError(f"Unexpected RPC {name}")
+
+        return LockedBuilder()
+
+    client.rpc = mock_locked_rpc  # type: ignore
+    repo = ReviewRepository(client)
+
+    # atomic_revert_tx MUST raise ReviewDomainException with 423 ERR_SESSION_LOCKED
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await repo.atomic_revert_tx(
+            session_id=session_id,
+            question_id=q_id,
+            user_id="user-1",
+        )
+
+    assert exc_info.value.status_code == 423
+    assert exc_info.value.error_code == "ERR_SESSION_LOCKED"
+
 

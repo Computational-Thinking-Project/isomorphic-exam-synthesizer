@@ -57,6 +57,7 @@ class FinalizeRepository:
         Returns:
             Dict containing:
             - total_versions: number of versions belonging to the session
+            - expected_n_versions: configured n_versions from generation_configs (F19)
             - unfinalized_versions_count: number of versions where is_finalized is False
             - total_questions: total count of current question variants
             - unapproved_count: count of current questions not having status 'approved'
@@ -64,6 +65,21 @@ class FinalizeRepository:
             - missing_pairs_count: count of (version, source_question) pairs missing active approved variants (F02)
             - source_questions_count: count of required source questions
         """
+        # 0. Fetch configured expected number of versions from generation_configs (F19)
+        cfg_res = (
+            self.db.table("generation_configs")
+            .select("n_versions")
+            .eq("session_id", session_id)
+            .limit(1)
+            .execute()
+        )
+        cfg_rows = _get_rows(cfg_res)
+        expected_n_versions: Optional[int] = (
+            int(cfg_rows[0]["n_versions"])
+            if cfg_rows and cfg_rows[0].get("n_versions") is not None
+            else None
+        )
+
         # 1. Fetch versions for this session
         v_res = (
             self.db.table("exam_versions")
@@ -79,6 +95,7 @@ class FinalizeRepository:
         if not version_rows:
             return {
                 "total_versions": 0,
+                "expected_n_versions": expected_n_versions,
                 "unfinalized_versions_count": 0,
                 "total_questions": 0,
                 "unapproved_count": 0,
@@ -150,6 +167,7 @@ class FinalizeRepository:
 
         return {
             "total_versions": total_versions,
+            "expected_n_versions": expected_n_versions,
             "unfinalized_versions_count": unfinalized_versions_count,
             "total_questions": total_questions,
             "unapproved_count": unapproved_count,
@@ -227,6 +245,10 @@ class FinalizeRepository:
                 raise ReviewDomainException(
                     404, "ERR_SESSION_NOT_FOUND", f"Phiên đề '{session_id}' không tồn tại"
                 ) from exc
+            if "ERR_UNAUTHORIZED" in err_msg:
+                raise ReviewDomainException(
+                    403, "ERR_UNAUTHORIZED", "Người dùng không có quyền phê duyệt phiên thi này"
+                ) from exc
 
             # 2. Strict Fail-Closed Infrastructure & Transport Exceptions
             if "PGRST202" in err_msg or "Could not find the function" in err_msg:
@@ -253,6 +275,9 @@ class FinalizeRepository:
             raise ReviewDomainException(
                 500, "ERR_DATABASE_TRANSACTION_FAILED", f"Lỗi giao dịch phê duyệt CSDL: {exc}"
             ) from exc
+
+    # Contract alias for TASK-305 / TASK-302 alignment (F13)
+    finalize_approve_rpc = update_session_approved
 
     async def fetch_matrix_raw(
         self, session_id: str

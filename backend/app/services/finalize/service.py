@@ -98,14 +98,21 @@ class FinalizeService:
             # Step 4: Verify pre-conditions
             stats = await self.repo.check_preconditions(session_id)
 
-            # 4a. Check versions finalized
+            # 4a. Check versions finalized and configured versions completeness (F19)
             total_versions = stats.get("total_versions", 0)
             unfinalized_versions = stats.get("unfinalized_versions_count", 0)
+            expected_n_versions = stats.get("expected_n_versions")
             if total_versions == 0:
                 raise ReviewDomainException(
                     400,
                     "ERR_VERSIONS_NOT_FINALIZED",
                     "Phiên đề chưa được khởi tạo các phiên bản hoán vị (chưa qua TASK-303)",
+                )
+            if expected_n_versions is not None and total_versions != expected_n_versions:
+                raise ReviewDomainException(
+                    400,
+                    "ERR_VERSIONS_NOT_FINALIZED",
+                    f"Số lượng phiên bản đề thi ({total_versions}) không khớp với cấu hình yêu cầu ({expected_n_versions})",
                 )
             if unfinalized_versions > 0:
                 raise ReviewDomainException(
