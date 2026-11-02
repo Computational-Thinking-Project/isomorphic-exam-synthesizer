@@ -504,8 +504,7 @@ class MockRpcQueryBuilder:
             if self.fn_name == "review_complete_regeneration":
                 opid = str(self.params.get("p_operation_id", ""))
                 cand = self.params.get("p_candidate", {}) or {}
-                uid = str(self.params.get("p_user_id", ""))
-                calls = int(self.params.get("p_actual_calls", 0))
+                calls = int(cand.get("api_calls_count", 1))
 
                 # Idempotency check: see if a replacement was already committed with this operation_id
                 existing = next(
@@ -526,6 +525,15 @@ class MockRpcQueryBuilder:
                 if not old_vq:
                     return MockExecutionResult([{"success": False, "rejection_reason": "OPERATION_NOT_FOUND"}])
 
+                # Resolve session and user_id from session context
+                session_id = ""
+                for ev in self.db_state.get("exam_versions", []):
+                    if str(ev.get("id")) == str(old_vq.get("version_id")):
+                        session_id = str(ev.get("session_id", ""))
+                        break
+                s_row = next((s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == session_id), None)
+                uid = str(s_row.get("user_id", "mock-user")) if s_row else "mock-user"
+
                 # 1. Deactivate old candidate
                 old_vq["is_current"] = False
                 old_vq["status"] = "rejected"
@@ -541,19 +549,21 @@ class MockRpcQueryBuilder:
 
                 # 2. Insert new candidate with fresh canonical snapshot
                 new_id = str(uuid4())
+                content_val = cand.get("stem_latex") or cand.get("content", "")
+                solution_val = cand.get("solution_markdown") or cand.get("solution_md", "")
                 new_q = {
                     "id": new_id,
                     "version_id": old_vq.get("version_id"),
                     "source_question_id": old_vq.get("source_question_id"),
                     "question_no": old_vq.get("question_no", 1),
-                    "content": cand.get("content") or cand.get("stem_latex", ""),
+                    "content": content_val,
                     "options": list(cand.get("options", [])),
-                    "correct_key": cand.get("correct_key", "A"),
-                    "solution_md": cand.get("solution_md", ""),
+                    "correct_key": str(cand.get("correct_key", "A")).strip().upper(),
+                    "solution_md": solution_val,
                     "canonical_question_no": old_vq.get("canonical_question_no", old_vq.get("question_no", 1)),
                     "canonical_options": list(cand.get("options", [])),
                     "canonical_correct_key": str(cand.get("correct_key", "A")).strip().upper(),
-                    "canonical_solution_md": cand.get("solution_md", ""),
+                    "canonical_solution_md": solution_val,
                     "validation_report": cand.get("validation_report") or {},
                     "status": "pending_review",
                     "is_current": True,
@@ -571,12 +581,6 @@ class MockRpcQueryBuilder:
                 })
 
                 # 3. Session-wide reshuffle invalidation
-                session_id = ""
-                for ev in self.db_state.get("exam_versions", []):
-                    if str(ev.get("id")) == str(old_vq.get("version_id")):
-                        session_id = str(ev.get("session_id", ""))
-                        break
-
                 self.db_state["answer_keys"] = []
                 for ev in self.db_state.get("exam_versions", []):
                     if str(ev.get("session_id")) == session_id:
@@ -621,8 +625,6 @@ class MockRpcQueryBuilder:
             if self.fn_name == "review_fail_regeneration":
                 opid = str(self.params.get("p_operation_id", ""))
                 err = str(self.params.get("p_error_code", ""))
-                uid = str(self.params.get("p_user_id", ""))
-                calls = int(self.params.get("p_actual_calls", 0))
 
                 # If TX2 already committed (replacement exists), rollback is aborted/replayed
                 committed_new = next(
@@ -642,6 +644,14 @@ class MockRpcQueryBuilder:
                 if not old_vq:
                     return MockExecutionResult([{"success": False, "replayed": True, "operation_id": opid}])
 
+                session_id = ""
+                for ev in self.db_state.get("exam_versions", []):
+                    if str(ev.get("id")) == str(old_vq.get("version_id")):
+                        session_id = str(ev.get("session_id", ""))
+                        break
+                s_row = next((s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == session_id), None)
+                uid = str(s_row.get("user_id", "mock-user")) if s_row else "mock-user"
+
                 old_vq["status"] = "pending_review"
                 old_vq["regeneration_id"] = None
                 old_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -653,19 +663,13 @@ class MockRpcQueryBuilder:
                     "count": 1,
                 })
 
-                session_id = ""
-                for ev in self.db_state.get("exam_versions", []):
-                    if str(ev.get("id")) == str(old_vq.get("version_id")):
-                        session_id = str(ev.get("session_id", ""))
-                        break
-
                 audit_entry = {
                     "session_id": session_id,
                     "version_question_id": old_vq.get("id"),
                     "user_id": uid,
                     "action_type": "REJECT_FAILED",
                     "reason": err,
-                    "api_calls_used": calls,
+                    "api_calls_used": 1,
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
                 self.db_state.setdefault("review_logs", []).append(audit_entry)
@@ -674,12 +678,15 @@ class MockRpcQueryBuilder:
                     "table": "review_logs",
                     "payload": dict(audit_entry),
                 })
-                return MockExecutionResult([{"success": True, "replayed": False, "status": "pending_review"}])
+                return MockExecutionResult([{"success": True, "replayed": False, "operation_status": "failed", "status": "pending_review"}])
 
             if self.fn_name == "review_accept_question":
                 sid = str(self.params.get("p_session_id", ""))
                 qid = str(self.params.get("p_question_id", ""))
-                uid = str(self.params.get("p_user_id", ""))
+                _ = self.params.get("p_action_id")
+
+                s_row = next((s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == sid), None)
+                uid = str(s_row.get("user_id", "mock-user")) if s_row else "mock-user"
 
                 target_vq = next((vq for vq in self.db_state.get("version_questions", []) if str(vq.get("id")) == qid), None)
                 if not target_vq:
@@ -713,12 +720,15 @@ class MockRpcQueryBuilder:
                     "table": "review_logs",
                     "payload": dict(audit_entry),
                 })
-                return MockExecutionResult([{"success": True, "status": "approved"}])
+                return MockExecutionResult([{"success": True, "question_status": "approved", "status": "approved"}])
 
             if self.fn_name == "review_revert_question":
                 sid = str(self.params.get("p_session_id", ""))
                 qid = str(self.params.get("p_question_id", ""))
-                uid = str(self.params.get("p_user_id", ""))
+                _ = self.params.get("p_action_id")
+
+                s_row = next((s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == sid), None)
+                uid = str(s_row.get("user_id", "mock-user")) if s_row else "mock-user"
 
                 target_vq = next((vq for vq in self.db_state.get("version_questions", []) if str(vq.get("id")) == qid), None)
                 if not target_vq:
@@ -731,7 +741,7 @@ class MockRpcQueryBuilder:
                     return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_REGENERATED"}])
 
                 if target_vq.get("is_reverted"):
-                    return MockExecutionResult([{"success": True, "replayed": True, "question_id": qid, "status": "approved"}])
+                    return MockExecutionResult([{"success": True, "replayed": True, "question_id": qid, "question_status": "approved", "status": "approved"}])
 
                 src_id = str(target_vq.get("source_question_id", ""))
                 src = next((sq for sq in self.db_state.get("source_questions", []) if str(sq.get("id")) == src_id), None) or {}
@@ -799,8 +809,21 @@ class MockRpcQueryBuilder:
                     "table": "review_logs",
                     "payload": dict(audit_entry),
                 })
-                return MockExecutionResult([{"success": True, "replayed": False, "question_id": new_id, "status": "approved"}])
+                return MockExecutionResult([{"success": True, "replayed": False, "question_id": new_id, "question_status": "approved", "status": "approved"}])
 
+            if self.fn_name == "review_recover_regeneration":
+                opid = str(self.params.get("p_operation_id", ""))
+                old_vq = next(
+                    (vq for vq in self.db_state.get("version_questions", [])
+                     if str(vq.get("regeneration_id")) == opid and vq.get("status") == "regenerating"),
+                    None
+                )
+                if old_vq:
+                    old_vq["status"] = "pending_review"
+                    old_vq["regeneration_id"] = None
+                    old_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    return MockExecutionResult([{"recovered": True, "operation_status": "recovered", "question_id": old_vq.get("id")}])
+                return MockExecutionResult([{"recovered": False, "operation_status": "none"}])
             if self.fn_name == "review_recover_stale":
                 sid = str(self.params.get("p_session_id", ""))
                 uid = str(self.params.get("p_caller_user_id", ""))

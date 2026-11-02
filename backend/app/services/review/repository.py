@@ -59,11 +59,40 @@ def _get_rows(res: Any) -> List[Dict[str, Any]]:
     return []
 
 
+def _map_rpc_exception(exc: Exception) -> ReviewDomainException:
+    """Map PostgreSQL domain exception messages from Migration 006 RPCs to ReviewDomainException."""
+    msg = str(exc)
+    if "REVIEW_NOT_FOUND" in msg or "P0002" in msg:
+        return ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Không tìm thấy câu hỏi hoặc phiên thi")
+    if "REVIEW_BUSY" in msg:
+        return ReviewDomainException(409, "ERR_SESSION_BUSY_REGENERATING", "Phiên thi đang có thao tác tái sinh khác đang chạy (Model A)")
+    if "REVIEW_STALE" in msg:
+        return ReviewDomainException(409, "ERR_QUESTION_NOT_CURRENT", "Câu hỏi hoặc phiên làm việc đã bị sửa đổi")
+    if "REVIEW_IDEMPOTENCY_CONFLICT" in msg:
+        return ReviewDomainException(409, "ERR_ATTEMPT_REPLAYED", "Xung đột idempotency: ID đã được gắn với thao tác khác")
+    if "REVIEW_LOCKED" in msg:
+        return ReviewDomainException(423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn")
+    if "REVIEW_QUOTA_EXHAUSTED" in msg:
+        return ReviewDomainException(429, "ERR_REVIEW_QUOTA_EXHAUSTED", "Đã hết quota 30 lượt sinh lại của buổi review")
+    if "REVIEW_INVALID_PAYLOAD" in msg or "REVIEW_SOURCE_MISMATCH" in msg:
+        return ReviewDomainException(422, "ERR_INVALID_PAYLOAD", "Dữ liệu gửi lên không hợp lệ hoặc không khớp nguồn đề")
+    if "42501" in msg or "permission denied" in msg.lower():
+        return ReviewDomainException(403, "ERR_FORBIDDEN", "Không có quyền thực hiện thao tác này")
+    return ReviewDomainException(500, "ERR_RPC_EXECUTION_FAILED", f"Lỗi CSDL khi thực thi RPC: {exc}")
+
+
 class ReviewRepository:
     """Data Access Object encapsulating database interactions for review decisions."""
 
-    def __init__(self, db: Client, allow_table_fallback: bool = False) -> None:
+    def __init__(
+        self,
+        db: Client,
+        service_db: Optional[Client] = None,
+        allow_table_fallback: bool = False,
+    ) -> None:
         self.db = db
+        # Distinct worker client with service_role privilege for settlement/attempt RPCs
+        self.worker_db = service_db if service_db is not None else db
         self.allow_table_fallback = allow_table_fallback
         # In-memory routing hint for operation-to-session mapping (durable ledger is stored in DB)
         self._operation_sessions: Dict[UUID, str] = {}
@@ -617,15 +646,27 @@ class ReviewRepository:
         str_regen_id = str(regeneration_id)
 
         # Primary Path: Atomic Stored Procedure RPC review_complete_regeneration
-        if callable(getattr(self.db, "rpc", None)):
+        # Primary Path: Stored procedure RPC review_complete_regeneration (Worker service_role)
+        if callable(getattr(self.worker_db, "rpc", None)):
             try:
-                rpc_res = self.db.rpc(
+                cand_payload = {
+                    "stem_latex": new_data.get("stem_latex") or new_data.get("content", ""),
+                    "solution_markdown": new_data.get("solution_markdown") or new_data.get("solution_md", ""),
+                    "correct_key": str(new_data.get("correct_key", "A")).strip().upper(),
+                    "options": list(new_data.get("options", [])),
+                    "api_calls_count": min(4, max(0, int(actual_calls))),
+                    "validation_report": {
+                        "is_valid": True,
+                        "math_verified": bool((new_data.get("validation_report") or {}).get("math_verified", True)),
+                        "requires_teacher_review": True,
+                        "warnings": list((new_data.get("validation_report") or {}).get("warnings", [])),
+                    },
+                }
+                rpc_res = self.worker_db.rpc(
                     "review_complete_regeneration",
                     {
                         "p_operation_id": str_regen_id,
-                        "p_candidate": new_data,
-                        "p_user_id": str(user_id),
-                        "p_actual_calls": int(actual_calls),
+                        "p_candidate": cand_payload,
                     },
                 ).execute()
                 rpc_data = (
@@ -788,15 +829,14 @@ class ReviewRepository:
         str_regen_id = str(regeneration_id)
 
         # Primary Path: Stored procedure RPC review_fail_regeneration
-        if callable(getattr(self.db, "rpc", None)):
+        # Primary Path: Stored procedure RPC review_fail_regeneration (Worker service_role)
+        if callable(getattr(self.worker_db, "rpc", None)):
             try:
-                rpc_res = self.db.rpc(
+                rpc_res = self.worker_db.rpc(
                     "review_fail_regeneration",
                     {
                         "p_operation_id": str_regen_id,
                         "p_error_code": str(error_msg)[:500],
-                        "p_user_id": str(user_id),
-                        "p_actual_calls": int(actual_calls_dispatched),
                     },
                 ).execute()
                 rpc_data = (
@@ -873,6 +913,8 @@ class ReviewRepository:
     ) -> Dict[str, Any]:
         """Approve a question variant (idempotent if already approved)."""
         # Primary Path: Stored procedure RPC review_accept_question
+        action_uuid = str(uuid4())
+        # Primary Path: Stored procedure RPC review_accept_question (Owner JWT)
         if callable(getattr(self.db, "rpc", None)):
             try:
                 rpc_res = self.db.rpc(
@@ -880,7 +922,7 @@ class ReviewRepository:
                     {
                         "p_session_id": str(session_id),
                         "p_question_id": str(question_id),
-                        "p_user_id": str(user_id),
+                        "p_action_id": action_uuid,
                     },
                 ).execute()
                 rpc_data = (
@@ -969,6 +1011,7 @@ class ReviewRepository:
     ) -> Dict[str, Any]:
         """Revert question to pristine source content (idempotent if already reverted)."""
         # Primary Path: Stored procedure RPC review_revert_question
+        # Primary Path: Stored procedure RPC review_revert_question (Owner JWT)
         if callable(getattr(self.db, "rpc", None)):
             try:
                 rpc_res = self.db.rpc(
@@ -977,7 +1020,6 @@ class ReviewRepository:
                         "p_session_id": str(session_id),
                         "p_question_id": str(question_id),
                         "p_action_id": str(action_id or uuid4()),
-                        "p_user_id": str(user_id),
                     },
                 ).execute()
                 rpc_data = (

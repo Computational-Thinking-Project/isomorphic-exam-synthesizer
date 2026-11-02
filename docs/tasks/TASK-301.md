@@ -85,24 +85,23 @@ Bảo đảm phiên có $N$ mã đề $\times$ $M$ câu luôn ra đúng $N \time
 
 
 
-### 3.5. Chuyển Dịch Toàn Diện Sang Atomic PostgreSQL Stored Procedures (v8.0)
-- **Xóa bỏ Pseudo-Transactions đa bước ở tầng Python:**
-  - `ReviewRepository` đóng vai trò là **Thin Wrapper Client** duy nhất gọi `self.db.rpc(...)`. Mọi thao tác ghi/cập nhật dữ liệu chuyển trạng thái đều thực thi trong 1 transaction ACID duy nhất tại PostgreSQL.
-  - Loại bỏ hoàn toàn nguy cơ rách dữ liệu (Dirty State) hoặc mất vĩnh viễn slot câu hỏi khi rớt mạng giữa các HTTP REST calls rời rạc.
-- **Trọn bộ 8 Stored Procedures chuyên trách:**
-  1. `review_reserve_regeneration`: Row-level lock `SELECT ... FOR UPDATE`, Concurrency Model A guard, Quota barrier, Snapshot extraction.
-  2. `review_acquire_attempt`: Per-attempt atomic accounting, operation lease check, idempotency replay prevention.
-  3. `review_complete_regeneration`: Atomic deactivate old + insert new variant with canonical snapshot + invalidate reshuffle (`answer_keys` purge + `is_finalized=false` + session demote) + audit log.
-  4. `review_fail_regeneration`: Emergency rollback khôi phục trạng thái về `pending_review` và xóa lease `regeneration_id = null`, giữ nguyên quota đã commit trong DB ledger (No Quota Refund), ghi log `REJECT_FAILED`.
-  5. `review_revert_question`: Atomic sao chép nguyên văn câu gốc từ `source_questions`, deactivate variant hiện tại, kích hoạt invalidation reshuffle, ghi log `REVERT`.
-  6. `review_accept_question`: Atomic phê duyệt câu hỏi sang `approved` và ghi log `ACCEPT`.
-  7. `review_recover_stale`: Tự động khôi phục các câu hỏi bị treo ở trạng thái `regenerating > 180s`.
-- **Phân quyền & RLS Chuẩn Stage 3:**
-  - Worker RPCs (`review_acquire_attempt`, `review_complete_regeneration`, `review_fail_regeneration`): REVOKE khỏi PUBLIC, anon, authenticated; chỉ GRANT cho `service_role`.
-  - Owner RPCs (`review_reserve_regeneration`, `review_accept_question`, `review_revert_question`): GRANT cho `authenticated` kèm kiểm tra `v_user_id = auth.uid()`.
-  - Bật Row Level Security (RLS) trên bảng `review_attempts`: Policy `review_attempts_owner_read` cho authenticated và `review_attempts_service_write` cho `service_role`.
-- **Kiểm Thử CSDL Thật (Beyond Mocks):**
-  - Xây dựng test suite `test_stage3_lifecycle_real_db.py` chạy trực tiếp trên Docker PostgreSQL 15 thật: Atomic Rollback Invariant, Multi-process Concurrency Model A, Reshuffle Invalidation Integrity, Quota Isolation & Replay.
+### 3.5. Đồng Bộ Hoàn Toàn Với Nền Tảng CSDL Của Hùng (TASK-302 / Migration 006)
+- **Tôn trọng ranh giới phân công (Clean Ownership Boundary):**
+  - Hùng (TASK-302, PR #36) sở hữu và duy trì toàn bộ schema, bảng ledger (`review_operations`, `review_attempts`, `review_action_receipts`), 8 RPCs và bộ test container Docker PostgreSQL 15 thật (`test_review_rpcs.py`).
+  - Duy (TASK-301, PR #28) xóa bỏ hoàn toàn migration 008 tự chế và file test real-db trùng lặp, hoàn nguyên `schema.sql`.
+- **Tích hợp Caller Thin Wrapper Trong `ReviewRepository`:**
+  - Phân tách 2 Client rõ ràng: `self.db` (Owner JWT Client) cho các RPC Owner (`reserve`, `accept`, `revert`, `get_progress`), và `self.worker_db` (Worker `service_role` Client) cho các RPC Worker (`acquire_attempt`, `complete`, `fail`, `recover`).
+  - Khớp 100% chữ ký theo `docs/api/review-rpc-contract.md`:
+    * `review_reserve_regeneration(p_session_id, p_question_id, p_operation_id)`
+    * `review_acquire_attempt(p_operation_id, p_attempt_id)` (trả về AttemptPermit 6 fields)
+    * `review_complete_regeneration(p_operation_id, p_candidate)` (không nhận p_user_id/calls)
+    * `review_fail_regeneration(p_operation_id, p_error_code)`
+    * `review_recover_regeneration(p_operation_id)`
+    * `review_accept_question(p_session_id, p_question_id, p_action_id)`
+    * `review_revert_question(p_session_id, p_question_id, p_action_id)`
+    * `review_get_progress(p_session_id)`
+  - Tập trung ánh xạ domain exception code từ CSDL (`REVIEW_NOT_FOUND` $ightarrow$ 404, `REVIEW_BUSY` $ightarrow$ 409, `REVIEW_STALE` $ightarrow$ 409, `REVIEW_LOCKED` $ightarrow$ 423, `REVIEW_QUOTA_EXHAUSTED` $ightarrow$ 429) sang `ReviewDomainException`.
+
 ### 3.4. State Guards & Lock Registry
 - **Chặn Revert câu chưa từng biến thể:** Ném ngay `HTTP 400 ERR_QUESTION_NOT_REGENERATED`.
 - **Accept SQL Check-and-Act:** UPDATE câu `pending_review` $\rightarrow$ `approved` với kiểm tra rowcount.
