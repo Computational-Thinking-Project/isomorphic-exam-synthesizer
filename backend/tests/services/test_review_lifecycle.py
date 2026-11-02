@@ -233,6 +233,7 @@ class MockRpcQueryBuilder:
             self.call_log.append(
                 {
                     "op": "rpc",
+                    "table": "rpc",
                     "fn": self.fn_name,
                     "params": dict(self.params),
                 }
@@ -456,6 +457,390 @@ class MockRpcQueryBuilder:
                         }
                     ]
                 )
+
+            if self.fn_name == "review_reserve_regeneration":
+                sid = str(self.params.get("p_session_id", ""))
+                qid = str(self.params.get("p_question_id", ""))
+                opid = str(self.params.get("p_operation_id", ""))
+
+                s_row = next((s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == sid), None)
+                if not s_row:
+                    return MockExecutionResult([{"success": False, "rejection_reason": "SESSION_NOT_FOUND"}])
+                if s_row.get("status") in ("approved", "exported"):
+                    return MockExecutionResult([{"success": False, "rejection_reason": "SESSION_LOCKED"}])
+                if s_row.get("status") == "generating":
+                    return MockExecutionResult([{"success": False, "rejection_reason": "SESSION_BUSY"}])
+                curr_calls = int(s_row.get("gemini_review_calls", 0) or 0)
+                if curr_calls >= 30:
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUOTA_EXHAUSTED"}])
+
+                for vq in self.db_state.get("version_questions", []):
+                    if vq.get("status") == "regenerating" and vq.get("is_current", True) and str(vq.get("id")) != qid:
+                        return MockExecutionResult([{"success": False, "rejection_reason": "SESSION_BUSY"}])
+
+                target_vq = next((vq for vq in self.db_state.get("version_questions", []) if str(vq.get("id")) == qid), None)
+                if not target_vq:
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_FOUND"}])
+                if not target_vq.get("is_current", True):
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_CURRENT"}])
+                if target_vq.get("status") == "regenerating":
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_BUSY"}])
+
+                target_vq["status"] = "regenerating"
+                target_vq["regeneration_id"] = opid
+                target_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
+                s_row["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+                return MockExecutionResult([
+                    {
+                        "success": True,
+                        "session_id": sid,
+                        "question_id": qid,
+                        "operation_id": opid,
+                        "status": "regenerating",
+                    }
+                ])
+
+            if self.fn_name == "review_complete_regeneration":
+                opid = str(self.params.get("p_operation_id", ""))
+                cand = self.params.get("p_candidate", {}) or {}
+                uid = str(self.params.get("p_user_id", ""))
+                calls = int(self.params.get("p_actual_calls", 0))
+
+                # Idempotency check: see if a replacement was already committed with this operation_id
+                existing = next(
+                    (vq for vq in self.db_state.get("version_questions", [])
+                     if str(vq.get("regeneration_id")) == opid and vq.get("status") not in ("rejected", "regenerating")),
+                    None
+                )
+                if existing:
+                    return MockExecutionResult([{"success": True, "replayed": True, "question_id": existing.get("id")}])
+
+                # Find active regenerating question bound to this operation (or fallback to active regenerating question for legacy test fixtures)
+                old_vq = next(
+                    (vq for vq in self.db_state.get("version_questions", [])
+                     if (str(vq.get("regeneration_id")) == opid or (vq.get("regeneration_id") is None and vq.get("status") == "regenerating"))
+                     and vq.get("status") == "regenerating"),
+                    None
+                )
+                if not old_vq:
+                    return MockExecutionResult([{"success": False, "rejection_reason": "OPERATION_NOT_FOUND"}])
+
+                # 1. Deactivate old candidate
+                old_vq["is_current"] = False
+                old_vq["status"] = "rejected"
+                old_vq["regeneration_id"] = None
+                old_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
+                self.call_log.append({
+                    "op": "update",
+                    "table": "version_questions",
+                    "payload": {"is_current": False, "status": "rejected"},
+                    "filters": [("id", "eq", old_vq.get("id"))],
+                    "count": 1,
+                })
+
+                # 2. Insert new candidate with fresh canonical snapshot
+                new_id = str(uuid4())
+                new_q = {
+                    "id": new_id,
+                    "version_id": old_vq.get("version_id"),
+                    "source_question_id": old_vq.get("source_question_id"),
+                    "question_no": old_vq.get("question_no", 1),
+                    "content": cand.get("content") or cand.get("stem_latex", ""),
+                    "options": list(cand.get("options", [])),
+                    "correct_key": cand.get("correct_key", "A"),
+                    "solution_md": cand.get("solution_md", ""),
+                    "canonical_question_no": old_vq.get("canonical_question_no", old_vq.get("question_no", 1)),
+                    "canonical_options": list(cand.get("options", [])),
+                    "canonical_correct_key": str(cand.get("correct_key", "A")).strip().upper(),
+                    "canonical_solution_md": cand.get("solution_md", ""),
+                    "validation_report": cand.get("validation_report") or {},
+                    "status": "pending_review",
+                    "is_current": True,
+                    "is_reverted": False,
+                    "regeneration_id": opid,
+                    "regenerated_from_id": old_vq.get("id"),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+                self.db_state.setdefault("version_questions", []).append(new_q)
+                self.call_log.append({
+                    "op": "insert",
+                    "table": "version_questions",
+                    "payload": dict(new_q),
+                })
+
+                # 3. Session-wide reshuffle invalidation
+                session_id = ""
+                for ev in self.db_state.get("exam_versions", []):
+                    if str(ev.get("id")) == str(old_vq.get("version_id")):
+                        session_id = str(ev.get("session_id", ""))
+                        break
+
+                self.db_state["answer_keys"] = []
+                for ev in self.db_state.get("exam_versions", []):
+                    if str(ev.get("session_id")) == session_id:
+                        ev["is_finalized"] = False
+                        ev["shuffle_seed"] = None
+                        ev["permutations"] = None
+
+                for es in self.db_state.get("exam_sessions", []):
+                    if str(es.get("id")) == session_id and es.get("status") == "reviewed":
+                        es["status"] = "generated"
+
+                # 4. Audit log
+                audit_entry = {
+                    "session_id": session_id,
+                    "version_question_id": new_id,
+                    "user_id": uid,
+                    "action_type": "REJECT",
+                    "reason": "USER_REJECTED",
+                    "api_calls_used": calls,
+                    "regenerated_from_id": old_vq.get("id"),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                self.db_state.setdefault("review_logs", []).append(audit_entry)
+                self.call_log.append({
+                    "op": "insert",
+                    "table": "review_logs",
+                    "payload": dict(audit_entry),
+                })
+
+                return MockExecutionResult([
+                    {
+                        "success": True,
+                        "replayed": False,
+                        "question_id": new_id,
+                        "previous_question_id": old_vq.get("id"),
+                        "operation_id": opid,
+                        "session_id": session_id,
+                        "status": "pending_review",
+                    }
+                ])
+
+            if self.fn_name == "review_fail_regeneration":
+                opid = str(self.params.get("p_operation_id", ""))
+                err = str(self.params.get("p_error_code", ""))
+                uid = str(self.params.get("p_user_id", ""))
+                calls = int(self.params.get("p_actual_calls", 0))
+
+                # If TX2 already committed (replacement exists), rollback is aborted/replayed
+                committed_new = next(
+                    (vq for vq in self.db_state.get("version_questions", [])
+                     if str(vq.get("regeneration_id")) == opid and vq.get("status") not in ("rejected", "regenerating")),
+                    None
+                )
+                if committed_new:
+                    return MockExecutionResult([{"success": False, "replayed": True, "operation_id": opid}])
+
+                old_vq = next(
+                    (vq for vq in self.db_state.get("version_questions", [])
+                     if (str(vq.get("regeneration_id")) == opid or (vq.get("regeneration_id") is None and vq.get("status") == "regenerating"))
+                     and vq.get("status") == "regenerating"),
+                    None
+                )
+                if not old_vq:
+                    return MockExecutionResult([{"success": False, "replayed": True, "operation_id": opid}])
+
+                old_vq["status"] = "pending_review"
+                old_vq["regeneration_id"] = None
+                old_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
+                self.call_log.append({
+                    "op": "update",
+                    "table": "version_questions",
+                    "payload": {"status": "pending_review", "regeneration_id": None},
+                    "filters": [("id", "eq", old_vq.get("id"))],
+                    "count": 1,
+                })
+
+                session_id = ""
+                for ev in self.db_state.get("exam_versions", []):
+                    if str(ev.get("id")) == str(old_vq.get("version_id")):
+                        session_id = str(ev.get("session_id", ""))
+                        break
+
+                audit_entry = {
+                    "session_id": session_id,
+                    "version_question_id": old_vq.get("id"),
+                    "user_id": uid,
+                    "action_type": "REJECT_FAILED",
+                    "reason": err,
+                    "api_calls_used": calls,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                self.db_state.setdefault("review_logs", []).append(audit_entry)
+                self.call_log.append({
+                    "op": "insert",
+                    "table": "review_logs",
+                    "payload": dict(audit_entry),
+                })
+                return MockExecutionResult([{"success": True, "replayed": False, "status": "pending_review"}])
+
+            if self.fn_name == "review_accept_question":
+                sid = str(self.params.get("p_session_id", ""))
+                qid = str(self.params.get("p_question_id", ""))
+                uid = str(self.params.get("p_user_id", ""))
+
+                target_vq = next((vq for vq in self.db_state.get("version_questions", []) if str(vq.get("id")) == qid), None)
+                if not target_vq:
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_FOUND"}])
+                if not target_vq.get("is_current", True):
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_CURRENT"}])
+                if target_vq.get("status") == "regenerating":
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_BUSY"}])
+
+                target_vq["status"] = "approved"
+                target_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
+                self.call_log.append({
+                    "op": "update",
+                    "table": "version_questions",
+                    "payload": {"status": "approved"},
+                    "filters": [("id", "eq", qid)],
+                    "count": 1,
+                })
+
+                audit_entry = {
+                    "session_id": sid,
+                    "version_question_id": qid,
+                    "user_id": uid,
+                    "action_type": "ACCEPT",
+                    "reason": None,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                self.db_state.setdefault("review_logs", []).append(audit_entry)
+                self.call_log.append({
+                    "op": "insert",
+                    "table": "review_logs",
+                    "payload": dict(audit_entry),
+                })
+                return MockExecutionResult([{"success": True, "status": "approved"}])
+
+            if self.fn_name == "review_revert_question":
+                sid = str(self.params.get("p_session_id", ""))
+                qid = str(self.params.get("p_question_id", ""))
+                uid = str(self.params.get("p_user_id", ""))
+
+                target_vq = next((vq for vq in self.db_state.get("version_questions", []) if str(vq.get("id")) == qid), None)
+                if not target_vq:
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_FOUND"}])
+                if not target_vq.get("is_current", True):
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_CURRENT"}])
+                if target_vq.get("status") == "regenerating":
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_BUSY"}])
+                if target_vq.get("regenerated_from_id") is None and not target_vq.get("is_reverted"):
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_REGENERATED"}])
+
+                if target_vq.get("is_reverted"):
+                    return MockExecutionResult([{"success": True, "replayed": True, "question_id": qid, "status": "approved"}])
+
+                src_id = str(target_vq.get("source_question_id", ""))
+                src = next((sq for sq in self.db_state.get("source_questions", []) if str(sq.get("id")) == src_id), None) or {}
+
+                target_vq["is_current"] = False
+                target_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
+                self.call_log.append({
+                    "op": "update",
+                    "table": "version_questions",
+                    "payload": {"is_current": False},
+                    "filters": [("id", "eq", qid)],
+                    "count": 1,
+                })
+
+                new_id = str(uuid4())
+                reverted_q = {
+                    "id": new_id,
+                    "version_id": target_vq.get("version_id"),
+                    "source_question_id": src_id,
+                    "question_no": target_vq.get("question_no", 1),
+                    "content": src.get("raw_content", ""),
+                    "options": src.get("options", []),
+                    "correct_key": src.get("correct_key", "A"),
+                    "solution_md": src.get("solution_md"),
+                    "canonical_question_no": target_vq.get("question_no", 1),
+                    "canonical_options": src.get("options", []),
+                    "canonical_correct_key": src.get("correct_key", "A"),
+                    "canonical_solution_md": src.get("solution_md"),
+                    "status": "approved",
+                    "is_current": True,
+                    "is_reverted": True,
+                    "regenerated_from_id": qid,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+                self.db_state.setdefault("version_questions", []).append(reverted_q)
+                self.call_log.append({
+                    "op": "insert",
+                    "table": "version_questions",
+                    "payload": dict(reverted_q),
+                })
+
+                self.db_state["answer_keys"] = []
+                for ev in self.db_state.get("exam_versions", []):
+                    if str(ev.get("session_id")) == sid:
+                        ev["is_finalized"] = False
+                        ev["shuffle_seed"] = None
+                        ev["permutations"] = None
+
+                for es in self.db_state.get("exam_sessions", []):
+                    if str(es.get("id")) == sid and es.get("status") == "reviewed":
+                        es["status"] = "generated"
+
+                audit_entry = {
+                    "session_id": sid,
+                    "version_question_id": new_id,
+                    "user_id": uid,
+                    "action_type": "REVERT",
+                    "reason": None,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                self.db_state.setdefault("review_logs", []).append(audit_entry)
+                self.call_log.append({
+                    "op": "insert",
+                    "table": "review_logs",
+                    "payload": dict(audit_entry),
+                })
+                return MockExecutionResult([{"success": True, "replayed": False, "question_id": new_id, "status": "approved"}])
+
+            if self.fn_name == "review_recover_stale":
+                sid = str(self.params.get("p_session_id", ""))
+                uid = str(self.params.get("p_caller_user_id", ""))
+                recovered = 0
+                now_dt = datetime.now(timezone.utc)
+                for vq in self.db_state.get("version_questions", []):
+                    if vq.get("status") == "regenerating":
+                        upd = vq.get("updated_at")
+                        is_stale = False
+                        if upd:
+                            try:
+                                dt = datetime.fromisoformat(upd.replace("Z", "+00:00"))
+                                if (now_dt - dt).total_seconds() >= 180:
+                                    is_stale = True
+                            except Exception:
+                                is_stale = True
+                        if is_stale:
+                            vq["status"] = "pending_review"
+                            vq["regeneration_id"] = None
+                            vq["updated_at"] = now_dt.isoformat()
+                            self.db_state.setdefault("review_logs", []).append(
+                                {
+                                    "payload": {
+                                        "session_id": sid,
+                                        "version_question_id": vq.get("id"),
+                                        "user_id": uid,
+                                        "action_type": "REJECT_FAILED",
+                                        "reason": "STALE_TIMEOUT",
+                                    },
+                                    "table": "review_logs",
+                                    "session_id": sid,
+                                    "version_question_id": vq.get("id"),
+                                    "user_id": uid,
+                                    "action_type": "REJECT_FAILED",
+                                    "reason": "STALE_TIMEOUT",
+                                    "created_at": now_dt.isoformat(),
+                                }
+                            )
+                            recovered += 1
+                return MockExecutionResult([{"success": True, "recovered_count": recovered}])
 
             return MockExecutionResult([])
 

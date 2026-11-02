@@ -30,6 +30,7 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
 - [DEC-BE1-009: Loại Trừ PostgreSQL SQLSTATE Class 08 Khỏi Bằng Chứng Rollback CSDL (TASK-202 / TASK-205 Round 5)](#dec-be1-009-loại-trừ-postgresql-sqlstate-class-08-khỏi-bằng-chứng-rollback-csdl-task-202--task-205-round-5)
 - [ADR-004: Tinh Giản Toàn Diện Stage 1 & Stage 2 Sang Kiến Trúc Black-Box, Silent Security Audit, và Chốt Nguồn Nguyên Tử Đơn Điểm](#adr-004-tinh-giản-toàn-diện-stage-1--stage-2-sang-kiến-trúc-black-box-silent-security-audit-và-chốt-nguồn-nguyên-tử-đơn-điểm)
 - [DEC-BE1-010: Khắc Phục Triệt Để Fail-Closed Permit RPC, Strict Operation Binding, và Đồng Bộ Contract TASK-302 (TASK-301 F07 v3.0)](#dec-be1-010)
+- [DEC-BE1-011: Chuyển Dịch Toàn Diện Review Lifecycle Sang Atomic PostgreSQL Stored Procedures và Kiểm Thử Trên CSDL Thật (Stage 3 Production-Ready)](#dec-be1-011)
 
 ---
 
@@ -317,3 +318,34 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
      - Đồng bộ hóa toàn bộ các cột bổ sung của Migration 006 (`regeneration_id`, `display_no`, `display_correct_key`, `canonical_question_no`, `session_id`, `user_id`, `api_calls_used`, `ck_review_logs_actor_required`) vào `backend/scripts/schema.sql`.
 * **Phạm vi ảnh hưởng:** `backend/app/models/schemas.py`, `backend/app/services/review/repository.py`, `backend/app/services/review/service.py`, `backend/migrations/008_stage3_review_acquire_attempt_rpc.sql`, `backend/scripts/schema.sql`, `backend/tests/services/test_review_lifecycle.py`, `docs/tasks/TASK-301.md`.
 * **Kiểm chứng:** 58/58 unit/lifecycle tests pass, Ruff check pass, Mypy pass (67 files).
+
+<a id="dec-be1-011"></a>
+
+### DEC-BE1-011: Chuyển Dịch Toàn Diện Review Lifecycle Sang Atomic PostgreSQL Stored Procedures và Kiểm Thử Trên CSDL Thật (Stage 3 Production-Ready)
+* **Mã quyết định:** DEC-BE1-011
+* **Ngày quyết định:** 02/11/2026
+* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
+* **Bối cảnh:**
+  1. Unit tests pass trên `MockSupabaseClient` nhưng phát sinh rủi ro Dirty State / Mất slot câu hỏi trên Supabase Production thật vì PostgREST client không hỗ trợ `db.transaction()` client-side. Chuỗi đa lệnh `select -> update -> insert` ở Python code khi mạng ngắt giữa Call 1 và Call 2 sẽ khiến slot câu hỏi bị mất vĩnh viễn (`is_current = FALSE` toàn bộ slot), phá vỡ bất biến $N \times M$ slots.
+  2. Cơ chế Concurrency Model A dùng `asyncio.Lock` ở tầng Python chỉ an toàn cho single-worker; multi-worker Uvicorn (`workers > 1`) hoặc container replicas sẽ bypass hoàn toàn khóa RAM này, dẫn đến race condition ở bước Reserve.
+  3. Lỗ hổng phân quyền: Worker RPCs cần được bảo vệ chặt chẽ, thu hồi quyền từ public/authenticated và chỉ cấp cho `service_role`; bảng `review_attempts` cần bật Row Level Security (RLS).
+* **Quyết định:**
+  1. **Chuyển Toàn Bộ State Transitions Thành PostgreSQL Stored Procedures (Atomic RPCs):**
+     - Tuyệt đối KHÔNG thực hiện chuỗi UPDATE/INSERT/DELETE nghiệp vụ đa bước từ Python service. Mọi thao tác biến đổi dữ liệu được gói gọn trong 1 transaction ACID duy nhất:
+       - `review_reserve_regeneration(p_session_id, p_question_id, p_operation_id)`: Khóa phiên ở tầng CSDL với `SELECT ... FOR UPDATE`, thực thi Model A concurrency guard, kiểm tra quota barrier, chuyển trạng thái câu hỏi sang `regenerating` và trích xuất snapshot.
+       - `review_acquire_attempt(p_operation_id, p_attempt_id)`: Cấp permit nguyên tử cho từng attempt, kiểm tra replay qua DB ledger `review_attempts`, bảo vệ trần operation (4) và session (30).
+       - `review_complete_regeneration(p_operation_id, p_candidate, p_user_id, p_actual_calls)`: Atomic deactivate old candidate (`is_current = false, status = 'rejected'`) + insert new candidate (`is_current = true, status = 'pending_review'`) với snapshot canonical mới + session-wide reshuffle invalidation (xóa sạch `answer_keys`, reset `is_finalized = false`, hạ `session.status = 'generated'`) + audit log `REJECT`.
+       - `review_fail_regeneration(p_operation_id, p_error_code, p_user_id, p_actual_calls)`: Emergency rollback khôi phục trạng thái về `pending_review` và xóa lease `regeneration_id = null`, giữ nguyên quota đã commit trong DB ledger (No Quota Refund), ghi log `REJECT_FAILED`.
+       - `review_revert_question(p_session_id, p_question_id, p_action_id, p_user_id)`: Atomic sao chép nguyên văn câu gốc từ `source_questions`, deactivate variant hiện tại, kích hoạt invalidation reshuffle, ghi log `REVERT`.
+       - `review_accept_question(p_session_id, p_question_id, p_user_id)`: Atomic phê duyệt câu hỏi sang `approved` và ghi log `ACCEPT`.
+       - `review_recover_stale(p_session_id, p_caller_user_id)`: Tự động khôi phục các câu hỏi bị treo ở trạng thái `regenerating > 180s`.
+  2. **Chuẩn Hóa Phân Quyền & RLS (Stage 3 Security Compliance):**
+     - Thu hồi quyền trên Worker RPCs (`review_acquire_attempt`, `review_complete_regeneration`, `review_fail_regeneration`) khỏi PUBLIC, anon, authenticated; chỉ `GRANT EXECUTE` cho `service_role`.
+     - Cấp quyền cho Owner RPCs (`review_reserve_regeneration`, `review_accept_question`, `review_revert_question`) cho `authenticated` kèm kiểm tra `v_user_id = auth.uid()` hoặc quyền admin/service_role.
+     - Bật Row Level Security (RLS) trên bảng `review_attempts`: Policy `review_attempts_owner_read` cho `authenticated` (đọc qua session sở hữu) và `review_attempts_service_write` cho `service_role`.
+  3. **Tinh Giản Tầng Ứng Dụng (`ReviewRepository` & `ReviewService`):**
+     - Tái cấu trúc `ReviewRepository` thành Thin Wrapper Client: mỗi phương thức chỉ thực thi đúng 1 cuộc gọi `self.db.rpc(...)`. Xóa bỏ các chuỗi REST rời rạc `table.update().insert()`.
+  4. **Kiểm Thử Trên PostgreSQL Thật (Beyond Mocks):**
+     - Xây dựng test suite `backend/tests/migrations/test_stage3_lifecycle_real_db.py` chạy trực tiếp trên container PostgreSQL 15 thật: Kiểm chứng Atomic Rollback, Model A Concurrency cross-process, Reshuffle Invalidation Integrity, Quota Isolation & Replay.
+* **Phạm vi ảnh hưởng:** `backend/migrations/008_stage3_review_acquire_attempt_rpc.sql`, `backend/scripts/schema.sql`, `backend/app/services/review/repository.py`, `backend/tests/services/test_review_lifecycle.py`, `backend/tests/migrations/test_stage3_lifecycle_real_db.py`, `docs/tasks/TASK-301.md`.
+* **Kiểm chứng:** 52/52 review lifecycle tests pass, 632 toàn bộ backend tests pass (100%), ruff check clean.

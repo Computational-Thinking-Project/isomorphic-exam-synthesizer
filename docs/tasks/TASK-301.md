@@ -5,7 +5,7 @@
 - **Reviewer:** Hùng (`benalexx007` — đã chốt)
 - **Repo/nhánh:** `feat/duy-task-301-review-lifecycle-api`; PR: [#28](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28)
 - **Hạn đợt:** tối thứ 3 03/11/2026; **ETA task:** Thứ 7 31/10/2026 (Duy xác nhận)
-- **Phiên bản:** v7.3 (Tiếp thu toàn diện phản biện F07 của Đạt @Thanhdat3010: Khắc phục triệt để Production Fail-Closed, Lỗ hổng SP Migration 008, và Đồng bộ Durable Operation Identity với TASK-302 PR #36)
+- **Phiên bản:** v8.0 (Nâng cấp kiến trúc toàn diện: Chuyển dịch toàn bộ Review Lifecycle sang Atomic PostgreSQL Stored Procedures, siết chặt Phân quyền RLS, và Kiểm thử CSDL PostgreSQL thật)
 
 ---
 
@@ -84,6 +84,25 @@ Bảo đảm phiên có $N$ mã đề $\times$ $M$ câu luôn ra đúng $N \time
 - **Ranh giới Schema Dependency & Tích hợp:** Cung cấp migration `008_stage3_review_acquire_attempt_rpc.sql` và cập nhật `backend/scripts/schema.sql` định nghĩa bảng `review_attempts` cùng stored procedure `review_acquire_attempt` theo đúng chuẩn `docs/api/review-rpc-contract.md`. Bộ test suite bao phủ 100% cả RPC path và Barrier CAS fallback.
 
 
+
+### 3.5. Chuyển Dịch Toàn Diện Sang Atomic PostgreSQL Stored Procedures (v8.0)
+- **Xóa bỏ Pseudo-Transactions đa bước ở tầng Python:**
+  - `ReviewRepository` đóng vai trò là **Thin Wrapper Client** duy nhất gọi `self.db.rpc(...)`. Mọi thao tác ghi/cập nhật dữ liệu chuyển trạng thái đều thực thi trong 1 transaction ACID duy nhất tại PostgreSQL.
+  - Loại bỏ hoàn toàn nguy cơ rách dữ liệu (Dirty State) hoặc mất vĩnh viễn slot câu hỏi khi rớt mạng giữa các HTTP REST calls rời rạc.
+- **Trọn bộ 8 Stored Procedures chuyên trách:**
+  1. `review_reserve_regeneration`: Row-level lock `SELECT ... FOR UPDATE`, Concurrency Model A guard, Quota barrier, Snapshot extraction.
+  2. `review_acquire_attempt`: Per-attempt atomic accounting, operation lease check, idempotency replay prevention.
+  3. `review_complete_regeneration`: Atomic deactivate old + insert new variant with canonical snapshot + invalidate reshuffle (`answer_keys` purge + `is_finalized=false` + session demote) + audit log.
+  4. `review_fail_regeneration`: Emergency rollback khôi phục trạng thái về `pending_review` và xóa lease `regeneration_id = null`, giữ nguyên quota đã commit trong DB ledger (No Quota Refund), ghi log `REJECT_FAILED`.
+  5. `review_revert_question`: Atomic sao chép nguyên văn câu gốc từ `source_questions`, deactivate variant hiện tại, kích hoạt invalidation reshuffle, ghi log `REVERT`.
+  6. `review_accept_question`: Atomic phê duyệt câu hỏi sang `approved` và ghi log `ACCEPT`.
+  7. `review_recover_stale`: Tự động khôi phục các câu hỏi bị treo ở trạng thái `regenerating > 180s`.
+- **Phân quyền & RLS Chuẩn Stage 3:**
+  - Worker RPCs (`review_acquire_attempt`, `review_complete_regeneration`, `review_fail_regeneration`): REVOKE khỏi PUBLIC, anon, authenticated; chỉ GRANT cho `service_role`.
+  - Owner RPCs (`review_reserve_regeneration`, `review_accept_question`, `review_revert_question`): GRANT cho `authenticated` kèm kiểm tra `v_user_id = auth.uid()`.
+  - Bật Row Level Security (RLS) trên bảng `review_attempts`: Policy `review_attempts_owner_read` cho authenticated và `review_attempts_service_write` cho `service_role`.
+- **Kiểm Thử CSDL Thật (Beyond Mocks):**
+  - Xây dựng test suite `test_stage3_lifecycle_real_db.py` chạy trực tiếp trên Docker PostgreSQL 15 thật: Atomic Rollback Invariant, Multi-process Concurrency Model A, Reshuffle Invalidation Integrity, Quota Isolation & Replay.
 ### 3.4. State Guards & Lock Registry
 - **Chặn Revert câu chưa từng biến thể:** Ném ngay `HTTP 400 ERR_QUESTION_NOT_REGENERATED`.
 - **Accept SQL Check-and-Act:** UPDATE câu `pending_review` $\rightarrow$ `approved` với kiểm tra rowcount.

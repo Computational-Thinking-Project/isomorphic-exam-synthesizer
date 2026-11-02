@@ -475,10 +475,65 @@ class ReviewRepository:
         """Lock question as 'regenerating' and verify quota eligibility (TX1).
 
         Architecture A (Pure per-acquire accounting):
-        - Verifies that session has not reached MAX_SESSION_REVIEW_QUOTA (30).
-        - Locks question state to 'regenerating' and binds durable operation identity (TASK-302 contract).
-        - Does NOT pre-increment gemini_review_calls by 4 (quota is atomically charged per acquire).
+        - Primary Path: Single-transaction PostgreSQL RPC review_reserve_regeneration (FOR UPDATE lock)
+        - Fallback Path: Table queries with Model A concurrency check (test mode only)
         """
+        # 1. Primary Path: Stored procedure RPC review_reserve_regeneration
+        if callable(getattr(self.db, "rpc", None)):
+            try:
+                rpc_res = self.db.rpc(
+                    "review_reserve_regeneration",
+                    {
+                        "p_session_id": str(session_id),
+                        "p_question_id": str(question_id),
+                        "p_operation_id": str(operation_id or uuid4()),
+                    },
+                ).execute()
+                rpc_data = (
+                    rpc_res.data[0]
+                    if isinstance(rpc_res.data, list) and rpc_res.data
+                    else rpc_res.data
+                )
+                if isinstance(rpc_data, dict):
+                    reason = rpc_data.get("rejection_reason")
+                    if reason == "SESSION_BUSY":
+                        return ReserveResult.SESSION_BUSY
+                    if reason == "QUOTA_EXHAUSTED":
+                        return ReserveResult.QUOTA_EXHAUSTED
+                    if reason == "QUESTION_BUSY":
+                        return ReserveResult.QUESTION_BUSY
+                    if reason == "QUESTION_NOT_CURRENT":
+                        return ReserveResult.QUESTION_NOT_CURRENT
+                    if reason == "QUESTION_NOT_FOUND":
+                        return ReserveResult.QUESTION_NOT_FOUND
+                    if reason == "SESSION_LOCKED":
+                        raise ReviewDomainException(
+                            423,
+                            "ERR_SESSION_LOCKED",
+                            "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn",
+                        )
+                    if reason == "FORBIDDEN":
+                        raise ReviewDomainException(
+                            403, "ERR_FORBIDDEN", "Không có quyền thao tác trên phiên đề này"
+                        )
+                    if rpc_data.get("success") is True:
+                        return ReserveResult.OK
+            except ReviewDomainException:
+                raise
+            except Exception as exc:
+                if not self.allow_table_fallback:
+                    logger.error(
+                        "RPC review_reserve_regeneration failed (fail-closed): %s",
+                        exc,
+                        exc_info=True,
+                    )
+                    raise ReviewDomainException(
+                        503,
+                        "ERR_DATABASE_UNAVAILABLE",
+                        f"Lỗi CSDL khi đặt chỗ tái sinh: {exc}",
+                    ) from exc
+
+        # 2. Fallback Path: Table checks (Test mode only)
         session_meta = await self.get_session_status_and_quota(session_id)
         current_calls = int(session_meta.get("gemini_review_calls", 0) or 0)
 
@@ -561,6 +616,72 @@ class ReviewRepository:
         """Idempotent TX2: Deactivate old variant, insert new variant, adjust quota, and audit log."""
         str_regen_id = str(regeneration_id)
 
+        # Primary Path: Atomic Stored Procedure RPC review_complete_regeneration
+        if callable(getattr(self.db, "rpc", None)):
+            try:
+                rpc_res = self.db.rpc(
+                    "review_complete_regeneration",
+                    {
+                        "p_operation_id": str_regen_id,
+                        "p_candidate": new_data,
+                        "p_user_id": str(user_id),
+                        "p_actual_calls": int(actual_calls),
+                    },
+                ).execute()
+                rpc_data = (
+                    rpc_res.data[0]
+                    if isinstance(rpc_res.data, list) and rpc_res.data
+                    else rpc_res.data
+                )
+                if isinstance(rpc_data, dict) and rpc_data.get("success") is True:
+                    new_qid = rpc_data.get("question_id")
+                    # Fetch fresh candidate row from table if available
+                    fetch_res = (
+                        self.db.table("version_questions")
+                        .select("*")
+                        .eq("id", str(new_qid))
+                        .limit(1)
+                        .execute()
+                    )
+                    fetched_rows = _get_rows(fetch_res)
+                    if fetched_rows:
+                        return fetched_rows[0]
+                    return {
+                        "id": new_qid,
+                        "version_id": old_q_snapshot.get("version_id"),
+                        "source_question_id": old_q_snapshot.get("source_question_id"),
+                        "question_no": old_q_snapshot.get("question_no", 1),
+                        "status": "pending_review",
+                        "is_current": True,
+                        "content": new_data.get("content") or new_data.get("stem_latex", ""),
+                        "options": new_data.get("options"),
+                        "correct_key": new_data.get("correct_key"),
+                        "solution_md": new_data.get("solution_md"),
+                        "canonical_options": new_data.get("options"),
+                        "canonical_correct_key": str(new_data.get("correct_key", "A")).strip().upper(),
+                        "canonical_solution_md": new_data.get("solution_md"),
+                        "validation_report": new_data.get("validation_report") or {},
+                        "regeneration_id": str_regen_id,
+                        "regenerated_from_id": old_q_snapshot.get("id"),
+                    }
+                if isinstance(rpc_data, dict) and rpc_data.get("rejection_reason") == "OPERATION_NOT_FOUND":
+                    return None
+            except ReviewDomainException:
+                raise
+            except Exception as exc:
+                if not self.allow_table_fallback:
+                    logger.error(
+                        "RPC review_complete_regeneration failed (fail-closed): %s",
+                        exc,
+                        exc_info=True,
+                    )
+                    raise ReviewDomainException(
+                        500,
+                        "ERR_COMPLETE_REGENERATION_FAILED",
+                        f"Lỗi CSDL khi hoàn tất tái sinh: {exc}",
+                    ) from exc
+
+        # Fallback Path: Table modifications (Test mode only)
         # Idempotency check: see if a replacement candidate was already created with regeneration_id
         existing = (
             self.db.table("version_questions")
@@ -666,6 +787,38 @@ class ReviewRepository:
         """
         str_regen_id = str(regeneration_id)
 
+        # Primary Path: Stored procedure RPC review_fail_regeneration
+        if callable(getattr(self.db, "rpc", None)):
+            try:
+                rpc_res = self.db.rpc(
+                    "review_fail_regeneration",
+                    {
+                        "p_operation_id": str_regen_id,
+                        "p_error_code": str(error_msg)[:500],
+                        "p_user_id": str(user_id),
+                        "p_actual_calls": int(actual_calls_dispatched),
+                    },
+                ).execute()
+                rpc_data = (
+                    rpc_res.data[0]
+                    if isinstance(rpc_res.data, list) and rpc_res.data
+                    else rpc_res.data
+                )
+                if isinstance(rpc_data, dict):
+                    if rpc_data.get("success") is True and not rpc_data.get("replayed"):
+                        return True
+                    if rpc_data.get("replayed") is True or rpc_data.get("success") is False:
+                        return False
+            except Exception as exc:
+                if not self.allow_table_fallback:
+                    logger.error(
+                        "RPC review_fail_regeneration failed (fail-closed): %s",
+                        exc,
+                        exc_info=True,
+                    )
+                    return False
+
+        # Fallback Path: Table modifications (Test mode only)
         # Check if TX2 already succeeded (new row with this regeneration_id)
         existing = (
             self.db.table("version_questions")
@@ -719,6 +872,45 @@ class ReviewRepository:
         self, session_id: str, question_id: str, user_id: str
     ) -> Dict[str, Any]:
         """Approve a question variant (idempotent if already approved)."""
+        # Primary Path: Stored procedure RPC review_accept_question
+        if callable(getattr(self.db, "rpc", None)):
+            try:
+                rpc_res = self.db.rpc(
+                    "review_accept_question",
+                    {
+                        "p_session_id": str(session_id),
+                        "p_question_id": str(question_id),
+                        "p_user_id": str(user_id),
+                    },
+                ).execute()
+                rpc_data = (
+                    rpc_res.data[0]
+                    if isinstance(rpc_res.data, list) and rpc_res.data
+                    else rpc_res.data
+                )
+                if isinstance(rpc_data, dict):
+                    reason = rpc_data.get("rejection_reason")
+                    if reason == "QUESTION_NOT_FOUND":
+                        raise ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Question not found")
+                    if reason == "QUESTION_NOT_CURRENT":
+                        raise ReviewDomainException(400, "ERR_QUESTION_NOT_CURRENT", "Question is not active")
+                    if reason == "QUESTION_BUSY":
+                        raise ReviewDomainException(409, "ERR_QUESTION_BUSY", "Question is currently regenerating")
+                    if reason == "SESSION_LOCKED":
+                        raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked")
+                    if reason == "SESSION_BUSY":
+                        raise ReviewDomainException(409, "ERR_SESSION_BUSY_GENERATING", "Session busy")
+                    if reason == "FORBIDDEN":
+                        raise ReviewDomainException(403, "ERR_FORBIDDEN", "Forbidden")
+                    if rpc_data.get("success") is True:
+                        return {"id": question_id, "status": "approved", "is_current": True}
+            except ReviewDomainException:
+                raise
+            except Exception as exc:
+                if not self.allow_table_fallback:
+                    raise ReviewDomainException(500, "ERR_ACCEPT_FAILED", f"Lỗi CSDL khi chấp nhận câu hỏi: {exc}") from exc
+
+        # Fallback Path: Table modifications (Test mode only)
         q_res = (
             self.db.table("version_questions")
             .select("id, status, is_current, is_reverted, updated_at")
@@ -773,9 +965,60 @@ class ReviewRepository:
         return upd_rows[0]
 
     async def atomic_revert_tx(
-        self, session_id: str, question_id: str, user_id: str
+        self, session_id: str, question_id: str, user_id: str, action_id: Optional[UUID] = None
     ) -> Dict[str, Any]:
         """Revert question to pristine source content (idempotent if already reverted)."""
+        # Primary Path: Stored procedure RPC review_revert_question
+        if callable(getattr(self.db, "rpc", None)):
+            try:
+                rpc_res = self.db.rpc(
+                    "review_revert_question",
+                    {
+                        "p_session_id": str(session_id),
+                        "p_question_id": str(question_id),
+                        "p_action_id": str(action_id or uuid4()),
+                        "p_user_id": str(user_id),
+                    },
+                ).execute()
+                rpc_data = (
+                    rpc_res.data[0]
+                    if isinstance(rpc_res.data, list) and rpc_res.data
+                    else rpc_res.data
+                )
+                if isinstance(rpc_data, dict):
+                    reason = rpc_data.get("rejection_reason")
+                    if reason == "QUESTION_NOT_REGENERATED":
+                        raise ReviewDomainException(
+                            400,
+                            "ERR_QUESTION_NOT_REGENERATED",
+                            "Cannot revert original question that has never been regenerated",
+                        )
+                    if reason == "QUESTION_NOT_CURRENT":
+                        raise ReviewDomainException(400, "ERR_QUESTION_NOT_CURRENT", "Question is not active")
+                    if reason == "QUESTION_BUSY":
+                        raise ReviewDomainException(409, "ERR_QUESTION_BUSY", "Question is currently regenerating")
+                    if reason == "QUESTION_NOT_FOUND":
+                        raise ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Question not found")
+                    if reason == "SESSION_LOCKED":
+                        raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked")
+                    if reason == "SESSION_BUSY":
+                        raise ReviewDomainException(409, "ERR_SESSION_BUSY_GENERATING", "Session busy")
+                    if reason == "FORBIDDEN":
+                        raise ReviewDomainException(403, "ERR_FORBIDDEN", "Forbidden")
+                    if rpc_data.get("success") is True:
+                        return {
+                            "id": rpc_data.get("question_id"),
+                            "status": "approved",
+                            "is_current": True,
+                            "is_reverted": True,
+                        }
+            except ReviewDomainException:
+                raise
+            except Exception as exc:
+                if not self.allow_table_fallback:
+                    raise ReviewDomainException(500, "ERR_REVERT_FAILED", f"Lỗi CSDL khi hoàn nguyên câu hỏi: {exc}") from exc
+
+        # Fallback Path: Table modifications (Test mode only)
         q_res = (
             self.db.table("version_questions")
             .select(
