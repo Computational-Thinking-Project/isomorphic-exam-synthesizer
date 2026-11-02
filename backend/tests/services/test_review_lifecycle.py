@@ -983,6 +983,75 @@ class MockRpcQueryBuilder:
                             recovered += 1
                 return MockExecutionResult([{"success": True, "recovered_count": recovered}])
 
+            if self.fn_name == "review_get_progress":
+                sid = str(self.params.get("p_session_id", ""))
+                sessions = self.db_state.get("exam_sessions", [])
+                s_row = next((s for s in sessions if str(s.get("id")) == sid), None)
+                if not s_row:
+                    raise RuntimeError("ERR_SESSION_NOT_FOUND")
+
+                cfgs = [c for c in self.db_state.get("generation_configs", []) if str(c.get("session_id")) == sid]
+                sqs = [sq for sq in self.db_state.get("source_questions", []) if str(sq.get("session_id")) == sid]
+                evs = [ev for ev in self.db_state.get("exam_versions", []) if str(ev.get("session_id")) == sid]
+                ev_ids = {str(ev.get("id")) for ev in evs}
+                vqs = [q for q in self.db_state.get("version_questions", []) if str(q.get("version_id")) in ev_ids]
+                current_vqs = [q for q in vqs if q.get("is_current")]
+
+                distinct_pairs = {
+                    (str(q.get("version_id")), str(q.get("source_question_id")))
+                    for q in vqs
+                    if q.get("version_id") and q.get("source_question_id")
+                }
+                if cfgs and cfgs[0].get("n_versions") and sqs:
+                    nv = int(cfgs[0]["n_versions"])
+                    expected = nv * len(sqs)
+                elif distinct_pairs:
+                    expected = len(distinct_pairs)
+                else:
+                    expected = len(evs)
+
+                currents = len(current_vqs)
+                approved = sum(1 for q in current_vqs if str(q.get("status", "")).lower() == "approved")
+                regenerating = sum(1 for q in current_vqs if str(q.get("status", "")).lower() == "regenerating")
+                missing = max(0, expected - currents)
+                duplicates = max(0, currents - expected)
+
+                active_ops = [
+                    op
+                    for op in self.db_state.get("review_operations", [])
+                    if str(op.get("session_id")) == sid and str(op.get("status", "")).lower() == "active"
+                ]
+
+                ready = bool(
+                    expected > 0
+                    and currents == expected
+                    and approved == expected
+                    and regenerating == 0
+                    and missing == 0
+                    and duplicates == 0
+                    and not active_ops
+                )
+
+                prog_obj = {
+                    "expected_slots": expected,
+                    "current_slots": currents,
+                    "approved_slots": approved,
+                    "regenerating_slots": regenerating,
+                    "missing_slots": missing,
+                    "duplicate_slots": duplicates,
+                    "ready": ready,
+                }
+                return MockExecutionResult(
+                    [
+                        {
+                            "session_id": sid,
+                            "session_status": s_row.get("status"),
+                            "replayed": False,
+                            "progress": prog_obj,
+                        }
+                    ]
+                )
+
             return MockExecutionResult([])
 
 
@@ -1524,6 +1593,7 @@ async def test_update_before_insert_ordering():
         "content": "Câu mới",
         "options": ["A. 1", "B. 2", "C. 3", "D. 4"],
         "correct_key": "A",
+        "solution_md": "Lời giải chi tiết mới",
         "validation_report": {"is_valid": True},
     }
 
@@ -1598,6 +1668,8 @@ async def test_revert_does_not_change_required_count():
         "content": "Variant 2",
         "options": ["A. 1", "B. 2", "C. 3", "D. 4"],
         "correct_key": "B",
+        "solution_md": "Lời giải chi tiết mới",
+        "validation_report": {"is_valid": True},
     }
     state["version_questions"][0]["status"] = "regenerating"
     created = await repo.complete_regeneration_tx(
@@ -1701,7 +1773,7 @@ async def test_reject_or_revert_unsets_is_finalized():
     state = _setup_standard_session_state(session_id, user_id, session_status="reviewed")
     state["exam_versions"][0]["is_finalized"] = True
     db = MockSupabaseClient(state)
-    repo = ReviewRepository(db)
+    repo = ReviewRepository(db, allow_table_fallback=True)
 
     invalidated = await repo.invalidate_shuffle_if_finalized(session_id)
     assert invalidated is True
@@ -1857,7 +1929,7 @@ async def test_invalidation_clears_shuffle_seed_permutations_and_answer_keys():
     ]
 
     db = MockSupabaseClient(state)
-    repo = ReviewRepository(db)
+    repo = ReviewRepository(db, allow_table_fallback=True)
 
     invalidated = await repo.invalidate_shuffle_if_finalized(session_id)
     assert invalidated is True
@@ -2992,7 +3064,7 @@ async def test_f01b_invalidation_demote_blocked_by_status_guard():
         ],
     }
     client = MockSupabaseClient(db_state)
-    repo = ReviewRepository(client)
+    repo = ReviewRepository(client, allow_table_fallback=True)
 
     orig_table = client.table
 
@@ -3027,25 +3099,28 @@ async def test_f07_revert_and_reserve_compatible_with_task302_contract():
         class ContractBuilder:
             def execute(self):
                 if name == "review_reserve_regeneration":
-                    # Returns pure entity payload: operation_id, question_id, expires_at, max_attempts, snapshot
+                    # Returns pure entity payload: session_id, operation_id, question_id, expires_at, max_attempts, snapshot
                     return MockExecutionResult(
                         [
                             {
+                                "session_id": session_id,
                                 "operation_id": str(op_id),
                                 "question_id": q_id,
-                                "expires_at": _now_iso(),
+                                "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=180)).isoformat(),
                                 "max_attempts": 4,
                                 "snapshot": {"source": {}},
                             }
                         ]
                     )
                 if name == "review_revert_question":
-                    # Returns pure entity payload: previous_question_id, question_id, invalidated_version_ids, progress
+                    # Returns pure entity payload: session_id, previous_question_id, question_id, question_status, invalidated_version_ids, progress
                     return MockExecutionResult(
                         [
                             {
+                                "session_id": session_id,
                                 "previous_question_id": q_id,
                                 "question_id": str(uuid4()),
+                                "question_status": "approved",
                                 "invalidated_version_ids": [],
                                 "progress": {"ready": False},
                             }
@@ -3125,7 +3200,7 @@ async def test_f01_adversarial_reject_cannot_destroy_concurrently_approved_sessi
         "options": ["1", "2", "3", "4"],
         "correct_key": "B",
         "solution_md": "Lời giải chi tiết",
-        "validation_report": {"syntax": "PASSED"},
+        "validation_report": {"is_valid": True, "math_verified": True},
         "api_calls_count": 1,
     }
     mock_ai_gen = AsyncMock(return_value=mock_candidate)

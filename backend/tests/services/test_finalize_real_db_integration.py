@@ -13,23 +13,19 @@ Proves resolution of reviewer findings:
 
 import json
 import os
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
-asyncpg = pytest.importorskip("asyncpg")
-
 from app.models.schemas import (
-    FinalizeApproveResponse,
-    ReserveResult,
     ReviewDomainException,
 )
 from app.services.finalize.repository import FinalizeRepository
 from app.services.finalize.service import FinalizeService
 from app.services.review.repository import ReviewRepository
-from app.services.review.service import ReviewService
+
+asyncpg = pytest.importorskip("asyncpg")
 
 OWNER_ID = "00000000-0000-0000-0000-000000000001"
 PG_DSN = os.getenv("PG_TEST_DSN", "postgresql://postgres@exam_pg:5432/postgres")
@@ -242,6 +238,10 @@ async def setup_real_postgres_database():
 
         # 3. Apply schema.sql
         schema_path = "/app/backend/scripts/schema.sql"
+        if not os.path.exists(schema_path):
+            schema_path = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "../../scripts/schema.sql")
+            )
         if os.path.exists(schema_path):
             with open(schema_path, "r", encoding="utf-8-sig") as f:
                 await conn.execute(f.read().lstrip("\ufeff"))

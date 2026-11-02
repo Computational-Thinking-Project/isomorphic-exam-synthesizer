@@ -619,7 +619,7 @@ class ReviewRepository:
                     res_op = str(rpc_data.get("operation_id") or "")
                     res_qid = str(rpc_data.get("question_id") or "")
                     res_sid = str(rpc_data.get("session_id") or "")
-                    if res_op != op_uuid_str or res_qid != str(question_id) or (res_sid and res_sid != str(session_id)):
+                    if res_op != op_uuid_str or res_qid != str(question_id) or res_sid != str(session_id):
                         logger.error(
                             "RPC review_reserve_regeneration identity mismatch: op=%s (expected %s), qid=%s (expected %s), sid=%s (expected %s)",
                             res_op,
@@ -648,8 +648,7 @@ class ReviewRepository:
                         try:
                             exp_dt = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00"))
                             now_utc = datetime.now(timezone.utc)
-                            from datetime import timedelta
-                            if exp_dt < now_utc - timedelta(seconds=10):
+                            if exp_dt <= now_utc:
                                 raise ValueError("expires_at lease is in the past")
                         except (ValueError, TypeError) as parse_err:
                             if not self.allow_table_fallback:
@@ -810,34 +809,80 @@ class ReviewRepository:
         """Idempotent TX2: Deactivate old variant, insert new variant, adjust quota, and audit log."""
         str_regen_id = str(regeneration_id)
 
-        # Ensure validation report has not failed (F10)
-        val_rep = new_data.get("validation_report") or {}
-        if val_rep.get("is_valid") is False:
+        # Strict Authoritative Candidate Validation (F10)
+        val_rep = new_data.get("validation_report")
+        if not isinstance(val_rep, dict):
             raise ReviewDomainException(
                 422,
                 "ERR_INVALID_PAYLOAD",
-                "Candidate variant is invalid and cannot be completed into the question bank",
+                "Candidate variant is missing required validation report",
+            )
+        if val_rep.get("is_valid") is not True:
+            raise ReviewDomainException(
+                422,
+                "ERR_INVALID_PAYLOAD",
+                "Candidate variant failed validation or validation evidence is incomplete",
             )
 
         sol_md = str(new_data.get("solution_md") or new_data.get("solution_markdown") or "").strip()
         if not sol_md:
-            sol_md = "**Lời giải chi tiết:**\nLời giải đang được cập nhật."
+            raise ReviewDomainException(
+                422,
+                "ERR_INVALID_PAYLOAD",
+                "Candidate variant is missing detailed solution markdown (solution_md)",
+            )
 
-        # Ensure checks is always a list of strings (F10)
         checks = val_rep.get("checks")
-        if not isinstance(checks, list):
-            checks = ["format_check", "content_check"]
+        if checks is None:
+            checks = []
+        elif not isinstance(checks, list):
+            raise ReviewDomainException(
+                422,
+                "ERR_INVALID_PAYLOAD",
+                "Candidate validation report checks must be a list if provided",
+            )
 
-        # Ensure warnings is always a list of strings
         warnings = val_rep.get("warnings")
-        if not isinstance(warnings, list):
+        if warnings is None:
             warnings = []
+        elif not isinstance(warnings, list):
+            raise ReviewDomainException(
+                422,
+                "ERR_INVALID_PAYLOAD",
+                "Candidate validation report warnings must be a list if provided",
+            )
+
+        raw_key = new_data.get("correct_key")
+        if not raw_key or str(raw_key).strip().upper() not in ("A", "B", "C", "D"):
+            raise ReviewDomainException(
+                422,
+                "ERR_INVALID_PAYLOAD",
+                f"Candidate variant has invalid or missing correct_key: {raw_key}",
+            )
+        correct_key = str(raw_key).strip().upper()
+
+        raw_options = new_data.get("options")
+        if not isinstance(raw_options, list) or len(raw_options) != 4 or len({str(opt).strip() for opt in raw_options}) != 4:
+            raise ReviewDomainException(
+                422,
+                "ERR_INVALID_PAYLOAD",
+                "Candidate options must be a list of exactly 4 distinct strings",
+            )
+        options = [str(opt) for opt in raw_options]
+
+        stem = str(new_data.get("stem_latex") or new_data.get("content", "")).strip()
+        if not stem:
+            raise ReviewDomainException(
+                422,
+                "ERR_INVALID_PAYLOAD",
+                "Candidate stem_latex is required and cannot be empty",
+            )
 
         cand_payload = {
-            "stem_latex": str(new_data.get("stem_latex") or new_data.get("content", "")).strip(),
+            "stem_latex": stem,
             "solution_md": sol_md,
-            "correct_key": str(new_data.get("correct_key", "A")).strip().upper(),
-            "options": list(new_data.get("options", [])),
+            "correct_key": correct_key,
+            "options": options,
             "api_calls_count": min(4, max(0, int(actual_calls))),
             "validation_report": {
                 "is_valid": True,
@@ -1289,40 +1334,43 @@ class ReviewRepository:
                 )
                 if isinstance(rpc_data, dict):
                     reason = rpc_data.get("rejection_reason") or rpc_data.get("error_code")
-                    if reason in ("QUESTION_NOT_REGENERATED", "ERR_QUESTION_NOT_REGENERATED"):
+                    status_flag = str(rpc_data.get("status", "")).lower()
+                    if status_flag == "denied" or reason:
+                        if reason in ("QUESTION_NOT_REGENERATED", "ERR_QUESTION_NOT_REGENERATED"):
+                            raise ReviewDomainException(
+                                400,
+                                "ERR_QUESTION_NOT_REGENERATED",
+                                "Cannot revert original question that has never been regenerated",
+                            )
+                        if reason in ("QUESTION_NOT_CURRENT", "ERR_QUESTION_NOT_CURRENT"):
+                            raise ReviewDomainException(400, "ERR_QUESTION_NOT_CURRENT", "Question is not active")
+                        if reason in ("QUESTION_BUSY", "REVIEW_BUSY", "ERR_QUESTION_BUSY"):
+                            raise ReviewDomainException(409, "ERR_QUESTION_BUSY", "Question is currently regenerating")
+                        if reason in ("QUESTION_NOT_FOUND", "ERR_QUESTION_NOT_FOUND"):
+                            raise ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Question not found")
+                        if reason in ("SESSION_LOCKED", "REVIEW_LOCKED", "ERR_SESSION_LOCKED"):
+                            raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked")
+                        if reason in ("SESSION_BUSY", "ERR_SESSION_BUSY_GENERATING"):
+                            raise ReviewDomainException(409, "ERR_SESSION_BUSY_GENERATING", "Session busy")
+                        if reason in ("FORBIDDEN", "ERR_FORBIDDEN"):
+                            raise ReviewDomainException(403, "ERR_FORBIDDEN", "Forbidden")
                         raise ReviewDomainException(
                             400,
-                            "ERR_QUESTION_NOT_REGENERATED",
-                            "Cannot revert original question that has never been regenerated",
+                            "ERR_REVERT_DENIED",
+                            f"Thao tác hoàn nguyên bị từ chối: {reason or 'Denied'}",
                         )
-                    if reason in ("QUESTION_NOT_CURRENT", "ERR_QUESTION_NOT_CURRENT"):
-                        raise ReviewDomainException(400, "ERR_QUESTION_NOT_CURRENT", "Question is not active")
-                    if reason in ("QUESTION_BUSY", "REVIEW_BUSY", "ERR_QUESTION_BUSY"):
-                        raise ReviewDomainException(409, "ERR_QUESTION_BUSY", "Question is currently regenerating")
-                    if reason in ("QUESTION_NOT_FOUND", "ERR_QUESTION_NOT_FOUND"):
-                        raise ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Question not found")
-                    if reason in ("SESSION_LOCKED", "REVIEW_LOCKED", "ERR_SESSION_LOCKED"):
-                        raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked")
-                    if reason in ("SESSION_BUSY", "ERR_SESSION_BUSY_GENERATING"):
-                        raise ReviewDomainException(409, "ERR_SESSION_BUSY_GENERATING", "Session busy")
-                    if reason in ("FORBIDDEN", "ERR_FORBIDDEN"):
-                        raise ReviewDomainException(403, "ERR_FORBIDDEN", "Forbidden")
 
-                if isinstance(rpc_data, dict) and rpc_data.get("question_id"):
-                    res_dict = dict(rpc_data)
-                    res_dict.setdefault("id", str(rpc_data.get("question_id")))
-                    res_dict.setdefault("question_id", str(rpc_data.get("question_id")))
-                    res_dict.setdefault("status", "approved")
-                    res_dict.setdefault("is_current", True)
-                    res_dict.setdefault("is_reverted", True)
-                    return res_dict
-                if isinstance(rpc_data, dict) and rpc_data.get("success") is True:
-                    return {
-                        "id": str(rpc_data.get("question_id") or question_id),
-                        "status": "approved",
-                        "is_current": True,
-                        "is_reverted": True,
-                    }
+                    # Only accept success if RPC confirms question_status is approved or success is True
+                    q_status = rpc_data.get("question_status") or rpc_data.get("status")
+                    if str(q_status).lower() == "approved" or rpc_data.get("success") is True or (rpc_data.get("question_id") and not reason and status_flag != "denied"):
+                        qid = str(rpc_data.get("question_id") or rpc_data.get("id") or question_id)
+                        res_dict = dict(rpc_data)
+                        res_dict["id"] = qid
+                        res_dict["question_id"] = qid
+                        res_dict["status"] = "approved"
+                        res_dict["is_current"] = True
+                        res_dict["is_reverted"] = True
+                        return res_dict
                 if not self.allow_table_fallback:
                     raise ReviewDomainException(
                         500,
@@ -1480,6 +1528,11 @@ class ReviewRepository:
             if s_chk_rows and str(s_chk_rows[0].get("status", "")).lower() in ("approved", "exported"):
                 return False
 
+            # Invalidation is handled atomically inside database review RPCs (Migration 006 / 007).
+            # Direct table invalidation is disabled in production to preserve transaction boundaries.
+            if not self.allow_table_fallback:
+                return False
+
             v_res = (
                 self.db.table("exam_versions")
                 .select("id, is_finalized")
@@ -1541,16 +1594,21 @@ class ReviewRepository:
                     if isinstance(rpc_res.data, list) and rpc_res.data
                     else rpc_res.data
                 )
-                if isinstance(rpc_data, dict) and "expected_slots" in rpc_data:
+                prog_dict = (
+                    rpc_data.get("progress")
+                    if isinstance(rpc_data, dict) and isinstance(rpc_data.get("progress"), dict)
+                    else rpc_data
+                )
+                if isinstance(prog_dict, dict) and "expected_slots" in prog_dict:
                     session_meta = await self.get_session_status_and_quota(session_id)
                     session_status = str(session_meta.get("status", ""))
-                    expected = int(rpc_data.get("expected_slots", 0))
-                    current = int(rpc_data.get("current_slots", 0))
-                    approved = int(rpc_data.get("approved_slots", 0))
-                    regenerating = int(rpc_data.get("regenerating_slots", 0))
-                    missing = int(rpc_data.get("missing_slots", 0))
-                    duplicate = int(rpc_data.get("duplicate_slots", 0))
-                    ready = bool(rpc_data.get("ready", False))
+                    expected = int(prog_dict.get("expected_slots", 0))
+                    current = int(prog_dict.get("current_slots", 0))
+                    approved = int(prog_dict.get("approved_slots", 0))
+                    regenerating = int(prog_dict.get("regenerating_slots", 0))
+                    missing = int(prog_dict.get("missing_slots", 0))
+                    duplicate = int(prog_dict.get("duplicate_slots", 0))
+                    ready = bool(prog_dict.get("ready", False))
                     is_complete = bool(expected > 0 and current == expected and approved == expected)
                     can_finalize = bool(ready and session_status in ("generated", "reviewed"))
                     return {
@@ -1570,6 +1628,14 @@ class ReviewRepository:
                         "is_complete": is_complete,
                         "can_finalize": can_finalize,
                     }
+                if not self.allow_table_fallback:
+                    raise ReviewDomainException(
+                        500,
+                        "ERR_PROGRESS_FAILED",
+                        f"RPC review_get_progress returned malformed progress payload: {rpc_data}",
+                    )
+            except ReviewDomainException:
+                raise
             except Exception as exc:
                 if not self.allow_table_fallback:
                     raise ReviewDomainException(
@@ -1656,8 +1722,47 @@ class ReviewRepository:
     async def recover_stale_questions(
         self, session_id: Optional[str] = None, actor_user_id: Optional[str] = None
     ) -> int:
-        """Scan and recover questions stuck in 'regenerating' for longer than 3 minutes."""
+        """Scan and recover questions stuck in 'regenerating' for longer than 3 minutes.
+
+        Primary Path: Atomic worker RPC review_recover_regeneration (Worker service_role).
+        Fallback Path: Table queries (Test mode only, gated by allow_table_fallback).
+        """
         now_dt = datetime.now(timezone.utc)
+        recovered = 0
+
+        # Primary Path: Stored procedure RPC review_recover_regeneration (Worker service_role)
+        if callable(getattr(self.worker_db, "rpc", None)):
+            try:
+                op_query = (
+                    self.worker_db.table("review_operations")
+                    .select("operation_id, session_id, expires_at")
+                    .eq("status", "active")
+                )
+                if session_id:
+                    op_query = op_query.eq("session_id", str(session_id))
+                op_res = op_query.execute()
+                op_rows = _get_rows(op_res)
+                for op in op_rows:
+                    exp_str = op.get("expires_at")
+                    if not exp_str:
+                        continue
+                    try:
+                        exp_dt = datetime.fromisoformat(str(exp_str).replace("Z", "+00:00"))
+                        if exp_dt <= now_dt:
+                            op_id = op.get("operation_id")
+                            if op_id:
+                                self.worker_db.rpc(
+                                    "review_recover_regeneration",
+                                    {"p_operation_id": str(op_id)},
+                                ).execute()
+                                recovered += 1
+                    except Exception as parse_err:
+                        logger.warning("Error during operation recovery: %s", parse_err)
+                if recovered > 0 or op_rows:
+                    return recovered
+            except Exception as exc:
+                logger.debug("RPC review_recover_regeneration scan encountered %s", exc)
+
         query = (
             self.db.table("version_questions")
             .select("id, updated_at, exam_versions!inner(session_id)")
@@ -1667,7 +1772,6 @@ class ReviewRepository:
             query = query.eq("exam_versions.session_id", session_id)
         vq_res = query.execute()
         stale_rows = _get_rows(vq_res)
-        recovered = 0
 
         for row in stale_rows:
             upd_str = row.get("updated_at")

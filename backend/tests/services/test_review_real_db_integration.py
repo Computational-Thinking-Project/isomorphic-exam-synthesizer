@@ -12,21 +12,19 @@ Proves resolution of reviewer findings:
 
 import json
 import os
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
-
-asyncpg = pytest.importorskip("asyncpg")
 
 from app.models.schemas import (
     ReserveResult,
     ReviewAcquireUnavailableError,
     ReviewDomainException,
 )
-from app.services.review.repository import AttemptPermit, ReviewRepository
-from app.services.review.service import ReviewService
+from app.services.review.repository import ReviewRepository
+
+asyncpg = pytest.importorskip("asyncpg")
 
 OWNER_ID = "00000000-0000-0000-0000-000000000001"
 SESSION_ID = "10000000-0000-0000-0000-000000000001"
@@ -217,12 +215,20 @@ async def setup_real_postgres_database():
 
         # 3. Apply schema.sql
         schema_path = "/app/backend/scripts/schema.sql"
+        if not os.path.exists(schema_path):
+            schema_path = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "../../scripts/schema.sql")
+            )
         if os.path.exists(schema_path):
             with open(schema_path, "r", encoding="utf-8-sig") as f:
                 await conn.execute(f.read().lstrip("\ufeff"))
 
         # 4. Apply Migration 006
         mig_path = "/app/backend/migrations/006_stage3_review_and_shuffle.sql"
+        if not os.path.exists(mig_path):
+            mig_path = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "../../migrations/006_stage3_review_and_shuffle.sql")
+            )
         if os.path.exists(mig_path):
             with open(mig_path, "r", encoding="utf-8-sig") as f:
                 await conn.execute(f.read().lstrip("\ufeff"))
@@ -415,7 +421,13 @@ async def test_f02_f06_fail_closed_guarantee(
         await repo.complete_regeneration_tx(
             session_id=s_id,
             old_q_snapshot={"id": q_id, "version_id": v_id, "source_question_id": src_id},
-            new_data={"stem_latex": "fake", "options": ["A", "B", "C", "D"], "correct_key": "A"},
+            new_data={
+                "stem_latex": "fake",
+                "options": ["A", "B", "C", "D"],
+                "correct_key": "A",
+                "solution_md": "HDG",
+                "validation_report": {"is_valid": True, "math_verified": True},
+            },
             regeneration_id=fake_op,
             actual_calls=1,
             user_id=OWNER_ID,
