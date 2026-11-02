@@ -293,3 +293,14 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
   - Giảm thiểu triệt để số lượng endpoint và form UI cần phát triển/bảo trì, tiết kiệm ít nhất 4 ngày công cho FE và BE.
   - Giao diện đạt chuẩn Zero-Friction: Giảng viên chỉ cần nạp đề $\rightarrow$ xem trước KaTeX $\rightarrow$ bấm 1 nút "Xác nhận đề gốc và tiếp tục" để chuyển sang sinh đề.
   - Bảo đảm an toàn tuyệt đối cho CSDL và hệ thống.
+
+## DEC-TV7-005: Nền schema Stage 3 tương thích dữ liệu cũ (TASK-302)
+
+- Ngày: 31/10/2026; người đề xuất/triển khai: Hùng (`benalexx007`).
+- Trạng thái: nền schema để bàn giao/review trong Draft PR; không phải toàn bộ TASK-302 đã hoàn tất.
+- Bối cảnh: schema dev đã có canonical nhưng thiếu cột audit của TASK-301; `answer_keys` dùng tên cũ. Migration `CREATE TABLE IF NOT EXISTS` không nâng cấp bảng đã tồn tại.
+- Thực hiện: migration 006 có transaction; backfill session audit và ánh xạ answer key khi suy ra duy nhất, giữ các cột cũ đồng bộ với `display_*`, chặn UPDATE canonical của cùng candidate. Dữ liệu thiếu/mâu thuẫn phải rollback, không tự xóa hay chọn giá trị.
+- Ngoại lệ actor được người phụ trách chốt 31/10/2026: giữ NULL cho lịch sử chưa biết, không suy ra actor từ owner. Dùng CHECK NOT VALID để giữ dữ liệu cũ nhưng chặn INSERT/UPDATE thiếu actor; fresh schema dùng CHECK bình thường. Không tự VALIDATE/SET NOT NULL khi lịch sử chưa có backfill đã xác minh. Đây là ngoại lệ đối với W3 NOT NULL toàn bộ dữ liệu, chưa phải đồng nghiệp đã xác nhận đọc hoặc PR đã approve.
+- Chưa chốt: interface RPC, quota/concurrency, revert và readiness theo review #28. Không dùng schema tests để nhận đã có transaction lifecycle an toàn.
+- Phạm vi ảnh hưởng: schema/migration và tests PostgreSQL; không sửa nhánh TASK-301, frontend, cloud hoặc description PR/issue.
+- Plan và kết quả kiểm: [TASK-302](tasks/TASK-302.md). [Contract RPC đề xuất](api/review-rpc-contract.md) giữ chữ ký/payload/quyền gọi và các lựa chọn chưa chốt; chưa có RPC/ledger được triển khai.
