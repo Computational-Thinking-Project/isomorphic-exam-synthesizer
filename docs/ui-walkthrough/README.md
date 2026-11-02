@@ -1,6 +1,6 @@
 # UI walkthrough — exam mirror
 
-**Bản portable 02/11/2026 — nhấn đáp án S03/S06, giữ thao tác trong popup S06.** Mở [launcher](index.html) hoặc [PREVIEW.html](PREVIEW.html) bằng Chrome sau khi lấy về máy. Không cần npm, Docker, API key hoặc server. GitHub chỉ hiển thị nội dung HTML, không chạy demo ngay trong trang xem file.
+**Bản portable 02/11/2026 — tên sản phẩm rõ ở S00, logo có chữ từ S01 trở đi.** Giữ nhấn đáp án S03/S06 và thao tác trong popup S06. Mở [launcher](index.html) hoặc [PREVIEW.html](PREVIEW.html) bằng Chrome sau khi lấy về máy. Không cần npm, Docker, API key hoặc server. GitHub chỉ hiển thị nội dung HTML, không chạy demo ngay trong trang xem file.
 
 ## Lấy gói về máy
 
@@ -25,14 +25,14 @@ git pull --ff-only origin fix/ui-ux-demo
 
 Mở `docs/ui-walkthrough/index.html` bằng Chrome từ trình quản lý file. Giữ nguyên cả thư mục nếu chia sẻ lại để các liên kết tương đối vẫn dùng được. Riêng PREVIEW.html tự chứa toàn bộ app, font, artwork và notices, có thể mở độc lập.
 
-**Mốc đóng gói:** bản nhấn đáp án chuẩn bị trên `fix/ui-ux-demo` từ `5448939`. Đây là thông tin lúc chuẩn bị commit; lịch sử Git và remote cho biết commit/push thực tế. Kiểm hash để nhận đúng bản.
+**Mốc đóng gói:** bản nhận diện S00/S01–S08 chuẩn bị trên `fix/ui-ux-demo` từ `95a3e3b`. Đây là thông tin lúc chuẩn bị commit; lịch sử Git và remote cho biết commit/push thực tế. Kiểm hash để nhận đúng bản.
 
 ## Bản và nguồn
 
 - Nguồn: `project/ui-draft/redesign/PREVIEW.html` ở workspace thiết kế, không phải build frontend sản phẩm.
-- 2.756.069 bytes; SHA256 `876cd1e5e32c40468747ac7ed370036b7d48ce169ccbddcbac6bbfa86a8faeaa`.
-- CSS `index-D1aTjqmo.css`, JS `index-BKFN3kae.js` đã nhúng cùng font, artwork và third-party notices.
-- Nền repo khi đóng gói: `5448939c5719c36b766ec38aa3c32181cc115d5f`; đây không phải source commit của artifact ui-draft.
+- 3.202.251 bytes; SHA256 `4493d700353966816c512e78bb8269f4a7f70d8b2076eb09729ed9578747107c`.
+- CSS `index-C1qeYyH6.css`, JS `index-B6eM5-OE.js` đã nhúng cùng font, artwork, cả hai logo và third-party notices.
+- Nền repo khi đóng gói: `95a3e3b9db2d6a73be3a87cb0af28b6f53a9aa41`; đây không phải source commit của artifact ui-draft.
 - [version.json](version.json) ghi nguồn/hash/trạng thái kiểm. `.gitattributes` giữ nguyên bytes PREVIEW, không tự chuyển CRLF/LF.
 
 Kiểm file bằng PowerShell:
@@ -45,6 +45,12 @@ Get-FileHash ./docs/ui-walkthrough/PREVIEW.html -Algorithm SHA256
 ## Walkthrough hiện hành
 
 ### S00 → S03: nguồn
+
+S00 dùng logo nhỏ, tên **EXAM MIRROR** bằng chữ navy, slogan, hai dòng mô tả và CTA `Bắt đầu "mirroring" nào!`. Đã bỏ audience, hint đăng nhập và hai caption artwork; giữ hai artwork trang trí. Entrance gồm bốn nhóm600ms, gap80ms, tổng840ms theo cấu hình.
+
+Từ khi S01 xuất hiện, header dùng logo ngang có chữ do user cung cấp; cùng logo ở header S02–S08 và menu drawer. PNG gốc1920×1080/333.450bytes, SHA256 `f0148119cfc9a35e9fe1d2873a3a8cc4d5f112876d44b6d69dcf233caca45f74`; nguồn đính kèm `Computational Thinking - Midterm.png`. Ảnh được nhúng nguyên trạng, không sửa pixel hoặc tách nền; CSS dùng khung1696×368 tại(128,368) để bỏ canvas trống. Giữ nền sáng, chữ serif và phản chiếu trong artwork; không thêm font ứng dụng. Không có license riêng đi kèm ảnh; ghi đúng nguồn user cung cấp, không tự gán license.
+
+S01 logo fade/float8px trong350ms, không co giãn từ tỷ lệ logo S00. Slogan giữFLIP450ms, card300ms+delay130ms; keyboard/reduced motion vào thẳng, focus không chờ animation. Mobile dùng logo256px/hai hàng header112px để giữ phần tên lớn hơn; desktop thấp giữheader52/56px. Đây là implementation/timing cấu hình, chưa kiểm hiển thị hay đo thực trên Chrome.
 
 Mở S00 từ launcher. Login/Library là giao diện demo. Tạo phiên mới hoặc dùng checkpoint S03 empty; bấm **Xem dữ liệu mẫu**, đọc đề, **Xác nhận toàn bộ đề**, rồi **Tiếp theo**. Chọn file chỉ dùng tên file, không upload/parse nội dung.
 
@@ -100,7 +106,9 @@ Tạo lại vẫn hỏi xác nhận, dùng cửa sổ offset 1–8 so với seed
 
 ## Kiểm đã làm và còn chờ
 
-Lượt nhấn đáp án: **18 ca tập trung + 30 ca popup + 36 ca Đại số = 84 ca qua**, thêm **32 so sánh markup S04/S05/S07/S08** giữ nguyên. TypeScript/build qua (1621 modules). Kiểm key theo ID/sau trộn, B=C, ID không hợp lệ, MathML và bản học sinh không marker. Tương phản tính từ tokens light nội dung/nhãn 13.14:1/7.74:1, dark 13.51:1/8.33:1; chưa kiểm màu thực hoặc screen reader.
+Lượt nhận diện mới nhất: **7 ca Brand/Login/WorkspaceShell/MenuDrawer + 11 ca hồi quy S00 = 18 ca qua**, TypeScript/build cuối qua (1622 modules). Đã cập nhật kỳ vọng Arrival chỉ còn slogan/không decode logo S00 và logo mới reveal350ms; không nhận suite S00 cũ giữ nguyên. 58 source file khác và60 asset public cũ giữ hash. Kiểm native layout/readability/timing/focus vẫn còn chờ.
+
+Lượt nhấn đáp án trước đó có84 ca và32 so sánh markup qua; không chạy lại khi chỉ đổi nhận diện. Tương phản tính từ tokens light nội dung/nhãn 13.14:1/7.74:1, dark13.51:1/8.33:1; chưa kiểm màu thực hoặc screen reader.
 
 Lượt popup trước đó có 151 ca và 40 so sánh markup qua; không nhận toàn bộ đã chạy lại cho bản này. Fake timers/hooks/React element/handler checks không phải browser pass. SSR useLayoutEffect warnings không dùng để nghiệm thu visual.
 
@@ -109,6 +117,7 @@ Gói chia sẻ được kiểm bytes/hash nguồn–dist–repo, tài nguyên/li
 | Kiểm trực tiếp Chrome cần làm | Trạng thái |
 |---|---|
 | Mở file ở folder mới, font/artwork/công thức | Chưa kiểm |
+| S00→S01 logo mới, crop/nền/chữ thực; header mobile hai hàng/drawer/desktop52px | Chưa kiểm |
 | Nhãn/nền/viền đáp án, panel hẹp, công thức dài, screen reader | Chưa kiểm |
 | S04→S05, mở duyệt sau cặp đầu, progress tiếp tục ở S06 | Chưa kiểm |
 | Click ô/tab còn tải, spinner/clock/skeleton rồi hiện nội dung | Chưa kiểm |
