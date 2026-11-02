@@ -23,7 +23,7 @@ Implements 18 critical test cases:
 
 import asyncio
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -270,7 +270,7 @@ class MockRpcQueryBuilder:
                                 "attempt_id": str_att_id,
                                 "dispatch_permitted": False,
                                 "calls_used": 0,
-                                "remaining_calls": 0,
+                                "remaining_calls": 30,
                                 "session_id": "",
                                 "session_status": "not_found",
                                 "replayed": False,
@@ -281,14 +281,19 @@ class MockRpcQueryBuilder:
 
                 # 2. Verify question is in active regenerating status
                 if matched_vq and matched_vq.get("status") != "regenerating":
+                    curr_c = 0
+                    for s in self.db_state.get("exam_sessions", []):
+                        if str(s.get("id")) == session_id:
+                            curr_c = int(s.get("gemini_review_calls", 0) or 0)
+                            break
                     return MockExecutionResult(
                         [
                             {
                                 "operation_id": str_op_id,
                                 "attempt_id": str_att_id,
                                 "dispatch_permitted": False,
-                                "calls_used": 0,
-                                "remaining_calls": 0,
+                                "calls_used": min(30, curr_c),
+                                "remaining_calls": max(0, 30 - curr_c),
                                 "session_id": session_id,
                                 "session_status": "invalid_state",
                                 "replayed": False,
@@ -309,7 +314,7 @@ class MockRpcQueryBuilder:
                                 "attempt_id": str_att_id,
                                 "dispatch_permitted": False,
                                 "calls_used": 0,
-                                "remaining_calls": 0,
+                                "remaining_calls": 30,
                                 "session_id": session_id,
                                 "session_status": "not_found",
                                 "replayed": False,
@@ -491,6 +496,7 @@ class MockRpcQueryBuilder:
                 target_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
                 s_row["updated_at"] = datetime.now(timezone.utc).isoformat()
 
+                exp_time = (datetime.now(timezone.utc) + timedelta(seconds=180)).isoformat()
                 return MockExecutionResult([
                     {
                         "success": True,
@@ -498,6 +504,9 @@ class MockRpcQueryBuilder:
                         "question_id": qid,
                         "operation_id": opid,
                         "status": "regenerating",
+                        "operation_status": "active",
+                        "expires_at": exp_time,
+                        "max_attempts": 4,
                     }
                 ])
 

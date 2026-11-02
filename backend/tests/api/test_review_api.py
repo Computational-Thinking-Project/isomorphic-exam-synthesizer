@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.dependencies import get_current_user, get_user_db
+from app.api.dependencies import get_current_user, get_service_db, get_user_db
 from app.main import app
 from app.models.schemas import (
     CurrentUser,
@@ -91,6 +91,7 @@ def test_accept_question_success(
 
     app.dependency_overrides[get_current_user] = lambda: mock_current_user
     app.dependency_overrides[get_user_db] = lambda: MagicMock()
+    app.dependency_overrides[get_service_db] = lambda: MagicMock()
 
     try:
         with (
@@ -133,6 +134,7 @@ def test_reject_question_success(
 
     app.dependency_overrides[get_current_user] = lambda: mock_current_user
     app.dependency_overrides[get_user_db] = lambda: MagicMock()
+    app.dependency_overrides[get_service_db] = lambda: MagicMock()
 
     try:
         with (
@@ -164,6 +166,7 @@ def test_reject_question_quota_exhausted_returns_429(
     """POST /reject returns 429 when quota is exhausted."""
     app.dependency_overrides[get_current_user] = lambda: mock_current_user
     app.dependency_overrides[get_user_db] = lambda: MagicMock()
+    app.dependency_overrides[get_service_db] = lambda: MagicMock()
 
     try:
         with (
@@ -205,6 +208,7 @@ def test_revert_question_success(
 
     app.dependency_overrides[get_current_user] = lambda: mock_current_user
     app.dependency_overrides[get_user_db] = lambda: MagicMock()
+    app.dependency_overrides[get_service_db] = lambda: MagicMock()
 
     try:
         with (
@@ -246,6 +250,7 @@ def test_get_review_progress_success(
 
     app.dependency_overrides[get_current_user] = lambda: mock_current_user
     app.dependency_overrides[get_user_db] = lambda: MagicMock()
+    app.dependency_overrides[get_service_db] = lambda: MagicMock()
 
     try:
         with (
