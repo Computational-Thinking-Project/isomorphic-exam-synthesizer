@@ -2,6 +2,9 @@
 -- Isomorphic Exam Synthesizer - Database Initialization Schema (TASK-002)
 -- Targets: PostgreSQL 15+ on Supabase (Region: Southeast Asia / Singapore)
 -- Features: 10 Tables, Strict Relational RLS, Google OAuth Trigger, Invariant Index
+-- After initialization, apply backend/migrations in order. Migration 006 installs
+-- canonical immutability and legacy/display answer-key compatibility triggers.
+-- It also creates the private review ledger, RPC functions and their ACLs.
 -- ==============================================================================
 
 -- ------------------------------------------------------------------------------
@@ -41,8 +44,7 @@ DO $$ BEGIN
     'ACCEPT',
     'REJECT',
     'REVERT',
-    'REJECT_FAILED',
-    'APPROVE_ALL'
+    'REJECT_FAILED'
   );
 EXCEPTION
   WHEN duplicate_object THEN null;
@@ -148,12 +150,14 @@ CREATE TABLE IF NOT EXISTS public.version_questions (
   is_current BOOLEAN NOT NULL DEFAULT TRUE,
   regenerated_from_id UUID REFERENCES public.version_questions(id) ON DELETE SET NULL,
   is_reverted BOOLEAN NOT NULL DEFAULT FALSE,
+  regeneration_id UUID NULL,
   validation_report JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Invariant Constraint: At any time, exactly one current record exists per version/source pair
+-- At most one current record per version/source pair; atomic lifecycle RPCs must
+-- additionally ensure that replacement failures do not leave zero current rows.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_single_current_version_question 
   ON public.version_questions (version_id, source_question_id) 
   WHERE is_current = TRUE;
@@ -164,18 +168,27 @@ CREATE TABLE IF NOT EXISTS public.answer_keys (
   version_id UUID NOT NULL REFERENCES public.exam_versions(id) ON DELETE CASCADE,
   question_no INT NOT NULL,
   correct_option TEXT NOT NULL,
+  display_no INT NOT NULL,
+  display_correct_key TEXT NOT NULL,
+  canonical_question_no INT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Table 9: Review Logs (Audit trail of teacher review decisions)
 CREATE TABLE IF NOT EXISTS public.review_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  session_id UUID REFERENCES public.exam_sessions(id) ON DELETE CASCADE,
-  version_question_id UUID REFERENCES public.version_questions(id) ON DELETE CASCADE,
-  user_id UUID REFERENCES public.users(id) ON DELETE SET NULL,
+  version_question_id UUID NOT NULL REFERENCES public.version_questions(id) ON DELETE CASCADE,
+  session_id UUID NOT NULL REFERENCES public.exam_sessions(id) ON DELETE CASCADE,
+  -- Nullable storage permits unknown historical actors on upgraded databases.
+  -- Fresh databases have no such history: the CHECK below requires an actor.
+  -- Migration 006 uses CHECK ... NOT VALID to retain pre-existing NULLs only.
+  user_id UUID REFERENCES public.users(id),
   action_type public.review_action_type NOT NULL,
   reason TEXT,
   latency_ms INT,
+  api_calls_used INT,
+  regenerated_from_id UUID REFERENCES public.version_questions(id),
+  CONSTRAINT ck_review_logs_actor_required CHECK (user_id IS NOT NULL),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -617,226 +630,3 @@ GRANT EXECUTE ON FUNCTION public.confirm_exam_source(UUID, INT, BOOLEAN, TIMESTA
 
 
 
--- Migration 007: Finalize & Content Lock Stored Procedure RPC (TASK-305)
--- Schema adjustments for APPROVE_ALL session-level audit logging (F12)
-DO $$ BEGIN
-  ALTER TYPE public.review_action_type ADD VALUE IF NOT EXISTS 'APPROVE_ALL';
-EXCEPTION
-  WHEN duplicate_object THEN null;
-END $$;
-
-ALTER TABLE public.review_logs ALTER COLUMN version_question_id DROP NOT NULL;
-ALTER TABLE public.review_logs ADD COLUMN IF NOT EXISTS session_id UUID REFERENCES public.exam_sessions(id) ON DELETE CASCADE;
-ALTER TABLE public.review_logs ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES public.users(id) ON DELETE SET NULL;
--- Purpose: Atomically lock exam session, verify all Stage 3 invariants,
--- enforce Cartesian version x question completeness, transition session status to 'approved',
--- stamp approved_at, and record APPROVE_ALL audit log in a single ACID transaction.
-
--- Drop previous overload if exists
-DROP FUNCTION IF EXISTS public.finalize_approve_session(UUID, UUID, TIMESTAMPTZ);
-DROP FUNCTION IF EXISTS public.finalize_approve_session(UUID, TIMESTAMPTZ);
-
-CREATE OR REPLACE FUNCTION public.finalize_approve_session(
-  p_session_id UUID,
-  p_user_id UUID DEFAULT NULL,
-  p_expected_updated_at TIMESTAMPTZ DEFAULT NULL
-)
-RETURNS JSONB
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, auth, pg_temp
-AS $$
-DECLARE
-  v_session RECORD;
-  v_caller_id UUID;
-  v_role TEXT := COALESCE(
-    NULLIF(current_setting('request.jwt.claim.role', true), ''),
-    CASE 
-      WHEN NULLIF(current_setting('request.jwt.claims', true), '') IS NOT NULL 
-           AND (current_setting('request.jwt.claims', true)::jsonb ? 'role')
-      THEN current_setting('request.jwt.claims', true)::jsonb->>'role'
-      ELSE ''
-    END
-  );
-  v_expected_versions INT;
-  v_total_versions INT := 0;
-  v_finalized_versions INT := 0;
-  v_regenerating_count INT := 0;
-  v_total_current_q INT := 0;
-  v_approved_current_q INT := 0;
-  v_now TIMESTAMPTZ := clock_timestamp();
-BEGIN
-  -- 1. Resolve authenticated caller ID (F16 Actor Spoofing Fix)
-  -- For service_role: trust p_user_id or fallback to auth.uid() / JWT claims
-  -- For authenticated / client role: strictly resolve from auth.uid() or JWT sub, NEVER trust p_user_id
-  IF v_role = 'service_role' THEN
-    v_caller_id := COALESCE(
-      p_user_id,
-      auth.uid(),
-      CASE 
-        WHEN NULLIF(current_setting('request.jwt.claim.sub', true), '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-        THEN NULLIF(current_setting('request.jwt.claim.sub', true), '')::UUID
-        WHEN NULLIF(current_setting('request.jwt.claims', true), '') IS NOT NULL 
-             AND (current_setting('request.jwt.claims', true)::jsonb ? 'sub')
-             AND (current_setting('request.jwt.claims', true)::jsonb->>'sub') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-        THEN (current_setting('request.jwt.claims', true)::jsonb->>'sub')::UUID
-        ELSE NULL
-      END
-    );
-  ELSE
-    v_caller_id := COALESCE(
-      auth.uid(),
-      CASE 
-        WHEN NULLIF(current_setting('request.jwt.claim.sub', true), '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-        THEN NULLIF(current_setting('request.jwt.claim.sub', true), '')::UUID
-        WHEN NULLIF(current_setting('request.jwt.claims', true), '') IS NOT NULL 
-             AND (current_setting('request.jwt.claims', true)::jsonb ? 'sub')
-             AND (current_setting('request.jwt.claims', true)::jsonb->>'sub') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-        THEN (current_setting('request.jwt.claims', true)::jsonb->>'sub')::UUID
-        ELSE NULL
-      END
-    );
-  END IF;
-
-  -- 2. Lock root tuple on exam_sessions exclusively
-  SELECT id, user_id, status, approved_at, updated_at
-  INTO v_session
-  FROM public.exam_sessions
-  WHERE id = p_session_id
-  FOR UPDATE;
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'ERR_SESSION_NOT_FOUND' USING ERRCODE = 'P0002';
-  END IF;
-
-  -- 3. Verify user ownership authorization (unless service_role) (F14 & F16)
-  IF v_role != 'service_role' AND (v_caller_id IS NULL OR v_session.user_id IS DISTINCT FROM v_caller_id) THEN
-    RAISE EXCEPTION 'ERR_UNAUTHORIZED' USING ERRCODE = '42501';
-  END IF;
-
-  -- 4. Idempotency Guard: if already approved, return stored timestamp without mutation
-  IF v_session.status = 'approved' THEN
-    RETURN jsonb_build_object(
-      'session_id', v_session.id,
-      'status', 'approved',
-      'approved_at', v_session.approved_at,
-      'updated_at', v_session.updated_at,
-      'message', 'Phiên đề đã được phê duyệt trước đó'
-    );
-  END IF;
-
-  -- 5. Session State Machine Guard: only 'reviewed' or 'generated' allowed
-  IF v_session.status NOT IN ('reviewed', 'generated') THEN
-    RAISE EXCEPTION 'ERR_INVALID_SESSION_STATE' USING ERRCODE = 'P0001';
-  END IF;
-
-  -- 6. Optimistic Locking Guard: detect concurrent mutations
-  IF p_expected_updated_at IS NOT NULL 
-     AND v_session.updated_at IS DISTINCT FROM p_expected_updated_at THEN
-    RAISE EXCEPTION 'ERR_INVALID_SESSION_STATE' USING ERRCODE = 'P0001';
-  END IF;
-
-  -- 7. Exam Versions Invariant Guard (TASK-303 & F19):
-  -- 7a. Query configured expected n_versions from generation_configs
-  SELECT n_versions
-  INTO v_expected_versions
-  FROM public.generation_configs
-  WHERE session_id = p_session_id
-  LIMIT 1;
-
-  -- 7b. Total versions must match configured n_versions and 100% of versions must have is_finalized = TRUE
-  SELECT count(*), count(*) FILTER (WHERE is_finalized IS TRUE)
-  INTO v_total_versions, v_finalized_versions
-  FROM public.exam_versions
-  WHERE session_id = p_session_id;
-
-  IF v_expected_versions IS NOT NULL AND v_total_versions != v_expected_versions THEN
-    RAISE EXCEPTION 'ERR_VERSIONS_NOT_FINALIZED' USING ERRCODE = 'P0001';
-  END IF;
-
-  IF v_total_versions = 0 OR v_finalized_versions < v_total_versions THEN
-    RAISE EXCEPTION 'ERR_VERSIONS_NOT_FINALIZED' USING ERRCODE = 'P0001';
-  END IF;
-
-  -- 8. Questions Invariant Guard (TASK-301):
-  -- 8a. No question may be actively regenerating
-  SELECT count(*)
-  INTO v_regenerating_count
-  FROM public.version_questions q
-  JOIN public.exam_versions v ON v.id = q.version_id
-  WHERE v.session_id = p_session_id 
-    AND q.is_current IS TRUE 
-    AND q.status = 'regenerating';
-
-  IF v_regenerating_count > 0 THEN
-    RAISE EXCEPTION 'ERR_QUESTION_REGENERATING' USING ERRCODE = 'P0001';
-  END IF;
-
-  -- 8b. 100% of active questions must have status = 'approved'
-  SELECT count(*), count(*) FILTER (WHERE q.status = 'approved')
-  INTO v_total_current_q, v_approved_current_q
-  FROM public.version_questions q
-  JOIN public.exam_versions v ON v.id = q.version_id
-  WHERE v.session_id = p_session_id 
-    AND q.is_current IS TRUE;
-
-  IF v_total_current_q = 0 OR v_approved_current_q < v_total_current_q THEN
-    RAISE EXCEPTION 'ERR_NOT_ALL_QUESTIONS_APPROVED' USING ERRCODE = 'P0001';
-  END IF;
-
-  -- 8c. Cartesian Completeness Guard (F02):
-  -- Every (version, source_question) pair must have an active approved variant
-  IF EXISTS (
-    SELECT 1
-    FROM public.exam_versions v
-    CROSS JOIN public.source_questions s
-    WHERE v.session_id = p_session_id 
-      AND s.session_id = p_session_id
-      AND NOT EXISTS (
-        SELECT 1
-        FROM public.version_questions q
-        WHERE q.version_id = v.id
-          AND q.source_question_id = s.id
-          AND q.is_current IS TRUE
-          AND q.status = 'approved'
-      )
-  ) THEN
-    RAISE EXCEPTION 'ERR_NOT_ALL_QUESTIONS_APPROVED' USING ERRCODE = 'P0001';
-  END IF;
-
-  -- 9. Atomic State Transition
-  UPDATE public.exam_sessions
-  SET status = 'approved',
-      approved_at = v_now,
-      updated_at = v_now
-  WHERE id = p_session_id;
-
-  -- 10. Record APPROVE_ALL audit log entry
-  INSERT INTO public.review_logs (
-    session_id,
-    user_id,
-    action_type,
-    reason,
-    created_at
-  ) VALUES (
-    p_session_id,
-    COALESCE(v_caller_id, v_session.user_id),
-    'APPROVE_ALL',
-    'Phiên đề được phê duyệt chính thức và khóa nội dung bất biến vĩnh viễn (TASK-305)',
-    v_now
-  );
-
-  -- 11. Return approved response payload
-  RETURN jsonb_build_object(
-    'session_id', p_session_id,
-    'status', 'approved',
-    'approved_at', v_now,
-    'updated_at', v_now,
-    'message', 'Phê duyệt phiên thi thành công và đã khóa nội dung'
-  );
-END;
-$$;
-
--- Grant permissions for authenticated users and backend service role
-REVOKE EXECUTE ON FUNCTION public.finalize_approve_session(UUID, UUID, TIMESTAMPTZ) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.finalize_approve_session(UUID, UUID, TIMESTAMPTZ) TO authenticated, service_role;

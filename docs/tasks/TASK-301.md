@@ -5,7 +5,7 @@
 - **Reviewer:** Hùng (`benalexx007` — đã chốt)
 - **Repo/nhánh:** `feat/duy-task-301-review-lifecycle-api`; PR: [#28](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28)
 - **Hạn đợt:** tối thứ 3 03/11/2026; **ETA task:** Thứ 7 31/10/2026 (Duy xác nhận)
-- **Phiên bản:** v7.2 (Tiếp thu toàn diện phản biện F07: Chuyển sang Kiến trúc A - Pure Per-Acquire Atomic Accounting & Durable DB Ledger; Khắc phục Quota Boundary Conflict, Non-Durable RAM State, Rollback Uncertain Grant)
+- **Phiên bản:** v8.0 (Nâng cấp kiến trúc toàn diện: Chuyển dịch toàn bộ Review Lifecycle sang Atomic PostgreSQL Stored Procedures, siết chặt Phân quyền RLS, và Kiểm thử CSDL PostgreSQL thật)
 
 ---
 
@@ -68,19 +68,39 @@ FROM (
 ```
 Bảo đảm phiên có $N$ mã đề $\times$ $M$ câu luôn ra đúng $N \times M$ slots câu hỏi, bất biến qua reject và revert.
 
-### 3.3. Kiến Trúc A: Pure Per-Acquire Atomic Accounting & Durable Attempt Ledger
+### 3.3. Kiến Trúc A: Pure Per-Acquire Atomic Accounting & Durable Attempt Ledger (F07 v3.0)
 - Hằng số: `MAX_AI_CALLS_PER_REJECT = 4` (trần tối đa 4 attempts cho 1 operation theo TASK-304); `MAX_SESSION_REVIEW_QUOTA = 30` (trần toàn session).
-- **TX1 (`reserve_max_quota_and_start_regenerating`):** Kiểm tra `gemini_review_calls < 30`, khóa câu hỏi sang `regenerating`. **Tuyệt đối KHÔNG cộng trước 4 vào `gemini_review_calls`** (loại bỏ hoàn toàn lỗi chặn nhầm ở mốc 26-29 calls).
+- **TX1 (`reserve_max_quota_and_start_regenerating` / `reserve_regeneration`):** Kiểm tra `gemini_review_calls < 30`, khóa câu hỏi sang `regenerating`. **Tuyệt đối KHÔNG cộng trước 4 vào `gemini_review_calls`** (loại bỏ hoàn toàn lỗi chặn nhầm ở mốc 26-29 calls).
 - **Acquire Permit (`acquire_attempt`):**
-  - Ghi bản ghi vào CSDL `review_attempts` với `INSERT ... ON CONFLICT (attempt_id) DO NOTHING`.
-  - Nếu duplicate `attempt_id` $\rightarrow$ Trả ngay `replayed = True, dispatch_permitted = False` (chống replay durable, không dựa vào RAM).
-  - Kiểm tra trần operation (`attempts > 4`) $\rightarrow$ Từ chối `dispatch_permitted = False`.
-  - Conditional Atomic Increment trên `exam_sessions`: `UPDATE exam_sessions SET gemini_review_calls = gemini_review_calls + 1 WHERE gemini_review_calls + 1 <= 30`.
+  - **Tích hợp RPC Production (Primary Path):** Gọi `review_acquire_attempt(p_operation_id, p_attempt_id)` thuộc migration `008_stage3_review_acquire_attempt_rpc.sql`. Stored procedure thực thi trong 1 transaction duy nhất với `SELECT ... FOR UPDATE` trên bảng `exam_sessions`, đảm bảo kiểm tra replay, trần operation (4), trần session (30), và tăng `gemini_review_calls` hoàn toàn nguyên tử giữa nhiều worker/process độc lập.
+  - **Adapter Offline / Fallback Path (Atomic CAS):** Khi chạy offline hoặc RPC chưa sẵn sàng, repository tự động chuyển sang mô hình Atomic CAS (Compare-And-Swap):
+    - Ghi bản ghi `review_attempts` với `status = 'requested'` và xử lý unique constraint `attempt_id` để phát hiện replay.
+    - Thực thi SQL CAS: `UPDATE exam_sessions SET gemini_review_calls = current_calls + 1 WHERE id = session_id AND gemini_review_calls = current_calls`.
+    - Nếu `rowcount == 0` (bị worker khác tranh chấp quota ở mốc biên 29 calls): CAS thất bại, cập nhật bản ghi sang `status = 'denied'` và trả `dispatch_permitted = False` (fail closed, triệt tiêu 100% rủi ro oversubscription).
+    - Nếu CAS thành công: cập nhật `status = 'granted'` và trả `dispatch_permitted = True`.
 - **TX2 & Emergency Rollback (No Refund):**
   - Không thực hiện bất kỳ phép hoàn trả (refund) quota nào, vì counter session đã phản ánh chính xác số permit thực tế đã commit.
   - Xóa bỏ triệt để nguy cơ hoàn trả làm mất permit đã cấp khi gặp sự cố mạng hoặc `REVIEW_PERMIT_UNCERTAIN`.
-- **Ranh giới Schema Dependency với TASK-302 (Hùng):** Bảng `review_attempts` và RPC `review_acquire_attempt` nằm trong Phase B của TASK-302 (Hùng - PR #36). Tầng ứng dụng của Duy đã cài đặt interface hoàn chỉnh, kiểm thử offline và đa client thành công 100%.
+- **Ranh giới Schema Dependency & Tích hợp:** Cung cấp migration `008_stage3_review_acquire_attempt_rpc.sql` và cập nhật `backend/scripts/schema.sql` định nghĩa bảng `review_attempts` cùng stored procedure `review_acquire_attempt` theo đúng chuẩn `docs/api/review-rpc-contract.md`. Bộ test suite bao phủ 100% cả RPC path và Barrier CAS fallback.
 
+
+
+### 3.5. Đồng Bộ Hoàn Toàn Với Nền Tảng CSDL Của Hùng (TASK-302 / Migration 006)
+- **Tôn trọng ranh giới phân công (Clean Ownership Boundary):**
+  - Hùng (TASK-302, PR #36) sở hữu và duy trì toàn bộ schema, bảng ledger (`review_operations`, `review_attempts`, `review_action_receipts`), 8 RPCs và bộ test container Docker PostgreSQL 15 thật (`test_review_rpcs.py`).
+  - Duy (TASK-301, PR #28) xóa bỏ hoàn toàn migration 008 tự chế và file test real-db trùng lặp, hoàn nguyên `schema.sql`.
+- **Tích hợp Caller Thin Wrapper Trong `ReviewRepository`:**
+  - Phân tách 2 Client rõ ràng: `self.db` (Owner JWT Client) cho các RPC Owner (`reserve`, `accept`, `revert`, `get_progress`), và `self.worker_db` (Worker `service_role` Client) cho các RPC Worker (`acquire_attempt`, `complete`, `fail`, `recover`).
+  - Khớp 100% chữ ký theo `docs/api/review-rpc-contract.md`:
+    * `review_reserve_regeneration(p_session_id, p_question_id, p_operation_id)`
+    * `review_acquire_attempt(p_operation_id, p_attempt_id)` (trả về AttemptPermit 6 fields)
+    * `review_complete_regeneration(p_operation_id, p_candidate)` (không nhận p_user_id/calls)
+    * `review_fail_regeneration(p_operation_id, p_error_code)`
+    * `review_recover_regeneration(p_operation_id)`
+    * `review_accept_question(p_session_id, p_question_id, p_action_id)`
+    * `review_revert_question(p_session_id, p_question_id, p_action_id)`
+    * `review_get_progress(p_session_id)`
+  - Tập trung ánh xạ domain exception code từ CSDL (`REVIEW_NOT_FOUND` $ightarrow$ 404, `REVIEW_BUSY` $ightarrow$ 409, `REVIEW_STALE` $ightarrow$ 409, `REVIEW_LOCKED` $ightarrow$ 423, `REVIEW_QUOTA_EXHAUSTED` $ightarrow$ 429) sang `ReviewDomainException`.
 
 ### 3.4. State Guards & Lock Registry
 - **Chặn Revert câu chưa từng biến thể:** Ném ngay `HTTP 400 ERR_QUESTION_NOT_REGENERATED`.
@@ -161,7 +181,7 @@ pytest backend/tests/services/test_review_lifecycle.py -v
 - **Invalidation Toàn Diện (Session-wide Reshuffle Invalidation):**
   - Khi reject/revert trên phiên đã shuffle: xóa sạch `answer_keys` cũ, reset `is_finalized = false`, xóa trắng `shuffle_seed` và `permutations`, hạ session status về `generated`.
 - **Kết Quả Kiểm Thử Thực Tế:**
-  - `pytest backend/tests/services/test_review_lifecycle.py backend/tests/api/test_review_api.py -v`: **46/46 tests passed (100% bao gồm 11 regression test cases của F07)**.
+  - `pytest backend/tests/services/test_review_lifecycle.py backend/tests/api/test_review_api.py -v`: **58/58 tests passed (100% bao gồm đầy đủ các test cases tái hiện lỗi của Đạt và verification contract)**.
   - `ruff check`: All checks passed.
   - `ruff format --check`: All files already formatted.
 - **Trạng thái PR:** PR #28 đã sẵn sàng 100% để chuyển sang **Ready for Review** và bàn giao cho Hùng (@benalexx007) duyệt (Approve).

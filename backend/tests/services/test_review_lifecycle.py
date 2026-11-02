@@ -30,7 +30,12 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.models.schemas import ReserveResult, ReviewDomainException, ReviewProgressResponse
+from app.models.schemas import (
+    ReserveResult,
+    ReviewAcquireUnavailableError,
+    ReviewDomainException,
+    ReviewProgressResponse,
+)
 from app.services.review.repository import ReviewRepository, _now_iso
 from app.services.review.service import ReviewService, session_lock_registry
 
@@ -93,9 +98,6 @@ class MockTableQueryBuilder:
 
     def limit(self, n: int) -> "MockTableQueryBuilder":
         self.limit_val = n
-        return self
-
-    def order(self, field: str, *args: Any, **kwargs: Any) -> "MockTableQueryBuilder":
         return self
 
     def _matches(self, row: Dict[str, Any]) -> bool:
@@ -212,18 +214,19 @@ class MockTableQueryBuilder:
 
 
 class MockRpcQueryBuilder:
-    """Fluent mock builder simulating PostgreSQL RPC Stored Procedure executions."""
+    """Fluent mock builder simulating PostgREST RPC executions in-memory."""
 
     def __init__(
         self,
-        function_name: str,
+        fn_name: str,
         params: Dict[str, Any],
         db_state: Dict[str, List[Dict[str, Any]]],
         call_log: List[Dict[str, Any]],
         auth_user_id: Optional[str] = None,
         role: str = "service_role",
     ) -> None:
-        self.function_name = function_name
+        self.fn_name = fn_name
+        self.function_name = fn_name
         self.params = params or {}
         self.db_state = db_state
         self.call_log = call_log
@@ -233,10 +236,16 @@ class MockRpcQueryBuilder:
     def execute(self) -> MockExecutionResult:
         with _GLOBAL_MOCK_LOCK:
             self.call_log.append(
-                {"op": "rpc", "table": None, "function": self.function_name, "params": dict(self.params)}
+                {
+                    "op": "rpc",
+                    "table": "rpc",
+                    "fn": self.fn_name,
+                    "function": self.fn_name,
+                    "params": dict(self.params),
+                }
             )
 
-            if self.function_name == "finalize_approve_session":
+            if self.fn_name == "finalize_approve_session":
                 session_id = str(self.params.get("p_session_id", ""))
                 p_user_id = str(self.params.get("p_user_id", ""))
 
@@ -276,11 +285,19 @@ class MockRpcQueryBuilder:
                 vqs = self.db_state.get("version_questions", [])
                 evs = self.db_state.get("exam_versions", [])
                 cfgs = self.db_state.get("generation_configs", [])
-                cfg_row = next((c for c in cfgs if str(c.get("session_id")) == session_id), None)
-                expected_n_versions = int(cfg_row["n_versions"]) if cfg_row and cfg_row.get("n_versions") is not None else None
 
+                # F19 Fail-Closed generation_configs check
+                session_cfgs = [c for c in cfgs if str(c.get("session_id")) == session_id]
+                if not session_cfgs:
+                    raise RuntimeError("ERR_CONFIG_NOT_FOUND")
+
+                n_versions_set = {int(c["n_versions"]) for c in session_cfgs if c.get("n_versions") is not None}
+                if len(n_versions_set) > 1:
+                    raise RuntimeError("ERR_CONFIG_AMBIGUOUS")
+
+                expected_n_versions = next(iter(n_versions_set))
                 session_versions = [v for v in evs if str(v.get("session_id")) == session_id]
-                if expected_n_versions is not None and len(session_versions) != expected_n_versions:
+                if len(session_versions) != expected_n_versions:
                     raise RuntimeError("ERR_VERSIONS_NOT_FINALIZED")
 
                 session_v_ids = {
@@ -326,181 +343,636 @@ class MockRpcQueryBuilder:
                 return MockExecutionResult(
                     [{"status": "approved", "approved_at": now_str, "session_id": session_id}]
                 )
+            if self.fn_name == "review_acquire_attempt":
+                str_op_id = str(self.params.get("p_operation_id", ""))
+                str_att_id = str(self.params.get("p_attempt_id", ""))
 
-            if self.function_name == "review_reserve_regeneration":
-                session_id = str(self.params.get("p_session_id", ""))
-                question_id = str(self.params.get("p_question_id", ""))
-                user_id = str(self.params.get("p_user_id", ""))
-                operation_id = self.params.get("p_operation_id")
+                # Strict Operation Identity & Session Binding (TASK-302 contract)
+                session_id = ""
+                matched_vq = None
+                for vq in self.db_state.get("version_questions", []):
+                    if str(vq.get("regeneration_id", "")) == str_op_id and vq.get("is_current", True):
+                        matched_vq = vq
+                        for ev in self.db_state.get("exam_versions", []):
+                            if str(ev.get("id")) == str(vq.get("version_id")):
+                                session_id = str(ev.get("session_id", ""))
+                                break
+                        break
 
-                sessions = self.db_state.get("exam_sessions", [])
-                s_row = next((s for s in sessions if str(s.get("id")) == session_id), None)
+                attempts = self.db_state.setdefault("review_attempts", [])
+                if not session_id:
+                    for a in attempts:
+                        if str(a.get("operation_id")) == str_op_id:
+                            session_id = str(a.get("session_id", ""))
+                            break
+
+                # 1. Reject if operation does not exist (Strict binding)
+                if not session_id:
+                    return MockExecutionResult(
+                        [
+                            {
+                                "operation_id": str_op_id,
+                                "attempt_id": str_att_id,
+                                "dispatch_permitted": False,
+                                "calls_used": 0,
+                                "remaining_calls": 0,
+                                "session_id": "",
+                                "session_status": "not_found",
+                                "replayed": False,
+                                "rejection_reason": "OPERATION_NOT_FOUND",
+                            }
+                        ]
+                    )
+
+                # 2. Verify question is in active regenerating status
+                if matched_vq and matched_vq.get("status") != "regenerating":
+                    return MockExecutionResult(
+                        [
+                            {
+                                "operation_id": str_op_id,
+                                "attempt_id": str_att_id,
+                                "dispatch_permitted": False,
+                                "calls_used": 0,
+                                "remaining_calls": 0,
+                                "session_id": session_id,
+                                "session_status": "invalid_state",
+                                "replayed": False,
+                                "rejection_reason": "OPERATION_INACTIVE",
+                            }
+                        ]
+                    )
+
+                s_row = next(
+                    (s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == session_id),
+                    None,
+                )
                 if not s_row:
-                    raise RuntimeError("ERR_SESSION_NOT_FOUND")
+                    return MockExecutionResult(
+                        [
+                            {
+                                "operation_id": str_op_id,
+                                "attempt_id": str_att_id,
+                                "dispatch_permitted": False,
+                                "calls_used": 0,
+                                "remaining_calls": 0,
+                                "session_id": session_id,
+                                "session_status": "not_found",
+                                "replayed": False,
+                                "rejection_reason": "SESSION_NOT_FOUND",
+                            }
+                        ]
+                    )
 
-                status = str(s_row.get("status", "")).lower()
-                if status in ("approved", "exported"):
-                    raise RuntimeError("ERR_SESSION_LOCKED")
+                curr_calls = int(s_row.get("gemini_review_calls", 0) or 0)
+                s_status = str(s_row.get("status", ""))
 
-                gemini_calls = int(s_row.get("gemini_review_calls", 0) or 0)
-                if gemini_calls >= 30:
-                    raise RuntimeError("ERR_REVIEW_QUOTA_EXHAUSTED")
+                # 3. Enforce session locked guard
+                if s_status in ("approved", "exported"):
+                    return MockExecutionResult(
+                        [
+                            {
+                                "operation_id": str_op_id,
+                                "attempt_id": str_att_id,
+                                "dispatch_permitted": False,
+                                "calls_used": min(30, curr_calls),
+                                "remaining_calls": max(0, 30 - curr_calls),
+                                "session_id": session_id,
+                                "session_status": s_status,
+                                "replayed": False,
+                                "rejection_reason": "SESSION_LOCKED",
+                            }
+                        ]
+                    )
 
-                vqs = self.db_state.get("version_questions", [])
-                evs = self.db_state.get("exam_versions", [])
-                session_v_ids = {
-                    str(v.get("id")) for v in evs if str(v.get("session_id")) == session_id
-                }
+                # 4. Enforce session busy guard
+                if s_status == "generating":
+                    return MockExecutionResult(
+                        [
+                            {
+                                "operation_id": str_op_id,
+                                "attempt_id": str_att_id,
+                                "dispatch_permitted": False,
+                                "calls_used": min(30, curr_calls),
+                                "remaining_calls": max(0, 30 - curr_calls),
+                                "session_id": session_id,
+                                "session_status": s_status,
+                                "replayed": False,
+                                "rejection_reason": "SESSION_BUSY",
+                            }
+                        ]
+                    )
 
-                # Model A concurrency: max 1 active regenerating question per session
-                active_regen = [
-                    q
-                    for q in vqs
-                    if (not session_v_ids or str(q.get("version_id")) in session_v_ids)
-                    and str(q.get("status")).lower() == "regenerating"
-                ]
-                if active_regen:
-                    raise RuntimeError("ERR_SESSION_BUSY_REGENERATING")
+                # 5. Replay check
+                found = next((a for a in attempts if str(a.get("attempt_id")) == str_att_id), None)
+                if found:
+                    return MockExecutionResult(
+                        [
+                            {
+                                "operation_id": str_op_id,
+                                "attempt_id": str_att_id,
+                                "dispatch_permitted": False,
+                                "calls_used": min(30, curr_calls),
+                                "remaining_calls": max(0, 30 - curr_calls),
+                                "session_id": session_id,
+                                "session_status": s_status,
+                                "replayed": True,
+                                "rejection_reason": "ATTEMPT_REPLAYED",
+                            }
+                        ]
+                    )
 
-                q_row = next((q for q in vqs if str(q.get("id")) == question_id), None)
-                if not q_row:
-                    raise RuntimeError("ERR_QUESTION_NOT_FOUND")
-                if not q_row.get("is_current"):
-                    raise RuntimeError("ERR_QUESTION_NOT_CURRENT")
-                if str(q_row.get("status", "")).lower() == "regenerating":
-                    raise RuntimeError("ERR_QUESTION_BUSY")
+                # 6. Operation ceiling check (max 4 per reject operation)
+                op_attempts = [a for a in attempts if str(a.get("operation_id")) == str_op_id]
+                if len(op_attempts) >= 4:
+                    attempts.append(
+                        {
+                            "attempt_id": str_att_id,
+                            "operation_id": str_op_id,
+                            "session_id": session_id,
+                            "status": "denied",
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+                    return MockExecutionResult(
+                        [
+                            {
+                                "operation_id": str_op_id,
+                                "attempt_id": str_att_id,
+                                "dispatch_permitted": False,
+                                "calls_used": min(30, curr_calls),
+                                "remaining_calls": max(0, 30 - curr_calls),
+                                "session_id": session_id,
+                                "session_status": s_status,
+                                "replayed": False,
+                                "rejection_reason": "OPERATION_EXHAUSTED",
+                            }
+                        ]
+                    )
 
-                now_str = _now_iso()
-                q_row["status"] = "regenerating"
-                q_row["updated_at"] = now_str
-                s_row["updated_at"] = now_str
+                # 7. Session quota check (max 30 per session)
+                if curr_calls >= 30:
+                    attempts.append(
+                        {
+                            "attempt_id": str_att_id,
+                            "operation_id": str_op_id,
+                            "session_id": session_id,
+                            "status": "denied",
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+                    return MockExecutionResult(
+                        [
+                            {
+                                "operation_id": str_op_id,
+                                "attempt_id": str_att_id,
+                                "dispatch_permitted": False,
+                                "calls_used": 30,
+                                "remaining_calls": 0,
+                                "session_id": session_id,
+                                "session_status": s_status,
+                                "replayed": False,
+                                "rejection_reason": "QUOTA_EXHAUSTED",
+                            }
+                        ]
+                    )
 
+                # 8. Grant attempt atomically in single transaction
+                s_row["gemini_review_calls"] = curr_calls + 1
+                s_row["updated_at"] = datetime.now(timezone.utc).isoformat()
+                attempts.append(
+                    {
+                        "attempt_id": str_att_id,
+                        "operation_id": str_op_id,
+                        "session_id": session_id,
+                        "status": "granted",
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
                 return MockExecutionResult(
                     [
                         {
-                            "status": "ok",
-                            "question_id": question_id,
+                            "operation_id": str_op_id,
+                            "attempt_id": str_att_id,
+                            "dispatch_permitted": True,
+                            "calls_used": curr_calls + 1,
+                            "remaining_calls": 30 - (curr_calls + 1),
                             "session_id": session_id,
-                            "operation_id": operation_id,
-                            "expires_at": now_str,
-                            "max_attempts": 4,
+                            "session_status": s_status,
+                            "replayed": False,
                         }
                     ]
                 )
 
-            if self.function_name == "review_revert_question":
-                session_id = str(self.params.get("p_session_id", ""))
-                question_id = str(self.params.get("p_question_id", ""))
-                user_id = str(self.params.get("p_user_id", ""))
+            if self.fn_name == "review_reserve_regeneration":
+                sid = str(self.params.get("p_session_id", ""))
+                qid = str(self.params.get("p_question_id", ""))
+                opid = str(self.params.get("p_operation_id", ""))
 
-                sessions = self.db_state.get("exam_sessions", [])
-                s_row = next((s for s in sessions if str(s.get("id")) == session_id), None)
+                s_row = next((s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == sid), None)
                 if not s_row:
-                    raise RuntimeError("ERR_SESSION_NOT_FOUND")
+                    return MockExecutionResult([{"success": False, "rejection_reason": "SESSION_NOT_FOUND"}])
+                if s_row.get("status") in ("approved", "exported"):
+                    return MockExecutionResult([{"success": False, "rejection_reason": "SESSION_LOCKED"}])
+                if s_row.get("status") == "generating":
+                    return MockExecutionResult([{"success": False, "rejection_reason": "SESSION_BUSY"}])
+                curr_calls = int(s_row.get("gemini_review_calls", 0) or 0)
+                if curr_calls >= 30:
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUOTA_EXHAUSTED"}])
 
-                status = str(s_row.get("status", "")).lower()
-                if status in ("approved", "exported"):
-                    raise RuntimeError("ERR_SESSION_LOCKED")
+                for vq in self.db_state.get("version_questions", []):
+                    if vq.get("status") == "regenerating" and vq.get("is_current", True) and str(vq.get("id")) != qid:
+                        return MockExecutionResult([{"success": False, "rejection_reason": "SESSION_BUSY"}])
 
-                vqs = self.db_state.get("version_questions", [])
-                q_row = next((q for q in vqs if str(q.get("id")) == question_id), None)
-                if not q_row:
-                    raise RuntimeError("ERR_QUESTION_NOT_FOUND")
+                target_vq = next((vq for vq in self.db_state.get("version_questions", []) if str(vq.get("id")) == qid), None)
+                if not target_vq:
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_FOUND"}])
+                if not target_vq.get("is_current", True):
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_CURRENT"}])
+                if target_vq.get("status") == "regenerating":
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_BUSY"}])
 
-                if not q_row.get("is_current"):
-                    raise RuntimeError("ERR_QUESTION_NOT_CURRENT")
+                target_vq["status"] = "regenerating"
+                target_vq["regeneration_id"] = opid
+                target_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
+                s_row["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-                if str(q_row.get("status", "")).lower() == "regenerating":
-                    raise RuntimeError("ERR_QUESTION_BUSY")
+                return MockExecutionResult([
+                    {
+                        "success": True,
+                        "session_id": sid,
+                        "question_id": qid,
+                        "operation_id": opid,
+                        "status": "regenerating",
+                    }
+                ])
 
-                # Guard: question never regenerated cannot be reverted
-                if q_row.get("regenerated_from_id") is None and not q_row.get("is_reverted"):
-                    raise RuntimeError("ERR_QUESTION_NOT_REGENERATED")
+            if self.fn_name == "review_complete_regeneration":
+                opid = str(self.params.get("p_operation_id", ""))
+                cand = self.params.get("p_candidate", {}) or {}
+                calls = int(cand.get("api_calls_count", 1))
 
-                # Idempotent: already reverted
-                if q_row.get("is_reverted"):
-                    return MockExecutionResult([q_row])
+                # Idempotency check: see if a replacement was already committed with this operation_id
+                existing = next(
+                    (vq for vq in self.db_state.get("version_questions", [])
+                     if str(vq.get("regeneration_id")) == opid and vq.get("status") not in ("rejected", "regenerating")),
+                    None
+                )
+                if existing:
+                    return MockExecutionResult([{"success": True, "replayed": True, "question_id": existing.get("id")}])
 
-                source_id = str(q_row.get("source_question_id", ""))
-                sources = self.db_state.get("source_questions", [])
-                src_row = next((s for s in sources if str(s.get("id")) == source_id), None)
-                if not src_row:
-                    raise RuntimeError("ERR_SOURCE_QUESTION_NOT_FOUND")
+                # Find active regenerating question bound to this operation (or fallback to active regenerating question for legacy test fixtures)
+                old_vq = next(
+                    (vq for vq in self.db_state.get("version_questions", [])
+                     if (str(vq.get("regeneration_id")) == opid or (vq.get("regeneration_id") is None and vq.get("status") == "regenerating"))
+                     and vq.get("status") == "regenerating"),
+                    None
+                )
+                if not old_vq:
+                    return MockExecutionResult([{"success": False, "rejection_reason": "OPERATION_NOT_FOUND"}])
 
-                now_time = _now_iso()
-                q_row["is_current"] = False
-                q_row["updated_at"] = now_time
+                # Resolve session and user_id from session context
+                session_id = ""
+                for ev in self.db_state.get("exam_versions", []):
+                    if str(ev.get("id")) == str(old_vq.get("version_id")):
+                        session_id = str(ev.get("session_id", ""))
+                        break
+                s_row = next((s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == session_id), None)
+                uid = str(s_row.get("user_id", "mock-user")) if s_row else "mock-user"
 
+                # 1. Deactivate old candidate
+                old_vq["is_current"] = False
+                old_vq["status"] = "rejected"
+                old_vq["regeneration_id"] = None
+                old_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
+                self.call_log.append({
+                    "op": "update",
+                    "table": "version_questions",
+                    "payload": {"is_current": False, "status": "rejected"},
+                    "filters": [("id", "eq", old_vq.get("id"))],
+                    "count": 1,
+                })
+
+                # 2. Insert new candidate with fresh canonical snapshot
                 new_id = str(uuid4())
+                content_val = cand.get("stem_latex") or cand.get("content", "")
+                solution_val = cand.get("solution_markdown") or cand.get("solution_md", "")
                 new_q = {
                     "id": new_id,
-                    "question_id": new_id,
-                    "previous_question_id": question_id,
-                    "version_id": q_row["version_id"],
-                    "source_question_id": src_row["id"],
-                    "question_no": q_row.get("question_no", 1),
-                    "content": src_row.get("raw_content", ""),
-                    "options": src_row.get("options", []),
-                    "correct_key": src_row.get("correct_key", "A"),
-                    "solution_md": src_row.get("solution_md"),
-                    "canonical_question_no": q_row.get("question_no", 1),
-                    "canonical_options": src_row.get("options", []),
-                    "canonical_correct_key": src_row.get("correct_key", "A"),
-                    "canonical_solution_md": src_row.get("solution_md"),
-                    "status": "approved",
+                    "version_id": old_vq.get("version_id"),
+                    "source_question_id": old_vq.get("source_question_id"),
+                    "question_no": old_vq.get("question_no", 1),
+                    "content": content_val,
+                    "options": list(cand.get("options", [])),
+                    "correct_key": str(cand.get("correct_key", "A")).strip().upper(),
+                    "solution_md": solution_val,
+                    "canonical_question_no": old_vq.get("canonical_question_no", old_vq.get("question_no", 1)),
+                    "canonical_options": list(cand.get("options", [])),
+                    "canonical_correct_key": str(cand.get("correct_key", "A")).strip().upper(),
+                    "canonical_solution_md": solution_val,
+                    "validation_report": cand.get("validation_report") or {},
+                    "status": "pending_review",
                     "is_current": True,
-                    "is_reverted": True,
-                    "regenerated_from_id": q_row["id"],
-                    "regeneration_id": None,
-                    "created_at": now_time,
-                    "updated_at": now_time,
+                    "is_reverted": False,
+                    "regeneration_id": opid,
+                    "regenerated_from_id": old_vq.get("id"),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
-                vqs.append(new_q)
-                s_row["updated_at"] = now_time
+                self.db_state.setdefault("version_questions", []).append(new_q)
+                self.call_log.append({
+                    "op": "insert",
+                    "table": "version_questions",
+                    "payload": dict(new_q),
+                })
 
+                # 3. Session-wide reshuffle invalidation
+                self.db_state["answer_keys"] = []
+                for ev in self.db_state.get("exam_versions", []):
+                    if str(ev.get("session_id")) == session_id:
+                        ev["is_finalized"] = False
+                        ev["shuffle_seed"] = None
+                        ev["permutations"] = None
+
+                for es in self.db_state.get("exam_sessions", []):
+                    if str(es.get("id")) == session_id and es.get("status") == "reviewed":
+                        es["status"] = "generated"
+
+                # 4. Audit log
                 audit_entry = {
                     "session_id": session_id,
                     "version_question_id": new_id,
-                    "user_id": user_id,
+                    "user_id": uid,
+                    "action_type": "REJECT",
+                    "reason": "USER_REJECTED",
+                    "api_calls_used": calls,
+                    "regenerated_from_id": old_vq.get("id"),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                self.db_state.setdefault("review_logs", []).append(audit_entry)
+                self.call_log.append({
+                    "op": "insert",
+                    "table": "review_logs",
+                    "payload": dict(audit_entry),
+                })
+
+                return MockExecutionResult([
+                    {
+                        "success": True,
+                        "replayed": False,
+                        "question_id": new_id,
+                        "previous_question_id": old_vq.get("id"),
+                        "operation_id": opid,
+                        "session_id": session_id,
+                        "status": "pending_review",
+                    }
+                ])
+
+            if self.fn_name == "review_fail_regeneration":
+                opid = str(self.params.get("p_operation_id", ""))
+                err = str(self.params.get("p_error_code", ""))
+
+                # If TX2 already committed (replacement exists), rollback is aborted/replayed
+                committed_new = next(
+                    (vq for vq in self.db_state.get("version_questions", [])
+                     if str(vq.get("regeneration_id")) == opid and vq.get("status") not in ("rejected", "regenerating")),
+                    None
+                )
+                if committed_new:
+                    return MockExecutionResult([{"success": False, "replayed": True, "operation_id": opid}])
+
+                old_vq = next(
+                    (vq for vq in self.db_state.get("version_questions", [])
+                     if (str(vq.get("regeneration_id")) == opid or (vq.get("regeneration_id") is None and vq.get("status") == "regenerating"))
+                     and vq.get("status") == "regenerating"),
+                    None
+                )
+                if not old_vq:
+                    return MockExecutionResult([{"success": False, "replayed": True, "operation_id": opid}])
+
+                session_id = ""
+                for ev in self.db_state.get("exam_versions", []):
+                    if str(ev.get("id")) == str(old_vq.get("version_id")):
+                        session_id = str(ev.get("session_id", ""))
+                        break
+                s_row = next((s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == session_id), None)
+                uid = str(s_row.get("user_id", "mock-user")) if s_row else "mock-user"
+
+                old_vq["status"] = "pending_review"
+                old_vq["regeneration_id"] = None
+                old_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
+                self.call_log.append({
+                    "op": "update",
+                    "table": "version_questions",
+                    "payload": {"status": "pending_review", "regeneration_id": None},
+                    "filters": [("id", "eq", old_vq.get("id"))],
+                    "count": 1,
+                })
+
+                audit_entry = {
+                    "session_id": session_id,
+                    "version_question_id": old_vq.get("id"),
+                    "user_id": uid,
+                    "action_type": "REJECT_FAILED",
+                    "reason": err,
+                    "api_calls_used": 1,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                self.db_state.setdefault("review_logs", []).append(audit_entry)
+                self.call_log.append({
+                    "op": "insert",
+                    "table": "review_logs",
+                    "payload": dict(audit_entry),
+                })
+                return MockExecutionResult([{"success": True, "replayed": False, "operation_status": "failed", "status": "pending_review"}])
+
+            if self.fn_name == "review_accept_question":
+                sid = str(self.params.get("p_session_id", ""))
+                qid = str(self.params.get("p_question_id", ""))
+                _ = self.params.get("p_action_id")
+
+                s_row = next((s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == sid), None)
+                if s_row and str(s_row.get("status", "")).lower() in ("approved", "exported"):
+                    return MockExecutionResult([{"success": False, "rejection_reason": "SESSION_LOCKED"}])
+                uid = str(s_row.get("user_id", "mock-user")) if s_row else "mock-user"
+
+                target_vq = next((vq for vq in self.db_state.get("version_questions", []) if str(vq.get("id")) == qid), None)
+                if not target_vq:
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_FOUND"}])
+                if not target_vq.get("is_current", True):
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_CURRENT"}])
+                if target_vq.get("status") == "regenerating":
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_BUSY"}])
+
+                target_vq["status"] = "approved"
+                target_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
+                self.call_log.append({
+                    "op": "update",
+                    "table": "version_questions",
+                    "payload": {"status": "approved"},
+                    "filters": [("id", "eq", qid)],
+                    "count": 1,
+                })
+
+                audit_entry = {
+                    "session_id": sid,
+                    "version_question_id": qid,
+                    "user_id": uid,
+                    "action_type": "ACCEPT",
+                    "reason": None,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+                self.db_state.setdefault("review_logs", []).append(audit_entry)
+                self.call_log.append({
+                    "op": "insert",
+                    "table": "review_logs",
+                    "payload": dict(audit_entry),
+                })
+                return MockExecutionResult([{"success": True, "question_status": "approved", "status": "approved"}])
+
+            if self.fn_name == "review_revert_question":
+                sid = str(self.params.get("p_session_id", ""))
+                qid = str(self.params.get("p_question_id", ""))
+                _ = self.params.get("p_action_id")
+
+                s_row = next((s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == sid), None)
+                if s_row and str(s_row.get("status", "")).lower() in ("approved", "exported"):
+                    return MockExecutionResult([{"success": False, "rejection_reason": "SESSION_LOCKED"}])
+                uid = str(s_row.get("user_id", "mock-user")) if s_row else "mock-user"
+
+                target_vq = next((vq for vq in self.db_state.get("version_questions", []) if str(vq.get("id")) == qid), None)
+                if not target_vq:
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_FOUND"}])
+                if not target_vq.get("is_current", True):
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_CURRENT"}])
+                if target_vq.get("status") == "regenerating":
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_BUSY"}])
+                if target_vq.get("regenerated_from_id") is None and not target_vq.get("is_reverted"):
+                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_REGENERATED"}])
+
+                if target_vq.get("is_reverted"):
+                    return MockExecutionResult([{"success": True, "replayed": True, "question_id": qid, "question_status": "approved", "status": "approved"}])
+
+                src_id = str(target_vq.get("source_question_id", ""))
+                src = next((sq for sq in self.db_state.get("source_questions", []) if str(sq.get("id")) == src_id), None) or {}
+
+                target_vq["is_current"] = False
+                target_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
+                self.call_log.append({
+                    "op": "update",
+                    "table": "version_questions",
+                    "payload": {"is_current": False},
+                    "filters": [("id", "eq", qid)],
+                    "count": 1,
+                })
+
+                new_id = str(uuid4())
+                reverted_q = {
+                    "id": new_id,
+                    "version_id": target_vq.get("version_id"),
+                    "source_question_id": src_id,
+                    "question_no": target_vq.get("question_no", 1),
+                    "content": src.get("raw_content", ""),
+                    "options": src.get("options", []),
+                    "correct_key": src.get("correct_key", "A"),
+                    "solution_md": src.get("solution_md"),
+                    "canonical_question_no": target_vq.get("question_no", 1),
+                    "canonical_options": src.get("options", []),
+                    "canonical_correct_key": src.get("correct_key", "A"),
+                    "canonical_solution_md": src.get("solution_md"),
+                    "status": "approved",
+                    "is_current": True,
+                    "is_reverted": True,
+                    "regenerated_from_id": qid,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+                self.db_state.setdefault("version_questions", []).append(reverted_q)
+                self.call_log.append({
+                    "op": "insert",
+                    "table": "version_questions",
+                    "payload": dict(reverted_q),
+                })
+
+                self.db_state["answer_keys"] = []
+                for ev in self.db_state.get("exam_versions", []):
+                    if str(ev.get("session_id")) == sid:
+                        ev["is_finalized"] = False
+                        ev["shuffle_seed"] = None
+                        ev["permutations"] = None
+
+                for es in self.db_state.get("exam_sessions", []):
+                    if str(es.get("id")) == sid and es.get("status") == "reviewed":
+                        es["status"] = "generated"
+
+                audit_entry = {
+                    "session_id": sid,
+                    "version_question_id": new_id,
+                    "user_id": uid,
                     "action_type": "REVERT",
                     "reason": None,
-                    "created_at": now_time,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
                 }
-                logs = self.db_state.setdefault("review_logs", [])
-                logs.append(audit_entry)
-                self.call_log.append(
-                    {
-                        "op": "insert",
-                        "table": "review_logs",
-                        "payload": audit_entry,
-                    }
+                self.db_state.setdefault("review_logs", []).append(audit_entry)
+                self.call_log.append({
+                    "op": "insert",
+                    "table": "review_logs",
+                    "payload": dict(audit_entry),
+                })
+                return MockExecutionResult([{"success": True, "replayed": False, "question_id": new_id, "question_status": "approved", "status": "approved"}])
+
+            if self.fn_name == "review_recover_regeneration":
+                opid = str(self.params.get("p_operation_id", ""))
+                old_vq = next(
+                    (vq for vq in self.db_state.get("version_questions", [])
+                     if str(vq.get("regeneration_id")) == opid and vq.get("status") == "regenerating"),
+                    None
                 )
-
-                # Atomic Shuffle Invalidation contract (F01 v3.0 / TASK-302 Phase B)
-                evs = self.db_state.get("exam_versions", [])
-                session_evs = [v for v in evs if str(v.get("session_id")) == session_id]
-                session_v_ids = {str(v.get("id")) for v in session_evs}
-                any_finalized = any(v.get("is_finalized") for v in session_evs)
-
-                if any_finalized and session_v_ids:
-                    # 1. Purge answer_keys for versions of this session
-                    self.db_state["answer_keys"] = [
-                        ak
-                        for ak in self.db_state.get("answer_keys", [])
-                        if str(ak.get("version_id")) not in session_v_ids
-                    ]
-                    # 2. Reset finalized flag and permutations metadata on versions
-                    for v in session_evs:
-                        v["is_finalized"] = False
-                        v["shuffle_seed"] = None
-                        v["permutations"] = None
-                        v["updated_at"] = now_time
-
-                    # 3. Demote session status if currently reviewed
-                    if str(s_row.get("status", "")).lower() == "reviewed":
-                        s_row["status"] = "generated"
-
-                return MockExecutionResult([new_q])
+                if old_vq:
+                    old_vq["status"] = "pending_review"
+                    old_vq["regeneration_id"] = None
+                    old_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    return MockExecutionResult([{"recovered": True, "operation_status": "recovered", "question_id": old_vq.get("id")}])
+                return MockExecutionResult([{"recovered": False, "operation_status": "none"}])
+            if self.fn_name == "review_recover_stale":
+                sid = str(self.params.get("p_session_id", ""))
+                uid = str(self.params.get("p_caller_user_id", ""))
+                recovered = 0
+                now_dt = datetime.now(timezone.utc)
+                for vq in self.db_state.get("version_questions", []):
+                    if vq.get("status") == "regenerating":
+                        upd = vq.get("updated_at")
+                        is_stale = False
+                        if upd:
+                            try:
+                                dt = datetime.fromisoformat(upd.replace("Z", "+00:00"))
+                                if (now_dt - dt).total_seconds() >= 180:
+                                    is_stale = True
+                            except Exception:
+                                is_stale = True
+                        if is_stale:
+                            vq["status"] = "pending_review"
+                            vq["regeneration_id"] = None
+                            vq["updated_at"] = now_dt.isoformat()
+                            self.db_state.setdefault("review_logs", []).append(
+                                {
+                                    "payload": {
+                                        "session_id": sid,
+                                        "version_question_id": vq.get("id"),
+                                        "user_id": uid,
+                                        "action_type": "REJECT_FAILED",
+                                        "reason": "STALE_TIMEOUT",
+                                    },
+                                    "table": "review_logs",
+                                    "session_id": sid,
+                                    "version_question_id": vq.get("id"),
+                                    "user_id": uid,
+                                    "action_type": "REJECT_FAILED",
+                                    "reason": "STALE_TIMEOUT",
+                                    "created_at": now_dt.isoformat(),
+                                }
+                            )
+                            recovered += 1
+                return MockExecutionResult([{"success": True, "recovered_count": recovered}])
 
             return MockExecutionResult([])
 
@@ -522,16 +994,14 @@ class MockSupabaseClient:
     def table(self, table_name: str) -> MockTableQueryBuilder:
         return MockTableQueryBuilder(table_name, self.state, self.call_log)
 
-    def rpc(
-        self, function_name: str, params: Optional[Dict[str, Any]] = None
-    ) -> MockRpcQueryBuilder:
+    def rpc(self, fn_name: str, params: Optional[Dict[str, Any]] = None) -> MockRpcQueryBuilder:
         return MockRpcQueryBuilder(
-            function_name,
+            fn_name,
             params or {},
             self.state,
             self.call_log,
-            auth_user_id=self.auth_user_id,
-            role=self.role,
+            getattr(self, "auth_user_id", None),
+            getattr(self, "role", "service_role"),
         )
 
 
@@ -882,14 +1352,18 @@ async def test_reserve_at_calls_26():
     db = MockSupabaseClient(state)
     repo = ReviewRepository(db)
 
-    res = await repo.reserve_max_quota_and_start_regenerating(session_id, q_id, user_id)
+    op_id = uuid4()
+    res = await repo.reserve_max_quota_and_start_regenerating(
+        session_id, q_id, user_id, operation_id=op_id
+    )
     assert res == ReserveResult.OK
     # Quota remains 26 in TX1 (Architecture A pure per-acquire)
     assert state["exam_sessions"][0]["gemini_review_calls"] == 26
     assert state["version_questions"][0]["status"] == "regenerating"
+    assert state["version_questions"][0]["regeneration_id"] == str(op_id)
 
     # Subsequent acquire_attempt increments quota to 27
-    permit = await repo.acquire_attempt(uuid4(), uuid4())
+    permit = await repo.acquire_attempt(op_id, uuid4())
     assert permit.dispatch_permitted is True
     assert permit.calls_used == 27
     assert state["exam_sessions"][0]["gemini_review_calls"] == 27
@@ -1637,6 +2111,8 @@ async def test_f07_quota_boundary_at_26_allows_valid_attempt():
     repo = ReviewRepository(db)
 
     op_id = uuid4()
+    state["version_questions"][0]["regeneration_id"] = str(op_id)
+    state["version_questions"][0]["status"] = "regenerating"
     repo.register_operation(op_id, session_id)
 
     att_1 = uuid4()
@@ -1658,6 +2134,8 @@ async def test_f07_operation_exhausted_after_4_attempts():
     repo = ReviewRepository(db)
 
     op_id = uuid4()
+    state["version_questions"][0]["regeneration_id"] = str(op_id)
+    state["version_questions"][0]["status"] = "regenerating"
     repo.register_operation(op_id, session_id)
 
     # 4 attempts granted
@@ -1685,6 +2163,8 @@ async def test_f07_session_exhausted_at_30_denied():
     repo = ReviewRepository(db)
 
     op_id = uuid4()
+    state["version_questions"][0]["regeneration_id"] = str(op_id)
+    state["version_questions"][0]["status"] = "regenerating"
     repo.register_operation(op_id, session_id)
 
     permit = await repo.acquire_attempt(op_id, uuid4())
@@ -1710,6 +2190,8 @@ async def test_f07_replay_across_separate_clients_same_db():
 
     op_id = uuid4()
     att_id = uuid4()
+    shared_state["version_questions"][0]["regeneration_id"] = str(op_id)
+    shared_state["version_questions"][0]["status"] = "regenerating"
     repo_a.register_operation(op_id, session_id)
 
     # Worker A acquires permit
@@ -1739,6 +2221,8 @@ async def test_f07_concurrent_same_attempt_id_only_one_granted():
     repo_b = ReviewRepository(db_b)
 
     op_id = uuid4()
+    shared_state["version_questions"][0]["regeneration_id"] = str(op_id)
+    shared_state["version_questions"][0]["status"] = "regenerating"
     repo_a.register_operation(op_id, session_id)
     repo_b.register_operation(op_id, session_id)
 
@@ -1768,6 +2252,14 @@ async def test_f07_concurrent_two_ops_at_26_no_oversubscribe():
 
     op_a = uuid4()
     op_b = uuid4()
+    shared_state["version_questions"][0]["regeneration_id"] = str(op_a)
+    shared_state["version_questions"][0]["status"] = "regenerating"
+    shared_state["version_questions"].append({
+        **shared_state["version_questions"][0],
+        "id": "vq-002",
+        "regeneration_id": str(op_b),
+        "status": "regenerating",
+    })
     repo.register_operation(op_a, session_id)
     repo.register_operation(op_b, session_id)
 
@@ -1877,13 +2369,16 @@ async def test_f07_db_unavailable_fail_closed():
     repo = ReviewRepository(db)
 
     op_id = uuid4()
+    state["version_questions"][0]["regeneration_id"] = str(op_id)
+    state["version_questions"][0]["status"] = "regenerating"
     repo.register_operation(op_id, session_id)
 
     # Simulate DB disconnection
-    def broken_table(name: str):
+    def broken_call(*args: Any, **kwargs: Any):
         raise ConnectionError("DB connection refused")
 
-    db.table = broken_table  # type: ignore
+    db.table = broken_call  # type: ignore
+    db.rpc = broken_call  # type: ignore
 
     with pytest.raises(ConnectionError):
         await repo.acquire_attempt(op_id, uuid4())
@@ -1926,12 +2421,372 @@ async def test_f07_service_maps_all_permit_error_codes():
         assert exc_info.value.error_code == expected_domain_code, f"Failed error code for {err_code}"
 
 
-# ---------------------------------------------------------------------------
-# Adversarial Tests (Finding F01 v3.0, F05, F06)
-# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_f07_concurrent_barrier_at_29_only_one_granted():
+    """Reproduces reviewer F07 condition: Two concurrent callers at quota 29.
+    Both read quota=29 at a synchronization barrier.
+    With atomic CAS, exactly ONE permit is granted and the second is denied.
+    Final session quota reaches 30, and review_attempts records 1 granted and 1 denied.
+    """
+    session_id = "00000000-0000-0000-0000-000000000108"
+    user_id = "teacher-108"
+    shared_state = _setup_standard_session_state(session_id, user_id, gemini_calls=29)
+
+    db_a = MockSupabaseClient(shared_state)
+    repo_a = ReviewRepository(db_a)
+
+    db_b = MockSupabaseClient(shared_state)
+    repo_b = ReviewRepository(db_b)
+
+    op_a = uuid4()
+    op_b = uuid4()
+    shared_state["version_questions"][0]["regeneration_id"] = str(op_a)
+    shared_state["version_questions"][0]["status"] = "regenerating"
+    shared_state["version_questions"].append({
+        **shared_state["version_questions"][0],
+        "id": "vq-002",
+        "regeneration_id": str(op_b),
+        "status": "regenerating",
+    })
+    repo_a.register_operation(op_a, session_id)
+    repo_b.register_operation(op_b, session_id)
+
+    att_a = uuid4()
+    att_b = uuid4()
+
+    # Disable rpc to test the table CAS fallback path specifically under barrier
+    db_a.rpc = None  # type: ignore
+    db_b.rpc = None  # type: ignore
+    repo_a.allow_table_fallback = True
+    repo_b.allow_table_fallback = True
+
+    barrier = asyncio.Barrier(2)
+    orig_get_quota = ReviewRepository.get_session_status_and_quota
+
+    async def hooked_get_quota(self_repo: ReviewRepository, sid: str) -> Dict[str, Any]:
+        res = await orig_get_quota(self_repo, sid)
+        # Synchronize at barrier after reading quota 29 so both see current_calls=29
+        await barrier.wait()
+        return res
+
+    repo_a.get_session_status_and_quota = lambda sid: hooked_get_quota(repo_a, sid)  # type: ignore
+    repo_b.get_session_status_and_quota = lambda sid: hooked_get_quota(repo_b, sid)  # type: ignore
+
+    permits = await asyncio.gather(
+        repo_a.acquire_attempt(op_a, att_a),
+        repo_b.acquire_attempt(op_b, att_b),
+    )
+
+    granted = [p for p in permits if p.dispatch_permitted is True]
+    denied = [p for p in permits if p.dispatch_permitted is False]
+
+    # Exactly 1 permit granted, 1 denied!
+    assert len(granted) == 1, f"Expected 1 permit granted, got {len(granted)}"
+    assert len(denied) == 1, f"Expected 1 permit denied, got {len(denied)}"
+    assert shared_state["exam_sessions"][0]["gemini_review_calls"] == 30
+
+    # Verify attempt ledger in DB has 1 granted and 1 denied
+    attempts = shared_state["review_attempts"]
+    assert len([a for a in attempts if a["status"] == "granted"]) == 1
+    assert len([a for a in attempts if a["status"] == "denied"]) == 1
 
 
 @pytest.mark.asyncio
+async def test_f07_rpc_concurrency_at_29_only_one_granted():
+    """Verify that under PostgreSQL RPC review_acquire_attempt, two concurrent acquisitions
+    at quota 29 atomically grant exactly 1 permit and deny 1 permit in a single transaction."""
+    session_id = "00000000-0000-0000-0000-000000000109"
+    user_id = "teacher-109"
+    shared_state = _setup_standard_session_state(session_id, user_id, gemini_calls=29)
+
+    db_a = MockSupabaseClient(shared_state)
+    repo_a = ReviewRepository(db_a)
+
+    db_b = MockSupabaseClient(shared_state)
+    repo_b = ReviewRepository(db_b)
+
+    op_a = uuid4()
+    op_b = uuid4()
+    shared_state["version_questions"][0]["regeneration_id"] = str(op_a)
+    shared_state["version_questions"][0]["status"] = "regenerating"
+    shared_state["version_questions"].append({
+        **shared_state["version_questions"][0],
+        "id": "vq-002",
+        "regeneration_id": str(op_b),
+        "status": "regenerating",
+    })
+    repo_a.register_operation(op_a, session_id)
+    repo_b.register_operation(op_b, session_id)
+
+    att_a = uuid4()
+    att_b = uuid4()
+
+    permits = await asyncio.gather(
+        repo_a.acquire_attempt(op_a, att_a),
+        repo_b.acquire_attempt(op_b, att_b),
+    )
+
+    granted = [p for p in permits if p.dispatch_permitted is True]
+    denied = [p for p in permits if p.dispatch_permitted is False]
+
+    assert len(granted) == 1
+    assert len(denied) == 1
+    assert shared_state["exam_sessions"][0]["gemini_review_calls"] == 30
+
+
+@pytest.mark.asyncio
+async def test_f07_fail_closed_on_pgrst202_rpc_missing():
+    """Reproduces reviewer Đạt F07 defect:
+    When RPC review_acquire_attempt throws PGRST202 (function not found/unmigrated),
+    the repository in production mode (allow_table_fallback=False) MUST fail closed.
+    It raises ReviewAcquireUnavailableError, denies permit, and does NOT increment session quota.
+    """
+    session_id = "00000000-0000-0000-0000-000000000110"
+    user_id = "teacher-110"
+    state = _setup_standard_session_state(session_id, user_id, gemini_calls=0)
+    db = MockSupabaseClient(state)
+
+    def failing_rpc(fn_name: str, params: Optional[Dict[str, Any]] = None):
+        if fn_name == "review_acquire_attempt":
+            raise RuntimeError("PGRST202 function review_acquire_attempt not found")
+        return MockRpcQueryBuilder(fn_name, params or {}, db.state, db.call_log)
+
+    db.rpc = failing_rpc  # type: ignore
+
+    repo = ReviewRepository(db, allow_table_fallback=False)
+    op_id = uuid4()
+    state["version_questions"][0]["regeneration_id"] = str(op_id)
+    state["version_questions"][0]["status"] = "regenerating"
+    repo.register_operation(op_id, session_id)
+
+    att_id = uuid4()
+    with pytest.raises(ReviewAcquireUnavailableError) as exc_info:
+        await repo.acquire_attempt(op_id, att_id)
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.error_code == "ERR_AI_GATEWAY_PERMIT_FAILURE"
+    # Invariant: session quota must not increase, no table fallback permitted!
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 0
+    # No review_attempts row created
+    assert len(state.get("review_attempts", [])) == 0
+
+
+@pytest.mark.asyncio
+async def test_f07_fail_closed_on_rpc_permission_denied():
+    """Verify that permission denied (PGRST301/401/403) on RPC fails closed in production."""
+    session_id = "00000000-0000-0000-0000-000000000111"
+    user_id = "teacher-111"
+    state = _setup_standard_session_state(session_id, user_id, gemini_calls=5)
+    db = MockSupabaseClient(state)
+
+    def failing_rpc(fn_name: str, params: Optional[Dict[str, Any]] = None):
+        if fn_name == "review_acquire_attempt":
+            raise PermissionError("PGRST301 permission denied for function review_acquire_attempt")
+        return MockRpcQueryBuilder(fn_name, params or {}, db.state, db.call_log)
+
+    db.rpc = failing_rpc  # type: ignore
+
+    repo = ReviewRepository(db, allow_table_fallback=False)
+    op_id = uuid4()
+    state["version_questions"][0]["regeneration_id"] = str(op_id)
+    state["version_questions"][0]["status"] = "regenerating"
+    repo.register_operation(op_id, session_id)
+
+    with pytest.raises(ReviewAcquireUnavailableError):
+        await repo.acquire_attempt(op_id, uuid4())
+
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 5
+
+
+@pytest.mark.asyncio
+async def test_f07_service_reject_maps_rpc_unavailable_to_503():
+    """Verify that when RPC is missing/unavailable in production, service.reject_question
+    rolls back with 0 calls dispatched and raises ReviewDomainException HTTP 503."""
+    session_id = "00000000-0000-0000-0000-000000000112"
+    user_id = "teacher-112"
+    q_id = "vq-001"
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id, gemini_calls=7)
+    db = MockSupabaseClient(state)
+
+    def failing_rpc(fn_name: str, params: Optional[Dict[str, Any]] = None):
+        if fn_name == "review_acquire_attempt":
+            raise RuntimeError("PGRST202 function review_acquire_attempt not found")
+        return MockRpcQueryBuilder(fn_name, params or {}, db.state, db.call_log)
+
+    db.rpc = failing_rpc  # type: ignore
+
+    service = ReviewService(db, allow_table_fallback=False)
+    service.ai_generator = service._default_ai_generator
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.reject_question(session_id, q_id, user_id)
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.error_code == "ERR_AI_GATEWAY_PERMIT_FAILURE"
+    # Question is rolled back to pending_review
+    assert state["version_questions"][0]["status"] == "pending_review"
+    # Gemini review calls remain 7 (no increment)
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 7
+
+
+@pytest.mark.asyncio
+async def test_f07_sp_rejects_unregistered_random_operation_id():
+    """Reproduces reviewer Đạt F07 defect:
+    An arbitrary random operation_id that is NOT bound to any question in the database
+    must NOT be granted a permit by review_acquire_attempt (strict binding, no OR fallback).
+    """
+    session_id = "00000000-0000-0000-0000-000000000113"
+    user_id = "teacher-113"
+    legit_op = uuid4()
+    state = _setup_standard_session_state(session_id, user_id, gemini_calls=0)
+    state["version_questions"][0]["status"] = "regenerating"
+    state["version_questions"][0]["regeneration_id"] = str(legit_op)
+
+    db = MockSupabaseClient(state)
+    repo = ReviewRepository(db)
+
+    # Attacker / random operation tries to acquire attempt
+    random_op = uuid4()
+    permit = await repo.acquire_attempt(random_op, uuid4())
+
+    # Must be denied!
+    assert permit.dispatch_permitted is False
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 0
+
+
+@pytest.mark.asyncio
+async def test_f07_sp_rejects_operation_when_session_locked():
+    """Verify review_acquire_attempt strictly blocks permits if session is approved or exported."""
+    for locked_status in ("approved", "exported"):
+        session_id = f"00000000-0000-0000-0000-000000000114-{locked_status[:3]}"
+        user_id = "teacher-114"
+        state = _setup_standard_session_state(
+            session_id, user_id, session_status=locked_status, gemini_calls=2
+        )
+        op_id = uuid4()
+        state["version_questions"][0]["status"] = "regenerating"
+        state["version_questions"][0]["regeneration_id"] = str(op_id)
+
+        db = MockSupabaseClient(state)
+        repo = ReviewRepository(db)
+
+        permit = await repo.acquire_attempt(op_id, uuid4())
+        assert permit.dispatch_permitted is False
+        assert state["exam_sessions"][0]["gemini_review_calls"] == 2
+
+
+@pytest.mark.asyncio
+async def test_f07_sp_rejects_operation_when_session_generating():
+    """Verify review_acquire_attempt blocks permits if session is in initial generating state."""
+    session_id = "00000000-0000-0000-0000-000000000115"
+    user_id = "teacher-115"
+    state = _setup_standard_session_state(
+        session_id, user_id, session_status="generating", gemini_calls=0
+    )
+    op_id = uuid4()
+    state["version_questions"][0]["status"] = "regenerating"
+    state["version_questions"][0]["regeneration_id"] = str(op_id)
+
+    db = MockSupabaseClient(state)
+    repo = ReviewRepository(db)
+
+    permit = await repo.acquire_attempt(op_id, uuid4())
+    assert permit.dispatch_permitted is False
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 0
+
+
+@pytest.mark.asyncio
+async def test_f07_sp_rejects_inactive_or_finished_operation():
+    """Verify review_acquire_attempt blocks permits if the question is no longer in regenerating state."""
+    session_id = "00000000-0000-0000-0000-000000000116"
+    user_id = "teacher-116"
+    state = _setup_standard_session_state(session_id, user_id, gemini_calls=1)
+    op_id = uuid4()
+    state["version_questions"][0]["status"] = "approved"
+    state["version_questions"][0]["regeneration_id"] = str(op_id)
+
+    db = MockSupabaseClient(state)
+    repo = ReviewRepository(db)
+
+    permit = await repo.acquire_attempt(op_id, uuid4())
+    assert permit.dispatch_permitted is False
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 1
+
+
+@pytest.mark.asyncio
+async def test_f07_sp_allows_strictly_bound_active_operation():
+    """Verify valid case: strictly bound active regenerating operation in generated session is granted."""
+    session_id = "00000000-0000-0000-0000-000000000117"
+    user_id = "teacher-117"
+    state = _setup_standard_session_state(session_id, user_id, gemini_calls=0)
+    op_id = uuid4()
+    state["version_questions"][0]["status"] = "regenerating"
+    state["version_questions"][0]["regeneration_id"] = str(op_id)
+
+    db = MockSupabaseClient(state)
+    repo = ReviewRepository(db)
+
+    permit = await repo.acquire_attempt(op_id, uuid4())
+    assert permit.dispatch_permitted is True
+    assert permit.calls_used == 1
+    assert state["exam_sessions"][0]["gemini_review_calls"] == 1
+
+
+@pytest.mark.asyncio
+async def test_f07_reservation_sets_durable_regeneration_id():
+    """TASK-302 contract test: TX1 reserve_max_quota_and_start_regenerating binds
+    the operation_id into version_questions.regeneration_id durably.
+    """
+    session_id = "00000000-0000-0000-0000-000000000118"
+    user_id = "teacher-118"
+    q_id = "vq-001"
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id)
+    db = MockSupabaseClient(state)
+    repo = ReviewRepository(db)
+
+    op_id = uuid4()
+    res = await repo.reserve_max_quota_and_start_regenerating(
+        session_id, q_id, user_id, operation_id=op_id
+    )
+    assert res == ReserveResult.OK
+    assert state["version_questions"][0]["status"] == "regenerating"
+    assert state["version_questions"][0]["regeneration_id"] == str(op_id)
+
+
+@pytest.mark.asyncio
+async def test_f07_rollback_clears_regeneration_id():
+    """TASK-302 contract test: emergency rollback resets question to pending_review
+    and clears regeneration_id to None.
+    """
+    session_id = "00000000-0000-0000-0000-000000000119"
+    user_id = "teacher-119"
+    q_id = "vq-001"
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id)
+    db = MockSupabaseClient(state)
+    repo = ReviewRepository(db)
+
+    op_id = uuid4()
+    await repo.reserve_max_quota_and_start_regenerating(
+        session_id, q_id, user_id, operation_id=op_id
+    )
+    assert state["version_questions"][0]["regeneration_id"] == str(op_id)
+
+    # Now execute emergency rollback
+    ok = await repo.emergency_rollback_tx(
+        session_id=session_id,
+        old_question_id=q_id,
+        regeneration_id=op_id,
+        error_msg="Test error",
+        user_id=user_id,
+        actual_calls_dispatched=0,
+    )
+    assert ok is True
+    assert state["version_questions"][0]["status"] == "pending_review"
+    assert state["version_questions"][0]["regeneration_id"] is None
+
+
+
+
+
 async def test_f01_late_invalidation_cannot_corrupt_approved_session():
     """F01 Adversarial (Finding F01 v3.0 by @Thanhdat3010):
     Prove that a late invalidation call from an asynchronous/lagged worker
@@ -1951,6 +2806,9 @@ async def test_f01_late_invalidation_cannot_corrupt_approved_session():
                 "gemini_review_calls": 0,
                 "updated_at": _now_iso(),
             }
+        ],
+        "generation_configs": [
+            {"session_id": session_id, "n_versions": 2},
         ],
         "exam_versions": [
             {"id": v1_id, "session_id": session_id, "version_code": "101", "is_finalized": True, "shuffle_seed": 111},
@@ -2266,9 +3124,13 @@ async def test_f01_adversarial_reject_cannot_destroy_concurrently_approved_sessi
     # Simulate race condition: Session is approved concurrently right after TX2 persistence
     orig_complete_tx = service.repo.complete_regeneration_tx
 
+    fresh_ak = {"id": str(uuid4()), "version_id": v1_id, "question_no": 1, "correct_option": "B"}
+
     async def complete_tx_with_concurrent_approval(*args, **kwargs):
         res = await orig_complete_tx(*args, **kwargs)
-        # Interleaving: Concurrent worker commits approval RPC
+        # Interleaving: Concurrent worker finishes re-shuffle and commits approval RPC
+        db_state["answer_keys"] = [fresh_ak]
+        db_state["exam_versions"][0]["is_finalized"] = True
         db_state["exam_sessions"][0]["status"] = "approved"
         db_state["exam_sessions"][0]["approved_at"] = _now_iso()
         return res
@@ -2344,7 +3206,9 @@ async def test_f17_adversarial_denied_revert_with_question_id_raises_423():
     session_id = str(uuid4())
     q_id = str(uuid4())
 
-    client = MockSupabaseClient({})
+    client = MockSupabaseClient({
+        "exam_sessions": [{"id": session_id, "status": "approved"}]
+    })
 
     def mock_locked_rpc(name: str, params: Optional[Dict[str, Any]] = None):
         class LockedBuilder:

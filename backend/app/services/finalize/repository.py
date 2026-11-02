@@ -65,20 +65,30 @@ class FinalizeRepository:
             - missing_pairs_count: count of (version, source_question) pairs missing active approved variants (F02)
             - source_questions_count: count of required source questions
         """
-        # 0. Fetch configured expected number of versions from generation_configs (F19)
+        # 0. Fetch configured expected number of versions from generation_configs (F19 Fail-Closed)
         cfg_res = (
             self.db.table("generation_configs")
             .select("n_versions")
             .eq("session_id", session_id)
-            .limit(1)
             .execute()
         )
         cfg_rows = _get_rows(cfg_res)
-        expected_n_versions: Optional[int] = (
-            int(cfg_rows[0]["n_versions"])
-            if cfg_rows and cfg_rows[0].get("n_versions") is not None
-            else None
-        )
+        config_error: Optional[str] = None
+        if not cfg_rows:
+            config_error = "ERR_CONFIG_NOT_FOUND"
+            expected_n_versions = None
+        else:
+            n_versions_list = [
+                int(c["n_versions"]) for c in cfg_rows if c.get("n_versions") is not None
+            ]
+            if not n_versions_list:
+                config_error = "ERR_CONFIG_NOT_FOUND"
+                expected_n_versions = None
+            elif len(set(n_versions_list)) > 1:
+                config_error = "ERR_CONFIG_AMBIGUOUS"
+                expected_n_versions = None
+            else:
+                expected_n_versions = n_versions_list[0]
 
         # 1. Fetch versions for this session
         v_res = (
@@ -96,6 +106,7 @@ class FinalizeRepository:
             return {
                 "total_versions": 0,
                 "expected_n_versions": expected_n_versions,
+                "config_error": config_error,
                 "unfinalized_versions_count": 0,
                 "total_questions": 0,
                 "unapproved_count": 0,
@@ -168,6 +179,7 @@ class FinalizeRepository:
         return {
             "total_versions": total_versions,
             "expected_n_versions": expected_n_versions,
+                "config_error": config_error,
             "unfinalized_versions_count": unfinalized_versions_count,
             "total_questions": total_questions,
             "unapproved_count": unapproved_count,
@@ -228,6 +240,14 @@ class FinalizeRepository:
             if "ERR_QUESTION_REGENERATING" in err_msg:
                 raise ReviewDomainException(
                     409, "ERR_QUESTION_REGENERATING", "Còn câu hỏi đang trong tiến trình sinh lại bởi AI"
+                ) from exc
+            if "ERR_CONFIG_NOT_FOUND" in err_msg:
+                raise ReviewDomainException(
+                    422, "ERR_CONFIG_NOT_FOUND", "Không tìm thấy cấu hình sinh đề của phiên thi"
+                ) from exc
+            if "ERR_CONFIG_AMBIGUOUS" in err_msg:
+                raise ReviewDomainException(
+                    422, "ERR_CONFIG_AMBIGUOUS", "Cấu hình sinh đề không đồng nhất"
                 ) from exc
             if "ERR_NOT_ALL_QUESTIONS_APPROVED" in err_msg:
                 raise ReviewDomainException(

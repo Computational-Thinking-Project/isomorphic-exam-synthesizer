@@ -40,6 +40,9 @@ DECLARE
       ELSE ''
     END
   );
+  v_config_count INT := 0;
+  v_min_n_versions INT;
+  v_max_n_versions INT;
   v_expected_versions INT;
   v_total_versions INT := 0;
   v_finalized_versions INT := 0;
@@ -118,13 +121,22 @@ BEGIN
     RAISE EXCEPTION 'ERR_INVALID_SESSION_STATE' USING ERRCODE = 'P0001';
   END IF;
 
-  -- 7. Exam Versions Invariant Guard (TASK-303 & F19):
+  -- 7. Exam Versions Invariant Guard (TASK-303 & F19 Fail-Closed):
   -- 7a. Query configured expected n_versions from generation_configs
-  SELECT n_versions
-  INTO v_expected_versions
+  SELECT count(*), min(n_versions), max(n_versions)
+  INTO v_config_count, v_min_n_versions, v_max_n_versions
   FROM public.generation_configs
-  WHERE session_id = p_session_id
-  LIMIT 1;
+  WHERE session_id = p_session_id;
+
+  IF v_config_count = 0 THEN
+    RAISE EXCEPTION 'ERR_CONFIG_NOT_FOUND' USING ERRCODE = '22023';
+  END IF;
+
+  IF v_config_count > 1 AND v_min_n_versions != v_max_n_versions THEN
+    RAISE EXCEPTION 'ERR_CONFIG_AMBIGUOUS' USING ERRCODE = '22023';
+  END IF;
+
+  v_expected_versions := v_min_n_versions;
 
   -- 7b. Total versions must match configured n_versions and 100% of versions must have is_finalized = TRUE
   SELECT count(*), count(*) FILTER (WHERE is_finalized IS TRUE)
@@ -132,7 +144,7 @@ BEGIN
   FROM public.exam_versions
   WHERE session_id = p_session_id;
 
-  IF v_expected_versions IS NOT NULL AND v_total_versions != v_expected_versions THEN
+  IF v_total_versions != v_expected_versions THEN
     RAISE EXCEPTION 'ERR_VERSIONS_NOT_FINALIZED' USING ERRCODE = 'P0001';
   END IF;
 

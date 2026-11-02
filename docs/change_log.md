@@ -29,6 +29,8 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
 - [DEC-BE1-008: Phân Loại Ngoại Lệ Mạng Phân Tán và Chuẩn Hóa Kiểm Quyền Migration 003 (TASK-205 Round 3)](#dec-be1-008-phân-loại-ngoại-lệ-mạng-phân-tán-và-chuẩn-hóa-kiểm-quyền-migration-003-task-205-round-3)
 - [DEC-BE1-009: Loại Trừ PostgreSQL SQLSTATE Class 08 Khỏi Bằng Chứng Rollback CSDL (TASK-202 / TASK-205 Round 5)](#dec-be1-009-loại-trừ-postgresql-sqlstate-class-08-khỏi-bằng-chứng-rollback-csdl-task-202--task-205-round-5)
 - [ADR-004: Tinh Giản Toàn Diện Stage 1 & Stage 2 Sang Kiến Trúc Black-Box, Silent Security Audit, và Chốt Nguồn Nguyên Tử Đơn Điểm](#adr-004-tinh-giản-toàn-diện-stage-1--stage-2-sang-kiến-trúc-black-box-silent-security-audit-và-chốt-nguồn-nguyên-tử-đơn-điểm)
+- [DEC-BE1-010: Khắc Phục Triệt Để Fail-Closed Permit RPC, Strict Operation Binding, và Đồng Bộ Contract TASK-302 (TASK-301 F07 v3.0)](#dec-be1-010)
+- [DEC-BE1-011: Chuyển Dịch Toàn Diện Review Lifecycle Sang Atomic PostgreSQL Stored Procedures và Kiểm Thử Trên CSDL Thật (Stage 3 Production-Ready)](#dec-be1-011)
 
 ---
 
@@ -293,3 +295,53 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
   - Giảm thiểu triệt để số lượng endpoint và form UI cần phát triển/bảo trì, tiết kiệm ít nhất 4 ngày công cho FE và BE.
   - Giao diện đạt chuẩn Zero-Friction: Giảng viên chỉ cần nạp đề $\rightarrow$ xem trước KaTeX $\rightarrow$ bấm 1 nút "Xác nhận đề gốc và tiếp tục" để chuyển sang sinh đề.
   - Bảo đảm an toàn tuyệt đối cho CSDL và hệ thống.
+
+<a id="dec-be1-010"></a>
+
+### DEC-BE1-010: Khắc Phục Triệt Để Fail-Closed Permit RPC, Strict Operation Binding, và Đồng Bộ Contract TASK-302 (TASK-301 F07 v3.0)
+* **Mã quyết định:** DEC-BE1-010
+* **Ngày quyết định:** 02/11/2026
+* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
+* **Bối cảnh:**
+  1. Review finding F07 (P1, Changes requested) từ Đạt (@Thanhdat3010) trên PR #28 chỉ ra 3 lỗ hổng bảo mật và toàn vẹn:
+     - Wrapper RPC `acquire_attempt` bắt generic `Exception` và tự động fallback sang bảng CAS khi RPC không tồn tại (PGRST202) hoặc lỗi quyền/mạng, dẫn đến fail-open cấp permit và tăng counter sai trái tại production.
+     - Migration 008 có điều kiện `OR (q.status = 'regenerating' AND q.is_current)` cho phép `operation_id` ngẫu nhiên chiếm đoạt câu hỏi đang tái sinh của phiên khác; thiếu kiểm tra hạn lease 180s và khóa phiên.
+     - Operation identity chưa bền vững và chưa đồng bộ chặt chẽ với schema foundation của TASK-302 (PR #36).
+* **Quyết định:**
+  1. **Fail-Closed Production Policy:** Loại bỏ hoàn toàn fallback ngầm trong production (`allow_table_fallback=False`). Mọi lỗi RPC (PGRST202, lỗi quyền, ngắt kết nối mạng, malformed payload) đều ghi log ERROR đầy đủ context và raise `ReviewAcquireUnavailableError` (HTTP 503 `ERR_AI_GATEWAY_PERMIT_FAILURE`), triệt tiêu rủi ro rò rỉ quota. Nhánh table CAS chỉ được kích hoạt tường minh trong môi trường test (`allow_table_fallback=True`).
+  2. **Strict Operation Binding & Guard trong Stored Procedure (Migration 008):**
+     - Bỏ hoàn toàn nhánh OR nguy hiểm; bắt buộc `q.regeneration_id = p_operation_id AND q.is_current = TRUE`.
+     - Bổ sung các guard nghiêm ngặt: kiểm tra lease hết hạn sau 180s (`OPERATION_EXPIRED`), kiểm tra trạng thái câu hỏi (`OPERATION_INACTIVE`), chặn phiên đã khóa (`SESSION_LOCKED` cho `approved`/`exported`), chặn phiên đang bận sinh (`SESSION_BUSY` cho `generating`).
+     - Trả về mã lỗi từ chối rõ ràng trong payload JSONB (`rejection_reason`), không ném unhandled exception làm crash worker.
+  3. **Đồng Bộ Hoàn Toàn Schema và Contract TASK-302:**
+     - Ghi nhận `regeneration_id` vào `version_questions` trong TX1 (`reserve_max_quota_and_start_regenerating`) và dọn dẹp khi rollback (`emergency_rollback_tx`).
+     - Đồng bộ hóa toàn bộ các cột bổ sung của Migration 006 (`regeneration_id`, `display_no`, `display_correct_key`, `canonical_question_no`, `session_id`, `user_id`, `api_calls_used`, `ck_review_logs_actor_required`) vào `backend/scripts/schema.sql`.
+* **Phạm vi ảnh hưởng:** `backend/app/models/schemas.py`, `backend/app/services/review/repository.py`, `backend/app/services/review/service.py`, `backend/migrations/008_stage3_review_acquire_attempt_rpc.sql`, `backend/scripts/schema.sql`, `backend/tests/services/test_review_lifecycle.py`, `docs/tasks/TASK-301.md`.
+* **Kiểm chứng:** 58/58 unit/lifecycle tests pass, Ruff check pass, Mypy pass (67 files).
+
+<a id="dec-be1-011"></a>
+
+### DEC-BE1-011: Đồng Bộ Toàn Diện Review Lifecycle Caller Với Hợp Đồng RPC CSDL Của Hùng (TASK-302 / Migration 006)
+* **Mã quyết định:** DEC-BE1-011
+* **Ngày quyết định:** 02/11/2026
+* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
+* **Bối cảnh:**
+  1. Hùng (TASK-302, PR #36) đã hoàn tất và bàn giao nền tảng CSDL Stage 3 tại Migration `006_stage3_review_and_shuffle.sql` kèm 45/45 test cases pass trên container PostgreSQL 15 thật và tài liệu hợp đồng `docs/api/review-rpc-contract.md`.
+  2. Để tránh dẫm chân lên phạm vi công việc của Hùng (không tạo 2 migration cạnh tranh, không sửa đè schema CSDL), Duy (TASK-301) xóa bỏ hoàn toàn migration 008 tự tạo và file test real-db trùng lặp.
+  3. Thay vào đó, Duy tập trung làm đúng vai trò Caller: Tái cấu trúc `ReviewRepository` thành Thin Wrapper Client ăn khớp 100% với 8 RPCs chuẩn của Hùng.
+* **Quyết định:**
+  1. **Xóa bỏ triệt để triển khai CSDL cạnh tranh:**
+     - Xóa `backend/migrations/008_stage3_review_acquire_attempt_rpc.sql` và `backend/tests/migrations/test_stage3_lifecycle_real_db.py`.
+     - Hoàn nguyên `backend/scripts/schema.sql` khớp hoàn toàn với bản chuẩn của Hùng.
+     - Xác nhận: Migration 008 chưa từng chạy lên Supabase Cloud dùng chung.
+  2. **Ghép nối Caller `ReviewRepository` với 8 RPCs của Migration 006:**
+     - Tách biệt 2 Client: `self.db` (Owner JWT client) cho các RPC Owner (`reserve`, `accept`, `revert`, `get_progress`), và `self.worker_db` (Worker `service_role` client) cho các RPC Worker (`acquire_attempt`, `complete_regeneration`, `fail_regeneration`, `recover_regeneration`).
+     - Chuẩn hóa tham số gọi RPC theo đúng `review-rpc-contract.md`:
+       - `review_complete_regeneration(p_operation_id, p_candidate)`: Bỏ `p_user_id` và `p_actual_calls` (CSDL tự suy từ ledger và operation context).
+       - `review_fail_regeneration(p_operation_id, p_error_code)`: Bỏ `p_user_id` và `p_actual_calls`.
+       - `review_accept_question(p_session_id, p_question_id, p_action_id)` và `review_revert_question`: Dùng `p_action_id` (CSDL tự lấy actor từ `auth.uid()`).
+     - Chuẩn hóa payload `AttemptPermit` đúng 6 trường: `operation_id, attempt_id, dispatch_permitted, calls_used, remaining_calls, replayed`.
+  3. **Ánh xạ ngoại lệ tập trung (`_map_rpc_exception`):**
+     - Bắt các mã domain exception sanitized do CSDL ném ra (`REVIEW_NOT_FOUND` $ightarrow$ 404, `REVIEW_BUSY` $ightarrow$ 409, `REVIEW_STALE` $ightarrow$ 409, `REVIEW_LOCKED` $ightarrow$ 423, `REVIEW_QUOTA_EXHAUSTED` $ightarrow$ 429, `REVIEW_IDEMPOTENCY_CONFLICT` $ightarrow$ 409) và chuyển thành `ReviewDomainException`.
+* **Phạm vi ảnh hưởng:** `backend/app/services/review/repository.py`, `backend/tests/services/test_review_lifecycle.py`, `docs/tasks/TASK-301.md`.
+* **Kiểm chứng:** 58/58 Stage 3 review tests pass (52 lifecycle + 6 API), ruff check clean.

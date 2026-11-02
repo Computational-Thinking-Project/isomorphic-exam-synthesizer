@@ -20,6 +20,7 @@ from app.core.constants import MAX_AI_CALLS_PER_REJECT
 from app.models.schemas import (
     RegeneratedQuestionResponse,
     ReserveResult,
+    ReviewAcquireUnavailableError,
     ReviewActionResponse,
     ReviewDomainException,
     ReviewProgressResponse,
@@ -59,9 +60,10 @@ class ReviewService:
         self,
         db: Client,
         ai_generator: Optional[Callable[..., Any]] = None,
+        allow_table_fallback: bool = False,
     ) -> None:
         self.db = db
-        self.repo = ReviewRepository(db)
+        self.repo = ReviewRepository(db, allow_table_fallback=allow_table_fallback)
         self.ai_generator = ai_generator
 
     async def _default_ai_generator(
@@ -77,14 +79,17 @@ class ReviewService:
         acquire_attempt: Optional[Callable[..., Any]] = None,
     ) -> Dict[str, Any]:
         """Default mock/fallback AI generator for regeneration outside DB."""
-        # If permit callback is supplied, simulate 1 permit acquisition
+        # If permit callback is supplied, enforce permit acquisition
         calls_used = 1
         if operation_id and callable(acquire_attempt):
-            try:
-                permit = await acquire_attempt(operation_id, uuid4())
-                calls_used = 1 if getattr(permit, "dispatch_permitted", True) else 0
-            except Exception:
-                calls_used = 1
+            permit = await acquire_attempt(operation_id, uuid4())
+            if not getattr(permit, "dispatch_permitted", False):
+                raise ReviewDomainException(
+                    429,
+                    "ERR_REVIEW_QUOTA_EXHAUSTED",
+                    "Không được cấp phép gọi AI do đã đạt giới hạn quota hoặc attempt",
+                )
+            calls_used = 1
 
         # Simulated regeneration result conforming to contract
         options = current_variant.get("options") or ["A. 1", "B. 2", "C. 3", "D. 4"]
@@ -205,6 +210,21 @@ class ReviewService:
             logger.error(
                 "AI Variant generation failed or timed out for question %s: %s", question_id, exc
             )
+            if isinstance(exc, ReviewAcquireUnavailableError):
+                await self.repo.emergency_rollback_tx(
+                    session_id=session_id,
+                    old_question_id=question_id,
+                    regeneration_id=regeneration_id,
+                    error_msg=str(exc),
+                    user_id=user_id,
+                    actual_calls_dispatched=0,
+                )
+                raise ReviewDomainException(
+                    503,
+                    "ERR_AI_GATEWAY_PERMIT_FAILURE",
+                    "Hệ thống cấp phép AI tạm thời không khả dụng",
+                ) from exc
+
             # F07: Track actual acknowledged permits / dispatched calls (default 1 for provider/timeout exception unless explicitly 0)
             default_calls = 1 if isinstance(exc, (asyncio.TimeoutError, TimeoutError)) else 0
             dispatched = getattr(exc, "api_calls_count", getattr(exc, "dispatched_calls", default_calls))

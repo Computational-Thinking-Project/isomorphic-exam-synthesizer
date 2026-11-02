@@ -407,6 +407,7 @@ async def test_f01_interleaving_mutation_prevents_approval():
                 "user_id": MOCK_USER_ID,
             }
         ],
+        "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 1}],
         "exam_versions": [
             {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
         ],
@@ -742,6 +743,7 @@ async def test_f01_rpc_transaction_happy_path_approves_and_locks():
                 "user_id": MOCK_USER_ID,
             }
         ],
+        "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 1}],
         "exam_versions": [
             {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
         ],
@@ -823,6 +825,7 @@ async def test_f01_controlled_interleaving_blocks_worker_b_and_prevents_corrupt_
                 "updated_at": "2026-10-30T00:00:00+00:00",
             }
         ],
+        "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 1}],
         "exam_versions": [
             {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
         ],
@@ -876,6 +879,7 @@ async def test_f01_strict_fail_closed_when_finalize_rpc_missing_pgrst202():
                 "user_id": MOCK_USER_ID,
             }
         ],
+        "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 1}],
         "exam_versions": [
             {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
         ],
@@ -926,6 +930,7 @@ async def test_f01_strict_fail_closed_when_finalize_rpc_timeouts():
                 "user_id": MOCK_USER_ID,
             }
         ],
+        "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 1}],
         "exam_versions": [
             {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
         ],
@@ -1048,6 +1053,7 @@ async def test_f01_interleaved_revert_blocked_when_session_approved():
                 "updated_at": "2026-10-30T00:00:00+00:00",
             }
         ],
+        "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 1}],
         "exam_versions": [
             {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
         ],

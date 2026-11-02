@@ -98,21 +98,14 @@ class FinalizeService:
             # Step 4: Verify pre-conditions
             stats = await self.repo.check_preconditions(session_id)
 
-            # 4a. Check versions finalized and configured versions completeness (F19)
+            # 4a. Check versions finalized (TASK-303)
             total_versions = stats.get("total_versions", 0)
             unfinalized_versions = stats.get("unfinalized_versions_count", 0)
-            expected_n_versions = stats.get("expected_n_versions")
             if total_versions == 0:
                 raise ReviewDomainException(
                     400,
                     "ERR_VERSIONS_NOT_FINALIZED",
                     "Phiên đề chưa được khởi tạo các phiên bản hoán vị (chưa qua TASK-303)",
-                )
-            if expected_n_versions is not None and total_versions != expected_n_versions:
-                raise ReviewDomainException(
-                    400,
-                    "ERR_VERSIONS_NOT_FINALIZED",
-                    f"Số lượng phiên bản đề thi ({total_versions}) không khớp với cấu hình yêu cầu ({expected_n_versions})",
                 )
             if unfinalized_versions > 0:
                 raise ReviewDomainException(
@@ -147,6 +140,28 @@ class FinalizeService:
                     400,
                     "ERR_NOT_ALL_QUESTIONS_APPROVED",
                     f"Còn {total_defective_count} câu hỏi chưa được thẩm định phê duyệt hoặc bị thiếu trong các mã đề",
+                )
+
+            # 4d. F19 Fail-Closed config check (must have unique valid config)
+            if stats.get("config_error") == "ERR_CONFIG_NOT_FOUND":
+                raise ReviewDomainException(
+                    422,
+                    "ERR_CONFIG_NOT_FOUND",
+                    "Không tìm thấy cấu hình sinh đề của phiên thi",
+                )
+            if stats.get("config_error") == "ERR_CONFIG_AMBIGUOUS":
+                raise ReviewDomainException(
+                    422,
+                    "ERR_CONFIG_AMBIGUOUS",
+                    "Cấu hình sinh đề không đồng nhất",
+                )
+
+            expected_n_versions = stats.get("expected_n_versions")
+            if expected_n_versions is not None and total_versions != expected_n_versions:
+                raise ReviewDomainException(
+                    400,
+                    "ERR_VERSIONS_NOT_FINALIZED",
+                    f"Số lượng phiên bản đề thi ({total_versions}) không khớp với cấu hình yêu cầu ({expected_n_versions})",
                 )
 
             # Step 5: Atomic update with optimistic lock (F01 / F10)
