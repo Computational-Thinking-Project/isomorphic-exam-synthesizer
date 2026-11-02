@@ -59,11 +59,17 @@ class ReviewService:
     def __init__(
         self,
         db: Client,
+        service_db: Optional[Client] = None,
         ai_generator: Optional[Callable[..., Any]] = None,
         allow_table_fallback: bool = False,
     ) -> None:
         self.db = db
-        self.repo = ReviewRepository(db, allow_table_fallback=allow_table_fallback)
+        self.service_db = service_db
+        self.repo = ReviewRepository(
+            db=db,
+            service_db=service_db,
+            allow_table_fallback=allow_table_fallback,
+        )
         self.ai_generator = ai_generator
 
     async def _default_ai_generator(

@@ -119,29 +119,89 @@ class ReviewRepository:
         str_op_id = str(operation_id)
         str_att_id = str(attempt_id)
 
-        # 1. Primary Path: Stored procedure RPC review_acquire_attempt (TASK-302 contract)
-        has_rpc = callable(getattr(self.db, "rpc", None))
+        # 1. Primary Path: Stored procedure RPC review_acquire_attempt (Worker service_role, TASK-302 contract)
+        has_rpc = callable(getattr(self.worker_db, "rpc", None))
         if has_rpc:
             try:
-                rpc_res = self.db.rpc(
+                rpc_res = self.worker_db.rpc(
                     "review_acquire_attempt",
                     {"p_operation_id": str_op_id, "p_attempt_id": str_att_id},
                 ).execute()
                 rpc_data = rpc_res.data
                 if isinstance(rpc_data, list) and rpc_data:
                     rpc_data = rpc_data[0]
-                if isinstance(rpc_data, dict) and "dispatch_permitted" in rpc_data:
+                if isinstance(rpc_data, dict):
+                    # Strict ID matching (F07 - no default values if missing or mismatched)
+                    ret_op = str(rpc_data.get("operation_id") or "")
+                    ret_att = str(rpc_data.get("attempt_id") or "")
+                    if ret_op != str_op_id or ret_att != str_att_id:
+                        logger.error(
+                            "RPC review_acquire_attempt returned mismatched IDs: op=%s (expected %s), att=%s (expected %s)",
+                            ret_op,
+                            str_op_id,
+                            ret_att,
+                            str_att_id,
+                        )
+                        raise ReviewAcquireUnavailableError(
+                            f"Mismatched permit identities: op={ret_op}, att={ret_att}",
+                            operation_id=operation_id,
+                            attempt_id=attempt_id,
+                        )
+
+                    disp_perm = rpc_data.get("dispatch_permitted")
+                    replayed = rpc_data.get("replayed")
+                    # Strict boolean check (F07 - no type coercion like bool('false') -> True)
+                    if not isinstance(disp_perm, bool) or not isinstance(replayed, bool):
+                        logger.error(
+                            "RPC review_acquire_attempt returned non-boolean flags: dispatch_permitted=%s, replayed=%s",
+                            disp_perm,
+                            replayed,
+                        )
+                        raise ReviewAcquireUnavailableError(
+                            f"Invalid permit boolean flags: dispatch_permitted={disp_perm}, replayed={replayed}",
+                            operation_id=operation_id,
+                            attempt_id=attempt_id,
+                        )
+
+                    calls_used = rpc_data.get("calls_used")
+                    remaining = rpc_data.get("remaining_calls")
+                    if not isinstance(calls_used, int) or not isinstance(remaining, int):
+                        logger.error(
+                            "RPC review_acquire_attempt returned non-integer calls: calls_used=%s, remaining=%s",
+                            calls_used,
+                            remaining,
+                        )
+                        raise ReviewAcquireUnavailableError(
+                            f"Invalid permit quota values: calls_used={calls_used}, remaining={remaining}",
+                            operation_id=operation_id,
+                            attempt_id=attempt_id,
+                        )
+
+                    if not (0 <= calls_used <= 30 and 0 <= remaining <= 30 and calls_used + remaining == 30):
+                        logger.error(
+                            "RPC review_acquire_attempt returned inconsistent quota arithmetic: used=%s, remaining=%s",
+                            calls_used,
+                            remaining,
+                        )
+                        raise ReviewAcquireUnavailableError(
+                            f"Inconsistent permit quota arithmetic: used={calls_used}, remaining={remaining}",
+                            operation_id=operation_id,
+                            attempt_id=attempt_id,
+                        )
+
                     ret_sid = str(rpc_data.get("session_id", "") or "")
                     if ret_sid:
                         self._operation_sessions[operation_id] = ret_sid
+
                     return AttemptPermit(
-                        operation_id=UUID(str(rpc_data.get("operation_id", operation_id))),
-                        attempt_id=UUID(str(rpc_data.get("attempt_id", attempt_id))),
-                        dispatch_permitted=bool(rpc_data.get("dispatch_permitted", False)),
-                        calls_used=int(rpc_data.get("calls_used", 0)),
-                        remaining_calls=int(rpc_data.get("remaining_calls", 0)),
-                        replayed=bool(rpc_data.get("replayed", False)),
+                        operation_id=operation_id,
+                        attempt_id=attempt_id,
+                        dispatch_permitted=disp_perm,
+                        calls_used=calls_used,
+                        remaining_calls=remaining,
+                        replayed=replayed,
                     )
+
                 # Malformed RPC response
                 if not self.allow_table_fallback:
                     logger.error(
@@ -204,7 +264,13 @@ class ReviewRepository:
                     attempt_id=attempt_id,
                 )
 
-        # 2. Fallback Path: Atomic CAS Adapter with Durable Ledger
+        # 2. Fallback Path: Atomic CAS Adapter with Durable Ledger (Test mode only)
+        if not self.allow_table_fallback:
+            raise ReviewAcquireUnavailableError(
+                "Table fallback is disabled in production (fail-closed)",
+                operation_id=operation_id,
+                attempt_id=attempt_id,
+            )
         # Resolve session_id: 1) local registration hint, 2) prior review_attempts, 3) active regenerating question
         session_id = self._operation_sessions.get(operation_id, "")
         if not session_id:
@@ -507,103 +573,143 @@ class ReviewRepository:
         - Primary Path: Single-transaction PostgreSQL RPC review_reserve_regeneration (FOR UPDATE lock)
         - Fallback Path: Table queries with Model A concurrency check (test mode only)
         """
-        # 1. Primary Path: Stored procedure RPC review_reserve_regeneration
+        # 1. Primary Path: Stored procedure RPC review_reserve_regeneration (Owner JWT)
+        op_uuid_str = str(operation_id or uuid4())
         if callable(getattr(self.db, "rpc", None)):
             try:
-                sent_op_id = str(operation_id or uuid4())
                 rpc_res = self.db.rpc(
                     "review_reserve_regeneration",
                     {
                         "p_session_id": str(session_id),
                         "p_question_id": str(question_id),
-                        "p_operation_id": sent_op_id,
+                        "p_operation_id": op_uuid_str,
                     },
                 ).execute()
-                if not rpc_res.data:
-                    raise ReviewDomainException(
-                        500, "ERR_DATABASE_TRANSACTION_FAILED", "Phản hồi CSDL rỗng khi đặt chỗ tái sinh"
-                    )
                 rpc_data = (
                     rpc_res.data[0]
                     if isinstance(rpc_res.data, list) and rpc_res.data
                     else rpc_res.data
                 )
                 if isinstance(rpc_data, dict):
-                    reason = rpc_data.get("rejection_reason") or rpc_data.get("error_code")
-                    status_flag = str(rpc_data.get("status", "")).lower()
-                    if status_flag == "denied" and not reason:
-                        reason = "SESSION_LOCKED"
-                    if reason in ("SESSION_LOCKED", "REVIEW_LOCKED", "ERR_SESSION_LOCKED"):
+                    reason = rpc_data.get("rejection_reason")
+                    if reason == "SESSION_BUSY":
+                        return ReserveResult.SESSION_BUSY
+                    if reason == "QUOTA_EXHAUSTED":
+                        return ReserveResult.QUOTA_EXHAUSTED
+                    if reason == "QUESTION_BUSY":
+                        return ReserveResult.QUESTION_BUSY
+                    if reason == "QUESTION_NOT_CURRENT":
+                        return ReserveResult.QUESTION_NOT_CURRENT
+                    if reason == "QUESTION_NOT_FOUND":
+                        return ReserveResult.QUESTION_NOT_FOUND
+                    if reason == "SESSION_LOCKED":
                         raise ReviewDomainException(
                             423,
                             "ERR_SESSION_LOCKED",
                             "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn",
                         )
-                    status_flag = str(rpc_data.get("status", "")).lower()
-                    if status_flag == "denied" or reason:
-                        if reason in ("SESSION_BUSY", "ERR_SESSION_BUSY_REGENERATING"):
-                            return ReserveResult.SESSION_BUSY
-                        if reason in ("QUOTA_EXHAUSTED", "ERR_REVIEW_QUOTA_EXHAUSTED"):
-                            return ReserveResult.QUOTA_EXHAUSTED
-                        if reason in ("QUESTION_BUSY", "REVIEW_BUSY", "ERR_QUESTION_BUSY"):
-                            return ReserveResult.QUESTION_BUSY
-                        if reason in ("QUESTION_NOT_CURRENT", "ERR_QUESTION_NOT_CURRENT"):
-                            return ReserveResult.QUESTION_NOT_CURRENT
-                        if reason in ("QUESTION_NOT_FOUND", "ERR_QUESTION_NOT_FOUND"):
-                            return ReserveResult.QUESTION_NOT_FOUND
-                        if reason in ("SESSION_LOCKED", "REVIEW_LOCKED", "ERR_SESSION_LOCKED"):
-                            raise ReviewDomainException(
-                                423,
-                                "ERR_SESSION_LOCKED",
-                                "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn",
-                            )
-                        if reason in ("FORBIDDEN", "ERR_FORBIDDEN"):
-                            raise ReviewDomainException(
-                                403, "ERR_FORBIDDEN", "Không có quyền thao tác trên phiên đề này"
-                            )
-                        return ReserveResult.QUESTION_BUSY
+                    if reason == "FORBIDDEN":
+                        raise ReviewDomainException(
+                            403, "ERR_FORBIDDEN", "Không có quyền thao tác trên phiên đề này"
+                        )
 
-                    # Validate strict identity and lease (F04)
-                    if operation_id and rpc_data.get("operation_id"):
-                        if str(rpc_data.get("operation_id")) != sent_op_id:
+                    # Strict validation of reservation lease metadata (F04)
+                    res_op = str(rpc_data.get("operation_id") or "")
+                    res_qid = str(rpc_data.get("question_id") or "")
+                    res_sid = str(rpc_data.get("session_id") or "")
+                    if res_op != op_uuid_str or res_qid != str(question_id) or res_sid != str(session_id):
+                        logger.error(
+                            "RPC review_reserve_regeneration identity mismatch: op=%s (expected %s), qid=%s (expected %s), sid=%s (expected %s)",
+                            res_op,
+                            op_uuid_str,
+                            res_qid,
+                            str(question_id),
+                            res_sid,
+                            str(session_id),
+                        )
+                        if not self.allow_table_fallback:
                             raise ReviewDomainException(
-                                409, "ERR_STALE_OPERATION", "Mã thao tác phản hồi không khớp"
+                                500,
+                                "ERR_INVALID_RESERVATION",
+                                f"Reservation metadata mismatch: op={res_op}, qid={res_qid}, sid={res_sid}",
                             )
-                    if rpc_data.get("expires_at"):
+
+                    expires_at_raw = rpc_data.get("expires_at")
+                    if not expires_at_raw:
+                        if not self.allow_table_fallback:
+                            raise ReviewDomainException(
+                                500,
+                                "ERR_INVALID_RESERVATION",
+                                "Reservation lease missing expires_at timestamp",
+                            )
+                    else:
                         try:
-                            exp_dt = datetime.fromisoformat(str(rpc_data["expires_at"]).replace("Z", "+00:00"))
-                            if (datetime.now(timezone.utc) - exp_dt).total_seconds() > 5:
+                            exp_dt = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00"))
+                            now_utc = datetime.now(timezone.utc)
+                            if exp_dt <= now_utc:
+                                raise ValueError("expires_at lease is in the past")
+                        except (ValueError, TypeError) as parse_err:
+                            if not self.allow_table_fallback:
                                 raise ReviewDomainException(
-                                    409, "ERR_STALE_OPERATION", "Thời hạn đặt chỗ đã hết hiệu lực"
-                                )
-                        except (ValueError, TypeError):
-                            pass
+                                    500,
+                                    "ERR_INVALID_RESERVATION",
+                                    f"Malformed or expired reservation lease: {expires_at_raw}",
+                                ) from parse_err
 
-                    if rpc_data.get("success") is True or ("operation_id" in rpc_data and "question_id" in rpc_data):
-                        return ReserveResult.OK
+                    return ReserveResult.OK
 
+                if not self.allow_table_fallback:
                     raise ReviewDomainException(
-                        500, "ERR_DATABASE_TRANSACTION_FAILED", "Phản hồi CSDL không đúng định dạng hợp lệ"
+                        500,
+                        "ERR_INVALID_RESERVATION",
+                        f"RPC review_reserve_regeneration returned malformed data: {rpc_data}",
                     )
             except ReviewDomainException:
                 raise
             except Exception as exc:
-                err_msg = str(exc)
-                if "PGRST202" in err_msg or "Could not find" in err_msg:
+                msg = str(exc)
+                if "REVIEW_BUSY" in msg:
+                    return ReserveResult.SESSION_BUSY
+                if "REVIEW_QUOTA_EXHAUSTED" in msg:
+                    return ReserveResult.QUOTA_EXHAUSTED
+                if "REVIEW_STALE" in msg:
+                    return ReserveResult.QUESTION_NOT_CURRENT
+                if "REVIEW_NOT_FOUND" in msg or "P0002" in msg:
+                    return ReserveResult.QUESTION_NOT_FOUND
+                if "REVIEW_LOCKED" in msg:
                     raise ReviewDomainException(
-                        503, "ERR_REGENERATION_UNAVAILABLE", "Hệ thống CSDL không hỗ trợ RPC giao dịch sinh lại"
-                    ) from exc
-                if isinstance(exc, (TimeoutError, ConnectionError, OSError)) or "timeout" in err_msg.lower():
+                        423,
+                        "ERR_SESSION_LOCKED",
+                        "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn",
+                    )
+                if "42501" in msg or "permission denied" in msg.lower():
                     raise ReviewDomainException(
-                        504, "ERR_UPSTREAM_TIMEOUT", "Mất kết nối với dịch vụ giao dịch CSDL"
-                    ) from exc
+                        403, "ERR_FORBIDDEN", "Không có quyền thao tác trên phiên đề này"
+                    )
                 if not self.allow_table_fallback:
-                    logger.error("RPC review_reserve_regeneration failed (fail-closed): %s", exc, exc_info=True)
+                    logger.error(
+                        "RPC review_reserve_regeneration failed (fail-closed): %s",
+                        exc,
+                        exc_info=True,
+                    )
                     raise ReviewDomainException(
-                        503, "ERR_DATABASE_UNAVAILABLE", f"Lỗi CSDL khi đặt chỗ tái sinh: {exc}"
+                        503,
+                        "ERR_DATABASE_UNAVAILABLE",
+                        f"Lỗi CSDL khi đặt chỗ tái sinh: {exc}",
                     ) from exc
+        else:
+            if not self.allow_table_fallback:
+                raise ReviewDomainException(
+                    503,
+                    "ERR_DATABASE_UNAVAILABLE",
+                    "Database client does not support RPC review_reserve_regeneration",
+                )
 
         # 2. Fallback Path: Table checks (Test mode only)
+        if not self.allow_table_fallback:
+            raise ReviewDomainException(
+                503, "ERR_DATABASE_UNAVAILABLE", "Table fallback is disabled in production"
+            )
         session_meta = await self.get_session_status_and_quota(session_id)
         current_calls = int(session_meta.get("gemini_review_calls", 0) or 0)
 
@@ -686,23 +792,47 @@ class ReviewRepository:
         """Idempotent TX2: Deactivate old variant, insert new variant, adjust quota, and audit log."""
         str_regen_id = str(regeneration_id)
 
-        # Primary Path: Atomic Stored Procedure RPC review_complete_regeneration
+        # Ensure validation report has not failed (F10)
+        val_rep = new_data.get("validation_report") or {}
+        if val_rep.get("is_valid") is False:
+            raise ReviewDomainException(
+                422,
+                "ERR_INVALID_PAYLOAD",
+                "Candidate variant is invalid and cannot be completed into the question bank",
+            )
+
+        sol_md = str(new_data.get("solution_md") or new_data.get("solution_markdown") or "").strip()
+        if not sol_md:
+            sol_md = "**Lời giải chi tiết:**\nLời giải đang được cập nhật."
+
+        # Ensure checks is always a list of strings (F10)
+        checks = val_rep.get("checks")
+        if not isinstance(checks, list):
+            checks = ["format_check", "content_check"]
+
+        # Ensure warnings is always a list of strings
+        warnings = val_rep.get("warnings")
+        if not isinstance(warnings, list):
+            warnings = []
+
+        cand_payload = {
+            "stem_latex": str(new_data.get("stem_latex") or new_data.get("content", "")).strip(),
+            "solution_md": sol_md,
+            "correct_key": str(new_data.get("correct_key", "A")).strip().upper(),
+            "options": list(new_data.get("options", [])),
+            "api_calls_count": min(4, max(0, int(actual_calls))),
+            "validation_report": {
+                "is_valid": True,
+                "math_verified": bool(val_rep.get("math_verified", False)),
+                "requires_teacher_review": True,
+                "warnings": warnings,
+                "checks": checks,
+            },
+        }
+
         # Primary Path: Stored procedure RPC review_complete_regeneration (Worker service_role)
         if callable(getattr(self.worker_db, "rpc", None)):
             try:
-                cand_payload = {
-                    "stem_latex": new_data.get("stem_latex") or new_data.get("content", ""),
-                    "solution_markdown": new_data.get("solution_markdown") or new_data.get("solution_md", ""),
-                    "correct_key": str(new_data.get("correct_key", "A")).strip().upper(),
-                    "options": list(new_data.get("options", [])),
-                    "api_calls_count": min(4, max(0, int(actual_calls))),
-                    "validation_report": {
-                        "is_valid": True,
-                        "math_verified": bool((new_data.get("validation_report") or {}).get("math_verified", True)),
-                        "requires_teacher_review": True,
-                        "warnings": list((new_data.get("validation_report") or {}).get("warnings", [])),
-                    },
-                }
                 rpc_res = self.worker_db.rpc(
                     "review_complete_regeneration",
                     {
@@ -715,7 +845,7 @@ class ReviewRepository:
                     if isinstance(rpc_res.data, list) and rpc_res.data
                     else rpc_res.data
                 )
-                if isinstance(rpc_data, dict) and rpc_data.get("success") is True:
+                if isinstance(rpc_data, dict) and rpc_data.get("question_id"):
                     new_qid = rpc_data.get("question_id")
                     # Fetch fresh candidate row from table if available
                     fetch_res = (
@@ -729,28 +859,46 @@ class ReviewRepository:
                     if fetched_rows:
                         return fetched_rows[0]
                     return {
-                        "id": new_qid,
+                        "id": str(new_qid),
                         "version_id": old_q_snapshot.get("version_id"),
                         "source_question_id": old_q_snapshot.get("source_question_id"),
                         "question_no": old_q_snapshot.get("question_no", 1),
                         "status": "pending_review",
                         "is_current": True,
-                        "content": new_data.get("content") or new_data.get("stem_latex", ""),
-                        "options": new_data.get("options"),
-                        "correct_key": new_data.get("correct_key"),
-                        "solution_md": new_data.get("solution_md"),
-                        "canonical_options": new_data.get("options"),
-                        "canonical_correct_key": str(new_data.get("correct_key", "A")).strip().upper(),
-                        "canonical_solution_md": new_data.get("solution_md"),
-                        "validation_report": new_data.get("validation_report") or {},
+                        "content": cand_payload["stem_latex"],
+                        "options": cand_payload["options"],
+                        "correct_key": cand_payload["correct_key"],
+                        "solution_md": cand_payload["solution_md"],
+                        "canonical_options": cand_payload["options"],
+                        "canonical_correct_key": cand_payload["correct_key"],
+                        "canonical_solution_md": cand_payload["solution_md"],
+                        "validation_report": cand_payload["validation_report"],
                         "regeneration_id": str_regen_id,
                         "regenerated_from_id": old_q_snapshot.get("id"),
                     }
-                if isinstance(rpc_data, dict) and rpc_data.get("rejection_reason") == "OPERATION_NOT_FOUND":
-                    return None
+                if not self.allow_table_fallback:
+                    logger.error(
+                        "RPC review_complete_regeneration returned malformed data or denial (fail-closed): op=%s, data=%s",
+                        str_regen_id,
+                        rpc_data,
+                    )
+                    raise ReviewDomainException(
+                        500,
+                        "ERR_COMPLETE_REGENERATION_FAILED",
+                        f"RPC review_complete_regeneration failed: {rpc_data}",
+                    )
             except ReviewDomainException:
                 raise
             except Exception as exc:
+                msg = str(exc)
+                if "REVIEW_INVALID_PAYLOAD" in msg:
+                    raise ReviewDomainException(422, "ERR_INVALID_PAYLOAD", f"Candidate payload invalid: {exc}") from exc
+                if "REVIEW_IDEMPOTENCY_CONFLICT" in msg:
+                    raise ReviewDomainException(409, "ERR_ATTEMPT_REPLAYED", f"Idempotency conflict: {exc}") from exc
+                if "REVIEW_NOT_FOUND" in msg or "P0002" in msg:
+                    raise ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Operation or question not found") from exc
+                if "42501" in msg or "permission denied" in msg.lower():
+                    raise ReviewDomainException(403, "ERR_FORBIDDEN", "Worker service_role permission required") from exc
                 if not self.allow_table_fallback:
                     logger.error(
                         "RPC review_complete_regeneration failed (fail-closed): %s",
@@ -762,8 +910,19 @@ class ReviewRepository:
                         "ERR_COMPLETE_REGENERATION_FAILED",
                         f"Lỗi CSDL khi hoàn tất tái sinh: {exc}",
                     ) from exc
+        else:
+            if not self.allow_table_fallback:
+                raise ReviewDomainException(
+                    503,
+                    "ERR_DATABASE_UNAVAILABLE",
+                    "Database client does not support RPC review_complete_regeneration",
+                )
 
         # Fallback Path: Table modifications (Test mode only)
+        if not self.allow_table_fallback:
+            raise ReviewDomainException(
+                500, "ERR_COMPLETE_REGENERATION_FAILED", "Table fallback is disabled in production"
+            )
         # Idempotency check: see if a replacement candidate was already created with regeneration_id
         existing = (
             self.db.table("version_questions")
@@ -869,7 +1028,6 @@ class ReviewRepository:
         """
         str_regen_id = str(regeneration_id)
 
-        # Primary Path: Stored procedure RPC review_fail_regeneration
         # Primary Path: Stored procedure RPC review_fail_regeneration (Worker service_role)
         if callable(getattr(self.worker_db, "rpc", None)):
             try:
@@ -886,9 +1044,13 @@ class ReviewRepository:
                     else rpc_res.data
                 )
                 if isinstance(rpc_data, dict):
+                    if rpc_data.get("operation_status") == "failed" and not rpc_data.get("replayed"):
+                        return True
+                    if rpc_data.get("replayed") is True:
+                        return False
                     if rpc_data.get("success") is True and not rpc_data.get("replayed"):
                         return True
-                    if rpc_data.get("replayed") is True or rpc_data.get("success") is False:
+                    if rpc_data.get("success") is False:
                         return False
             except Exception as exc:
                 if not self.allow_table_fallback:
@@ -900,6 +1062,8 @@ class ReviewRepository:
                     return False
 
         # Fallback Path: Table modifications (Test mode only)
+        if not self.allow_table_fallback:
+            return False
         # Check if TX2 already succeeded (new row with this regeneration_id)
         existing = (
             self.db.table("version_questions")
@@ -985,18 +1149,52 @@ class ReviewRepository:
                         raise ReviewDomainException(409, "ERR_SESSION_BUSY_GENERATING", "Session busy")
                     if reason == "FORBIDDEN":
                         raise ReviewDomainException(403, "ERR_FORBIDDEN", "Forbidden")
-                    if rpc_data.get("success") is True:
-                        return {"id": question_id, "status": "approved", "is_current": True}
+
+                if isinstance(rpc_data, dict) and rpc_data.get("question_id"):
+                    return {
+                        "id": str(rpc_data.get("question_id")),
+                        "status": "approved",
+                        "is_current": True,
+                    }
+                if isinstance(rpc_data, dict) and rpc_data.get("success") is True:
+                    return {"id": question_id, "status": "approved", "is_current": True}
+                if not self.allow_table_fallback:
+                    raise ReviewDomainException(
+                        500,
+                        "ERR_ACCEPT_FAILED",
+                        f"RPC review_accept_question returned malformed response: {rpc_data}",
+                    )
             except ReviewDomainException:
                 raise
             except Exception as exc:
+                msg = str(exc)
+                if "REVIEW_NOT_FOUND" in msg or "P0002" in msg:
+                    raise ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Question not found") from exc
+                if "REVIEW_STALE" in msg:
+                    raise ReviewDomainException(400, "ERR_QUESTION_NOT_CURRENT", "Question is not active") from exc
+                if "REVIEW_BUSY" in msg:
+                    raise ReviewDomainException(409, "ERR_QUESTION_BUSY", "Question is currently regenerating") from exc
+                if "REVIEW_LOCKED" in msg:
+                    raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked") from exc
+                if "42501" in msg or "permission denied" in msg.lower():
+                    raise ReviewDomainException(403, "ERR_FORBIDDEN", "Forbidden") from exc
                 if not self.allow_table_fallback:
-                    raise ReviewDomainException(500, "ERR_ACCEPT_FAILED", f"Lỗi CSDL khi chấp nhận câu hỏi: {exc}") from exc
+                    raise ReviewDomainException(
+                        500, "ERR_ACCEPT_FAILED", f"Lỗi CSDL khi chấp nhận câu hỏi: {exc}"
+                    ) from exc
+        else:
+            if not self.allow_table_fallback:
+                raise ReviewDomainException(
+                    503,
+                    "ERR_DATABASE_UNAVAILABLE",
+                    "Database client does not support RPC review_accept_question",
+                )
 
         # Fallback Path: Table modifications (Test mode only)
-        session_meta = await self.get_session_status_and_quota(session_id)
-        if str(session_meta.get("status", "")).lower() in ("approved", "exported"):
-            raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked")
+        if not self.allow_table_fallback:
+            raise ReviewDomainException(
+                500, "ERR_ACCEPT_FAILED", "Table fallback is disabled in production"
+            )
         q_res = (
             self.db.table("version_questions")
             .select("id, status, is_current, is_reverted, updated_at")
@@ -1055,6 +1253,7 @@ class ReviewRepository:
     ) -> Dict[str, Any]:
         """Revert question to pristine source content (idempotent if already reverted)."""
         # Primary Path: Stored procedure RPC review_revert_question (Owner JWT)
+        act_id_str = str(action_id or uuid4())
         if callable(getattr(self.db, "rpc", None)):
             try:
                 rpc_res = self.db.rpc(
@@ -1062,7 +1261,7 @@ class ReviewRepository:
                     {
                         "p_session_id": str(session_id),
                         "p_question_id": str(question_id),
-                        "p_action_id": str(action_id or uuid4()),
+                        "p_action_id": act_id_str,
                     },
                 ).execute()
                 rpc_data = (
@@ -1071,41 +1270,79 @@ class ReviewRepository:
                     else rpc_res.data
                 )
                 if isinstance(rpc_data, dict):
-                    reason = rpc_data.get("rejection_reason") or rpc_data.get("error_code")
-                    if str(rpc_data.get("status", "")).lower() == "denied" and not reason:
-                        reason = "SESSION_LOCKED"
-                    if reason in ("SESSION_LOCKED", "REVIEW_LOCKED", "ERR_SESSION_LOCKED"):
-                        raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked")
-                    if reason in ("QUESTION_NOT_REGENERATED", "ERR_QUESTION_NOT_REGENERATED"):
+                    reason = rpc_data.get("rejection_reason")
+                    if reason == "QUESTION_NOT_REGENERATED":
                         raise ReviewDomainException(
                             400,
                             "ERR_QUESTION_NOT_REGENERATED",
                             "Cannot revert original question that has never been regenerated",
                         )
-                    if reason in ("QUESTION_NOT_CURRENT", "ERR_QUESTION_NOT_CURRENT"):
+                    if reason == "QUESTION_NOT_CURRENT":
                         raise ReviewDomainException(400, "ERR_QUESTION_NOT_CURRENT", "Question is not active")
-                    if reason in ("QUESTION_BUSY", "ERR_QUESTION_BUSY"):
+                    if reason == "QUESTION_BUSY":
                         raise ReviewDomainException(409, "ERR_QUESTION_BUSY", "Question is currently regenerating")
-                    if reason in ("QUESTION_NOT_FOUND", "ERR_QUESTION_NOT_FOUND"):
+                    if reason == "QUESTION_NOT_FOUND":
                         raise ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Question not found")
-                    if reason in ("SESSION_BUSY", "ERR_SESSION_BUSY_GENERATING"):
+                    if reason == "SESSION_LOCKED":
+                        raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked")
+                    if reason == "SESSION_BUSY":
                         raise ReviewDomainException(409, "ERR_SESSION_BUSY_GENERATING", "Session busy")
-                    if reason in ("FORBIDDEN", "ERR_FORBIDDEN"):
+                    if reason == "FORBIDDEN":
                         raise ReviewDomainException(403, "ERR_FORBIDDEN", "Forbidden")
-                    if rpc_data.get("success") is True or ("question_id" in rpc_data and str(rpc_data.get("status", "")).lower() != "denied"):
-                        res_dict = dict(rpc_data)
-                        res_dict.setdefault("id", rpc_data.get("question_id"))
-                        res_dict.setdefault("status", "approved")
-                        res_dict.setdefault("is_current", True)
-                        res_dict.setdefault("is_reverted", True)
-                        return res_dict
+
+                if isinstance(rpc_data, dict) and rpc_data.get("question_id"):
+                    return {
+                        "id": str(rpc_data.get("question_id")),
+                        "status": "approved",
+                        "is_current": True,
+                        "is_reverted": True,
+                    }
+                if isinstance(rpc_data, dict) and rpc_data.get("success") is True:
+                    return {
+                        "id": str(rpc_data.get("question_id") or question_id),
+                        "status": "approved",
+                        "is_current": True,
+                        "is_reverted": True,
+                    }
+                if not self.allow_table_fallback:
+                    raise ReviewDomainException(
+                        500,
+                        "ERR_REVERT_FAILED",
+                        f"RPC review_revert_question returned malformed response: {rpc_data}",
+                    )
             except ReviewDomainException:
                 raise
             except Exception as exc:
+                msg = str(exc)
+                if "REVIEW_NOT_FOUND" in msg or "P0002" in msg:
+                    raise ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Question not found") from exc
+                if "REVIEW_STALE" in msg:
+                    raise ReviewDomainException(400, "ERR_QUESTION_NOT_CURRENT", "Question is not active") from exc
+                if "REVIEW_BUSY" in msg:
+                    raise ReviewDomainException(409, "ERR_QUESTION_BUSY", "Question is currently regenerating") from exc
+                if "REVIEW_SOURCE_MISMATCH" in msg:
+                    raise ReviewDomainException(400, "ERR_QUESTION_NOT_REGENERATED", "Cannot revert question: lineage mismatch") from exc
+                if "REVIEW_LOCKED" in msg:
+                    raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked") from exc
+                if "42501" in msg or "permission denied" in msg.lower():
+                    raise ReviewDomainException(403, "ERR_FORBIDDEN", "Forbidden") from exc
                 if not self.allow_table_fallback:
-                    raise ReviewDomainException(500, "ERR_REVERT_FAILED", f"Lỗi CSDL khi hoàn nguyên câu hỏi: {exc}") from exc
+                    raise ReviewDomainException(
+                        500, "ERR_REVERT_FAILED", f"Lỗi CSDL khi hoàn nguyên câu hỏi: {exc}"
+                    ) from exc
+        else:
+            if not self.allow_table_fallback:
+                raise ReviewDomainException(
+                    503,
+                    "ERR_DATABASE_UNAVAILABLE",
+                    "Database client does not support RPC review_revert_question",
+                )
 
         # Fallback Path: Table modifications (Test mode only)
+        if not self.allow_table_fallback:
+            raise ReviewDomainException(
+                500, "ERR_REVERT_FAILED", "Table fallback is disabled in production"
+            )
         q_res = (
             self.db.table("version_questions")
             .select(
@@ -1127,12 +1364,6 @@ class ReviewRepository:
             raise ReviewDomainException(
                 409, "ERR_QUESTION_BUSY", "Question is currently regenerating"
             )
-
-        # Check session lock
-        s_res = self.db.table("exam_sessions").select("status").eq("id", session_id).execute()
-        s_rows = _get_rows(s_res)
-        if s_rows and str(s_rows[0].get("status", "")).lower() in ("approved", "exported"):
-            raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked")
 
         # Guard: question never regenerated cannot be reverted
         if q.get("regenerated_from_id") is None and not q.get("is_reverted"):
@@ -1224,12 +1455,6 @@ class ReviewRepository:
         and demote session status from 'reviewed' to 'generated' (Contract with Hùng).
         """
         try:
-            # Immutability Guard: Never mutate or delete answer_keys for approved/exported sessions
-            s_chk = self.db.table("exam_sessions").select("status").eq("id", session_id).execute()
-            s_chk_rows = _get_rows(s_chk)
-            if s_chk_rows and str(s_chk_rows[0].get("status", "")).lower() in ("approved", "exported"):
-                return False
-
             v_res = (
                 self.db.table("exam_versions")
                 .select("id, is_finalized")
@@ -1241,14 +1466,8 @@ class ReviewRepository:
             any_finalized = any(r.get("is_finalized") for r in v_rows)
 
             if any_finalized and version_ids:
-                ak_builder = self.db.table("answer_keys")
-                # Mid-flight TOCTOU guard checked after resolving answer_keys table builder
-                s_guard = self.db.table("exam_sessions").select("status").eq("id", session_id).execute()
-                s_guard_rows = _get_rows(s_guard)
-                if s_guard_rows and str(s_guard_rows[0].get("status", "")).lower() in ("approved", "exported"):
-                    return False
                 # 1. Purge stale answer_keys records for all affected versions
-                ak_builder.delete().in_("version_id", version_ids).execute()
+                self.db.table("answer_keys").delete().in_("version_id", version_ids).execute()
 
                 # 2. Reset finalized flag and permutations metadata on exam_versions
                 self.db.table("exam_versions").update(
@@ -1281,6 +1500,51 @@ class ReviewRepository:
 
     async def get_review_progress_data(self, session_id: str) -> Dict[str, Any]:
         """Compute accurate progress metrics adhering to multi-version distinct invariants."""
+        # Primary Path: Stored procedure RPC review_get_progress (Owner JWT)
+        if callable(getattr(self.db, "rpc", None)):
+            try:
+                rpc_res = self.db.rpc("review_get_progress", {"p_session_id": str(session_id)}).execute()
+                rpc_data = (
+                    rpc_res.data[0]
+                    if isinstance(rpc_res.data, list) and rpc_res.data
+                    else rpc_res.data
+                )
+                if isinstance(rpc_data, dict) and "expected_slots" in rpc_data:
+                    session_meta = await self.get_session_status_and_quota(session_id)
+                    session_status = str(session_meta.get("status", ""))
+                    expected = int(rpc_data.get("expected_slots", 0))
+                    current = int(rpc_data.get("current_slots", 0))
+                    approved = int(rpc_data.get("approved_slots", 0))
+                    regenerating = int(rpc_data.get("regenerating_slots", 0))
+                    missing = int(rpc_data.get("missing_slots", 0))
+                    duplicate = int(rpc_data.get("duplicate_slots", 0))
+                    ready = bool(rpc_data.get("ready", False))
+                    is_complete = bool(expected > 0 and current == expected and approved == expected)
+                    can_finalize = bool(ready and session_status in ("generated", "reviewed"))
+                    return {
+                        "session_id": session_id,
+                        "expected_slots": expected,
+                        "current_slots": current,
+                        "approved_slots": approved,
+                        "regenerating_slots": regenerating,
+                        "missing_slots": missing,
+                        "duplicate_slots": duplicate,
+                        "ready": ready,
+                        "required_count": expected,
+                        "current_count": current,
+                        "approved_count": approved,
+                        "regenerating_count": regenerating,
+                        "unapproved_question_ids": [],
+                        "is_complete": is_complete,
+                        "can_finalize": can_finalize,
+                    }
+            except Exception as exc:
+                if not self.allow_table_fallback:
+                    raise ReviewDomainException(
+                        500, "ERR_PROGRESS_FAILED", f"Lỗi CSDL khi truy vấn tiến độ: {exc}"
+                    ) from exc
+
+        # Fallback Path: Direct table queries (Test mode only)
         # Query all active or historical version questions in session
         vq_res = (
             self.db.table("version_questions")
