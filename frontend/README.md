@@ -1,5 +1,11 @@
 # Frontend — thiết lập local và checkpoint TASK-101/103
 
+## TASK201 P1/P2 — service và nhập text, 02/11/2026
+
+- Đã viết [ingestion.js](src/services/ingestion.js) và [22tests service](src/services/ingestion.test.js): text/multipart qua client chung, kiểm Unicode/file/response, signal/progress; lỗi HTTP giữ nguyên và không thêm POST retry ngoài refresh401 chung. P2 đã ghép text vào ID draft qua [panel](src/features/stage1-ingestion/Stage1SourcePanel.jsx), controller và preview chỉ đọc. User đã giao lưu commit/push P1/P2; chưa UIupload/confirm, xem lịch sử nhánh/PR29 để lấy head công bố.
+- Full frontend chạy lại242tests đạt, lint/build đạt; lần full đầu có1ca timerStage2 redirect chưa đạt, chạy riêng và full rerun đạt, không sửa Stage2. Không nhận tests mô phỏng là parser/browser/API thật. Chi tiết phạm vi và bước P2 ở [Stage1 README](src/features/stage1-ingestion/README.md).
+- Checkpoint P2 mới nhất:full274tests/lint/buildđạt, gồm22controller+10component/route/SSR tests mới. Harness thêm nodeValue chuẩnDOM cho cập nhật count. Browser tool lỗi khởi tạo/reset nên native layout/focus/chạyGoogle/API thật chưa kiểm; không nhận controller/DOMfixture thay cho các ca đó. Chi tiết và P3 còn lại ở [Stage1 README](src/features/stage1-ingestion/README.md).
+
 ## Kiểm cuối W1 — 27/10/2026
 
 - User có quyền chốt đã chọn scope W1: Dashboard/API thật, tạo/mở draft và clone; trạng thái chưa có màn thông báo rõ, ghép ở tuần sau. User xác nhận ca lỗi mở tại Dashboard→bỏ chặn→Thử mở lại khôngF5→đúngID/nội dung đạt, cùng các ca entry/reload/account đã đạt trước đó. Clone sao chép nguồn và Blueprint của phiên sang draft độc lập.
@@ -140,6 +146,7 @@ Các module dùng chung:
 - [authStore.js](src/features/auth/authStore.js): trạng thái phiên/profile và version của lượt đăng nhập.
 - [api.js](src/services/api.js): Axios client cho API sản phẩm, lấy token hiện tại, 401 refresh/retry tối đa một lần, 403 giữ nguyên lỗi. Lỗi tạm không tự yêu cầu đăng nhập lại; lỗi không còn phiên được xử lý khi scope/token vẫn hiện hành. Không gọi signOut từ interceptor.
 - [profile.js](src/services/profile.js): lấy profile qua API client dùng chung và kiểm ID/email cơ bản.
+- [ingestion.js](src/services/ingestion.js): service nhập text/file và validator; sai response thành công được báo kết quả chưa rõ. P2 đã ghép text, file UI còn P3.
 - [useAuthProfile.js](src/features/auth/useAuthProfile.js): tải/thử lại profile, đối chiếu tài khoản/version, hủy và bỏ kết quả cũ khi cleanup.
 - [UserAvatar.jsx](src/features/auth/UserAvatar.jsx): ảnh từ metadata của phiên Google có ID khớp profile; thiếu/lỗi ảnh hiển thị chữ viết tắt. Dashboard giữ tên từ backend, reset component theo tài khoản/version/URL ảnh.
 - [authErrors.js](src/services/authErrors.js) và [authRefresh.js](src/services/authRefresh.js): phân loại lỗi Auth và chia sẻ refresh promise đồng thời.
