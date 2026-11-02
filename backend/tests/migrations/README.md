@@ -1,7 +1,7 @@
-# TASK-302 PostgreSQL schema tests
+# TASK-302 PostgreSQL schema and RPC tests
 
 These tests execute SQL against **PostgreSQL 15**, rather than mocking Supabase.
-They create a disposable container with no network, published ports, host mounts,
+Each suite class creates a disposable container with no network, published ports, host mounts,
 or real credentials, and remove it on completion (including test failures).
 Docker Desktop must be running. The runner uses Python 3's standard library;
 no host Python packages are required. The `postgres:15-alpine` image must already
@@ -19,17 +19,35 @@ python -m unittest discover -s backend/tests/migrations -v
 Without `RUN_POSTGRES_MIGRATION_TESTS=1`, unittest/pytest report these tests as
 **skipped**; an ordinary CI run is not evidence that PostgreSQL checks ran.
 
-The suite covers populated legacy upgrade and replay, full initialization plus
+The schema suite covers populated legacy upgrade and replay, full initialization plus
 migration, canonical immutability with display-only shuffle, independent new
 candidate snapshots, the partial current index, both answer-key field formats,
 ambiguous/missing mappings, duplicate legacy keys, and transaction rollback.
+An incompatible attempt ledger (the competing 008 layout) must stop 006 without
+altering receipts, existing quota, or the legacy answer-key schema. This is a
+fail-closed upgrade check; conversion of an already deployed 008 needs verified
+database state and a separate owner-provided transition.
 `fixtures/legacy_schema.sql` snapshots the pre-TASK-302 table definitions from
 dev `32d7644`; keep that fixture unchanged when updating the initialization schema.
 
 The `auth`/`storage` bootstrap is a local test stub. These checks do **not** verify
-Supabase deployment/RLS, AI calls, actual shuffle algorithms, or lifecycle RPC
-concurrency, idempotency and quota accounting. Those remain separate integration
-checks after the contracts in `docs/tasks/TASK-302.md` are settled.
+Supabase deployment/JWT/RLS, AI calls, actual shuffle algorithms, or the Python
+repository/endpoint integration. Local PostgreSQL role/ACL tests are not a deployed
+Supabase authorization test.
+
+`test_review_rpcs.py` additionally runs the actual eight stored procedures against
+independent psql connections: reservation/attempt/recovery races, quota 26–30 and
+four/operation, committed grant with lost response, replay after new connection,
+late worker after recovery, source-row changes, complete/revert snapshots,
+missing expected slots, caller permissions, and rollback on candidate/audit/key
+failures. The approval interleaving waits for `pg_blocking_pids` evidence before
+committing the competing session lock; it does not rely on a sleep to establish
+which transaction wins. It does not implement or certify TASK-305's own writer.
+
+The RPC suite uses raw database source/blueprint fixtures and explicit zero-call
+candidate payloads where appropriate; it does not claim those legacy rows are
+AI-ready canonical documents or confirmed adapter hashes. See the source-to-AI
+handoff limitation in `docs/api/review-rpc-contract.md`.
 
 Migration 006 deliberately refuses ambiguous data. Do not delete/deduplicate
 history or derive missing canonical values from shuffled display values to make
@@ -46,7 +64,7 @@ historical backfill. Fresh initialization uses an ordinary CHECK because there
 is no existing history. The actor foreign key remains enforced. This is a
 deliberate exception to the W3 blanket NOT NULL requirement; see the decision in
 `docs/tasks/TASK-302.md`. These database constraints do not authenticate a caller
-or replace the actor/ownership checks required in the pending lifecycle RPCs.
+or replace the actor/ownership checks in the lifecycle RPCs/callers.
 
 Actor regressions cover migration replay with historical NULLs, fresh-schema
 enforcement, missing/backdated new actors, preserving known actors on UPDATE,

@@ -1,150 +1,215 @@
 # TASK-302 / TASK-301 review RPC contract
 
-**Proposed; not implemented or agreed.** This is the TASK-302 database interface
-proposal for discussion on its Draft PR. Migration 006 supplies only schema
-foundations; it does not create these RPCs, an operation ledger, or attempt records.
-Hùng owns the database implementation proposal; Duy owns lifecycle/API integration.
-Changes require the affected owners' explicit response before implementation.
+**Database implementation available on this branch; not deployed, integrated or approved.**
+Migration `006_stage3_review_and_shuffle.sql` contains the schema, private ledger
+and RPCs below. Hùng owns these database operations; Duy owns the existing
+ReviewRepository/service/API callers. No parallel repository is introduced.
 
-References: [TASK-302 plan](../tasks/TASK-302.md),
-[open handoff on #28](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28#issuecomment-6544415727).
-Compared against #28 `4db0869`, #24 `0016b2a`, and #26 `0a3e5e5` on 31/10/2026.
-Those PRs remain separate implementations, not integrated-test evidence.
+Decisions: [Duy: boundary, auth, Model A, lifecycle and quota](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6546291626),
+[Đạt: callback and accounting](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6551270882),
+[adapter handoff](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6551386372).
+Compared on 2026-11-02 against TASK-301 `a4dd03b`, TASK-305 `8e04613`,
+TASK-304 `a8f61d5`, and dev `ada2963` (including TASK-303/306).
+Database tests and remaining integration work are recorded in [TASK-302](../tasks/TASK-302.md).
 
-## Calls and authorization — F02/C03, pending Duy
+## Interface and authorization — F02/C03
 
-Proposed split: the existing ReviewRepository becomes the caller of database RPCs;
-TASK-302 does not create a second review repository. Each call is one short
-transaction. No transaction stays open during an AI request.
+Parameters carry the `p_` prefix in PostgreSQL. IDs are UUID, times TIMESTAMPTZ,
+payloads/results JSONB. Each mutation is one short transaction; AI runs outside it.
 
-All parameters below have the `p_` prefix in PostgreSQL. IDs are UUIDs, times are
-TIMESTAMPTZ, and each RPC returns one JSONB object. JWT calls derive the actor from
-`auth.uid()` and verify session ownership; no client-supplied actor is accepted.
-Worker calls are executable only by `service_role`, with PUBLIC/anon/authenticated
-EXECUTE revoked. Their audit actor comes from the authenticated operation creator
-persisted during reservation, never a sentinel or an arbitrary request field.
-This mixed JWT/worker arrangement is a proposal requiring Duy's confirmation.
-
-| RPC name | Parameters (after `p_`) | Caller | Result in addition to common fields |
+| RPC | Parameters after `p_` | Allowed caller | Main result |
 |---|---|---|---|
-| `review_reserve_regeneration` | `session_id UUID, question_id UUID, operation_id UUID` | Owner JWT | `operation_id, question_id, expires_at, max_attempts, snapshot` |
-| `review_acquire_attempt` | `operation_id UUID, attempt_id UUID` | Worker | `operation_id, attempt_id, dispatch_permitted BOOLEAN, calls_used, remaining_calls` |
-| `review_complete_regeneration` | `operation_id UUID, candidate JSONB` | Worker | `operation_id, previous_question_id, question_id, api_calls_used, invalidated_version_ids` |
-| `review_fail_regeneration` | `operation_id UUID, error_code TEXT` | Worker | `operation_id, question_id, api_calls_used, operation_status` |
-| `review_recover_regeneration` | `operation_id UUID` | Worker | Same as fail, plus `recovered BOOLEAN` |
-| `review_accept_question` | `session_id UUID, question_id UUID, action_id UUID` | Owner JWT | `question_id, question_status, progress` |
-| `review_revert_question` | `session_id UUID, question_id UUID, action_id UUID` | Owner JWT | `previous_question_id, question_id, invalidated_version_ids, progress` |
-| `review_get_progress` | `session_id UUID` | Owner JWT | `progress` (read-only) |
+| `review_reserve_regeneration` | `session_id UUID, question_id UUID, operation_id UUID` | Owner JWT | `operation_id, question_id, expires_at, max_attempts, snapshot, operation_status` |
+| `review_acquire_attempt` | `operation_id UUID, attempt_id UUID` | Worker | The six-field permit below |
+| `review_complete_regeneration` | `operation_id UUID, candidate JSONB` | Worker | `operation_id, previous_question_id, question_id, api_calls_used, invalidated_version_ids, progress` |
+| `review_fail_regeneration` | `operation_id UUID, error_code TEXT` | Worker | `operation_id, question_id, api_calls_used, operation_status, recovered, progress` |
+| `review_recover_regeneration` | `operation_id UUID` | Worker | `operation_id, question_id, api_calls_used, operation_status, recovered`; settled recovery also includes `progress` |
+| `review_accept_question` | `session_id UUID, question_id UUID, action_id UUID` | Owner JWT | `previous_question_id, question_id, question_status, invalidated_version_ids, progress` |
+| `review_revert_question` | Same as accept | Owner JWT | Same as accept |
+| `review_get_progress` | `session_id UUID` | Owner JWT | `progress` |
 
-Common success fields: `session_id UUID, session_status TEXT, replayed BOOLEAN`.
-For progress reads, `replayed=false`. Mutation IDs are generated once by the caller
-and retained across transport retries. An identical ID/input returns the stored
-outcome without duplicate effects; an ID reused with different input is a conflict.
-`dispatch_permitted` is true only for the initial acquisition: a replay must never
-authorize dispatching the same attempt twice. A lost acquisition response therefore
-does not permit an automatic redispatch; quota uncertainty is covered below.
+Except the permit, results include `session_id, session_status, replayed`.
+Owner calls require the authenticated role and derive the audit actor from
+`auth.uid()`, then check ownership inside the transaction. Worker calls require
+`service_role` EXECUTE privileges and the service-role claim. Their actor is the
+authenticated creator stored in the operation, never an actor supplied in a request.
+Worker functions are unavailable to authenticated/anon; owner functions are not
+granted to service_role. Use separate JWT and worker clients in the wrapper.
 
-All writes lock session then relevant candidate/operation rows in a consistent
-order, verify membership/current identity, and reject approved/locked sessions.
-Completion/failure/recovery must verify the operation still owns the reserved
-candidate; an expired worker must not overwrite a recovered/new operation.
-Recovery uses database time and the existing proposed 180-second stale interval.
-An unexpired operation returns `recovered=false` without writes.
+The three new tables (`review_operations`, `review_attempts`,
+`review_action_receipts`) have RLS enabled and no direct grants to any API role,
+including service_role. Internal `_review_*` helpers have no API-role EXECUTE.
+Only the eight entry points receive the specific grants above. SECURITY DEFINER
+functions pin their search path and qualify application tables.
 
-## Reservation and candidate payload — F02/F03/F05/F06, pending Duy
+## Durable permit callback — F07
 
-Reservation preserves the current candidate while marking it regenerating and
-records its prior status, initiating actor, lease and operation identity. It returns
-`max_attempts=4` and the frozen adapter inputs:
-`source_snapshot, blueprint, current_variant, peer_variants`. Sources/blueprints
-must match the confirmed source hash. Peer variants are current rows from the same
-session/source. Missing confirmed data is an error, not an invented snapshot.
-The repository maps stored fields to the TASK-304 callable described in
-[its handoff at the reviewed commit](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/0a3e5e5f8575df2580ddd600fb6e1ad2257cf76e/docs/ai-w3-targeted-regeneration.md).
+The TASK-304 callable takes these keyword arguments in addition to its snapshots:
 
-`candidate` uses TASK-304's `RegeneratedVariantResult`: `stem_latex`, exactly four
-unprefixed `options`, `correct_key` A–D, `solution_md`, `validation_report`,
-`api_calls_count`. Its compatibility `content` alias, when supplied, must equal
-`stem_latex`. Database code validates the shape and `validation_report.is_valid`;
-it does not independently certify mathematical correctness. Client-reported call
-counts cannot replace the durable attempt ledger; discrepancies fail settlement.
+```python
+operation_id: UUID
+acquire_attempt: Callable[[UUID, UUID], Awaitable[AttemptPermit]]
+```
 
-Completion atomically demotes the old current row, inserts one pending-review
-candidate with its own canonical snapshot, retains the source/canonical slot,
-writes audit, settles the operation, and invalidates finalization. Failure or stale
-recovery retains the old candidate and restores its recorded prior status, settles
-accounting, and closes only the owned operation. AI failure does not create a
-successful candidate or automatically approve one.
+`review_acquire_attempt` returns exactly:
 
-Invalidation means `is_finalized=false`, clearing `shuffle_seed`/`permutations`,
-and deleting stale answer keys for affected versions in the same transaction.
-The proposed affected set is **all session versions**, matching the current
-session-wide reshuffle flow. Nothing restores display data into canonical fields.
-If any required write fails, the whole database transaction fails. A transport
-error with unknown commit outcome must be reconciled using the same operation ID,
-not described as proven rollback.
+```json
+{
+  "operation_id": "<uuid>",
+  "attempt_id": "<uuid>",
+  "dispatch_permitted": true,
+  "calls_used": 27,
+  "remaining_calls": 3,
+  "replayed": false
+}
+```
 
-## Attempt accounting — F07, pending Duy and Đạt
+The wrapper constructs TASK-304's strict `AttemptPermit`; do not pass a raw dict
+to that adapter. Counts are session-wide integers and booleans are JSON booleans.
+Permit denial returns `dispatch_permitted=false, replayed=false`, not an exception.
+Replay returns `dispatch_permitted=false, replayed=true` with the stored counts;
+it never authorizes another provider request. Rebinding an attempt ID to another
+operation is an idempotency conflict. Unknown operations are not inferred from
+some other regenerating question.
 
-Proposed limits: 30 attempts/session, up to 4/operation, including provider failures,
-schema repair and retries. TASK-304 would need a durable permit callback immediately
-before **each** provider dispatch; its current local `RequestBudget` is not this
-mechanism. No change to that adapter is included here.
+Policy confirmed by Duy/Đạt: 30 charged permits/session, at most four granted
+permits/operation, including errors/repair/retries. Reserve charges **zero** calls.
+Each initial grant atomically inserts its receipt and increments the session
+counter under the session lock. A denial does not increment it. Legacy counter
+values are carried forward; never reset them or replace them with SUM(new ledger).
 
-Each acquired permit consumes one ledger entry and atomically increments the
-session count. Completed/failed attempts remain charged; unused potential attempts
-are never precharged. The proposal for a crash between permit commit and provider
-dispatch is to retain that uncertain charge, rather than refund without proof.
-This conservative accounting may count an attempt that never reached the provider:
-it is an explicit policy choice requiring confirmation, not a claim of exact
-provider-call measurement. Retry never exceeds either bound; recovery never
-refunds a fixed four calls. A zero-call explicitly injected mock may settle zero;
-production must not silently fall back to it.
+The adapter requests a permit at its existing gateway boundary, after waiting for
+capacity/key and immediately before transport. A new provider attempt uses a new
+attempt UUID. RPC transport retries retain the original IDs. After an uncertain
+permit response or replay the adapter stops; the wrapper reconciles rather than
+obtaining a new ID to bypass uncertainty. Provider automatic retries remain disabled.
 
-## Lifecycle choices and readiness — C01/C02, pending Duy
+**Lost-response accounting:** a committed grant stays charged even if no provider
+request was sent, or if the adapter never received the grant. This is conservative
+permit accounting, not exact provider-call measurement. `api_calls_count` reports
+acknowledged grants for that invocation. A normal successful completion must match
+the operation's granted ledger count; a mismatch rejects completion without losing
+the current candidate. Failure, cancellation and recovery do **not** accept a client
+count: they settle from the ledger, so acknowledged=0/committed=1 still records one.
+There is no fixed-four refund or refund based on an adapter exception's count.
+Zero-call fixtures are for explicitly injected mocks; production must not silently
+fall back to a mock or local-only budget.
 
-- Proposed concurrency: one active regeneration per session. Another returns busy;
-  reservation replay of the same operation remains idempotent. This is not yet
-  agreement on Model A versus Model B in TASK-301.
-- Proposed reject input: binary action, without teacher free text.
-- Proposed revert: restore the first candidate in that slot as current and approved,
-  retaining each candidate's original canonical snapshot. Audit and invalidation
-  are atomic. A first-candidate revert is an idempotent approval/no replacement.
-- Proposed readiness: accept/revert/complete/fail/recover recalculate in-transaction;
-  progress GET remains read-only. `reviewed` requires the full configured version
-  set and every confirmed source slot in each version, exactly one current per slot,
-  all approved, and no active regeneration. COUNT(approved)=COUNT(existing) alone
-  is insufficient. Content changes move the session back to `generated` until this
-  predicate holds. Session-level approval/export remains TASK-305 and TASK-308.
+## Operation ownership, snapshots and settlement
 
-`progress` shape: `expected_slots INT, current_slots INT, approved_slots INT,
-regenerating_slots INT, missing_slots INT, duplicate_slots INT, ready BOOLEAN`.
-The expected set comes from the confirmed source set and `generation_configs.n_versions`;
-configuration/source ambiguity is an error rather than permission to mark reviewed.
+Reserve records the initiating actor, current candidate, prior review status and a
+180-second DB-clock expiry. It leaves that candidate current, marks it regenerating,
+and sets session status generated. The partial active-operation index enforces
+Model A: one active regeneration/session. Other-slot accepts remain allowed.
 
-## Canonical/display handoff — pending Duy and Tâm
+The returned `snapshot` has `format="database_rows"` and frozen
+`source_snapshot, blueprint, current_variant, peer_variants`. Source/blueprint rows
+must belong to the session and have `confirmed_at`; peers are current candidates
+from the same source/session. Acquire/complete reject if those source/blueprint
+rows changed after reservation. Neither RPC recomputes a confirmation hash.
 
-Retain the four existing canonical fields: question number, four option strings in
-A/B/C/D order, key and solution. New candidates get new snapshots; shuffling updates
-display fields only. Answer keys retain synchronized aliases
-`question_no/correct_option` and `display_no/display_correct_key`, plus the stable
-`canonical_question_no`. This matches #24's `AnswerKeyRecord` aliases, including
-legacy serialization. Confirm the session-wide invalidation boundary and mapping
-with the actual shuffle persistence path before integration.
+**Source-to-AI handoff still required:** the current baseline persists legacy
+blueprint columns and no confirmed `source_fingerprint` field. A database row is
+not TASK-304's canonical blueprint 0.4.0 or its required confirmed hash. Duy's mapper
+must obtain those from the actual confirmed pipeline/storage contract, map field
+aliases/options and fail closed when missing. Do not recompute a hash at reject
+and label it confirmed, or feed legacy variables/domains as a canonical blueprint.
+TASK-302 does not silently invent new source-storage columns or change ingestion.
+This snapshot boundary clarification requires acknowledgement during integration.
 
-## Error mapping and acceptance — pending Duy
+Complete accepts TASK-304's `RegeneratedVariantResult`: `stem_latex`, four distinct
+nonempty option strings, `correct_key` A–D, nonempty `solution_md`, validation report,
+and integer `api_calls_count` 0–4. Optional `content` must equal `stem_latex`.
+`validation_report.is_valid` and `requires_teacher_review` must be true;
+`math_verified` is a boolean and warnings/checks arrays. Database checks enforce
+shape and ledger consistency, not independent mathematical correctness or the full
+Python validator's normalization. The caller still validates with TASK-304's model.
 
-Proposed stable domain codes (database-to-HTTP mapping in Duy's service):
-`REVIEW_NOT_FOUND` → 404 (also wrong owner, without resource disclosure),
-`REVIEW_STALE` / `REVIEW_BUSY` / `REVIEW_IDEMPOTENCY_CONFLICT` → 409,
-`REVIEW_LOCKED` → 423, `REVIEW_QUOTA_EXHAUSTED` → 429,
-`REVIEW_INVALID_PAYLOAD` / `REVIEW_SOURCE_MISMATCH` → 422.
-Unexpected database errors remain failures; unavailable AI is a service-side 503.
-Do not parse provider exception text or return raw database/transport details.
+Completion atomically demotes the old candidate, inserts a new pending-review
+candidate with its own canonical snapshot and stable canonical slot, writes audit,
+invalidates all session versions, and settles the operation. Fail/recover restore
+the reserved candidate's prior status and close only that operation without refund.
+Fail takes only a sanitized code (`^[A-Z][A-Z0-9_]{0,79}$`), never provider exception
+text. Recovery uses DB time; before expiry it returns `recovered=false` without
+writes. A recovered operation cannot complete late or mutate a new reservation.
 
-Before Ready: owners resolve these choices and signatures, update this contract,
-implement RPCs/caller wrappers, and verify real PostgreSQL races, idempotent retries,
-late completion after recovery, rollback of audit/invalidation failures, quota
-across workers and the integrated TASK-304/TASK-303 paths. Phase A's 15 schema tests
-are not evidence of these guarantees. Historical actor handling is already decided
-in the plan; JWT/worker authorization and Supabase RLS remain to be verified.
+All writers lock parent session before operation/candidate rows. New mutations
+reject approved/exported sessions or a non-NULL approved_at. Existing committed
+receipts may be read back after approval, without another mutation. Reusing IDs
+with different input is rejected; exact retries return stored results and
+`replayed=true`. Reserve replay also returns current `operation_status` and stored
+`settlement` for reconciliation. Receipt state describes that committed operation,
+not necessarily the latest session state; refresh progress when needed.
+
+## Revert, readiness and finalization — C01/C02
+
+Reject remains binary. Revert follows the current candidate's lineage to its first
+candidate, requiring the same version/source throughout; broken/cyclic lineage is
+rejected. Restore that original as current/approved without rewriting canonical
+fields. Reverting the first candidate acts as idempotent approval, without copying
+a row. Repeated accept/revert does not create duplicate audit for an unchanged action.
+
+Successful replacement/revert-to-another-row invalidates **all session versions**:
+`is_finalized=false`, NULL seed/permutations, deletion of stale answer keys in the
+same transaction. Failure or reserve alone does not alter the old display output.
+This session-wide scope and canonical/display persistence policy were confirmed by
+[Tâm](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6555305930).
+The aliases remain those supported by #24. Actual persistence/shuffle E2E remains unverified.
+
+Accept/revert/complete/fail/recover recalculate readiness inside their transaction.
+It requires exactly one configuration, confirmed sources, the configured number
+of distinct version codes, one current per expected source/version slot, all approved,
+no extraneous slots and no active operation. Missing rows cannot disappear from
+the denominator. Progress GET uses a shared parent lock for a consistent read and
+does not recover or change lifecycle state.
+
+`progress` contains `expected_slots, current_slots, approved_slots,
+regenerating_slots, missing_slots, duplicate_slots` (integers) and `ready` (boolean).
+Mutation recalculation sets reviewed only when ready; otherwise generated.
+
+**TASK-305 boundary:** final approval must acquire the same session row lock and
+check complete readiness/no active operation plus finalization within that database
+transaction. SQL 007 at `8e04613` already locks that row, but must also fail closed
+on missing/ambiguous configuration and align with 006's operation/readiness checks.
+A Python read followed by a separate CAS is not proof of this boundary.
+This PR does not implement or certify TASK-305's final approval writer. Existing
+direct table mutation paths must be replaced by the agreed RPCs before production
+integration; these RPC tests do not certify the old repository or shuffle callers.
+
+## Error mapping and rollout
+
+The RPC raises a sanitized domain code as its message:
+`REVIEW_NOT_FOUND` (SQLSTATE P0002) → 404, including wrong-owner calls;
+`REVIEW_STALE` / `REVIEW_BUSY` (55000) and `REVIEW_IDEMPOTENCY_CONFLICT` (22023) → 409;
+`REVIEW_LOCKED` (55000) → 423; `REVIEW_QUOTA_EXHAUSTED` (54000) → 429;
+`REVIEW_INVALID_PAYLOAD` / `REVIEW_SOURCE_MISMATCH` (22023) → 422.
+ACL/worker-role failure is 42501. Duy maps domain codes in the service; SQLSTATE
+alone cannot distinguish all HTTP cases. Do not return raw SQL/transport exceptions.
+Adapter permit-invalid/uncertain HTTP behavior remains its existing 502 mapping.
+
+Any required write failing rolls back that RPC transaction. A previously committed
+permit stays charged. Transport failure does not prove rollback: reconcile using
+the same IDs. No source overwrite, history deletion, quota reset, or fake actor
+backfill is part of recovery or rollout. Drain old workers before cutover; legacy
+regenerating rows without a ledger operation require verified operator handling,
+not a fabricated operation/actor or blind automated refund.
+
+Apply with `psql -v ON_ERROR_STOP=1 -f backend/migrations/006_stage3_review_and_shuffle.sql`.
+Replay preserves receipts and permissions. The migration owner keeps this filename;
+there must not be a second 006 under `006_stage3_review_rpc.sql`. Integration order:
+004/005 (#32) → 006 (#36) → 007 (#33). Duy has acknowledged the ordering and historical
+actor policy in his [completed response](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6567937686).
+
+**Competing 008:** #28 at `a4dd03b` creates a different `review_attempts` shape and
+replaces `review_acquire_attempt` with different authorization/lifecycle behavior.
+Do not apply it after 006 or maintain both implementations. TASK-301 must remove the
+competing implementation and use these RPCs, as requested in the
+[coordination comment](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6568374582).
+If 008 has already been applied to a shared database, report its schema/ledger state
+before rollout so the migration owner can provide a data-preserving transition.
+006 detects the incompatible attempt ledger and stops without rewriting it or
+resetting quota. That guard is not a conversion script or a certificate of deployed compatibility.
+
+Supabase rollout, live JWT/RLS, live AI, caller/adapter E2E and shuffle integration
+are not yet verified. TASK-301's acquire wrapper now calls an RPC, but still needs
+strict response validation and conversion of the remaining direct lifecycle writes.

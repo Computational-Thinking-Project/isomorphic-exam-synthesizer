@@ -2,58 +2,73 @@
 
 - Phụ trách: Hùng (`benalexx007`); reviewer: Duy (`johannguyen015`, đã được phân công).
 - Chế độ: author. Workflow v0.1 **proposed**, docs commit `506384bb312058d8ad2bec759fed8957b19940b3`.
-- Nền: `dev` tại `32d7644d0c2d0e6fc8c99234096ee9cc550fbea3`; nhánh `feat/task-302-schema-foundation`.
+- Nền ban đầu: `dev` tại `32d7644d0c2d0e6fc8c99234096ee9cc550fbea3`; nhánh `feat/task-302-schema-foundation`. Đã đồng bộ dev `ada2963` ngày 02/11, không có conflict Git.
 - Nguồn: [W3 assignment v2.1 trên nhánh TASK-301](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/4db0869f14b455a20a0355d8ffb1070355b45fb5/docs/tasks/W3_ASSIGNMENT.md).
 - Contract đầu vào: [review #28](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28#pullrequestreview-5720765457), [Duy bàn giao migration/RPC](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28#issuecomment-6540968075), [phản hồi cần chốt](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28#issuecomment-6544415727).
-- Bản code tham chiếu TASK-301: `4db0869f14b455a20a0355d8ffb1070355b45fb5`; chưa merge vào dev.
+- Bản code đối chiếu cập nhật 02/11: TASK-301 `a4dd03bb24d8122256fcc687940b29d78ae0861a`, TASK-305 `8e04613d481891bca25bba0d0ab50187788fafb4`, TASK-304 `a8f61d57976181472eae355d869362b2c80261d4`, dev `ada29633b721765a3e0eaae5f8accfb908e48bd8` (đã nhận TASK-303/306). Đây là đối chiếu interface, chưa phải tích hợp caller/AI/shuffle E2E.
 - Hạn chung: tối 03/11/2026 theo file tuần; mốc TASK-302 cũ là 30/10, không tự coi đã đạt hoặc tự thay ETA. ETA phần còn chờ: cần thống nhất với Duy.
 
-## Phạm vi thực hiện trước
+## Phạm vi triển khai và bàn giao
 
-Triển khai nền schema, nâng cấp có transaction và kiểm thử PostgreSQL. Tái sử dụng tên/index tương thích hiện có. Không sao chép repository chưa merge thành một implementation cạnh tranh.
+Triển khai schema, ledger và các RPC review nguyên tử, kiểm trên PostgreSQL thật rồi bàn giao cho ReviewRepository hiện có của Duy. Giữ cùng PR #36 và migration 006; không tạo repository cạnh tranh, không sửa nhánh tác giả khác, không deploy cloud hoặc sửa description PR/issue đã có.
 
 | Thứ tự / file | Mục đích / output | Phụ thuộc | Cách kiểm |
 |---|---|---|---|
-| 1. `backend/migrations/006_stage3_review_and_shuffle.sql` | Bổ sung các cột đã rõ; backfill không đoán; giữ lịch sử và dữ liệu canonical đã có | Schema dev; 004/005 của PR #32 vẫn chưa merge | Nâng cấp database cũ, chạy lại, rollback khi dữ liệu không hợp lệ |
+| 1. `backend/migrations/006_stage3_review_and_shuffle.sql` | Schema; ledger operation/attempt/action; RPC reserve/acquire/complete/fail/recover/accept/revert/progress | Quyết định Duy và interface Đạt bên dưới; 004/005 của #32 vẫn riêng | Upgrade/replay, rollback, ACL, hai connection tranh permit/current/recovery |
 | 2. `backend/scripts/schema.sql` | Đồng bộ cấu trúc khởi tạo; ghi rõ cần áp dụng migration để có trigger/index bảo vệ | Cùng contract schema | Khởi tạo mới rồi chạy migration |
-| 3. `backend/tests/migrations/` | Fixture PostgreSQL biệt lập và kiểm dữ liệu/thao tác thật | Docker PostgreSQL 15; không dùng cloud/secret | Chống canonical overwrite, duplicate current, alias sai, FK/upgrade/rollback |
-| 4. `docs/api/review-rpc-contract.md` | Đề xuất chữ ký, input/output, quyền gọi và bảo đảm để owner chốt trước khi code | F02/F06/F07, C01/C02/C03 đang chờ | Đối chiếu từng quyết định trong review |
+| 3. `backend/tests/migrations/` | Giữ 15 ca schema; thêm suite ledger/RPC trên connection DB độc lập | Docker PostgreSQL 15; không dùng cloud/secret | Concurrency, replay, lost response, expiry/recovery, audit/invalidation failure, ACL và actor |
+| 4. `docs/api/review-rpc-contract.md` | Interface thực tế, callback strict và accounting khi mất response; policy đã chốt/caller pending | F02/F06/F07, C01/C02/C03 và phản hồi owner | Đối chiếu code/test và link quyết định, không nhận đã tích hợp chỉ vì interface khớp |
 | 5. `docs/change_log.md` | Ghi phạm vi schema và ngoại lệ/giới hạn đúng trạng thái | Kết quả thực tế | Kiểm diff/link, không ghi đã chấp nhận nếu chưa có |
 
-Tên migration 006 được Duy đề xuất, Hùng chấp nhận có điều kiện kiểm thứ tự; PR #32 đang dùng 004/005. Migration nền không phụ thuộc các RPC generation của #32. Không tự đổi/xóa migration của PR khác.
+Quyết định owner migration ngày 02/11: giữ `006_stage3_review_and_shuffle.sql`, không tạo thêm 006 dưới tên khác. Thứ tự tích hợp 004/005 (#32) → 006 (#36) → 007 (#33). TASK-302 là nguồn duy nhất cho ledger/tám RPC review; Duy xử lý phần trùng trong 008 ở #28. Nếu 008 đã áp dụng vào DB dùng chung, phải báo trạng thái để Hùng cung cấp chuyển đổi an toàn; không tự xóa lịch sử/quota hoặc sửa migration đã áp dụng. Migration nền không phụ thuộc các RPC generation của #32; không sửa nhánh tác giả khác.
+
+## Plan tiếp tục — 02/11/2026
+
+Nguồn phối hợp: [comment tiếng Anh đã đăng trên #36](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6568374582). Đây là quyết định migration và yêu cầu đầu vào; chưa phải bàn giao code đã kiểm.
+
+| Thứ tự | Việc thực hiện / file | Output / cách kiểm | Phụ thuộc |
+|---|---|---|---|
+| 1 | Cập nhật plan/contract/change log theo head mới và phản hồi owner | Ghi nhận xác nhận Tâm, actor/thứ tự của Duy; tách SQL trùng 008 khỏi interface chuẩn | Đã có căn cứ và quyền quyết định migration |
+| 2 | Hoàn thiện 006 và test RPC | Giữ khóa session trước mutation; serialize global receipt IDs, giữ snapshot source khi acquire/complete; từ chối ledger không tương thích bằng lỗi rõ ràng và rollback | Không cần chờ mapper AI |
+| 3 | Kiểm PostgreSQL thật và static checks trên code cuối, đối chiếu dev mới | Upgrade/replay, multi-connection quota/global-ID races, recovery/late worker, approval interleaving, rollback và ACL; Ruff/mypy theo CI | Docker PostgreSQL 15, không secret/cloud |
+| 4 | Commit/push cùng #36 và comment M3 bàn giao | Commit, lệnh/kết quả thực tế, contract và pending owners; giữ Draft | Checks phần TASK-302 đạt; caller/E2E chưa tự coi Done |
+| 5 | Tích hợp caller/AI/shuffle sau phản hồi | Duy nối wrappers; Duy/Đạt chốt canonical blueprint/hash; Đạt/Tâm phối hợp kiểm các điểm nối | Chờ input được tag ở comment, không tự code thay owner |
+
+Chưa có xác nhận 008 đã áp dụng vào database nào; không xây dựng script chuyển đổi dữ liệu theo giả định. Guard trong 006 chỉ dừng an toàn nếu gặp ledger không tương thích và yêu cầu điều tra.
 
 ## Quy tắc dữ liệu
 
 - Canonical bất biến **trong một candidate**. INSERT candidate mới có snapshot riêng; UPDATE display fields khi shuffle không được sửa canonical. Không sửa canonical lịch sử để che lỗi sinh trước đó.
 - Nếu canonical lịch sử thiếu thì dừng, không backfill từ display kể cả `is_finalized=false`: dữ liệu có thể từng được shuffle rồi invalidated. Snapshot đã đủ nhưng solution NULL vẫn được giữ nguyên.
-- Giữ index `idx_single_current_version_question`: chỉ bảo đảm **tối đa một** current/slot. Bảo đảm còn đúng một sau replacement cần RPC, chưa được tuyên bố ở phase này.
+- Giữ index `idx_single_current_version_question`: bản thân index chỉ bảo đảm **tối đa một** current/slot. RPC complete/revert bảo toàn current bằng transaction; lỗi demote/insert/audit/invalidation rollback chung.
 - Giữ các cột `answer_keys.question_no/correct_option` để tương thích; thêm `display_no/display_correct_key` cùng nghĩa và đồng bộ hai cách ghi. Không đổi nội dung hoặc chọn một phía khi hai giá trị xung đột.
 - Backfill canonical slot của answer key chỉ khi ánh xạ `(version_id, display_no)` tới đúng một current candidate và đã có canonical slot. Không suy ra từ vị trí hiển thị nếu thiếu ánh xạ.
 - Không tự deduplicate, xóa lịch sử, suy đoán actor, đổi khóa ngoại xóa lịch sử hoặc sửa dữ liệu đã shuffle. Dữ liệu mâu thuẫn phải làm migration dừng và rollback, báo cách điều tra.
 - `review_logs.session_id` có thể suy ra qua candidate → version → session. Actor lịch sử theo quyết định đã chốt bên dưới; không tự điền owner thành người đã thao tác.
-- Không đổi policy RLS/ACL hiện có trong phase nền; cần kiểm riêng khi chốt RPC và dạng log có/không có candidate. Không tuyên bố đã kiểm Supabase thật.
+- Không thay policy RLS của bảng sản phẩm cũ; thêm private ledger có RLS/ACL và quyền EXECUTE riêng JWT/worker cho RPC. Đã kiểm role PostgreSQL cục bộ; không nhận đã kiểm JWT/RLS Supabase thật.
 
-## Contract RPC đề xuất — chưa phải interface đã chốt
+## Contract RPC và nguồn quyết định
 
-Nguồn interface đề xuất: [review-rpc-contract.md](../api/review-rpc-contract.md).
-File này giữ tên/chữ ký RPC, kiểu dữ liệu, payload TASK-304, quyền JWT/worker,
-idempotency, hiệu ứng nguyên tử và mã lỗi để owner đối chiếu trên Draft PR.
-Plan chỉ giữ phạm vi, phụ thuộc và trạng thái quyết định; không tạo bản contract thứ hai.
+Nguồn interface: [review-rpc-contract.md](../api/review-rpc-contract.md). Đã triển khai ledger và tám entry point trong migration 006; plan chỉ giữ scope, trạng thái và bàn giao, không sao chép interface.
 
-Chưa triển khai RPC hoặc ledger operation/attempt. Không giữ transaction DB trong
-lúc gọi AI. Không code các policy phụ thuộc trước khi chốt; wrapper sẽ tích hợp
-trên ReviewRepository hiện có của Duy, không tạo repository cạnh tranh.
+- [Duy xác nhận ranh giới/auth/quota/lifecycle/invalidation](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6546291626).
+- [Đạt xác nhận callback và phân biệt acknowledged count/ledger](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6551270882), [bàn giao adapter tại a8f61d5](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6551386372).
+- TASK-301 `a4dd03b` đã gọi acquire RPC, nhưng parser vẫn coercion và complete vẫn ghi nhiều request riêng; SQL 008 trùng/incompatible với 006. [Review mới của Đạt](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28#pullrequestreview-5731619370) còn Request changes. Không nhận caller đã hoàn tất lifecycle atomic chỉ vì đã có acquire wrapper.
 
-## Input còn chờ và người xác nhận
+Mất response sau khi DB commit vẫn giữ charge. Complete thành công đối chiếu count với ledger; fail/recover không nhận count adapter và không từ chối recovery chỉ vì adapter nhận 0 acknowledged trong khi DB đã grant 1. Không hoàn cố định 4 lượt.
 
-| ID / cần ai | Lựa chọn Hùng đề xuất | Trạng thái |
+## Trạng thái đầu vào và người nhận bàn giao
+
+| ID / cần ai | Contract / cách thực hiện | Trạng thái |
 |---|---|---|
-| F02/C03 — Duy | TASK-302 làm toàn bộ mutation DB nguyên tử; Duy giữ service/API, cùng chốt RPC signatures | Duy đồng ý hướng RPC; phạm vi đầy đủ và signatures chưa xác nhận |
-| F07 — Duy + Đạt | 30 attempts kể cả fail, tối đa 4/operation, permit bền vững trước mỗi dispatch; giữ charge khi crash chưa biết có dispatch hay không | Chưa xác nhận contract đầy đủ; cách đếm bảo thủ khi crash là lựa chọn đề xuất, không nhận đo chính xác provider calls |
-| C01 — Duy | DB recalculation readiness; lifecycle gọi; đủ toàn bộ slot mới `reviewed` | Phản hồi trước dùng sai ID, chưa coi là chốt |
-| C02 — Duy | Revert candidate đầu; reject binary; một regeneration/session | Chưa xác nhận; không tự chọn Model A/B |
-| Canonical/display — Duy + Tâm | list 4 strings A/B/C/D; canonical slot ổn định, display mapping tách biệt | Cơ sở từ W3/#24; tích hợp shuffle thật còn chờ |
-| Actor lịch sử — Hùng | Giữ NULL cho lịch sử không biết actor; bắt buộc actor cho log mới | Người phụ trách xác nhận phương án 1 ngày 31/10/2026 trong phiên làm việc này; chưa đồng nghĩa Duy đã đọc hoặc GitHub approve |
+| F02/C03 — Duy | TASK-302 làm mutation DB; Duy dùng JWT/worker clients gọi RPC trên repository hiện có | Boundary/auth đã xác nhận; RPC đã code, caller chuyển từ direct writes sang RPC còn chờ. Duy ước lượng wrapper trong 24h sau khi nhận RPC, chưa là bằng chứng đã giao/tích hợp |
+| F07 — Duy + Đạt | 30/session, 4/operation, grant trước mỗi dispatch; ledger quyết toán, giữ uncertain charge | Policy đã chốt; callback Đạt đã giao. RPC đã code; wrapper/adapter E2E còn chờ |
+| C01 — Duy | Recalculate trong mutation; đủ expected slots và không active operation mới reviewed; progress chỉ đọc | Đã xác nhận và triển khai DB; SQL 007 đã khóa session, còn đồng bộ operation/readiness, fail-closed khi config thiếu/mơ hồ và kiểm tích hợp |
+| C02 — Duy | Revert candidate đầu; reject binary; Model A một regeneration/session | Đã xác nhận và triển khai RPC; không tự đổi Model B |
+| Canonical/display — Duy + Tâm (`AI-WFox`) | Giữ mapping/alias #24, canonical bất biến; invalidation toàn phiên khi replacement | [Tâm đã xác nhận](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6555305930), TASK-303/306 đã merge; còn shuffle persistence/E2E |
+| Source-to-AI snapshot — Duy (`johannguyen015`) + Đạt (`Thanhdat3010`) | RPC freeze raw DB rows; Duy xác định storage/mapper canonical/hash, Đạt xác nhận input/fail-closed | Baseline chưa lưu canonical document/hash đúng TASK-304. Không dựng hash ở reject hoặc tự mở rộng source-storage; input đang chờ trên comment 02/11 |
+| Thứ tự migration — Hùng quyết định, Duy tích hợp | Giữ 006 của PR này, sau 004/005 và trước 007; loại implementation 008 trùng | [Duy đã xác nhận thứ tự](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6567937686); owner giữ tên file hiện có. Chờ Duy báo 008 đã được áp dụng ở đâu chưa |
+| Actor lịch sử — Hùng + Duy | Giữ NULL cho lịch sử không biết actor; bắt buộc actor cho log mới | Owner chốt 31/10, [Duy đã đồng thuận](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6567937686); chưa phải GitHub approve |
 
 ## Quyết định actor lịch sử — đã chốt ngày 31/10/2026
 
@@ -72,12 +87,12 @@ Người phụ trách chọn: **giữ `user_id=NULL` cho log lịch sử không 
 
 - Dùng PostgreSQL container tạm, không publish port, không mount `.env`, không gọi Gemini/Supabase, dọn container khi xong.
 - Kiểm upgrade có dữ liệu, fresh init, replay; giữ IDs/count/history/quota/canonical; các trường hợp ambiguity/duplicate phải rollback toàn bộ.
-- Kiểm transaction replacement/concurrency/recovery/quota chỉ sau khi RPC được triển khai. Không dùng kết quả schema tests để nhận các bảo đảm lifecycle này.
-- Output nền cho Duy/Tâm: migration, cấu trúc canonical/answer keys và test tái lập. Không tuyên bố TASK-302 Done khi repository/RPC còn chờ.
+- Kiểm RPC bằng các connection psql độc lập. Approval interleaving chứng minh RPC đợi/recheck khóa session; không chứng minh writer TASK-305 đã có transaction tương ứng.
+- Output cho Duy/Đạt/Tâm: migration/RPC, contract, tests tái lập. Duy hoàn thiện RPC wrappers và bỏ local refund/direct lifecycle writes; Đạt giữ callback/fail-closed; Tâm phối hợp kiểm persistence/shuffle theo policy đã xác nhận. Không tự sửa nhánh các owner này.
 - Bàn giao qua Draft PR vào dev; giữ Draft khi contract/RPC còn chờ, không chỉnh description PR/issue đã có.
 - Kết quả đã chạy và giới hạn nằm bên dưới; trạng thái push/CI/review thực tế được ghi trên PR.
 
-## Kết quả triển khai cục bộ — 31/10/2026
+## Mốc nền schema đã kiểm — 31/10/2026
 
 - Đã viết migration nền 006, cập nhật schema khởi tạo, giữ nguyên index current, thêm index regeneration và stale lookup, backfill audit session, thêm FK audit thiếu trên database chuẩn bị dở.
 - Đã thêm trigger bảo vệ canonical và bridge `question_no/correct_option` ↔ `display_no/display_correct_key`. Giữ nguyên dữ liệu/lịch sử cũ; actor đã có constraint theo quyết định ngoại lệ lịch sử ở trên.
@@ -86,5 +101,21 @@ Người phụ trách chọn: **giữ `user_id=NULL` cho log lịch sử không 
 - Các ca có bằng chứng: upgrade/replay dữ liệu cũ, fresh full schema + migration, display shuffle không sửa canonical, candidate mới snapshot riêng, chống hai current/slot, hai kiểu ghi answer key, rollback khi duplicate/alias mâu thuẫn/thiếu hoặc mơ hồ mapping, từ chối canonical thiếu và actor FK sai.
 - Policy actor đã kiểm: giữ NULL lịch sử qua replay; fresh schema chặn log thiếu actor ngay cả trước migration; log mới thiếu actor/giả ngày cũ bị chặn; actor hợp lệ được ghi nhưng không thể xóa thành NULL; UPDATE lịch sử NULL cần actor đã xác minh. Ruff cho test runner sau thay đổi cũng pass.
 - Container PostgreSQL tạm đã được dọn. Không test cloud/Gemini, không deploy migration, không chạy full product suite, không nhận các RPC pending đã hoạt động.
-- **TASK-302 chưa hoàn tất.** Quyết định actor lịch sử đã chốt; contract RPC/C01/C02/F07 vẫn chờ trước khi triển khai phần phụ thuộc. File SQL hiện là nền để review, chưa là gói deploy hoàn thiện.
-- Gói bàn giao gồm schema, migration, tests và contract RPC đề xuất. Cần Duy xác nhận lifecycle/interface, Duy–Đạt xác nhận budget, Duy–Tâm xác nhận mapping/invalidation trước khi làm phần phụ thuộc. Quyết định sẽ được hỏi tại đúng mục trên Conversation của Draft PR.
+- Đây là bằng chứng phase nền tại thời điểm đó; không gán 15 schema tests thành kiểm RPC.
+
+## Gói ledger/RPC — 01/11/2026
+
+- Đã triển khai private operation/attempt/action ledger, ACL/RLS của ledger và tám RPC; actor worker lấy từ operation creator, không nhận user_id do caller gửi. Replay không reset quota, receipts hoặc lịch sử.
+- Reserve không trừ quota; grant/replay/denial bền vững qua connection mới; complete/audit/invalidation và fail/recover/revert có transaction. Recovery dùng lease 180s, không refund; worker cũ không được thay operation mới.
+- Tests PostgreSQL và static checks cuối được ghi theo kết quả thực tế trong PR handoff; runner phải bật opt-in. Pytest mặc định skip DB tests, không nhận đó là PostgreSQL pass.
+- **Chưa nhận TASK-302 Done/Ready toàn luồng.** Còn caller RPC thực tế, confirmed canonical/hash mapper, TASK-305 approval compatibility, xử lý 008 trùng và tích hợp Supabase/AI/shuffle E2E. Policy Tâm/thứ tự migration đã có phản hồi; PR giữ Draft, không deploy/approve/merge hoặc đóng finding #28 thay người kiểm.
+
+## Kiểm bản cuối — 02/11/2026
+
+- PostgreSQL 15 thật: `RUN_POSTGRES_MIGRATION_TESTS=1`, `DOCKER_BIN=<Docker CLI>`, `python -m unittest discover -s backend/tests/migrations -v` → **45/45 pass, 0 skip, 109.656s** (16 schema + 29 RPC). Hai suite dùng container tạm riêng; đã kiểm chúng được dọn sau khi chạy.
+- Đã kiểm thêm global operation/attempt/action ID race giữa hai session trả domain conflict, source/blueprint row lock khi reserve/acquire/complete, và guard ledger 008 không tương thích giữ nguyên receipts/quota. Các ca rollback fault, replay sau connection mới, conservative lost-response accounting, recovery/late worker và approval-first interleaving đều pass.
+- Sau đồng bộ dev: `ruff check --no-cache backend/app scripts/blueprint backend/tests/migrations` → **pass** với pyproject của repo; `mypy backend/app --ignore-missing-imports --cache-dir /tmp/mypy-cache` → **pass, 68 source files**. `git diff --check` không có lỗi khoảng trắng.
+- Image kiểm thử riêng `task302-backend-check:20261102` build từ Dockerfile hiện tại với `pip --require-hashes` theo lockfile; `pip check` pass. Trong image mới, Ruff/mypy tiếp tục pass với kết quả trên.
+- `python -m pytest backend/tests scripts/blueprint/tests -q -p no:cacheprovider` → **685 passed, 46 skipped, 21 warnings, 63.04s**. 46 skip gồm 45 PostgreSQL opt-in đã chạy riêng và 1 live API opt-in; không gọi Gemini. Dùng network none, mock Supabase env và chỉ mount code/config/test/schema, không mount `.env`.
+- CI của commit bàn giao phải đọc theo head mới sau push; không dùng CI xanh của head schema cũ để đại diện cho ledger/RPC mới.
+- Giới hạn: PostgreSQL roles/JWT claims là bootstrap cục bộ; chưa kiểm Supabase thật, mapper/adapter/caller/shuffle E2E, live Gemini hoặc triển khai SQL 007/008 trên DB dùng chung. Chưa có GitHub approve/nghiệm thu của Duy cho gói này.

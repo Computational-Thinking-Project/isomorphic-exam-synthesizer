@@ -4,6 +4,7 @@
 -- Features: 10 Tables, Strict Relational RLS, Google OAuth Trigger, Invariant Index
 -- After initialization, apply backend/migrations in order. Migration 006 installs
 -- canonical immutability and legacy/display answer-key compatibility triggers.
+-- It also creates the private review ledger, RPC functions and their ACLs.
 -- ==============================================================================
 
 -- ------------------------------------------------------------------------------

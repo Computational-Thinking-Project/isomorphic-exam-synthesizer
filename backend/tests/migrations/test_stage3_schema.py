@@ -55,7 +55,7 @@ INSERT INTO review_logs(id,version_question_id,action_type,reason) VALUES
 @unittest.skipUnless(
     os.getenv("RUN_POSTGRES_MIGRATION_TESTS") == "1", "PostgreSQL integration opt-in"
 )
-class Stage3SchemaTests(unittest.TestCase):
+class PostgresCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.docker = os.getenv("DOCKER_BIN") or shutil.which("docker")
@@ -76,7 +76,14 @@ class Stage3SchemaTests(unittest.TestCase):
         )
         for _ in range(40):
             ready = cls.run_docker(
-                "exec", cls.container, "pg_isready", "-U", "postgres", check=False
+                "exec",
+                cls.container,
+                "pg_isready",
+                "-h",
+                "127.0.0.1",
+                "-U",
+                "postgres",
+                check=False,
             )
             if ready.returncode == 0:
                 break
@@ -141,6 +148,32 @@ class Stage3SchemaTests(unittest.TestCase):
         result = self.sql(script, db=db, check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(expected, result.stderr)
+
+
+class Stage3SchemaTests(PostgresCase):
+    def test_incompatible_attempt_ledger_stops_upgrade_without_losing_receipts(self):
+        self.sql("""
+        CREATE TABLE review_attempts (
+          attempt_id UUID PRIMARY KEY, operation_id UUID NOT NULL,
+          session_id UUID NOT NULL REFERENCES exam_sessions(id),
+          status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        INSERT INTO review_attempts(attempt_id,operation_id,session_id,status) VALUES
+          ('70000000-0000-0000-0000-000000000001','80000000-0000-0000-0000-000000000001',
+           '10000000-0000-0000-0000-000000000001','granted');
+        """)
+        before = self.value("SELECT row_to_json(a) FROM review_attempts a;")
+        result = self.migrate(check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("incompatible review_attempts ledger", result.stderr)
+        self.assertEqual(before, self.value("SELECT row_to_json(a) FROM review_attempts a;"))
+        self.assertEqual(self.value("SELECT gemini_review_calls FROM exam_sessions;"), "7")
+        self.assertEqual(self.value("SELECT to_regclass('public.review_operations') IS NULL;"), "t")
+        self.assertEqual(
+            self.value("""SELECT count(*) FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='answer_keys' AND column_name='display_no';"""),
+            "0",
+        )
 
     def test_existing_history_upgrade_and_replay_preserve_data(self):
         self.sql(LEGACY_HISTORY)
