@@ -1,21 +1,21 @@
 {
-  "packageId": "UI-WALKTHROUGH-20261101-S06-REGENERATE-ONLY",
-  "packagedDate": "2026-11-01",
+  "packageId": "UI-WALKTHROUGH-20261102-S06-POPUP-ACTIONS-RIGHT",
+  "packagedDate": "2026-11-02",
   "timezone": "Asia/Bangkok",
   "kind": "Portable UI with sample data; not integrated product or AI output",
-  "branch": "feat/ui-ux-demo",
-  "repositoryBaseAtPackaging": "6fef4e1f3f6aa830a8d965369d5ec8b00476dcb9",
+  "branch": "fix/ui-ux-demo",
+  "repositoryBaseAtPackaging": "ada29633b721765a3e0eaae5f8accfb908e48bd8",
   "artifact": {
     "file": "PREVIEW.html",
-    "bytes": 2752027,
-    "sha256": "13543c80074d7eaf17072892e392ffa3bed952275da6feef76ee2efb2b4a9dc1",
+    "bytes": 2754938,
+    "sha256": "ca2e3d9efd5c76911c1903b8090b3c4ad5a2bbe9e55eef9574a8c78e0cd305e5",
     "sourceWorkspaceRelativePath": "project/ui-draft/redesign/PREVIEW.html",
-    "sourceDateFromReview": "2026-11-01",
+    "sourceDateFromReview": "2026-11-02",
     "sourceCommit": null,
     "sourceCommitNote": "ui-draft lives outside the product Git repository; repositoryBaseAtPackaging is not the artifact source commit",
     "built": [
-      "index-WFK8JX_V.css",
-      "index-BGqR_Xk3.js"
+      "index-Dgyjw04J.css",
+      "index-_7p9qpiX.js"
     ],
     "selfContained": true,
     "thirdPartyNoticesEmbedded": true,
@@ -59,14 +59,15 @@
     "S05ToS06": "Shared scheduler continues without restarting its outstanding timer. New run selects question1/code101 with zero approvals. Question3/code101 intentionally has duplicate B=C content as a demo issue; no preapproved Presenter preset.",
     "S06Loading": "Per selected code, active spinner/pending clock/failed icon in clickable cells and tabs. Selected active or pending pair displays right-panel skeleton; source stays visible. Unreceived variant content/key/steps are hidden.",
     "recovery": "Continue healthy queued pairs after a failure; retry only failed pairs with run/pair/revision guards. Shared pause/resume. New run resets selection/pause; stale callbacks and unmount leases are guarded.",
-    "review": "S06 is read-only with no edit/save/attestation/dirty guard. Current approvals and regenerated content survive other receipts. Approval selects next unapproved source, keeps code, never auto S07.",
+    "review": "View captures generation run, pair/source/variant revision. Own acknowledged regeneration refreshes inspection in place; external changes invalidate it. Old approval callbacks cannot approve new revision/run. Explicit approval still closes popup, selects next unapproved source, keeps code, never auto S07.",
     "finalization": "All received valid pairs plus readiness, all current approvals and current copy marks are still required.",
     "S06Notifications": "Body-portal toasts under header, max2 visible/5000ms each, dismiss/dedupe/scope cleanup. Modal errors and persistent recovery controls remain; no editor warnings.",
     "S00ToS01": "CTA ends with S00; no CTA ghost on S01; logo/slogan450ms, card300ms with delay130ms",
-    "regenerate": "One confirmed Tạo lại content action: received/missing/excluded pair uses bounded sample replacement, failed pair enqueues scoped retry. Active/pending/permanent sample failure/snapshot/offline/conflict blocked. Lock/run/pair/source+variant revision guards, unmount cleanup, acknowledgement/rejection handling. Regenerated pair stays unapproved, copy marks invalidated. Finite offsets1..8, no duplicate current/same-source other-code content.",
+    "regenerate": "Inside inspection only: valid/missing/excluded replacement or scoped failed-pair retry. Keep bounded1..8 pool, locks/run/pair/source+variant revision guards, no stale dispatch. Failed/missing recovery popup never invents question/key/steps. Retry shows skeleton in same popup until receipt. Rejection/throw/pool full stays inline with old data/error. Permanent sample failure/snapshot/offline/conflict remain blocked.",
     "persistence": "Tab memory only",
     "realPDFExport": false,
-    "defaultContentIssue": "G03/101 intentionally has B=C, source/key/steps intact, check=issue, no preapproval. Content error after receipt, not failed job. Regenerate, reopen answers/steps and explicitly approve; no manual editing or reseeding on revisit."
+    "defaultContentIssue": "G03/101 B=C stays intentional with0approvals/Cau1 selected first. Inspect B=C, Tạo lại/confirm inside same popup, read new question/key/steps there, explicitly approve. No manual edit or reseeding on revisit.",
+    "S06Popup": "Main S06 has Kiểm tra đáp án entry; Tạo lại only inside the single inspection Modal, next to approval in a right-aligned group. No Quay lại. Header X/Esc/backdrop close and cancel unsubmitted intent; closing disabled only while regeneration is busy. Inline confirmation uses Hủy tạo lại/Tạo lại đúng cặp. Successful model acknowledgement refreshes the same popup to the exact new revision; user must read/approve explicitly. No nested dialog or autoapproval."
   },
   "checks": {
     "staticPackageVerification": "See local verification report; source/dist/package bytes and hash checked; native Chrome not run",
@@ -74,24 +75,33 @@
     "keyboardFocusScroll": "not run",
     "rehearsal": "not run",
     "sourceChecks": {
-      "date": "2026-11-01",
-      "regenerateOnlyFocused": 26,
-      "progressiveReview": 27,
-      "s06Regression": 29,
+      "date": "2026-11-02",
+      "popupFocused": 30,
+      "s06Regression": 28,
+      "progressiveReview": 26,
+      "regenerationHookRegression": 17,
       "algebraRegression": 36,
       "toastRegression": 14,
-      "total": 132,
+      "total": 151,
+      "otherScreenMarkupComparisons": 40,
       "result": "passed in ui-draft",
-      "scope": "Fake timers, reducers/selectors, in-memory hooks, React element/static markup; not native Chrome or real AI. Scheduler regressions use a controlled clean-content fixture; focused cases cover actual B=C→regenerate→approve. Obsolete edit/save/stale assertions removed, not claimed passing.",
+      "scope": "Fake timers/hooks/React element/modal handlers, not native browser. Includes every-render single-modal continuity and missing/failed recovery.40 non-S06 workflow markup comparisons unchanged; old page button/confirmation assumptions replaced, not claimed unchanged.",
       "typeScript": "passed",
-      "build": "passed,1620 modules"
+      "build": "passed,1621 modules",
+      "alignmentFollowup": {
+        "focused": 30,
+        "typeScript": "passed",
+        "build": "passed,1621 modules",
+        "otherChecks": "121 prior logic cases and40 markup comparisons not rerun for this CSS-only change",
+        "appScriptsUnchanged": true
+      }
     }
   },
   "publicationAtPreparation": {
     "committed": false,
     "pushed": false,
     "packageCommit": null,
-    "note": "Regenerate-only refresh is local working changes based on6fef4e1; no commit/push for this refresh."
+    "note": "Popup-actions refresh is local onfix/ui-ux-demo based onada2963; no commit/push in this change."
   },
   "limits": [
     "No real auth/upload/parser/AI/server persistence/PDF",
