@@ -115,6 +115,12 @@ Typst thật được thêm PATH riêng cho tiến trình. Ruff exporter/test/CL
 toàn app đạt (72 files). Không dùng kết quả compile cũ để nhận lượt này đã chạy
 XeLaTeX hay E2E Storage.
 
+Regression toàn backend + Blueprint cùng lượt: **718 passed, 2 skipped,
+21 warnings**, 162.40s. Hai skip là XeLaTeX ngoài PATH và live API tùy chọn.
+Ruff theo CI, mypy 72 files, pip check và diff check đều đạt. Đã đồng bộ dev
+`032fbf2` (chỉ README/UI walkthrough, không đổi backend). GitHub CI trên head mới
+là bằng chứng riêng, không tái sử dụng checks xanh của head cũ.
+
 Cập nhật 01/11: đã merge `dev` tại `a57079c` vào nhánh TASK-307, gồm PR #24/#25.
 Pipeline compiler → bundler hiện dùng cùng validated snapshot cho PDF/TeX/MD và
 ma trận đa mã; có regression hai mã khác thứ tự options/key/solution, lỗi compiler,
