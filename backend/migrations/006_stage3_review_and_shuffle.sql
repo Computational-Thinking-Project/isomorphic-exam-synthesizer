@@ -612,6 +612,32 @@ RETURNS JSONB LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public
   SELECT public._review_finish_failure(p_operation_id,'STALE_RECOVERY',true)
 $$;
 
+-- Restart-safe recovery discovery: workers know the session, not necessarily the
+-- reservation UUID. Keep ledger SELECT private and run discovery + settlement
+-- under the same parent lock. Model A permits at most one active operation here.
+CREATE OR REPLACE FUNCTION public.review_recover_session(p_session_id UUID)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp AS $$
+DECLARE s public.exam_sessions; op UUID; outcome JSONB; outcomes JSONB := '[]'::jsonb;
+BEGIN
+  IF auth.role() IS DISTINCT FROM 'service_role' THEN
+    RAISE EXCEPTION 'REVIEW_WORKER_REQUIRED' USING ERRCODE='42501';
+  END IF;
+  s := public._review_lock_session(p_session_id,false);
+  SELECT operation_id INTO op FROM public.review_operations
+    WHERE session_id=s.id AND status='active' AND expires_at<=clock_timestamp()
+    FOR UPDATE;
+  IF FOUND THEN
+    outcome := public._review_finish_failure(op,'STALE_RECOVERY',true);
+    IF outcome->'recovered'='true'::jsonb AND outcome->'replayed'='false'::jsonb THEN
+      outcomes := jsonb_build_array(outcome);
+    END IF;
+  END IF;
+  SELECT * INTO s FROM public.exam_sessions WHERE id=p_session_id;
+  RETURN jsonb_build_object('session_id',s.id,'session_status',s.status,
+    'recovered_count',jsonb_array_length(outcomes),'recoveries',outcomes);
+END $$;
+
 CREATE OR REPLACE FUNCTION public._review_apply_action(p_session_id UUID, p_question_id UUID, p_action_id UUID, p_revert BOOLEAN)
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, public, pg_temp AS $$
@@ -690,7 +716,7 @@ BEGIN
       '_review_lock_session','_review_assert_editable','_review_worker_operation','_review_assert_operation','_review_progress',
       '_review_recalculate','_review_invalidate','_review_finish_failure','_review_apply_action',
       'review_get_progress','review_reserve_regeneration','review_acquire_attempt','review_complete_regeneration',
-      'review_fail_regeneration','review_recover_regeneration','review_accept_question','review_revert_question')
+      'review_fail_regeneration','review_recover_regeneration','review_recover_session','review_accept_question','review_revert_question')
   LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC, anon, authenticated, service_role',f.signature);
   END LOOP;
@@ -698,6 +724,7 @@ END $$;
 GRANT EXECUTE ON FUNCTION public.review_get_progress(UUID),public.review_reserve_regeneration(UUID,UUID,UUID),
   public.review_accept_question(UUID,UUID,UUID),public.review_revert_question(UUID,UUID,UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.review_acquire_attempt(UUID,UUID),public.review_complete_regeneration(UUID,JSONB),
-  public.review_fail_regeneration(UUID,TEXT),public.review_recover_regeneration(UUID) TO service_role;
+  public.review_fail_regeneration(UUID,TEXT),public.review_recover_regeneration(UUID),
+  public.review_recover_session(UUID) TO service_role;
 
 COMMIT;

@@ -35,7 +35,7 @@ Supabase deployment/JWT/RLS, AI calls, actual shuffle algorithms, or the Python
 repository/endpoint integration. Local PostgreSQL role/ACL tests are not a deployed
 Supabase authorization test.
 
-`test_review_rpcs.py` additionally runs the actual eight stored procedures against
+`test_review_rpcs.py` additionally runs the actual nine stored procedures against
 independent psql connections: reservation/attempt/recovery races, quota 26–30 and
 four/operation, committed grant with lost response, replay after new connection,
 late worker after recovery, source-row changes, complete/revert snapshots,
@@ -43,6 +43,37 @@ missing expected slots, caller permissions, and rollback on candidate/audit/key
 failures. The approval interleaving waits for `pg_blocking_pids` evidence before
 committing the competing session lock; it does not rely on a sleep to establish
 which transaction wins. It does not implement or certify TASK-305's own writer.
+
+Session recovery additionally checks discovery after a restart without private
+ledger SELECT or a question's regeneration UUID, DB-clock lease/no-op behavior,
+worker-only authorization, session isolation, concurrent discovery/direct recovery/
+late completion, audit rollback/retry, and preservation of uncertain charges.
+
+## Pinned upstream migration chain (additional opt-in)
+
+`test_review_migration_chain.py` reads immutable SQL blobs from these Git commits:
+
+- 004/005: `31ed3bc71188db537c41b547630a6b9dbf5f270f` (PR #32).
+- 007: `d7a3d3f788972f06552cd21a7e7103eceb2f2a55` (PR #33).
+
+This avoids maintaining copies of another owner's unmerged SQL. Fetch those
+objects first if absent (network is needed only for that preparation):
+
+```powershell
+git fetch origin 31ed3bc71188db537c41b547630a6b9dbf5f270f d7a3d3f788972f06552cd21a7e7103eceb2f2a55
+$env:RUN_POSTGRES_MIGRATION_TESTS = '1'
+$env:RUN_UPSTREAM_MIGRATION_TESTS = '1'
+python -m unittest discover -s backend/tests/migrations -v
+```
+
+Keep `DOCKER_BIN` set as above if needed. Without the second opt-in only the six
+chain cases skip; with it, missing Git objects fail rather than silently selecting
+a different revision. The suite runs 004/005 → local 006 → 007 on both populated
+legacy and full initialization schemas, then tests chain replay, retained charged
+receipts, recovery before actual 007 approval, refusal during active review, and
+review locking after approval. It verifies these integration paths, not every
+generation/approval input or shared-cloud rollout. It never executes `git fetch`
+or accesses a remote from inside a test.
 
 The RPC suite uses raw database source/blueprint fixtures and explicit zero-call
 candidate payloads where appropriate; it does not claim those legacy rows are

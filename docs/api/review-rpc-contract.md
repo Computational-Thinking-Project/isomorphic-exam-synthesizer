@@ -8,8 +8,8 @@ ReviewRepository/service/API callers. No parallel repository is introduced.
 Decisions: [Duy: boundary, auth, Model A, lifecycle and quota](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6546291626),
 [Đạt: callback and accounting](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6551270882),
 [adapter handoff](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6551386372).
-Compared on 2026-11-02 against TASK-301 `a4dd03b`, TASK-305 `8e04613`,
-TASK-304 `a8f61d5`, and dev `ada2963` (including TASK-303/306).
+Compared on 2026-11-03 against TASK-301 `b9ef112`, TASK-305 `d7a3d3f`,
+TASK-207a/b `31ed3bc`, TASK-304 `a8f61d5`, and dev `032fbf2`.
 Database tests and remaining integration work are recorded in [TASK-302](../tasks/TASK-302.md).
 
 ## Interface and authorization — F02/C03
@@ -24,11 +24,12 @@ payloads/results JSONB. Each mutation is one short transaction; AI runs outside 
 | `review_complete_regeneration` | `operation_id UUID, candidate JSONB` | Worker | `operation_id, previous_question_id, question_id, api_calls_used, invalidated_version_ids, progress` |
 | `review_fail_regeneration` | `operation_id UUID, error_code TEXT` | Worker | `operation_id, question_id, api_calls_used, operation_status, recovered, progress` |
 | `review_recover_regeneration` | `operation_id UUID` | Worker | `operation_id, question_id, api_calls_used, operation_status, recovered`; settled recovery also includes `progress` |
+| `review_recover_session` | `session_id UUID` | Worker | `session_id, session_status, recovered_count, recoveries` |
 | `review_accept_question` | `session_id UUID, question_id UUID, action_id UUID` | Owner JWT | `previous_question_id, question_id, question_status, invalidated_version_ids, progress` |
 | `review_revert_question` | Same as accept | Owner JWT | Same as accept |
 | `review_get_progress` | `session_id UUID` | Owner JWT | `progress` |
 
-Except the permit, results include `session_id, session_status, replayed`.
+Except the permit and session recovery, results include `session_id, session_status, replayed`.
 Owner calls require the authenticated role and derive the audit actor from
 `auth.uid()`, then check ownership inside the transaction. Worker calls require
 `service_role` EXECUTE privileges and the service-role claim. Their actor is the
@@ -39,7 +40,7 @@ granted to service_role. Use separate JWT and worker clients in the wrapper.
 The three new tables (`review_operations`, `review_attempts`,
 `review_action_receipts`) have RLS enabled and no direct grants to any API role,
 including service_role. Internal `_review_*` helpers have no API-role EXECUTE.
-Only the eight entry points receive the specific grants above. SECURITY DEFINER
+Only the nine entry points receive the specific grants above. SECURITY DEFINER
 functions pin their search path and qualify application tables.
 
 ## Durable permit callback — F07
@@ -133,6 +134,37 @@ Fail takes only a sanitized code (`^[A-Z][A-Z0-9_]{0,79}$`), never provider exce
 text. Recovery uses DB time; before expiry it returns `recovered=false` without
 writes. A recovered operation cannot complete late or mutate a new reservation.
 
+### Restart-safe recovery discovery — F06
+
+When only the session ID survives a worker restart, call
+`review_recover_session(p_session_id)` using the worker client. Do not SELECT the
+private ledger or infer an operation UUID from a question's `regeneration_id`.
+This RPC locks the session first, discovers its expired active operation using
+the database clock, then settles it through the same failure helper in that
+transaction. Model A permits at most one active operation per session.
+
+```json
+{
+  "session_id": "<uuid>",
+  "session_status": "generated",
+  "recovered_count": 0,
+  "recoveries": []
+}
+```
+
+For a successful recovery, `recoveries` contains the full
+`review_recover_regeneration` settlement object, including the actual operation ID,
+ledger-based `api_calls_used`, and progress. The audit uses the actor stored in
+the reservation. `recovered_count` counts operations
+settled by **this call**, not historical recoveries; it is 0 or 1 and equals the
+array length. An empty, unexpired or already settled session returns 0 and `[]`
+without audit/state/quota writes. Retrying after a lost successful response also
+returns 0; it does not replay the earlier recovery as a new event. A caller that
+retained the operation ID can use operation recovery to replay its receipt.
+Unknown sessions raise `REVIEW_NOT_FOUND`. Authorization is worker-only even
+for a no-op. Audit failure rolls back settlement so a subsequent call can retry;
+concurrent recovery paths cannot duplicate audit or refund committed grants.
+
 All writers lock parent session before operation/candidate rows. New mutations
 reject approved/exported sessions or a non-NULL approved_at. Existing committed
 receipts may be read back after approval, without another mutation. Reusing IDs
@@ -169,8 +201,10 @@ Mutation recalculation sets reviewed only when ready; otherwise generated.
 
 **TASK-305 boundary:** final approval must acquire the same session row lock and
 check complete readiness/no active operation plus finalization within that database
-transaction. SQL 007 at `8e04613` already locks that row, but must also fail closed
-on missing/ambiguous configuration and align with 006's operation/readiness checks.
+transaction. The pinned 004/005 at `31ed3bc` and 007 at `d7a3d3f` are tested with
+006 on fresh and upgraded databases: charged-receipt replay, recovery followed by
+approval, approval denial during an active operation, and review mutation denial
+after approval. This verifies those paths, not all possible TASK-305 writer inputs.
 A Python read followed by a separate CAS is not proof of this boundary.
 This PR does not implement or certify TASK-305's final approval writer. Existing
 direct table mutation paths must be replaced by the agreed RPCs before production
@@ -200,16 +234,12 @@ there must not be a second 006 under `006_stage3_review_rpc.sql`. Integration or
 004/005 (#32) → 006 (#36) → 007 (#33). Duy has acknowledged the ordering and historical
 actor policy in his [completed response](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6567937686).
 
-**Competing 008:** #28 at `a4dd03b` creates a different `review_attempts` shape and
-replaces `review_acquire_attempt` with different authorization/lifecycle behavior.
-Do not apply it after 006 or maintain both implementations. TASK-301 must remove the
-competing implementation and use these RPCs, as requested in the
-[coordination comment](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6568374582).
-If 008 has already been applied to a shared database, report its schema/ledger state
-before rollout so the migration owner can provide a data-preserving transition.
+**Competing 008:** Duy [confirmed it was never applied to shared Supabase Cloud
+and removed it from #28](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6568707780).
+Do not apply the old competing implementation after 006 or maintain both.
 006 detects the incompatible attempt ledger and stops without rewriting it or
 resetting quota. That guard is not a conversion script or a certificate of deployed compatibility.
 
 Supabase rollout, live JWT/RLS, live AI, caller/adapter E2E and shuffle integration
-are not yet verified. TASK-301's acquire wrapper now calls an RPC, but still needs
-strict response validation and conversion of the remaining direct lifecycle writes.
+are not yet verified. The latest caller's discovery path still needs to consume
+the new session recovery RPC; these SQL tests do not certify that caller.

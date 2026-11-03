@@ -579,6 +579,138 @@ class ReviewRpcTests(PostgresCase):
         self.assertEqual(self.value("SELECT gemini_review_calls FROM exam_sessions;"), "1")
         self.assertEqual(self.fail(op)["api_calls_used"], 1)
 
+    def test_session_recovery_discovers_private_operation_after_worker_restart(self):
+        self.sql("UPDATE version_questions SET status='approved';")
+        op = self.reserve()["operation_id"]
+        self.permit(op)  # Committed grant; the restarted worker may never see its response.
+        self.assertEqual(self.value("SELECT regeneration_id IS NULL FROM version_questions;"), "t")
+        denied = self.sql(
+            self.auth("service_role") + "SELECT * FROM review_operations;", check=False
+        )
+        self.assertNotEqual(denied.returncode, 0)
+        self.sql("UPDATE review_operations SET expires_at=now()-interval '1 second';")
+        recovered = self.call("review_recover_session", SID, worker=True)
+        self.assertEqual(recovered["recovered_count"], 1)
+        receipt = recovered["recoveries"][0]
+        self.assertEqual(receipt["operation_id"], op)
+        self.assertEqual(receipt["api_calls_used"], 1)
+        self.assertTrue(receipt["recovered"])
+        self.assertFalse(receipt["replayed"])
+        self.assertEqual(recovered["session_status"], "reviewed")
+        self.assertEqual(self.value("SELECT status FROM version_questions;"), "approved")
+        self.assertEqual(self.value("SELECT user_id FROM review_logs;"), OWNER)
+        self.assertEqual(self.call("review_recover_session", SID, worker=True)["recoveries"], [])
+        self.assertEqual(self.value("SELECT count(*) FROM review_logs;"), "1")
+        self.assertEqual(self.value("SELECT gemini_review_calls FROM exam_sessions;"), "1")
+        new_op = self.reserve()["operation_id"]
+        self.assertNotEqual(new_op, op)
+        self.expect_error(
+            "REVIEW_STALE",
+            "review_complete_regeneration",
+            op,
+            json.dumps(candidate(1)),
+            worker=True,
+        )
+        self.assertEqual(self.value("SELECT status FROM version_questions;"), "regenerating")
+
+    def test_session_recovery_uses_operation_lease_and_is_read_only_without_expiry(self):
+        empty = self.call("review_recover_session", SID, worker=True)
+        self.assertEqual(
+            empty,
+            {
+                "session_id": SID,
+                "session_status": "generated",
+                "recovered_count": 0,
+                "recoveries": [],
+            },
+        )
+        self.reserve()
+        self.sql("UPDATE version_questions SET updated_at=now()-interval '1 day';")
+        self.assertEqual(self.call("review_recover_session", SID, worker=True), empty)
+        self.assertEqual(self.value("SELECT status FROM review_operations;"), "active")
+        self.assertEqual(self.value("SELECT count(*) FROM review_logs;"), "0")
+        self.expect_error("REVIEW_NOT_FOUND", "review_recover_session", uuid4(), worker=True)
+        for role in ("anon", "authenticated"):
+            result = self.sql(
+                self.auth(role) + f"SELECT review_recover_session('{SID}');", check=False
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("permission denied", result.stderr)
+        result = self.sql(
+            self.auth("service_role")
+            + f"SET request.jwt.claim.role='authenticated'; SELECT review_recover_session('{SID}');",
+            check=False,
+        )
+        self.assertIn("REVIEW_WORKER_REQUIRED", result.stderr)
+
+    def test_concurrent_session_recovery_settles_once(self):
+        self.reserve()
+        self.sql("UPDATE review_operations SET expires_at=now()-interval '1 second';")
+        script = self.auth("service_role") + f"SELECT review_recover_session('{SID}');"
+        results = self.concurrent(script, script)
+        for result in results:
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(sum(json.loads(r.stdout)["recovered_count"] for r in results), 1)
+        self.assertEqual(self.value("SELECT count(*) FROM review_logs;"), "1")
+        self.assertEqual(self.value("SELECT status FROM review_operations;"), "recovered")
+
+    def test_session_discovery_races_direct_recovery_and_late_completion(self):
+        op = self.reserve()["operation_id"]
+        self.permit(op)
+        self.sql("UPDATE review_operations SET expires_at=now()-interval '1 second';")
+        discovery, direct, late = self.concurrent(
+            self.auth("service_role") + f"SELECT review_recover_session('{SID}');",
+            self.auth("service_role") + f"SELECT review_recover_regeneration('{op}');",
+            self.auth("service_role")
+            + f"SELECT review_complete_regeneration('{op}',{literal(json.dumps(candidate(1)))});",
+        )
+        self.assertEqual(discovery.returncode, 0, discovery.stderr)
+        self.assertEqual(direct.returncode, 0, direct.stderr)
+        self.assertNotEqual(late.returncode, 0)
+        self.assertIn("REVIEW_STALE", late.stderr)
+        self.assertEqual(self.value("SELECT count(*) FROM review_logs;"), "1")
+        self.assertEqual(self.value("SELECT gemini_review_calls FROM exam_sessions;"), "1")
+        self.assertEqual(
+            self.value("SELECT count(*) FROM version_questions WHERE is_current;"), "1"
+        )
+
+    def test_session_recovery_audit_failure_rolls_back_and_can_retry(self):
+        self.reserve()
+        self.permit(self.value("SELECT operation_id FROM review_operations;"))
+        self.sql("UPDATE review_operations SET expires_at=now()-interval '1 second';")
+        self.inject_failure("review_logs", "INSERT")
+        self.expect_error(
+            "injected transaction failure", "review_recover_session", SID, worker=True
+        )
+        self.assertEqual(self.value("SELECT status FROM review_operations;"), "active")
+        self.assertEqual(self.value("SELECT status FROM version_questions;"), "regenerating")
+        self.assertEqual(self.value("SELECT gemini_review_calls FROM exam_sessions;"), "1")
+        self.sql("DROP TRIGGER injected_failure ON review_logs;")
+        self.assertEqual(
+            self.call("review_recover_session", SID, worker=True)["recovered_count"], 1
+        )
+
+    def test_session_recovery_does_not_scan_other_sessions_and_survives_replay(self):
+        other = uuid4()
+        self.reserve()
+        self.sql(
+            f"INSERT INTO exam_sessions(id,user_id,title,status) VALUES ('{other}','{OWNER}','Other','generated'); UPDATE review_operations SET expires_at=now()-interval '1 second';"
+        )
+        self.assertEqual(
+            self.call("review_recover_session", other, worker=True)["recovered_count"], 0
+        )
+        self.assertEqual(self.value("SELECT status FROM review_operations;"), "active")
+        self.migrate()
+        self.assertEqual(
+            self.call("review_recover_session", SID, worker=True)["recovered_count"], 1
+        )
+        self.assertEqual(
+            self.value(
+                "SELECT has_function_privilege('authenticated','review_recover_session(uuid)','EXECUTE');"
+            ),
+            "f",
+        )
+
     def test_global_id_rebinding_races_across_sessions_return_domain_conflict(self):
         sid2, source2, version2, qid2 = (str(uuid4()) for _ in range(4))
         self.sql(f"""
