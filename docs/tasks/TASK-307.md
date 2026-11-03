@@ -80,6 +80,18 @@ Duy đã chốt ZIP/filenames và input approved thật chiều 02/11 tại [PR 
 
 ## Bàn giao — trạng thái thực tế
 
+- Cập nhật 03/11: nối compiler đã có từ trước, không triển khai lặp. Bổ sung CLI
+  `backend/scripts/build_export_bundle.py` để build ZIP từ snapshot được cung cấp;
+  thêm regression shuffler thật → display answers → matrix/TeX/Markdown.
+- Compile mẫu 4 câu bằng Typst thật phát hiện và sửa dấu sao đơn trong prose và
+  LaTeX binomial ở shared `typst_converter.py`; cần reviewer Tâm xác minh bản vá.
+  ZIP mẫu tạo thành công, chưa kiểm trực quan layout lượt này.
+- Focused exporter/shuffler: 103 passed, 1 skipped (XeLaTeX ngoài PATH); Ruff đạt,
+  mypy toàn app 72 files đạt. Chi tiết/hướng dẫn CLI tại docs/export-w3-bundler.md.
+- Tình trạng phụ thuộc hiện tại: #24/#25 đã merge. #33 head d7a3d3f vẫn có finding
+  recovery F06; không tiếp tục dùng nhận định F01 ngày 01/11 như kết luận review
+  mới nhất. Chưa có approved DB snapshot/mapper và Storage download thật để nghiệm thu.
+
 - Cập nhật 01/11: đã merge `dev` `a57079c`, tích hợp compiler đã merge của Tâm qua `exporter/export_pipeline.py`. Hùng có thể gọi `build_compiled_bundle(snapshot)` ngoài event loop để nhận `BundleArtifact`; giữ `build_bundle(snapshot, pdfs)` nếu đã có PDF. Một validated display snapshot cung cấp cả 2*N+1 PDF, matrix, TeX và Markdown, lỗi compiler không trả archive thiếu. Không thêm route/DB/cloud/dependency/Docker mới.
 - Tests bổ sung dùng hai mã với options/key/solution khác nhau; kiểm snapshot trước compile, lỗi compile dừng luồng, PDF sai bị từ chối và compile Typst thật. Kết quả cuối được ghi trên PR theo đúng head sau push.
 - Đầu vào còn thiếu để nghiệm thu: snapshot đã khóa thực từ Duy/TASK-305 (F01 #33), contract Storage/size limits và download E2E với Hùng/TASK-308. TASK-308 là bên nhận ZIP, không phải điều kiện để hoàn thành module bundler.

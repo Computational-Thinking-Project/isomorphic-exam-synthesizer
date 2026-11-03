@@ -84,6 +84,37 @@ Lỗi BundleBuildError.code: EXPORT_PDF_MANIFEST_MISMATCH, EXPORT_PDF_INVALID, E
 
 ## Trạng thái kiểm
 
+### Cập nhật 03/11 — kiểm nối shuffler và công cụ chạy local
+
+Chạy từ root repo với snapshot JSON theo boundary ở trên:
+
+```powershell
+python backend/scripts/build_export_bundle.py snapshot.json --output-dir .artifacts/export
+# Khi Typst chưa có trên PATH, thêm --typst-binary C:/tools/typst.exe
+```
+
+CLI tái sử dụng `build_compiled_bundle`, chỉ ghi ZIP sau khi compile/bundle thành công,
+in path/revision/size/SHA-256 và từ chối ghi đè ZIP đã có. Không gọi Gemini, đọc DB,
+upload hoặc tự biến trạng thái nguồn thành approved. Status trong JSON chỉ được
+kiểm cấu trúc; caller vẫn phải cung cấp snapshot đã khóa thật.
+
+Đã thêm regression dùng `shuffle_exam_version` thật cho hai mã đề với ba cấu hình
+shuffle câu/options, đối chiếu nội dung đáp án đúng theo canonical input,
+answer_keys, matrix và TeX/Markdown; canonical input không bị sửa.
+
+Mẫu 4 câu từ `.artifacts/export-demo/snapshot.json` phát hiện hai lỗi converter
+TASK-306 trong đường tích hợp: dấu `*` đơn trong prose làm mở emphasis không đóng,
+và `\\binom{n}{k}` chưa được chuyển sang Typst. Bản vá trong nhánh TASK-307 giữ
+paired Markdown emphasis, escape dấu sao lẻ và chuyển binomial bằng parser braces
+hiện có. Đây là thay đổi shared file `typst_converter.py`, cần Tâm review cùng PR.
+Mẫu này hiện compile đủ ba PDF và đóng ZIP 538943 bytes bằng Typst 0.11.1 thật;
+không phải bằng chứng chất lượng toán học, layout đã xem hay approval từ DB.
+
+Kiểm focused ngày 03/11: **103 passed, 1 skipped** (XeLaTeX không có trên PATH),
+Typst thật được thêm PATH riêng cho tiến trình. Ruff exporter/test/CLI đạt; mypy
+toàn app đạt (72 files). Không dùng kết quả compile cũ để nhận lượt này đã chạy
+XeLaTeX hay E2E Storage.
+
 Cập nhật 01/11: đã merge `dev` tại `a57079c` vào nhánh TASK-307, gồm PR #24/#25.
 Pipeline compiler → bundler hiện dùng cùng validated snapshot cho PDF/TeX/MD và
 ma trận đa mã; có regression hai mã khác thứ tự options/key/solution, lỗi compiler,
