@@ -1,5 +1,15 @@
 # KẾ HOẠCH CHI TIẾT TÍCH HỢP ATTEMPT PERMIT (TASK-304 / ĐẠT) VÀO REVIEW ORCHESTRATOR (TASK-301 / DUY)
 
+> Cập nhật 04/11/2026: bản kế hoạch bên dưới là lịch sử trước contract hiện tại.
+> Phần refund/direct table writes/migration 008 hoặc trạng thái "đã xong" không
+> phải yêu cầu/kiểm chứng hiện hành. Xem [TASK-301 hiện tại](TASK-301.md) và
+> [contract authority](../api/review-rpc-contract.md). Persistence/frozen payload
+> v1 và recovery trigger mới đang xin xác nhận trên #36; chưa triển khai trong
+> thay đổi tài liệu này. Không dùng pseudocode cũ để thay transaction RPC.
+
+<details>
+<summary>Bản kế hoạch lịch sử (giữ nguyên để truy vết)</summary>
+
 **Tài liệu tham chiếu:**
 - Branch Đạt: `feat/dat-task-304-targeted-regeneration` tại commit `a8f61d5` (PR #26).
 - Handoff doc: `docs/ai-w3-targeted-regeneration.md`.
@@ -174,3 +184,5 @@ except Exception as exc:
    `ruff check backend/app/services/review backend/tests/services`
    `mypy backend/app/services/review`
 
+
+</details>

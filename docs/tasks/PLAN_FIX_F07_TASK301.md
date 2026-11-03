@@ -1,5 +1,15 @@
 # KẾ HOẠCH BÀI BẢN XỬ LÝ TOÀN DIỆN VẤN ĐỀ F07 (ATTEMPT ACCOUNTING & RPC WRAPPER) [TASK-301] — BẢN v2.0 (ĐÃ TIẾP THU TOÀN DIỆN FEEDBACK)
 
+> Cập nhật 04/11/2026: bản kế hoạch bên dưới là lịch sử trước contract hiện tại.
+> Phần refund/direct table writes/migration 008 hoặc trạng thái "đã xong" không
+> phải yêu cầu/kiểm chứng hiện hành. Xem [TASK-301 hiện tại](TASK-301.md) và
+> [contract authority](../api/review-rpc-contract.md). Persistence/frozen payload
+> v1 và recovery trigger mới đang xin xác nhận trên #36; chưa triển khai trong
+> thay đổi tài liệu này. Không dùng pseudocode cũ để thay transaction RPC.
+
+<details>
+<summary>Bản kế hoạch lịch sử (giữ nguyên để truy vết)</summary>
+
 - **Mã finding:** F07 — [Bắt buộc sửa — P1] open: callback hiện chưa bảo đảm durable attempt accounting
 - **Reviewer:** Đạt (`Thanhdat3010`)
 - **Tác giả kế hoạch:** Duy (`johannguyen015` — Lead)
@@ -211,3 +221,5 @@ flowchart TD
 - Commit với message chuẩn: `fix(review): adopt per-acquire atomic accounting and durable attempt ledger (F07) [TASK-301]`.
 - Push lên `origin/feat/duy-task-301-review-lifecycle-api`.
 - Trả lời comment của Đạt theo mẫu M5 trên PR #28.
+
+</details>

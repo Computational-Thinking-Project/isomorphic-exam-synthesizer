@@ -1,3 +1,22 @@
+## DEC-BE1-012: Đề xuất confirmed artifacts và frozen review payload
+
+- Ngày: 04/11/2026; người đề xuất: Duy (`johannguyen015`).
+- Trạng thái: tài liệu gửi thảo luận #36; chờ Hùng/Đạt xác nhận bổ sung. Chưa
+  triển khai storage/producer/RPC payload v1 hoặc nghiệm thu caller/E2E.
+- Bối cảnh: baseline #36 `a2d2fc3` freeze database_rows; #28 `39083c2` còn đọc
+  nguồn sống/tính hash lúc Reject. Chưa có persistence đúng input canonical #26.
+- Đề xuất: lưu exact confirmed input, per-question fingerprint và immutable
+  revision; lưu validated canonical Blueprint gắn cùng revision/hash; reservation
+  freeze artifacts cho adapter. Caller không tự dựng hash/Blueprint để bù thiếu.
+  Recovery worker theo session trước mỗi Reject; GET progress/list giữ thuần đọc.
+- Authority: [review RPC contract](api/review-rpc-contract.md), kế thừa baseline
+  owner #36 và ghi riêng phần đề xuất. Sau thống nhất, cập nhật cùng authority
+  của owner, không duy trì contract cạnh tranh.
+- Phạm vi: tài liệu TASK-301, liên quan TASK-302/304/305 và producer cần điều phối;
+  không tự phân công thêm thành viên hoặc sửa nhánh Hùng. Giữ SQL 004/005 → 006 → 007.
+- Kiểm: đọc code/trao đổi đúng các commit ghim trong contract; kiểm link/diff.
+  Không chạy product tests trong thay đổi docs, không nhận finding đã verified.
+
 ## 24/10/2026 — AI W2 (thay đổi cục bộ, chưa merge)
 
 Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical core dùng chung CLI/backend, generator theo Blueprint kèm lời giải, bounded validation/retry, resume/callback và lifecycle. [Chi tiết và giới hạn nghiệm thu](ai-w2-integration.md). Chưa tích hợp routes/DB/SSE/UI W2; chưa nghiệm thu Docker/live API.

@@ -1,5 +1,41 @@
 # TASK-301 — Plan và Bàn Giao: API Thẩm Định 1-1, Vòng Đời `is_current`, Revert Nguyên Tử & Safe Re-shuffle Invalidation
 
+## Trạng thái hiện tại — 04/11/2026
+
+- Chế độ: author TASK-301; workflow v0.1 **proposed**, docs `506384b`.
+- Đối chiếu: #28 `39083c2`, #36 `a2d2fc3`, #26 `a8f61d5`, #33 `d7a3d3f`.
+- Nguồn interface/policy: [review RPC contract](../api/review-rpc-contract.md).
+  Baseline SQL thuộc Hùng/#36; phần persistence/revision/frozen payload v1 và
+  recovery trigger là đề xuất cần Hùng/Đạt xác nhận trong Conversation #36.
+- Chỉ thay tài liệu; không nhận producer/storage/caller đã khớp hoàn toàn hoặc
+  finding đã verified. Không thay phân công, ETA, cloud hoặc merge trong lượt này.
+- Code #28 hiện vẫn đọc lại snapshot từ bảng và có nhánh tự tính content_hash;
+  caller reserve chưa chuyển tiếp đầy đủ frozen receipt. Còn phải tích hợp target
+  contract, settlement toàn bộ lỗi sau reserve, validation F10 và recovery trước
+  reservation (hiện chỉ có một nhánh SESSION_BUSY gọi session recovery).
+- GET progress hiện thuần đọc. Giữ nguyên điều này trong đề xuất; recovery lazy
+  trước Reject vẫn cần triển khai và kiểm qua route công khai.
+- Kết quả tests trong phần lịch sử dưới đây là báo cáo tại thời điểm cũ, chưa
+  được chạy lại lượt này và không chứng minh payload/persistence mới hoạt động.
+
+## Bước tiếp theo và cách kiểm
+
+1. Xin Hùng xác nhận storage/revision/payload, Đạt xác nhận mapping vào adapter;
+   Duy điều phối owner producer và write boundary còn thiếu. Dẫn kết luận về
+   cùng file authority, không mở một contract khác trong plan.
+2. Nhận frozen JSON thực từ RPC và các fixture lỗi theo mục P4 của authority.
+3. Nối caller theo receipt, validate trước acquire, settlement với operation ID
+   gốc; không tính lại hash/Blueprint hoặc fallback ghi bảng trong production.
+4. Kiểm route→RPC→adapter với fake provider, DB ACL/concurrency và các repro F06/F10;
+   chỉ điền kết quả thực tế cho head được kiểm. Đồng bộ #33 khi tích hợp code.
+
+**Các mô tả refund, reserve bốn calls, migration 008, table fallback tự động,
+revert/readiness cũ hoặc checklist Done trong bản cũ bên dưới đã được thay thế bởi
+authority và trạng thái trên. Chúng được giữ để truy vết, không phải chỉ dẫn hiện hành.**
+
+<details>
+<summary>Bản kế hoạch lịch sử (giữ nguyên để truy vết)</summary>
+
 - **Nguồn giao việc:** [W3_ASSIGNMENT.md](W3_ASSIGNMENT.md) (v2.1; 28/10/2026), [w3.md](../../w3.md)
 - **Phụ trách:** Duy (`johannguyen015` — Lead); Hùng (`benalexx007` — Contributor)
 - **Reviewer:** Hùng (`benalexx007` — đã chốt)
@@ -205,3 +241,5 @@ pytest backend/tests/services/test_review_lifecycle.py -v
 - [x] **13. Ranh giới Database Connection & AI:** Transaction TX1 phải commit hoàn toàn trước khi gọi AI. Không giữ transaction, row lock hoặc transaction-scoped database state trong suốt thời gian chờ provider. TX2 là một transaction độc lập.
 - [x] **14. Mock Builder chuẩn xác:** `MockRpcQueryBuilder` trong file test unit phản ánh chính xác 100% chữ ký và ràng buộc của Migration 006 (`p_operation_id` cho reserve; `p_operation_id, p_attempt_id` cho acquire; mô phỏng đúng `review_recover_session`).
 - [x] **15. Integration Test Suite:** 62/62 tests passed (100%) bao gồm đầy đủ các kịch bản: Quota boundary, Stale recovery, Concurrent retry, Active replay, Idempotency-Key, Client cancellation shield, và Revert shuffle invalidation.
+
+</details>
