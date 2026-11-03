@@ -9,7 +9,7 @@ Implements:
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set, Tuple, cast
+from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast
 from uuid import UUID, uuid4
 
 from supabase import Client
@@ -1650,117 +1650,130 @@ class ReviewRepository:
             "can_finalize": can_finalize,
         }
 
+    async def recover_stale_operations(self, session_id: Union[str, UUID]) -> int:
+        """Call PostgreSQL worker RPC review_recover_session(p_session_id UUID).
+
+        Adheres strictly to Migration 006 (TASK-302):
+        - Primary Path: Stored procedure RPC review_recover_session (Worker service_role)
+        - Strictly validates the response contract (session_id, recovered_count in (0, 1),
+          recoveries format, operation_status == 'recovered').
+        """
+        if self.worker_db is None:
+            raise ReviewDomainException(503, "ERR_DATABASE_UNAVAILABLE", "Worker client not configured")
+
+        str_sid = str(session_id)
+        try:
+            res = (
+                self.worker_db.rpc("review_recover_session", {"p_session_id": str_sid})
+                .execute()
+            )
+        except Exception as exc:
+            err_msg = str(exc)
+            if "42501" in err_msg or "REVIEW_WORKER_REQUIRED" in err_msg:
+                logger.error("Internal worker config error: missing service_role for recovery RPC")
+                raise ReviewDomainException(503, "ERR_DATABASE_UNAVAILABLE", "Internal worker configuration error")
+            if "P0002" in err_msg or "REVIEW_NOT_FOUND" in err_msg:
+                raise ReviewDomainException(404, "ERR_NOT_FOUND", "Session not found")
+            logger.error("RPC review_recover_session failed: %s", exc)
+            raise ReviewDomainException(500, "ERR_DATABASE_ERROR", f"Recovery RPC execution failed: {exc}")
+
+        data = res.data[0] if isinstance(res.data, list) and res.data else res.data
+        if not isinstance(data, dict):
+            raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Recovery response must be a JSON object")
+
+        try:
+            ret_sid = UUID(str(data.get("session_id", "")))
+            req_sid = UUID(str_sid)
+            if ret_sid != req_sid:
+                raise ValueError("Session ID mismatch")
+        except Exception:
+            raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Invalid or mismatched session_id in recovery")
+
+        count = data.get("recovered_count")
+        if isinstance(count, bool) or not isinstance(count, int) or count not in (0, 1):
+            raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", f"Invalid recovered_count: {count}")
+
+        recoveries = data.get("recoveries")
+        if not isinstance(recoveries, list) or len(recoveries) != count:
+            raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", f"Recoveries length must match count ({count})")
+
+        if count == 1:
+            rec = recoveries[0]
+            if not isinstance(rec, dict):
+                raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Recovery item must be a dictionary")
+            try:
+                UUID(str(rec.get("operation_id", "")))
+                if not rec.get("question_id"):
+                    raise ValueError("Missing question_id")
+            except Exception:
+                raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Invalid identifiers in recovery item")
+            if rec.get("operation_status") != "recovered":
+                raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Recovery item operation_status must be 'recovered'")
+            if rec.get("recovered") is not True or rec.get("replayed") is not False:
+                raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Fresh recovery item must have recovered=True and replayed=False")
+            calls_used = rec.get("api_calls_used")
+            if isinstance(calls_used, bool) or not isinstance(calls_used, int) or calls_used < 0:
+                raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", f"Invalid api_calls_used: {calls_used}")
+
+        return count
+
     async def recover_stale_questions(
         self, session_id: Optional[str] = None, actor_user_id: Optional[str] = None
     ) -> int:
         """Scan and recover questions/operations stuck in 'regenerating' for longer than 3 minutes.
 
         Adheres strictly to Migration 006 contract:
-        - Primary Path: Stored procedure RPC review_recover_regeneration (Worker service_role)
-          Queries review_operations where status='active' AND expires_at <= NOW(),
-          then calls review_recover_regeneration(p_operation_id) to close ledger and restore question.
+        - Primary Path: Stored procedure RPC review_recover_session (Worker service_role)
         - Fallback Path: Direct table update for offline test mode only (allow_table_fallback=True).
         """
+        # 1. Primary Path: Stored procedure RPC review_recover_session
+        if session_id and callable(getattr(self.worker_db, "rpc", None)):
+            try:
+                return await self.recover_stale_operations(session_id)
+            except Exception:
+                if not self.allow_table_fallback:
+                    raise
+
+        # 2. Offline / Mock fallback (when session_id is None or allow_table_fallback)
         now_dt = datetime.now(timezone.utc)
         recovered = 0
 
-        # 1. Primary Path: Stored procedure RPC review_recover_regeneration (Worker service_role)
-        # Scan review_operations if available; otherwise scan version_questions if allow_table_fallback or local
-        if callable(getattr(self.worker_db, "rpc", None)):
-            try:
-                op_rows = []
+        # Scan version_questions if allow_table_fallback or local
+        vq_query = (
+            self.db.table("version_questions")
+            .select("id, updated_at, regeneration_id, exam_versions!inner(session_id)")
+            .eq("status", "regenerating")
+        )
+        if session_id:
+            vq_query = vq_query.eq("exam_versions.session_id", session_id)
+        vq_res = vq_query.execute()
+        vq_rows = _get_rows(vq_res)
+
+        for row in vq_rows:
+            upd_str = row.get("updated_at")
+            diff_sec: float = float(STALE_REGENERATION_TIMEOUT_SECONDS + 1)
+            if upd_str:
                 try:
-                    op_query = (
-                        self.worker_db.table("review_operations")
-                        .select("operation_id, session_id, question_id, expires_at, status")
-                        .eq("status", "active")
-                    )
-                    if session_id:
-                        op_query = op_query.eq("session_id", session_id)
-                    op_res = op_query.execute()
-                    op_rows = _get_rows(op_res)
+                    upd_dt = datetime.fromisoformat(upd_str.replace("Z", "+00:00"))
+                    diff_sec = float((now_dt - upd_dt).total_seconds())
                 except Exception:
-                    op_rows = []
+                    diff_sec = float(STALE_REGENERATION_TIMEOUT_SECONDS + 1)
 
-                if op_rows:
-                    for row in op_rows:
-                        op_id = str(row.get("operation_id") or "")
-                        if not op_id:
-                            continue
+            if diff_sec >= STALE_REGENERATION_TIMEOUT_SECONDS:
+                qid = str(row.get("id"))
+                sid = session_id or (row.get("exam_versions", {}).get("session_id") if isinstance(row.get("exam_versions"), dict) else None)
+                if sid and callable(getattr(self.worker_db, "rpc", None)):
+                    try:
+                        return await self.recover_stale_operations(sid)
+                    except Exception:
+                        pass
+                # Direct table update for offline test
+                self.db.table("version_questions").update(
+                    {"status": "pending_review", "updated_at": _now_iso()}
+                ).eq("id", qid).execute()
+                recovered += 1
 
-                        exp_str = row.get("expires_at")
-                        is_expired = False
-                        if exp_str:
-                            try:
-                                exp_dt = datetime.fromisoformat(str(exp_str).replace("Z", "+00:00"))
-                                if exp_dt <= now_dt:
-                                    is_expired = True
-                            except Exception:
-                                is_expired = True
-                        else:
-                            is_expired = True
-
-                        if is_expired:
-                            rpc_res = self.worker_db.rpc(
-                                "review_recover_regeneration",
-                                {"p_operation_id": op_id},
-                            ).execute()
-                            rpc_data = (
-                                rpc_res.data[0]
-                                if isinstance(rpc_res.data, list) and rpc_res.data
-                                else rpc_res.data
-                            )
-                            if isinstance(rpc_data, dict):
-                                if rpc_data.get("recovered") is True or rpc_data.get("replayed") is True:
-                                    recovered += 1
-
-                    return recovered
-
-                # If no review_operations rows found, check version_questions
-                vq_query = (
-                    self.db.table("version_questions")
-                    .select("id, updated_at, regeneration_id, exam_versions!inner(session_id)")
-                    .eq("status", "regenerating")
-                )
-                if session_id:
-                    vq_query = vq_query.eq("exam_versions.session_id", session_id)
-                vq_res = vq_query.execute()
-                vq_rows = _get_rows(vq_res)
-
-                for row in vq_rows:
-                    upd_str = row.get("updated_at")
-                    diff_sec: float = float(STALE_REGENERATION_TIMEOUT_SECONDS + 1)
-                    if upd_str:
-                        try:
-                            upd_dt = datetime.fromisoformat(upd_str.replace("Z", "+00:00"))
-                            diff_sec = float((now_dt - upd_dt).total_seconds())
-                        except Exception:
-                            diff_sec = float(STALE_REGENERATION_TIMEOUT_SECONDS + 1)
-
-                    if diff_sec >= STALE_REGENERATION_TIMEOUT_SECONDS:
-                        op_id = str(row.get("regeneration_id") or row.get("id") or "")
-                        rpc_res = self.worker_db.rpc(
-                            "review_recover_regeneration",
-                            {"p_operation_id": op_id},
-                        ).execute()
-                        rpc_data = (
-                            rpc_res.data[0]
-                            if isinstance(rpc_res.data, list) and rpc_res.data
-                            else rpc_res.data
-                        )
-                        if isinstance(rpc_data, dict):
-                            if rpc_data.get("recovered") is True or rpc_data.get("replayed") is True:
-                                recovered += 1
-
-                return recovered
-            except Exception as exc:
-                if not self.allow_table_fallback:
-                    logger.error("RPC review_recover_regeneration failed (fail-closed): %s", exc)
-                    raise ReviewDomainException(
-                        500,
-                        "ERR_RECOVERY_FAILED",
-                        f"Lỗi CSDL khi phục hồi trạng thái hết hạn: {exc}",
-                    ) from exc
+        return recovered
 
         # 2. Fallback Path: Direct table queries (Offline test mode only)
         # Note: In standard unit test environments where allow_table_fallback=False by default,

@@ -173,11 +173,17 @@ class ReviewService:
                     "Câu hỏi đang trong tiến trình sinh lại",
                 )
             if reserve_res == ReserveResult.SESSION_BUSY:
-                raise ReviewDomainException(
-                    409,
-                    "ERR_SESSION_BUSY_REGENERATING",
-                    "Phiên đề đang có một câu hỏi khác trong tiến trình sinh lại (Model A concurrency)",
+                logger.info("Session %s busy. Invoking lazy recovery...", session_id)
+                await self.repo.recover_stale_operations(session_id)
+                reserve_res = await self.repo.reserve_max_quota_and_start_regenerating(
+                    session_id, question_id, user_id, operation_id=operation_id
                 )
+                if reserve_res == ReserveResult.SESSION_BUSY:
+                    raise ReviewDomainException(
+                        409,
+                        "ERR_SESSION_BUSY_REGENERATING",
+                        "Phiên đề đang có một câu hỏi khác trong tiến trình sinh lại (Model A concurrency)",
+                    )
             if reserve_res == ReserveResult.QUESTION_NOT_CURRENT:
                 raise ReviewDomainException(
                     400,
@@ -357,9 +363,6 @@ class ReviewService:
 
         assert created_q is not None
 
-        # Phase 4: Invalidate shuffle if already finalized (Best-effort)
-        await self.repo.invalidate_shuffle_if_finalized(session_id)
-
         return RegeneratedQuestionResponse(
             question_id=str(created_q["id"]),
             regenerated_from_id=str(created_q.get("regenerated_from_id", question_id)),
@@ -412,8 +415,6 @@ class ReviewService:
             )
 
         res = await self.repo.atomic_revert_tx(session_id, question_id, user_id)
-        # Invalidate shuffle if session was finalized
-        await self.repo.invalidate_shuffle_if_finalized(session_id)
 
         return ReviewActionResponse(
             question_id=str(res["id"]),
@@ -427,10 +428,6 @@ class ReviewService:
     async def get_progress(
         self, session_id: str, user_id: Optional[str] = None
     ) -> ReviewProgressResponse:
-        """Progress retrieval with automatic stale recovery and multi-version calculations."""
-        # F06: Automatically recover any question stuck in regenerating > 3 mins for this session
-        if user_id:
-            await self.repo.recover_stale_questions(session_id=session_id, actor_user_id=user_id)
-        # Read-only calculation
+        """Progress retrieval (purely read-only via Owner JWT, no recovery mutations)."""
         data = await self.repo.get_review_progress_data(session_id)
         return ReviewProgressResponse(**data)
