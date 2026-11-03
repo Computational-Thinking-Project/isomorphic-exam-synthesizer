@@ -246,7 +246,9 @@ class MockRpcQueryBuilder:
                 session_id = ""
                 matched_vq = None
                 for vq in self.db_state.get("version_questions", []):
-                    if str(vq.get("regeneration_id", "")) == str_op_id and vq.get("is_current", True):
+                    if str(vq.get("regeneration_id", "")) == str_op_id and vq.get(
+                        "is_current", True
+                    ):
                         matched_vq = vq
                         for ev in self.db_state.get("exam_versions", []):
                             if str(ev.get("id")) == str(vq.get("version_id")):
@@ -303,7 +305,11 @@ class MockRpcQueryBuilder:
                     )
 
                 s_row = next(
-                    (s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == session_id),
+                    (
+                        s
+                        for s in self.db_state.get("exam_sessions", [])
+                        if str(s.get("id")) == session_id
+                    ),
                     None,
                 )
                 if not s_row:
@@ -468,28 +474,58 @@ class MockRpcQueryBuilder:
                 qid = str(self.params.get("p_question_id", ""))
                 opid = str(self.params.get("p_operation_id", ""))
 
-                s_row = next((s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == sid), None)
+                s_row = next(
+                    (s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == sid),
+                    None,
+                )
                 if not s_row:
-                    return MockExecutionResult([{"success": False, "rejection_reason": "SESSION_NOT_FOUND"}])
+                    return MockExecutionResult(
+                        [{"success": False, "rejection_reason": "SESSION_NOT_FOUND"}]
+                    )
                 if s_row.get("status") in ("approved", "exported"):
-                    return MockExecutionResult([{"success": False, "rejection_reason": "SESSION_LOCKED"}])
+                    return MockExecutionResult(
+                        [{"success": False, "rejection_reason": "SESSION_LOCKED"}]
+                    )
                 if s_row.get("status") == "generating":
-                    return MockExecutionResult([{"success": False, "rejection_reason": "SESSION_BUSY"}])
+                    return MockExecutionResult(
+                        [{"success": False, "rejection_reason": "SESSION_BUSY"}]
+                    )
                 curr_calls = int(s_row.get("gemini_review_calls", 0) or 0)
                 if curr_calls >= 30:
-                    return MockExecutionResult([{"success": False, "rejection_reason": "QUOTA_EXHAUSTED"}])
+                    return MockExecutionResult(
+                        [{"success": False, "rejection_reason": "QUOTA_EXHAUSTED"}]
+                    )
 
                 for vq in self.db_state.get("version_questions", []):
-                    if vq.get("status") == "regenerating" and vq.get("is_current", True) and str(vq.get("id")) != qid:
-                        return MockExecutionResult([{"success": False, "rejection_reason": "SESSION_BUSY"}])
+                    if (
+                        vq.get("status") == "regenerating"
+                        and vq.get("is_current", True)
+                        and str(vq.get("id")) != qid
+                    ):
+                        return MockExecutionResult(
+                            [{"success": False, "rejection_reason": "SESSION_BUSY"}]
+                        )
 
-                target_vq = next((vq for vq in self.db_state.get("version_questions", []) if str(vq.get("id")) == qid), None)
+                target_vq = next(
+                    (
+                        vq
+                        for vq in self.db_state.get("version_questions", [])
+                        if str(vq.get("id")) == qid
+                    ),
+                    None,
+                )
                 if not target_vq:
-                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_FOUND"}])
+                    return MockExecutionResult(
+                        [{"success": False, "rejection_reason": "QUESTION_NOT_FOUND"}]
+                    )
                 if not target_vq.get("is_current", True):
-                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_CURRENT"}])
+                    return MockExecutionResult(
+                        [{"success": False, "rejection_reason": "QUESTION_NOT_CURRENT"}]
+                    )
                 if target_vq.get("status") == "regenerating":
-                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_BUSY"}])
+                    return MockExecutionResult(
+                        [{"success": False, "rejection_reason": "QUESTION_BUSY"}]
+                    )
 
                 target_vq["status"] = "regenerating"
                 target_vq["regeneration_id"] = opid
@@ -497,18 +533,20 @@ class MockRpcQueryBuilder:
                 s_row["updated_at"] = datetime.now(timezone.utc).isoformat()
 
                 exp_time = (datetime.now(timezone.utc) + timedelta(seconds=180)).isoformat()
-                return MockExecutionResult([
-                    {
-                        "success": True,
-                        "session_id": sid,
-                        "question_id": qid,
-                        "operation_id": opid,
-                        "status": "regenerating",
-                        "operation_status": "active",
-                        "expires_at": exp_time,
-                        "max_attempts": 4,
-                    }
-                ])
+                return MockExecutionResult(
+                    [
+                        {
+                            "success": True,
+                            "session_id": sid,
+                            "question_id": qid,
+                            "operation_id": opid,
+                            "status": "regenerating",
+                            "operation_status": "active",
+                            "expires_at": exp_time,
+                            "max_attempts": 4,
+                        }
+                    ]
+                )
 
             if self.fn_name == "review_complete_regeneration":
                 opid = str(self.params.get("p_operation_id", ""))
@@ -517,22 +555,39 @@ class MockRpcQueryBuilder:
 
                 # Idempotency check: see if a replacement was already committed with this operation_id
                 existing = next(
-                    (vq for vq in self.db_state.get("version_questions", [])
-                     if str(vq.get("regeneration_id")) == opid and vq.get("status") not in ("rejected", "regenerating")),
-                    None
+                    (
+                        vq
+                        for vq in self.db_state.get("version_questions", [])
+                        if str(vq.get("regeneration_id")) == opid
+                        and vq.get("status") not in ("rejected", "regenerating")
+                    ),
+                    None,
                 )
                 if existing:
-                    return MockExecutionResult([{"success": True, "replayed": True, "question_id": existing.get("id")}])
+                    return MockExecutionResult(
+                        [{"success": True, "replayed": True, "question_id": existing.get("id")}]
+                    )
 
                 # Find active regenerating question bound to this operation (or fallback to active regenerating question for legacy test fixtures)
                 old_vq = next(
-                    (vq for vq in self.db_state.get("version_questions", [])
-                     if (str(vq.get("regeneration_id")) == opid or (vq.get("regeneration_id") is None and vq.get("status") == "regenerating"))
-                     and vq.get("status") == "regenerating"),
-                    None
+                    (
+                        vq
+                        for vq in self.db_state.get("version_questions", [])
+                        if (
+                            str(vq.get("regeneration_id")) == opid
+                            or (
+                                vq.get("regeneration_id") is None
+                                and vq.get("status") == "regenerating"
+                            )
+                        )
+                        and vq.get("status") == "regenerating"
+                    ),
+                    None,
                 )
                 if not old_vq:
-                    return MockExecutionResult([{"success": False, "rejection_reason": "OPERATION_NOT_FOUND"}])
+                    return MockExecutionResult(
+                        [{"success": False, "rejection_reason": "OPERATION_NOT_FOUND"}]
+                    )
 
                 # Resolve session and user_id from session context
                 session_id = ""
@@ -540,7 +595,14 @@ class MockRpcQueryBuilder:
                     if str(ev.get("id")) == str(old_vq.get("version_id")):
                         session_id = str(ev.get("session_id", ""))
                         break
-                s_row = next((s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == session_id), None)
+                s_row = next(
+                    (
+                        s
+                        for s in self.db_state.get("exam_sessions", [])
+                        if str(s.get("id")) == session_id
+                    ),
+                    None,
+                )
                 uid = str(s_row.get("user_id", "mock-user")) if s_row else "mock-user"
 
                 # 1. Deactivate old candidate
@@ -548,13 +610,15 @@ class MockRpcQueryBuilder:
                 old_vq["status"] = "rejected"
                 old_vq["regeneration_id"] = None
                 old_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
-                self.call_log.append({
-                    "op": "update",
-                    "table": "version_questions",
-                    "payload": {"is_current": False, "status": "rejected"},
-                    "filters": [("id", "eq", old_vq.get("id"))],
-                    "count": 1,
-                })
+                self.call_log.append(
+                    {
+                        "op": "update",
+                        "table": "version_questions",
+                        "payload": {"is_current": False, "status": "rejected"},
+                        "filters": [("id", "eq", old_vq.get("id"))],
+                        "count": 1,
+                    }
+                )
 
                 # 2. Insert new candidate with fresh canonical snapshot
                 new_id = str(uuid4())
@@ -569,7 +633,9 @@ class MockRpcQueryBuilder:
                     "options": list(cand.get("options", [])),
                     "correct_key": str(cand.get("correct_key", "A")).strip().upper(),
                     "solution_md": solution_val,
-                    "canonical_question_no": old_vq.get("canonical_question_no", old_vq.get("question_no", 1)),
+                    "canonical_question_no": old_vq.get(
+                        "canonical_question_no", old_vq.get("question_no", 1)
+                    ),
                     "canonical_options": list(cand.get("options", [])),
                     "canonical_correct_key": str(cand.get("correct_key", "A")).strip().upper(),
                     "canonical_solution_md": solution_val,
@@ -583,11 +649,13 @@ class MockRpcQueryBuilder:
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
                 self.db_state.setdefault("version_questions", []).append(new_q)
-                self.call_log.append({
-                    "op": "insert",
-                    "table": "version_questions",
-                    "payload": dict(new_q),
-                })
+                self.call_log.append(
+                    {
+                        "op": "insert",
+                        "table": "version_questions",
+                        "payload": dict(new_q),
+                    }
+                )
 
                 # 3. Session-wide reshuffle invalidation
                 self.db_state["answer_keys"] = []
@@ -613,23 +681,27 @@ class MockRpcQueryBuilder:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
                 self.db_state.setdefault("review_logs", []).append(audit_entry)
-                self.call_log.append({
-                    "op": "insert",
-                    "table": "review_logs",
-                    "payload": dict(audit_entry),
-                })
-
-                return MockExecutionResult([
+                self.call_log.append(
                     {
-                        "success": True,
-                        "replayed": False,
-                        "question_id": new_id,
-                        "previous_question_id": old_vq.get("id"),
-                        "operation_id": opid,
-                        "session_id": session_id,
-                        "status": "pending_review",
+                        "op": "insert",
+                        "table": "review_logs",
+                        "payload": dict(audit_entry),
                     }
-                ])
+                )
+
+                return MockExecutionResult(
+                    [
+                        {
+                            "success": True,
+                            "replayed": False,
+                            "question_id": new_id,
+                            "previous_question_id": old_vq.get("id"),
+                            "operation_id": opid,
+                            "session_id": session_id,
+                            "status": "pending_review",
+                        }
+                    ]
+                )
 
             if self.fn_name == "review_fail_regeneration":
                 opid = str(self.params.get("p_operation_id", ""))
@@ -637,40 +709,66 @@ class MockRpcQueryBuilder:
 
                 # If TX2 already committed (replacement exists), rollback is aborted/replayed
                 committed_new = next(
-                    (vq for vq in self.db_state.get("version_questions", [])
-                     if str(vq.get("regeneration_id")) == opid and vq.get("status") not in ("rejected", "regenerating")),
-                    None
+                    (
+                        vq
+                        for vq in self.db_state.get("version_questions", [])
+                        if str(vq.get("regeneration_id")) == opid
+                        and vq.get("status") not in ("rejected", "regenerating")
+                    ),
+                    None,
                 )
                 if committed_new:
-                    return MockExecutionResult([{"success": False, "replayed": True, "operation_id": opid}])
+                    return MockExecutionResult(
+                        [{"success": False, "replayed": True, "operation_id": opid}]
+                    )
 
                 old_vq = next(
-                    (vq for vq in self.db_state.get("version_questions", [])
-                     if (str(vq.get("regeneration_id")) == opid or (vq.get("regeneration_id") is None and vq.get("status") == "regenerating"))
-                     and vq.get("status") == "regenerating"),
-                    None
+                    (
+                        vq
+                        for vq in self.db_state.get("version_questions", [])
+                        if (
+                            str(vq.get("regeneration_id")) == opid
+                            or (
+                                vq.get("regeneration_id") is None
+                                and vq.get("status") == "regenerating"
+                            )
+                        )
+                        and vq.get("status") == "regenerating"
+                    ),
+                    None,
                 )
                 if not old_vq:
-                    return MockExecutionResult([{"success": False, "replayed": True, "operation_id": opid}])
+                    return MockExecutionResult(
+                        [{"success": False, "replayed": True, "operation_id": opid}]
+                    )
 
                 session_id = ""
                 for ev in self.db_state.get("exam_versions", []):
                     if str(ev.get("id")) == str(old_vq.get("version_id")):
                         session_id = str(ev.get("session_id", ""))
                         break
-                s_row = next((s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == session_id), None)
+                s_row = next(
+                    (
+                        s
+                        for s in self.db_state.get("exam_sessions", [])
+                        if str(s.get("id")) == session_id
+                    ),
+                    None,
+                )
                 uid = str(s_row.get("user_id", "mock-user")) if s_row else "mock-user"
 
                 old_vq["status"] = "pending_review"
                 old_vq["regeneration_id"] = None
                 old_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
-                self.call_log.append({
-                    "op": "update",
-                    "table": "version_questions",
-                    "payload": {"status": "pending_review", "regeneration_id": None},
-                    "filters": [("id", "eq", old_vq.get("id"))],
-                    "count": 1,
-                })
+                self.call_log.append(
+                    {
+                        "op": "update",
+                        "table": "version_questions",
+                        "payload": {"status": "pending_review", "regeneration_id": None},
+                        "filters": [("id", "eq", old_vq.get("id"))],
+                        "count": 1,
+                    }
+                )
 
                 audit_entry = {
                     "session_id": session_id,
@@ -682,38 +780,67 @@ class MockRpcQueryBuilder:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
                 self.db_state.setdefault("review_logs", []).append(audit_entry)
-                self.call_log.append({
-                    "op": "insert",
-                    "table": "review_logs",
-                    "payload": dict(audit_entry),
-                })
-                return MockExecutionResult([{"success": True, "replayed": False, "operation_status": "failed", "status": "pending_review"}])
+                self.call_log.append(
+                    {
+                        "op": "insert",
+                        "table": "review_logs",
+                        "payload": dict(audit_entry),
+                    }
+                )
+                return MockExecutionResult(
+                    [
+                        {
+                            "success": True,
+                            "replayed": False,
+                            "operation_status": "failed",
+                            "status": "pending_review",
+                        }
+                    ]
+                )
 
             if self.fn_name == "review_accept_question":
                 sid = str(self.params.get("p_session_id", ""))
                 qid = str(self.params.get("p_question_id", ""))
                 _ = self.params.get("p_action_id")
 
-                s_row = next((s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == sid), None)
+                s_row = next(
+                    (s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == sid),
+                    None,
+                )
                 uid = str(s_row.get("user_id", "mock-user")) if s_row else "mock-user"
 
-                target_vq = next((vq for vq in self.db_state.get("version_questions", []) if str(vq.get("id")) == qid), None)
+                target_vq = next(
+                    (
+                        vq
+                        for vq in self.db_state.get("version_questions", [])
+                        if str(vq.get("id")) == qid
+                    ),
+                    None,
+                )
                 if not target_vq:
-                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_FOUND"}])
+                    return MockExecutionResult(
+                        [{"success": False, "rejection_reason": "QUESTION_NOT_FOUND"}]
+                    )
                 if not target_vq.get("is_current", True):
-                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_CURRENT"}])
+                    return MockExecutionResult(
+                        [{"success": False, "rejection_reason": "QUESTION_NOT_CURRENT"}]
+                    )
                 if target_vq.get("status") == "regenerating":
-                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_BUSY"}])
+                    return MockExecutionResult(
+                        [{"success": False, "rejection_reason": "QUESTION_BUSY"}]
+                    )
 
                 target_vq["status"] = "approved"
                 target_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
-                self.call_log.append({
-                    "op": "update",
-                    "table": "version_questions",
-                    "payload": {"status": "approved"},
-                    "filters": [("id", "eq", qid)],
-                    "count": 1,
-                })
+                self.call_log.append(
+                    {
+                        "op": "update",
+                        "table": "version_questions",
+                        "payload": {"status": "approved"},
+                        "filters": [("id", "eq", qid)],
+                        "count": 1,
+                    }
+                )
 
                 audit_entry = {
                     "session_id": sid,
@@ -724,46 +851,92 @@ class MockRpcQueryBuilder:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
                 self.db_state.setdefault("review_logs", []).append(audit_entry)
-                self.call_log.append({
-                    "op": "insert",
-                    "table": "review_logs",
-                    "payload": dict(audit_entry),
-                })
-                return MockExecutionResult([{"success": True, "question_status": "approved", "status": "approved"}])
+                self.call_log.append(
+                    {
+                        "op": "insert",
+                        "table": "review_logs",
+                        "payload": dict(audit_entry),
+                    }
+                )
+                return MockExecutionResult(
+                    [{"success": True, "question_status": "approved", "status": "approved"}]
+                )
 
             if self.fn_name == "review_revert_question":
                 sid = str(self.params.get("p_session_id", ""))
                 qid = str(self.params.get("p_question_id", ""))
                 _ = self.params.get("p_action_id")
 
-                s_row = next((s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == sid), None)
+                s_row = next(
+                    (s for s in self.db_state.get("exam_sessions", []) if str(s.get("id")) == sid),
+                    None,
+                )
                 uid = str(s_row.get("user_id", "mock-user")) if s_row else "mock-user"
 
-                target_vq = next((vq for vq in self.db_state.get("version_questions", []) if str(vq.get("id")) == qid), None)
+                target_vq = next(
+                    (
+                        vq
+                        for vq in self.db_state.get("version_questions", [])
+                        if str(vq.get("id")) == qid
+                    ),
+                    None,
+                )
                 if not target_vq:
-                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_FOUND"}])
+                    return MockExecutionResult(
+                        [{"success": False, "rejection_reason": "QUESTION_NOT_FOUND"}]
+                    )
                 if not target_vq.get("is_current", True):
-                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_CURRENT"}])
+                    return MockExecutionResult(
+                        [{"success": False, "rejection_reason": "QUESTION_NOT_CURRENT"}]
+                    )
                 if target_vq.get("status") == "regenerating":
-                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_BUSY"}])
-                if target_vq.get("regenerated_from_id") is None and not target_vq.get("is_reverted"):
-                    return MockExecutionResult([{"success": False, "rejection_reason": "QUESTION_NOT_REGENERATED"}])
+                    return MockExecutionResult(
+                        [{"success": False, "rejection_reason": "QUESTION_BUSY"}]
+                    )
+                if target_vq.get("regenerated_from_id") is None and not target_vq.get(
+                    "is_reverted"
+                ):
+                    return MockExecutionResult(
+                        [{"success": False, "rejection_reason": "QUESTION_NOT_REGENERATED"}]
+                    )
 
                 if target_vq.get("is_reverted"):
-                    return MockExecutionResult([{"success": True, "replayed": True, "question_id": qid, "question_status": "approved", "status": "approved"}])
+                    return MockExecutionResult(
+                        [
+                            {
+                                "success": True,
+                                "replayed": True,
+                                "question_id": qid,
+                                "question_status": "approved",
+                                "status": "approved",
+                            }
+                        ]
+                    )
 
                 src_id = str(target_vq.get("source_question_id", ""))
-                src = next((sq for sq in self.db_state.get("source_questions", []) if str(sq.get("id")) == src_id), None) or {}
+                src = (
+                    next(
+                        (
+                            sq
+                            for sq in self.db_state.get("source_questions", [])
+                            if str(sq.get("id")) == src_id
+                        ),
+                        None,
+                    )
+                    or {}
+                )
 
                 target_vq["is_current"] = False
                 target_vq["updated_at"] = datetime.now(timezone.utc).isoformat()
-                self.call_log.append({
-                    "op": "update",
-                    "table": "version_questions",
-                    "payload": {"is_current": False},
-                    "filters": [("id", "eq", qid)],
-                    "count": 1,
-                })
+                self.call_log.append(
+                    {
+                        "op": "update",
+                        "table": "version_questions",
+                        "payload": {"is_current": False},
+                        "filters": [("id", "eq", qid)],
+                        "count": 1,
+                    }
+                )
 
                 new_id = str(uuid4())
                 reverted_q = {
@@ -787,11 +960,13 @@ class MockRpcQueryBuilder:
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
                 self.db_state.setdefault("version_questions", []).append(reverted_q)
-                self.call_log.append({
-                    "op": "insert",
-                    "table": "version_questions",
-                    "payload": dict(reverted_q),
-                })
+                self.call_log.append(
+                    {
+                        "op": "insert",
+                        "table": "version_questions",
+                        "payload": dict(reverted_q),
+                    }
+                )
 
                 self.db_state["answer_keys"] = []
                 for ev in self.db_state.get("exam_versions", []):
@@ -813,17 +988,30 @@ class MockRpcQueryBuilder:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                 }
                 self.db_state.setdefault("review_logs", []).append(audit_entry)
-                self.call_log.append({
-                    "op": "insert",
-                    "table": "review_logs",
-                    "payload": dict(audit_entry),
-                })
-                return MockExecutionResult([{"success": True, "replayed": False, "question_id": new_id, "question_status": "approved", "status": "approved"}])
+                self.call_log.append(
+                    {
+                        "op": "insert",
+                        "table": "review_logs",
+                        "payload": dict(audit_entry),
+                    }
+                )
+                return MockExecutionResult(
+                    [
+                        {
+                            "success": True,
+                            "replayed": False,
+                            "question_id": new_id,
+                            "question_status": "approved",
+                            "status": "approved",
+                        }
+                    ]
+                )
 
             if self.fn_name == "review_get_progress":
                 sid = str(self.params.get("p_session_id", ""))
                 vqs = [
-                    vq for vq in self.db_state.get("version_questions", [])
+                    vq
+                    for vq in self.db_state.get("version_questions", [])
                     if vq.get("is_current", True)
                 ]
                 approved_c = sum(1 for vq in vqs if vq.get("status") == "approved")
@@ -831,20 +1019,24 @@ class MockRpcQueryBuilder:
                 total_c = len(vqs)
                 expected_c = total_c if total_c > 0 else 1
                 ready_val = bool(expected_c > 0 and approved_c == expected_c and regen_c == 0)
-                return MockExecutionResult([{
-                    "session_id": sid,
-                    "session_status": "generated",
-                    "replayed": False,
-                    "progress": {
-                        "expected_slots": expected_c,
-                        "current_slots": total_c,
-                        "approved_slots": approved_c,
-                        "regenerating_slots": regen_c,
-                        "missing_slots": max(0, expected_c - total_c),
-                        "duplicate_slots": max(0, total_c - expected_c),
-                        "ready": ready_val,
-                    }
-                }])
+                return MockExecutionResult(
+                    [
+                        {
+                            "session_id": sid,
+                            "session_status": "generated",
+                            "replayed": False,
+                            "progress": {
+                                "expected_slots": expected_c,
+                                "current_slots": total_c,
+                                "approved_slots": approved_c,
+                                "regenerating_slots": regen_c,
+                                "missing_slots": max(0, expected_c - total_c),
+                                "duplicate_slots": max(0, total_c - expected_c),
+                                "ready": ready_val,
+                            },
+                        }
+                    ]
+                )
 
             if self.fn_name == "review_recover_session":
                 sid = str(self.params.get("p_session_id", ""))
@@ -868,15 +1060,21 @@ class MockRpcQueryBuilder:
                                 if str(vq.get("id")) == qid and vq.get("status") == "regenerating":
                                     vq["status"] = "pending_review"
                                     vq["regeneration_id"] = None
-                            recovered_items.append({
-                                "operation_id": str(op.get("operation_id")),
-                                "question_id": qid,
-                                "operation_status": "recovered",
-                                "recovered": True,
-                                "replayed": False,
-                                "api_calls_used": int(op.get("api_calls_used", 0)),
-                                "progress": {"expected_slots": 1, "approved_slots": 0, "ready": False},
-                            })
+                            recovered_items.append(
+                                {
+                                    "operation_id": str(op.get("operation_id")),
+                                    "question_id": qid,
+                                    "operation_status": "recovered",
+                                    "recovered": True,
+                                    "replayed": False,
+                                    "api_calls_used": int(op.get("api_calls_used", 0)),
+                                    "progress": {
+                                        "expected_slots": 1,
+                                        "approved_slots": 0,
+                                        "ready": False,
+                                    },
+                                }
+                            )
                             break
                 if not recovered_items:
                     for vq in self.db_state.get("version_questions", []):
@@ -885,7 +1083,9 @@ class MockRpcQueryBuilder:
                             is_stale = False
                             if upd_str:
                                 try:
-                                    upd_dt = datetime.fromisoformat(str(upd_str).replace("Z", "+00:00"))
+                                    upd_dt = datetime.fromisoformat(
+                                        str(upd_str).replace("Z", "+00:00")
+                                    )
                                     if (now_dt - upd_dt).total_seconds() >= 180:
                                         is_stale = True
                                 except Exception:
@@ -895,22 +1095,32 @@ class MockRpcQueryBuilder:
                             if is_stale:
                                 vq["status"] = "pending_review"
                                 vq["regeneration_id"] = None
-                                recovered_items.append({
-                                    "operation_id": str(uuid4()),
-                                    "question_id": str(vq.get("id")),
-                                    "operation_status": "recovered",
-                                    "recovered": True,
-                                    "replayed": False,
-                                    "api_calls_used": 0,
-                                    "progress": {"expected_slots": 1, "approved_slots": 0, "ready": False},
-                                })
+                                recovered_items.append(
+                                    {
+                                        "operation_id": str(uuid4()),
+                                        "question_id": str(vq.get("id")),
+                                        "operation_status": "recovered",
+                                        "recovered": True,
+                                        "replayed": False,
+                                        "api_calls_used": 0,
+                                        "progress": {
+                                            "expected_slots": 1,
+                                            "approved_slots": 0,
+                                            "ready": False,
+                                        },
+                                    }
+                                )
                                 break
-                return MockExecutionResult([{
-                    "session_id": sid,
-                    "session_status": "generated",
-                    "recovered_count": len(recovered_items),
-                    "recoveries": recovered_items,
-                }])
+                return MockExecutionResult(
+                    [
+                        {
+                            "session_id": sid,
+                            "session_status": "generated",
+                            "recovered_count": len(recovered_items),
+                            "recoveries": recovered_items,
+                        }
+                    ]
+                )
 
             if self.fn_name == "review_recover_regeneration":
                 opid = str(self.params.get("p_operation_id", ""))
@@ -920,9 +1130,13 @@ class MockRpcQueryBuilder:
                         op["status"] = "recovered"
 
                 old_vq = next(
-                    (vq for vq in self.db_state.get("version_questions", [])
-                     if (str(vq.get("regeneration_id")) == opid or str(vq.get("id")) == opid) and vq.get("status") == "regenerating"),
-                    None
+                    (
+                        vq
+                        for vq in self.db_state.get("version_questions", [])
+                        if (str(vq.get("regeneration_id")) == opid or str(vq.get("id")) == opid)
+                        and vq.get("status") == "regenerating"
+                    ),
+                    None,
                 )
                 if old_vq:
                     old_vq["status"] = "pending_review"
@@ -940,7 +1154,8 @@ class MockRpcQueryBuilder:
                             break
 
                     log_entry = {
-                        "session_id": old_vq.get("exam_versions", {}).get("session_id") or (self.db_state.get("exam_sessions", [{}])[0].get("id", "")),
+                        "session_id": old_vq.get("exam_versions", {}).get("session_id")
+                        or (self.db_state.get("exam_sessions", [{}])[0].get("id", "")),
                         "version_question_id": old_vq.get("id"),
                         "user_id": audit_user_id,
                         "action_type": "REJECT_FAILED",
@@ -948,19 +1163,34 @@ class MockRpcQueryBuilder:
                         "created_at": datetime.now(timezone.utc).isoformat(),
                     }
                     self.db_state.setdefault("review_logs", []).append(log_entry)
-                    self.call_log.append({
-                        "op": "insert",
-                        "table": "review_logs",
-                        "payload": dict(log_entry),
-                    })
-                    return MockExecutionResult([{"recovered": True, "replayed": False, "operation_status": "recovered", "question_id": old_vq.get("id")}])
+                    self.call_log.append(
+                        {
+                            "op": "insert",
+                            "table": "review_logs",
+                            "payload": dict(log_entry),
+                        }
+                    )
+                    return MockExecutionResult(
+                        [
+                            {
+                                "recovered": True,
+                                "replayed": False,
+                                "operation_status": "recovered",
+                                "question_id": old_vq.get("id"),
+                            }
+                        ]
+                    )
 
                 # Check if operation was already settled (idempotent replay)
                 for op in self.db_state.get("review_operations", []):
                     if str(op.get("operation_id")) == opid and op.get("status") == "recovered":
-                        return MockExecutionResult([{"recovered": True, "replayed": True, "operation_status": "recovered"}])
+                        return MockExecutionResult(
+                            [{"recovered": True, "replayed": True, "operation_status": "recovered"}]
+                        )
 
-                return MockExecutionResult([{"recovered": False, "replayed": False, "operation_status": "none"}])
+                return MockExecutionResult(
+                    [{"recovered": False, "replayed": False, "operation_status": "none"}]
+                )
             if self.fn_name == "review_recover_stale":
                 sid = str(self.params.get("p_session_id", ""))
                 uid = str(self.params.get("p_caller_user_id", ""))
@@ -2263,12 +2493,14 @@ async def test_f07_concurrent_two_ops_at_26_no_oversubscribe():
     op_b = uuid4()
     shared_state["version_questions"][0]["regeneration_id"] = str(op_a)
     shared_state["version_questions"][0]["status"] = "regenerating"
-    shared_state["version_questions"].append({
-        **shared_state["version_questions"][0],
-        "id": "vq-002",
-        "regeneration_id": str(op_b),
-        "status": "regenerating",
-    })
+    shared_state["version_questions"].append(
+        {
+            **shared_state["version_questions"][0],
+            "id": "vq-002",
+            "regeneration_id": str(op_b),
+            "status": "regenerating",
+        }
+    )
     repo.register_operation(op_a, session_id)
     repo.register_operation(op_b, session_id)
 
@@ -2427,7 +2659,9 @@ async def test_f07_service_maps_all_permit_error_codes():
             await service.reject_question(session_id, q_id, user_id)
 
         assert exc_info.value.status_code == expected_status, f"Failed mapping for {err_code}"
-        assert exc_info.value.error_code == expected_domain_code, f"Failed error code for {err_code}"
+        assert exc_info.value.error_code == expected_domain_code, (
+            f"Failed error code for {err_code}"
+        )
 
 
 @pytest.mark.asyncio
@@ -2451,12 +2685,14 @@ async def test_f07_concurrent_barrier_at_29_only_one_granted():
     op_b = uuid4()
     shared_state["version_questions"][0]["regeneration_id"] = str(op_a)
     shared_state["version_questions"][0]["status"] = "regenerating"
-    shared_state["version_questions"].append({
-        **shared_state["version_questions"][0],
-        "id": "vq-002",
-        "regeneration_id": str(op_b),
-        "status": "regenerating",
-    })
+    shared_state["version_questions"].append(
+        {
+            **shared_state["version_questions"][0],
+            "id": "vq-002",
+            "regeneration_id": str(op_b),
+            "status": "regenerating",
+        }
+    )
     repo_a.register_operation(op_a, session_id)
     repo_b.register_operation(op_b, session_id)
 
@@ -2518,12 +2754,14 @@ async def test_f07_rpc_concurrency_at_29_only_one_granted():
     op_b = uuid4()
     shared_state["version_questions"][0]["regeneration_id"] = str(op_a)
     shared_state["version_questions"][0]["status"] = "regenerating"
-    shared_state["version_questions"].append({
-        **shared_state["version_questions"][0],
-        "id": "vq-002",
-        "regeneration_id": str(op_b),
-        "status": "regenerating",
-    })
+    shared_state["version_questions"].append(
+        {
+            **shared_state["version_questions"][0],
+            "id": "vq-002",
+            "regeneration_id": str(op_b),
+            "status": "regenerating",
+        }
+    )
     repo_a.register_operation(op_a, session_id)
     repo_b.register_operation(op_b, session_id)
 
@@ -2793,4 +3031,57 @@ async def test_f07_rollback_clears_regeneration_id():
     assert state["version_questions"][0]["regeneration_id"] is None
 
 
+@pytest.mark.asyncio
+async def test_reject_question_custom_idempotency_key():
+    """TASK-301 / TASK-302: Service accepts valid UUID idempotency_key as operation_id."""
+    session_id = "00000000-0000-0000-0000-000000000120"
+    user_id = "teacher-120"
+    q_id = "vq-001"
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id)
+    db = MockSupabaseClient(state)
 
+    idempotency_uuid = "44444444-4444-4444-4444-444444444444"
+    captured_op_id = None
+
+    async def mock_ai_generator(**kwargs):
+        nonlocal captured_op_id
+        captured_op_id = kwargs.get("operation_id")
+        return {
+            "stem_latex": "New candidate question",
+            "options": ["A. Opt 1", "B. Opt 2", "C. Opt 3", "D. Opt 4"],
+            "correct_key": "C",
+            "solution_md": "New solution",
+            "validation_report": {"is_valid": True},
+            "api_calls_count": 1,
+        }
+
+    service = ReviewService(db=db, service_db=db, ai_generator=mock_ai_generator)
+    res = await service.reject_question(
+        session_id=session_id,
+        question_id=q_id,
+        user_id=user_id,
+        idempotency_key=idempotency_uuid,
+    )
+    assert res.status == "pending_review"
+    assert str(captured_op_id) == idempotency_uuid
+
+
+@pytest.mark.asyncio
+async def test_reject_question_invalid_idempotency_key_raises_400():
+    """TASK-301: Service raises HTTP 400 for malformed idempotency_key."""
+    session_id = "00000000-0000-0000-0000-000000000121"
+    user_id = "teacher-121"
+    q_id = "vq-001"
+    state = _setup_standard_session_state(session_id, user_id, question_id=q_id)
+    db = MockSupabaseClient(state)
+
+    service = ReviewService(db=db, service_db=db, ai_generator=AsyncMock())
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.reject_question(
+            session_id=session_id,
+            question_id=q_id,
+            user_id=user_id,
+            idempotency_key="malformed-not-a-uuid",
+        )
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.error_code == "ERR_INVALID_IDEMPOTENCY_KEY"

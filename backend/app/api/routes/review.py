@@ -10,7 +10,7 @@ Exposes:
 import logging
 from typing import Any, Callable, Optional
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Header, Request, status
 from supabase import Client
 
 from app.api.dependencies import assert_ownership, get_current_user, get_service_db, get_user_db
@@ -27,13 +27,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def get_ai_generator() -> Optional[Callable[..., Any]]:
+def get_ai_generator(request: Request) -> Optional[Callable[..., Any]]:
     """Dependency provider for AI variant regeneration adapter (TASK-304).
 
     Returns None if not configured in production, raising HTTP 503 rather than fabricating mock data.
     Tests can override this dependency with an explicit mock fixture.
     """
-    return None
+    ai_services = getattr(request.app.state, "ai_services", None)
+    if not ai_services or not getattr(
+        getattr(ai_services, "settings", None), "gemini_api_key", None
+    ):
+        return None
+    try:
+        from app.services.generation.targeted_service import TargetedRegenerator
+
+        return TargetedRegenerator(
+            service=ai_services.generation,
+            max_api_calls=4,
+            timeout_seconds=40.0,
+        )
+    except Exception as exc:
+        logger.warning("Could not initialize TargetedRegenerator: %s", exc)
+        return None
 
 
 @router.post(
@@ -69,6 +84,7 @@ async def accept_question_endpoint(
 async def reject_question_endpoint(
     session_id: str,
     version_question_id: str,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
     service_db: Client = Depends(get_service_db),
@@ -79,7 +95,9 @@ async def reject_question_endpoint(
     assert_ownership("version_questions", version_question_id, current_user.id, db=db)
 
     service = ReviewService(db=db, service_db=service_db, ai_generator=ai_generator)
-    return await service.reject_question(session_id, version_question_id, current_user.id)
+    return await service.reject_question(
+        session_id, version_question_id, current_user.id, idempotency_key=idempotency_key
+    )
 
 
 @router.post(

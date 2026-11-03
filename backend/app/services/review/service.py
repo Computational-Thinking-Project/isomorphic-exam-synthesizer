@@ -24,6 +24,7 @@ from app.models.schemas import (
     ReviewActionResponse,
     ReviewDomainException,
     ReviewProgressResponse,
+    RollbackErrorCode,
 )
 from app.services.review.repository import ReviewRepository
 
@@ -126,6 +127,7 @@ class ReviewService:
         session_id: str,
         question_id: str,
         user_id: str,
+        idempotency_key: Optional[str] = None,
     ) -> RegeneratedQuestionResponse:
         """Execute 1-to-1 question rejection with atomic quota reservation and AI generation."""
         await self.check_session_guards(session_id)
@@ -146,7 +148,15 @@ class ReviewService:
             )
 
         session_uuid = UUID(session_id)
-        operation_id = uuid4()
+        if idempotency_key:
+            try:
+                operation_id = UUID(str(idempotency_key))
+            except Exception:
+                raise ReviewDomainException(
+                    400, "ERR_INVALID_IDEMPOTENCY_KEY", "Idempotency-Key must be a valid UUID"
+                )
+        else:
+            operation_id = uuid4()
         regeneration_id = operation_id
         lock = session_lock_registry.get_lock(session_uuid)
 
@@ -213,6 +223,22 @@ class ReviewService:
                 ),
                 timeout=45.0,
             )
+        except asyncio.CancelledError:
+            logger.info(
+                "Client cancelled rejection request for op %s. Executing best-effort settlement.",
+                operation_id,
+            )
+            await asyncio.shield(
+                self.repo.emergency_rollback_tx(
+                    session_id=session_id,
+                    old_question_id=question_id,
+                    regeneration_id=regeneration_id,
+                    error_msg=RollbackErrorCode.CLIENT_CANCELLED.value,
+                    user_id=user_id,
+                    actual_calls_dispatched=0,
+                )
+            )
+            raise
         except Exception as exc:
             logger.error(
                 "AI Variant generation failed or timed out for question %s: %s", question_id, exc
@@ -234,7 +260,9 @@ class ReviewService:
 
             # F07: Track actual acknowledged permits / dispatched calls (default 1 for provider/timeout exception unless explicitly 0)
             default_calls = 1 if isinstance(exc, (asyncio.TimeoutError, TimeoutError)) else 0
-            dispatched = getattr(exc, "api_calls_count", getattr(exc, "dispatched_calls", default_calls))
+            dispatched = getattr(
+                exc, "api_calls_count", getattr(exc, "dispatched_calls", default_calls)
+            )
             # Immediate Emergency Rollback: Refund unused calls & Reset question status
             await self.repo.emergency_rollback_tx(
                 session_id=session_id,
@@ -270,10 +298,7 @@ class ReviewService:
                     "ERR_ATTEMPT_REPLAYED",
                     "Attempt ID đã được sử dụng hoặc bị trùng lặp",
                 ) from exc
-            if (
-                "DB_UNAVAILABLE" in exc_msg
-                or exc_code == "DB_UNAVAILABLE"
-            ):
+            if "DB_UNAVAILABLE" in exc_msg or exc_code == "DB_UNAVAILABLE":
                 raise ReviewDomainException(
                     503,
                     "ERR_AI_GATEWAY_PERMIT_FAILURE",

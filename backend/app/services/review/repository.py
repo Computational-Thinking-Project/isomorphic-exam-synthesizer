@@ -41,6 +41,7 @@ except ImportError:
         remaining_calls: Annotated[StrictInt, Field(ge=0, le=30)]
         replayed: StrictBool
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,22 +64,40 @@ def _map_rpc_exception(exc: Exception) -> ReviewDomainException:
     """Map PostgreSQL domain exception messages from Migration 006 RPCs to ReviewDomainException."""
     msg = str(exc)
     if "REVIEW_NOT_FOUND" in msg or "P0002" in msg:
-        return ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Không tìm thấy câu hỏi hoặc phiên thi")
+        return ReviewDomainException(
+            404, "ERR_QUESTION_NOT_FOUND", "Không tìm thấy câu hỏi hoặc phiên thi"
+        )
     if "REVIEW_BUSY" in msg:
-        return ReviewDomainException(409, "ERR_SESSION_BUSY_REGENERATING", "Phiên thi đang có thao tác tái sinh khác đang chạy (Model A)")
+        return ReviewDomainException(
+            409,
+            "ERR_SESSION_BUSY_REGENERATING",
+            "Phiên thi đang có thao tác tái sinh khác đang chạy (Model A)",
+        )
     if "REVIEW_STALE" in msg:
-        return ReviewDomainException(409, "ERR_QUESTION_NOT_CURRENT", "Câu hỏi hoặc phiên làm việc đã bị sửa đổi")
+        return ReviewDomainException(
+            409, "ERR_QUESTION_NOT_CURRENT", "Câu hỏi hoặc phiên làm việc đã bị sửa đổi"
+        )
     if "REVIEW_IDEMPOTENCY_CONFLICT" in msg:
-        return ReviewDomainException(409, "ERR_ATTEMPT_REPLAYED", "Xung đột idempotency: ID đã được gắn với thao tác khác")
+        return ReviewDomainException(
+            409, "ERR_ATTEMPT_REPLAYED", "Xung đột idempotency: ID đã được gắn với thao tác khác"
+        )
     if "REVIEW_LOCKED" in msg:
-        return ReviewDomainException(423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn")
+        return ReviewDomainException(
+            423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
+        )
     if "REVIEW_QUOTA_EXHAUSTED" in msg:
-        return ReviewDomainException(429, "ERR_REVIEW_QUOTA_EXHAUSTED", "Đã hết quota 30 lượt sinh lại của buổi review")
+        return ReviewDomainException(
+            429, "ERR_REVIEW_QUOTA_EXHAUSTED", "Đã hết quota 30 lượt sinh lại của buổi review"
+        )
     if "REVIEW_INVALID_PAYLOAD" in msg or "REVIEW_SOURCE_MISMATCH" in msg:
-        return ReviewDomainException(422, "ERR_INVALID_PAYLOAD", "Dữ liệu gửi lên không hợp lệ hoặc không khớp nguồn đề")
+        return ReviewDomainException(
+            422, "ERR_INVALID_PAYLOAD", "Dữ liệu gửi lên không hợp lệ hoặc không khớp nguồn đề"
+        )
     if "42501" in msg or "permission denied" in msg.lower():
         return ReviewDomainException(403, "ERR_FORBIDDEN", "Không có quyền thực hiện thao tác này")
-    return ReviewDomainException(500, "ERR_RPC_EXECUTION_FAILED", f"Lỗi CSDL khi thực thi RPC: {exc}")
+    return ReviewDomainException(
+        500, "ERR_RPC_EXECUTION_FAILED", f"Lỗi CSDL khi thực thi RPC: {exc}"
+    )
 
 
 class ReviewRepository:
@@ -177,7 +196,11 @@ class ReviewRepository:
                             attempt_id=attempt_id,
                         )
 
-                    if not (0 <= calls_used <= 30 and 0 <= remaining <= 30 and calls_used + remaining == 30):
+                    if not (
+                        0 <= calls_used <= 30
+                        and 0 <= remaining <= 30
+                        and calls_used + remaining == 30
+                    ):
                         logger.error(
                             "RPC review_acquire_attempt returned inconsistent quota arithmetic: used=%s, remaining=%s",
                             calls_used,
@@ -617,7 +640,11 @@ class ReviewRepository:
                     res_op = str(rpc_data.get("operation_id") or "")
                     res_qid = str(rpc_data.get("question_id") or "")
                     res_sid = str(rpc_data.get("session_id") or "")
-                    if res_op != op_uuid_str or res_qid != str(question_id) or res_sid != str(session_id):
+                    if (
+                        res_op != op_uuid_str
+                        or res_qid != str(question_id)
+                        or res_sid != str(session_id)
+                    ):
                         logger.error(
                             "RPC review_reserve_regeneration identity mismatch: op=%s (expected %s), qid=%s (expected %s), sid=%s (expected %s)",
                             res_op,
@@ -644,7 +671,9 @@ class ReviewRepository:
                             )
                     else:
                         try:
-                            exp_dt = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00"))
+                            exp_dt = datetime.fromisoformat(
+                                str(expires_at_raw).replace("Z", "+00:00")
+                            )
                             now_utc = datetime.now(timezone.utc)
                             if exp_dt <= now_utc:
                                 raise ValueError("expires_at lease is in the past")
@@ -818,9 +847,29 @@ class ReviewRepository:
         if not isinstance(warnings, list):
             warnings = []
 
-        math_verified = bool(val_rep.get("math_verified", False)) if isinstance(val_rep, dict) else False
+        math_verified = (
+            bool(val_rep.get("math_verified", False)) if isinstance(val_rep, dict) else False
+        )
 
         options = list(new_data.get("options") or [])
+        if len(options) != 4:
+            raise ReviewDomainException(
+                422, "ERR_INVALID_PAYLOAD", "Candidate variant must have exactly 4 options"
+            )
+        for opt in options:
+            if not (1 <= len(str(opt).strip()) <= 4000):
+                raise ReviewDomainException(
+                    422,
+                    "ERR_INVALID_PAYLOAD",
+                    "Option length must be between 1 and 4000 characters",
+                )
+        normalized_opts = {str(opt).strip().lower() for opt in options}
+        if len(normalized_opts) != 4:
+            raise ReviewDomainException(
+                422,
+                "ERR_INVALID_PAYLOAD",
+                "Options must be distinct after whitespace trimming and lowercasing",
+            )
         correct_key = str(new_data.get("correct_key", "A")).strip().upper()
 
         cand_payload = {
@@ -900,13 +949,21 @@ class ReviewRepository:
             except Exception as exc:
                 msg = str(exc)
                 if "REVIEW_INVALID_PAYLOAD" in msg:
-                    raise ReviewDomainException(422, "ERR_INVALID_PAYLOAD", f"Candidate payload invalid: {exc}") from exc
+                    raise ReviewDomainException(
+                        422, "ERR_INVALID_PAYLOAD", f"Candidate payload invalid: {exc}"
+                    ) from exc
                 if "REVIEW_IDEMPOTENCY_CONFLICT" in msg:
-                    raise ReviewDomainException(409, "ERR_ATTEMPT_REPLAYED", f"Idempotency conflict: {exc}") from exc
+                    raise ReviewDomainException(
+                        409, "ERR_ATTEMPT_REPLAYED", f"Idempotency conflict: {exc}"
+                    ) from exc
                 if "REVIEW_NOT_FOUND" in msg or "P0002" in msg:
-                    raise ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Operation or question not found") from exc
+                    raise ReviewDomainException(
+                        404, "ERR_QUESTION_NOT_FOUND", "Operation or question not found"
+                    ) from exc
                 if "42501" in msg or "permission denied" in msg.lower():
-                    raise ReviewDomainException(403, "ERR_FORBIDDEN", "Worker service_role permission required") from exc
+                    raise ReviewDomainException(
+                        403, "ERR_FORBIDDEN", "Worker service_role permission required"
+                    ) from exc
                 if not self.allow_table_fallback:
                     logger.error(
                         "RPC review_complete_regeneration failed (fail-closed): %s",
@@ -1052,7 +1109,9 @@ class ReviewRepository:
                     else rpc_res.data
                 )
                 if isinstance(rpc_data, dict):
-                    if rpc_data.get("operation_status") == "failed" and not rpc_data.get("replayed"):
+                    if rpc_data.get("operation_status") == "failed" and not rpc_data.get(
+                        "replayed"
+                    ):
                         return True
                     if rpc_data.get("replayed") is True:
                         return False
@@ -1146,15 +1205,23 @@ class ReviewRepository:
                 if isinstance(rpc_data, dict):
                     reason = rpc_data.get("rejection_reason")
                     if reason == "QUESTION_NOT_FOUND":
-                        raise ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Question not found")
+                        raise ReviewDomainException(
+                            404, "ERR_QUESTION_NOT_FOUND", "Question not found"
+                        )
                     if reason == "QUESTION_NOT_CURRENT":
-                        raise ReviewDomainException(400, "ERR_QUESTION_NOT_CURRENT", "Question is not active")
+                        raise ReviewDomainException(
+                            400, "ERR_QUESTION_NOT_CURRENT", "Question is not active"
+                        )
                     if reason == "QUESTION_BUSY":
-                        raise ReviewDomainException(409, "ERR_QUESTION_BUSY", "Question is currently regenerating")
+                        raise ReviewDomainException(
+                            409, "ERR_QUESTION_BUSY", "Question is currently regenerating"
+                        )
                     if reason == "SESSION_LOCKED":
                         raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked")
                     if reason == "SESSION_BUSY":
-                        raise ReviewDomainException(409, "ERR_SESSION_BUSY_GENERATING", "Session busy")
+                        raise ReviewDomainException(
+                            409, "ERR_SESSION_BUSY_GENERATING", "Session busy"
+                        )
                     if reason == "FORBIDDEN":
                         raise ReviewDomainException(403, "ERR_FORBIDDEN", "Forbidden")
 
@@ -1177,13 +1244,21 @@ class ReviewRepository:
             except Exception as exc:
                 msg = str(exc)
                 if "REVIEW_NOT_FOUND" in msg or "P0002" in msg:
-                    raise ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Question not found") from exc
+                    raise ReviewDomainException(
+                        404, "ERR_QUESTION_NOT_FOUND", "Question not found"
+                    ) from exc
                 if "REVIEW_STALE" in msg:
-                    raise ReviewDomainException(400, "ERR_QUESTION_NOT_CURRENT", "Question is not active") from exc
+                    raise ReviewDomainException(
+                        400, "ERR_QUESTION_NOT_CURRENT", "Question is not active"
+                    ) from exc
                 if "REVIEW_BUSY" in msg:
-                    raise ReviewDomainException(409, "ERR_QUESTION_BUSY", "Question is currently regenerating") from exc
+                    raise ReviewDomainException(
+                        409, "ERR_QUESTION_BUSY", "Question is currently regenerating"
+                    ) from exc
                 if "REVIEW_LOCKED" in msg:
-                    raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked") from exc
+                    raise ReviewDomainException(
+                        423, "ERR_SESSION_LOCKED", "Session locked"
+                    ) from exc
                 if "42501" in msg or "permission denied" in msg.lower():
                     raise ReviewDomainException(403, "ERR_FORBIDDEN", "Forbidden") from exc
                 if not self.allow_table_fallback:
@@ -1286,15 +1361,23 @@ class ReviewRepository:
                             "Cannot revert original question that has never been regenerated",
                         )
                     if reason == "QUESTION_NOT_CURRENT":
-                        raise ReviewDomainException(400, "ERR_QUESTION_NOT_CURRENT", "Question is not active")
+                        raise ReviewDomainException(
+                            400, "ERR_QUESTION_NOT_CURRENT", "Question is not active"
+                        )
                     if reason == "QUESTION_BUSY":
-                        raise ReviewDomainException(409, "ERR_QUESTION_BUSY", "Question is currently regenerating")
+                        raise ReviewDomainException(
+                            409, "ERR_QUESTION_BUSY", "Question is currently regenerating"
+                        )
                     if reason == "QUESTION_NOT_FOUND":
-                        raise ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Question not found")
+                        raise ReviewDomainException(
+                            404, "ERR_QUESTION_NOT_FOUND", "Question not found"
+                        )
                     if reason == "SESSION_LOCKED":
                         raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked")
                     if reason == "SESSION_BUSY":
-                        raise ReviewDomainException(409, "ERR_SESSION_BUSY_GENERATING", "Session busy")
+                        raise ReviewDomainException(
+                            409, "ERR_SESSION_BUSY_GENERATING", "Session busy"
+                        )
                     if reason == "FORBIDDEN":
                         raise ReviewDomainException(403, "ERR_FORBIDDEN", "Forbidden")
 
@@ -1323,15 +1406,27 @@ class ReviewRepository:
             except Exception as exc:
                 msg = str(exc)
                 if "REVIEW_NOT_FOUND" in msg or "P0002" in msg:
-                    raise ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Question not found") from exc
+                    raise ReviewDomainException(
+                        404, "ERR_QUESTION_NOT_FOUND", "Question not found"
+                    ) from exc
                 if "REVIEW_STALE" in msg:
-                    raise ReviewDomainException(400, "ERR_QUESTION_NOT_CURRENT", "Question is not active") from exc
+                    raise ReviewDomainException(
+                        400, "ERR_QUESTION_NOT_CURRENT", "Question is not active"
+                    ) from exc
                 if "REVIEW_BUSY" in msg:
-                    raise ReviewDomainException(409, "ERR_QUESTION_BUSY", "Question is currently regenerating") from exc
+                    raise ReviewDomainException(
+                        409, "ERR_QUESTION_BUSY", "Question is currently regenerating"
+                    ) from exc
                 if "REVIEW_SOURCE_MISMATCH" in msg:
-                    raise ReviewDomainException(400, "ERR_QUESTION_NOT_REGENERATED", "Cannot revert question: lineage mismatch") from exc
+                    raise ReviewDomainException(
+                        400,
+                        "ERR_QUESTION_NOT_REGENERATED",
+                        "Cannot revert question: lineage mismatch",
+                    ) from exc
                 if "REVIEW_LOCKED" in msg:
-                    raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session locked") from exc
+                    raise ReviewDomainException(
+                        423, "ERR_SESSION_LOCKED", "Session locked"
+                    ) from exc
                 if "42501" in msg or "permission denied" in msg.lower():
                     raise ReviewDomainException(403, "ERR_FORBIDDEN", "Forbidden") from exc
                 if not self.allow_table_fallback:
@@ -1511,14 +1606,18 @@ class ReviewRepository:
         # Primary Path: Stored procedure RPC review_get_progress (Owner JWT)
         if callable(getattr(self.db, "rpc", None)):
             try:
-                rpc_res = self.db.rpc("review_get_progress", {"p_session_id": str(session_id)}).execute()
+                rpc_res = self.db.rpc(
+                    "review_get_progress", {"p_session_id": str(session_id)}
+                ).execute()
                 rpc_data = (
                     rpc_res.data[0]
                     if isinstance(rpc_res.data, list) and rpc_res.data
                     else rpc_res.data
                 )
                 progress_dict: Optional[Dict[str, Any]] = None
-                rpc_dict: Optional[Dict[str, Any]] = rpc_data if isinstance(rpc_data, dict) else None
+                rpc_dict: Optional[Dict[str, Any]] = (
+                    rpc_data if isinstance(rpc_data, dict) else None
+                )
                 if rpc_dict is not None:
                     inner_prog = rpc_dict.get("progress")
                     if isinstance(inner_prog, dict):
@@ -1539,7 +1638,9 @@ class ReviewRepository:
                     missing = int(progress_dict.get("missing_slots", 0))
                     duplicate = int(progress_dict.get("duplicate_slots", 0))
                     ready = bool(progress_dict.get("ready", False))
-                    is_complete = bool(expected > 0 and current == expected and approved == expected)
+                    is_complete = bool(
+                        expected > 0 and current == expected and approved == expected
+                    )
                     can_finalize = bool(ready and session_status in ("generated", "reviewed"))
                     return {
                         "session_id": session_id,
@@ -1659,27 +1760,32 @@ class ReviewRepository:
           recoveries format, operation_status == 'recovered').
         """
         if self.worker_db is None:
-            raise ReviewDomainException(503, "ERR_DATABASE_UNAVAILABLE", "Worker client not configured")
+            raise ReviewDomainException(
+                503, "ERR_DATABASE_UNAVAILABLE", "Worker client not configured"
+            )
 
         str_sid = str(session_id)
         try:
-            res = (
-                self.worker_db.rpc("review_recover_session", {"p_session_id": str_sid})
-                .execute()
-            )
+            res = self.worker_db.rpc("review_recover_session", {"p_session_id": str_sid}).execute()
         except Exception as exc:
             err_msg = str(exc)
             if "42501" in err_msg or "REVIEW_WORKER_REQUIRED" in err_msg:
                 logger.error("Internal worker config error: missing service_role for recovery RPC")
-                raise ReviewDomainException(503, "ERR_DATABASE_UNAVAILABLE", "Internal worker configuration error")
+                raise ReviewDomainException(
+                    503, "ERR_DATABASE_UNAVAILABLE", "Internal worker configuration error"
+                )
             if "P0002" in err_msg or "REVIEW_NOT_FOUND" in err_msg:
                 raise ReviewDomainException(404, "ERR_NOT_FOUND", "Session not found")
             logger.error("RPC review_recover_session failed: %s", exc)
-            raise ReviewDomainException(500, "ERR_DATABASE_ERROR", f"Recovery RPC execution failed: {exc}")
+            raise ReviewDomainException(
+                500, "ERR_DATABASE_ERROR", f"Recovery RPC execution failed: {exc}"
+            )
 
         data = res.data[0] if isinstance(res.data, list) and res.data else res.data
         if not isinstance(data, dict):
-            raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Recovery response must be a JSON object")
+            raise ReviewDomainException(
+                500, "ERR_RECOVERY_MALFORMED", "Recovery response must be a JSON object"
+            )
 
         try:
             ret_sid = UUID(str(data.get("session_id", "")))
@@ -1687,33 +1793,53 @@ class ReviewRepository:
             if ret_sid != req_sid:
                 raise ValueError("Session ID mismatch")
         except Exception:
-            raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Invalid or mismatched session_id in recovery")
+            raise ReviewDomainException(
+                500, "ERR_RECOVERY_MALFORMED", "Invalid or mismatched session_id in recovery"
+            )
 
         count = data.get("recovered_count")
         if isinstance(count, bool) or not isinstance(count, int) or count not in (0, 1):
-            raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", f"Invalid recovered_count: {count}")
+            raise ReviewDomainException(
+                500, "ERR_RECOVERY_MALFORMED", f"Invalid recovered_count: {count}"
+            )
 
         recoveries = data.get("recoveries")
         if not isinstance(recoveries, list) or len(recoveries) != count:
-            raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", f"Recoveries length must match count ({count})")
+            raise ReviewDomainException(
+                500, "ERR_RECOVERY_MALFORMED", f"Recoveries length must match count ({count})"
+            )
 
         if count == 1:
             rec = recoveries[0]
             if not isinstance(rec, dict):
-                raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Recovery item must be a dictionary")
+                raise ReviewDomainException(
+                    500, "ERR_RECOVERY_MALFORMED", "Recovery item must be a dictionary"
+                )
             try:
                 UUID(str(rec.get("operation_id", "")))
                 if not rec.get("question_id"):
                     raise ValueError("Missing question_id")
             except Exception:
-                raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Invalid identifiers in recovery item")
+                raise ReviewDomainException(
+                    500, "ERR_RECOVERY_MALFORMED", "Invalid identifiers in recovery item"
+                )
             if rec.get("operation_status") != "recovered":
-                raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Recovery item operation_status must be 'recovered'")
+                raise ReviewDomainException(
+                    500,
+                    "ERR_RECOVERY_MALFORMED",
+                    "Recovery item operation_status must be 'recovered'",
+                )
             if rec.get("recovered") is not True or rec.get("replayed") is not False:
-                raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Fresh recovery item must have recovered=True and replayed=False")
+                raise ReviewDomainException(
+                    500,
+                    "ERR_RECOVERY_MALFORMED",
+                    "Fresh recovery item must have recovered=True and replayed=False",
+                )
             calls_used = rec.get("api_calls_used")
             if isinstance(calls_used, bool) or not isinstance(calls_used, int) or calls_used < 0:
-                raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", f"Invalid api_calls_used: {calls_used}")
+                raise ReviewDomainException(
+                    500, "ERR_RECOVERY_MALFORMED", f"Invalid api_calls_used: {calls_used}"
+                )
 
         return count
 
@@ -1761,7 +1887,11 @@ class ReviewRepository:
 
             if diff_sec >= STALE_REGENERATION_TIMEOUT_SECONDS:
                 qid = str(row.get("id"))
-                sid = session_id or (row.get("exam_versions", {}).get("session_id") if isinstance(row.get("exam_versions"), dict) else None)
+                sid = session_id or (
+                    row.get("exam_versions", {}).get("session_id")
+                    if isinstance(row.get("exam_versions"), dict)
+                    else None
+                )
                 if sid and callable(getattr(self.worker_db, "rpc", None)):
                     try:
                         return await self.recover_stale_operations(sid)

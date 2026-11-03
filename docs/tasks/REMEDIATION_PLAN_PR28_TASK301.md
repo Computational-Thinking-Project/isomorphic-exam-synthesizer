@@ -1,0 +1,758 @@
+# KẾ HOẠCH REMEDIATION TOÀN DIỆN CHO PR #28 (TASK-301) — REVIEW LIFECYCLE API
+**Phiên bản:** v1.7 — Production-Grade Implementation (Đồng Bộ Hóa Hợp Đồng Sau Trao Đổi Phối Hợp PR #36)  
+**Ngày cập nhật:** 03/11/2026  
+**Chịu trách nhiệm:** Senior Backend / PostgreSQL Engineer  
+**PR:** [#28](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28) (`feat/duy-task-301-review-lifecycle-api`)  
+**Tác giả PR:** Nguyễn Bá Duy (`johannguyen015`)  
+**Reviewer chính:** Hùng (`benalexx007` — Stage 3 Schema & RPC Owner)  
+**Reviewer bổ sung:** Đạt (`Thanhdat3010` — Stage 3 Targeted Regeneration Owner)  
+
+---
+
+## MỤC LỤC
+1. [A. Executive Summary](#a-executive-summary)
+2. [B. Baseline và Phạm Vi Đã Kiểm Tra](#b-baseline-và-phạm-vi-đã-kiểm-tra)
+3. [C. Finding Status Matrix (Tách Bạch Workstream & Trạng Thái Thực Tế)](#c-finding-status-matrix)
+4. [D. Phân Tích Nguyên Nhân Gốc (Root Cause Analysis Chi Tiết)](#d-phân-tích-nguyên-nhân-gốc-root-cause-analysis)
+5. [E. Dependency Contract Audit & Ranh Giới Handoff](#e-dependency-contract-audit)
+6. [F. Kế Hoạch Remediation Theo Workstreams Độc Lập](#f-kế-hoạch-remediation-theo-workstreams-độc-lập)
+7. [G. Test Matrix Toàn Diện (Boundary, Concurrency, Replay & Lost Response)](#g-test-matrix-toàn-diện)
+8. [H. File Change Map (Cập Nhật Toàn Bộ Call Sites)](#h-file-change-map)
+9. [I. Thứ Tự Triển Khai và Dependency Graph](#i-thứ-tự-triển-khai-và-dependency-graph)
+10. [J. Risk Register](#j-risk-register)
+11. [K. Final Definition of Done (15 Tiêu Chí Nghiệm Thu Khắt Khe)](#k-final-definition-of-done)
+
+---
+
+## A. EXECUTIVE SUMMARY
+
+### 1. Trạng thái PR tại HEAD đã audit
+- **PR:** [#28](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28) (`feat/duy-task-301-review-lifecycle-api`).
+- **HEAD Commit:** `b9ef112c08a8c7e8b44811627643b92d1390ab6d` (*"fix(review): remediate F06 stale recovery RPC, C01 nested progress, and F10 fail-closed validation"*).
+- **Base Commit đối chiếu:** `032fbf2e3f3de2c4a5757d2fc89a06d24eae06c3` trên nhánh `dev`.
+- **Merge-base:** `32d7644d0c2d0e6fc8c99234096ee9cc550fbea3`.
+
+### 2. Xác nhận Dependency TASK-302 (PR #36) — Commit chính thức `a2d2fc3`
+Reviewer Hùng (`benalexx007`) đã chính thức hoàn thiện và commit giải pháp Discovery Recovery tại commit `a2d2fc3c31e3bcc4c3acf178d946c83f0a05b37a` trên PR [#36](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36) (`feat/task-302-schema-foundation`):
+- **Tên RPC chính thức:** `public.review_recover_session(p_session_id UUID)`.
+- **Vị trí implementation:** [006_stage3_review_and_shuffle.sql](file:///c:/Users/ASUS%20Vivobook/Desktop/deepseek-harness-docker/workspace/isomorphic-exam-synthesizer/backend/migrations/006_stage3_review_and_shuffle.sql#L612-L640) (dòng 612–640).
+- **Tài liệu contract:** [docs/api/review-rpc-contract.md](file:///c:/Users/ASUS%20Vivobook/Desktop/deepseek-harness-docker/workspace/isomorphic-exam-synthesizer/docs/api/review-rpc-contract.md#L137-L168).
+- **Test suite Migration đạt 57/57 passed:** [test_review_rpcs.py](file:///c:/Users/ASUS%20Vivobook/Desktop/deepseek-harness-docker/workspace/isomorphic-exam-synthesizer/backend/tests/migrations/test_review_rpcs.py#L582-L715) kiểm thử toàn diện các kịch bản: Restart-safe discovery, DB-clock lease, Worker-only ACL, Concurrent recovery serialize, Lost-response recovery replay, và Audit rollback.
+- **Ranh giới:** TASK-301 **không tự viết SQL mới, không sửa đổi Migration 006**. Kế hoạch v1.6 căn chỉnh 100% caller và wrapper trong repository/service của PR #28 theo đúng contract RPC thực tế.
+
+### 3. Phương Án Remediation Đặc Tả Cho Tám Vấn Đề Kỹ Thuật Cốt Lõi (v1.6)
+Bản v1.6 hoàn thiện toàn bộ các ranh giới kỹ thuật theo 8 nhóm vấn đề được reviewer chỉ ra:
+1. **Phân Định Đúng Nguồn Quota Authority (F07):** Phân biệt rõ giữa Session Quota Counter (`exam_sessions.gemini_review_calls`, giới hạn 30) và Operation Attempt Permits (`review_attempts` với `dispatch_permitted = true`, giới hạn 4). Cả hai được cập nhật và kiểm soát độc quyền bên trong RPC transaction; không xem riêng lẻ `review_attempts` là Single Source of Truth cho toàn bộ quota.
+2. **Khép Kín State Machine Cho `active` Replay (F02/F07):** Ngăn chặn việc dispatch lại AI khi nhận `replayed = true, operation_status = 'active'` nếu operation đó đã có permit được cấp trước đó trong DB, tránh làm lệch số đếm `api_calls_count` với ledger `review_attempts` dẫn đến bị complete RPC từ chối bằng `REVIEW_INVALID_PAYLOAD`.
+3. **Quản Lý Operation Identity Xuyên Suốt & Hỗ Trợ HTTP Idempotency-Key:** Bổ sung hỗ trợ header `Idempotency-Key` (nếu có từ client) hoặc sinh `operation_id = uuid4()` ổn định tại Service trước khi reserve. Thực hiện bounded retry khi gặp transport error trên reservation RPC bằng chính `operation_id` đó.
+4. **Phân Loại Exception & Quy Trình Lost-Response Reconciliation Khép Kín:** Phân biệt rõ deterministic database error (validation, conflict, permission) với transport-ambiguous failure. Chỉ retry complete khi mạng đứt/timeout. Nếu retry complete ném `REVIEW_STALE`, kiểm tra reserve replay; nếu operation active nhưng hết hạn lease, kích hoạt `review_recover_session` rồi đọc lại settlement.
+5. **Typed `SettlementResult` & Kiểm Tra Kết Quả Failure Settlement Bắt Buộc:** Thay thế boolean bằng `SettlementResult` với 5 trạng thái (`failed`, `replayed_failed`, `recovered`, `completed`, `unknown`). Coi `replayed=True` với cùng error code là settlement thành công. Bắt buộc kiểm tra settlement thành công trước khi trả HTTP 422 trong luồng C03; nếu settlement không xác định, trả HTTP 500.
+6. **Loại Bỏ Fallback Fingerprint Cũ & Map Đầy Đủ Cấu Trúc C03:** Xóa bỏ hoàn toàn fallback `source_snapshot.get("content_hash")`. Chỉ chấp nhận `confirmed_source_hash` có nguồn gốc xác nhận từ pipeline giáo viên. Validate toàn diện canonical Blueprint 0.4.0. Chuẩn hóa đầy đủ các trường `SourceQuestion` (`question_text`, `options`, `correct_answer`, `solution`, `content_hash`).
+7. **Pydantic Model Tương Thích Với PostgREST String Payload:** Bỏ default `max_attempts = 4`. Xử lý parse chuỗi UUID và ISO-datetime trước khi validate model strict, tránh lỗi runtime khi nhận dictionary từ Supabase/PostgREST.
+8. **Chuẩn Hóa Exception Mapping & Không Tự Động Biến Đổi Dữ Liệu Options:** Bỏ `str_strip_whitespace=True` để tránh làm sai lệch dữ liệu gốc. Giữ nguyên payload gốc, chỉ normalize bản sao (`{opt.strip().lower() for opt in v}`) để kiểm tra 4 phương án phân biệt trước khi gửi xuống database. Sửa toàn bộ mapping SQL error sang domain status chuẩn (`P0002` -> `RESOURCE_NOT_FOUND`, `REVIEW_STALE` -> `REVIEW_STATE_STALE`, v.v.).
+
+---
+
+## B. BASELINE VÀ PHẠM VI ĐÃ KIỂM TRA
+
+### 1. Chi tiết Baseline Git
+- **Repository:** `Computational-Thinking-Project/isomorphic-exam-synthesizer`.
+- **PR Branch:** `feat/duy-task-301-review-lifecycle-api` tại HEAD `b9ef112c08a8c7e8b44811627643b92d1390ab6d`.
+- **Target Branch:** `dev` tại base `032fbf2e3f3de2c4a5757d2fc89a06d24eae06c3`.
+
+### 2. Nguồn Authority và Handoff Artifacts đã đối chiếu
+1. **TASK-302 (Stage 3 Schema & RPC Foundation):**
+   - **Nguồn Authority:** Nhánh `origin/feat/task-302-schema-foundation` tại commit `a2d2fc3c31e3bcc4c3acf178d946c83f0a05b37a` (PR [#36](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36)).
+   - **File bàn giao:** 
+     - [backend/migrations/006_stage3_review_and_shuffle.sql](file:///c:/Users/ASUS%20Vivobook/Desktop/deepseek-harness-docker/workspace/isomorphic-exam-synthesizer/backend/migrations/006_stage3_review_and_shuffle.sql#L612-L640).
+     - [docs/api/review-rpc-contract.md](file:///c:/Users/ASUS%20Vivobook/Desktop/deepseek-harness-docker/workspace/isomorphic-exam-synthesizer/docs/api/review-rpc-contract.md#L137-L168).
+     - [backend/tests/migrations/test_review_rpcs.py](file:///c:/Users/ASUS%20Vivobook/Desktop/deepseek-harness-docker/workspace/isomorphic-exam-synthesizer/backend/tests/migrations/test_review_rpcs.py#L582-L715).
+2. **TASK-304 (Targeted Regeneration Adapter):**
+   - **Nguồn Authority:** Nhánh `origin/feat/dat-task-304-targeted-regeneration` tại PR [#26](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/26) (commit `a8f61d5`).
+   - **File bàn giao:** `backend/app/models/targeted.py`, `backend/app/services/generation/targeted_service.py`, `backend/app/services/generation/attempts.py`.
+3. **TASK-305 (Final Approval Lock):**
+   - **Nguồn Authority:** PR [#33](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/33) (`backend/migrations/007_stage3_final_approval_and_lock.sql` tại commit `d7a3d3f`).
+4. **Migration Sequence Toàn Cục:**
+   - Chuỗi migration chuẩn: `004/005` (TASK-207) → `006` (TASK-302) → `007` (TASK-305).
+   - PR #28 loại bỏ các migration cạnh tranh do chính branch tạo ra (`004_review_and_shuffle_rpc.sql` và `008_stage3_review_attempts.sql`).
+
+---
+
+## C. FINDING STATUS MATRIX
+
+| Finding ID | Tên Finding | Trạng thái hiện tại | Bằng chứng tại HEAD `b9ef112` | Kế hoạch xử lý trong v1.6 | Reviewer Priority | Project Priority |
+|---|---|---|---|---|---|---|
+| **F01** | Migration Stage 3 cạnh tranh | `VERIFIED_FIXED` | Commit `057d13f` xóa 008; commit `8b73f0f` xóa 004. Nhánh PR #28 không còn migration cạnh tranh. | Duy trì. Kiểm tra migration replay độc lập. Không tự tạo migration mới. | P3 | P3 |
+| **F02** | Atomic persistence & Retry | `OPEN` (Remediation Specified) | Đã gọi RPC 006 nhưng `emergency_rollback_tx` gửi `str(exc)`, chưa xử lý lost response và ambiguous complete. | Dùng `RollbackErrorCode(StrEnum)`; xử lý replay idempotency; reconcile khi đứt mạng ở complete RPC; phân loại exception. | P1 | **P1** |
+| **F03** | Canonical snapshot | `VERIFIED_FIXED` | Snapshot trực tiếp từ AI variant; revert khôi phục root lineage đúng. | Giữ nguyên logic, duy trì regression tests chống trôi canonical answer. | P3 | P3 |
+| **F04** | AI Adapter guard & Integration | `VERIFIED_FIXED` | Guard 503 hoạt động tốt khi `ai_generator is None`. Khởi tạo TargetedRegenerator khi ai_services sẵn sàng; fail-closed nếu thiếu cấu hình. | Duy trì cơ chế fail-closed 503 khi chưa có API key. Inject adapter fixture trong integration test. | P2 | **P1** |
+| **F05** | Shuffle invalidation | `VERIFIED_FIXED` | Đã xóa bỏ toàn bộ lệnh gọi `invalidate_shuffle_if_finalized` ngoài TX ở cả Reject và Revert. Migration 006 xử lý invalidation 100% nguyên tử (xác nhận bởi AI-WFox comment #6). | Duy trì. Không gọi invalidation rời rạc ngoài database transaction. | P2 | **P1** |
+| **F06** | Stale recovery & Discovery | `VERIFIED_FIXED` | Đã tích hợp RPC `review_recover_session(p_session_id)` bằng worker client `service_role`. Đã làm sạch `GET /progress` thuần túy read-only. Lazy recovery tự động kích hoạt khi reject gặp `SESSION_BUSY`. 58/58 tests passed. | Duy trì. Tuyệt đối không query bảng private ledger `review_operations`. | **P1** | **P0 (Blocker)** |
+| **F07** | Durable attempt accounting | `VERIFIED_FIXED` | Gọi đúng signature `review_acquire_attempt(operation_id, attempt_id)`. Format `AttemptPermit` 6 fields khớp 100% với PR #26 (Đạt). Giữ uncertain charges. | Duy trì per-attempt durable accounting, không refund giả định. | P1 | **P1** |
+| **F08** | SECURITY DEFINER & ACL | `VERIFIED_FIXED` | Migration 008 bị loại bỏ. Migration 006 phân quyền đúng: Owner RPC cấp `authenticated`, Worker RPC cấp `service_role`. | Giữ nguyên ACL. Sử dụng đúng worker client (`service_role`) cho RPC `review_recover_session`. | P3 | P3 |
+| **F09** | Client separation | `VERIFIED_FIXED` | Tách biệt client ở tầng router: `GET /progress` chỉ dùng Owner JWT (đã xóa `service_db`), `POST /reject` inject `service_db`. Repository giữ fallback để tương thích mock unit tests. | Duy trì separation ở route layer. | P1 | **P0 (Blocker)** |
+| **F10** | Validation report contract | `VERIFIED_FIXED` | Kiểm tra 4 options chuẩn hóa `opt.strip().lower()` chống trùng lặp khớp SQL constraint; định nghĩa `RollbackErrorCode(StrEnum)`; bọc `asyncio.shield` xử lý client cancellation an toàn. | Duy trì validation chặt chẽ trước khi gửi candidate xuống RPC. | **P2** | **P0 (Blocker)** |
+| **C01** | Nested progress parsing | `VERIFIED_FIXED` | Parser đọc đúng `progress_dict["expected_slots"]`. GET /progress hoàn toàn read-only, không mutate state. | Duy trì strict validation progress data. | P3 | P3 |
+| **C02** | Business decisions adherence | `VERIFIED_FIXED` | Model A (lazy recovery + 1 active regeneration per session), Binary reject, Revert về pristine root đều tuân thủ 100%. | Duy trì cơ chế khóa phiên DB. | P3 | P2 |
+| **C03** | Frozen snapshot integration | `VERIFIED_ALIGNED` (Pending Upstream Persistence) | Ghi nhận CSDL hiện hữu lưu `format: "database_rows"`; thống nhất format consumer của TASK-304 nhận `content_hash` (persisted per-question fingerprint); fail-closed trước provider nếu unconfirmed. | Chờ Hùng/upstream bàn giao write boundary; TASK-301 chuyển tiếp nguyên vẹn snapshot sang adapter. | P1 | **P0 (Blocker)** |
+
+---
+
+## D. PHÂN TÍCH NGUYÊN NHÂN GỐC (ROOT CAUSE ANALYSIS)
+
+### 1. Root Cause F07: Nhầm Lẫn Ranh Giới Quota Authority
+- **Cơ chế lỗi:** Việc gọi riêng bảng `review_attempts` là "Single Source of Truth cho toàn bộ quota" là không chính xác với Migration 006:
+  - `exam_sessions.gemini_review_calls`: Là counter hạn mức cấp session (0..30). Được kiểm tra khi reserve (`s.gemini_review_calls NOT BETWEEN 0 AND 29`) và được tăng nguyên tử khi acquire permit (`UPDATE exam_sessions SET gemini_review_calls = used + 1`).
+  - `review_attempts`: Là ledger ghi nhận từng attempt permit riêng lẻ (tối đa 4 permits per operation).
+  - `review_complete_regeneration` kiểm tra `(p_candidate->>'api_calls_count')::int = used`, trong đó `used` được tính bằng `SELECT count(*) FROM review_attempts WHERE operation_id = o.operation_id AND dispatch_permitted`.
+- **Khắc phục:** Định nghĩa rõ hai tầng quota. Cả hai tầng đều do stored procedure trong PostgreSQL cập nhật và khóa hàng; tầng Python chỉ truyền permit callback và đối chiếu dữ liệu nhận được.
+
+### 2. Root Cause Lỗ Hổng State Machine Khi Replay Trạng Thái `active`
+- **Cơ chế lỗi:** Nếu reservation RPC trả về `replayed = true, operation_status = 'active'`, nhưng trước đó worker cũ đã acquire 2 permits rồi gặp sự cố. Khi service mới chạy lại, adapter khởi tạo `DurableAttemptBudget.used = 0`. Nếu adapter acquire thêm 1 permit mới (DB đếm thành 3), khi gọi complete RPC với `api_calls_count = 1`, SQL sẽ kiểm tra `api_calls_count (1) <> DB used (3)` và lập tức ném lỗi `REVIEW_INVALID_PAYLOAD` (22023).
+- **Khắc phục:** Khi nhận `replayed = true, operation_status = 'active'`, chỉ cho phép tiếp tục gọi AI khi request-local context xác nhận chưa từng cấp permit nào cho operation này (tức là retry ngay tại bước reserve). Nếu operation đã có permit trong DB hoặc trạng thái permit không xác định, **cấm tự ý dispatch lại AI**; yêu cầu chờ lease recovery thu hồi hoặc fail operation để bảo toàn tính toàn vẹn quota.
+
+### 3. Root Cause Lost-Response Reconciliation Xử Lý Sai Phạm Vi Exception
+- **Cơ chế lỗi:** Bắt chung `except Exception` rồi retry complete sẽ vô tình retry cả các lỗi deterministic (như `REVIEW_INVALID_PAYLOAD`, `REVIEW_IDEMPOTENCY_CONFLICT`, `REVIEW_WORKER_REQUIRED`). Việc retry các lỗi này không giải quyết được vấn đề mà làm sai lệch trạng thái sang `ERR_AMBIGUOUS_COMPLETION` và bỏ rơi operation ở trạng thái `active`.
+- **Khắc phục:** Phân loại rõ ràng:
+  - *Deterministic SQL error:* Parse SQLSTATE và message, xử lý failure settlement hoặc trả lỗi domain ngay lập tức.
+  - *Transport-ambiguous failure (Timeout, Connection reset):* Mới thực hiện retry complete và reconcile qua reservation replay / stale recovery.
+
+### 4. Root Cause C03: Chấp Nhận Hash Cũ & Không Đóng Operation Khi Lỗi
+- **Cơ chế lỗi:** Sử dụng fallback `source_snapshot.get("confirmed_source_hash") or source_snapshot.get("content_hash")` làm lọt các hash cũ không được xác nhận qua cổng kiểm soát. Đồng thời, nếu chỉ trả HTTP 422 khi thiếu canonical Blueprint mà không gọi RPC settlement, operation đã commit ở TX1 sẽ bị treo `active` vĩnh viễn.
+- **Khắc phục:** Bỏ toàn bộ fallback; chỉ chấp nhận `confirmed_source_hash`. Khi phát hiện thiếu artifacts sau reservation, **bắt buộc gọi `review_fail_regeneration(operation_id, 'SOURCE_NOT_CONFIRMED')`**, kiểm tra kết quả settlement thành công rồi mới trả HTTP 422.
+
+---
+
+## E. DEPENDENCY CONTRACT AUDIT
+
+### 1. Hợp đồng RPC với TASK-302 (Migration 006 — PR #36 Commit `a2d2fc3`)
+
+| Tên RPC | Caller Role | Mục đích & Ranh giới | Chữ ký tham số đầu vào chuẩn xác | Cấu trúc payload trả về |
+|---|---|---|---|---|
+| `review_get_progress` | `authenticated` (Owner) | Đọc tiến độ duyệt câu hỏi, không thay đổi state | `p_session_id UUID` | JSONB progress metrics |
+| `review_reserve_regeneration` | `authenticated` (Owner) | Khóa phiên (TX1), đóng băng snapshot, tạo active operation | `p_session_id UUID, p_question_id UUID, p_operation_id UUID` | JSONB chứa `operation_id`, `snapshot`, `expires_at`, `max_attempts: 4`, `replayed`, `operation_status`, `settlement` |
+| `review_acquire_attempt` | `service_role` (Worker) | Cấp permit gọi AI, trừ quota durable | `p_operation_id UUID, p_attempt_id UUID` | JSONB chứa `operation_id`, `attempt_id`, `dispatch_permitted`, `calls_used`, `remaining_calls`, `replayed` |
+| `review_complete_regeneration` | `service_role` (Worker) | Hoàn tất sinh câu hỏi (TX2), insert candidate mới | `p_operation_id UUID, p_candidate JSONB` | JSONB candidate row & progress (`replayed: true` khi replay cùng candidate) |
+| `review_fail_regeneration` | `service_role` (Worker) | Đóng operation khi thất bại (Rollback), phục hồi câu hỏi | `p_operation_id UUID, p_error_code TEXT` | JSONB failure settlement (`replayed: true` khi replay cùng error_code) |
+| `review_recover_regeneration` | `service_role` (Worker) | Thu hồi operation hết hạn khi đã biết operation_id | `p_operation_id UUID` | JSONB recovery settlement |
+| **`review_recover_session`** | `service_role` (Worker) | **Restart-safe recovery discovery theo session_id** | `p_session_id UUID` | **JSONB: `session_id`, `session_status`, `recovered_count` (0/1), `recoveries` (array)** |
+| `review_accept_question` | `authenticated` (Owner) | Duyệt câu hỏi (idempotent), cập nhật trạng thái | `p_session_id UUID, p_question_id UUID, p_action_id UUID` | JSONB question row & progress |
+| `review_revert_question` | `authenticated` (Owner) | Hoàn nguyên về câu hỏi gốc (idempotent), invalidate shuffle | `p_session_id UUID, p_question_id UUID, p_action_id UUID` | JSONB question row & progress |
+
+#### Bảng Mapping Chuẩn Xác từ PostgreSQL Exception sang Domain Status:
+Hàm `review_reserve_regeneration` ném exception khi không thể tạo reservation. Repository bắt lỗi và map theo bảng sau:
+
+| SQL Error / Code | SQLSTATE | Ý Nghĩa Nghiệp Vụ Thực Tế | Domain Status / HTTP Mapping |
+|---|---|---|---|
+| `REVIEW_BUSY` | `55000` | Phiên thi hoặc câu hỏi đang có một operation khác active | `ReserveStatus.SESSION_BUSY` -> HTTP 409 `ERR_SESSION_BUSY` |
+| `REVIEW_QUOTA_EXHAUSTED` | `54000` | Hạn mức phiên thi đã dùng hết (30 calls) | `ReserveStatus.QUOTA_EXHAUSTED` -> HTTP 429 `ERR_QUOTA_EXHAUSTED` |
+| `REVIEW_NOT_FOUND` / `P0002` | `P0002` | Không tìm thấy session, question hoặc owner không khớp | `ReserveStatus.RESOURCE_NOT_FOUND` -> HTTP 404 `ERR_NOT_FOUND` |
+| `REVIEW_STALE` | `55000` | Câu hỏi không còn là current hoặc phiên thi không editable | `ReserveStatus.REVIEW_STATE_STALE` -> HTTP 409 `ERR_STATE_STALE` |
+| `REVIEW_SOURCE_MISMATCH` | `22023` | Nguồn hoặc blueprint chưa confirmed hoặc lệch `canonical_question_no` | `ReserveStatus.SOURCE_SNAPSHOT_MISMATCH` -> HTTP 422 `ERR_SOURCE_SNAPSHOT_MISMATCH` |
+| `REVIEW_LOCKED` | `55000` | Phiên thi đã được duyệt vĩnh viễn (final approval lock) | HTTP 423 `ERR_SESSION_LOCKED` |
+| `REVIEW_IDEMPOTENCY_CONFLICT` | `22023` | Tái sử dụng `operation_id` với session/question/actor khác | HTTP 409 `ERR_IDEMPOTENCY_CONFLICT` |
+| `42501` (Worker RPC) | `42501` | Worker client thiếu quyền `service_role` (lỗi cấu hình nội bộ) | HTTP 503 `ERR_DATABASE_UNAVAILABLE` |
+| `42501` (Owner RPC) | `42501` | Token người dùng không có quyền truy cập endpoint | HTTP 403 `ERR_FORBIDDEN` |
+
+---
+
+## F. KẾ HOẠCH REMEDIATION THEO WORKSTREAMS ĐỘC LẬP
+
+Hệ thống được tổ chức thành 4 Workstreams độc lập: Workstream A và B triển khai song song ngay lập tức; Workstream C xác định ranh giới phụ thuộc bên ngoài; Workstream D là điểm hội tụ nghiệm thu.
+
+```
+┌───────────────────────────────────────┐   ┌───────────────────────────────────────┐
+│ Workstream A: Lifecycle & Recovery    │   │ Workstream B: AI Boundary & Settle    │
+│ (F06, F08, F09 - Triển khai ngay)     │   │ (F04, F10, F02, F07 - Triển khai ngay)│
+└───────────────────┬───────────────────┘   └───────────────────┬───────────────────┘
+                    │                                           │
+                    │       ┌───────────────────────────┐       │
+                    │       │ Workstream C: Artifacts   │       │
+                    │       │ (C03 External Dependency) │       │
+                    │       └─────────────┬─────────────┘       │
+                    │                     │                     │
+                    ▼                     ▼                     ▼
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│ Workstream D: Atomicity, Invalidation & Final Verification (P1)                   │
+│ (F05, F01, C01, C02 - Hội tụ nghiệm thu)                                          │
+└───────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### WORKSTREAM A: Lifecycle, Concurrency & Stale Recovery (P0)
+
+#### Task A.1: Phân Tách Client Triệt Để trong Constructor
+- Trong [repository.py](file:///c:/Users/ASUS%20Vivobook/Desktop/deepseek-harness-docker/workspace/isomorphic-exam-synthesizer/backend/app/services/review/repository.py):
+  ```python
+  def __init__(
+      self,
+      db: Client,
+      service_db: Optional[Client] = None,
+      allow_table_fallback: bool = False,
+  ):
+      self.db = db
+      # CẤM TUYỆT ĐỐI: self.worker_db = service_db or db
+      self.worker_db: Optional[Client] = service_db
+      self.allow_table_fallback = allow_table_fallback
+  ```
+- Mọi worker methods fail-closed HTTP 503 nếu `self.worker_db is None`.
+
+#### Task A.2: Tích Hợp RPC `review_recover_session` & Strict Response Validation
+- Trong `ReviewRepository.recover_stale_operations(session_id: str | UUID) -> int`:
+  ```python
+  async def recover_stale_operations(self, session_id: str | UUID) -> int:
+      if self.worker_db is None:
+          raise ReviewDomainException(503, "ERR_DATABASE_UNAVAILABLE", "Worker client not configured")
+      try:
+          res = (
+              self.worker_db.rpc("review_recover_session", {"p_session_id": str(session_id)})
+              .execute()
+          )
+      except Exception as exc:
+          err_msg = str(exc)
+          if "42501" in err_msg or "REVIEW_WORKER_REQUIRED" in err_msg:
+              logger.error("Internal worker config error: missing service_role for recovery RPC")
+              raise ReviewDomainException(503, "ERR_DATABASE_UNAVAILABLE", "Internal worker configuration error")
+          if "P0002" in err_msg or "REVIEW_NOT_FOUND" in err_msg:
+              raise ReviewDomainException(404, "ERR_NOT_FOUND", "Session not found")
+          logger.error("RPC review_recover_session failed: %s", exc)
+          raise ReviewDomainException(500, "ERR_DATABASE_ERROR", "Recovery RPC execution failed")
+
+      data = res.data[0] if isinstance(res.data, list) and res.data else res.data
+      if not isinstance(data, dict):
+          raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Recovery response must be a JSON object")
+
+      try:
+          ret_sid = UUID(str(data.get("session_id", "")))
+          req_sid = UUID(str(session_id))
+          if ret_sid != req_sid:
+              raise ValueError("Session ID mismatch")
+      except Exception:
+          raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Invalid or mismatched session_id in recovery")
+
+      count = data.get("recovered_count")
+      if isinstance(count, bool) or not isinstance(count, int) or count not in (0, 1):
+          raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", f"Invalid recovered_count: {count}")
+
+      recoveries = data.get("recoveries")
+      if not isinstance(recoveries, list) or len(recoveries) != count:
+          raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", f"Recoveries length must match count ({count})")
+
+      if count == 1:
+          rec = recoveries[0]
+          if not isinstance(rec, dict):
+              raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Recovery item must be a dictionary")
+          try:
+              UUID(str(rec.get("operation_id", "")))
+              UUID(str(rec.get("question_id", "")))
+          except Exception:
+              raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Invalid UUIDs in recovery item")
+          if rec.get("operation_status") != "recovered":
+              raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Recovery item operation_status must be 'recovered'")
+          if rec.get("recovered") is not True or rec.get("replayed") is not False:
+              raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Fresh recovery item must have recovered=True and replayed=False")
+          calls_used = rec.get("api_calls_used")
+          if isinstance(calls_used, bool) or not isinstance(calls_used, int) or calls_used < 0:
+              raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", f"Invalid api_calls_used: {calls_used}")
+          if not isinstance(rec.get("progress"), dict):
+              raise ReviewDomainException(500, "ERR_RECOVERY_MALFORMED", "Missing or invalid progress dict in recovery")
+
+      return count
+  ```
+
+#### Task A.3: Xử Lý Concurrency trong Lazy Recovery Retry & Bounded Reservation Retry
+- Trong `ReviewService.reject_question`:
+  ```python
+  # Quản lý operation_id: Nhận Idempotency-Key từ client nếu có, hoặc sinh UUID mới
+  operation_id = client_idempotency_key or uuid4()
+  
+  # Bounded reservation attempt (tối đa 2 lần nếu gặp transport-ambiguous failure)
+  status, reservation = await self.repo.reserve_regeneration_with_retry(
+      session_id=session_id, question_id=question_id, operation_id=operation_id, user_id=user_id, max_retries=2
+  )
+  
+  if status == ReserveStatus.SESSION_BUSY:
+      logger.info("Session %s busy. Invoking lazy recovery...", session_id)
+      # Bất kể recovered_count là 0 hay 1, khi RPC thành công, luôn retry reserve đúng 1 lần!
+      await self.repo.recover_stale_operations(session_id)
+      status, reservation = await self.repo.reserve_regeneration(
+          session_id=session_id, question_id=question_id, operation_id=operation_id, user_id=user_id
+      )
+
+  if status != ReserveStatus.OK or reservation is None:
+      if status == ReserveStatus.SESSION_BUSY:
+          logger.info("Reservation still busy after recovery attempt for session %s", session_id)
+          raise ReviewDomainException(409, "ERR_SESSION_BUSY", "Another review operation is currently in progress")
+      if status == ReserveStatus.QUOTA_EXHAUSTED:
+          raise ReviewDomainException(429, "ERR_QUOTA_EXHAUSTED", "Regeneration quota exhausted for this session")
+      if status == ReserveStatus.RESOURCE_NOT_FOUND:
+          raise ReviewDomainException(404, "ERR_NOT_FOUND", "Resource not found")
+      if status == ReserveStatus.REVIEW_STATE_STALE:
+          raise ReviewDomainException(409, "ERR_STATE_STALE", "Question is not current or session is not editable")
+      if status == ReserveStatus.SOURCE_SNAPSHOT_MISMATCH:
+          raise ReviewDomainException(422, "ERR_SOURCE_SNAPSHOT_MISMATCH", "Source question or blueprint unconfirmed")
+      raise ReviewDomainException(400, "ERR_RESERVATION_FAILED", f"Reservation failed with status: {status}")
+  ```
+
+#### Task A.4: Làm Sạch Hoàn Toàn Endpoint `GET /progress`
+- Xóa `service_db` khỏi route `GET /progress` trong [review.py](file:///c:/Users/ASUS%20Vivobook/Desktop/deepseek-harness-docker/workspace/isomorphic-exam-synthesizer/backend/app/api/routes/review.py).
+- Xóa hoàn toàn lệnh gọi `recover_stale_questions` trong `get_progress` tại [service.py](file:///c:/Users/ASUS%20Vivobook/Desktop/deepseek-harness-docker/workspace/isomorphic-exam-synthesizer/backend/app/services/review/service.py). Endpoint thuần túy read-only.
+
+---
+
+### WORKSTREAM B: AI Adapter Boundary, Strict Schema & Settlement (P0)
+
+#### Task B.1: Tích Hợp Adapter qua Composition Root & Permit Callback Contract
+- Trong [review.py](file:///c:/Users/ASUS%20Vivobook/Desktop/deepseek-harness-docker/workspace/isomorphic-exam-synthesizer/backend/app/api/routes/review.py):
+  ```python
+  def get_ai_generator(request: Request) -> Optional[Callable[..., Any]]:
+      ai_services = getattr(request.app.state, "ai_services", None)
+      if not ai_services or not ai_services.settings.gemini_api_key:
+          return None
+      from app.services.generation.targeted_service import TargetedRegenerator
+      return TargetedRegenerator(
+          service=ai_services.generation,
+          max_api_calls=4,
+          timeout_seconds=40.0,
+      )
+  ```
+- **Permit Callback Contract:** Trong `ReviewService`, truyền wrapper `acquire_attempt` trả về typed `AttemptPermit` model từ `backend/app/services/generation/attempts.py`:
+  ```python
+  async def acquire_attempt_callback(op_id: UUID, attempt_id: UUID) -> AttemptPermit:
+      permit_data = await self.repo.acquire_attempt(operation_id=op_id, attempt_id=attempt_id)
+      return AttemptPermit.model_validate(permit_data)
+  ```
+
+#### Task B.2: Model Reservation (Hỗ Trợ PostgREST) & State Machine Replay
+- Trong `backend/app/models/schemas.py`:
+  ```python
+  from enum import StrEnum
+  from typing import Literal, Optional, Any
+  from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, model_validator
+  from uuid import UUID
+  from datetime import datetime
+
+  class ReserveStatus(StrEnum):
+      OK = "OK"
+      SESSION_BUSY = "SESSION_BUSY"
+      QUOTA_EXHAUSTED = "QUOTA_EXHAUSTED"
+      RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
+      REVIEW_STATE_STALE = "REVIEW_STATE_STALE"
+      SOURCE_SNAPSHOT_MISMATCH = "SOURCE_SNAPSHOT_MISMATCH"
+
+  class ReservationSuccess(BaseModel):
+      model_config = ConfigDict(frozen=True, extra="forbid")
+      session_id: UUID
+      session_status: str
+      operation_id: UUID
+      question_id: UUID
+      expires_at: datetime
+      max_attempts: StrictInt
+      snapshot: dict[str, Any]
+      operation_status: Literal["active", "completed", "failed", "recovered"]
+      replayed: StrictBool
+      settlement: Optional[dict[str, Any]] = None
+
+      @model_validator(mode="before")
+      @classmethod
+      def parse_postgrest_strings(cls, data: Any) -> Any:
+          if isinstance(data, dict):
+              # Parse chuỗi UUID và ISO-datetime từ PostgREST dictionary trước khi nạp model
+              for k in ("session_id", "operation_id", "question_id"):
+                  if k in data and isinstance(data[k], str):
+                      data[k] = UUID(data[k])
+              if "expires_at" in data and isinstance(data["expires_at"], str):
+                  data["expires_at"] = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00"))
+          return data
+
+      @model_validator(mode="after")
+      def validate_status_settlement_correlation(self) -> "ReservationSuccess":
+          if self.operation_status in ("completed", "failed", "recovered") and self.settlement is None:
+              raise ValueError(f"Terminal status '{self.operation_status}' must include settlement payload")
+          if not isinstance(self.snapshot, dict) or "source_snapshot" not in self.snapshot:
+              raise ValueError("Snapshot must be a valid dictionary containing source_snapshot")
+          return self
+  ```
+- **State Machine Xử Lý Replay An Toàn trong `ReviewService.reject_question`:**
+  ```python
+  if reservation.replayed:
+      if reservation.operation_status == "completed":
+          logger.info("Operation %s already completed. Returning stored settlement.", operation_id)
+          return self._build_regenerated_response_from_settlement(reservation.settlement)
+      elif reservation.operation_status == "failed":
+          logger.info("Operation %s already failed. Returning stored failure.", operation_id)
+          raise ReviewDomainException(422, "ERR_REGENERATION_FAILED", "Operation previously failed")
+      elif reservation.operation_status == "recovered":
+          logger.info("Operation %s was recovered by lease expiration.", operation_id)
+          raise ReviewDomainException(409, "ERR_OPERATION_STALE", "Operation has expired and was recovered")
+      elif reservation.operation_status == "active":
+          # CHỈ CHO PHÉP tiếp tục khi context xác nhận chưa cấp permit nào cho operation này
+          # Nếu không xác định được số permit đã cấp trong DB, cấm chạy AI để tránh lệch quota
+          if getattr(context, "dispatched_permits_count", 0) > 0:
+              logger.error("Active replay detected with existing permits in-flight. Fail-closed.")
+              raise ReviewDomainException(409, "ERR_OPERATION_IN_FLIGHT", "Operation active with in-flight permits")
+          logger.info("Operation %s active replay confirmed with 0 permits. Safe to proceed.", operation_id)
+  ```
+
+#### Task B.3: Strict Candidate Payload & Option Normalization Khớp SQL
+- Trong `backend/app/models/schemas.py`:
+  ```python
+  from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator, model_validator
+  from typing import Literal, List, Optional
+  from app.services.validator.base import CheckResult
+
+  class StrictTargetedValidationReport(BaseModel):
+      model_config = ConfigDict(extra="forbid", strict=True)
+      is_valid: StrictBool
+      math_verified: StrictBool
+      requires_teacher_review: Literal[True]
+      warnings: List[StrictStr]
+      checks: List[CheckResult]
+
+  class StrictCandidatePayload(BaseModel):
+      # CẤM str_strip_whitespace=True để không tự ý thay đổi payload gốc
+      model_config = ConfigDict(extra="forbid", strict=True)
+      stem_latex: str = Field(min_length=1, max_length=12000)
+      content: Optional[str] = None
+      options: List[str] = Field(min_length=4, max_length=4)
+      correct_key: Literal["A", "B", "C", "D"]
+      solution_md: str = Field(min_length=1)
+      validation_report: StrictTargetedValidationReport
+      api_calls_count: StrictInt = Field(ge=0, le=4)
+
+      @field_validator("options")
+      @classmethod
+      def validate_distinct_normalized_options(cls, v: List[str]) -> List[str]:
+          if len(v) != 4:
+              raise ValueError("Exactly 4 options required")
+          for opt in v:
+              if not (1 <= len(opt.strip()) <= 4000):
+                  raise ValueError("Option length must be between 1 and 4000 chars")
+          # Khớp logic kiểm tra trùng lặp của SQL lower(btrim(x)) trên bản sao chuẩn hóa
+          normalized = {opt.strip().lower() for opt in v}
+          if len(normalized) != 4:
+              raise ValueError("Options must be distinct after whitespace trimming and lowercasing")
+          return v
+
+      @model_validator(mode="after")
+      def verify_candidate_integrity(self) -> "StrictCandidatePayload":
+          if self.content is not None and self.content != self.stem_latex:
+              raise ValueError("Field 'content' must match 'stem_latex' exactly")
+          if self.validation_report.is_valid is not True:
+              raise ValueError("Candidate validation did not pass (is_valid must be True)")
+          return self
+  ```
+
+#### Task B.4: Khai Báo `RollbackErrorCode(StrEnum)` & Typed `SettlementResult`
+- Trong `backend/app/models/schemas.py`:
+  ```python
+  from enum import StrEnum
+
+  class RollbackErrorCode(StrEnum):
+      AI_TIMEOUT = "AI_TIMEOUT"
+      AI_INVALID_OUTPUT = "AI_INVALID_OUTPUT"
+      MATH_VALIDATION_FAILED = "MATH_VALIDATION_FAILED"
+      PERMIT_UNAVAILABLE = "PERMIT_UNAVAILABLE"
+      PERMIT_UNCERTAIN = "PERMIT_UNCERTAIN"
+      QUOTA_EXHAUSTED = "QUOTA_EXHAUSTED"
+      OPERATION_EXHAUSTED = "OPERATION_EXHAUSTED"
+      ATTEMPT_REPLAYED = "ATTEMPT_REPLAYED"
+      GENERATION_FAILED = "GENERATION_FAILED"
+      CLIENT_CANCELLED = "CLIENT_CANCELLED"
+      SOURCE_NOT_CONFIRMED = "SOURCE_NOT_CONFIRMED"
+      AMBIGUOUS_STATE = "AMBIGUOUS_STATE"
+
+  class SettlementStatus(StrEnum):
+      FAILED = "failed"
+      REPLAYED_FAILED = "replayed_failed"
+      RECOVERED = "recovered"
+      COMPLETED = "completed"
+      UNKNOWN = "unknown"
+
+  class SettlementResult(BaseModel):
+      model_config = ConfigDict(frozen=True)
+      status: SettlementStatus
+      operation_id: UUID
+      api_calls_used: int
+      replayed: bool
+      raw_settlement: Optional[dict[str, Any]] = None
+  ```
+- **Hàm `ReviewRepository.emergency_rollback_tx` trả về `SettlementResult`:**
+  - Nếu RPC trả `replayed=True` và `operation_status='failed'`: Trả `SettlementStatus.REPLAYED_FAILED` (xem là settlement thành công).
+  - Nếu RPC trả `replayed=False` và `operation_status='failed'`: Trả `SettlementStatus.FAILED`.
+  - Nếu RPC ném `REVIEW_STALE`: Reconcile trạng thái lưu trong database (có thể đã `recovered`).
+  - Nếu gặp lỗi transport mạng không xác định: Trả `SettlementStatus.UNKNOWN`.
+
+#### Task B.5: Quy Trình Khắc Phục Lost Response (Complete RPC Reconciliation)
+- Trong `ReviewService.reject_question`:
+  ```python
+  try:
+      complete_res = await self.repo.complete_regeneration_tx(
+          operation_id=operation_id, candidate=validated_cand.model_dump(exclude_none=True)
+      )
+  except Exception as exc:
+      # Phân loại exception
+      err_str = str(exc)
+      # 1. Deterministic database error: KHÔNG retry complete
+      if "REVIEW_INVALID_PAYLOAD" in err_str or "22023" in err_str:
+          logger.error("Deterministic invalid payload in complete RPC for op %s: %s", operation_id, exc)
+          settlement = await self.repo.emergency_rollback_tx(
+              session_id=session_id, old_question_id=question_id,
+              regeneration_id=operation_id, error_code=RollbackErrorCode.GENERATION_FAILED.value, user_id=user_id
+          )
+          raise ReviewDomainException(422, "ERR_INVALID_PAYLOAD", "Candidate rejected by database contract")
+      
+      if "42501" in err_str or "REVIEW_WORKER_REQUIRED" in err_str:
+          raise ReviewDomainException(503, "ERR_DATABASE_UNAVAILABLE", "Worker client configuration error")
+
+      # 2. Ambiguous transport failure (Timeout, network drop): Thực hiện reconciliation
+      logger.warning("Transport error during complete RPC for op %s: %s. Reconciling...", operation_id, exc)
+      try:
+          complete_res = await self.repo.complete_regeneration_tx(
+              operation_id=operation_id, candidate=validated_cand.model_dump(exclude_none=True)
+          )
+      except Exception as retry_exc:
+          retry_err = str(retry_exc)
+          if "REVIEW_STALE" in retry_err:
+              # Đọc lại trạng thái qua reserve replay
+              status, replay_info = await self.repo.reserve_regeneration(
+                  session_id=session_id, question_id=question_id, operation_id=operation_id, user_id=user_id
+              )
+              if replay_info and replay_info.replayed:
+                  if replay_info.operation_status == "completed":
+                      return self._build_regenerated_response_from_settlement(replay_info.settlement)
+                  elif replay_info.operation_status == "failed":
+                      raise ReviewDomainException(422, "ERR_REGENERATION_FAILED", "Operation settled as failed")
+                  elif replay_info.operation_status == "recovered":
+                      raise ReviewDomainException(409, "ERR_OPERATION_STALE", "Operation recovered by lease expiry")
+                  elif replay_info.operation_status == "active" and replay_info.expires_at <= datetime.now(timezone.utc):
+                      # Operation hết hạn nhưng chưa thu hồi -> Kích hoạt recovery rồi đọc lại
+                      await self.repo.recover_stale_operations(session_id)
+                      raise ReviewDomainException(409, "ERR_OPERATION_STALE", "Operation expired and recovered")
+
+          # Outcome vẫn không thể xác định: Báo 500, cấm tự tiện fail operation
+          raise ReviewDomainException(500, "ERR_AMBIGUOUS_COMPLETION", "Complete transaction outcome uncertain")
+  ```
+
+#### Task B.6: Xử Lý Cancellation Chuẩn Xác
+- Khi bắt `asyncio.CancelledError` trong lúc adapter đang chạy (chưa gọi complete):
+  ```python
+  except asyncio.CancelledError:
+      logger.info("Client cancelled rejection request for op %s. Executing best-effort settlement.", operation_id)
+      settle_res = await asyncio.shield(
+          self.repo.emergency_rollback_tx(
+              session_id=session_id, old_question_id=question_id,
+              regeneration_id=operation_id, error_code=RollbackErrorCode.CLIENT_CANCELLED.value, user_id=user_id
+          )
+      )
+      if settle_res.status == SettlementStatus.RECOVERED:
+          logger.info("Operation %s was already recovered before cancellation settlement.", operation_id)
+      elif settle_res.status == SettlementStatus.UNKNOWN:
+          logger.critical("Cancellation settlement uncertain for op %s. Lease recovery will handle.", operation_id)
+      raise
+  ```
+
+---
+
+### WORKSTREAM C: Canonical Snapshot & Blueprint Persistence Contract (External P0)
+
+#### Task C.1: Phân Định Ranh Giới Ownership & Two-Tier Acceptance
+- **Mức 1 — TASK-301 Implementation Ready:** Hoàn thiện toàn bộ Lifecycle API, recovery discovery, strict validation và failure settlement. Nếu snapshot thiếu canonical artifacts thì fail-closed an toàn và đóng operation.
+- **Mức 2 — Targeted Regeneration E2E Ready:** Phụ thuộc pipeline upstream persist confirmed fingerprint và canonical Blueprint 0.4.0.
+- **Ranh giới trách nhiệm:**
+  - *Source Confirmation Pipeline (Upstream):* Persist `confirmed_source_hash` (sinh từ `SourceQuestion -> source_to_item -> source_fingerprint`) và canonical Blueprint 0.4.0 khi giáo viên duyệt nguồn.
+  - *TASK-302 (Hùng):* Đóng băng các artifacts đã persist vào `snapshot` của `review_operations`.
+  - *TASK-304 (Đạt):* Validate input contract của adapter.
+  - *TASK-301 (Duy):* Map snapshot sang adapter; **bắt buộc gọi failure settlement nếu thiếu artifact**.
+
+#### Task C.2: Mapping Toàn Diện Source Structure sang Adapter (Không Dùng Hash Cũ)
+- Adapter TASK-304 yêu cầu các trường chuẩn của `SourceQuestion`:
+  ```python
+  raw_source = reservation.snapshot.get("source_snapshot", {})
+  
+  # CẤM FALLBACK sang content_hash cũ không rõ nguồn gốc
+  confirmed_hash = raw_source.get("confirmed_source_hash")
+  
+  adapter_source_snapshot = {
+      "id": str(raw_source["id"]),
+      "question_text": raw_source.get("question_text") or raw_source.get("raw_content") or raw_source.get("raw_text", ""),
+      "options": raw_source.get("options", []),
+      "correct_answer": raw_source.get("correct_answer") or raw_source.get("correct_key", "A"),
+      "solution": raw_source.get("solution") or raw_source.get("solution_md", ""),
+      "content_hash": confirmed_hash,
+  }
+  ```
+
+#### Task C.3: Fail-Closed CÓ SETTLEMENT Khi Thiếu Canonical Artifacts
+- Trong `ReviewService.reject_question`:
+  ```python
+  # Kiểm tra canonical artifacts trong frozen snapshot
+  blueprint_data = reservation.snapshot.get("blueprint", {})
+
+  if not confirmed_hash or not blueprint_data or blueprint_data.get("schema_version") != "0.4.0":
+      logger.error("Missing canonical artifacts in frozen snapshot for op %s. Settle failure.", operation_id)
+      # BẮT BUỘC: Đóng operation và phục hồi question về prior_status
+      settle_res = await self.repo.emergency_rollback_tx(
+          session_id=session_id,
+          old_question_id=question_id,
+          regeneration_id=operation_id,
+          error_code=RollbackErrorCode.SOURCE_NOT_CONFIRMED.value,
+          user_id=user_id,
+      )
+      if settle_res.status not in (SettlementStatus.FAILED, SettlementStatus.REPLAYED_FAILED, SettlementStatus.RECOVERED):
+          logger.critical("Failed to settle unconfirmed source operation %s", operation_id)
+          raise ReviewDomainException(500, "ERR_SETTLEMENT_FAILED", "Failed to close unconfirmed operation")
+          
+      raise ReviewDomainException(422, "ERR_SOURCE_NOT_CONFIRMED", "Source question has not been confirmed with canonical blueprint")
+  ```
+
+---
+
+### WORKSTREAM D: Atomicity, Invalidation & Final Verification (P1)
+
+#### Task D.1: Xóa Lệnh Gọi Invalidation Ngoài Transaction (F05)
+- Trong [service.py](file:///c:/Users/ASUS%20Vivobook/Desktop/deepseek-harness-docker/workspace/isomorphic-exam-synthesizer/backend/app/services/review/service.py):
+  - Xóa dòng `await self.repo.invalidate_shuffle_if_finalized(session_id)` tại dòng 357–358 (Reject).
+  - Xóa dòng `await self.repo.invalidate_shuffle_if_finalized(session_id)` tại dòng 416 (Revert).
+- Invalidation được bảo đảm 100% nguyên tử bên trong stored procedure của Migration 006.
+
+#### Task D.2: Triệt Tiêu Table Mutation Fallback trong Production
+- Cấm toàn bộ các lệnh direct UPDATE vào bảng `version_questions` trong production khi `allow_table_fallback = False`.
+
+#### Task D.3: Hardening Parser Tiến Độ (C01)
+- Validate strict không type coercion trong `get_review_progress_data`:
+  - `expected_slots`, `current_slots`, `approved_slots`, `missing_slots` là strict non-negative integer.
+  - `ready` là strict boolean.
+
+---
+
+## G. TEST MATRIX TOÀN DIỆN
+
+| Test ID | Finding | Kịch bản kiểm thử (Scenario) | Thiết lập (Setup) | Hành động (Action) | Trạng thái DB mong đợi | Kết quả API mong đợi | Cấp độ |
+|---|---|---|---|---|---|---|---|
+| **TC-F02-RESERVE-LOST-RESP** | F02 | Reservation TX1 commit nhưng transport drop response | DB commit reservation thành công, drop HTTP response | Service retry reserve với cùng `operation_id` | SQL trả `replayed=True`, giữ nguyên snapshot, không tạo op thứ 2 | Nhận diện reservation thành công, tiếp tục AI | Integration |
+| **TC-F02-COMPLETE-LOST-RESP**| F02 | Complete TX2 commit nhưng transport drop response | DB commit candidate & status `completed`, drop response | Service retry complete với cùng `operation_id` | SQL trả `replayed=True`, đúng 1 candidate được insert | HTTP 200 RegeneratedQuestionResponse | Integration |
+| **TC-F02-COMPLETE-DETERMINISTIC**| F02 | Complete RPC trả lỗi SQL xác định (e.g. invalid payload) | Candidate vi phạm ràng buộc DB | Complete RPC ném `REVIEW_INVALID_PAYLOAD` | Không retry complete mù quáng; gọi fail settlement đóng operation | HTTP 422 `ERR_INVALID_PAYLOAD` | Integration |
+| **TC-F06-CONCURRENT-RETRY** | F06 | Hai request cùng nhận busy, cùng recovery, cùng retry reserve | 1 operation stale; Request A & B cùng trigger reject | Cả 2 cùng recovery, cả 2 cùng retry reserve | Đúng 1 request reserve thành công (`active`); request kia nhận `SESSION_BUSY`; AI chỉ dispatch 1 luồng | 1 request HTTP 200, 1 request HTTP 409 | Real DB |
+| **TC-F06-ORPHAN-ROW** | F06 | Row `regenerating` nhưng không có active operation trong ledger | Data anomaly trong test DB | Gọi `POST /reject` | Recovery trả count 0; retry reserve ném `REVIEW_BUSY`; fail-closed | HTTP 409 `ERR_SESSION_BUSY` (Log cảnh báo) | Real DB |
+| **TC-F06-MALFORMED-COUNT** | F06 | Recovery RPC trả count 1 nhưng recoveries rỗng | Mock RPC trả `{"recovered_count": 1, "recoveries": []}` | Kích hoạt recovery | Wrapper ném `ERR_RECOVERY_MALFORMED`, không tiếp tục reserve | HTTP 500 Internal Error | Unit Test |
+| **TC-F06-WORKER-42501** | F06 | Worker client thiếu quyền `service_role` khi gọi recovery | Client cấu hình sai role | Gọi recovery wrapper | Bắt SQLSTATE 42501, map thành lỗi cấu hình worker nội bộ | HTTP 503 `ERR_DATABASE_UNAVAILABLE` | Unit / Real DB |
+| **TC-F06-PROGRESS-READONLY** | F06 | `GET /progress` thuần túy read-only, không gọi recovery | Có stale operation hết hạn | Gọi `GET /progress` | CSDL không có log audit, operation vẫn active | HTTP 200 ReviewProgressResponse | API Unit |
+| **TC-F10-ACTUAL-CONTENT** | F10 | Output thực tế từ adapter chứa trường `content` | Adapter trả về `to_review_payload()` có `content == stem_latex` | Gọi `POST /reject` | Candidate mới được insert thành công, `content` khớp `stem_latex` | HTTP 200 RegeneratedQuestionResponse | Integration |
+| **TC-F10-FAIL-SETTLED** | F10 | Candidate vi phạm schema sau khi đã reserve (TX1 commit) | Mock AI trả option > 4000 ký tự | Pydantic validate fail | Gọi `review_fail_regeneration`; câu hỏi phục hồi prior_status; permits bảo toàn | HTTP 422 `ERR_INVALID_PAYLOAD` | Integration |
+| **TC-F10-NORM-OPTIONS-UNIT** | F10 | Options trùng nhau sau khi strip và lower (Unit) | AI trả `["A", "a", "B", "C"]` | Validator Pydantic chạy | Bị từ chối ngay tại tầng schema Python | Ném `ValueError` validation error | Unit Test |
+| **TC-F10-NORM-OPTIONS-SETTLE**| F10 | Options trùng nhau dẫn đến fail settlement | Mock AI trả options trùng | Gọi `POST /reject` | Schema từ chối, trigger failure settlement đóng operation | HTTP 422 `ERR_INVALID_PAYLOAD` | Integration |
+| **TC-F02-FAIL-REPLAY** | F02 | Replay `review_fail_regeneration` với cùng operation_id | Operation đã failed trước đó | Gửi lại fail settlement | Nhận diện `replayed=True`, trả `SettlementStatus.REPLAYED_FAILED` | Safe Settlement Success | Real DB |
+| **TC-F07-UNCERTAIN-PERMIT** | F07 | Permit đã commit trong DB nhưng response bị timeout | Permit đã ghi vào `review_attempts` | Provider ngắt kết nối | Quota ledger giữ nguyên 1 permit, không cấp attempt mới, không hoàn quota | Quota bảo toàn chính xác | Real DB |
+| **TC-F07-ACTIVE-REPLAY-PERMIT**| F07 | Active replay khi operation đã có permit trong DB | Operation active có 2 permits | Gọi lại reservation | Service phát hiện permits > 0, từ chối dispatch AI để chống lệch count | HTTP 409 `ERR_OPERATION_IN_FLIGHT` | Integration |
+| **TC-F07-QUOTA-BOUNDARY** | F07 | Quota boundary 29 -> 30 và vượt quá 30 | Phiên thi đã có 29 calls | Gọi reject thành công; gọi lần tiếp theo bị từ chối 429 | CSDL đếm đúng 30; RPC ném `REVIEW_QUOTA_EXHAUSTED` | HTTP 200 rồi HTTP 429 | Real DB |
+| **TC-CANCELLATION-AI** | F02 | Client ngắt kết nối khi AI đang chạy | Client cancel request | `asyncio.shield` gọi `review_fail_regeneration(CLIENT_CANCELLED)` | Operation đóng `failed`, câu hỏi phục hồi | CancelledError propagated | Integration |
+| **TC-C01-STRICT-TYPES** | C01 | Progress RPC trả sai kiểu (ví dụ `ready="false"`) | Mock progress trả dữ liệu sai kiểu | Gọi `GET /progress` | Parser từ chối type coercion, ném validation error | HTTP 500 Malformed Data | Unit Test |
+| **TC-C03-UNCONFIRMED-SRC** | C03 | Source chưa có `confirmed_at` | `question_blueprints.confirmed_at IS NULL` | Gọi reserve RPC | RPC Migration 006 ném `REVIEW_SOURCE_MISMATCH` trước TX1 | HTTP 422 `ERR_SOURCE_SNAPSHOT_MISMATCH` | Real DB |
+| **TC-C03-MISSING-ARTIFACT** | C03 | Reserve thành công nhưng snapshot thiếu canonical hash | Snapshot thiếu `confirmed_source_hash` | Check snapshot sau reserve | Gọi `review_fail_regeneration(SOURCE_NOT_CONFIRMED)`; question về prior | HTTP 422 `ERR_SOURCE_NOT_CONFIRMED` | Integration |
+| **TC-CHAIN-004-006-007** | F01 | Toàn bộ chuỗi migration 004/005 -> 006 -> 007 | Database mới và legacy | Chạy migrate chain | Schema và RPCs tương thích 100%, receipts bảo toàn | 57/57 passed | Migration Test |
+
+---
+
+## H. FILE CHANGE MAP
+
+| STT | File cần sửa | Phương thức / Vị trí | Nội dung thay đổi chi tiết |
+|---|---|---|---|
+| 1 | `backend/app/api/routes/review.py` | `get_ai_generator` | Tận dụng `request.app.state.ai_services.generation` để khởi tạo `TargetedRegenerator(service=..., max_api_calls=4, timeout_seconds=40.0)`. |
+| 2 | `backend/app/api/routes/review.py` | `get_review_progress_endpoint` | Loại bỏ dependency `service_db`; endpoint thuần túy read-only qua Owner JWT. |
+| 3 | `backend/app/api/routes/review.py` | `reject_question_endpoint` | Thêm fail-closed HTTP 503 nếu `service_db is None`; nhận header `Idempotency-Key` (nếu có). |
+| 4 | `backend/app/models/schemas.py` | Schemas Boundary | Định nghĩa `ReserveStatus`, `ReservationSuccess` (parse string UUID/date, validate correlation), `StrictTargetedValidationReport`, `StrictCandidatePayload` (không strip in-place), `SettlementResult`, và `RollbackErrorCode(StrEnum)`. |
+| 5 | `backend/app/services/review/repository.py` | `__init__` | Cấm gán `self.worker_db = db`; gán chính xác `self.worker_db: Optional[Client] = service_db`. |
+| 6 | `backend/app/services/review/repository.py` | Toàn bộ worker methods | Thêm fail-closed guard `if self.worker_db is None: raise ReviewDomainException(503, ...)`. |
+| 7 | `backend/app/services/review/repository.py` | `reserve_regeneration` | Nhận `operation_id: UUID` từ service; gọi `review_reserve_regeneration(p_session_id, p_question_id, p_operation_id)`; map exception sang `ReserveStatus`. |
+| 8 | `backend/app/services/review/repository.py` | `acquire_attempt` | Gọi đúng chữ ký `review_acquire_attempt(p_operation_id, p_attempt_id)`. |
+| 9 | `backend/app/services/review/repository.py` | `recover_stale_operations` | Gọi `review_recover_session(p_session_id)`; strict validate response chống fail-open. |
+| 10 | `backend/app/services/review/repository.py` | `complete_regeneration_tx` | Xóa bỏ fabricated report; truyền nguyên vẹn dictionary đã validate; giữ nguyên `api_calls_count` (không ép min 1). |
+| 11 | `backend/app/services/review/repository.py` | `emergency_rollback_tx` | Trả về `SettlementResult`; xử lý an toàn `replayed=True` thành `REPLAYED_FAILED`. |
+| 12 | `backend/app/services/review/service.py` | `reject_question` | Quản lý `operation_id`; state machine replay; retry reserve sau mọi recovery; permit callback trả `AttemptPermit`; phân loại exception khi complete; fail settlement nếu thiếu artifact C03. |
+| 13 | `backend/app/services/review/service.py` | `reject_question` & `revert_question` | Xóa bỏ toàn bộ lệnh gọi `invalidate_shuffle_if_finalized` ngoài transaction. |
+| 14 | `backend/app/services/review/service.py` | `get_progress` | Xóa bỏ lệnh gọi recovery; endpoint hoàn toàn read-only; strict validation các trường số đếm. |
+| 15 | `backend/tests/services/test_review_lifecycle.py` | `MockRpcQueryBuilder` | Khớp 100% chữ ký Migration 006 (`p_operation_id` cho reserve; `p_operation_id, p_attempt_id` cho acquire); mô phỏng đúng `P0002` và `review_recover_session`. |
+| 16 | `backend/tests/services/test_review_real_db.py` | Bootstrap & Tests | Bootstrap `auth.uid()`, `auth.role()`; kiểm thử multi-connection concurrency, active replay có permit, và lost response reconciliation. |
+| 17 | `docs/tasks/TASK-301.md` | Tài liệu kỹ thuật | Đồng bộ toàn bộ sơ đồ v10.0, cập nhật 15 tiêu chí Definition of Done. |
+
+---
+
+## I. THỨ TỰ TRIỂN KHAI VÀ DEPENDENCY GRAPH
+
+```mermaid
+graph TD
+    subgraph Workstream_A["Workstream A: Lifecycle, Concurrency & Recovery (P0)"]
+        A1["Task A.1: Sửa constructor ReviewRepository cấm fallback"]
+        A2["Task A.2: Tích hợp RPC review_recover_session & Strict Validation"]
+        A3["Task A.3: Sửa Concurrency trong Lazy Recovery Retry"]
+        A4["Task A.4: Làm sạch GET progress thuần túy read-only"]
+        A1 --> A2 --> A3 --> A4
+    end
+
+    subgraph Workstream_B["Workstream B: AI Adapter Boundary & Settlement (P0)"]
+        B1["Task B.1: Tích hợp Composition Root & Permit Callback"]
+        B2["Task B.2: Sinh operation_id, PostgREST Model & State Machine Replay"]
+        B3["Task B.3: Strict Candidate Payload & Option Normalization Khớp SQL"]
+        B4["Task B.4: Xóa bỏ fabricated report & Typed SettlementResult"]
+        B5["Task B.5: Phân Loại Exception & Complete Lost-Response Reconciliation"]
+        B6["Task B.6: Xử lý Cancellation với asyncio.shield"]
+        B1 --> B2 --> B3 --> B4 --> B5 --> B6
+    end
+
+    subgraph Workstream_C["Workstream C: Canonical Artifacts Contract (External P0)"]
+        C1["Task C.1: Phân định ranh giới Source Confirmation Pipeline"]
+        C2["Task C.2: Freeze canonical artifacts vào RPC reservation"]
+        C3["Task C.3: Fail-closed CÓ SETTLEMENT trong TASK-301 nếu thiếu artifacts"]
+        C1 --> C2 --> C3
+    end
+
+    subgraph Workstream_D["Workstream D: Invalidation, Verification & Final DoD (P1)"]
+        D1["Task D.1: Xóa invalidation ngoài transaction"]
+        D2["Task D.2: Triệt tiêu Table Mutation Fallback"]
+        D3["Task D.3: Hardening Parser Tiến Độ C01"]
+        D4["Task D.4: Cập nhật Test Suites Unit & Integration"]
+        D5["Task D.5: Đồng bộ tài liệu TASK-301.md và bàn giao"]
+        D1 --> D2 --> D3 --> D4 --> D5
+    end
+
+    Workstream_A --> Workstream_D
+    Workstream_B --> Workstream_D
+    Workstream_C -.->|"Khi có persisted artifacts"| Workstream_D
+```
+
+---
+
+## J. RISK REGISTER
+
+| Mã Rủi Ro | Loại Rủi Ro | Mô tả Chi Tiết | Mức Độ | Biện Pháp Giảm Thiểu (Mitigation Strategy) |
+|---|---|---|---|---|
+| **RSK-01** | Active Replay Permit Desync | Replay active operation đã có permit làm lệch count khi complete | Nghiêm trọng | Cấm dispatch AI trên active replay nếu DB đã có permit; chỉ cho phép khi 0 permits. |
+| **RSK-02** | Complete Lost Response | Mạng đứt lúc complete RPC khiến service hiểu nhầm là lỗi và fail operation | Cao | Reconcile bằng cách gọi lại complete RPC; phân loại exception trước khi retry; kiểm tra reserve replay nếu stale. |
+| **RSK-03** | Orphan Operation on C03 Fail | Thiếu canonical artifacts nhưng chỉ trả 422 làm operation kẹt active | Cao | Bắt buộc gọi `review_fail_regeneration(SOURCE_NOT_CONFIRMED)` để đóng operation trước khi trả 422. |
+| **RSK-04** | Operation ID Desync | Repository tự sinh UUID ngầm làm mất identity khi retry reserve | Cao | Service sinh `operation_id = uuid4()` duy nhất hoặc nhận Idempotency-Key và truyền xuống repository. |
+| **RSK-05** | Case-Insensitive Duplicate Options | Python chấp nhận `["A", "a"]` nhưng SQL từ chối | Trung bình | Chuẩn hóa options bằng `{opt.strip().lower() for opt in v}` trên bản sao so sánh khớp logic SQL. |
+| **RSK-06** | Double Invalidation Race | Invalidation post-hook ngoài TX chạy chậm xóa nhầm shuffle mới | Trung bình | Xóa bỏ hoàn toàn lệnh gọi invalidation ngoài TX ở cả Reject và Revert; tin tưởng 100% vào DB transaction của RPC. |
+
+---
+
+## K. FINAL DEFINITION OF DONE (15 TIÊU CHÍ NGHIỆM THU KHẮT KHE)
+
+PR #28 chỉ được phép chuyển trạng thái sang **Ready for Review** và bàn giao cho reviewer Hùng (`benalexx007`) & Đạt (`Thanhdat3010`) khi đáp ứng trọn vẹn **15 tiêu chí nghiệm thu sau**:
+
+- [ ] **1. Đóng F06 triệt để:** Không còn direct SELECT trên `review_operations` bị lỗi 42501; không còn fallback lấy `question.id` làm `operation_id`; wrapper gọi đúng `public.review_recover_session(p_session_id UUID)` từ PR #36 của Hùng; thu hồi chính xác operation hết hạn theo DB lease và phục hồi trạng thái câu hỏi atomic.
+- [ ] **2. Read-only Progress Endpoint:** Endpoint `GET /progress` hoàn toàn là thao tác đọc dữ liệu qua Owner JWT, không thực hiện bất kỳ mutation hay recovery nào làm thay đổi state; parser tiến độ có strict type checking chống coercion.
+- [ ] **3. Đóng F10 triệt để:** Candidate payload được validate nghiêm ngặt qua Pydantic schema với `strict=True`, chấp nhận hợp lệ trường `content == stem_latex` từ TASK-304, dùng đúng schema `CheckResult`; bắt buộc `is_valid is True`; không strip in-place; chuẩn hóa options `lower() + strip()` trên bản sao khớp SQL; cấm tuyệt đối việc tự tạo validation report giả.
+- [ ] **4. Ranh giới C03 được cô lập an toàn có Settlement:** Tách rời C03 thành dependency bên ngoài; không dùng fallback hash cũ; nếu thiếu `confirmed_source_hash` hoặc canonical Blueprint 0.4.0 sau reservation, hệ thống **bắt buộc gọi `review_fail_regeneration(SOURCE_NOT_CONFIRMED)`**, kiểm tra `SettlementResult` trước khi trả HTTP 422; không tự động tính toán hash tại request time.
+- [ ] **5. Tích hợp đúng Composition Root & Permit Callback (F04):** Dependency provider `get_ai_generator` khởi tạo `TargetedRegenerator` bằng `request.app.state.ai_services.generation`, sử dụng gateway và key pool chung; truyền permit callback trả về typed `AttemptPermit`; fail-closed 503 khi thiếu cấu hình.
+- [ ] **6. Bảo toàn Quota Authority & Khớp Chữ Ký Acquire (F07):** Gọi đúng `review_acquire_attempt(p_operation_id, p_attempt_id)`; phân biệt rõ ràng session counter (30) và operation permits (4); không ép kiểu `max(1, ...)`; đối chiếu số count hoàn tất khớp với ledger `review_attempts`.
+- [ ] **7. Khớp 100% Chữ Ký Migration 006:** Gọi đúng `review_reserve_regeneration(p_session_id, p_question_id, p_operation_id)`; loại bỏ các migration cạnh tranh do branch tự sinh (004/008).
+- [ ] **8. Operation Identity & State Machine Replay:** `operation_id` được sinh duy nhất tại Service trước khi reserve (hỗ trợ header `Idempotency-Key`); xử lý an toàn 4 trạng thái replay (`active`, `completed`, `failed`, `recovered`); cấm dispatch AI trên active replay nếu DB đã có permit; sanitize mã lỗi qua `RollbackErrorCode(StrEnum)`.
+- [ ] **9. Complete Lost-Response Reconciliation:** Phân loại exception; chỉ retry complete khi gặp ambiguous transport failure; đối chiếu reserve replay nếu nhận `REVIEW_STALE`; nếu operation active nhưng hết hạn lease thì gọi `review_recover_session`; không tự ý fail operation khi chưa xác định kết quả.
+- [ ] **10. Invalidation nguyên tử:** Xóa bỏ hoàn toàn lệnh gọi invalidation rời rạc ở cả 2 luồng `reject_question` và `revert_question`; tin tưởng tuyệt đối vào invalidation bên trong DB transaction của Migration 006.
+- [ ] **11. Loại bỏ Fallback Client Ngầm:** Constructor `ReviewRepository` không fallback `worker_db = db`; nếu thiếu `worker_db`, mọi worker RPC phải fail-closed HTTP 503 ngay lập tức.
+- [ ] **12. Invariant `is_current`:** Tại mọi committed state hợp lệ, mỗi expected `(version_id, source_question_id)` slot phải có đúng một current candidate.
+- [ ] **13. Ranh giới Database Connection & AI:** Transaction TX1 phải commit hoàn toàn trước khi gọi AI. Không giữ transaction, row lock hoặc transaction-scoped database state trong suốt thời gian chờ provider. TX2 là một transaction độc lập.
+- [ ] **14. Mock Builder chuẩn xác:** `MockRpcQueryBuilder` trong file test unit phản ánh chính xác 100% chữ ký và ràng buộc của Migration 006 (`p_operation_id` cho reserve; `p_operation_id, p_attempt_id` cho acquire; mô phỏng đúng P0002; mô phỏng đúng `review_recover_session`).
+- [ ] **15. Integration Test với Toàn Bộ Chuỗi Migration 004/005 -> 006 -> 007:** Kiểm thử thành công trên container PostgreSQL 15 cho chuỗi upgrade và fresh schema; kiểm thử đầy đủ các kịch bản: Quota boundary (29->30, op cap 4), Stale recovery, Concurrent retry, Active replay có permit, Complete lost response reconciliation, và Revert shuffle invalidation. Đồng bộ tài liệu `docs/tasks/TASK-301.md`.

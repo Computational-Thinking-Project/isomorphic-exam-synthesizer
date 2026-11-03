@@ -1,4 +1,4 @@
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
@@ -315,6 +315,23 @@ class ReviewErrorCode:
     REVIEW_ATTEMPT_REPLAYED = "REVIEW_ATTEMPT_REPLAYED"
 
 
+class RollbackErrorCode(StrEnum):
+    """Sanitized failure/rollback error codes for failure settlement (TASK-301/TASK-302)."""
+
+    AI_TIMEOUT = "AI_TIMEOUT"
+    AI_INVALID_OUTPUT = "AI_INVALID_OUTPUT"
+    MATH_VALIDATION_FAILED = "MATH_VALIDATION_FAILED"
+    PERMIT_UNAVAILABLE = "PERMIT_UNAVAILABLE"
+    PERMIT_UNCERTAIN = "PERMIT_UNCERTAIN"
+    QUOTA_EXHAUSTED = "QUOTA_EXHAUSTED"
+    OPERATION_EXHAUSTED = "OPERATION_EXHAUSTED"
+    ATTEMPT_REPLAYED = "ATTEMPT_REPLAYED"
+    GENERATION_FAILED = "GENERATION_FAILED"
+    CLIENT_CANCELLED = "CLIENT_CANCELLED"
+    SOURCE_NOT_CONFIRMED = "SOURCE_NOT_CONFIRMED"
+    AMBIGUOUS_STATE = "AMBIGUOUS_STATE"
+
+
 class ReviewActionResponse(BaseModel):
     """Phản hồi sau thao tác Accept hoặc Revert trên một câu hỏi (TASK-301)."""
 
@@ -486,6 +503,7 @@ __all__ = [
     "ConfirmSourceResponse",
     "ReserveResult",
     "ReviewErrorCode",
+    "RollbackErrorCode",
     "ReviewActionResponse",
     "RegeneratedQuestionResponse",
     "ReviewProgressResponse",

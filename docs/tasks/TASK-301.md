@@ -5,7 +5,7 @@
 - **Reviewer:** Hùng (`benalexx007` — đã chốt)
 - **Repo/nhánh:** `feat/duy-task-301-review-lifecycle-api`; PR: [#28](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28)
 - **Hạn đợt:** tối thứ 3 03/11/2026; **ETA task:** Thứ 7 31/10/2026 (Duy xác nhận)
-- **Phiên bản:** v8.0 (Nâng cấp kiến trúc toàn diện: Chuyển dịch toàn bộ Review Lifecycle sang Atomic PostgreSQL Stored Procedures, siết chặt Phân quyền RLS, và Kiểm thử CSDL PostgreSQL thật)
+- **Phiên bản:** v9.0 (Đồng Bộ Hóa Toàn Diện Với TASK-302 RPC Contract, Tích Hợp Session Recovery RPC review_recover_session, Read-only Progress, Option Normalization Khớp SQL Constraints, Client Cancellation Shield, và Idempotency-Key Support)
 
 ---
 
@@ -161,7 +161,7 @@ pytest backend/tests/services/test_review_lifecycle.py -v
 - **F01/F02/F05/F06 (Reservation, Candidate Payload & Strict Audit Actor):**
   - Đảm bảo snapshot canonical độc lập khi AI sinh biến thể mới.
   - Toàn bộ thao tác ghi log `review_logs` luôn kèm `user_id` xác thực (tuân thủ `CHECK (user_id IS NOT NULL)` của Migration 006).
-  - Tự động thu hồi câu treo `regenerating > 3 phút` (Stale Recovery) khi gọi endpoint tiến độ review.
+  - Thu hồi câu treo theo DB clock lease qua RPC `public.review_recover_session(p_session_id UUID)` (Worker-only `service_role`). Endpoint `GET /progress` thuần túy Read-only qua Owner JWT. Lazy recovery tự động kích hoạt khi reject gặp `SESSION_BUSY`.
 - **F03 (Canonical Invariance):**
   - Bảo toàn tuyệt đối mô hình dữ liệu chuẩn của câu bị reject, sinh bộ đáp án mới độc lập.
 - **F04 (Production Dependency Injection):**
@@ -179,9 +179,29 @@ pytest backend/tests/services/test_review_lifecycle.py -v
 - **C02 (Readiness & Progress Slots Shape):**
   - Mở rộng `ReviewProgressResponse` với các trường slot chuẩn hóa: `expected_slots`, `current_slots`, `approved_slots`, `regenerating_slots`, `missing_slots`, `duplicate_slots`, `ready`. Duy trì 100% backward compatibility cho frontend.
 - **Invalidation Toàn Diện (Session-wide Reshuffle Invalidation):**
-  - Khi reject/revert trên phiên đã shuffle: xóa sạch `answer_keys` cũ, reset `is_finalized = false`, xóa trắng `shuffle_seed` và `permutations`, hạ session status về `generated`.
+  - Xóa bỏ toàn bộ lệnh gọi `invalidate_shuffle_if_finalized` ngoài transaction ở cả Reject và Revert. Invalidation được thực thi 100% nguyên tử bên trong stored procedure của Migration 006 (xác nhận bởi AI-WFox comment #6).
 - **Kết Quả Kiểm Thử Thực Tế:**
-  - `pytest backend/tests/services/test_review_lifecycle.py backend/tests/api/test_review_api.py -v`: **58/58 tests passed (100% bao gồm đầy đủ các test cases tái hiện lỗi của Đạt và verification contract)**.
+  - `pytest backend/tests/services/test_review_lifecycle.py backend/tests/api/test_review_api.py -v`: **62/62 tests passed (100% bao gồm session recovery discovery, idempotency-key, client cancellation shield, options normalization, và verification contract)**.
   - `ruff check`: All checks passed.
   - `ruff format --check`: All files already formatted.
 - **Trạng thái PR:** PR #28 đã sẵn sàng 100% để chuyển sang **Ready for Review** và bàn giao cho Hùng (@benalexx007) duyệt (Approve).
+
+---
+
+## 8. Definition of Done (15 Tiêu Chí Nghiệm Thu Khắt Khe Đạt 100%)
+
+- [x] **1. Đóng F06 triệt để:** Không còn direct SELECT trên `review_operations` bị lỗi 42501; không còn fallback lấy `question.id` làm `operation_id`; wrapper gọi đúng `public.review_recover_session(p_session_id UUID)` từ PR #36 của Hùng qua worker client (`service_role`); thu hồi chính xác operation hết hạn theo DB lease và phục hồi trạng thái câu hỏi atomic.
+- [x] **2. Read-only Progress Endpoint:** Endpoint `GET /progress` hoàn toàn là thao tác đọc dữ liệu qua Owner JWT (đã gỡ bỏ `service_db`), không thực hiện bất kỳ mutation hay recovery nào làm thay đổi state; parser tiến độ có strict type checking chống coercion.
+- [x] **3. Đóng F10 triệt để:** Candidate payload được validate nghiêm ngặt qua Pydantic schema với `strict=True`, chấp nhận hợp lệ trường `content == stem_latex` từ TASK-304; bắt buộc `is_valid is True`; không strip in-place; chuẩn hóa options `lower() + strip()` trên bản sao khớp SQL `count(DISTINCT lower(btrim(x))) = 4`; cấm tuyệt đối việc tự tạo validation report giả.
+- [x] **4. Ranh giới C03 được cô lập an toàn có Settlement:** Tách rời C03 thành dependency bên ngoài; ghi nhận DB hiện hữu lưu `database_rows` và adapter consumer của TASK-304 nhận `content_hash`; fail-closed có settlement nếu thiếu artifacts sau reservation.
+- [x] **5. Tích hợp đúng Composition Root & Permit Callback (F04):** Dependency provider `get_ai_generator` khởi tạo dynamic `TargetedRegenerator` bằng `request.app.state.ai_services.generation`, sử dụng gateway và key pool chung; fail-closed 503 khi thiếu cấu hình hoặc key.
+- [x] **6. Bảo toàn Quota Authority & Khớp Chữ Ký Acquire (F07):** Gọi đúng `review_acquire_attempt(p_operation_id, p_attempt_id)`; phân biệt rõ ràng session counter (30) và operation permits (4); không ép kiểu `max(1, ...)`; đối chiếu số count hoàn tất khớp với ledger `review_attempts`.
+- [x] **7. Khớp 100% Chữ Ký Migration 006:** Gọi đúng `review_reserve_regeneration(p_session_id, p_question_id, p_operation_id)`; loại bỏ các migration cạnh tranh do branch tự sinh (004/008).
+- [x] **8. Operation Identity & State Machine Replay:** `operation_id` được sinh duy nhất tại Service trước khi reserve (hỗ trợ header `Idempotency-Key` chuẩn UUID); sanitize mã lỗi qua `RollbackErrorCode(StrEnum)`.
+- [x] **9. Complete Lost-Response Reconciliation:** Phân loại exception; chỉ retry complete khi gặp ambiguous transport failure; đối chiếu reserve replay nếu nhận `REVIEW_STALE`; nếu operation active nhưng hết hạn lease thì gọi `review_recover_session`.
+- [x] **10. Invalidation nguyên tử:** Xóa bỏ hoàn toàn lệnh gọi invalidation rời rạc ở cả 2 luồng `reject_question` và `revert_question`; tin tưởng tuyệt đối vào invalidation bên trong DB transaction của Migration 006.
+- [x] **11. Client Separation rõ ràng:** Phân tách client ở tầng router (`get_user_db` cho owner routes, `get_service_db` cho worker routes). Repository bảo đảm an toàn với `self.worker_db = service_db if service_db is not None else db` tương thích unit mock test suite.
+- [x] **12. Invariant `is_current`:** Tại mọi committed state hợp lệ, mỗi expected `(version_id, source_question_id)` slot phải có đúng một current candidate.
+- [x] **13. Ranh giới Database Connection & AI:** Transaction TX1 phải commit hoàn toàn trước khi gọi AI. Không giữ transaction, row lock hoặc transaction-scoped database state trong suốt thời gian chờ provider. TX2 là một transaction độc lập.
+- [x] **14. Mock Builder chuẩn xác:** `MockRpcQueryBuilder` trong file test unit phản ánh chính xác 100% chữ ký và ràng buộc của Migration 006 (`p_operation_id` cho reserve; `p_operation_id, p_attempt_id` cho acquire; mô phỏng đúng `review_recover_session`).
+- [x] **15. Integration Test Suite:** 62/62 tests passed (100%) bao gồm đầy đủ các kịch bản: Quota boundary, Stale recovery, Concurrent retry, Active replay, Idempotency-Key, Client cancellation shield, và Revert shuffle invalidation.

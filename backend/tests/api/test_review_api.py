@@ -160,6 +160,87 @@ def test_reject_question_success(
     assert data["status"] == "pending_review"
 
 
+def test_reject_question_with_idempotency_key(
+    client: TestClient, mock_current_user: CurrentUser, auth_headers: dict
+):
+    """POST /reject passes Idempotency-Key header to service."""
+    expected_resp = RegeneratedQuestionResponse(
+        question_id="22222222-2222-2222-2222-222222222222",
+        regenerated_from_id=MOCK_QUESTION_ID,
+        status="pending_review",
+        content="Câu hỏi mới sau sinh lại",
+        options=["A. 1", "B. 2", "C. 3", "D. 4"],
+        correct_key="B",
+        solution_md="Lời giải chi tiết mới",
+        validation_report={"is_valid": True},
+    )
+
+    app.dependency_overrides[get_current_user] = lambda: mock_current_user
+    app.dependency_overrides[get_user_db] = lambda: MagicMock()
+    app.dependency_overrides[get_service_db] = lambda: MagicMock()
+
+    idempotency_uuid = "33333333-3333-3333-3333-333333333333"
+    custom_headers = {**auth_headers, "Idempotency-Key": idempotency_uuid}
+
+    try:
+        with (
+            patch("app.api.routes.review.assert_ownership", return_value=None),
+            patch.object(
+                ReviewService,
+                "reject_question",
+                new_callable=AsyncMock,
+                return_value=expected_resp,
+            ) as mock_reject,
+        ):
+            res = client.post(
+                f"/api/sessions/{MOCK_SESSION_ID}/questions/{MOCK_QUESTION_ID}/reject",
+                headers=custom_headers,
+            )
+            mock_reject.assert_awaited_once_with(
+                MOCK_SESSION_ID,
+                MOCK_QUESTION_ID,
+                mock_current_user.id,
+                idempotency_key=idempotency_uuid,
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert res.status_code == 200
+
+
+def test_reject_question_invalid_idempotency_key_returns_400(
+    client: TestClient, mock_current_user: CurrentUser, auth_headers: dict
+):
+    """POST /reject with non-UUID Idempotency-Key returns 400."""
+    app.dependency_overrides[get_current_user] = lambda: mock_current_user
+    app.dependency_overrides[get_user_db] = lambda: MagicMock()
+    app.dependency_overrides[get_service_db] = lambda: MagicMock()
+
+    custom_headers = {**auth_headers, "Idempotency-Key": "not-a-valid-uuid"}
+
+    try:
+        with (
+            patch("app.api.routes.review.assert_ownership", return_value=None),
+            patch.object(
+                ReviewService,
+                "reject_question",
+                new_callable=AsyncMock,
+                side_effect=ReviewDomainException(
+                    400, "ERR_INVALID_IDEMPOTENCY_KEY", "Idempotency-Key must be a valid UUID"
+                ),
+            ),
+        ):
+            res = client.post(
+                f"/api/sessions/{MOCK_SESSION_ID}/questions/{MOCK_QUESTION_ID}/reject",
+                headers=custom_headers,
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert res.status_code == 400
+    assert res.json()["error_code"] == "ERR_INVALID_IDEMPOTENCY_KEY"
+
+
 def test_reject_question_quota_exhausted_returns_429(
     client: TestClient, mock_current_user: CurrentUser, auth_headers: dict
 ):
