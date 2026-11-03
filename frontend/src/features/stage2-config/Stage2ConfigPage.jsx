@@ -104,8 +104,8 @@ export default function Stage2ConfigPage({
         if (!active) return;
         setSession(data);
 
-        // Nếu session đã ở trạng thái generating hoặc đã được cấu hình trước đó
-        if (data.status === 'generating') {
+        // Nếu session đã ở trạng thái generating hoặc hoàn thành một phần (partial_generated)
+        if (data.status === 'generating' || data.status === 'partial_generated') {
           setIsGenerating(true);
         }
         if (data.config) {
@@ -136,6 +136,8 @@ export default function Stage2ConfigPage({
   // Hook SSE kết nối khi ở trạng thái isGenerating
   const sseState = useSSEHook(sessionId, {
     enabled: isGenerating,
+    initialProgress: session?.progress,
+    initialQuestionStatuses: session?.question_statuses,
   });
 
   // Xử lý nộp form cấu hình
@@ -350,7 +352,13 @@ export default function Stage2ConfigPage({
   }
 
   // Trích xuất số lượng mã đề thật, không võ đoán mặc định 2 khi F5/reload
-  const statusVersions = Object.keys(sseState.questionStatuses || {}).map((k) =>
+  const restoredStatuses = session?.question_statuses || {};
+  const mergedStatuses = {
+    ...restoredStatuses,
+    ...(sseState.questionStatuses || {}),
+  };
+
+  const statusVersions = Object.keys(mergedStatuses).map((k) =>
     parseInt(k.split('-')[0], 10),
   );
   const maxVersionFromStatuses =
@@ -364,7 +372,19 @@ export default function Stage2ConfigPage({
     (session?.exam_versions?.length > 0 ? session.exam_versions.length : null) ||
     sseState.progress?.n_versions ||
     sseState.progress?.num_versions ||
+    (session?.progress?.totalCount && session?.source_questions?.length
+      ? Math.round(session.progress.totalCount / session.source_questions.length)
+      : null) ||
     (maxVersionFromStatuses && maxVersionFromStatuses > 0 ? maxVersionFromStatuses : null);
+
+  const mergedProgress =
+    (sseState.progress?.percent > 0 || sseState.progress?.completedCount > 0 || sseState.isDone)
+      ? sseState.progress
+      : session?.progress || sseState.progress;
+
+  const effectiveIsDone =
+    sseState.isDone ||
+    (session?.status === 'partial_generated' && sseState.connectionState === 'idle');
 
   return (
     <div className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
@@ -388,11 +408,11 @@ export default function Stage2ConfigPage({
           totalSourceQuestions={
             session?.source_questions?.length || session?.blueprint_summary?.total_questions || 10
           }
-          progress={sseState.progress}
-          questionStatuses={sseState.questionStatuses}
+          progress={mergedProgress}
+          questionStatuses={mergedStatuses}
           warnings={sseState.warnings}
           connectionState={sseState.connectionState}
-          isDone={sseState.isDone}
+          isDone={effectiveIsDone}
           error={retryError || sseState.error}
           reconnectCount={sseState.reconnectCount}
           onReconnect={sseState.reconnect}

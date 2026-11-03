@@ -12,6 +12,8 @@ import { requestEventTicket } from '../services/stage2Service.js';
  */
 export function useSSE(sessionId, {
   enabled = true,
+  initialProgress = null,
+  initialQuestionStatuses = null,
   requestTicket = requestEventTicket,
   eventSourceFactory = (url) => new EventSource(url),
   maxReconnectAttempts = 5,
@@ -23,7 +25,7 @@ export function useSSE(sessionId, {
   const [connectionState, setConnectionState] = useState('idle');
   // 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'completed' | 'disconnected' | 'failed'
 
-  const [progress, setProgress] = useState({
+  const [progress, setProgress] = useState(() => initialProgress || {
     percent: 0,
     completedCount: 0,
     totalCount: 0,
@@ -31,7 +33,7 @@ export function useSSE(sessionId, {
     estimatedSeconds: null,
   });
 
-  const [questionStatuses, setQuestionStatuses] = useState({});
+  const [questionStatuses, setQuestionStatuses] = useState(() => initialQuestionStatuses || {});
   const [warnings, setWarnings] = useState([]);
   const [error, setError] = useState(null);
   const [isDone, setIsDone] = useState(false);
@@ -115,6 +117,9 @@ export function useSSE(sessionId, {
       }
 
       ticket = ticketRes?.ticket;
+      if (ticketRes?.reset_cursor) {
+        lastEventIdRef.current = null;
+      }
       if (!ticket) {
         throw new Error('Không nhận được ticket xác thực từ máy chủ.');
       }
@@ -200,6 +205,25 @@ export function useSSE(sessionId, {
     const handleJobError = (payloadOrEvent) => {
       if (!isMountedRef.current || connectionTokenRef.current !== currentToken) return;
       const data = payloadOrEvent?.data !== undefined ? parsePayload(payloadOrEvent) : payloadOrEvent;
+
+      // Xử lý cơ chế phục hồi khi cursor sự kiện bị trôi (> 50 events buffer overflow) hoặc server restart
+      if (
+        data?.error_code === 'ERR_CURSOR_OUTDATED' ||
+        data?.code === 'ERR_CURSOR_OUTDATED' ||
+        data?.requires_resync === true ||
+        data?.reset_cursor === true
+      ) {
+        lastEventIdRef.current = null;
+        cleanupConnection();
+        if (reconnectAttemptRef.current < maxReconnectAttempts) {
+          reconnectAttemptRef.current += 1;
+          setReconnectCount(reconnectAttemptRef.current);
+          setConnectionState('reconnecting');
+          reconnectTimerRef.current = setTimeout(connect, 600);
+          return;
+        }
+      }
+
       const errorMsg =
         data?.error_message ||
         data?.message ||

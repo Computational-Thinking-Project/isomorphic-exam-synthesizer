@@ -257,3 +257,89 @@ test('fetchSessionDetail trả blueprint_summary: null khi có câu hỏi nguồ
     api.get = originalGet;
   }
 });
+
+test('fetchSessionDetail tính fallback supported_modes từ source_questions nếu backend trả summary thiếu supported_modes (F02/PR32)', async () => {
+  const originalGet = api.get;
+  api.get = async () => ({
+    data: {
+      id: 'session-pr32-summary',
+      status: 'blueprinted',
+      blueprint_summary: {
+        is_ready: true,
+        counts: { total: 2, blueprinted: 2 },
+        // supported_modes bị thiếu từ PR #32
+      },
+      source_questions: [
+        { id: 'q1', variation_modes: ['NUMERICAL', 'context_swap'] },
+        { id: 'q2', variation_modes: ['NUMERICAL'] },
+      ],
+    },
+  });
+
+  try {
+    const detail = await fetchSessionDetail('session-pr32-summary');
+    assert.ok(detail.blueprint_summary);
+    assert.equal(detail.blueprint_summary.is_ready, true);
+    assert.ok(Array.isArray(detail.blueprint_summary.supported_modes));
+
+    const numMode = detail.blueprint_summary.supported_modes.find((m) => m.id === 'NUMERICAL');
+    assert.ok(numMode, 'Phải có NUMERICAL được bóc tách từ source_questions');
+    assert.equal(numMode.is_available, true, '100% câu hỗ trợ NUMERICAL');
+
+    const ctxMode = detail.blueprint_summary.supported_modes.find((m) => m.id === 'context_swap');
+    assert.ok(ctxMode);
+    assert.equal(ctxMode.is_available, false, 'Chỉ 1/2 câu hỗ trợ context_swap');
+  } finally {
+    api.get = originalGet;
+  }
+});
+
+test('fetchSessionDetail khôi phục snapshot tiến độ và bản đồ câu hỏi khi F5/reload phiên partial_generated', async () => {
+  const originalGet = api.get;
+  api.get = async () => ({
+    data: {
+      id: 'session-reload-partial',
+      status: 'partial_generated',
+      generation_config: {
+        n_versions: 2,
+        active_variation_modes: ['parameter_variation'],
+        ordering_preferences: { shuffle_questions: true, shuffle_options: false },
+      },
+      source_questions: [{ id: 'q1' }, { id: 'q2' }],
+      exam_versions: [
+        {
+          version_index: 1,
+          version_code: '101',
+          questions: [
+            { question_no: 1, status: 'done' },
+            { question_no: 2, status: 'done' },
+          ],
+        },
+        {
+          version_index: 2,
+          version_code: '102',
+          questions: [
+            { question_no: 1, status: 'done' },
+            // question_no: 2 bị thiếu
+          ],
+        },
+      ],
+    },
+  });
+
+  try {
+    const detail = await fetchSessionDetail('session-reload-partial');
+    assert.ok(detail.progress, 'Phải có progress snapshot khôi phục');
+    assert.equal(detail.progress.completedCount, 3);
+    assert.equal(detail.progress.totalCount, 4);
+    assert.equal(detail.progress.percent, 75);
+    assert.equal(detail.progress.is_partial, true);
+
+    assert.equal(detail.question_statuses['1-1']?.status, 'done');
+    assert.equal(detail.question_statuses['1-2']?.status, 'done');
+    assert.equal(detail.question_statuses['2-1']?.status, 'done');
+    assert.equal(detail.question_statuses['2-2'], undefined, 'Câu 2 mã 2 chưa sinh');
+  } finally {
+    api.get = originalGet;
+  }
+});
