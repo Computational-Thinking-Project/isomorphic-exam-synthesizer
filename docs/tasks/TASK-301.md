@@ -6,6 +6,19 @@
 
 ## Trạng thái hiện tại — 04/11/2026
 
+### Tích hợp dev sau caller update
+
+- Caller update đã publish tại `55449fc`; checkout local đã đối chiếu nội dung và
+  đồng bộ, giữ bản dự phòng `task301-published-before-fast-forward` trong stash.
+- Tích hợp `dev@8bdc3b1`: conflict duy nhất ở changelog được giải bằng cách giữ
+  cả quyết định bundler của dev và quyết định caller301; code review không đổi.
+- Sau tích hợp: review/exporter/shuffler **245 passed, 7 skipped** (các ca cần
+  Typst CLI); Ruff pass; mypy79 source files pass; full suite876 collected,
+  chưa chạy full async/API/SQL suite. Jinja2/MarkupSafe đúng lock được cài vào
+  thư mục `.artifacts` local để kiểm; không đổi requirements của dev.
+- Chưa coi merge dev hoặc checks ở trên là tích hợp #26/#36/artifacts thật.
+  P1–P4/R1, progress IDs, DB/HTTP/concurrency, CI và review vẫn còn gate.
+
 ### Bổ sung caller: reservation outcome chưa rõ
 
 - Reserve response mất hoặc malformed được đối soát tối đa ba lần bằng cùng IDs.

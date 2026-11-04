@@ -21,6 +21,15 @@ và bảy regression; chưa gọi là reviewer verified. Đã chạy lại năm 
 **148 passed**, Ruff pass, mypy69 files pass. Scheduling stub/RPC fake không thay
 kiểm async/HTTP/SQL thật. Các dependency B01–B07 và gate nghiệm thu còn giữ nguyên.
 
+### Cập nhật bước5: tích hợp dev
+
+Caller update đã publish `55449fc`. Đã đối chiếu local/remote cùng nội dung,
+giữ stash dự phòng và fast-forward checkout; tích hợp dev `8bdc3b1`, giải conflict
+duy nhất ở changelog bằng cách giữ cả hai ADR. Không thay code review trong merge.
+Sau tích hợp245 passed/7 skipped cho review/exporter/shuffler; skips cần Typst CLI.
+Ruff pass, mypy79 source files pass, full suite876 collected (không phải full pass).
+Chưa thực hiện DB/HTTP/concurrency gates hoặc nhận P1–P4/R1 đã được owner chốt.
+
 ## 2. Kết luận để quyết định triển khai
 
 Có thể sửa ngay phần caller, validation, receipt/replay, settlement và tests. Chưa thể nghiệm thu Reject hoàn chỉnh chỉ bằng tài liệu: producer chưa lưu confirmed artifacts theo target, SQL baseline trả `database_rows`, mapping cuối/P1–P4/R1 chưa chốt. Trả lỗi an toàn khi thiếu dependency là cần thiết nhưng chưa hoàn thành chức năng.

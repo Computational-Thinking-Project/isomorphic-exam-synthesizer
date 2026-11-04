@@ -1,4 +1,18 @@
+## DEC-DAT-W3-307: Boundary bundler và dependency template
+
+- Cập nhật 01/11/2026 — Đạt: tích hợp Typst compiler đã merge từ TASK-306 qua `build_compiled_bundle`. Một validated display snapshot cấp dữ liệu cho toàn bộ PDF/ma trận/TeX/Markdown trước khi đóng ZIP; tái sử dụng `build_bundle`, lỗi compiler không trả gói thiếu. Không thêm DB/API/cloud/dependency/Docker. Kiểm tích hợp module bằng fixture, snapshot đã khóa và Storage E2E vẫn pending; [interface/handoff](export-w3-bundler.md).
+- Ngày/người: 29/10/2026 — Đạt. ZIP theo phản hồi Duy tại PR #27.
+- Triển khai: typed display snapshot, Jinja2 XeLaTeX/Markdown, ZIP bytes + SHA-256, không DB/AI/cloud. Thêm Jinja2/MarkupSafe vào dependency lock cho Docker hiện hành.
+- Boundary/bytes/giới hạn cần owner Duy/Tâm/Hùng xác nhận khi ráp; không sửa API/SQL của owner khác. [Handoff](export-w3-bundler.md).
+- Chưa nghiệm thu: XeLaTeX compile/layout và E2E snapshot/PDF/Storage thật.
+
 ## DEC-BE1-013: Caller review dùng durable receipts và action keys
+
+- Tích hợp 04/11/2026: caller `55449fc` ghép dev `8bdc3b1`; giữ cả ADR bundler
+  và caller khi giải conflict changelog, không thay code review. Kiểm sau ghép:
+  review/exporter/shuffler245 pass/7 skip do thiếu Typst CLI, Ruff pass, mypy79
+  files pass, full suite876 collect. Chưa full async/DB/HTTP/concurrency hoặc CI;
+  P1–P4/R1/progress IDs và owner artifacts vẫn pending.
 
 - Ngày: 04/11/2026; người triển khai: Duy (`johannguyen015`) qua TASK-301.
 - Trạng thái: caller để review, chưa nghiệm thu producer/storage/DB/AI E2E hoặc deployed.
@@ -9,7 +23,7 @@
   Accept/Revert thêm optional Idempotency-Key; client cũ không gửi header vẫn dùng được.
 - Authority: [review RPC contract](api/review-rpc-contract.md). P1–P4/R1 vẫn proposed;
   yêu cầu progress IDs trong cùng RPC snapshot cần owner TASK-302 xác nhận. Không thay DDL.
-- Kiểm: 141 caller tests pass, Ruff/mypy pass; 765 tests collect. Fake RPC/scheduling
+- Kiểm: 148 caller tests pass, Ruff/mypy pass; 772 tests collect. Fake RPC/scheduling
   không thay kiểm PostgreSQL/concurrency/ASGI/JWT. Full async local chưa kiểm do quyền
   chạy ngoài môi trường hạn chế bị từ chối; CI/DB checks vẫn bắt buộc trước merge.
 - Phạm vi: review routes/service/repository/models cục bộ, regression tests và docs.
