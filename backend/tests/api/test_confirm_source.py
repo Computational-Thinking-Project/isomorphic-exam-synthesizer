@@ -140,6 +140,7 @@ def flow(monkeypatch):
         return SimpleNamespace(execute=execute)
 
     worker = SimpleNamespace(rpc=rpc)
+    db.rpc.side_effect = rpc
 
     class Extractor:
         async def extract_confirmed(self, items, **kwargs):
@@ -236,7 +237,20 @@ def test_missing_source_or_answer_is_rejected_before_worker(flow, missing):
 def test_owner_guard_before_worker(flow, suffix, method):
     state, client = flow
     state.owner = str(uuid4())
-    assert getattr(client, method)(url(state, suffix)).status_code == 403
+    options = {"json": {}} if method == "post" else {}
+    assert getattr(client, method)(url(state, suffix), **options).status_code == 403
+    assert not state.calls
+
+
+@pytest.mark.parametrize(
+    "suffix,method",
+    [("confirm-source", "post"), ("source-artifacts", "get"), ("source-artifacts/retry", "post")],
+)
+def test_source_endpoints_require_authentication(flow, suffix, method):
+    state, client = flow
+    app.dependency_overrides.pop(get_current_user)
+    options = {"json": {}} if method == "post" else {}
+    assert getattr(client, method)(url(state, suffix), **options).status_code == 401
     assert not state.calls
 
 

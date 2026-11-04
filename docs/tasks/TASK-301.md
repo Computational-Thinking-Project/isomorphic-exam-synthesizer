@@ -2,9 +2,19 @@
 
 ## Kế hoạch hoàn thiện hiện hành
 
-[Bản kế hoạch chi tiết ngày 04/11/2026](REMEDIATION_PLAN_PR28_TASK301.md) phân loại A01–A11 (caller/tài liệu), B01–B07 (đầu vào/kiểm chứng), các bước sửa và điều kiện nghiệm thu. Bản này đối chiếu PR head `1366f3c` riêng với draft local chưa commit; không nhận draft đã được publish hoặc reviewer xác minh. Contract vẫn theo authority, P1–P4/R1 chưa được chấp nhận chỉ vì tài liệu đã đăng.
+[Kế hoạch hiện hành](REMEDIATION_PLAN_PR28_TASK301.md) giữ thứ tự8 bước đã được
+Duy giao và trạng thái từng lỗi/gate. [Authority](../api/review-rpc-contract.md)
+là nguồn interface duy nhất. Bản tích hợp8b0a20f đã nối background producer,
+frozen-v1 và recovery trước reserve mới; bootstrap4bc71e4 và F11 tại674d3aa.
+Luồng HTTP→producer/SQL→adapter thật/provider giả→permit/complete đã thực thi đạt.
+Final SQL/CI và phản hồi owner/reviewer được ghi trên PR, không suy đã Approve.
+Producer thuộc301, không chờ phân công. PR giữ non-Draft theo Duy, chưa đủ merge
+cho tới khi đạt checks và independent approval.
 
-## Trạng thái hiện tại — 04/11/2026
+## Lịch sử checkpoint — không thay kế hoạch/authority hiện hành
+
+Các mục dưới ghi trạng thái tại thời điểm cũ; không dùng để khẳng định current
+code còn thiếu wiring hoặc yêu cầu sửa lại finding đã verified.
 
 ### Producer persistence checkpoint — TASK-301
 

@@ -3,10 +3,9 @@
 These tests execute SQL against **PostgreSQL 15**, rather than mocking Supabase.
 Each suite class creates a disposable container with no network, published ports, host mounts,
 or real credentials, and remove it on completion (including test failures).
-Docker Desktop must be running. The original schema/RPC runner uses Python's
-standard library. The additional TASK-301 `test_source_artifacts.py` cases need
-backend Python dependencies for the actual source mapper/canonical validator and
-producer repository. The `postgres:15-alpine` image must already
+Docker Desktop must be running. The schema runner uses Python's standard library. RPC/producer/chain cases now
+need backend dependencies: fixture artifacts are validated and published through
+actual worker RPCs, rather than pretending legacy rows are canonical input. The `postgres:15-alpine` image must already
 be available locally (`docker pull postgres:15-alpine` if necessary).
 
 From the repository root, in PowerShell:
@@ -33,8 +32,11 @@ database state and a separate owner-provided transition.
 dev `32d7644`; keep that fixture unchanged when updating the initialization schema.
 
 The `auth`/`storage` bootstrap is a local test stub. These checks do **not** verify
-Supabase deployment/JWT/RLS, AI calls, actual shuffle algorithms, or the Python
-repository/endpoint integration. Local PostgreSQL role/ACL tests are not a deployed
+Supabase deployment/JWT/RLS, live AI or actual shuffle algorithms. The dedicated producer test now executes
+HTTP→actual BlueprintService→SQL→frozen reservation→actual TargetedRegenerator/
+GenerationService→permit→complete, with a fake gateway and injected auth. Its
+table-read transport uses the fixture superuser, while RPCs use actual owner/worker
+roles; this is not proof of deployed JWT/table-read RLS/PostgREST connection pools. Local PostgreSQL role/ACL tests are not a deployed
 Supabase authorization test.
 
 `test_review_rpcs.py` additionally runs the actual nine stored procedures against
@@ -77,10 +79,11 @@ review locking after approval. It verifies these integration paths, not every
 generation/approval input or shared-cloud rollout. It never executes `git fetch`
 or accesses a remote from inside a test.
 
-The RPC suite uses raw database source/blueprint fixtures and explicit zero-call
-candidate payloads where appropriate; it does not claim those legacy rows are
-AI-ready canonical documents or confirmed adapter hashes. See the source-to-AI
-handoff limitation in `docs/api/review-rpc-contract.md`.
+The RPC suite publishes real validated fixture source/Blueprint artifacts through
+worker RPCs. Reservation JSON is fed to the strict frozen-v1 validator. Tests retain
+canonical/display differences, missing/pending artifact denial, edit-and-revert
+revision rejection and zero-call candidate payloads where appropriate. The producer
+suite also checks leases, two triggers, partial failure, cancellation and restart.
 
 Migration 006 deliberately refuses ambiguous data. Do not delete/deduplicate
 history or derive missing canonical values from shuffled display values to make
