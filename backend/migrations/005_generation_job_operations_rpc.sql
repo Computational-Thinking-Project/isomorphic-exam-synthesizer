@@ -76,6 +76,57 @@ BEGIN
   END IF;
 END $$;
 
+-- 1b. Helper & Trigger: Guard worker-managed columns on exam_sessions (F07)
+CREATE OR REPLACE FUNCTION public.guard_exam_sessions_worker_columns()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth, pg_temp
+AS $$
+BEGIN
+  -- Allow service_role, superusers, or internal execution within RPCs
+  IF public.current_role() IN ('service_role', 'postgres', 'supabase_admin')
+     OR NULLIF(current_setting('app.internal_worker_rpc', true), '') = 'true' THEN
+    RETURN NEW;
+  END IF;
+
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.active_job_id IS NOT NULL THEN
+      RAISE EXCEPTION 'Access denied: cannot manually set active_job_id on session creation'
+        USING ERRCODE = '42501';
+    END IF;
+    IF NEW.gemini_call_count IS NOT NULL AND NEW.gemini_call_count <> 0 THEN
+      RAISE EXCEPTION 'Access denied: cannot manually set gemini_call_count on session creation'
+        USING ERRCODE = '42501';
+    END IF;
+    IF NEW.status IS NOT NULL AND NEW.status NOT IN ('draft', 'blueprinted') THEN
+      RAISE EXCEPTION 'Access denied: cannot manually create session in status %', NEW.status
+        USING ERRCODE = '42501';
+    END IF;
+  ELSIF TG_OP = 'UPDATE' THEN
+    IF NEW.active_job_id IS DISTINCT FROM OLD.active_job_id THEN
+      RAISE EXCEPTION 'Access denied: cannot manually modify active_job_id'
+        USING ERRCODE = '42501';
+    END IF;
+    IF NEW.gemini_call_count IS DISTINCT FROM OLD.gemini_call_count THEN
+      RAISE EXCEPTION 'Access denied: cannot manually modify gemini_call_count'
+        USING ERRCODE = '42501';
+    END IF;
+    IF NEW.status IS DISTINCT FROM OLD.status AND (NEW.status = 'generating' OR OLD.status = 'generating') THEN
+      RAISE EXCEPTION 'Access denied: cannot manually transition to or from generating status'
+        USING ERRCODE = '42501';
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_guard_exam_sessions_worker_columns ON public.exam_sessions;
+CREATE TRIGGER trg_guard_exam_sessions_worker_columns
+BEFORE INSERT OR UPDATE ON public.exam_sessions
+FOR EACH ROW EXECUTE FUNCTION public.guard_exam_sessions_worker_columns();
+
 -- 2. Drop existing signatures to avoid overload mismatch
 DROP FUNCTION IF EXISTS public.claim_generation_job(UUID, BOOLEAN);
 DROP FUNCTION IF EXISTS public.claim_generation_job(UUID, BOOLEAN, UUID);
@@ -109,6 +160,8 @@ DECLARE
   v_committed_targets JSONB;
   v_job_id UUID;
 BEGIN
+  PERFORM set_config('app.internal_worker_rpc', 'true', true);
+
   IF p_is_retry IS NULL THEN
     RAISE EXCEPTION 'p_is_retry cannot be NULL' USING ERRCODE = '22023';
   END IF;
@@ -217,6 +270,8 @@ DECLARE
   v_current_quota INT;
   v_new_quota INT;
 BEGIN
+  PERFORM set_config('app.internal_worker_rpc', 'true', true);
+
   IF public.current_role() != 'service_role' THEN
     RAISE EXCEPTION 'Access denied: reserve_generation_quota is restricted to service_role'
       USING ERRCODE = '42501';
@@ -301,7 +356,10 @@ DECLARE
   v_existing_options JSONB;
   v_existing_correct_key TEXT;
   v_existing_solution_md TEXT;
+  v_n_versions INT;
 BEGIN
+  PERFORM set_config('app.internal_worker_rpc', 'true', true);
+
   IF public.current_role() != 'service_role' THEN
     RAISE EXCEPTION 'Access denied: persist_version_question is restricted to service_role'
       USING ERRCODE = '42501';
@@ -317,6 +375,16 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
   v_version_code := (100 + p_version_index)::TEXT;
+
+  -- Verify version index does not exceed configured n_versions (F04: prevent persisting beyond configured versions)
+  SELECT n_versions INTO v_n_versions
+  FROM public.generation_configs
+  WHERE session_id = p_session_id;
+
+  IF v_n_versions IS NOT NULL AND p_version_index > v_n_versions THEN
+    RAISE EXCEPTION 'p_version_index % exceeds configured n_versions % for session %',
+      p_version_index, v_n_versions, p_session_id USING ERRCODE = '22023';
+  END IF;
 
   -- 1. Lock session row to verify active fencing token
   SELECT status, active_job_id
@@ -450,6 +518,8 @@ DECLARE
   v_source_count INT;
   v_persisted_count INT;
 BEGIN
+  PERFORM set_config('app.internal_worker_rpc', 'true', true);
+
   IF p_outcome IS NULL OR p_outcome NOT IN ('generated', 'partial_generated', 'failed') THEN
     RAISE EXCEPTION 'Invalid outcome status: % (must be generated, partial_generated, or failed)', p_outcome
       USING ERRCODE = '22023';
@@ -502,15 +572,25 @@ BEGIN
         USING ERRCODE = '22023';
     END IF;
 
-    SELECT COUNT(*) INTO v_persisted_count
-    FROM public.version_questions vq
-    JOIN public.exam_versions ev ON vq.version_id = ev.id
-    WHERE ev.session_id = p_session_id
-      AND vq.is_current = TRUE;
-
-    IF v_persisted_count < (v_n_versions * v_source_count) THEN
-      RAISE EXCEPTION 'Cannot finish as generated: database incomplete (% of % required questions persisted)',
-        v_persisted_count, (v_n_versions * v_source_count) USING ERRCODE = '22023';
+    -- F04: Verify exact Cartesian completeness for all configured versions and source questions
+    -- Prevents completing when questions are persisted in wrong/unexpected version slots
+    IF EXISTS (
+      SELECT 1
+      FROM generate_series(1, v_n_versions) AS ver(idx)
+      CROSS JOIN public.source_questions sq
+      WHERE sq.session_id = p_session_id
+        AND NOT EXISTS (
+          SELECT 1
+          FROM public.exam_versions ev
+          JOIN public.version_questions vq ON vq.version_id = ev.id
+          WHERE ev.session_id = p_session_id
+            AND ev.version_code = (100 + ver.idx)::TEXT
+            AND vq.source_question_id = sq.id
+            AND vq.is_current = TRUE
+        )
+    ) THEN
+      RAISE EXCEPTION 'Cannot finish as generated: database incomplete or missing targets for configured versions'
+        USING ERRCODE = '22023';
     END IF;
   END IF;
 
@@ -548,6 +628,8 @@ DECLARE
   v_recovered BOOLEAN := FALSE;
   v_now TIMESTAMPTZ := now();
 BEGIN
+  PERFORM set_config('app.internal_worker_rpc', 'true', true);
+
   IF p_cutoff_seconds IS NULL OR p_cutoff_seconds <= 0 THEN
     RAISE EXCEPTION 'p_cutoff_seconds must be positive (got %)', p_cutoff_seconds
       USING ERRCODE = '22023';
@@ -604,3 +686,6 @@ GRANT  EXECUTE ON FUNCTION public.finish_generation_job(UUID, TEXT, UUID) TO ser
 
 REVOKE EXECUTE ON FUNCTION public.fail_stale_generation_job(UUID, INT) FROM PUBLIC, anon, authenticated;
 GRANT  EXECUTE ON FUNCTION public.fail_stale_generation_job(UUID, INT) TO service_role;
+
+-- F07 Column-level security: Prevent authenticated / anon clients from directly altering worker-managed columns
+REVOKE UPDATE (active_job_id, gemini_call_count) ON public.exam_sessions FROM PUBLIC, anon, authenticated;

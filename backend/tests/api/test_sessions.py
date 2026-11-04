@@ -657,3 +657,109 @@ def test_clone_session_fails_and_cleans_up_on_db_exception(
     assert "Failed to clone" in response.json()["detail"]
     assert "session-cloned-crash-uuid" in deleted_session_ids
 
+
+def test_get_session_detail_invalid_blueprint_modes_structure(
+    client, mock_auth_user, test_user_id, auth_headers
+):
+    """GET /api/sessions/{id} returns is_ready=False and supported_modes=None when variation_modes is an object (F02)."""
+    mock_db = MagicMock()
+
+    def table_router(table_name):
+        mock_t = MagicMock()
+        if table_name == "exam_sessions":
+            exec_s = MagicMock()
+            exec_s.data = [{
+                "id": "session-invalid-modes",
+                "user_id": test_user_id,
+                "title": "Đề kiểm tra",
+                "status": "blueprinted",
+            }]
+            mock_t.select.return_value.eq.return_value.execute.return_value = exec_s
+        elif table_name == "source_questions":
+            exec_q = MagicMock()
+            exec_q.data = [{"id": "q-1", "session_id": "session-invalid-modes", "question_no": 1}]
+            mock_t.select.return_value.eq.return_value.order.return_value.execute.return_value = exec_q
+        elif table_name == "exam_versions":
+            exec_v = MagicMock()
+            exec_v.data = []
+            mock_t.select.return_value.eq.return_value.order.return_value.execute.return_value = exec_v
+        elif table_name == "generation_configs":
+            exec_cfg = MagicMock()
+            exec_cfg.data = []
+            mock_t.select.return_value.eq.return_value.limit.return_value.execute.return_value = exec_cfg
+        elif table_name == "question_blueprints":
+            exec_bp = MagicMock()
+            # Blueprint with invalid variation_modes structure (object instead of array)
+            exec_bp.data = [{
+                "id": "bp-1",
+                "source_question_id": "q-1",
+                "confirmed_at": "2026-11-01T00:00:00Z",
+                "is_fallback": False,
+                "variation_modes": {"NUMERICAL": True},
+            }]
+            mock_t.select.return_value.in_.return_value.execute.return_value = exec_bp
+        return mock_t
+
+    mock_db.table.side_effect = table_router
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.get("/api/sessions/session-invalid-modes", headers=auth_headers)
+
+    assert response.status_code == 200
+    bp_summary = response.json()["blueprint_summary"]
+    assert bp_summary is not None
+    assert bp_summary["is_ready"] is False
+    assert bp_summary["supported_modes"] is None
+
+
+def test_clone_session_default_title_and_subject_encoding(
+    client, mock_auth_user, test_user_id, auth_headers
+):
+    """POST /api/sessions/{id}/clone uses correct Vietnamese encoding for default title and subject (F08)."""
+    mock_db = MagicMock()
+    inserted_records = []
+
+    def table_router(table_name):
+        mock_t = MagicMock()
+        if table_name == "exam_sessions":
+            exec_s = MagicMock()
+            exec_s.data = [{
+                "id": "session-orig",
+                "user_id": test_user_id,
+                "title": "Đề toán 12",
+                "subject": "Toán",
+                "grade": 12,
+            }]
+            mock_t.select.return_value.eq.return_value.execute.return_value = exec_s
+
+            def capture_insert(data):
+                inserted_records.append(data)
+                exec_ins = MagicMock()
+                exec_ins.data = [{**data, "id": "session-cloned-new"}]
+                m = MagicMock()
+                m.execute.return_value = exec_ins
+                return m
+
+            mock_t.insert.side_effect = capture_insert
+        elif table_name == "source_questions":
+            exec_q = MagicMock()
+            exec_q.data = []
+            mock_t.select.return_value.eq.return_value.order.return_value.execute.return_value = exec_q
+        return mock_t
+
+    mock_db.table.side_effect = table_router
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post("/api/sessions/session-orig/clone", json={}, headers=auth_headers)
+
+    assert response.status_code == 201
+    assert len(inserted_records) == 1
+    assert inserted_records[0]["title"] == "Đề toán 12 (Bản sao)"
+    assert inserted_records[0]["subject"] == "Toán"
+

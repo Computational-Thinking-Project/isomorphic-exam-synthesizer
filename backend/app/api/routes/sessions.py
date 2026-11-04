@@ -203,20 +203,32 @@ async def get_session_detail(
         bp_rows = cast(List[dict[str, Any]], bp_res.data or [])
         confirmed_count = sum(1 for bp in bp_rows if bp.get("confirmed_at") is not None)
         total_sources = len(source_questions)
-        is_ready = total_sources > 0 and confirmed_count == total_sources and len(bp_rows) == total_sources
+
+        # F02: Validate variation_modes structure across all blueprints
+        # Structure must strictly be a list of non-empty strings (matching RPC validation)
+        has_invalid_modes_structure = any(
+            not isinstance(bp.get("variation_modes"), list)
+            or any(not isinstance(m, str) or not m.strip() for m in bp.get("variation_modes", []))
+            for bp in bp_rows
+        )
+
+        is_ready = (
+            total_sources > 0
+            and confirmed_count == total_sources
+            and len(bp_rows) == total_sources
+            and not has_invalid_modes_structure
+        )
 
         supported_modes: Optional[List[dict[str, Any]]] = None
         if not is_ready:
-            # Not ready / Blueprints incomplete
+            # Not ready / Blueprints incomplete or invalid modes structure
             supported_modes = None
         else:
             # Ready: collect and count modes across all confirmed blueprints
             mode_counts: dict[str, int] = {}
             for bp in bp_rows:
-                raw_modes = bp.get("variation_modes")
-                modes_list: List[str] = []
-                if isinstance(raw_modes, list):
-                    modes_list = [str(m).strip() for m in raw_modes if str(m).strip()]
+                raw_modes = bp.get("variation_modes") or []
+                modes_list: List[str] = [str(m).strip() for m in raw_modes if str(m).strip()]
                 # Deduplicate per blueprint while preserving case
                 for m in dict.fromkeys(modes_list):
                     mode_counts[m] = mode_counts.get(m, 0) + 1
@@ -345,13 +357,13 @@ async def clone_session(
 
     # 2. Determine new title
     custom_title = payload.new_title.strip() if payload and payload.new_title else None
-    new_title = custom_title if custom_title else f"{orig.get('title', '')} (Báº£n sao)"
+    new_title = custom_title if custom_title else f"{orig.get('title', '')} (Bản sao)"
 
     # 3. Insert cloned session record
     new_session_data: dict[str, Any] = {
         "user_id": current_user.id,
         "title": new_title,
-        "subject": orig.get("subject", "ToĂ¡n"),
+        "subject": orig.get("subject", "Toán"),
         "grade": orig.get("grade", 12),
         "status": "draft",
         "gemini_call_count": 0,

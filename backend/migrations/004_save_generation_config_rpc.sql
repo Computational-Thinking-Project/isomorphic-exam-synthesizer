@@ -207,6 +207,26 @@ BEGIN
     RAISE EXCEPTION 'Not all source questions have confirmed blueprints' USING ERRCODE = '22023';
   END IF;
 
+  -- 8a. Validate blueprint variation_modes structure (F01: reject invalid structure even if modes=[])
+  IF EXISTS (
+    SELECT 1
+    FROM public.source_questions sq
+    JOIN public.question_blueprints qb ON qb.source_question_id = sq.id
+    WHERE sq.session_id = p_session_id
+      AND (
+        qb.variation_modes IS NULL
+        OR jsonb_typeof(qb.variation_modes) != 'array'
+        OR EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(qb.variation_modes) AS elem
+          WHERE jsonb_typeof(elem) != 'string' OR length(trim(elem #>> '{}')) = 0
+        )
+      )
+  ) THEN
+    RAISE EXCEPTION 'Invalid variation_modes in source blueprints: must be array of non-empty strings'
+      USING ERRCODE = '22023';
+  END IF;
+
   -- 8b. Validate variation modes intersection (TASK-207a contract):
   -- Any requested mode must be supported by 100% of the session's source blueprints.
   IF jsonb_array_length(v_normalized_modes) > 0 THEN
@@ -219,8 +239,10 @@ BEGIN
         JOIN public.question_blueprints qb ON qb.source_question_id = sq.id
         WHERE sq.session_id = p_session_id
           AND qb.confirmed_at IS NOT NULL
-          AND NOT (
-            qb.variation_modes ? req.mode_id
+          AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(qb.variation_modes) AS bp_elem(val)
+            WHERE bp_elem.val = req.mode_id
           )
       )
     ) THEN

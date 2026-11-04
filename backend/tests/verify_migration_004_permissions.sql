@@ -73,6 +73,13 @@ BEGIN
     RAISE EXCEPTION 'Missing trigger trg_generation_configs_updated_at';
   END IF;
 
+  -- Worker columns guard trigger (F07)
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger WHERE tgname = 'trg_guard_exam_sessions_worker_columns'
+  ) THEN
+    RAISE EXCEPTION 'Missing trigger trg_guard_exam_sessions_worker_columns';
+  END IF;
+
   RAISE NOTICE 'Step 1: All schema elements, columns, constraints, indexes, and triggers verified.';
 END $$;
 
@@ -139,6 +146,15 @@ BEGIN
   SELECT has_function_privilege('authenticated', 'public.claim_generation_job(UUID, BOOLEAN)', 'EXECUTE') INTO v_has_auth;
   IF v_has_auth = FALSE THEN
     RAISE EXCEPTION 'Permission failure: authenticated role must have EXECUTE on claim_generation_job!';
+  END IF;
+
+  -- 2.7 Column-level security: authenticated role must NOT have UPDATE on worker columns (F07)
+  IF has_column_privilege('authenticated', 'public.exam_sessions', 'active_job_id', 'UPDATE') = TRUE THEN
+    RAISE EXCEPTION 'Security failure: authenticated role must NOT have direct UPDATE on exam_sessions.active_job_id!';
+  END IF;
+
+  IF has_column_privilege('authenticated', 'public.exam_sessions', 'gemini_call_count', 'UPDATE') = TRUE THEN
+    RAISE EXCEPTION 'Security failure: authenticated role must NOT have direct UPDATE on exam_sessions.gemini_call_count!';
   END IF;
 
   RAISE NOTICE 'Step 2: Least privilege permissions for all RPCs and helpers verified.';
