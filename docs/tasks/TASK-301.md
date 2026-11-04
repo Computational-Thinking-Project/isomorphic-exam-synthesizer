@@ -1,6 +1,73 @@
 # TASK-301 — Plan và Bàn Giao: API Thẩm Định 1-1, Vòng Đời `is_current`, Revert Nguyên Tử & Safe Re-shuffle Invalidation
 
+## Kế hoạch hoàn thiện hiện hành
+
+[Bản kế hoạch chi tiết ngày 04/11/2026](REMEDIATION_PLAN_PR28_TASK301.md) phân loại A01–A11 (caller/tài liệu), B01–B07 (đầu vào/kiểm chứng), các bước sửa và điều kiện nghiệm thu. Bản này đối chiếu PR head `1366f3c` riêng với draft local chưa commit; không nhận draft đã được publish hoặc reviewer xác minh. Contract vẫn theo authority, P1–P4/R1 chưa được chấp nhận chỉ vì tài liệu đã đăng.
+
 ## Trạng thái hiện tại — 04/11/2026
+
+### Bổ sung caller: reservation outcome chưa rõ
+
+- Reserve response mất hoặc malformed được đối soát tối đa ba lần bằng cùng IDs.
+  Active replay trả409, không gọi AI hoặc fail operation có thể thuộc request khác;
+  hết lượt đối soát trả503 ERR_RESERVATION_UNCERTAIN, giữ key để retry/recovery.
+- Bảy regression mới bao gồm lỗi trước/sau commit, wrong identity, empty/multi-row
+  receipt, toàn bộ responses mất và deterministic error không retry. Tổng148 pass
+  là caller boundary với scheduling stub, không thay DB/HTTP/concurrency gates.
+
+### Bản caller đang triển khai — chưa Ready/Done
+
+- Nền code: `1366f3c`; gói caller chưa được reviewer xác minh và chưa đủ điều kiện merge.
+- GitHub PR vẫn non-Draft: thao tác chuyển Draft đã bị từ chối; các dependency/gate
+  ở dưới vẫn bắt buộc, không suy từ trạng thái PR rằng tích hợp đã hoàn tất.
+- Đã nối caller mới qua typed reservation/completion/action/settlement/progress receipts;
+  giữ snapshot và replay metadata, không SELECT nguồn sống hoặc tự bù confirmed hash.
+- Candidate/report/count được kiểm strict; bảo toàn validation evidence, không clamp quota.
+- Worker thiếu không tự thay bằng owner; permit/recovery chỉ dùng RPC, không tạo CAS/ledger fallback.
+- Reject xử lý lỗi sau reserve qua failure settlement bằng sanitized code; đọc kết quả lỗi
+  sau commit không kích hoạt rollback. Replay active không chạy AI lần hai; replay completed
+  đọc candidate đã commit. Accept/Revert nhận `Idempotency-Key` tùy chọn, vẫn kiểm ownership.
+- Recovery hiện giữ trigger busy đang có, nhưng dùng session RPC và kiểm settlement receipt;
+  chưa nhận R1 trước mọi reservation đã được owner chấp thuận. GET progress giữ thuần đọc.
+- Payload `database_rows` bị từ chối trước permit/provider và settlement operation đã mở.
+  Parser cho proposed v1 là phần chuẩn bị, không phải bằng chứng producer/storage đã tồn tại.
+- Progress không bịa danh sách chưa duyệt rỗng: nếu RPC có câu chưa duyệt nhưng không cung cấp
+  danh sách ID, trả `ERR_PROGRESS_DETAILS_UNAVAILABLE`. Cần owner bổ sung IDs trong cùng
+  snapshot progress; chưa coi việc trả lỗi an toàn này là đã hoàn thiện chức năng progress.
+- Đã kiểm local: **148 passed** trong năm module lifecycle/validation/receipt/contract-parser/flow;
+  orchestration dùng scheduling stub và fake RPC, không chứng minh concurrency/transaction DB.
+  Handler được gọi trực tiếp và kiểm OpenAPI, chưa phải kiểm HTTP/JWT qua TestClient.
+- Ruff app/scripts và các test review đã pass; mypy app pass (69 source files).
+  Toàn bộ backend/Blueprint collect được 772 tests; collect không phải execution pass.
+- Đã migrate fixture lifecycle theo receipt contract, bỏ fake table-write/operation binding sai SQL.
+- Còn làm: tích hợp #26/#36, conflict/dev và CI, kiểm DB thật/API/async đầy đủ,
+  owner xác nhận artifacts/R1/progress IDs và reviewer xác minh bản cuối.
+- Kiểm full backend/API async local bị chặn tại Windows socketpair khi khởi tạo event loop. Yêu cầu chạy ngoài
+  môi trường hạn chế đã bị từ chối; không nhận suite này pass hoặc tự bỏ checks trước merge.
+
+### Phạm vi thay thế bộ fake cũ và các gate còn giữ
+
+Fake cũ ở `1366f3c` kiểm table mutations/CAS và suy operation từ question.regeneration_id,
+khác ledger/RPC authority của #36. Bộ lifecycle mới kiểm actual caller/repository với receipt
+fixtures; không giữ fake cũ như một triển khai SQL cạnh tranh, không nhận tăng số tests là đã
+nghiệm thu SQL hoặc mất các yêu cầu concurrency bên dưới.
+
+| Yêu cầu hồi quy | Bằng chứng caller hiện có | Gate còn phải kiểm thật |
+|---|---|---|
+| TX2 retry/lost response, fail/recovery replay | Giữ nguyên operation/candidate; không sinh AI lại, không refund | Ledger/audit/current rows trên PostgreSQL nhiều connection |
+| Pool và local lock trong AI | Provider fixture kiểm local lock đã nhả; caller không mở transaction quanh AI | Đo connection checkout khi AI đang chạy |
+| Quota 26–30, cap 4/operation, unique attempt | Strict six-field permit; nhận grant/denial/replay đúng, không CAS fallback | Race ở 29 calls, cap 4 và global-ID races bằng SQL authority |
+| Canonical mới và invalidation | Caller gửi đáp án/lời giải của candidate mới, không late invalidator | Candidate/audit/keys rollback chung, canonical snapshot và full-session invalidation |
+| Crash/recovery | Discovery theo session; expired same-question retry; không đọc ledger/đoán UUID | DB-clock lease, prior status/actor/audit, recovery-vs-late-completion trên DB thật |
+| Revert/readiness | Revert candidate đầu theo C02; progress nested/counts/list và action receipts | Lineage/canonical source/version coverage; shuffle persistence và approval common lock |
+| Auth/HTTP | Validate ID/key trước handler query, truyền header đúng; owner/worker RPC tách biệt | TestClient/JWT/RLS/ASGI và Supabase deployment khi có môi trường |
+| Source → Blueprint → AI | Parser proposed v1 kiểm persisted hash/canonical document/identity; baseline bị chặn | Producer/storage/RPC fixtures thật, adapter #26 và E2E; không suy từ hand-built fixture |
+
+Tests DB của owner #36 vẫn là yêu cầu tích hợp, không bị thay bằng fake. Trước Ready phải
+chạy caller→RPC thật với cùng pins, full CI và kiểm lại các finding trên head cuối.
+Không dùng `importorskip`, bỏ tests hoặc chuyển async suite thành skipped để nhận đã pass.
+
+### Mốc tài liệu trước triển khai
 
 - Chế độ: author TASK-301; workflow v0.1 **proposed**, docs `506384b`.
 - Đối chiếu: #28 `39083c2`, #36 `a2d2fc3`, #26 `a8f61d5`, #33 `d7a3d3f`.

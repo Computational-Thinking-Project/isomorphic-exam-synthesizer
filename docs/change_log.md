@@ -1,3 +1,20 @@
+## DEC-BE1-013: Caller review dùng durable receipts và action keys
+
+- Ngày: 04/11/2026; người triển khai: Duy (`johannguyen015`) qua TASK-301.
+- Trạng thái: caller để review, chưa nghiệm thu producer/storage/DB/AI E2E hoặc deployed.
+- Bối cảnh: enum reserve làm mất snapshot/replay; validation tự dựng evidence và failure
+  RPC nhận exception text; các wrapper/table fakes cũ không khớp SQL authority.
+- Thay đổi: typed receipts, strict evidence/counts, worker tách owner, frozen input,
+  same-ID retry/settlement/reconciliation, không local ledger/CAS/direct lifecycle writes.
+  Accept/Revert thêm optional Idempotency-Key; client cũ không gửi header vẫn dùng được.
+- Authority: [review RPC contract](api/review-rpc-contract.md). P1–P4/R1 vẫn proposed;
+  yêu cầu progress IDs trong cùng RPC snapshot cần owner TASK-302 xác nhận. Không thay DDL.
+- Kiểm: 141 caller tests pass, Ruff/mypy pass; 765 tests collect. Fake RPC/scheduling
+  không thay kiểm PostgreSQL/concurrency/ASGI/JWT. Full async local chưa kiểm do quyền
+  chạy ngoài môi trường hạn chế bị từ chối; CI/DB checks vẫn bắt buộc trước merge.
+- Phạm vi: review routes/service/repository/models cục bộ, regression tests và docs.
+  Không sửa nhánh #36/#26, deploy cloud, approve/merge hoặc đóng finding thay reviewer.
+
 ## DEC-BE1-012: Đề xuất confirmed artifacts và frozen review payload
 
 - Ngày: 04/11/2026; người đề xuất: Duy (`johannguyen015`).
@@ -364,3 +381,13 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
      - Bắt các mã domain exception sanitized do CSDL ném ra (`REVIEW_NOT_FOUND` $ightarrow$ 404, `REVIEW_BUSY` $ightarrow$ 409, `REVIEW_STALE` $ightarrow$ 409, `REVIEW_LOCKED` $ightarrow$ 423, `REVIEW_QUOTA_EXHAUSTED` $ightarrow$ 429, `REVIEW_IDEMPOTENCY_CONFLICT` $ightarrow$ 409) và chuyển thành `ReviewDomainException`.
 * **Phạm vi ảnh hưởng:** `backend/app/services/review/repository.py`, `backend/tests/services/test_review_lifecycle.py`, `docs/tasks/TASK-301.md`.
 * **Kiểm chứng:** 58/58 Stage 3 review tests pass (52 lifecycle + 6 API), ruff check clean.
+
+
+### TASK-301 follow-up to DEC-BE1-013: uncertain reservation response
+
+04/11/2026 — caller draft: bounded reservation reconciliation reuses the original
+IDs. Active replay never authorizes AI or a failure write; unresolved responses
+return sanitized503 with same-key retry guidance. Seven added regression cases;
+five caller modules148 passed, Ruff and mypy69 source files passed. These are
+offline RPC-boundary tests, not DB/HTTP/concurrency proof. Proposed P1–P4/R1,
+producer/persistence, progress IDs, integration/conflict and review gates remain.

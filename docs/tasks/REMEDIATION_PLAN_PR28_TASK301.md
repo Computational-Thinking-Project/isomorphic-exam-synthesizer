@@ -1,4 +1,163 @@
-# KẾ HOẠCH REMEDIATION TOÀN DIỆN CHO PR #28 (TASK-301) — REVIEW LIFECYCLE API
+# TASK-301 / PR #28 — kế hoạch hoàn thiện hiện hành, 04/11/2026
+
+## 1. Phạm vi, nguồn và mức bằng chứng
+
+- Chế độ **author / lập kế hoạch**, dùng M2; M3/M5 chỉ điền khi thực sự triển khai/kiểm. Lượt này không sửa code, push, đăng comment, approve hoặc merge.
+- Nhánh `feat/duy-task-301-review-lifecycle-api`; PR head **1366f3ce2bd6fd4924746544c78bb0ef5a5974fd**, base `dev` **032fbf2e3f3de2c4a5757d2fc89a06d24eae06c3** theo GitHub khi đọc. PR đang open, không Draft và `mergeable=false`.
+- Workflow **v0.1 proposed**, docs tham chiếu `506384b`; nguồn giao việc [W3 v2.1](W3_ASSIGNMENT.md), [TASK-301](TASK-301.md). Hạn tuần cũ 03/11 đã qua; không tự biến ETA lịch sử thành cam kết mới.
+- Đối chiếu #36 **a2d2fc3c31e3bcc4c3acf178d946c83f0a05b37a** và #26 **a8f61d57976181472eae355d869362b2c80261d4**. Hùng giữ DB/SQL authority; Duy giữ caller/API; Đạt giữ adapter. Không tự giao thêm người hoặc viết SQL cạnh tranh.
+- Authority: [review RPC contract](../api/review-rpc-contract.md). Baseline RPC đã có ở #36; **P1–P4 và R1 vẫn proposed**. [Comment chờ xác nhận](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6611551443) chưa có phản hồi mới lúc đọc.
+- Đã đọc code bằng `git show HEAD:...`, diff phạm vi PR và timeline review. Các nhận định dưới đây là đối chiếu tĩnh với head; ca tái hiện do reviewer chạy được dẫn nguồn riêng. Không nhận đã chạy lại product/DB tests trong lượt lập plan.
+- Working tree có bộ sửa caller/tests/docs chưa commit. Phải giữ nguyên và đối chiếu từng phần, không coi nó là PR head hoặc kết quả reviewer xác minh. Những số 141 pass/765 collect trong ghi chú local là báo cáo trước đó, không phải kết quả được chạy lại lượt này; collect không phải pass.
+
+**Tài liệu này là kế hoạch thực hiện; không định nghĩa một contract thứ hai.** Phần v1.7 phía dưới là lịch sử và không ghi đè trạng thái/tiêu chí tại đây. Các nhãn VERIFIED_FIXED/100% trong lịch sử chỉ áp dụng đúng ca/head đã có bằng chứng, không phải chứng nhận tích hợp hiện tại.
+
+### Tiến độ thực hiện sau khi lập plan — vẫn chưa Ready
+
+Draft local đã bổ sung đối soát reserve tối đa ba lần bằng IDs gốc cho transport/
+malformed response. Active replay không dispatch hoặc failure-settle; outcome chưa
+rõ trả503. Khoảng trống reserve response loss nêu ở bước3 dưới đây đã có bản sửa
+và bảy regression; chưa gọi là reviewer verified. Đã chạy lại năm module caller:
+**148 passed**, Ruff pass, mypy69 files pass. Scheduling stub/RPC fake không thay
+kiểm async/HTTP/SQL thật. Các dependency B01–B07 và gate nghiệm thu còn giữ nguyên.
+
+## 2. Kết luận để quyết định triển khai
+
+Có thể sửa ngay phần caller, validation, receipt/replay, settlement và tests. Chưa thể nghiệm thu Reject hoàn chỉnh chỉ bằng tài liệu: producer chưa lưu confirmed artifacts theo target, SQL baseline trả `database_rows`, mapping cuối/P1–P4/R1 chưa chốt. Trả lỗi an toàn khi thiếu dependency là cần thiết nhưng chưa hoàn thành chức năng.
+
+Ưu tiên dưới đây: **P1** chặn tính đúng/an toàn hoặc tính năng chính; **P2** sai dữ liệu hiển thị, thiếu kiểm chứng hoặc bàn giao. Mã A/B dùng để quản lý đầu việc, **không thay ID F/C của review**. Đây là danh mục vấn đề đã biết và các gate cần kiểm, không cam kết mọi bug có thể tồn tại đều đã được tìm ra.
+
+## 3. Danh mục lỗi và nguyên nhân — phần sửa được ngay
+
+| Mã / review liên quan | Nguyên nhân tại PR head, điều kiện và hậu quả | Việc sửa cụ thể | Trạng thái / cách kiểm đạt |
+|---|---|---|---|
+| A01 — P1, C03/F02 | `reserve_max_quota_and_start_regenerating` quy receipt về `ReserveResult.OK`, bỏ `snapshot`, `replayed`, `operation_status`, `settlement`, `max_attempts`. Service lại SELECT snapshot sống sau TX1. Input AI không còn là bản đóng băng trong operation. | Trả typed ReservationReceipt; validate đúng IDs, strict bool/int, lease có timezone, trạng thái/settlement. Service chỉ dùng snapshot từ receipt. Không reload source/Blueprint/peers hoặc suy metadata. | Sửa caller ngay; format target chờ B01/B02. Local draft đã có hướng sửa, chưa publish/verified. Test capture arguments: sửa live rows sau reserve không đổi input AI; malformed receipt không chạy AI. |
+| A02 — P1, C03 | `get_question_snapshot` tự tạo content_hash khi thiếu; lấy legacy Blueprint row. Hash tính lúc Reject không chứng minh đã xác nhận; Blueprint legacy không phải full canonical 0.4.0. | Bỏ fallback hash/Blueprint; chỉ kiểm fingerprint đã persist bằng hàm dùng chung; validate full canonical document và revision/source association. Thiếu/mismatch dừng trước acquire/provider, rồi settle reservation nếu đã mở. | Bỏ fallback ngay; success thật chờ B01/B02. Test missing hash, altered stem/options/key/solution, wrong source/revision, legacy Blueprint: 0 permit, 0 provider, operation không kẹt. |
+| A03 — P1, F02/F06 | Snapshot load nằm ngoài vùng catch sau reserve; xử lý output/count ngoài catch cũng có thể throw. Sau TX1, các lỗi này để operation active đến khi recovery. | Đặt toàn bộ frozen parsing → gọi AI → validation → completion trong vùng settlement. Dùng operation gốc; đọc projection sau commit nằm ngoài vùng rollback. Không lấy question ID thay operation ID. | Sửa ngay; draft bao được nhiều đường nhưng vẫn phải kiểm cả reserve response không rõ. Inject lỗi ở từng điểm, kiểm current/prior status/quota/audit. |
+| A04 — P1, F02/F07 | Replay reserve bị xem như thao tác mới; completed replay bị chặn bởi question/status/lease hiện tại. Cùng key có thể chạy AI lại, hoặc không lấy được kết quả đã commit sau expiry/approval. | Phân nhánh receipt: active replay → 409, không dispatch; completed → đọc kết quả đã commit; failed/recovered → outcome rõ, chỉ key mới mới tạo action mới. Không dùng đồng hồ worker để vô hiệu receipt lịch sử. SQL vẫn kiểm quyền và khóa mutation mới. | Sửa ngay; kiểm replay trước/sau expiry, sau approval, sau candidate được thay tiếp. Không nhận replay nếu IDs không khớp. |
+| A05 — P1, F02 | Service chỉ retry exception thường nhưng repo map lỗi RPC thành ReviewDomainException rồi service raise ngay. Commit thành công nhưng mất response không có reconciliation đầy đủ; đọc candidate lỗi có thể bị hiểu là mutation thất bại. | Phân biệt lỗi deterministic và outcome chưa rõ. Retry bounded với cùng operation/candidate khi transport không rõ; không retry invalid/conflict/permission như transport. Đọc lại durable receipt để phân biệt completed/failed/recovered/active. Post-commit read lỗi trả retryable error, không rollback. | Sửa ngay; draft có retry503/reconcile nhưng reserve response loss còn cần bổ sung ở bước 3. Test commit-then-disconnect ở reserve/complete/fail; không duplicate AI/candidate/audit hoặc refund. |
+| A06 — P1, F02/F06 | Nhiều nhánh gửi `str(exc)` hoặc chuỗi tự do vào fail RPC, trong khi SQL nhận error code dạng `^[A-Z][A-Z0-9_]{0,79}$`. Settlement có thể thất bại, lỗi gốc che mất operation còn active. | Map exception sang enum code ổn định; không gửi raw provider/DB exception. Parse SettlementReceipt, kiểm IDs/status/count; nếu chưa xác nhận settlement thì báo outcome chưa rõ, không trả422 như thể đã dọn xong. Preserve cancellation sau best-effort shield; recovery xử lý khi process chết. | Sửa ngay; draft đã có hướng sửa. Test invalid output + fail RPC mất response, complete đã commit + fail bị từ chối, cancellation trước/sau permit. |
+| A07 — P1, F10 | Thiếu report vẫn được dựng `is_valid=true`; checks/warnings sai kiểu bị thay []; bool/coercion và count clamp che dữ liệu sai. Mặc định key A hoặc int conversion cũng che lỗi input. | Một validator dùng chung trước complete: report/checks/warnings/booleans đúng schema adapter, stem/options/key/solution bắt buộc; count int thực trong0–4, không clamp; giữ nguyên evidence đã validate. Không thêm math_verified hoặc checks giả. | Sửa ngay; draft có validation.py. Test thiếu report/is_valid/checks/solution, bool/string count, >4, false dạng chuỗi, options trùng; valid payload giữ đúng evidence/content. |
+| A08 — P1, F02/F07/F09 | Repo còn nhiều triển khai table-write/CAS phía sau RPC cho test fallback; constructor head dùng `service_db or db`. Test fake dễ kiểm đường khác production; worker thiếu có thể gọi nhầm owner rồi lỗi ACL. | Mọi mutation/permit/recovery chỉ RPC; worker thiếu explicit503. Giữ public compatibility names nếu cần nhưng delegate một implementation. Mock bằng injection tại RPC boundary, không duy trì một DB lifecycle thứ hai. Không nới ACL để né lỗi. | Sửa ngay; không báo lại lỗi production {}→INSERT đã được reviewer xác minh sửa. Draft đã xóa fallback lớn; cần kiểm callers/imports và regression coverage trước nhận thay thế. |
+| A09 — P2, C01 | Parser progress nested đã sửa, nhưng vẫn trả `unapproved_question_ids=[]` dù còn câu chưa duyệt; danh sách và counts mâu thuẫn. | Giữ count/readiness authority; không suy mẫu số từ current rows. Nhận IDs cùng snapshot từ RPC theo B03. Trước khi dependency có, trả lỗi rõ thay vì danh sách giả; đây chưa phải hoàn thiện progress. | Parser/guard sửa ngay; đủ chức năng chờ B03. Test thiếu cả version/source, duplicate/missing/current regenerating; count/list phải nhất quán. |
+| A10 — P2, F02/C02 | Accept/Revert route không nhận key, nên client retry sau mất response không giữ được action_id. Đây là thiếu khả năng phục hồi outcome, không tự kết luận mọi thao tác đều duplicate. | Nếu giữ phạm vi bổ sung này, thêm optional Idempotency-Key, UUID validation trước query; truyền ổn định p_action_id. Lookup receipt theo SQL trước edit guard cho replay, mutation mới vẫn guard. Ghi API docs và test key binding. | Có thể sửa ngay trên caller vì SQL đã có action_id; local draft đã có header. Cần xác nhận phạm vi nếu chưa được owner duyệt, không biến đề xuất thành yêu cầu review cũ. |
+| A11 — P2, docs/M3 | PR body còn plan cũ: reserve/refund/reason/progress recovery và link tạo PR; một số plan ghi hoàn tất/verified rộng hơn bằng chứng. GitHub đang non-Draft dù còn dependency/conflict. | Cập nhật TASK-301 và M3 đúng head, phân biệt baseline/proposed/local/published; dẫn authority, findings, checks và phần chưa kiểm. Chỉ chuyển Ready khi đủ gói tích hợp. Khi thực hiện, đưa PR về Draft nếu chưa đủ. | Làm ngay phần tài liệu; không tự đóng review thread. Kiểm link và tính nhất quán, không chép contract sang các plan. |
+
+## 4. Phụ thuộc/thiếu thông tin — chưa thể tự hoàn tất
+
+| Mã / liên quan | Thiếu chính xác điều gì | Bên cần xác nhận / đầu ra để mở khóa | Phần TASK-301 làm được trong lúc chờ |
+|---|---|---|---|
+| B01 — P1, C03/P1/P2 | Confirm source hiện chưa lưu exact validated SourceQuestion + per-question fingerprint/revision/actor/time; Blueprint producer chưa publish full canonical0.4.0 gắn cùng revision/hash. Chỉ thêm content_hash column không đủ. | Duy điều phối owner producer/write boundary theo scope; Hùng xác nhận storage/atomic binding/guards. Cần code producer, persistence và test concurrent edit/publication; chưa có ETA xác nhận mới. | Validator và negative fixtures; fail closed. Không hash lúc Reject để lấp khoảng trống. Nếu phải mở scope Stage1/producer, ghi quyết định trước khi thực hiện. |
+| B02 — P1, C03/P3/P4 | #36 baseline snapshot format=database_rows; chưa triển khai target confirmed_artifacts_v1 hoặc một biểu diễn tương đương đã chốt. Chưa có frozen JSON xuất từ RPC target thật. | Hùng/Đạt phản hồi P1–P4; owner cập nhật cùng authority với field/type/error/replay/version cụ thể. Hùng giao success + missing/mismatch/revision-changed fixtures từ SQL; Đạt xác nhận mapping adapter. | Typed envelope/parser và contract tests; chỉ gọi chúng là chuẩn bị cho proposed format. Không ép tên field đề xuất thành schema đã được chấp nhận. |
+| B03 — P2, C01 | HTTP cần danh sách chưa duyệt, RPC baseline chỉ trả counts. SELECT riêng phía caller có thể khác snapshot khi đang mutation. | Đề xuất Hùng thêm unapproved_question_ids trong cùng progress calculation/transaction, hoặc owner thống nhất thay public response. Cần schema/fixture và count/list semantics (kể cả regenerating/duplicates). | Guard không trả danh sách rỗng giả, chuẩn bị parser/tests. Không coi503 là xong chức năng. |
+| B04 — P1, F06/R1 | Worker discovery RPC đã có ở a2d2fc3; caller head chỉ gọi khi SESSION_BUSY. Target R1 trước mọi Reject chưa được xác nhận; flow same-question/replay/locked session cần rõ. | Hùng/Duy/Đạt chốt R1 trên authority: GET thuần đọc, lazy worker recovery ở Reject, thứ tự guards/replay/reserve, DB-clock180s và actor từ operation. R1 không bảo đảm tự dọn khi không có request. | Duy trì discovery RPC đúng ACL; thêm test same-question stale và cả hai thứ tự late completion. Chuẩn bị thay trigger, không gọi đó là quyết định đã chấp thuận. |
+| B05 — P1, F01/F02/F05/F06/F07/F08/C01/C02 | #36 có baseline implementation/tests riêng; PR28 chưa tích hợp nguyên gói SQL/adapter đúng pin. Tests ở nhánh owner không chứng minh caller end-to-end. | Tích hợp code #36/#26 đúng commit đã chấp nhận, migrations004/005→006→007 tương thích #33, test roles/concurrency nhiều connection. Không cần chờ toàn bộ export/UI để kiểm caller. | Caller/fixture integration trước; chuẩn bị DB fault/concurrency matrix. Không thêm migration008 hoặc sửa nhánh Hùng. |
+| B06 — P1, môi trường/nghiệm thu | Chưa có bằng chứng chạy full async/API/DB suite của bản caller local và head tích hợp. Ghi chú local mô tả Windows socketpair bị chặn; một lần xin chạy ngoài môi trường hạn chế đã bị từ chối. | Chạy trong CI/Linux/Docker/DB test được phép; phân biệt fixture/real PostgreSQL/PostgREST/JWT/deployed Supabase. Không xin lại cùng quyền bị từ chối hoặc bỏ checks để có xanh. | Static/lint/typecheck và unit boundary; chuẩn bị tests thật. Không đổi async tests thành skip hoặc coi scheduling stub là concurrency proof. |
+| B07 — P1 trước merge | GitHub PR28 mergeable=false; chưa giải quyết conflict với dev hiện tại. Shared review code cũng hiện diện trong #33, có nguy cơ mang lại bản cũ. | Khi triển khai, kiểm đúng dev/head mới, giữ local drafts, giải conflict trên nhánh Duy; xác định commit review dùng chung để #33 tích hợp sau. Merge chỉ khi có quyền riêng và đủ checks/Approve. | Lập danh sách shared files và phương án kiểm lại. Không reset/discard working tree hoặc dùng bản stale của #33 đè lên301. |
+
+### Những lỗi không báo lại như còn nguyên
+
+- F01/F08: SQL008 cạnh tranh đã bị xóa; không gán lỗ hổng ACL của file đã xóa cho head mới. Giữ test ACL trên authority thay thế.
+- F03: canonical của candidate mới đã có sửa; giữ regression candidate khác đáp án nguồn/cũ và shuffle không đổi canonical.
+- F04: guard thiếu adapter→503 đã được xác minh ở head trước. Hàm mock cũ còn trong service không chứng minh route đang gọi nó; có thể xóa dead code nhưng không báo route hiện vẫn fabricate theo repro cũ.
+- F05: caller đã bỏ invalidation rời ở flow chính; cần chứng minh transaction SQL tích hợp, không yêu cầu thêm late invalidator.
+- F07/F09: strict permit IDs/bool và worker Reject đã được reviewer xác minh ở head trước; giữ và mở rộng tests, không lặp lỗi cũ như chưa sửa.
+- C01: nested progress repro đã verified; phần danh sách còn thiếu là A09/B03, không nói parser vẫn fallback như nguyên trạng.
+
+Nguồn: [review gốc F01–F07/C01–C03](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28#pullrequestreview-5720765457), [review F08 và integration](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28#pullrequestreview-5731260253), [F09/F10](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28#pullrequestreview-5732905517), [xác minh từng phần](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28#pullrequestreview-5736420652), [review gần nhất](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28#pullrequestreview-5745235148).
+
+## 5. Các bước triển khai, thứ tự và điều kiện qua bước
+
+### Bước 0 — cố định bản làm việc, giữ thay đổi đang có
+
+1. Ghi branch/status/head/base; giữ snapshot hoặc commit riêng các draft hiện có theo nội dung sau khi kiểm; không trộn/bỏ thay đổi của user. Không dùng số tests local để đóng finding trên remote head.
+2. Map từng diff local vào A01–A11; đọc cả test bị xóa/thay. File caller chính: review/service.py, repository.py, routes/review.py; validator/receipt có thể tách module như draft hiện có.
+3. Đánh dấu gói còn Draft trong M3 khi thực hiện; giữ scope301. Output bước này là danh sách diff rõ nguồn, không phải báo hoàn tất.
+
+### Bước 1 — chốt đúng phần còn thiếu, không mở lại quyết định đã có
+
+1. Tiếp tục cùng thread #36 P1–P4/R1; yêu cầu phản hồi từng mục, gồm B03 progress IDs. Ghi rõ câu nào đã đồng ý về nguyên tắc và câu nào chưa có schema/code.
+2. Chốt owner implementation producer + persistence và input tối thiểu B01/B02; ETA phải do bên cung cấp xác nhận, không dùng mốc23:00 cũ.
+3. Owner cập nhật một authority; TASK-301 dẫn link commit/section được chấp nhận. Có thể làm bước2–4 khi đang chờ, nhưng không nghiệm thu target envelope hoặc R1 bằng im lặng.
+
+### Bước 2 — receipt/RPC boundary và validation (A01/A02/A07/A08)
+
+1. Typed models cho reserve/complete/action/fail/recovery/progress; parse JSON object hoặc singleton array, từ chối array nhiều phần tử. UUID JSON string được parse đúng; boolean/counter strict; session/operation/question phải khớp request.
+2. Giữ snapshot/replay/settlement; closed replay không bị worker-clock lease check từ chối. Tách owner và worker; worker thiếu hoặc lỗi/malformed RPC không có table fallback.
+3. Validate frozen source/hash/revision/canonical Blueprint/current/peers trên bản copy. Không thêm kwargs revision ngoài chữ ký adapter đã chốt, không sửa dữ liệu lưu.
+4. Validate candidate/report theo contract304; giữ solution/checks/warnings/confidence thật, không coercion hoặc tạo bằng chứng. Cùng validator ở service và repository nếu có compatibility entrypoint, tránh bypass.
+5. Qua bước khi các negative fixtures không dispatch/mutate và valid fixture giữ nguyên input/evidence. Positive fixture tự dựng chỉ là unit evidence, chưa thay JSON thực B02.
+
+### Bước 3 — state machine/retry/settlement hoàn chỉnh (A03–A06)
+
+1. Chọn operation UUID trước reserve; mọi retry transport giữ cùng key. Phân loại reserve response loss/invalid receipt là outcome chưa rõ, vì SQL có thể đã commit dù caller chưa có typed receipt.
+2. **Khoảng trống draft còn phải sửa:** reserve hiện gọi một lần, parser lỗi ngoài vùng settlement. Bổ sung bounded replay/reconciliation bằng bộ IDs gốc. Chỉ settlement khi đã xác minh operation thuộc request; không dùng IDs sai trong malformed payload. Nếu vẫn không xác định được, trả503 và giữ cùng key cho retry/recovery, không tự dựng active receipt.
+3. Phân nhánh trạng thái ngay sau receipt: active mới mới được AI; active replay không được AI; completed replay đọc kết quả; failed/recovered không mở operation mới cùng key. Kiểm key reuse khác session/question là409.
+4. Đánh giá guard trước replay: SQL phải kiểm ownership cả khi replay. Mutation mới bị generating/approved/exported/approved_at guards. Không để check local của trạng thái hiện tại ngăn đọc kết quả đã settle mà DB cho replay; kiểm cả trường hợp adapter hiện không cấu hình. Nếu cần hỗ trợ replay không có adapter, chốt đường lookup không tạo reservation ngoài ý muốn; không bỏ guard bằng cách reserve rồi mới phát hiện thiếu adapter.
+5. Bọc frozen parsing/AI/output/complete; map error codes; retry bounded chỉ outcome transient/uncertain. Nếu complete đã commit, fail/reconcile phải trả completed, không khôi phục old candidate.
+6. Phân biệt mất response với postcommit projection error; lỗi đọc trả outcome/retryable error, không fail operation đã hoàn thành. Nếu projection đọc candidate sau các mutation khác, kiểm response không ghép canonical/display/status từ hai thời điểm; chốt semantics replay theo receipt nếu cần.
+7. Cancellation: shield settlement best effort, giữ CancelledError; process crash dựa vào DB lease/recovery. Qua bước khi fault injection mọi boundary giữ đúng số candidate/audit/permits và không chạm operation mới.
+
+### Bước 4 — Accept/Revert/progress/HTTP/recovery (A09/A10/B03/B04)
+
+1. Optional key Accept/Revert nếu nằm trong scope đã đồng ý; validate IDs/key trước DB query, vẫn assert session/question ownership và association. Thử đủ401/403/404/409/422/423/429/503 theo mapping authority.
+2. Revert theo C02 trong authority: đi theo lineage cùng version/source về **candidate đầu tiên**, khôi phục row đó current/approved, không copy source_questions thành row mới. Revert chính candidate đầu tiên là approval idempotent. Broken/cyclic lineage bị từ chối; canonical không bị viết lại. Không dùng mô tả “copy source” trong plan cũ.
+3. Progress nested counts/ready phải dùng authority; danh sách cùng snapshot sau B03. GET không recovery/mutation; không lấy version_questions hiện có làm expected denominator.
+4. Sau R1 được chấp thuận: recovery worker ở vị trí đã chốt trước reserve mới, gồm chính câu stale. Repeat recovery no-op; DB-clock và stored actor; không scan ledger hoặc đoán operation từ question.regeneration_id.
+5. Kiểm flow qua public HTTP/JWT, không chỉ gọi hàm handler trực tiếp. Qua bước khi headers/auth/error mapping hoạt động với actual service/repository và DB RPC.
+
+### Bước 5 — tích hợp pins, producer/DB/AI và giải conflict
+
+1. Sau B01/B02 sẵn: integrate đúng producer + SQL + adapter commits trên nhánh Duy; bảo toàn migration ordering và docs changelog. Không tạo DB implementation song song. Giải conflict với dev sau khi giữ draft; đọc diff hợp nhất, không chọn cả một bên máy móc.
+2. Xuất fixtures từ RPC thật; chạy public Reject → frozen input → adapter thật + fake provider → permit → complete. Provider fake cho kết quả xác định, không cần tốn Gemini để kiểm transaction; không gọi live Gemini hoặc deploy cloud nếu chưa được giao riêng.
+3. Tái hiện missing/mismatch/superseded source/Blueprint dưới transaction lock. Run actual PostgreSQL nhiều connection cho race/ACL/fault; test framework/fake chỉ dùng orchestration.
+4. Kiểm shared files với #33, bảo đảm tích hợp305 không mang lại code301 cũ; #28 không tự mở rộng sang sửa toàn305. Output cho303/305: canonical/current/approved/readiness và error/receipt contract đúng pin.
+
+### Bước 6 — kiểm đủ và trả review cùng ID
+
+1. Chạy checks theo CONTRIBUTING/CI; ghi commit và môi trường. Mỗi failure sửa nguyên nhân rồi chạy lại suite ảnh hưởng; không xóa/skip tests để giảm yêu cầu.
+2. Cập nhật M3, TASK-301 và changelog đúng phần đã làm/đã kiểm/còn chờ. Với từng F/C, M5 trả cùng thread: commit sửa, repro cũ, regression mới, giới hạn, **claimed_fixed**. Không tự gắn verified thay reviewer.
+3. Request reviewer kiểm gói tích hợp một lần khi đủ input và checks. Nếu có lỗi mới, phân loại ID mới/hồi quy; lỗi cũ vẫn giữ ID. Resolve thread/CI xanh không tự thay GitHub Approve.
+
+## 6. Ma trận kiểm bắt buộc trước nghiệm thu
+
+| Nhóm | Ca kiểm cụ thể | Mức bằng chứng cần |
+|---|---|---|
+| Frozen provenance | success exported fixture; thiếu source/hash/Blueprint; sai revision; edit-and-revert; source/peers sai session/version; canonical/display không đồng nhất | Validator unit + producer/storage/RPC integration |
+| Reservation/replay | lost reserve response; malformed/IDs sai; active/completed/failed/recovered replay; replay sau180s/approval; key reuse khác resource | Actual caller + SQL receipts; không chỉ fake state |
+| Candidate evidence | thiếu/sai report/checks/solution; false-string; math_verified thiếu evidence; count bool/-1/5; duplicate options; valid report unchanged | Unit boundary + adapter contract + SQL validation |
+| Settlement | lỗi trước permit/sau grant/timeout/cancel/output/complete; lost fail response; complete committed nhưng response mất; postcommit SELECT lỗi | Fault injection caller và PostgreSQL, assert ledger/current/audit/quota |
+| Quota | session26/27/28/29/30; operation cap4; same attempt replay/global ID conflict; uncertain grant; provider retry/repair; không refund | Permit/adapter unit + multi-connection SQL race tại29 |
+| Ownership/ACL | userB gọi owner RPC củaA; anon/authenticated gọi worker; service_role không SELECT private ledger; worker thiếu; UUID sai; association sai | HTTP JWT/RLS + roles/grants thực, không chỉ mocks |
+| Atomicity/canonical | lỗi insert/audit/invalidation/readiness; exactly one current/slot; candidate mới dùng đáp án mới; revert về candidate đầu lineage; shuffle không sửa canonical | PostgreSQL transaction/fault + shuffler integration |
+| Recovery/races | same-question stale, operation ID khác questionID, prior approved restore, repeated recovery; A recover→B reserve→lateA; complete thắng recovery và chiều ngược | DB clock + nhiều connection + public trigger được chốt |
+| Progress/readiness | N×M đúng; mất cả source/version; duplicate/missing/regenerating; count/list snapshot; GET không ghi; đủ approved→reviewed | RPC/readiness SQL + HTTP contract |
+| Pool/locking | provider đang chờ không giữ transaction/connection; accept câu khác được phép; second Reject409; approve/shuffle serialize | Connection instrumentation + nhiều worker/connection |
+
+Checks dự kiến theo CI hiện hành:
+
+```text
+ruff check backend/app scripts/blueprint
+mypy backend/app --ignore-missing-imports
+python -m pytest backend/tests scripts/blueprint/tests -q
+```
+
+Chạy thêm suite migration thật đúng hướng dẫn owner #36; phải chứng minh tests được execute, không chỉ collect hoặc skipped. Giữ CI Pipeline và Docker environment checks áp dụng trên final head. Fixture nội bộ, PGlite một connection, direct-handler tests và scheduling stub không thay PostgreSQL races/HTTP deployment evidence. Không lặp full suite vô ích khi code không đổi; rerun sau tích hợp/conflict/fix ảnh hưởng.
+
+## 7. Điều kiện hoàn tất và bàn giao
+
+- [ ] A01–A11 đã xử lý theo scope được chấp thuận; B01–B04 có quyết định và implementation/fixtures đủ dùng, không chỉ tài liệu proposed.
+- [ ] Actual endpoint→RPC→adapter→settlement thành công; negative/cancel/replay/recovery/races đạt; không fake evidence, refund hoặc fallback mutation.
+- [ ] Migration/schema/ACL/ledger/canonical/invalidation/readiness giữ invariant; progress trả đủ dữ liệu, không trả503 thay chức năng khi nghiệm thu.
+- [ ] Conflict/dev giải xong; diff cuối không đưa code cũ trở lại; #33 có input301 đúng phiên bản để tích hợp.
+- [ ] Checks áp dụng đạt trên final head; kết quả local/CI/DB và giới hạn ghi đúng; reviewer xác minh findings cùng ID, có ít nhất một GitHub Approve theo CONTRIBUTING trước merge.
+- [ ] Output/commit/API contract giao cho303/305; chưa nhận Done hoặc “không còn bug” từ unit pass, comment đồng ý hoặc tài liệu đã đăng.
+
+**Việc khởi động trước:** kiểm và hoàn thiện draft caller theo bước0/2/3, đặc biệt reserve response uncertainty; đồng thời nhận xác nhận/input B01–B04. Những phần này đủ rõ để tiến hành mà không cần chờ toàn bộ #36 xong, nhưng chưa đủ để cam kết ngày Done khi producer/fixtures/môi trường chưa có ETA được xác nhận.
+
+---
+
+# Bản remediation v1.7 lịch sử — giữ để truy vết
 **Phiên bản:** v1.7 — Production-Grade Implementation (Đồng Bộ Hóa Hợp Đồng Sau Trao Đổi Phối Hợp PR #36)  
 **Ngày cập nhật:** 03/11/2026  
 **Chịu trách nhiệm:** Senior Backend / PostgreSQL Engineer  

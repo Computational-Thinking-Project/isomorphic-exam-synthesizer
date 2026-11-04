@@ -20,7 +20,7 @@ from app.models.schemas import (
     ReviewActionResponse,
     ReviewProgressResponse,
 )
-from app.services.review.service import ReviewService
+from app.services.review.service import ReviewService, action_key, resource_ids
 
 logger = logging.getLogger(__name__)
 
@@ -60,15 +60,21 @@ def get_ai_generator(request: Request) -> Optional[Callable[..., Any]]:
 async def accept_question_endpoint(
     session_id: str,
     version_question_id: str,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
 ) -> ReviewActionResponse:
     """Accept and approve a version question."""
+    resource_ids(session_id, version_question_id)
+    if idempotency_key is not None:
+        action_key(idempotency_key)
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
     assert_ownership("version_questions", version_question_id, current_user.id, db=db)
 
     service = ReviewService(db)
-    return await service.accept_question(session_id, version_question_id, current_user.id)
+    return await service.accept_question(
+        session_id, version_question_id, current_user.id, idempotency_key=idempotency_key
+    )
 
 
 @router.post(
@@ -91,6 +97,9 @@ async def reject_question_endpoint(
     ai_generator: Optional[Callable[..., Any]] = Depends(get_ai_generator),
 ) -> RegeneratedQuestionResponse:
     """Reject question variant and trigger targeted regeneration."""
+    resource_ids(session_id, version_question_id)
+    if idempotency_key is not None:
+        action_key(idempotency_key)
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
     assert_ownership("version_questions", version_question_id, current_user.id, db=db)
 
@@ -109,15 +118,21 @@ async def reject_question_endpoint(
 async def revert_question_endpoint(
     session_id: str,
     version_question_id: str,
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
 ) -> ReviewActionResponse:
     """Revert question variant back to original source content."""
+    resource_ids(session_id, version_question_id)
+    if idempotency_key is not None:
+        action_key(idempotency_key)
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
     assert_ownership("version_questions", version_question_id, current_user.id, db=db)
 
     service = ReviewService(db)
-    return await service.revert_question(session_id, version_question_id, current_user.id)
+    return await service.revert_question(
+        session_id, version_question_id, current_user.id, idempotency_key=idempotency_key
+    )
 
 
 @router.get(
@@ -132,6 +147,7 @@ async def get_review_progress_endpoint(
     db: Client = Depends(get_user_db),
 ) -> ReviewProgressResponse:
     """Query current review progress metrics for the session."""
+    resource_ids(session_id)
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
 
     service = ReviewService(db=db)

@@ -418,3 +418,73 @@ Supabase rollout, live JWT/RLS, live AI, caller/adapter E2E and shuffle integrat
 are not yet verified. TASK-301 at 39083c2 calls session recovery on one busy branch; the proposed
 pre-reservation trigger and strict fallback gating still need implementation.
 These SQL tests do not certify the caller or the proposed artifact contract.
+
+
+## TASK-301 caller implementation handoff — 2026-11-04
+
+This is caller work in progress, not owner acceptance of the proposed storage/envelope
+or deployed integration. SQL signatures remain those of pinned TASK-302 a2d2fc3.
+Owner/worker RPC results are parsed as typed receipts, including replay/settlement;
+the caller no longer constructs source snapshots or confirmation hashes from live rows.
+Baseline database_rows is unavailable for provider dispatch and is failure-settled.
+Proposed confirmed_artifacts_v1 parsing is preparatory until producer/RPC handoff.
+
+### HTTP action keys and error behavior
+
+POST accept/revert now accept the same optional UUID Idempotency-Key header as Reject.
+Invalid resource/key UUIDs return 400 before handler queries. With a supplied key,
+the SQL receipt is checked before its mutation edit guard; a committed replay may be
+read after approval, while a new mutation stays locked. The same key cannot bind to
+another question/session/action. Without a key the server creates an invocation ID;
+separate HTTP requests without a retained key are separate actions.
+
+An active Reject replay returns 409 without dispatching another generator. Completed
+replay reads the committed candidate; failed/recovered replay returns 409 and requires
+a deliberate new key for new work. Receipt expiry is not reinterpreted using worker
+time: DB acquire/complete owns lease validity. Response projection reads may reflect
+later state; idempotency guarantees effects, not byte-identical JSON after later writes.
+
+Malformed/identity-mismatched/uncertain RPC results and post-commit read failures return
+sanitized availability errors (503). Completion retry retains exactly the operation ID
+and validated payload. Source/input/output validation is 422; missing adapter is 503
+before reserving or charging; timeout is 504; permit uncertain/invalid keeps existing
+502 mapping. Failure RPC receives only a sanitized code, never raw exception text or a
+client refund count. A cancelled invocation propagates cancellation after best-effort
+settlement. Read failure after commit never initiates a rollback.
+
+### Remaining progress interface decision
+
+The HTTP contract includes unapproved_question_ids, but baseline review_get_progress
+returns counts only. Proposed additive field: progress.unapproved_question_ids, UUID
+array of current unapproved candidates produced in the same SQL snapshot as counts.
+TASK-302 owner confirmation/implementation is still required. The caller checks the
+array's uniqueness and cardinality against current_slots-approved_slots. Without this
+field, an empty array is only inferred when that difference is zero; otherwise it
+returns ERR_PROGRESS_DETAILS_UNAVAILABLE (503), not a fabricated empty list. This safe
+failure does not complete the pending progress feature.
+
+The caller retains busy-trigger recovery using review_recover_session and read-only
+GET progress. Proposed R1 before every reservation remains awaiting acknowledgement.
+No new RPC, table-write fallback, ledger SELECT grant or alternative SQL is introduced.
+
+### Evidence and remaining acceptance
+
+141 local caller/receipt tests pass with actual Python boundaries, explicit fake RPC
+fixtures and stubbed scheduling. They cover typed permits, lost responses, replay,
+settlement, validation, cancellation, direct handlers and OpenAPI keys. They do not
+measure actual DB pool use, locks or concurrency, execute ASGI/JWT, or establish
+producer/storage/adapter integration. 765 backend/Blueprint tests collect successfully;
+collection is not execution. Full async local execution remains unverified after the
+requested unrestricted run was declined. Required CI and PostgreSQL integration are
+still mandatory before Ready/merge; no checks are exempted.
+
+### Reservation response uncertainty — caller handoff
+
+The caller retries an unavailable/malformed reservation response at most three
+times with exactly the original session/question/operation IDs. A validated active
+replay is not permission to dispatch or failure-settle: another request with that
+key may be running. It returns409; unresolved responses return sanitized503
+ERR_RESERVATION_UNCERTAIN. Only a validated newly active receipt starts generation.
+No private-ledger lookup or inferred receipt/operation ID is introduced. Recovery
+of a crash/unknown active operation still uses the worker RPC and DB lease.
+This caller behavior does not imply acceptance of proposed P1–P4/R1.

@@ -1,38 +1,34 @@
-"""Service Layer Orchestration for Review Lifecycle (TASK-301).
+"""Review orchestration over durable owner/worker RPC receipts.
 
-Implements:
-- 2 Short Transactions decoupled from AI execution
-- Immediate Rollback on timeout or exception
-- Concurrency Model B with per-session WeakValueLock
-- Quota reservation and idempotency guarantees
+AI execution is outside the transaction and session lock. Committed permits are
+never refunded. Source-to-AI artifacts remain an explicit TASK-302 dependency.
 """
 
 import asyncio
 import logging
 import weakref
-from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Optional, cast
+from typing import Any, Callable
 from uuid import UUID, uuid4
 
 from supabase import Client
 
-from app.core.constants import MAX_AI_CALLS_PER_REJECT
 from app.models.schemas import (
     RegeneratedQuestionResponse,
-    ReserveResult,
     ReviewAcquireUnavailableError,
     ReviewActionResponse,
     ReviewDomainException,
     ReviewProgressResponse,
     RollbackErrorCode,
 )
+from app.services.review.receipts import ReservationReceipt, completion_receipt
 from app.services.review.repository import ReviewRepository
+from app.services.review.validation import frozen_inputs, validate_candidate
 
 logger = logging.getLogger(__name__)
 
 
 class SessionLockRegistry:
-    """Registry maintaining per-session asyncio locks with automatic garbage collection."""
+    """Local contention optimization; the DB remains the cross-worker authority."""
 
     def __init__(self) -> None:
         self._locks: weakref.WeakValueDictionary[UUID, asyncio.Lock] = weakref.WeakValueDictionary()
@@ -45,414 +41,317 @@ class SessionLockRegistry:
         return lock
 
 
-# Global lock registry for concurrency serialization across requests
 session_lock_registry = SessionLockRegistry()
 
 
-class ReviewService:
-    """Orchestrates question review decisions, AI variant regeneration, and quota protection."""
+def action_key(value: str | None) -> UUID:
+    if value is None:
+        return uuid4()
+    try:
+        return UUID(value)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ReviewDomainException(
+            400, "ERR_INVALID_IDEMPOTENCY_KEY", "Idempotency-Key must be a UUID"
+        ) from exc
 
+
+def resource_ids(session_id: str, question_id: str | None = None) -> None:
+    try:
+        UUID(session_id)
+        if question_id is not None:
+            UUID(question_id)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ReviewDomainException(
+            400, "ERR_INVALID_RESOURCE_ID", "Resource IDs must be UUIDs"
+        ) from exc
+
+
+def failure_code(exc: Exception) -> str:
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return RollbackErrorCode.AI_TIMEOUT.value
+    if isinstance(exc, ReviewAcquireUnavailableError):
+        return RollbackErrorCode.PERMIT_UNAVAILABLE.value
+    code = getattr(exc, "code", getattr(exc, "error_code", ""))
+    codes = {
+        "REVIEW_QUOTA_EXHAUSTED": RollbackErrorCode.QUOTA_EXHAUSTED,
+        "REVIEW_ATTEMPT_EXHAUSTED": RollbackErrorCode.OPERATION_EXHAUSTED,
+        "OPERATION_EXHAUSTED": RollbackErrorCode.OPERATION_EXHAUSTED,
+        "REVIEW_ATTEMPT_REPLAYED": RollbackErrorCode.ATTEMPT_REPLAYED,
+        "REVIEW_PERMIT_UNCERTAIN": RollbackErrorCode.PERMIT_UNCERTAIN,
+        "REVIEW_PERMIT_INVALID": RollbackErrorCode.PERMIT_UNAVAILABLE,
+        "SOURCE_NOT_CONFIRMED": RollbackErrorCode.SOURCE_NOT_CONFIRMED,
+        "ERR_SOURCE_NOT_CONFIRMED": RollbackErrorCode.SOURCE_NOT_CONFIRMED,
+        "ERR_INVALID_PAYLOAD": RollbackErrorCode.AI_INVALID_OUTPUT,
+        "BLUEPRINT_INVALID": RollbackErrorCode.AI_INVALID_OUTPUT,
+        "PREVIOUS_VARIANT_MISMATCH": RollbackErrorCode.AI_INVALID_OUTPUT,
+    }
+    return codes.get(code, RollbackErrorCode.GENERATION_FAILED).value
+
+
+def generation_error(exc: Exception) -> ReviewDomainException:
+    if isinstance(exc, ReviewDomainException):
+        return exc
+    if isinstance(exc, ReviewAcquireUnavailableError):
+        return ReviewDomainException(
+            503, "ERR_AI_GATEWAY_PERMIT_FAILURE", "AI permit service unavailable"
+        )
+    code = getattr(exc, "code", "")
+    if code in ("REVIEW_QUOTA_EXHAUSTED", "REVIEW_ATTEMPT_EXHAUSTED", "OPERATION_EXHAUSTED"):
+        return ReviewDomainException(
+            429, "ERR_REVIEW_QUOTA_EXHAUSTED", "Review attempt quota exhausted"
+        )
+    if code == "REVIEW_ATTEMPT_REPLAYED":
+        return ReviewDomainException(409, "ERR_ATTEMPT_REPLAYED", "Attempt already used")
+    if code in ("REVIEW_PERMIT_UNCERTAIN", "REVIEW_PERMIT_INVALID"):
+        return ReviewDomainException(
+            502, "ERR_AI_GATEWAY_PERMIT_FAILURE", "AI permit could not be confirmed"
+        )
+    if code == "DB_UNAVAILABLE":
+        return ReviewDomainException(
+            503, "ERR_AI_GATEWAY_PERMIT_FAILURE", "AI permit service unavailable"
+        )
+    if code in (
+        "SOURCE_NOT_CONFIRMED",
+        "BLUEPRINT_INVALID",
+        "PREVIOUS_VARIANT_MISMATCH",
+        "REGENERATION_INPUT_INVALID",
+    ):
+        return ReviewDomainException(422, "ERR_INVALID_PAYLOAD", "Regeneration input invalid")
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return ReviewDomainException(504, "ERR_AI_TIMEOUT", "Generation timed out")
+    return ReviewDomainException(502, "ERR_AI_GENERATION_FAILED", "Generation failed")
+
+
+class ReviewService:
     def __init__(
         self,
         db: Client,
-        service_db: Optional[Client] = None,
-        ai_generator: Optional[Callable[..., Any]] = None,
+        service_db: Client | None = None,
+        ai_generator: Callable[..., Any] | None = None,
         allow_table_fallback: bool = False,
     ) -> None:
         self.db = db
         self.service_db = service_db
         self.repo = ReviewRepository(
-            db=db,
-            service_db=service_db,
-            allow_table_fallback=allow_table_fallback,
+            db, service_db=service_db, allow_table_fallback=allow_table_fallback
         )
         self.ai_generator = ai_generator
 
-    async def _default_ai_generator(
-        self,
-        session_id: str,
-        question_id: str,
-        source_snapshot: Dict[str, Any],
-        blueprint: Dict[str, Any],
-        current_variant: Dict[str, Any],
-        peer_variants: list[Dict[str, Any]],
-        *,
-        operation_id: Optional[UUID] = None,
-        acquire_attempt: Optional[Callable[..., Any]] = None,
-    ) -> Dict[str, Any]:
-        """Default mock/fallback AI generator for regeneration outside DB."""
-        # If permit callback is supplied, enforce permit acquisition
-        calls_used = 1
-        if operation_id and callable(acquire_attempt):
-            permit = await acquire_attempt(operation_id, uuid4())
-            if not getattr(permit, "dispatch_permitted", False):
-                raise ReviewDomainException(
-                    429,
-                    "ERR_REVIEW_QUOTA_EXHAUSTED",
-                    "Không được cấp phép gọi AI do đã đạt giới hạn quota hoặc attempt",
-                )
-            calls_used = 1
-
-        # Simulated regeneration result conforming to contract
-        options = current_variant.get("options") or ["A. 1", "B. 2", "C. 3", "D. 4"]
-        stem = current_variant.get("content") or "Biến thể câu hỏi mới (được sinh lại)"
-        correct_key = current_variant.get("correct_key", "A")
-
-        return {
-            "content": f"{stem} [Tạo mới lúc {datetime.now(timezone.utc).strftime('%H:%M:%S')}]",
-            "stem_latex": f"{stem} [Tạo mới lúc {datetime.now(timezone.utc).strftime('%H:%M:%S')}]",
-            "options": options,
-            "correct_key": correct_key,
-            "solution_md": "**Lời giải chi tiết mới:**\nCác bước giải bài toán biến thể đã được kiểm định.",
-            "validation_report": {"is_valid": True, "math_verified": True},
-            "api_calls_count": calls_used,
-        }
-
-    async def check_session_guards(self, session_id: str) -> Dict[str, Any]:
-        """Verify session exists and enforce session status guards."""
-        session_meta = await self.repo.get_session_status_and_quota(session_id)
-        status = str(session_meta.get("status", ""))
-        if status == "generating":
+    async def check_session_guards(self, session_id: str) -> dict[str, Any]:
+        resource_ids(session_id)
+        meta = await self.repo.get_session_status_and_quota(session_id)
+        if meta.get("status") == "generating":
             raise ReviewDomainException(
-                409, "ERR_SESSION_BUSY_GENERATING", "Phiên đề đang trong tiến trình sinh đề ban đầu"
+                409, "ERR_SESSION_BUSY_GENERATING", "Session generation is in progress"
             )
-        if status in ("approved", "exported"):
-            raise ReviewDomainException(
-                423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
-            )
-        return session_meta
+        if meta.get("status") in ("approved", "exported") or meta.get("approved_at") is not None:
+            raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session is locked")
+        return meta
 
-    async def reject_question(
-        self,
-        session_id: str,
-        question_id: str,
-        user_id: str,
-        idempotency_key: Optional[str] = None,
+    async def _question(self, session_id: str, question_id: str) -> None:
+        resource_ids(session_id, question_id)
+        if not await self.repo.verify_question_in_session(session_id, question_id):
+            raise ReviewDomainException(
+                404, "ERR_QUESTION_NOT_FOUND", "Question not found in this session"
+            )
+
+    async def _result(
+        self, session_id: str, previous_id: str, new_id: UUID
     ) -> RegeneratedQuestionResponse:
-        """Execute 1-to-1 question rejection with atomic quota reservation and AI generation."""
-        await self.check_session_guards(session_id)
-
-        # Question-to-session integrity check (Anti-IDOR)
-        is_valid = await self.repo.verify_question_in_session(session_id, question_id)
-        if not is_valid:
-            raise ReviewDomainException(
-                404, "ERR_QUESTION_NOT_FOUND", "Câu hỏi không tồn tại trong phiên thi này"
+        row = await self.repo.load_question(session_id, new_id)
+        try:
+            if UUID(str(row["regenerated_from_id"])) != UUID(previous_id):
+                raise ValueError("Replacement lineage mismatch")
+            return RegeneratedQuestionResponse(
+                question_id=str(new_id),
+                regenerated_from_id=previous_id,
+                status=row["status"],
+                content=row["content"],
+                options=row["options"],
+                correct_key=row["correct_key"],
+                solution_md=row["solution_md"],
+                validation_report=row["validation_report"],
             )
-
-        # F04: Ensure AI generator is configured before changing question state or reserving quota
-        if self.ai_generator is None:
+        except (ValueError, TypeError, KeyError) as exc:
             raise ReviewDomainException(
                 503,
-                "ERR_AI_SERVICE_UNAVAILABLE",
-                "Dịch vụ AI sinh câu hỏi biến thể chưa được cấu hình hoặc tạm thời không khả dụng",
-            )
+                "ERR_RESULT_UNAVAILABLE",
+                "Committed result unavailable; retry with the same key",
+            ) from exc
 
-        session_uuid = UUID(session_id)
-        if idempotency_key:
-            try:
-                operation_id = UUID(str(idempotency_key))
-            except Exception:
-                raise ReviewDomainException(
-                    400, "ERR_INVALID_IDEMPOTENCY_KEY", "Idempotency-Key must be a valid UUID"
-                )
-        else:
-            operation_id = uuid4()
-        regeneration_id = operation_id
-        lock = session_lock_registry.get_lock(session_uuid)
-
-        # Register operation binding in repository for permit callback accounting
-        self.repo.register_operation(operation_id, session_id)
-
-        # ------------------------------------------------------------------
-        # Phase 1: Short DB TX 1 (Reserve Quota & Lock Question State)
-        # ------------------------------------------------------------------
-        async with lock:
-            reserve_res = await self.repo.reserve_max_quota_and_start_regenerating(
-                session_id, question_id, user_id, operation_id=operation_id
-            )
-            if reserve_res == ReserveResult.QUOTA_EXHAUSTED:
-                raise ReviewDomainException(
-                    429,
-                    "ERR_REVIEW_QUOTA_EXHAUSTED",
-                    "Đã dùng hết 30 lượt AI sinh lại của buổi review",
-                )
-            if reserve_res == ReserveResult.QUESTION_BUSY:
-                raise ReviewDomainException(
-                    409,
-                    "ERR_QUESTION_BUSY",
-                    "Câu hỏi đang trong tiến trình sinh lại",
-                )
-            if reserve_res == ReserveResult.SESSION_BUSY:
-                logger.info("Session %s busy. Invoking lazy recovery...", session_id)
-                await self.repo.recover_stale_operations(session_id)
-                reserve_res = await self.repo.reserve_max_quota_and_start_regenerating(
-                    session_id, question_id, user_id, operation_id=operation_id
-                )
-                if reserve_res == ReserveResult.SESSION_BUSY:
-                    raise ReviewDomainException(
-                        409,
-                        "ERR_SESSION_BUSY_REGENERATING",
-                        "Phiên đề đang có một câu hỏi khác trong tiến trình sinh lại (Model A concurrency)",
-                    )
-            if reserve_res == ReserveResult.QUESTION_NOT_CURRENT:
-                raise ReviewDomainException(
-                    400,
-                    "ERR_QUESTION_NOT_CURRENT",
-                    "Chỉ có thể từ chối câu hỏi hiện hành (is_current = True)",
-                )
-            if reserve_res != ReserveResult.OK:
-                raise ReviewDomainException(404, "ERR_QUESTION_NOT_FOUND", "Không tìm thấy câu hỏi")
-
-            snapshot = await self.repo.get_question_snapshot(question_id)
-
-        # ------------------------------------------------------------------
-        # Phase 2: AI Execution (OUTSIDE LOCK, OUTSIDE DB CONNECTION)
-        # ------------------------------------------------------------------
-        generator = self.ai_generator
+    async def _settle(self, reservation: ReservationReceipt, error_code: str) -> UUID | None:
+        sid, qid, op = (
+            str(reservation.session_id),
+            str(reservation.question_id),
+            reservation.operation_id,
+        )
         try:
-            ai_result = await asyncio.wait_for(
-                generator(
+            await self.repo.settle_failure(sid, qid, op, error_code)
+            return None
+        except ReviewDomainException as uncertain:
+            # A completion may have committed while its response was lost. The
+            # owner receipt lookup uses the same IDs and the DB session lock.
+            try:
+                replay = await self.repo.reserve_regeneration(sid, qid, op)
+                if replay.operation_status == "completed":
+                    result = completion_receipt(replay.settlement, sid, qid, op)
+                    return result.question_id
+                if replay.operation_status in ("failed", "recovered"):
+                    return None
+            except ReviewDomainException:
+                pass
+            raise uncertain
+
+    async def _reserve_receipt(
+        self, session_id: str, question_id: str, operation_id: UUID
+    ) -> ReservationReceipt:
+        """Reconcile uncertain reservation responses without authorizing replay.
+
+        Repeating the owner RPC with the original IDs is the durable lookup. A
+        returned active replay may already belong to another request with this
+        key, so the caller must still refuse to dispatch or fail that operation.
+        """
+        for attempt in range(3):
+            try:
+                return await self.repo.reserve_regeneration(
+                    session_id, question_id, operation_id
+                )
+            except ReviewDomainException as exc:
+                if exc.status_code != 503:
+                    raise
+                if attempt == 2:
+                    raise ReviewDomainException(
+                        503,
+                        "ERR_RESERVATION_UNCERTAIN",
+                        "Reservation could not be confirmed; retry with the same key",
+                    ) from exc
+                await asyncio.sleep(0.1 * 2**attempt)
+        raise AssertionError("Reservation retry loop did not return")
+
+    async def reject_question(
+        self, session_id: str, question_id: str, user_id: str, idempotency_key: str | None = None
+    ) -> RegeneratedQuestionResponse:
+        op = action_key(idempotency_key)
+        await self._question(session_id, question_id)
+        # Without a key there cannot be a receipt to replay. With a key, the RPC
+        # checks for its receipt before the edit guard, including after approval.
+        if idempotency_key is None:
+            await self.check_session_guards(session_id)
+        if self.ai_generator is None:
+            raise ReviewDomainException(
+                503, "ERR_AI_SERVICE_UNAVAILABLE", "Regeneration adapter unavailable"
+            )
+        lock = session_lock_registry.get_lock(UUID(session_id))
+        async with lock:
+            try:
+                reservation = await self._reserve_receipt(session_id, question_id, op)
+            except ReviewDomainException as exc:
+                if exc.error_code != "ERR_SESSION_BUSY_REGENERATING":
+                    raise
+                # Existing busy-trigger recovery is preserved. Moving this before
+                # every reserve is R1, still awaiting owner acknowledgement.
+                await self.repo.recover_stale_operations(session_id)
+                reservation = await self._reserve_receipt(session_id, question_id, op)
+        if reservation.operation_status == "completed":
+            result = completion_receipt(reservation.settlement, session_id, question_id, op)
+            return await self._result(session_id, question_id, result.question_id)
+        if reservation.operation_status != "active":
+            raise ReviewDomainException(
+                409,
+                "ERR_OPERATION_FINISHED",
+                "This operation has ended; use a new key for a new action",
+            )
+        if reservation.replayed:
+            raise ReviewDomainException(
+                409, "ERR_QUESTION_BUSY", "This operation is already in progress"
+            )
+
+        committed_id: UUID
+        try:
+            inputs = frozen_inputs(reservation)
+            raw = await asyncio.wait_for(
+                self.ai_generator(
                     session_id=session_id,
                     question_id=question_id,
-                    source_snapshot=snapshot["source"],
-                    blueprint=snapshot["blueprint"],
-                    current_variant=snapshot["variant"],
-                    peer_variants=snapshot["peers"],
-                    operation_id=operation_id,
+                    operation_id=op,
                     acquire_attempt=self.repo.acquire_attempt,
+                    **inputs,
                 ),
                 timeout=45.0,
             )
+            candidate = validate_candidate(raw)
+            # Only retry availability/uncertainty. Identity and candidate remain
+            # unchanged, so a lost committed response replays the same completion.
+            for attempt in range(3):
+                try:
+                    completed = await self.repo.complete_regeneration(
+                        session_id, question_id, op, candidate
+                    )
+                    committed_id = completed.question_id
+                    break
+                except ReviewDomainException as exc:
+                    if exc.status_code != 503 or attempt == 2:
+                        raise
+                    await asyncio.sleep(0.1 * 2**attempt)
         except asyncio.CancelledError:
-            logger.info(
-                "Client cancelled rejection request for op %s. Executing best-effort settlement.",
-                operation_id,
-            )
-            await asyncio.shield(
-                self.repo.emergency_rollback_tx(
-                    session_id=session_id,
-                    old_question_id=question_id,
-                    regeneration_id=regeneration_id,
-                    error_msg=RollbackErrorCode.CLIENT_CANCELLED.value,
-                    user_id=user_id,
-                    actual_calls_dispatched=0,
+            try:
+                await asyncio.shield(
+                    self._settle(reservation, RollbackErrorCode.CLIENT_CANCELLED.value)
                 )
-            )
+            except Exception:
+                logger.error("Cancellation settlement unresolved for operation %s", op)
             raise
         except Exception as exc:
-            logger.error(
-                "AI Variant generation failed or timed out for question %s: %s", question_id, exc
-            )
-            if isinstance(exc, ReviewAcquireUnavailableError):
-                await self.repo.emergency_rollback_tx(
-                    session_id=session_id,
-                    old_question_id=question_id,
-                    regeneration_id=regeneration_id,
-                    error_msg=str(exc),
-                    user_id=user_id,
-                    actual_calls_dispatched=0,
-                )
-                raise ReviewDomainException(
-                    503,
-                    "ERR_AI_GATEWAY_PERMIT_FAILURE",
-                    "Hệ thống cấp phép AI tạm thời không khả dụng",
-                ) from exc
+            logger.error("Review operation %s failed (%s)", op, type(exc).__name__)
+            resolved = await self._settle(reservation, failure_code(exc))
+            if resolved is not None:
+                return await self._result(session_id, question_id, resolved)
+            raise generation_error(exc) from exc
+        # A failure here is a read failure after commit, not a reason to settle.
+        return await self._result(session_id, question_id, committed_id)
 
-            # F07: Track actual acknowledged permits / dispatched calls (default 1 for provider/timeout exception unless explicitly 0)
-            default_calls = 1 if isinstance(exc, (asyncio.TimeoutError, TimeoutError)) else 0
-            dispatched = getattr(
-                exc, "api_calls_count", getattr(exc, "dispatched_calls", default_calls)
-            )
-            # Immediate Emergency Rollback: Refund unused calls & Reset question status
-            await self.repo.emergency_rollback_tx(
+    async def _action(
+        self, action: str, session_id: str, question_id: str, idempotency_key: str | None
+    ) -> ReviewActionResponse:
+        key = action_key(idempotency_key)
+        await self._question(session_id, question_id)
+        if idempotency_key is None:
+            await self.check_session_guards(session_id)
+        row = await self.repo.perform_action(action, session_id, question_id, key)
+        try:
+            if (
+                type(row["is_current"]) is not bool
+                or type(row["is_reverted"]) is not bool
+                or not row["updated_at"]
+            ):
+                raise ValueError("Action projection invalid")
+            return ReviewActionResponse(
+                question_id=str(row["id"]),
                 session_id=session_id,
-                old_question_id=question_id,
-                regeneration_id=regeneration_id,
-                error_msg=str(exc),
-                user_id=user_id,
-                actual_calls_dispatched=dispatched,
+                status=row["status"],
+                is_current=row["is_current"],
+                is_reverted=row["is_reverted"],
+                updated_at=row["updated_at"],
             )
-
-            exc_msg = str(exc)
-            exc_code = getattr(exc, "code", "")
-            if "REVIEW_QUOTA_EXHAUSTED" in exc_msg or exc_code == "REVIEW_QUOTA_EXHAUSTED":
-                raise ReviewDomainException(
-                    429,
-                    "ERR_REVIEW_QUOTA_EXHAUSTED",
-                    "Đã dùng hết 30 lượt AI sinh lại của buổi review",
-                ) from exc
-            if (
-                "OPERATION_EXHAUSTED" in exc_msg
-                or exc_code == "OPERATION_EXHAUSTED"
-                or "REVIEW_ATTEMPT_EXHAUSTED" in exc_msg
-                or exc_code == "REVIEW_ATTEMPT_EXHAUSTED"
-            ):
-                raise ReviewDomainException(
-                    429,
-                    "ERR_OPERATION_QUOTA_EXHAUSTED",
-                    "Đã vượt quá số lần thử sinh lại tối đa cho thao tác này (tối đa 4 lần)",
-                ) from exc
-            if "REVIEW_ATTEMPT_REPLAYED" in exc_msg or exc_code == "REVIEW_ATTEMPT_REPLAYED":
-                raise ReviewDomainException(
-                    409,
-                    "ERR_ATTEMPT_REPLAYED",
-                    "Attempt ID đã được sử dụng hoặc bị trùng lặp",
-                ) from exc
-            if "DB_UNAVAILABLE" in exc_msg or exc_code == "DB_UNAVAILABLE":
-                raise ReviewDomainException(
-                    503,
-                    "ERR_AI_GATEWAY_PERMIT_FAILURE",
-                    "Hệ thống cơ sở dữ liệu tạm thời không khả dụng",
-                ) from exc
-            if (
-                "REVIEW_PERMIT_UNCERTAIN" in exc_msg
-                or exc_code == "REVIEW_PERMIT_UNCERTAIN"
-                or "REVIEW_PERMIT_INVALID" in exc_msg
-                or exc_code == "REVIEW_PERMIT_INVALID"
-            ):
-                raise ReviewDomainException(
-                    502,
-                    "ERR_AI_GATEWAY_PERMIT_FAILURE",
-                    "Không thể xác thực giấy phép gọi AI với hệ thống",
-                ) from exc
-
-            status_code = 504 if isinstance(exc, asyncio.TimeoutError) else 502
-            err_code = (
-                "ERR_AI_TIMEOUT"
-                if isinstance(exc, asyncio.TimeoutError)
-                else "ERR_AI_GENERATION_FAILED"
-            )
+        except (KeyError, ValueError, TypeError) as exc:
             raise ReviewDomainException(
-                status_code, err_code, "Sinh biến thể mới thất bại hoặc quá thời gian chờ"
+                503,
+                "ERR_RESULT_UNAVAILABLE",
+                "Committed result unavailable; retry with the same key",
             ) from exc
 
-        # Check math validation result from AI
-        val_rep = ai_result.get("validation_report") or {}
-        if val_rep.get("is_valid") is False:
-            await self.repo.emergency_rollback_tx(
-                session_id=session_id,
-                old_question_id=question_id,
-                regeneration_id=regeneration_id,
-                error_msg="MATH_VALIDATION_FAILED",
-                user_id=user_id,
-            )
-            raise ReviewDomainException(
-                422,
-                "ERR_AI_MATH_VALIDATION_FAILED",
-                "Biến thể sinh ra không vượt qua bộ kiểm định toán học",
-            )
-
-        # ------------------------------------------------------------------
-        # Phase 3: Short DB TX 2 (Persist New Variant with Retry Backoff)
-        # ------------------------------------------------------------------
-        actual_calls = min(
-            MAX_AI_CALLS_PER_REJECT, max(1, int(ai_result.get("api_calls_count", 1)))
-        )
-        created_q: Optional[Dict[str, Any]] = None
-
-        for attempt in range(3):
-            try:
-                created_q = await self.repo.complete_regeneration_tx(
-                    session_id=session_id,
-                    old_q_snapshot=snapshot["variant"],
-                    new_data=ai_result,
-                    regeneration_id=regeneration_id,
-                    actual_calls=actual_calls,
-                    user_id=user_id,
-                )
-                if created_q is None:
-                    raise ReviewDomainException(
-                        409,
-                        "ERR_CONCURRENT_MODIFICATION",
-                        "Câu hỏi đã bị chỉnh sửa bởi yêu cầu khác",
-                    )
-                break
-            except ReviewDomainException:
-                raise
-            except Exception as exc:
-                logger.warning("TX2 persistence attempt %d failed: %s", attempt + 1, exc)
-                if attempt < 2:
-                    await asyncio.sleep(0.1 * (2**attempt))
-                    continue
-                # Exhausted retries -> Emergency Rollback
-                await self.repo.emergency_rollback_tx(
-                    session_id=session_id,
-                    old_question_id=question_id,
-                    regeneration_id=regeneration_id,
-                    error_msg=f"TX2 persistence failed: {exc}",
-                    user_id=user_id,
-                )
-                raise ReviewDomainException(
-                    500, "ERR_DB_PERSISTENCE_FAILED", "Không thể lưu kết quả câu hỏi mới"
-                ) from exc
-
-        assert created_q is not None
-
-        return RegeneratedQuestionResponse(
-            question_id=str(created_q["id"]),
-            regenerated_from_id=str(created_q.get("regenerated_from_id", question_id)),
-            status=str(created_q.get("status", "pending_review")),
-            content=str(created_q.get("content", "")),
-            options=cast(list[str], created_q.get("options", [])),
-            correct_key=str(created_q.get("correct_key", "A")),
-            solution_md=created_q.get("solution_md"),
-            validation_report=created_q.get("validation_report"),
-        )
-
     async def accept_question(
-        self,
-        session_id: str,
-        question_id: str,
-        user_id: str,
+        self, session_id: str, question_id: str, user_id: str, idempotency_key: str | None = None
     ) -> ReviewActionResponse:
-        """Approve a question variant."""
-        await self.check_session_guards(session_id)
-
-        is_valid = await self.repo.verify_question_in_session(session_id, question_id)
-        if not is_valid:
-            raise ReviewDomainException(
-                404, "ERR_QUESTION_NOT_FOUND", "Câu hỏi không tồn tại trong phiên thi này"
-            )
-
-        res = await self.repo.accept_question_tx(session_id, question_id, user_id)
-        return ReviewActionResponse(
-            question_id=str(res["id"]),
-            session_id=session_id,
-            status=str(res.get("status", "approved")),
-            is_current=bool(res.get("is_current", True)),
-            is_reverted=bool(res.get("is_reverted", False)),
-            updated_at=str(res.get("updated_at", "")),
-        )
+        return await self._action("accept", session_id, question_id, idempotency_key)
 
     async def revert_question(
-        self,
-        session_id: str,
-        question_id: str,
-        user_id: str,
+        self, session_id: str, question_id: str, user_id: str, idempotency_key: str | None = None
     ) -> ReviewActionResponse:
-        """Revert a question variant back to the source question original content."""
-        await self.check_session_guards(session_id)
-
-        is_valid = await self.repo.verify_question_in_session(session_id, question_id)
-        if not is_valid:
-            raise ReviewDomainException(
-                404, "ERR_QUESTION_NOT_FOUND", "Câu hỏi không tồn tại trong phiên thi này"
-            )
-
-        res = await self.repo.atomic_revert_tx(session_id, question_id, user_id)
-
-        return ReviewActionResponse(
-            question_id=str(res["id"]),
-            session_id=session_id,
-            status=str(res.get("status", "approved")),
-            is_current=bool(res.get("is_current", True)),
-            is_reverted=bool(res.get("is_reverted", True)),
-            updated_at=str(res.get("updated_at", "")),
-        )
+        return await self._action("revert", session_id, question_id, idempotency_key)
 
     async def get_progress(
-        self, session_id: str, user_id: Optional[str] = None
+        self, session_id: str, user_id: str | None = None
     ) -> ReviewProgressResponse:
-        """Progress retrieval (purely read-only via Owner JWT, no recovery mutations)."""
-        data = await self.repo.get_review_progress_data(session_id)
-        return ReviewProgressResponse(**data)
+        resource_ids(session_id)
+        return ReviewProgressResponse(**await self.repo.progress(session_id))
