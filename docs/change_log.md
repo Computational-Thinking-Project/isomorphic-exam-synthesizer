@@ -301,3 +301,79 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
   - Giảm thiểu triệt để số lượng endpoint và form UI cần phát triển/bảo trì, tiết kiệm ít nhất 4 ngày công cho FE và BE.
   - Giao diện đạt chuẩn Zero-Friction: Giảng viên chỉ cần nạp đề $\rightarrow$ xem trước KaTeX $\rightarrow$ bấm 1 nút "Xác nhận đề gốc và tiếp tục" để chuyển sang sinh đề.
   - Bảo đảm an toàn tuyệt đối cho CSDL và hệ thống.
+
+## DEC-TV7-005: Nền schema Stage 3 tương thích dữ liệu cũ (TASK-302)
+
+- Ngày: 31/10/2026; người đề xuất/triển khai: Hùng (`benalexx007`).
+- Trạng thái: nền schema để bàn giao/review trong Draft PR; không phải toàn bộ TASK-302 đã hoàn tất.
+- Bối cảnh: schema dev đã có canonical nhưng thiếu cột audit của TASK-301; `answer_keys` dùng tên cũ. Migration `CREATE TABLE IF NOT EXISTS` không nâng cấp bảng đã tồn tại.
+- Thực hiện: migration 006 có transaction; backfill session audit và ánh xạ answer key khi suy ra duy nhất, giữ các cột cũ đồng bộ với `display_*`, chặn UPDATE canonical của cùng candidate. Dữ liệu thiếu/mâu thuẫn phải rollback, không tự xóa hay chọn giá trị.
+- Ngoại lệ actor được người phụ trách chốt 31/10/2026: giữ NULL cho lịch sử chưa biết, không suy ra actor từ owner. Dùng CHECK NOT VALID để giữ dữ liệu cũ nhưng chặn INSERT/UPDATE thiếu actor; fresh schema dùng CHECK bình thường. Không tự VALIDATE/SET NOT NULL khi lịch sử chưa có backfill đã xác minh. Đây là ngoại lệ đối với W3 NOT NULL toàn bộ dữ liệu, chưa phải đồng nghiệp đã xác nhận đọc hoặc PR đã approve.
+- Tại mốc nền 31/10: interface RPC, quota/concurrency, revert và readiness còn chờ; các xác nhận/triển khai sau đó ghi ở DEC-TV7-006. Không dùng schema tests để nhận đã có transaction lifecycle an toàn.
+- Phạm vi ảnh hưởng: schema/migration và tests PostgreSQL; không sửa nhánh TASK-301, frontend, cloud hoặc description PR/issue.
+- Plan và kết quả kiểm: [TASK-302](tasks/TASK-302.md). [Contract RPC](api/review-rpc-contract.md) giữ interface hiện tại; ledger/RPC được bổ sung sau mốc nền theo DEC-TV7-006.
+
+## DEC-TV7-006: Ledger và RPC review nguyên tử (TASK-302)
+
+- Ngày: 01/11/2026; triển khai: Hùng (`benalexx007`), theo xác nhận policy/boundary của Duy và callback của Đạt trên [PR #36](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36).
+- Trạng thái: đã code để bàn giao kiểm/tích hợp; chưa deploy, approve hoặc nghiệm thu toàn luồng.
+- Bối cảnh: upfront reservation/local dictionaries không bảo vệ permit sau restart/đa worker; acknowledged count không biết chắc số grant đã commit khi mất response.
+- Thực hiện: mở rộng migration 006 của cùng PR bằng private operation/attempt/action receipts và tám RPC; khóa session trước mutation; reserve không charge, grant charge từng lượt dưới trần 30/session và 4/operation; replay không cấp quyền dispatch lần nữa. Complete gộp candidate/audit/invalidation; fail/recover quyết toán theo ledger, giữ uncertain charge và prior candidate; canonical của candidate mới độc lập.
+- Policy đã xác nhận: JWT-owner cho user actions, service-role worker với actor từ reservation; Model A; binary reject; revert candidate đầu; readiness theo đủ source/version slots; invalidation toàn phiên khi replacement. [Contract](api/review-rpc-contract.md) dẫn từng comment quyết định và mô tả lost-response reconciliation.
+- Cập nhật 02/11: [Tâm đã xác nhận canonical/display và invalidation](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6555305930); [Duy xác nhận actor/thứ tự](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6567937686). Owner quyết định giữ tên 006 hiện có, thứ tự 004/005 → 006 → 007, yêu cầu Duy bỏ implementation ledger/acquire trùng trong 008; [comment phối hợp](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6568374582). Nếu 008 đã được áp dụng thì cần báo trạng thái trước khi chuyển đổi, không reset quota/receipts. 006 có guard dừng an toàn trước ledger không tương thích.
+- Giới hạn: snapshot DB legacy chưa là canonical blueprint/hash đã confirm của TASK-304; Duy/Đạt cần xác nhận mapper/storage, không tự bịa hash hay thêm source columns. TASK-301 đã có acquire wrapper nhưng còn direct lifecycle writes/parser; SQL 007 TASK-305 đã khóa session nhưng còn readiness/config compatibility. Caller/shuffle/Supabase/AI E2E chưa kiểm.
+- Phạm vi: SQL/schema, PostgreSQL tests và docs TASK-302; không sửa nhánh tác giả khác hoặc description PR/issue đã có. Không đánh dấu finding #28 verified thay reviewer; PR giữ Draft đến khi đủ bàn giao/tích hợp.
+- Cập nhật local 03/11: bổ sung worker-only `review_recover_session(UUID)` để discovery + recovery theo session dưới cùng khóa DB, không mở SELECT ledger. Có chín RPC; recovery theo operation ID vẫn giữ nguyên. Kiểm thêm restart, cạnh tranh recovery/completion, rollback, quota và chuỗi 004/005 (`31ed3bc`) → 006 → 007 (`d7a3d3f`) trên fresh/upgrade. Duy đã xác nhận 008 chưa chạy Cloud và đã bỏ. Theo chỉ đạo mới, chỉ hoàn thiện/kiểm local; giao tiếp và commit/push để sau. Không mở rộng source storage hoặc nhận canonical blueprint/hash đã đầy đủ.
+
+## DEC-TV7-007: Persisted source/Blueprint revisions for review (TASK-302)
+
+- Date/owner: 04/11/2026, Hung (`benalexx007`); author mode, workflow v0.1 proposed.
+- Status: local implementation for PR #36; no cloud rollout, merge or E2E acceptance.
+- Context: legacy confirmed_at/Blueprint columns are insufficient for the strict
+  TASK-304 input contract; recomputing a hash at Reject cannot prove confirmation.
+- Decision: adopt Duy/TASK-301 artifact SQL/tests from `68b375f` into the existing
+  006 authority, preserving 004/005 -> 006 -> 007. Store exact confirmed source,
+  per-question fingerprint, immutable source/Blueprint revisions and heads. Python
+  producer/HTTP remain TASK-301; trusted Python validates the full canonical schema.
+  New review snapshots freeze persisted v1 evidence and canonical candidate data;
+  permits/completion reject superseded revisions. Old receipts/history/charges remain
+  intact; legacy missing evidence never gets fabricated or downgraded into v1.
+- Additive contract: progress exposes unapproved current IDs in the same transaction.
+  Invalid confirmation blocks readiness while old operations can still settle.
+  Source content/set changes invalidate availability; approved/exported content locks
+  cover source insert/update/delete and new publication. Source changes demote
+  reviewed to generated under the same lock to preserve approval 007's gate. Read-only replay does not
+  resurrect a head. Caller R1 recovery-before-every-new-Reject is recorded, not wired here.
+- Evidence/limits: [TASK-302](tasks/TASK-302.md), [RPC authority](api/review-rpc-contract.md),
+  [PostgreSQL/consumer checks](../backend/tests/migrations/README.md). This supersedes
+  the earlier dated statement that artifact storage was absent; public caller,
+  actual producer orchestration and Supabase/provider E2E remain separate work.
+- Publication update: Duy subsequently delivered TASK-301 `553a009` with receipt
+  lookup, independent bootstrap and background producer lease/retry/caller wiring.
+  This checkpoint is independently checked against `68b375f`; the newer overlapping
+  SQL/contract is not yet adopted or verified here. Reconcile under TASK-302 ownership
+  and check the combined head before deployment; neither branch's test evidence
+  alone proves the combined implementation.
+
+## DEC-TV7-008: Adopt TASK-301 lookup/bootstrap/producer protocol in 006
+
+- Date/owner: 04/11/2026, Hung (`benalexx007`), author TASK-302; workflow v0.1 proposed.
+- Context: the published `8fff9da` checkpoint predates TASK-301 `553a009` and cannot
+  supply its lookup or producer lease/status API. Two independently changed copies
+  of 006 must not become competing migrations.
+- Decision: adopt Duy's owner-only read lookup, independent source confirmation,
+  worker claim/failure/publication fencing and status in the existing 006 authority.
+  Align initialization DDL; preserve receipts, unknown historical actors and charges.
+  V1 readiness checks the entire confirmed source set without requiring legacy
+  Blueprint rows; legacy-only review keeps its existing path. Acquire/complete
+  recheck source/Blueprint/current candidate while retaining frozen peers, allowing
+  another slot's Accept/Revert. No source/Blueprint fallback or quota backfill.
+- Evidence: [task plan](tasks/TASK-302.md), [DB contract](api/review-rpc-contract.md),
+  [repeatable SQL and pinned consumer checks](../backend/tests/migrations/README.md).
+  Pinned TASK-301 producer/API/adapter integration uses real PostgreSQL RPCs with
+  injected auth/table transport and an offline gateway. This is not deployed
+  JWT/table-read RLS/PostgREST pooling/live Gemini or W2 generation-job E2E evidence.
+- Impact/ownership: TASK-302 keeps the single migration/DB contract; TASK-301 keeps
+  producer/repository/API code. No application code from another branch was changed.
+  Publication, CI and independent review states are recorded on PR #36; no merge
+  or cloud rollout is authorized by this record.
