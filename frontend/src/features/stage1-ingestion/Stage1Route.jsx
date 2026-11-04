@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuthStore } from '../auth/authStore.js';
 import { createSession, getSessionDetail } from '../../services/sessions.js';
 import { createSessionEntryController } from './sessionEntry.js';
+import Stage1SourcePanel from './Stage1SourcePanel.jsx';
 
 const buttonClass = 'rounded-lg border border-slate-600 px-4 py-2 hover:bg-slate-800 disabled:opacity-50';
 const inputClass = 'mt-2 w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2';
@@ -37,7 +38,7 @@ function SessionEntry({ sessionId, accountKey }) {
   const update = (field, value) => setMetadata((previous) => ({ ...previous, [field]: value }));
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8">
+    <main className={isNew ? 'mx-auto max-w-3xl px-4 py-8' : 'mx-auto flex h-dvh min-h-[40rem] max-w-6xl flex-col overflow-hidden px-4 py-4'}>
       <Link to="/dashboard" className="text-sky-300 underline">Quay về Dashboard</Link>
       <h1 className="mt-6 text-3xl font-semibold">{isNew ? 'Tạo phiên đề mới' : 'Nguồn đề của phiên'}</h1>
 
@@ -69,17 +70,17 @@ function SessionEntry({ sessionId, accountKey }) {
           {creating && <p role="status">Đang lưu thông tin phiên…</p>}
         </form>
       ) : (
-        <section className="mt-6" aria-label="Thông tin phiên">
+        <section className="mt-4 flex min-h-0 flex-1 flex-col" aria-label="Thông tin phiên">
           {(state.phase === 'idle' || state.phase === 'loading') && <p role="status">Đang tải phiên…</p>}
           {state.detail && (
             <>
               <h2 className="break-words text-xl font-semibold">{state.detail.title}</h2>
               <p className="mt-3 break-words">Môn: {state.detail.subject || 'Chưa ghi'} · Khối: {state.detail.grade}</p>
               {state.detail.status === 'draft' ? (
-                <>
-                  <p className="mt-3">Đang chuẩn bị · {state.detail.source_questions.length} câu nguồn · {state.detail.exam_versions.length} bản đề</p>
-                  <p className="mt-4 text-slate-300">Đã mở đúng phiên. Phần nhập và xác nhận nguồn đề sẽ được bổ sung ở bước tiếp theo.</p>
-                </>
+                <Stage1SourcePanel detail={state.detail} isCurrent={() => {
+                  const auth = useAuthStore.getState();
+                  return auth.status === 'authenticated' && `${auth.user?.id ?? ''}:${auth.sessionVersion}` === accountKey;
+                }} />
               ) : (
                 <p role="status" className="mt-4 text-slate-300">Phiên không còn ở trạng thái nháp. Quay về Dashboard để xem trạng thái mới; màn tiếp tục tương ứng chưa được kết nối.</p>
               )}
