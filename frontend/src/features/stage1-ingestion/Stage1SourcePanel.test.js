@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
-import { beforeEach, test } from 'node:test';
+import { after, beforeEach, test } from 'node:test';
 import { register } from 'node:module';
 import axios from 'axios';
 import React, { act } from 'react';
 import { ensureDomEnvironment } from '../../test-support/domHarness.js';
 import { useAuthStore } from '../auth/authStore.js';
 import { auth } from '../../services/test-support/supabase.stub.js';
+import { installDialogLifecycleStub } from './test-support/dialog.stub.js';
 
 ensureDomEnvironment();
+after(installDialogLifecycleStub());
 // Expose the standard input-event surface before ReactDOM detects DOM support.
 document.oninput = null;
 const { createRoot } = await import('react-dom/client');
@@ -440,7 +442,10 @@ test('203b: chọn file từ dialog text dùng cùng picker trong click, giữ t
   const picker = app.container.querySelector('input[type="file"]');
   assert.equal(picker.parentNode.getAttribute('hidden'), '');
   let pickerClicks = 0;
-  picker.addEventListener('click', () => { pickerClicks++; });
+  picker.addEventListener('click', () => {
+    assert.equal(dialog(app.container).open, false); // Picker must no longer be inside inert background.
+    pickerClicks++;
+  });
   await act(async () => input(app.container, 'Text B chưa hoàn chỉnh'));
   api.defaults.adapter = async config => { calls.push(config.method); throw { config, response: incompleteResponse() }; };
   await act(async () => submit(app.container));
@@ -485,6 +490,27 @@ test('203b: file422 → chuyển text đúng focus/giữ input; chọn lại cù
   assert.equal(dialog(app.container), null);
   assert(app.container.textContent.includes('Nguồn qb'));
   assert.deepEqual(calls, ['get', 'post', 'post']);
+  await app.unmount();
+});
+
+test('F01: hủy picker từ dialog giữ file/text và nguồn, không tự POST hoặc mở lại dialog', async () => {
+  const app = mount();
+  await app.render();
+  await act(async () => input(app.container, 'Nháp chưa gửi'));
+  await act(async () => button(app.container, 'Tải tệp').click());
+  await act(async () => selectFile(app.container, [new File(['Thiếu key'], 'loi.md')]));
+  api.defaults.adapter = async config => { calls.push(config.method); throw { config, response: incompleteResponse() }; };
+  await act(async () => submit(app.container));
+  const modal = dialog(app.container);
+  await act(async () => dialogButton(app.container, 'Chọn tệp đã sửa').click());
+  assert.equal(modal.open, false);
+  await act(async () => selectFile(app.container, []));
+  assert.equal(dialog(app.container), null);
+  assert(app.container.textContent.includes('Đã chọn: loi.md'));
+  assert(app.container.textContent.includes('Nguồn qa'));
+  await act(async () => button(app.container, 'Nhập trực tiếp').click());
+  assert.equal(app.container.querySelector('textarea').value, 'Nháp chưa gửi');
+  assert.deepEqual(calls, ['get', 'post']);
   await app.unmount();
 });
 
@@ -549,8 +575,11 @@ test('203b: đổi route bỏ incomplete trả muộn; logout khi dialog đang m
   await act(async () => input(app.container, 'Nguồn B sai'));
   await act(async () => submit(app.container));
   assert(dialog(app.container));
+  const openedModal = dialog(app.container);
   await act(async () => useAuthStore.getState().setSession(null));
   assert.equal(dialog(app.container), null);
+  assert.equal(openedModal.open, false);
+  assert.equal(openedModal.closeRequests, 1);
   assert(app.container.textContent.includes('Đăng nhập'));
   assert.equal(app.container.querySelector('textarea'), null);
   await app.unmount();

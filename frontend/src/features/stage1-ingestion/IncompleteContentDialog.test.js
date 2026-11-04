@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { register } from 'node:module';
 import React, { act } from 'react';
 import { ensureDomEnvironment } from '../../test-support/domHarness.js';
 import { readIncompleteError } from './stage1Errors.js';
+import { installDialogLifecycleStub } from './test-support/dialog.stub.js';
 
 ensureDomEnvironment();
+after(installDialogLifecycleStub());
 const { createRoot } = await import('react-dom/client');
 const { renderToStaticMarkup } = await import('react-dom/server');
 register('../../test-loader.mjs', import.meta.url);
@@ -33,7 +35,7 @@ async function mount(t, overrides = {}) {
   const unmount = () => act(async () => root.unmount());
   t.after(unmount);
   await render({});
-  return { trigger, container, events, render };
+  return { trigger, container, events, render, unmount };
 }
 function press(element, key, shiftKey = false) {
   const event = { type: 'keydown', key, shiftKey, bubbles: true, cancelable: true,
@@ -49,6 +51,25 @@ test('dialog đóng hoặc không có lỗi không render và không lấy focus
   await app.render({ open: true, errors: [] });
   assert.equal(app.container.textContent, '');
   assert.equal(document.activeElement, app.trigger);
+});
+
+test('F01: mở bằng native modal API đúng một lần, cleanup khi đóng hoặc unmount', async t => {
+  const app = await mount(t);
+  const modal = app.container.querySelector('[role="dialog"]');
+  assert.equal(modal.tagName, 'DIALOG');
+  assert.equal(modal.open, true);
+  assert.equal(modal.modalRequests, 1);
+  await app.render({ errors: [...errors] });
+  assert.equal(modal.modalRequests, 1);
+  await app.render({ open: false });
+  assert.equal(modal.open, false);
+  assert.equal(modal.closeRequests, 1);
+  await app.render({ open: true });
+  const reopened = app.container.querySelector('dialog');
+  assert.equal(reopened.open, true);
+  await app.unmount();
+  assert.equal(reopened.open, false);
+  assert.equal(reopened.closeRequests, 1);
 });
 
 test('render lỗi dài/markup như text, có nhãn dialog/list và đúng hướng sửa', () => {
@@ -97,13 +118,34 @@ test('Escape/Đóng gọi callback và trả focus; reopen lấy lại focus đ�
   assert.equal(document.activeElement, app.trigger);
 });
 
-test('hai hành động chỉ phát callback riêng, không gọi onClose hoặc phục hồi focus cũ', async t => {
+test('F01: hai hành động đóng modal trước callback, không tự gọi onClose hoặc chạy hai lần', async t => {
   const app = await mount(t);
-  const buttons = app.container.querySelectorAll('button');
-  await act(async () => buttons[1].click());
-  await act(async () => buttons[2].click());
+  for (const [index, action] of [[1, 'file'], [2, 'text']]) {
+    await app.render({ open: false });
+    await app.render({ open: true });
+    const modal = app.container.querySelector('dialog');
+    const callback = () => { assert.equal(modal.open, false); app.events.push(action); };
+    await app.render(action === 'file' ? { onChooseFile: callback } : { onSwitchToText: callback });
+    const button = app.container.querySelectorAll('button')[index];
+    await act(async () => { button.click(); button.click(); });
+    assert.equal(modal.closeRequests, 1);
+  }
   assert.deepEqual(app.events, ['file', 'text']);
-  assert.notEqual(document.activeElement, app.trigger);
+});
+
+test('F01: native cancel đóng đúng một lần, cleanup không đóng lại hoặc gọi thêm callback', async t => {
+  const app = await mount(t);
+  const modal = app.container.querySelector('dialog');
+  const cancel = { type: 'cancel', bubbles: false, cancelable: true,
+    preventDefault() { this.defaultPrevented = true; } };
+  await act(async () => modal.dispatchEvent(cancel));
+  assert.equal(cancel.defaultPrevented, true);
+  assert.equal(modal.open, false);
+  assert.equal(document.activeElement, app.trigger);
+  assert.deepEqual(app.events, ['close']);
+  await app.render({ open: false });
+  assert.equal(modal.closeRequests, 1);
+  assert.deepEqual(app.events, ['close']);
 });
 
 test('backdrop đóng, click trong nội dung không đóng', async t => {
@@ -122,6 +164,8 @@ test('không trả focus vào trigger đã rời DOM hoặc disabled', async t =
   assert.notEqual(document.activeElement, app.trigger);
   app.trigger.removeAttribute('disabled');
   document.documentElement.removeChild(app.trigger);
-  await act(async () => close.click());
+  await app.render({ open: false });
+  await app.render({ open: true });
+  await act(async () => app.container.querySelector('button').click());
   assert.notEqual(document.activeElement, app.trigger);
 });

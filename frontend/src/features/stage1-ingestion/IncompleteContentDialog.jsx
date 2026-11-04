@@ -12,20 +12,29 @@ export default function IncompleteContentDialog({ open, errors = [], onClose, on
 
   useEffect(() => {
     if (!visible) return;
+    const modal = box.current;
     trigger.current = document.activeElement;
+    modal.showModal();
     closeButton.current?.focus();
-    return () => { trigger.current = null; };
+    return () => {
+      if (modal.open) modal.close();
+      trigger.current = null;
+    };
   }, [visible]);
 
   if (!visible) return null;
 
-  const close = () => {
+  const finish = (action, restoreFocus = false) => {
+    if (!box.current?.open) return;
     const target = trigger.current;
-    onClose();
-    if (target?.ownerDocument?.documentElement?.contains(target) && target.getAttribute('disabled') === null) {
+    // Release native inertness before the callback opens a picker in this same user click.
+    box.current.close();
+    action();
+    if (restoreFocus && target?.ownerDocument?.documentElement?.contains(target) && target.getAttribute('disabled') === null) {
       target.focus();
     }
   };
+  const close = () => finish(onClose, true);
   const handleKeyDown = event => {
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -34,8 +43,7 @@ export default function IncompleteContentDialog({ open, errors = [], onClose, on
     } else if (event.key === 'Tab') {
       const first = closeButton.current;
       const last = textButton.current;
-      const outside = !box.current?.contains(document.activeElement);
-      if (outside || (event.shiftKey ? document.activeElement === first : document.activeElement === last)) {
+      if (event.shiftKey ? document.activeElement === first : document.activeElement === last) {
         event.preventDefault();
         (event.shiftKey ? last : first)?.focus();
       }
@@ -43,10 +51,11 @@ export default function IncompleteContentDialog({ open, errors = [], onClose, on
   };
 
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={`${id}-help`}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm"
+    <dialog ref={box} role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={`${id}-help`}
+      className="fixed inset-0 m-0 h-dvh max-h-none w-screen max-w-none items-center justify-center border-0 bg-transparent p-4 text-slate-100 open:flex backdrop:bg-slate-950/80 backdrop:backdrop-blur-sm"
+      onCancel={event => { event.preventDefault(); close(); }}
       onKeyDown={handleKeyDown} onClick={event => { if (event.target === event.currentTarget) close(); }}>
-      <div ref={box} className="flex max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
+      <div className="flex max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
         <header className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-700 p-4">
           <div>
             <h2 id={`${id}-title`} className="text-xl font-semibold">Đề nguồn chưa đầy đủ</h2>
@@ -62,10 +71,10 @@ export default function IncompleteContentDialog({ open, errors = [], onClose, on
           </li>)}
         </ol>
         <footer className="flex shrink-0 flex-wrap gap-2 border-t border-slate-700 p-4">
-          <button type="button" className={buttonClass} onClick={onChooseFile}>Chọn tệp đã sửa</button>
-          <button ref={textButton} type="button" className={buttonClass} onClick={onSwitchToText}>Chuyển sang Nhập trực tiếp</button>
+          <button type="button" className={buttonClass} onClick={() => finish(onChooseFile)}>Chọn tệp đã sửa</button>
+          <button ref={textButton} type="button" className={buttonClass} onClick={() => finish(onSwitchToText)}>Chuyển sang Nhập trực tiếp</button>
         </footer>
       </div>
-    </div>
+    </dialog>
   );
 }
