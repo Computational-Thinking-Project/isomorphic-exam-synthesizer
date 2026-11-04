@@ -169,11 +169,35 @@ FUNCTION public.fail_stale_generation_job(
 
 ---
 
-## 4. Bảo Vệ Cột Worker & Column-Level Security (F07)
+## 4. Bảo Vệ Cột Worker & Column-Level Security (F07 / SEC-04)
 
-Bảng `exam_sessions` được bảo vệ hai tầng chống việc can thiệp trực tiếp từ client `authenticated`:
-1. **Column-Level Privileges:** `REVOKE UPDATE (active_job_id, gemini_call_count) ON public.exam_sessions FROM PUBLIC, anon, authenticated;`.
-2. **Database Trigger Guard (`trg_guard_exam_sessions_worker_columns`):**
-   - Chặn client tự ý INSERT phiên thi mới với `active_job_id IS NOT NULL`, `gemini_call_count > 0`, hoặc `status = 'generating'`.
-   - Chặn client tự ý UPDATE thay đổi `active_job_id`, `gemini_call_count` hoặc tự chuyển trạng thái `generating`.
-   - Các RPC của hệ thống sử dụng session-level flag `app.internal_worker_rpc` để thực hiện mutation hợp lệ.
+Bảng `exam_sessions` được bảo vệ nhiều tầng (defense-in-depth) chống việc can thiệp trực tiếp từ client `authenticated` hoặc `anon`:
+
+1. **Authoritative Column-Level Privileges (PostgreSQL ACL):**
+   ```sql
+   REVOKE INSERT, UPDATE ON TABLE public.exam_sessions FROM PUBLIC, anon, authenticated;
+   GRANT INSERT (user_id, title, subject, grade) ON TABLE public.exam_sessions TO authenticated;
+   GRANT UPDATE (title, subject, grade) ON TABLE public.exam_sessions TO authenticated;
+   ```
+   Client hoàn toàn không có quyền SQL cấp bảng hay quyền cấp cột trên các trường trạng thái và worker (`status`, `active_job_id`, `gemini_call_count`, `retry_count`, `gemini_review_calls`, `approved_at`). Mọi thay đổi trên các trường này bắt buộc phải đi qua các hàm `SECURITY DEFINER` RPC có xác thực nghiệp vụ chặt chẽ.
+
+2. **Trigger Phòng Thủ Độc Lập (`trg_guard_exam_sessions_worker_columns` - SECURITY INVOKER):**
+   - Hoạt động ở chế độ `SECURITY INVOKER`, kiểm tra trực tiếp database principal thực thi (`current_user`).
+   - Chỉ cho phép các vai trò tin cậy (`postgres`, `service_role`, `supabase_admin`) khi thực thi qua RPC hoặc quản trị hệ thống.
+   - Chặn đứng mọi nỗ lực khởi tạo hoặc cập nhật trạng thái worker trái phép ngay cả khi quyền cấp bảng bị mở nhầm.
+   - **Loại bỏ hoàn toàn cờ tùy ý `app.internal_worker_rpc` khỏi trust boundary** để ngăn ngừa lỗ hổng rò rỉ flag trong cùng transaction.
+
+---
+
+## 5. Đặc Tả Đối Chiếu Handoff W2 (TASK-207b / PR #30)
+
+Dựa trên phản hồi chính thức từ W2 worker adapter ([PR #30](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6635728977)) và AI generation module ([PR #41](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/41)):
+
+| Boundary | Dữ liệu / Đảm bảo W2 cần có | Chủ trách nhiệm & Trạng thái |
+|---|---|---|
+| **Canonical Preflight** | - `ready`: boolean và `reason` nếu chưa sẵn sàng.<br>- Danh sách câu nguồn theo thứ tự `question_no`, `source_question_id`, fingerprint.<br>- `confirmed_source_hash` tính trên batch câu hỏi nguồn đã sắp xếp.<br>- Full Blueprint schema `0.4.0` kèm `allowed_transformations[].dimension`. | **Hùng (#36):** Cung cấp read RPC/snapshot chuẩn.<br>**Duy (#32):** Kiểm tra readiness và mode intersection.<br>**Quỳnh (#30):** Tiêu thụ preflight tại worker adapter. |
+| **Config Transaction** | - Kiểm tra tính sẵn sàng (readiness) atomically dưới khóa hàng session.<br>- Xác thực requested modes trên tập giao hợp lệ.<br>- Phân biệt rõ mã lỗi: `ERR_SOURCE_NOT_READY` vs `ERR_CONFIG_CONFLICT`. | **Duy (#32):** Cập nhật SQL RPC `save_generation_config` khi nhận canonical read interface từ #36. |
+| **Claim & Immutable Job Context** | - Fencing token (`job_id`), trần quota (250).<br>- Trả về cấu hình và `committed_targets` danh sách các vị trí `(version_code, source_question_id, question_no)` đã hoàn thành.<br>- Gắn kết với snapshot câu hỏi nguồn và `base_seed` bất biến. | **Duy (#32):** Quản lý trạng thái CSDL và fencing token RPC.<br>**Quỳnh (#30):** Khởi tạo `GenerationJobStore` và context thực thi. |
+| **Full Persist / Resume** | - Ghi nhận `QuestionResult` đầy đủ cùng provenance, seed, attempt metadata.<br>- Cập nhật atomically với `is_current = TRUE` và `updated_at = now()` dưới fencing token `p_job_token`.<br>- Cơ chế idempotent replay chống ghi đè và trùng lặp khi retry. | **Duy (#32):** Đã triển khai bảo vệ F03 (SQLSTATE 23505) và F05 (atomic timestamp) tại RPC `persist_version_question`. |
+| **Quota & Recovery** | - Giới hạn cứng 250 lượt gọi Gemini AI/phiên thi.<br>- Reserve quota trước khi phát sinh cuộc gọi thật.<br>- Fencing token bảo vệ chống zombie worker (SQLSTATE 55006). | **Duy (#32):** Đã hoàn tất bảo vệ F07.<br>**Quỳnh (#30):** Adapter gọi `reserve_generation_quota` trước khi gọi AI. |
+| **Mode Mapping & Clone** | - Case-sensitive mode IDs.<br>- Đề xuất ánh xạ: `NUMERICAL` $\rightarrow$ `values`, `context_swap` $\rightarrow$ `context`.<br>- Mode rỗng `[]` hoặc `["NONE"]`: Sao chép đề gốc (Original Clone), zero Gemini calls. | **Quỳnh (#30):** Xử lý luồng clone tại worker.<br>**Bội Anh (#40) & Duy (#32):** Thống nhất hiển thị UI và validation API. |
