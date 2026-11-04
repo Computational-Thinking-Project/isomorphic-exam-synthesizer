@@ -191,6 +191,20 @@ async def retry_source_artifacts(
     if state.ready:
         response.status_code = 200
         return summary
+    sessions = query_rows(
+        db.table("exam_sessions").select("status,approved_at").eq("id", session_id).execute().data
+    )
+    if len(sessions) != 1:
+        raise HTTPException(404, "Session not found")
+    if (
+        sessions[0].get("status") in ("approved", "exported")
+        or sessions[0].get("approved_at") is not None
+    ):
+        raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session is locked")
+    if sessions[0].get("status") == "generating":
+        raise ReviewDomainException(
+            409, "ERR_SESSION_BUSY_GENERATING", "Session generation is in progress"
+        )
     if state.production and all(item.status in ("running", "ready") for item in state.production):
         return summary
     blueprints = blueprint_service(request)

@@ -856,7 +856,10 @@ BEGIN
     END IF;
     RETURN saved.result || jsonb_build_object('replayed',true);
   END IF;
-  IF s.status<>'draft' OR s.approved_at IS NOT NULL OR p_expected_updated_at IS NULL
+  IF s.status IN ('approved','exported') OR s.approved_at IS NOT NULL THEN
+    RAISE EXCEPTION 'ARTIFACT_LOCKED' USING ERRCODE='55000';
+  END IF;
+  IF s.status<>'draft' OR p_expected_updated_at IS NULL
       OR s.updated_at IS DISTINCT FROM p_expected_updated_at THEN
     RAISE EXCEPTION 'ARTIFACT_STALE' USING ERRCODE='55000';
   END IF;
@@ -1094,8 +1097,6 @@ END $$;
 REVOKE ALL ON FUNCTION public.get_source_artifacts(UUID) FROM PUBLIC,anon,authenticated,service_role;
 GRANT EXECUTE ON FUNCTION public.get_source_artifacts(UUID) TO authenticated,service_role;
 
-COMMIT;
-
 -- One canonical representation for the target and all peers. Display permutations
 -- never travel with canonical keys/solutions. The caller already holds the parent
 -- session lock, shared with source invalidation, publication and approval.
@@ -1148,3 +1149,5 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public._review_canonical_variant(UUID),public._review_artifact_snapshot(UUID)
   FROM PUBLIC,anon,authenticated,service_role;
+
+COMMIT;

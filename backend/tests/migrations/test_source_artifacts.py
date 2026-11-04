@@ -328,6 +328,45 @@ class SourceArtifactTests(PostgresCase):
         self.assertEqual(sorted(r["replayed"] for r in receipts), [False, True])
         self.assertEqual(self.value("SELECT count(*) FROM canonical_blueprint_revisions;"), "1")
 
+    def test_publication_and_reservation_share_the_session_lock(self):
+        self.confirm()
+        self.call(
+            "claim_source_production",
+            SID,
+            self.publication["source_revision_id"],
+            self.publication["producer_job_id"],
+        )
+        self.sql(
+            f"UPDATE exam_sessions SET status='generated'; INSERT INTO generation_configs(session_id,n_versions) VALUES ('{SID}',1);"
+        )
+        publish = (
+            rpc_fixtures.ReviewRpcTests.auth("service_role")
+            + f"SELECT publish_canonical_blueprint('{SID}',{literal(json.dumps(self.publication))});"
+        )
+        reserve = (
+            rpc_fixtures.ReviewRpcTests.auth()
+            + f"SELECT review_reserve_regeneration('{SID}','{rpc_fixtures.QID}','{uuid4()}');"
+        )
+        publication, reservation = rpc_fixtures.ReviewRpcTests.concurrent(self, publish, reserve)
+        self.assertEqual(publication.returncode, 0, publication.stderr)
+        if reservation.returncode:
+            self.assertIn("REVIEW_SOURCE_MISMATCH", reservation.stderr)
+            self.assertEqual(self.value("SELECT count(*) FROM review_operations;"), "0")
+        else:
+            self.assertEqual(
+                json.loads(reservation.stdout)["snapshot"]["blueprint_revision_id"],
+                self.publication["blueprint_revision_id"],
+            )
+        self.assertEqual(self.value("SELECT gemini_review_calls FROM exam_sessions;"), "7")
+
+    def test_locked_confirmation_does_not_create_new_revision_but_replays_old(self):
+        first = self.confirm()
+        self.sql("UPDATE exam_sessions SET status='approved',approved_at=now();")
+        self.assertTrue(self.confirm()["replayed"])
+        self.assertIn("ARTIFACT_LOCKED", self.confirm(key=str(uuid4()), check=False).stderr)
+        self.assertEqual(self.value("SELECT count(*) FROM source_artifact_revisions;"), "1")
+        self.assertEqual(self.confirm()["sources"], first["sources"])
+
     def test_actual_python_producer_confirms_and_resumes_against_real_rpc_storage(self):
         from app.services.ai.gateway import RequestContext
         from app.services.blueprint.producer import (

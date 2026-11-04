@@ -263,6 +263,18 @@ def test_status_is_read_only_and_retry_without_adapter_is_503(flow):
     assert all(n == "get_source_artifacts" for n, _ in state.calls)
 
 
+@pytest.mark.parametrize("status,code", [("approved", 423), ("exported", 423), ("generating", 409)])
+def test_pending_retry_checks_session_guard_before_scheduling(flow, monkeypatch, status, code):
+    state, client = flow
+    assert client.post(url(state), json={}).status_code == 200
+    state.status = status
+    monkeypatch.setattr(source_artifacts, "blueprint_service", lambda request: state.extractor)
+    state.calls.clear()
+    assert client.post(url(state, "source-artifacts/retry")).status_code == code
+    assert state.extracts == 0
+    assert all(name == "get_source_artifacts" for name, _ in state.calls)
+
+
 @pytest.mark.parametrize(
     "error,status,rolled_back",
     [
