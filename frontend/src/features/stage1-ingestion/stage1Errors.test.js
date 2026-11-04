@@ -12,7 +12,8 @@ test('incomplete: nhãn toàn đề/câu và hướng sửa key, không đoán h
   ]));
   assert.match(model.message, /Chưa đọc được đầy đủ/);
   assert.deepEqual(model.errors.map(e => e.location), ['Câu 3', 'Toàn đề', 'Câu 1']);
-  assert.match(model.errors[0].guidance, /đáp án A–D/);
+  assert.match(model.errors[0].guidance, /đáp án đúng \(A\/B\/C\/D\)/);
+  assert.match(model.errors[0].guidance, /đáp án tương ứng vào bảng đáp án cuối đề/);
   assert.match(model.errors[1].guidance, /1 đến 20/);
   assert.equal(model.errors[1].detail, 'No valid questions');
   assert.match(model.errors[2].guidance, /Bổ sung nội dung/);
@@ -65,7 +66,7 @@ test('trộn item malformed giữ vị trí và fallback từng item, không m�
   assert.equal(errors[1].detail, 'Thông tin mới từ parser');
   assert.equal(errors[2].title, errors[0].title);
   assert.equal(errors[3].detail, '');
-  assert.match(errors[3].guidance, /đáp án A–D/);
+  assert.match(errors[3].guidance, /đáp án đúng/);
 });
 
 test('envelope không có item hữu ích giữ fallback chung, không mở dialog rỗng', () => {

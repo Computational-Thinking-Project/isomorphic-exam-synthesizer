@@ -1,5 +1,5 @@
 const descriptions = new Map([
-  ['MISSING_ANSWER', ['Thiếu đáp án đúng', 'Bổ sung đáp án A–D cho câu hỏi trong nguồn hoặc bảng đáp án cuối đề.']],
+  ['MISSING_ANSWER', ['Thiếu đáp án đúng', 'Xác định đáp án đúng (A/B/C/D) cho câu hỏi, hoặc bổ sung đáp án tương ứng vào bảng đáp án cuối đề.']],
   ['UNPARSED_OMML', ['Chưa đọc được công thức Word', 'Chuyển công thức bị lỗi sang văn bản hoặc LaTeX phù hợp rồi nạp lại nguồn.']],
   ['UNPARSED_IMAGE', ['Chưa đọc được hình ảnh', 'Dùng nguồn Đại số dạng văn bản/LaTeX. Bài bắt buộc hình vẽ nằm ngoài phạm vi hiện tại.']],
   ['AMBIGUOUS_FORMAT', ['Cấu trúc câu hỏi chưa rõ', 'Tách rõ số câu, nội dung, các phương án A–D và đáp án đúng trong nguồn.']],
