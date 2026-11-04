@@ -266,6 +266,7 @@ class GenerationService:
                 if (
                     saved.request_fingerprint != expected or saved.candidate is None or saved.error_code
                     or saved.candidate.source_question_id != source.id
+                    or saved.candidate.seed != seed
                     or saved.candidate.blueprint_fingerprint != fingerprint(blueprints[source.id])
                     or saved.validation is None or saved.validation.failures
                 ):

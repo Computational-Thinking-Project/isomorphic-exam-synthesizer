@@ -1,3 +1,10 @@
+## DEC-DAT-W2-HANDOFF: Contract hash/resume và public-mode proposal
+
+- Ngày/người: 04/11/2026 — Trương Thành Đạt, theo yêu cầu phối hợp I-B-AI/I-B-POLICY trên PR30.
+- Contract AI hiện có được làm rõ tại [ai-w2-integration.md](ai-w2-integration.md): ordered batch hash khác per-question revision hash, full QuestionResult/provenance và immutable job snapshot cần giữ khi resume. Fixture/test offline bàn giao cho owner worker/SQL.
+- Guard cục bộ: completed candidate.seed phải khớp expected slot seed, không chỉ request fingerprint. Không đổi prompt, provider, retry hoặc quota.
+- Mode aliases và deterministic NONE clone vẫn **proposed**, chờ Quỳnh/Duy/FE2 thống nhất trước triển khai public behavior. Không sửa SQL/worker/FE/gateway/Docker hay nhận W2 E2E đã đạt. [Scope/phối hợp](tasks/TASK-AI-W2-CONTRACT.md).
+
 ## DEC-DAT-W3-307: Boundary bundler và dependency template
 
 - Cập nhật 01/11/2026 — Đạt: tích hợp Typst compiler đã merge từ TASK-306 qua `build_compiled_bundle`. Một validated display snapshot cấp dữ liệu cho toàn bộ PDF/ma trận/TeX/Markdown trước khi đóng ZIP; tái sử dụng `build_bundle`, lỗi compiler không trả gói thiếu. Không thêm DB/API/cloud/dependency/Docker. Kiểm tích hợp module bằng fixture, snapshot đã khóa và Storage E2E vẫn pending; [interface/handoff](export-w3-bundler.md).
