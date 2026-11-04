@@ -754,6 +754,10 @@ def test_clone_session_default_title_and_subject_encoding(
                 exec_ins.data = [{
                     **data,
                     "id": "session-cloned-new",
+                    "status": "draft",
+                    "gemini_call_count": 0,
+                    "retry_count": 0,
+                    "approved_at": None,
                     "created_at": "2026-10-18T12:00:00Z",
                     "updated_at": "2026-10-18T12:00:00Z",
                 }]

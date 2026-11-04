@@ -148,13 +148,40 @@ BEGIN
     RAISE EXCEPTION 'Permission failure: authenticated role must have EXECUTE on claim_generation_job!';
   END IF;
 
-  -- 2.7 Column-level security: authenticated role must NOT have UPDATE on worker columns (F07)
+  -- 2.7 Column-level security (F07):
+  -- authenticated role must NOT have table-level UPDATE or INSERT
+  IF has_table_privilege('authenticated', 'public.exam_sessions', 'UPDATE') = TRUE THEN
+    RAISE EXCEPTION 'Security failure: authenticated role must NOT have table-level UPDATE on exam_sessions!';
+  END IF;
+
+  IF has_table_privilege('authenticated', 'public.exam_sessions', 'INSERT') = TRUE THEN
+    RAISE EXCEPTION 'Security failure: authenticated role must NOT have table-level INSERT on exam_sessions!';
+  END IF;
+
+  -- authenticated role must NOT have column-level UPDATE on protected worker/lifecycle columns
   IF has_column_privilege('authenticated', 'public.exam_sessions', 'active_job_id', 'UPDATE') = TRUE THEN
     RAISE EXCEPTION 'Security failure: authenticated role must NOT have direct UPDATE on exam_sessions.active_job_id!';
   END IF;
 
   IF has_column_privilege('authenticated', 'public.exam_sessions', 'gemini_call_count', 'UPDATE') = TRUE THEN
     RAISE EXCEPTION 'Security failure: authenticated role must NOT have direct UPDATE on exam_sessions.gemini_call_count!';
+  END IF;
+
+  IF has_column_privilege('authenticated', 'public.exam_sessions', 'status', 'UPDATE') = TRUE THEN
+    RAISE EXCEPTION 'Security failure: authenticated role must NOT have direct UPDATE on exam_sessions.status!';
+  END IF;
+
+  IF has_column_privilege('authenticated', 'public.exam_sessions', 'status', 'INSERT') = TRUE THEN
+    RAISE EXCEPTION 'Security failure: authenticated role must NOT have direct INSERT on exam_sessions.status!';
+  END IF;
+
+  -- authenticated role MUST have UPDATE & INSERT only on allowed metadata columns
+  IF has_column_privilege('authenticated', 'public.exam_sessions', 'title', 'UPDATE') = FALSE THEN
+    RAISE EXCEPTION 'Permission failure: authenticated role must have column UPDATE on exam_sessions.title!';
+  END IF;
+
+  IF has_column_privilege('authenticated', 'public.exam_sessions', 'title', 'INSERT') = FALSE THEN
+    RAISE EXCEPTION 'Permission failure: authenticated role must have column INSERT on exam_sessions.title!';
   END IF;
 
   RAISE NOTICE 'Step 2: Least privilege permissions for all RPCs and helpers verified.';
@@ -207,6 +234,90 @@ BEGIN
   END IF;
 
   RAISE NOTICE 'Step 3: All functional, domain, and NULL-semantics tests passed.';
+END $$;
+
+-- ----------------------------------------------------------------------------
+-- 4. Functional Attack Simulation & Defense-in-Depth Verification (F07)
+-- ----------------------------------------------------------------------------
+DO $$
+DECLARE
+  v_test_session_id UUID := '22222222-2222-2222-2222-222222222222'::uuid;
+  v_test_user_id UUID := '00000000-0000-0000-0000-000000000001'::uuid;
+  v_claim_res JSONB;
+  v_quota_val INT;
+  v_attack_succeeded BOOLEAN := FALSE;
+BEGIN
+  -- Ensure test user exists in auth.users & public.users
+  INSERT INTO auth.users (id, email) VALUES (v_test_user_id, 'f07_test@example.com') ON CONFLICT DO NOTHING;
+  INSERT INTO public.users (id, email, name) VALUES (v_test_user_id, 'f07_test@example.com', 'F07 Test User') ON CONFLICT DO NOTHING;
+
+  -- Setup test session owned by v_test_user_id in configured state with quota=250
+  INSERT INTO public.exam_sessions (id, user_id, title, status, gemini_call_count, active_job_id)
+  VALUES (v_test_session_id, v_test_user_id, 'F07 Guard Test Exam', 'configured', 250, NULL)
+  ON CONFLICT (id) DO UPDATE SET status='configured', gemini_call_count=250, active_job_id=NULL;
+
+  INSERT INTO public.generation_configs (session_id, n_versions, active_variation_modes)
+  VALUES (v_test_session_id, 2, '[]'::jsonb)
+  ON CONFLICT (session_id) DO NOTHING;
+
+  -- 4.1 Probe 1: Same-transaction claim followed by direct UPDATE under authenticated role
+  -- Must be rejected by Column-level permissions
+  PERFORM set_config('role', 'authenticated', true);
+  PERFORM set_config('request.jwt.claim.sub', v_test_user_id::text, true);
+  PERFORM set_config('request.jwt.claim.role', 'authenticated', true);
+
+  -- Claim job legitimately
+  v_claim_res := public.claim_generation_job(v_test_session_id, false);
+  IF v_claim_res->>'status' != 'generating' THEN
+    RAISE EXCEPTION 'claim_generation_job failed during test setup';
+  END IF;
+
+  -- Attempt direct UPDATE in same transaction
+  BEGIN
+    UPDATE public.exam_sessions SET gemini_call_count = 0 WHERE id = v_test_session_id;
+    v_attack_succeeded := TRUE;
+  EXCEPTION
+    WHEN insufficient_privilege THEN
+      v_attack_succeeded := FALSE;
+  END;
+
+  IF v_attack_succeeded THEN
+    RAISE EXCEPTION 'Security failure (F07): direct UPDATE succeeded after claim in same transaction!';
+  END IF;
+
+  -- Reset role to test defense-in-depth trigger
+  PERFORM set_config('role', 'postgres', true);
+
+  -- 4.2 Probe 2: Defense-in-depth trigger under simulated table-level grant and manual GUC flag
+  -- Even if table-level UPDATE is accidentally granted and client sets custom GUC, trigger must reject!
+  EXECUTE 'GRANT UPDATE ON TABLE public.exam_sessions TO authenticated';
+  PERFORM set_config('role', 'authenticated', true);
+  PERFORM set_config('app.internal_worker_rpc', 'true', true);
+
+  BEGIN
+    UPDATE public.exam_sessions SET gemini_call_count = 0 WHERE id = v_test_session_id;
+    v_attack_succeeded := TRUE;
+  EXCEPTION
+    WHEN insufficient_privilege THEN
+      v_attack_succeeded := FALSE;
+  END;
+
+  IF v_attack_succeeded THEN
+    RAISE EXCEPTION 'Security failure (F07): trigger failed to block worker column update under table grant / GUC!';
+  END IF;
+
+  -- Cleanup temporary grant
+  PERFORM set_config('role', 'postgres', true);
+  EXECUTE 'REVOKE UPDATE ON TABLE public.exam_sessions FROM authenticated';
+  EXECUTE 'GRANT UPDATE (title, subject, grade) ON TABLE public.exam_sessions TO authenticated';
+
+  -- Verify DB value remained 250
+  SELECT gemini_call_count INTO v_quota_val FROM public.exam_sessions WHERE id = v_test_session_id;
+  IF v_quota_val != 250 THEN
+    RAISE EXCEPTION 'Security failure (F07): quota value was corrupted to %', v_quota_val;
+  END IF;
+
+  RAISE NOTICE 'Step 4: All F07 attack probes and defense-in-depth tests passed.';
 END $$;
 
 ROLLBACK;

@@ -77,15 +77,13 @@ async def create_session(
     db: Client = Depends(get_user_db),
 ) -> SessionItem:
     """Create a new exam session for the authenticated user with 'draft' status."""
+    # SEC-04 / F07: Only insert client-editable columns.
+    # status, gemini_call_count, retry_count, gemini_review_calls are DB-managed with defaults.
     new_session_data: dict[str, Any] = {
         "user_id": current_user.id,
         "title": payload.title.strip(),
         "subject": payload.subject.strip(),
         "grade": payload.grade,
-        "status": "draft",
-        "gemini_call_count": 0,
-        "retry_count": 0,
-        "gemini_review_calls": 0,
     }
 
     response = db.table("exam_sessions").insert(cast(Any, new_session_data)).execute()
@@ -360,15 +358,12 @@ async def clone_session(
     new_title = custom_title if custom_title else f"{orig.get('title', '')} (Bản sao)"
 
     # 3. Insert cloned session record
+    # SEC-04 / F07: Only insert client-editable columns. DB assigns defaults for status and counters.
     new_session_data: dict[str, Any] = {
         "user_id": current_user.id,
         "title": new_title,
         "subject": orig.get("subject") or "Toán",
         "grade": orig.get("grade", 12),
-        "status": "draft",
-        "gemini_call_count": 0,
-        "retry_count": 0,
-        "gemini_review_calls": 0,
     }
     create_res = db.table("exam_sessions").insert(cast(Any, new_session_data)).execute()
     create_rows = cast(List[dict[str, Any]], create_res.data or [])

@@ -77,43 +77,39 @@ BEGIN
 END $$;
 
 -- 1b. Helper & Trigger: Guard worker-managed columns on exam_sessions (F07)
+-- Uses SECURITY INVOKER with trusted database effective roles (current_user)
+-- Eliminates reliance on transaction-local custom GUC flags.
 CREATE OR REPLACE FUNCTION public.guard_exam_sessions_worker_columns()
 RETURNS TRIGGER
 LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public, auth, pg_temp
+SECURITY INVOKER
+SET search_path = pg_catalog, pg_temp
 AS $$
 BEGIN
-  -- Allow service_role, superusers, or internal execution within RPCs
-  IF public.current_role() IN ('service_role', 'postgres', 'supabase_admin')
-     OR NULLIF(current_setting('app.internal_worker_rpc', true), '') = 'true' THEN
+  -- Trusted database roles executing via SECURITY DEFINER functions or administrative tasks
+  IF current_user IN ('postgres', 'supabase_admin', 'service_role') THEN
     RETURN NEW;
   END IF;
 
   IF TG_OP = 'INSERT' THEN
-    IF NEW.active_job_id IS NOT NULL THEN
-      RAISE EXCEPTION 'Access denied: cannot manually set active_job_id on session creation'
-        USING ERRCODE = '42501';
-    END IF;
-    IF NEW.gemini_call_count IS NOT NULL AND NEW.gemini_call_count <> 0 THEN
-      RAISE EXCEPTION 'Access denied: cannot manually set gemini_call_count on session creation'
-        USING ERRCODE = '42501';
-    END IF;
-    IF NEW.status IS NOT NULL AND NEW.status NOT IN ('draft', 'blueprinted') THEN
-      RAISE EXCEPTION 'Access denied: cannot manually create session in status %', NEW.status
+    IF NEW.status IS DISTINCT FROM 'draft'::public.session_status
+       OR NEW.active_job_id IS NOT NULL
+       OR NEW.gemini_call_count IS DISTINCT FROM 0
+       OR NEW.retry_count IS DISTINCT FROM 0
+       OR NEW.gemini_review_calls IS DISTINCT FROM 0
+       OR NEW.approved_at IS NOT NULL THEN
+      RAISE EXCEPTION 'Direct worker-state initialization forbidden'
         USING ERRCODE = '42501';
     END IF;
   ELSIF TG_OP = 'UPDATE' THEN
-    IF NEW.active_job_id IS DISTINCT FROM OLD.active_job_id THEN
-      RAISE EXCEPTION 'Access denied: cannot manually modify active_job_id'
-        USING ERRCODE = '42501';
-    END IF;
-    IF NEW.gemini_call_count IS DISTINCT FROM OLD.gemini_call_count THEN
-      RAISE EXCEPTION 'Access denied: cannot manually modify gemini_call_count'
-        USING ERRCODE = '42501';
-    END IF;
-    IF NEW.status IS DISTINCT FROM OLD.status AND (NEW.status = 'generating' OR OLD.status = 'generating') THEN
-      RAISE EXCEPTION 'Access denied: cannot manually transition to or from generating status'
+    IF NEW.status IS DISTINCT FROM OLD.status
+       OR NEW.active_job_id IS DISTINCT FROM OLD.active_job_id
+       OR NEW.gemini_call_count IS DISTINCT FROM OLD.gemini_call_count
+       OR NEW.retry_count IS DISTINCT FROM OLD.retry_count
+       OR NEW.gemini_review_calls IS DISTINCT FROM OLD.gemini_review_calls
+       OR NEW.approved_at IS DISTINCT FROM OLD.approved_at
+       OR NEW.user_id IS DISTINCT FROM OLD.user_id THEN
+      RAISE EXCEPTION 'Direct worker-state modification forbidden'
         USING ERRCODE = '42501';
     END IF;
   END IF;
@@ -160,8 +156,6 @@ DECLARE
   v_committed_targets JSONB;
   v_job_id UUID;
 BEGIN
-  PERFORM set_config('app.internal_worker_rpc', 'true', true);
-
   IF p_is_retry IS NULL THEN
     RAISE EXCEPTION 'p_is_retry cannot be NULL' USING ERRCODE = '22023';
   END IF;
@@ -270,8 +264,6 @@ DECLARE
   v_current_quota INT;
   v_new_quota INT;
 BEGIN
-  PERFORM set_config('app.internal_worker_rpc', 'true', true);
-
   IF public.current_role() != 'service_role' THEN
     RAISE EXCEPTION 'Access denied: reserve_generation_quota is restricted to service_role'
       USING ERRCODE = '42501';
@@ -358,8 +350,6 @@ DECLARE
   v_existing_solution_md TEXT;
   v_n_versions INT;
 BEGIN
-  PERFORM set_config('app.internal_worker_rpc', 'true', true);
-
   IF public.current_role() != 'service_role' THEN
     RAISE EXCEPTION 'Access denied: persist_version_question is restricted to service_role'
       USING ERRCODE = '42501';
@@ -518,8 +508,6 @@ DECLARE
   v_source_count INT;
   v_persisted_count INT;
 BEGIN
-  PERFORM set_config('app.internal_worker_rpc', 'true', true);
-
   IF p_outcome IS NULL OR p_outcome NOT IN ('generated', 'partial_generated', 'failed') THEN
     RAISE EXCEPTION 'Invalid outcome status: % (must be generated, partial_generated, or failed)', p_outcome
       USING ERRCODE = '22023';
@@ -628,8 +616,6 @@ DECLARE
   v_recovered BOOLEAN := FALSE;
   v_now TIMESTAMPTZ := now();
 BEGIN
-  PERFORM set_config('app.internal_worker_rpc', 'true', true);
-
   IF p_cutoff_seconds IS NULL OR p_cutoff_seconds <= 0 THEN
     RAISE EXCEPTION 'p_cutoff_seconds must be positive (got %)', p_cutoff_seconds
       USING ERRCODE = '22023';
@@ -687,5 +673,14 @@ GRANT  EXECUTE ON FUNCTION public.finish_generation_job(UUID, TEXT, UUID) TO ser
 REVOKE EXECUTE ON FUNCTION public.fail_stale_generation_job(UUID, INT) FROM PUBLIC, anon, authenticated;
 GRANT  EXECUTE ON FUNCTION public.fail_stale_generation_job(UUID, INT) TO service_role;
 
--- F07 Column-level security: Prevent authenticated / anon clients from directly altering worker-managed columns
-REVOKE UPDATE (active_job_id, gemini_call_count) ON public.exam_sessions FROM PUBLIC, anon, authenticated;
+-- F07 Column-Level Least Privilege:
+-- Revoke all table-level write privileges from client roles.
+REVOKE INSERT, UPDATE ON TABLE public.exam_sessions FROM PUBLIC, anon, authenticated;
+
+-- Allow authenticated clients to only insert user-defined fields on creation.
+-- Status and worker counters default via schema definition.
+GRANT INSERT (user_id, title, subject, grade) ON TABLE public.exam_sessions TO authenticated;
+
+-- Allow authenticated clients to only update editable metadata fields.
+-- Status, active_job_id, gemini_call_count, retry_count, etc. are restricted to SECURITY DEFINER RPCs.
+GRANT UPDATE (title, subject, grade) ON TABLE public.exam_sessions TO authenticated;

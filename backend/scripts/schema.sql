@@ -617,6 +617,14 @@ REVOKE EXECUTE ON FUNCTION public.confirm_exam_source(UUID, INT, BOOLEAN, TIMEST
 GRANT EXECUTE ON FUNCTION public.confirm_exam_source(UUID, INT, BOOLEAN, TIMESTAMPTZ) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.confirm_exam_source(UUID, INT, BOOLEAN, TIMESTAMPTZ) TO service_role;
 
+-- ------------------------------------------------------------------------------
+-- 7. COLUMN-LEVEL LEAST PRIVILEGE ON EXAM_SESSIONS (F07 / SEC-04)
+-- ------------------------------------------------------------------------------
+REVOKE INSERT, UPDATE ON TABLE public.exam_sessions FROM PUBLIC, anon, authenticated;
+GRANT INSERT (user_id, title, subject, grade) ON TABLE public.exam_sessions TO authenticated;
+GRANT UPDATE (title, subject, grade) ON TABLE public.exam_sessions TO authenticated;
+
+
 
 
 
