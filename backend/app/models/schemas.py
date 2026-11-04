@@ -479,6 +479,43 @@ class ReviewAcquireUnavailableError(ConnectionError):
         self.status_code = status_code
 
 
+# ---------------------------------------------------------------------------
+# Finalize & Content Lock Schemas (TASK-305)
+# ---------------------------------------------------------------------------
+
+
+class FinalizeApproveResponse(BaseModel):
+    """Phản hồi phê duyệt phiên làm việc thành công (TASK-305)."""
+
+    session_id: str = Field(..., description="Mã phiên làm việc (UUID)")
+    status: str = Field("approved", description="Trạng thái phiên làm việc sau khi duyệt")
+    approved_at: str = Field(..., description="Thời điểm phê duyệt phiên làm việc (ISO8601)")
+    message: str = Field(..., description="Thông báo kết quả phê duyệt")
+
+
+class MatrixItem(BaseModel):
+    """Một dòng trong ma trận đáp án tương ứng với số thứ tự câu hỏi sau hoán vị."""
+
+    question_no: int = Field(..., ge=1, description="Số thứ tự câu hỏi trong đề thi (1..N)")
+    answers: Dict[str, str] = Field(
+        ...,
+        description="Bảng tra đáp án của câu hỏi theo từng mã đề (ví dụ: {'101': 'A', '102': 'C'})",
+    )
+
+
+class AnswersMatrixResponse(BaseModel):
+    """Ma trận đối soát đáp án của toàn bộ phiên đề (TASK-305)."""
+
+    session_id: str = Field(..., description="Mã phiên làm việc (UUID)")
+    total_questions: int = Field(..., ge=0, description="Tổng số câu hỏi trong ma trận")
+    version_codes: List[str] = Field(
+        ..., description="Danh sách các mã đề thi đã được sắp xếp (ví dụ: ['101', '102', '103', '104'])"
+    )
+    matrix: List[MatrixItem] = Field(
+        ..., description="Danh sách đáp án từng câu hỏi cho tất cả mã đề"
+    )
+
+
 # Re-export validator schemas for convenient consumption across services and routes
 from app.services.validator.base import CheckResult, ValidationReport  # noqa: E402
 
@@ -512,6 +549,9 @@ __all__ = [
     "ErrorDetailResponse",
     "ReviewDomainException",
     "ReviewAcquireUnavailableError",
+    "FinalizeApproveResponse",
+    "MatrixItem",
+    "AnswersMatrixResponse",
     "CheckResult",
     "ValidationReport",
 ]
