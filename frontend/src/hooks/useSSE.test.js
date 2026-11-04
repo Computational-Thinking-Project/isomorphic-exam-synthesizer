@@ -632,3 +632,109 @@ test('useSSE manualReconnect giữ nguyên last_event_id khi kết nối lại h
 
   await harness.unmount();
 });
+
+test('F04: useSSE xóa cursor và gọi onResync trước khi mở stream mới khi nhận ERR_EVENT_HISTORY_LOST trong stream', async () => {
+  MockEventSource.instances = [];
+  let resyncCalled = 0;
+
+  const mockRequestTicket = async (sessionId, lastEventId) => ({
+    ticket: `ticket-${lastEventId || 'clean'}`,
+  });
+
+  const mockOnResync = async () => {
+    resyncCalled += 1;
+    return {
+      progress: { percent: 80, completedCount: 8, totalCount: 10 },
+      question_statuses: { '1-1': { status: 'done' } },
+    };
+  };
+
+  const harness = renderHookHarness(() =>
+    useSSE('session-f04-stream', {
+      requestTicket: mockRequestTicket,
+      eventSourceFactory: (url) => new MockEventSource(url),
+      onResync: mockOnResync,
+    }),
+  );
+
+  await harness.render();
+  const es1 = MockEventSource.instances[0];
+
+  // Phát một số event có event_id
+  await act(async () => {
+    es1.simulateOpen();
+    es1.emit('progress', { percent: 50 }, 'evt-50');
+  });
+
+  // Backend phát tín hiệu mất lịch sử sự kiện ERR_EVENT_HISTORY_LOST
+  await act(async () => {
+    es1.emit('error', { error_code: 'ERR_EVENT_HISTORY_LOST' });
+  });
+
+  // Chờ timer reconnect 600ms
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 700));
+  });
+
+  assert.equal(resyncCalled, 1, 'onResync phải được gọi trước khi mở stream mới');
+  assert.equal(harness.result.progress.percent, 80, 'Progress phải được cập nhật từ snapshot resync');
+
+  // Stream thứ 2 mở ra phải có URL sạch không mang cursor hết hạn
+  assert.equal(MockEventSource.instances.length, 2);
+  const es2 = MockEventSource.instances[1];
+  assert.equal(es2.url.includes('last_event_id'), false, 'Stream mới không được mang cursor hết hạn');
+
+  await harness.unmount();
+});
+
+test('F04: useSSE xóa cursor và gọi onResync khi xin ticket gặp lỗi HTTP 409', async () => {
+  MockEventSource.instances = [];
+  let resyncCalled = 0;
+
+  const mockRequestTicket = async (sessionId, lastEventId) => {
+    if (lastEventId === 'evt-outdated') {
+      const err = new Error('Conflict cursor outdated');
+      err.status = 409;
+      throw err;
+    }
+    return { ticket: 'ticket-after-409' };
+  };
+
+  const mockOnResync = async () => {
+    resyncCalled += 1;
+    return {
+      progress: { percent: 90, completedCount: 9, totalCount: 10 },
+    };
+  };
+
+  const harness = renderHookHarness(() =>
+    useSSE('session-f04-ticket-409', {
+      requestTicket: mockRequestTicket,
+      eventSourceFactory: (url) => new MockEventSource(url),
+      onResync: mockOnResync,
+    }),
+  );
+
+  await harness.render();
+  const es1 = MockEventSource.instances[0];
+
+  await act(async () => {
+    es1.simulateOpen();
+    es1.emit('progress', { percent: 40 }, 'evt-outdated');
+  });
+
+  // Giả lập EventSource rớt mạng dẫn đến thử xin ticket lại
+  await act(async () => {
+    es1.simulateError(new Error('Network drop'));
+  });
+
+  // Chờ reconnect timer (1000ms delay cho lần 1)
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+  });
+
+  assert.equal(resyncCalled, 1, 'Khi gặp 409 khi lấy ticket, onResync phải được gọi để reload snapshot');
+  assert.equal(harness.result.progress.percent, 90, 'Snapshot mới được cập nhật vào state');
+
+  await harness.unmount();
+});

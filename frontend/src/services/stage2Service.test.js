@@ -343,3 +343,171 @@ test('fetchSessionDetail khôi phục snapshot tiến độ và bản đồ câu
     api.get = originalGet;
   }
 });
+
+test('F01: fetchSessionDetail khóa is_ready và đặt supported_modes: null khi có blueprint_summary nhưng thiếu metadata modes (PR32)', async () => {
+  const originalGet = api.get;
+  api.get = async () => ({
+    data: {
+      id: 'session-missing-modes-meta',
+      status: 'blueprinted',
+      blueprint_summary: {
+        is_ready: true,
+        total_questions: 2,
+      },
+      source_questions: [
+        { id: 'q1', variation_modes: ['NUMERICAL'] },
+        { id: 'q2', blueprint: {} }, // Blueprint có mặt nhưng thiếu variation_modes
+      ],
+    },
+  });
+
+  try {
+    const detail = await fetchSessionDetail('session-missing-modes-meta');
+    assert.ok(detail.blueprint_summary);
+    assert.equal(detail.blueprint_summary.is_ready, false, 'Thiếu modes phải khóa is_ready về false');
+    assert.equal(detail.blueprint_summary.supported_modes, null, 'supported_modes phải là null để khóa form');
+  } finally {
+    api.get = originalGet;
+  }
+});
+
+test('F01: saveSessionConfig chuẩn hóa active_variation_modes loại bỏ NONE và gửi mảng rỗng []', async () => {
+  let sentPayload = null;
+  const originalPost = api.post;
+  api.post = async (url, payload) => {
+    sentPayload = payload;
+    return { data: { success: true } };
+  };
+
+  try {
+    await saveSessionConfig('session-none-mode', {
+      n_versions: 2,
+      active_variation_modes: ['NONE'],
+      ordering_preferences: { shuffle_questions: true, shuffle_options: false },
+    });
+
+    assert.ok(sentPayload);
+    assert.deepEqual(
+      sentPayload.active_variation_modes,
+      [],
+      'Khi chọn NONE, active_variation_modes phải được chuẩn hóa thành mảng rỗng []',
+    );
+  } finally {
+    api.post = originalPost;
+  }
+});
+
+test('F02: fetchSessionDetail chuẩn hóa trường progress (percent_complete, completed_count) và dựng đủ lưới ô câu hỏi', async () => {
+  const originalGet = api.get;
+  api.get = async () => ({
+    data: {
+      id: 'session-f02-progress-norm',
+      status: 'partial_generated',
+      progress: {
+        percent_complete: 75,
+        completed_count: 3,
+        total_count: 4,
+      },
+      source_questions: [{ id: 'q1' }, { id: 'q2' }],
+      exam_versions: [
+        {
+          version_index: 1,
+          questions: [
+            { question_no: 1, status: 'done', variant_text: 'Đề 1 câu 1' },
+            { question_no: 2, status: 'done', variant_text: 'Đề 1 câu 2' },
+          ],
+        },
+        {
+          version_index: 2,
+          questions: [
+            { question_no: 1, status: 'done', variant_text: 'Đề 2 câu 1' },
+            { question_no: 2, status: 'failed', error_message: 'Lỗi sinh câu' },
+          ],
+        },
+      ],
+    },
+  });
+
+  try {
+    const detail = await fetchSessionDetail('session-f02-progress-norm');
+    assert.ok(detail.progress);
+    assert.equal(detail.progress.percent, 75, 'Chuẩn hóa percent_complete thành percent');
+    assert.equal(detail.progress.completedCount, 3, 'Chuẩn hóa completed_count thành completedCount');
+    assert.equal(detail.progress.totalCount, 4);
+
+    // Lưới câu hỏi phải được dựng đầy đủ từ exam_versions
+    assert.equal(detail.question_statuses['1-1']?.status, 'done');
+    assert.equal(detail.question_statuses['1-2']?.status, 'done');
+    assert.equal(detail.question_statuses['2-1']?.status, 'done');
+    assert.equal(detail.question_statuses['2-2']?.status, 'failed');
+  } finally {
+    api.get = originalGet;
+  }
+});
+
+test('F02: câu failed không làm tăng số completedCount và metadata mã đề rỗng không tạo progress 0/4', async () => {
+  const originalGet = api.get;
+
+  // Ca 1: có câu failed trong exam_versions tự đếm
+  api.get = async () => ({
+    data: {
+      id: 'session-f02-failed-count',
+      status: 'partial_generated',
+      source_questions: [{ id: 'q1' }, { id: 'q2' }],
+      exam_versions: [
+        {
+          version_index: 1,
+          questions: [
+            { question_no: 1, status: 'done', variant_text: 'Done 1' },
+            { question_no: 2, status: 'failed', error_message: 'Failed' },
+          ],
+        },
+      ],
+    },
+  });
+
+  try {
+    const detail = await fetchSessionDetail('session-f02-failed-count');
+    assert.ok(detail.progress);
+    assert.equal(detail.progress.completedCount, 1, 'Chỉ câu done mới tăng completedCount, câu failed không tăng');
+  } finally {
+    api.get = originalGet;
+  }
+
+  // Ca 2: exam_versions chỉ có metadata mã đề, chưa có câu nào được sinh
+  api.get = async () => ({
+    data: {
+      id: 'session-f02-meta-only',
+      status: 'configured',
+      source_questions: [{ id: 'q1' }, { id: 'q2' }],
+      exam_versions: [
+        { version_index: 1, version_code: '101', questions: [] },
+        { version_index: 2, version_code: '102', questions: [] },
+      ],
+    },
+  });
+
+  try {
+    const detail = await fetchSessionDetail('session-f02-meta-only');
+    assert.equal(detail.progress, null, 'Chỉ có metadata mã đề thì progress phải là null, không tạo 0/4');
+    assert.deepEqual(detail.question_statuses, {});
+  } finally {
+    api.get = originalGet;
+  }
+});
+
+test('F04: requestEventTicket gửi query param last_event_id khi có cursor', async () => {
+  let calledUrl = null;
+  const originalPost = api.post;
+  api.post = async (url) => {
+    calledUrl = url;
+    return { data: { ticket: 'ticket-with-cursor' } };
+  };
+
+  try {
+    await requestEventTicket('sess-100', 'evt-99');
+    assert.equal(calledUrl, '/sessions/sess-100/events/ticket?last_event_id=evt-99');
+  } finally {
+    api.post = originalPost;
+  }
+});

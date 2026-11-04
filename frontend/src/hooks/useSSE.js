@@ -21,6 +21,7 @@ export function useSSE(sessionId, {
   onQuestionStatus,
   onDone,
   onError,
+  onResync,
 } = {}) {
   const [connectionState, setConnectionState] = useState('idle');
   // 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'completed' | 'disconnected' | 'failed'
@@ -56,6 +57,7 @@ export function useSSE(sessionId, {
     onQuestionStatus,
     onDone,
     onError,
+    onResync,
     requestTicket,
     eventSourceFactory,
   });
@@ -66,6 +68,7 @@ export function useSSE(sessionId, {
       onQuestionStatus,
       onDone,
       onError,
+      onResync,
       requestTicket,
       eventSourceFactory,
     };
@@ -105,7 +108,10 @@ export function useSSE(sessionId, {
 
     let ticket;
     try {
-      const ticketRes = await callbacksRef.current.requestTicket(sessionId);
+      const ticketRes = await callbacksRef.current.requestTicket(
+        sessionId,
+        lastEventIdRef.current,
+      );
       // Kiểm tra xem lượt gọi này còn hợp lệ không trước khi tiếp tục
       if (
         !isMountedRef.current ||
@@ -131,6 +137,37 @@ export function useSSE(sessionId, {
         !enabled
       ) {
         return;
+      }
+
+      const status = ticketError?.response?.status ?? ticketError?.status;
+      const isHistoryLostOrConflict =
+        status === 409 ||
+        ticketError?.code === 'ERR_CURSOR_OUTDATED' ||
+        ticketError?.error_code === 'ERR_CURSOR_OUTDATED' ||
+        ticketError?.code === 'ERR_EVENT_HISTORY_LOST' ||
+        ticketError?.error_code === 'ERR_EVENT_HISTORY_LOST' ||
+        ticketError?.reset_cursor === true;
+
+      // F04: Nếu mất lịch sử hoặc xung đột con trỏ trước khi mở stream:
+      // Xóa cursor cũ và tải lại snapshot dữ liệu đã lưu
+      if (isHistoryLostOrConflict) {
+        lastEventIdRef.current = null;
+        if (callbacksRef.current.onResync) {
+          try {
+            const freshSnapshot = await callbacksRef.current.onResync(sessionId);
+            if (freshSnapshot?.progress) {
+              setProgress((prev) => ({ ...prev, ...freshSnapshot.progress }));
+            }
+            if (freshSnapshot?.question_statuses) {
+              setQuestionStatuses((prev) => ({
+                ...prev,
+                ...freshSnapshot.question_statuses,
+              }));
+            }
+          } catch {
+            // Không để lỗi resync chặn việc thử lại kết nối
+          }
+        }
       }
 
       const message = ticketError?.message || 'Không thể xin ticket kết nối tiến trình.';
@@ -206,22 +243,59 @@ export function useSSE(sessionId, {
       if (!isMountedRef.current || connectionTokenRef.current !== currentToken) return;
       const data = payloadOrEvent?.data !== undefined ? parsePayload(payloadOrEvent) : payloadOrEvent;
 
-      // Xử lý cơ chế phục hồi khi cursor sự kiện bị trôi (> 50 events buffer overflow) hoặc server restart
-      if (
+      // F04: Xử lý cơ chế phục hồi khi cursor sự kiện bị trôi (> 50 events buffer overflow), mất lịch sử hoặc server restart
+      const isHistoryLost =
         data?.error_code === 'ERR_CURSOR_OUTDATED' ||
         data?.code === 'ERR_CURSOR_OUTDATED' ||
+        data?.error_code === 'ERR_EVENT_HISTORY_LOST' ||
+        data?.code === 'ERR_EVENT_HISTORY_LOST' ||
+        data?.error_code === 'ERR_HISTORY_LOST' ||
+        data?.code === 'ERR_HISTORY_LOST' ||
         data?.requires_resync === true ||
-        data?.reset_cursor === true
-      ) {
+        data?.reset_cursor === true ||
+        data?.status === 409;
+
+      if (isHistoryLost) {
         lastEventIdRef.current = null;
         cleanupConnection();
-        if (reconnectAttemptRef.current < maxReconnectAttempts) {
-          reconnectAttemptRef.current += 1;
-          setReconnectCount(reconnectAttemptRef.current);
-          setConnectionState('reconnecting');
-          reconnectTimerRef.current = setTimeout(connect, 600);
-          return;
-        }
+
+        const doResyncAndReconnect = async () => {
+          if (!isMountedRef.current || connectionTokenRef.current !== currentToken) return;
+
+          // F04: Tải lại snapshot trước khi mở stream mới
+          if (callbacksRef.current.onResync) {
+            try {
+              const freshSnapshot = await callbacksRef.current.onResync(currentSessionId);
+              if (freshSnapshot?.progress) {
+                setProgress((prev) => ({
+                  ...prev,
+                  ...freshSnapshot.progress,
+                }));
+              }
+              if (freshSnapshot?.question_statuses) {
+                setQuestionStatuses((prev) => ({
+                  ...prev,
+                  ...freshSnapshot.question_statuses,
+                }));
+              }
+            } catch {
+              // Bỏ qua lỗi resync để không chặn mở stream mới
+            }
+          }
+
+          if (reconnectAttemptRef.current < maxReconnectAttempts) {
+            reconnectAttemptRef.current += 1;
+            setReconnectCount(reconnectAttemptRef.current);
+            setConnectionState('reconnecting');
+            reconnectTimerRef.current = setTimeout(connect, 600);
+          } else {
+            setConnectionState('failed');
+            setError('Mất lịch sử sự kiện và vượt quá số lần thử kết nối lại.');
+          }
+        };
+
+        void doResyncAndReconnect();
+        return;
       }
 
       const errorMsg =
@@ -397,6 +471,23 @@ export function useSSE(sessionId, {
       }
 
       cleanupConnection();
+
+      // F04: Nếu lỗi 409 hoặc mất lịch sử, xóa cursor cũ và tải lại snapshot
+      const errStatus = err?.status ?? err?.target?.status;
+      const isConflict409 = errStatus === 409 || err?.message?.includes('409');
+      if (isConflict409) {
+        lastEventIdRef.current = null;
+        if (callbacksRef.current.onResync) {
+          void callbacksRef.current.onResync(currentSessionId).then((freshSnapshot) => {
+            if (freshSnapshot?.progress) {
+              setProgress((prev) => ({ ...prev, ...freshSnapshot.progress }));
+            }
+            if (freshSnapshot?.question_statuses) {
+              setQuestionStatuses((prev) => ({ ...prev, ...freshSnapshot.question_statuses }));
+            }
+          }).catch(() => {});
+        }
+      }
 
       if (reconnectAttemptRef.current < maxReconnectAttempts) {
         reconnectAttemptRef.current += 1;

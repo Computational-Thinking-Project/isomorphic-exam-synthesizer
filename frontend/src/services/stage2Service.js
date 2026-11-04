@@ -41,13 +41,18 @@ export async function fetchSessionDetail(sessionId) {
       return null;
     }
     const totalQuestions = sourceQuestions.length;
-    const questionsWithBlueprints = sourceQuestions.filter(
-      (q) => q.question_blueprints || q.blueprint || q.variation_modes,
-    );
 
-    // Chỉ coi Blueprint đã sẵn sàng khi TOÀN BỘ câu hỏi trong đề nguồn đều có Blueprint
-    if (questionsWithBlueprints.length !== totalQuestions) {
-      return null;
+    // F01: Kiểm tra metadata modes của từng câu hỏi nguồn.
+    // Nếu có bất kỳ câu nào KHÔNG có trường variation_modes (hoặc blueprint.variation_modes, question_blueprints.variation_modes) dạng Array
+    // -> nghĩa là dữ liệu modes bị thiếu -> trả về null để khóa submit!
+    for (const q of sourceQuestions) {
+      const modes =
+        q.question_blueprints?.variation_modes ??
+        q.blueprint?.variation_modes ??
+        q.variation_modes;
+      if (!Array.isArray(modes)) {
+        return null;
+      }
     }
 
     const CANONICAL_MAP = {
@@ -76,25 +81,24 @@ export async function fetchSessionDetail(sessionId) {
 
     const modeCounts = {};
 
-    questionsWithBlueprints.forEach((q) => {
+    sourceQuestions.forEach((q) => {
       const rawModes =
-        q.question_blueprints?.variation_modes ||
-        q.blueprint?.variation_modes ||
-        q.variation_modes ||
+        q.question_blueprints?.variation_modes ??
+        q.blueprint?.variation_modes ??
+        q.variation_modes ??
         [];
-      if (Array.isArray(rawModes)) {
-        const distinctInQuestion = new Set();
-        rawModes.forEach((raw) => {
-          const trimmed = String(raw).trim();
-          if (trimmed && trimmed.toUpperCase() !== 'NONE') {
-            distinctInQuestion.add(trimmed);
-          }
-        });
+      const distinctInQuestion = new Set();
+      rawModes.forEach((raw) => {
+        const trimmed = String(raw).trim();
+        // Loại bỏ NONE ra khỏi danh sách modes biến thể thật
+        if (trimmed && trimmed.toUpperCase() !== 'NONE') {
+          distinctInQuestion.add(trimmed);
+        }
+      });
 
-        distinctInQuestion.forEach((rawId) => {
-          modeCounts[rawId] = (modeCounts[rawId] || 0) + 1;
-        });
-      }
+      distinctInQuestion.forEach((rawId) => {
+        modeCounts[rawId] = (modeCounts[rawId] || 0) + 1;
+      });
     });
 
     // Theo quy tắc Blueprint (DEC-TV1 / 207a):
@@ -160,7 +164,13 @@ export async function fetchSessionDetail(sessionId) {
       };
 
       const totalQ = rawSummary.total_questions ?? data.source_questions?.length ?? 10;
-      const normalizedModes = rawSummary.supported_modes.map((m) => {
+      // F01: Lọc bỏ 'NONE' nếu backend trả supported_modes có chứa 'NONE'
+      const filteredModes = rawSummary.supported_modes.filter((m) => {
+        const id = typeof m === 'string' ? m : m?.id;
+        return id && String(id).trim().toUpperCase() !== 'NONE';
+      });
+
+      const normalizedModes = filteredModes.map((m) => {
         if (typeof m === 'string') {
           const rawId = m.trim();
           const canonical = CANONICAL_MAP[rawId.toLowerCase()] || rawId.toLowerCase();
@@ -195,7 +205,7 @@ export async function fetchSessionDetail(sessionId) {
       if (computedModes !== null) {
         blueprintSummary = {
           ...rawSummary,
-          is_ready: true,
+          is_ready: rawSummary.is_ready !== false,
           total_questions: rawSummary.total_questions ?? data.source_questions.length,
           supported_modes: computedModes,
         };
@@ -215,48 +225,115 @@ export async function fetchSessionDetail(sessionId) {
         supported_modes: computedModes,
         is_ready: true,
       };
+    } else {
+      blueprintSummary = null;
     }
   }
 
-  // Khôi phục snapshot tiến độ bền vững (Durable Progress Snapshot) cho F5/reload
-  let restoredProgress = data.progress || null;
-  let restoredQuestionStatuses = data.question_statuses || {};
+  // F02: Khôi phục lưới câu hỏi và chuẩn hóa snapshot tiến độ
+  let hasAnyGeneratedQuestions = false;
+  let computedCompleted = 0;
+  const computedStatuses = {};
 
-  if (!restoredProgress && Array.isArray(data.exam_versions) && data.exam_versions.length > 0) {
-    let completedCount = 0;
-    const statuses = {};
-
+  if (Array.isArray(data.exam_versions) && data.exam_versions.length > 0) {
     data.exam_versions.forEach((ver, verIdx) => {
       const vIndex = ver.version_index ?? (verIdx + 1);
       const qList = ver.questions || ver.version_questions || [];
       qList.forEach((q, qIdx) => {
         const qNo = q.question_no ?? q.source_question_no ?? (qIdx + 1);
         const key = `${vIndex}-${qNo}`;
-        statuses[key] = {
-          status: q.status || 'done',
-          message: q.message || 'Đã hoàn thành',
-        };
-        completedCount += 1;
+        const isFailed = q.status === 'failed' || Boolean(q.error || q.error_message);
+        const isDone = q.status === 'done' || (!isFailed && Boolean(q.variant_text || q.content || q.raw_content));
+
+        if (isFailed) {
+          hasAnyGeneratedQuestions = true;
+          computedStatuses[key] = {
+            status: 'failed',
+            message: q.error_message || q.error || q.message || 'Sinh câu hỏi thất bại',
+          };
+          // QUAN TRỌNG: Câu failed KHÔNG tăng số hoàn tất!
+        } else if (isDone) {
+          hasAnyGeneratedQuestions = true;
+          computedCompleted += 1;
+          computedStatuses[key] = {
+            status: 'done',
+            message: q.message || 'Đã hoàn thành',
+          };
+        } else if (q.status) {
+          hasAnyGeneratedQuestions = true;
+          computedStatuses[key] = {
+            status: q.status,
+            message: q.message || `Đang xử lý (${q.status})`,
+          };
+        }
       });
     });
+  }
 
-    const nVersions = savedConfig?.n_versions || data.exam_versions.length || 2;
-    const totalSourceQ = data.source_questions?.length || data.total_source_questions || 10;
-    const totalCount = nVersions * totalSourceQ;
-    const percent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
-    const isPartial = data.status === 'partial_generated' || (data.status === 'generated' && completedCount < totalCount);
+  let restoredProgress = null;
+  let restoredQuestionStatuses = {};
+
+  const totalSourceQuestions =
+    data.source_questions?.length ||
+    data.blueprint_summary?.total_questions ||
+    data.total_source_questions ||
+    0;
+  const nVersions =
+    savedConfig?.n_versions ||
+    (Array.isArray(data.exam_versions) && data.exam_versions.length > 0 ? data.exam_versions.length : 2);
+  const totalCount = nVersions * (totalSourceQuestions || 1);
+
+  if (data.progress) {
+    // API có trả progress (kể cả với tên trường percent_complete, completed_count theo TASK-207b)
+    const apiProg = data.progress;
+    const completedCount =
+      apiProg.completedCount ??
+      apiProg.completed_count ??
+      computedCompleted;
+    const finalTotal =
+      apiProg.totalCount ??
+      apiProg.total_count ??
+      totalCount;
+    const percentVal =
+      apiProg.percent ??
+      apiProg.percent_complete ??
+      (finalTotal > 0 ? Math.round((completedCount / finalTotal) * 100) : 0);
+    const isDone = Boolean(
+      apiProg.isDone ??
+      apiProg.is_done ??
+      (data.status === 'generated' || (data.status === 'partial_generated' && completedCount === finalTotal))
+    );
 
     restoredProgress = {
-      percent,
+      percent: percentVal,
       completedCount,
+      totalCount: finalTotal,
+      isDone,
+      session_status: data.status,
+      is_partial: data.status === 'partial_generated' || (percentVal < 100 && isDone),
+      message: apiProg.message || (data.status === 'partial_generated' ? 'Đã sinh một phần' : ''),
+    };
+    restoredQuestionStatuses = {
+      ...computedStatuses,
+      ...(data.question_statuses || {}),
+    };
+  } else if (hasAnyGeneratedQuestions) {
+    // Không có data.progress nhưng có dữ liệu câu hỏi thực tế trong exam_versions
+    const percentVal = totalCount > 0 ? Math.round((computedCompleted / totalCount) * 100) : 0;
+    const isPartial = data.status === 'partial_generated' || (data.status === 'generated' && computedCompleted < totalCount);
+
+    restoredProgress = {
+      percent: percentVal,
+      completedCount: computedCompleted,
       totalCount,
       session_status: data.status,
       is_partial: isPartial,
+      isDone: Boolean(data.status === 'generated' || data.status === 'partial_generated'),
       message: isPartial
-        ? `Tiến trình kết thúc ở trạng thái sinh một phần (partial_generated). Đã sinh được ${completedCount} / ${totalCount} câu.`
+        ? `Tiến trình kết thúc ở trạng thái sinh một phần (partial_generated). Đã sinh được ${computedCompleted} / ${totalCount} câu.`
         : 'Đang tải tiến trình...',
     };
-    restoredQuestionStatuses = statuses;
+    restoredQuestionStatuses = computedStatuses;
   }
 
   return {
@@ -275,13 +352,20 @@ export async function saveSessionConfig(sessionId, configPayload) {
 
   // CHỈ gửi đúng tên trường theo contract BE2 (TASK-207a).
   // Tuyệt đối không gửi num_versions hay variation_modes để tránh lỗi 422 từ model Pydantic backend.
+  const rawModes = Array.isArray(configPayload.active_variation_modes)
+    ? configPayload.active_variation_modes
+    : Array.isArray(configPayload.variation_modes)
+    ? configPayload.variation_modes
+    : [];
+
+  // F01: Chuẩn hóa NONE: loại bỏ 'NONE' để gửi [] khi ở chế độ không biến thể theo contract 207a
+  const normalizedModes = rawModes
+    .map((m) => (typeof m === 'string' ? m : m?.id))
+    .filter((m) => typeof m === 'string' && m.trim().toUpperCase() !== 'NONE');
+
   const payload = {
     n_versions: Number(configPayload.n_versions ?? configPayload.num_versions ?? 2),
-    active_variation_modes: Array.isArray(configPayload.active_variation_modes)
-      ? configPayload.active_variation_modes
-      : Array.isArray(configPayload.variation_modes)
-      ? configPayload.variation_modes
-      : [],
+    active_variation_modes: normalizedModes,
     ordering_preferences: {
       shuffle_questions: Boolean(
         configPayload.ordering_preferences?.shuffle_questions ?? true,
@@ -321,13 +405,14 @@ export async function retryGeneration(sessionId) {
   return response.data;
 }
 
-export async function requestEventTicket(sessionId) {
+export async function requestEventTicket(sessionId, lastEventId = null) {
   if (!sessionId) {
     throw new Error('Mã phiên làm việc (sessionId) không được để trống.');
   }
 
+  const query = lastEventId ? `?last_event_id=${encodeURIComponent(lastEventId)}` : '';
   const response = await api.post(
-    `/sessions/${encodeURIComponent(sessionId)}/events/ticket`,
+    `/sessions/${encodeURIComponent(sessionId)}/events/ticket${query}`,
   );
   return response.data;
 }

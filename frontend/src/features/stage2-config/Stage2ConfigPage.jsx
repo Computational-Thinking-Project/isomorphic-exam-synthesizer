@@ -63,6 +63,7 @@ export default function Stage2ConfigPage({
   const [activeConfig, setActiveConfig] = useState(null);
   const [isRetryingGeneration, setIsRetryingGeneration] = useState(false);
   const [retryError, setRetryError] = useState(null);
+  const [isNewRunActive, setIsNewRunActive] = useState(false);
 
   const submitOperationRef = useRef(0);
   const retryOperationRef = useRef(0);
@@ -85,6 +86,7 @@ export default function Stage2ConfigPage({
     // Reset sạch sẽ trạng thái của container theo sessionId hiện tại
     setSession(null);
     setIsGenerating(false);
+    setIsNewRunActive(false);
     setActiveConfig(null);
     setConfigError(null);
     setSessionError(null);
@@ -133,11 +135,24 @@ export default function Stage2ConfigPage({
     };
   }, [sessionId, loadSession]);
 
+  // F04: Callback tải lại snapshot phiên khi mất lịch sử SSE / nhận tín hiệu resync
+  const handleResyncSnapshot = useCallback(
+    async (sid) => {
+      const data = await loadSession(sid);
+      if (isMountedRef.current && activeSessionIdRef.current === sid) {
+        setSession(data);
+      }
+      return data;
+    },
+    [loadSession],
+  );
+
   // Hook SSE kết nối khi ở trạng thái isGenerating
   const sseState = useSSEHook(sessionId, {
     enabled: isGenerating,
     initialProgress: session?.progress,
     initialQuestionStatuses: session?.question_statuses,
+    onResync: handleResyncSnapshot,
   });
 
   // Xử lý nộp form cấu hình
@@ -231,6 +246,7 @@ export default function Stage2ConfigPage({
       ) {
         return;
       }
+      setIsNewRunActive(true);
       setIsGenerating(true);
       sseState.reconnect();
     } catch (err) {
@@ -382,9 +398,18 @@ export default function Stage2ConfigPage({
       ? sseState.progress
       : session?.progress || sseState.progress;
 
-  const effectiveIsDone =
-    sseState.isDone ||
-    (session?.status === 'partial_generated' && sseState.connectionState === 'idle');
+  // F03: Tách trạng thái kết thúc lượt sinh khỏi trạng thái kết nối SSE.
+  // Khi F5 phiên partial_generated, lượt trước đã kết thúc nên isSnapshotFinished = true -> hiển thị ngay nút Sinh bù (Retry)
+  // Khi người dùng bấm Sinh bù, isNewRunActive = true -> theo dõi lượt mới qua sseState.isDone
+  const isSnapshotFinished = Boolean(
+    session?.status === 'partial_generated' ||
+    session?.status === 'generated' ||
+    session?.progress?.isDone,
+  );
+
+  const effectiveIsDone = isNewRunActive
+    ? sseState.isDone
+    : (isSnapshotFinished || sseState.isDone);
 
   return (
     <div className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">

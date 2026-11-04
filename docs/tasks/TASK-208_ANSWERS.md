@@ -5,7 +5,21 @@
 **PR liên quan:** [#30](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30), [#32](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/32), [#22](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/22)  
 **Người phản hồi (Author):** Bội Anh (`@htbaax` — FE2)  
 **Phối hợp & Xác nhận:** Nhật Quỳnh (`@nhatquynh1107` — BE2), Philip (`@philip-kkk` — Lead Reviewer), Duy (`@johannguyen015` — Leader)  
-**Trạng thái:** Resolved / Handed Over  
+**Trạng thái:** Proposed & FE Verified (Đang chờ thống nhất tích hợp BE2/AI)  
+
+---
+
+## Bảng Tình Trạng Bàn Giao Contract (Handoff Status Matrix)
+
+| Hạng mục | Trạng thái | Chi tiết & Phạm vi kiểm |
+|---|---|---|
+| **1. Payload Config & Ordering** | **Confirmed & FE Verified** | Gửi tường minh `shuffle_questions` và `shuffle_options` dạng boolean; `active_variation_modes` gửi `[]` khi chọn NONE / không biến thể. Đã kiểm 222+ tests. |
+| **2. Case-sensitive Mode IDs** | **Confirmed & FE Verified** | Giữ nguyên chữ hoa/thường theo đúng Policy 207a (ví dụ `NUMERICAL`). |
+| **3. Fallback Modes từ Đề Nguồn** | **Confirmed & FE Verified** | Bóc tách modes từ `source_questions`. Nếu thiếu metadata ở bất kỳ câu nào $\rightarrow$ khóa submit (`is_ready: false`, `supported_modes: null`). |
+| **4. Snapshot Reload & Grid Lưới** | **Confirmed & FE Verified** | Chuẩn hóa `percent`, `completedCount`, `totalCount`. Dựng lưới từ `exam_versions`, câu `failed` không tăng count, metadata rỗng không tạo 0/4. |
+| **5. Nút Sinh Bù (Retry) khi F5** | **Confirmed & FE Verified** | Tách trạng thái kết thúc lượt sinh khỏi SSE `idle` để giữ nút Sinh bù ngay khi F5 phiên `partial_generated`. |
+| **6. Trình tự Resync Mất Lịch Sử SSE** | **Proposed & FE Implemented** | FE bắt tín hiệu `ERR_CURSOR_OUTDATED`, `ERR_EVENT_HISTORY_LOST`, 409 $\rightarrow$ xóa cursor, gọi `GET /sessions/{id}` cập nhật snapshot trước khi mở stream mới. Chờ backend PR #30 phát tín hiệu tương ứng. |
+| **7. Hành vi Original Clone Mode** | **Proposed (Chờ BE/AI)** | Đề xuất: backend/AI giữ nguyên bài toán verbatim, chỉ chạy xáo trộn câu/đáp án theo ordering preferences. Phần triển khai thực tế thuộc worker của PR #30. |
 
 ---
 
