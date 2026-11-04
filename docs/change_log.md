@@ -316,3 +316,33 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
 - Giới hạn: snapshot DB legacy chưa là canonical blueprint/hash đã confirm của TASK-304; Duy/Đạt cần xác nhận mapper/storage, không tự bịa hash hay thêm source columns. TASK-301 đã có acquire wrapper nhưng còn direct lifecycle writes/parser; SQL 007 TASK-305 đã khóa session nhưng còn readiness/config compatibility. Caller/shuffle/Supabase/AI E2E chưa kiểm.
 - Phạm vi: SQL/schema, PostgreSQL tests và docs TASK-302; không sửa nhánh tác giả khác hoặc description PR/issue đã có. Không đánh dấu finding #28 verified thay reviewer; PR giữ Draft đến khi đủ bàn giao/tích hợp.
 - Cập nhật local 03/11: bổ sung worker-only `review_recover_session(UUID)` để discovery + recovery theo session dưới cùng khóa DB, không mở SELECT ledger. Có chín RPC; recovery theo operation ID vẫn giữ nguyên. Kiểm thêm restart, cạnh tranh recovery/completion, rollback, quota và chuỗi 004/005 (`31ed3bc`) → 006 → 007 (`d7a3d3f`) trên fresh/upgrade. Duy đã xác nhận 008 chưa chạy Cloud và đã bỏ. Theo chỉ đạo mới, chỉ hoàn thiện/kiểm local; giao tiếp và commit/push để sau. Không mở rộng source storage hoặc nhận canonical blueprint/hash đã đầy đủ.
+
+## DEC-TV7-007: Persisted source/Blueprint revisions for review (TASK-302)
+
+- Date/owner: 04/11/2026, Hung (`benalexx007`); author mode, workflow v0.1 proposed.
+- Status: local implementation for PR #36; no cloud rollout, merge or E2E acceptance.
+- Context: legacy confirmed_at/Blueprint columns are insufficient for the strict
+  TASK-304 input contract; recomputing a hash at Reject cannot prove confirmation.
+- Decision: adopt Duy/TASK-301 artifact SQL/tests from `68b375f` into the existing
+  006 authority, preserving 004/005 -> 006 -> 007. Store exact confirmed source,
+  per-question fingerprint, immutable source/Blueprint revisions and heads. Python
+  producer/HTTP remain TASK-301; trusted Python validates the full canonical schema.
+  New review snapshots freeze persisted v1 evidence and canonical candidate data;
+  permits/completion reject superseded revisions. Old receipts/history/charges remain
+  intact; legacy missing evidence never gets fabricated or downgraded into v1.
+- Additive contract: progress exposes unapproved current IDs in the same transaction.
+  Invalid confirmation blocks readiness while old operations can still settle.
+  Source content/set changes invalidate availability; approved/exported content locks
+  cover source insert/update/delete and new publication. Source changes demote
+  reviewed to generated under the same lock to preserve approval 007's gate. Read-only replay does not
+  resurrect a head. Caller R1 recovery-before-every-new-Reject is recorded, not wired here.
+- Evidence/limits: [TASK-302](tasks/TASK-302.md), [RPC authority](api/review-rpc-contract.md),
+  [PostgreSQL/consumer checks](../backend/tests/migrations/README.md). This supersedes
+  the earlier dated statement that artifact storage was absent; public caller,
+  actual producer orchestration and Supabase/provider E2E remain separate work.
+- Publication update: Duy subsequently delivered TASK-301 `553a009` with receipt
+  lookup, independent bootstrap and background producer lease/retry/caller wiring.
+  This checkpoint is independently checked against `68b375f`; the newer overlapping
+  SQL/contract is not yet adopted or verified here. Reconcile under TASK-302 ownership
+  and check the combined head before deployment; neither branch's test evidence
+  alone proves the combined implementation.

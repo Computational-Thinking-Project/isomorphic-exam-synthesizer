@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from uuid import uuid4
 
+from artifact_fixtures import seed_artifacts
 from test_stage3_schema import PostgresCase
 
 SID = "10000000-0000-0000-0000-000000000001"
@@ -46,6 +47,8 @@ class ReviewRpcTests(PostgresCase):
         INSERT INTO generation_configs(session_id,n_versions) VALUES ('{SID}',1);
         INSERT INTO question_blueprints(source_question_id,confirmed_at) VALUES ('{SOURCE}',now());
         """)
+
+        self.artifact, self.publication = seed_artifacts(self, SID, SOURCE, OWNER)
 
     @staticmethod
     def auth(role="authenticated", actor=OWNER):
@@ -106,8 +109,10 @@ class ReviewRpcTests(PostgresCase):
         self.assertFalse(first["replayed"])
         self.assertTrue(second["replayed"])
         self.assertEqual(first["snapshot"], second["snapshot"])
-        self.assertEqual(first["snapshot"]["format"], "database_rows")
-        self.assertNotIn("content_hash", first["snapshot"]["source_snapshot"])
+        self.assertEqual(first["snapshot"]["format"], "confirmed_artifacts_v1")
+        self.assertEqual(
+            first["snapshot"]["source_snapshot"]["content_hash"], self.artifact["source_fingerprint"]
+        )
         self.assertEqual(self.value("SELECT gemini_review_calls FROM exam_sessions;"), "0")
         self.assertEqual(self.value("SELECT count(*) FROM review_operations;"), "1")
         self.expect_error(
@@ -724,6 +729,7 @@ class ReviewRpcTests(PostgresCase):
           canonical_question_no,canonical_options,canonical_correct_key)
           VALUES ('{qid2}','{version2}','{source2}',1,'Candidate','["1","2","3","4"]','A',9,'["1","2","3","4"]','A');
         """)
+        seed_artifacts(self, sid2, source2, OWNER)
         shared_op = uuid4()
         sessions = [(SID, QID), (sid2, qid2)]
         results = self.concurrent(

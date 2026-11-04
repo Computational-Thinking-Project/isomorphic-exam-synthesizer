@@ -35,7 +35,7 @@ Supabase deployment/JWT/RLS, AI calls, actual shuffle algorithms, or the Python
 repository/endpoint integration. Local PostgreSQL role/ACL tests are not a deployed
 Supabase authorization test.
 
-`test_review_rpcs.py` additionally runs the actual nine stored procedures against
+`test_review_rpcs.py` additionally runs the actual nine review stored procedures against
 independent psql connections: reservation/attempt/recovery races, quota 26–30 and
 four/operation, committed grant with lost response, replay after new connection,
 late worker after recovery, source-row changes, complete/revert snapshots,
@@ -100,3 +100,47 @@ or replace the actor/ownership checks in the lifecycle RPCs/callers.
 Actor regressions cover migration replay with historical NULLs, fresh-schema
 enforcement, missing/backdated new actors, preserving known actors on UPDATE,
 verified historical correction, and invalid actor foreign keys.
+
+## Confirmed artifacts and frozen consumer handoff
+
+Artifact SQL/tests are adapted from Duy/TASK-301 `68b375f6fddfc9085dff9be4f2a73c3fa5a7c45d`.
+`test_source_artifacts.py` covers worker confirmation/publication, exact live-source
+comparison, owner-scoped reads, invalidation/history, replay, ACL, rollback and
+independent-connection confirmation/publication races. These SQL-only tests use a
+detached shared AI fixture; they do not import/copy Duy's Python producer.
+`test_review_artifacts.py` covers strict v1 reservations, missing/stale evidence,
+canonical mapping after display shuffle, superseded permits/completion, charged
+recovery, unchanged legacy receipts, content locks and publication races.
+
+To export a receipt **emitted by the real PostgreSQL reservation RPC**, opt in:
+
+```powershell
+$env:RUN_POSTGRES_MIGRATION_TESTS = '1'
+$env:REVIEW_RPC_FIXTURE_DIR = 'scratch/task302-handoff'
+python -m unittest discover -s backend/tests/migrations -p test_review_artifacts.py -v
+Remove-Item Env:REVIEW_RPC_FIXTURE_DIR
+```
+
+`reservation.json` contains only synthetic test data. It is an ignored generated
+artifact, not a manually constructed successful response or a file to commit.
+Tests without the export variable do not write results into the working tree.
+
+`check_review_consumer.py` is a separate explicit cross-PR check. Supply backend
+Python dependencies and an isolated checkout of TASK-301 at `68b375f` on PYTHONPATH
+(the producer, strict mapper and TASK-304 adapter do not live on this branch yet):
+
+```powershell
+git worktree add --detach scratch/task301-consumer 68b375f6fddfc9085dff9be4f2a73c3fa5a7c45d
+$env:PYTHONPATH = (Resolve-Path scratch/task301-consumer/backend).Path
+python backend/tests/migrations/check_review_consumer.py scratch/task302-handoff/reservation.json backend/tests/fixtures/ai_pipeline.json
+Remove-Item Env:PYTHONPATH
+```
+
+This check verifies the fixture fingerprint with the production producer, validates
+the canonical schema and frozen envelope, invokes the real adapter with a fake
+provider/permit and checks honest teacher-review output. Eight explicitly corrupted
+copies (missing artifacts/hash, wrong binding/hash, legacy format, invalid Blueprint,
+current/peer identity mismatch) must fail before another permit/dispatch. No real
+Gemini/key/Supabase is used. It does not certify public HTTP/background orchestration,
+provider transport, or deployment. The default suites do not discover/invoke this
+cross-PR script or import moving upstream code implicitly.

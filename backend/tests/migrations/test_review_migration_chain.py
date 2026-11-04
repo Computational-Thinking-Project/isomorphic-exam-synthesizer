@@ -10,6 +10,7 @@ import subprocess
 import unittest
 from uuid import uuid4
 
+from artifact_fixtures import seed_artifacts
 from test_review_rpcs import OWNER, QID, SID, SOURCE, candidate, literal
 from test_stage3_schema import BOOTSTRAP, ROOT, SEED, PostgresCase
 
@@ -53,6 +54,8 @@ class ReviewMigrationChainTests(PostgresCase):
         INSERT INTO generation_configs(session_id,n_versions) VALUES ('{SID}',1);
         INSERT INTO question_blueprints(source_question_id,confirmed_at) VALUES ('{SOURCE}',now());
         """)
+
+        seed_artifacts(self, SID, SOURCE, OWNER)
 
     def initialize_database(self):
         super().setUp()

@@ -345,11 +345,12 @@ BEGIN
     WHERE q.id=o.question_id AND q.is_current AND q.status='regenerating' AND v.session_id=o.session_id
   ) THEN RAISE EXCEPTION 'REVIEW_STALE' USING ERRCODE='55000'; END IF;
   IF p_check_expiry THEN
-    PERFORM 1 FROM public.version_questions q JOIN public.source_questions s ON s.id=q.source_question_id
-    JOIN public.question_blueprints b ON b.source_question_id=s.id
-    WHERE q.id=o.question_id AND to_jsonb(s)=o.snapshot->'source_snapshot' AND to_jsonb(b)=o.snapshot->'blueprint'
-    FOR SHARE OF s,b;
-    IF NOT FOUND THEN RAISE EXCEPTION 'REVIEW_SOURCE_MISMATCH' USING ERRCODE='22023'; END IF;
+    -- Historical reservations remain replayable/settleable, but never become
+    -- dispatchable merely because this migration was replayed.
+    IF o.snapshot->>'format' IS DISTINCT FROM 'confirmed_artifacts_v1' THEN
+      RAISE EXCEPTION 'REVIEW_SOURCE_MISMATCH' USING ERRCODE='22023';
+    END IF;
+    PERFORM public._review_check_frozen_artifacts(o.session_id,o.question_id,o.snapshot);
   END IF;
 END $$;
 
@@ -358,13 +359,25 @@ RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE nv INT; ns INT; config_count INT; versions_count INT; codes_count INT;
   currents INT; approved INT; regenerating INT; missing INT; duplicates INT; extras INT; expected INT; ready BOOLEAN;
+  unapproved JSONB; source_ready BOOLEAN;
 BEGIN
   SELECT count(*),min(n_versions) INTO config_count,nv FROM public.generation_configs WHERE session_id=p_session_id;
   SELECT count(*) INTO ns FROM public.source_questions WHERE session_id=p_session_id;
-  IF config_count <> 1 OR ns=0 OR EXISTS (
+  SELECT NOT EXISTS (
     SELECT 1 FROM public.source_questions s LEFT JOIN public.question_blueprints b ON b.source_question_id=s.id
     WHERE s.session_id=p_session_id AND b.confirmed_at IS NULL
-  ) OR EXISTS (
+  ) INTO source_ready;
+  -- A v1 confirmation binds the whole source set, not only surviving rows. In
+  -- particular, deleting a non-reserved source must not make a smaller exam ready.
+  -- Legacy-only sessions retain their existing review path; no artifact is invented.
+  IF EXISTS (SELECT 1 FROM public.source_artifact_confirmations WHERE session_id=p_session_id) THEN
+    BEGIN
+      source_ready := source_ready AND (public.get_source_artifacts(p_session_id)->>'ready')::boolean;
+    EXCEPTION WHEN SQLSTATE 'P0002' OR SQLSTATE '55000' THEN
+      source_ready := false;
+    END;
+  END IF;
+  IF config_count <> 1 OR ns=0 OR EXISTS (
     SELECT question_no FROM public.source_questions WHERE session_id=p_session_id GROUP BY question_no HAVING count(*)>1
   ) THEN RAISE EXCEPTION 'REVIEW_SOURCE_MISMATCH' USING ERRCODE='22023'; END IF;
   expected := nv * ns;
@@ -383,11 +396,15 @@ BEGIN
     WHERE v.session_id=p_session_id AND s.session_id=p_session_id GROUP BY v.id,s.id
   ) slots;
   missing := missing + greatest(nv-versions_count,0)*ns;
-  ready := versions_count=nv AND codes_count=nv AND missing=0 AND duplicates=0 AND extras=0
+  ready := source_ready AND versions_count=nv AND codes_count=nv AND missing=0 AND duplicates=0 AND extras=0
     AND currents=expected AND approved=expected AND regenerating=0
     AND NOT EXISTS (SELECT 1 FROM public.review_operations WHERE session_id=p_session_id AND status='active');
+  SELECT coalesce(jsonb_agg(q.id ORDER BY q.id),'[]'::jsonb) INTO unapproved
+    FROM public.version_questions q JOIN public.exam_versions v ON v.id=q.version_id
+    WHERE v.session_id=p_session_id AND q.is_current AND q.status<>'approved';
   RETURN jsonb_build_object('expected_slots',expected,'current_slots',currents,'approved_slots',approved,
-    'regenerating_slots',regenerating,'missing_slots',missing,'duplicate_slots',duplicates,'ready',ready);
+    'regenerating_slots',regenerating,'missing_slots',missing,'duplicate_slots',duplicates,'ready',ready,
+    'unapproved_question_ids',unapproved);
 END $$;
 
 CREATE OR REPLACE FUNCTION public._review_recalculate(p_session_id UUID)
@@ -430,7 +447,7 @@ CREATE OR REPLACE FUNCTION public.review_reserve_regeneration(p_session_id UUID,
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE s public.exam_sessions; q public.version_questions; o public.review_operations;
-  source_row JSONB; blueprint_row JSONB; peers JSONB; snapshot JSONB; result JSONB; expiry TIMESTAMPTZ;
+  snapshot JSONB; result JSONB; expiry TIMESTAMPTZ;
 BEGIN
   s := public._review_lock_session(p_session_id,true);
   IF p_operation_id IS NULL THEN RAISE EXCEPTION 'REVIEW_INVALID_PAYLOAD' USING ERRCODE='22023'; END IF;
@@ -456,18 +473,8 @@ BEGIN
     RAISE EXCEPTION 'REVIEW_QUOTA_EXHAUSTED' USING ERRCODE='54000';
   END IF;
   PERFORM public._review_progress(s.id);
-  SELECT to_jsonb(src),to_jsonb(b) INTO source_row,blueprint_row FROM public.source_questions src
-    JOIN public.question_blueprints b ON b.source_question_id=src.id
-    WHERE src.id=q.source_question_id AND src.session_id=s.id AND b.confirmed_at IS NOT NULL
-      AND src.question_no=q.canonical_question_no FOR SHARE OF src,b;
-  IF NOT FOUND THEN RAISE EXCEPTION 'REVIEW_SOURCE_MISMATCH' USING ERRCODE='22023'; END IF;
-  SELECT coalesce(jsonb_agg(to_jsonb(peer) ORDER BY peer.id),'[]'::jsonb) INTO peers
-    FROM public.version_questions peer JOIN public.exam_versions v ON v.id=peer.version_id
-    WHERE v.session_id=s.id AND peer.source_question_id=q.source_question_id AND peer.is_current AND peer.id<>q.id;
-  -- Freeze database rows, not an invented AI-ready blueprint or confirmation hash.
-  -- TASK-301 must map the confirmed canonical payload/hash before calling TASK-304.
-  snapshot := jsonb_build_object('source_snapshot',source_row,'blueprint',blueprint_row,
-    'current_variant',to_jsonb(q),'peer_variants',peers,'format','database_rows');
+  -- Read only durably confirmed artifacts. No legacy/hash/blueprint fallback.
+  snapshot := public._review_frozen_artifacts(s.id,q.id);
   expiry := clock_timestamp()+interval '180 seconds';
   result := jsonb_build_object('session_id',s.id,'session_status','generated','replayed',false,
     'operation_id',p_operation_id,'question_id',q.id,'expires_at',expiry,'max_attempts',4,'snapshot',snapshot,'operation_status','active');
@@ -726,5 +733,343 @@ GRANT EXECUTE ON FUNCTION public.review_get_progress(UUID),public.review_reserve
 GRANT EXECUTE ON FUNCTION public.review_acquire_attempt(UUID,UUID),public.review_complete_regeneration(UUID,JSONB),
   public.review_fail_regeneration(UUID,TEXT),public.review_recover_regeneration(UUID),
   public.review_recover_session(UUID) TO service_role;
+
+-- Artifact storage/RPCs adapted from TASK-301 (Duy), commit 68b375f.
+-- TASK-302 owns this migration; producer validation/public HTTP remain TASK-301.
+-- No legacy confirmation or canonical document is fabricated/backfilled.
+CREATE TABLE IF NOT EXISTS public.source_artifact_confirmations (
+  confirmation_id UUID PRIMARY KEY,
+  session_id UUID NOT NULL REFERENCES public.exam_sessions(id) ON DELETE CASCADE,
+  actor_id UUID NOT NULL REFERENCES public.users(id),
+  confirmed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  result JSONB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS public.source_artifact_revisions (
+  source_revision_id UUID PRIMARY KEY,
+  confirmation_id UUID NOT NULL REFERENCES public.source_artifact_confirmations(confirmation_id) ON DELETE CASCADE,
+  -- Historical identity survives removal/re-ingestion of a source row. Session
+  -- deletion still cascades through its confirmation, not through live sources.
+  source_question_id UUID NOT NULL,
+  confirmed_input JSONB NOT NULL CHECK (jsonb_typeof(confirmed_input)='object'),
+  source_fingerprint TEXT NOT NULL CHECK (source_fingerprint ~ '^[a-f0-9]{64}$'),
+  UNIQUE(source_revision_id,source_question_id)
+);
+ALTER TABLE public.source_artifact_revisions
+  DROP CONSTRAINT IF EXISTS source_artifact_revisions_source_question_id_fkey;
+CREATE TABLE IF NOT EXISTS public.canonical_blueprint_revisions (
+  blueprint_revision_id UUID PRIMARY KEY,
+  source_revision_id UUID NOT NULL,
+  source_question_id UUID NOT NULL,
+  canonical_blueprint JSONB NOT NULL CHECK (jsonb_typeof(canonical_blueprint)='object'),
+  schema_version TEXT NOT NULL CHECK (schema_version='0.4.0'),
+  published_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  FOREIGN KEY(source_revision_id,source_question_id)
+    REFERENCES public.source_artifact_revisions(source_revision_id,source_question_id) ON DELETE CASCADE,
+  UNIQUE(blueprint_revision_id,source_revision_id,source_question_id)
+);
+CREATE TABLE IF NOT EXISTS public.source_artifact_heads (
+  source_question_id UUID PRIMARY KEY REFERENCES public.source_questions(id) ON DELETE CASCADE,
+  source_revision_id UUID NOT NULL,
+  blueprint_revision_id UUID,
+  FOREIGN KEY(source_revision_id,source_question_id)
+    REFERENCES public.source_artifact_revisions(source_revision_id,source_question_id),
+  FOREIGN KEY(blueprint_revision_id,source_revision_id,source_question_id)
+    REFERENCES public.canonical_blueprint_revisions(blueprint_revision_id,source_revision_id,source_question_id)
+);
+ALTER TABLE public.source_artifact_confirmations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.source_artifact_revisions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.canonical_blueprint_revisions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.source_artifact_heads ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.source_artifact_confirmations,public.source_artifact_revisions,
+  public.canonical_blueprint_revisions,public.source_artifact_heads
+  FROM PUBLIC,anon,authenticated,service_role;
+
+CREATE OR REPLACE FUNCTION public._artifact_source_input(p_row public.source_questions)
+RETURNS JSONB LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,public AS $$
+  SELECT jsonb_build_object('id',p_row.id,'question_text',p_row.raw_content,
+    'options',CASE WHEN jsonb_typeof(p_row.options)='object'
+      THEN jsonb_build_array(p_row.options->'A',p_row.options->'B',p_row.options->'C',p_row.options->'D')
+      ELSE p_row.options END,
+    'correct_answer',p_row.correct_key,'solution',coalesce(p_row.solution_md,''))
+$$;
+
+CREATE OR REPLACE FUNCTION public.confirm_source_artifacts(
+  p_session_id UUID,p_actor_id UUID,p_confirmation_id UUID,
+  p_expected_updated_at TIMESTAMPTZ,p_sources JSONB
+)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE s public.exam_sessions; saved public.source_artifact_confirmations;
+  element JSONB; result JSONB; receipt JSONB; comparison JSONB; prior_comparison JSONB;
+  revision UUID; source_id UUID; n INT; legacy JSONB; sources JSONB := '[]'::jsonb;
+BEGIN
+  -- Only the backend worker can supply Python-computed hashes. Actor comes from
+  -- the verified HTTP identity, never an actor/hash field in the public request.
+  IF auth.role() IS DISTINCT FROM 'service_role' THEN
+    RAISE EXCEPTION 'ARTIFACT_WORKER_REQUIRED' USING ERRCODE='42501';
+  END IF;
+  s := public._review_lock_session(p_session_id,false);
+  IF p_actor_id IS NULL OR s.user_id IS DISTINCT FROM p_actor_id THEN
+    RAISE EXCEPTION 'ARTIFACT_OWNER_MISMATCH' USING ERRCODE='42501';
+  END IF;
+  IF p_confirmation_id IS NULL OR jsonb_typeof(p_sources) IS DISTINCT FROM 'array' THEN
+    RAISE EXCEPTION 'ARTIFACT_INVALID_PAYLOAD' USING ERRCODE='22023';
+  END IF;
+  n := jsonb_array_length(p_sources);
+  IF n NOT BETWEEN 1 AND 20 OR n<>(SELECT count(DISTINCT value->>'source_question_id') FROM jsonb_array_elements(p_sources)) THEN
+    RAISE EXCEPTION 'ARTIFACT_INVALID_PAYLOAD' USING ERRCODE='22023';
+  END IF;
+  SELECT jsonb_object_agg(value->>'source_question_id',jsonb_build_object(
+    'input',value->'confirmed_input','fingerprint',value->'source_fingerprint'))
+    INTO comparison FROM jsonb_array_elements(p_sources);
+  PERFORM pg_advisory_xact_lock(hashtextextended('source_confirmation:'||p_confirmation_id::text,0));
+  SELECT * INTO saved FROM public.source_artifact_confirmations WHERE confirmation_id=p_confirmation_id;
+  IF FOUND THEN
+    SELECT jsonb_object_agg(value->>'source_question_id',jsonb_build_object(
+      'input',value->'confirmed_input','fingerprint',value->'source_fingerprint'))
+      INTO prior_comparison FROM jsonb_array_elements(saved.result->'sources');
+    IF saved.session_id IS DISTINCT FROM s.id OR saved.actor_id IS DISTINCT FROM p_actor_id
+      OR comparison IS DISTINCT FROM prior_comparison THEN
+      RAISE EXCEPTION 'ARTIFACT_IDEMPOTENCY_CONFLICT' USING ERRCODE='22023';
+    END IF;
+    RETURN saved.result || jsonb_build_object('replayed',true);
+  END IF;
+  IF s.status<>'draft' OR s.approved_at IS NOT NULL OR p_expected_updated_at IS NULL
+      OR s.updated_at IS DISTINCT FROM p_expected_updated_at THEN
+    RAISE EXCEPTION 'ARTIFACT_STALE' USING ERRCODE='55000';
+  END IF;
+  IF n<>(SELECT count(*) FROM public.source_questions WHERE session_id=s.id) THEN
+    RAISE EXCEPTION 'ARTIFACT_SOURCE_MISMATCH' USING ERRCODE='22023';
+  END IF;
+  -- Compare exact content under the parent-session lock before recording any
+  -- revision. Python's fingerprint algorithm is not reimplemented in SQL.
+  FOR element IN SELECT value FROM jsonb_array_elements(p_sources) LOOP
+    source_id := (element->>'source_question_id')::uuid;
+    revision := (element->>'source_revision_id')::uuid;
+    IF revision IS NULL OR coalesce(element->>'source_fingerprint','') !~ '^[a-f0-9]{64}$'
+      OR NOT EXISTS (SELECT 1 FROM public.source_questions q WHERE q.id=source_id
+        AND q.session_id=s.id AND public._artifact_source_input(q)=element->'confirmed_input'
+        AND NOT q.has_missing_answer) THEN
+      RAISE EXCEPTION 'ARTIFACT_SOURCE_MISMATCH' USING ERRCODE='22023';
+    END IF;
+  END LOOP;
+  -- Existing Stage1 status/security/legacy-blueprint checks stay atomic with the
+  -- source revision write. This function requires migration003 at runtime.
+  legacy := public.confirm_exam_source(s.id,n,true,p_expected_updated_at);
+  receipt := jsonb_build_object('confirmation_id',p_confirmation_id,'session_id',s.id,
+    'actor_id',p_actor_id,'confirmed_at',legacy->'confirmed_at','status','blueprinted',
+    'total_questions',n,'total_blueprints',legacy->'total_blueprints','replayed',false,'sources',p_sources);
+  INSERT INTO public.source_artifact_confirmations(confirmation_id,session_id,actor_id,confirmed_at,result)
+    VALUES(p_confirmation_id,s.id,p_actor_id,(legacy->>'confirmed_at')::timestamptz,receipt);
+  FOR element IN SELECT value FROM jsonb_array_elements(p_sources) LOOP
+    source_id := (element->>'source_question_id')::uuid;
+    revision := (element->>'source_revision_id')::uuid;
+    INSERT INTO public.source_artifact_revisions(source_revision_id,confirmation_id,source_question_id,
+      confirmed_input,source_fingerprint)
+      VALUES(revision,p_confirmation_id,source_id,element->'confirmed_input',element->>'source_fingerprint');
+    INSERT INTO public.source_artifact_heads(source_question_id,source_revision_id)
+      VALUES(source_id,revision) ON CONFLICT(source_question_id) DO UPDATE
+      SET source_revision_id=excluded.source_revision_id,blueprint_revision_id=NULL;
+  END LOOP;
+  RETURN receipt;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.publish_canonical_blueprint(p_session_id UUID,p_publication JSONB)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE s public.exam_sessions; source public.source_artifact_revisions;
+  prior public.canonical_blueprint_revisions; bp UUID; source_id UUID; revision UUID; body JSONB;
+BEGIN
+  IF auth.role() IS DISTINCT FROM 'service_role' THEN
+    RAISE EXCEPTION 'ARTIFACT_WORKER_REQUIRED' USING ERRCODE='42501';
+  END IF;
+  s := public._review_lock_session(p_session_id,false);
+  bp := (p_publication->>'blueprint_revision_id')::uuid;
+  source_id := (p_publication->>'source_question_id')::uuid;
+  revision := (p_publication->>'source_revision_id')::uuid;
+  body := p_publication->'canonical_blueprint';
+  IF bp IS NULL OR source_id IS NULL OR revision IS NULL
+    OR p_publication->>'schema_version' IS DISTINCT FROM '0.4.0'
+    OR body->'requirement'->>'schema_version' IS DISTINCT FROM '0.4.0' THEN
+    RAISE EXCEPTION 'ARTIFACT_INVALID_PAYLOAD' USING ERRCODE='22023';
+  END IF;
+  SELECT r.* INTO source FROM public.source_artifact_revisions r
+    JOIN public.source_artifact_confirmations c ON c.confirmation_id=r.confirmation_id
+    WHERE r.source_revision_id=revision AND r.source_question_id=source_id AND c.session_id=s.id;
+  IF NOT FOUND OR source.source_fingerprint IS DISTINCT FROM p_publication->>'source_fingerprint' THEN
+    RAISE EXCEPTION 'ARTIFACT_SOURCE_MISMATCH' USING ERRCODE='22023';
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('canonical_blueprint:'||bp::text,0));
+  SELECT * INTO prior FROM public.canonical_blueprint_revisions WHERE blueprint_revision_id=bp;
+  IF FOUND THEN
+    IF prior.source_revision_id IS DISTINCT FROM revision OR prior.canonical_blueprint IS DISTINCT FROM body THEN
+      RAISE EXCEPTION 'ARTIFACT_IDEMPOTENCY_CONFLICT' USING ERRCODE='22023';
+    END IF;
+    RETURN jsonb_build_object('session_id',s.id,'source_question_id',source_id,'source_revision_id',revision,
+      'blueprint_revision_id',bp,'replayed',true);
+  END IF;
+  IF s.status IN ('approved','exported') OR s.approved_at IS NOT NULL THEN
+    RAISE EXCEPTION 'ARTIFACT_LOCKED' USING ERRCODE='55000';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.source_artifact_heads h JOIN public.source_questions q ON q.id=h.source_question_id
+    WHERE h.source_question_id=source_id AND h.source_revision_id=revision
+      AND public._artifact_source_input(q)=source.confirmed_input) THEN
+    RAISE EXCEPTION 'ARTIFACT_STALE' USING ERRCODE='55000';
+  END IF;
+  INSERT INTO public.canonical_blueprint_revisions(blueprint_revision_id,source_revision_id,source_question_id,
+    canonical_blueprint,schema_version) VALUES(bp,revision,source_id,body,'0.4.0');
+  UPDATE public.source_artifact_heads SET blueprint_revision_id=bp WHERE source_question_id=source_id;
+  RETURN jsonb_build_object('session_id',s.id,'source_question_id',source_id,'source_revision_id',revision,
+    'blueprint_revision_id',bp,'replayed',false);
+END $$;
+
+-- Edits invalidate the binding while retaining revision history. Parent locking
+-- serializes with reservation, permit, completion and publication. A parent
+-- already removed by session cascade needs no lifecycle write/check.
+CREATE OR REPLACE FUNCTION public._artifact_invalidate_source()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE s public.exam_sessions; sid UUID; source_id UUID;
+BEGIN
+  IF TG_OP='INSERT' THEN
+    sid := NEW.session_id; source_id := NEW.id;
+  ELSE
+    sid := OLD.session_id; source_id := OLD.id;
+  END IF;
+  IF TG_OP='UPDATE' AND NEW.id=OLD.id AND NEW.session_id=OLD.session_id
+    AND ROW(NEW.raw_content,NEW.options,NEW.correct_key,NEW.solution_md,NEW.question_no,NEW.has_missing_answer)
+      IS NOT DISTINCT FROM ROW(OLD.raw_content,OLD.options,OLD.correct_key,OLD.solution_md,OLD.question_no,OLD.has_missing_answer) THEN
+    RETURN NEW;
+  END IF;
+  IF TG_OP='UPDATE' AND (NEW.id<>OLD.id OR NEW.session_id<>OLD.session_id) THEN
+    RAISE EXCEPTION 'ARTIFACT_SOURCE_MISMATCH' USING ERRCODE='22023';
+  END IF;
+  SELECT * INTO s FROM public.exam_sessions WHERE id=sid FOR UPDATE;
+  IF FOUND THEN
+    IF s.status IN ('approved','exported') OR s.approved_at IS NOT NULL THEN
+      RAISE EXCEPTION 'ARTIFACT_LOCKED' USING ERRCODE='55000';
+    END IF;
+    DELETE FROM public.source_artifact_heads WHERE source_question_id=source_id;
+    UPDATE public.question_blueprints SET confirmed_at=NULL WHERE source_question_id=source_id;
+    -- Keep the reviewed-state gate used by approval 007 consistent with the
+    -- invalidated confirmation, including deletion of a different source slot.
+    IF s.status='reviewed' THEN
+      UPDATE public.exam_sessions SET status='generated',updated_at=clock_timestamp() WHERE id=s.id;
+    END IF;
+  END IF;
+  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS trg_source_artifact_invalidation ON public.source_questions;
+CREATE TRIGGER trg_source_artifact_invalidation BEFORE INSERT OR UPDATE OR DELETE ON public.source_questions
+  FOR EACH ROW EXECUTE FUNCTION public._artifact_invalidate_source();
+REVOKE ALL ON FUNCTION public._artifact_source_input(public.source_questions),public._artifact_invalidate_source()
+  FROM PUBLIC,anon,authenticated,service_role;
+REVOKE ALL ON FUNCTION public.confirm_source_artifacts(UUID,UUID,UUID,TIMESTAMPTZ,JSONB),
+  public.publish_canonical_blueprint(UUID,JSONB) FROM PUBLIC,anon,authenticated,service_role;
+GRANT EXECUTE ON FUNCTION public.confirm_source_artifacts(UUID,UUID,UUID,TIMESTAMPTZ,JSONB),
+  public.publish_canonical_blueprint(UUID,JSONB) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.get_source_artifacts(p_session_id UUID)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE s public.exam_sessions; c public.source_artifact_confirmations; pending JSONB;
+BEGIN
+  SELECT * INTO s FROM public.exam_sessions WHERE id=p_session_id FOR SHARE;
+  IF NOT FOUND OR (auth.role() IS DISTINCT FROM 'service_role'
+      AND (auth.uid() IS NULL OR s.user_id IS DISTINCT FROM auth.uid())) THEN
+    RAISE EXCEPTION 'ARTIFACT_NOT_FOUND' USING ERRCODE='P0002';
+  END IF;
+  SELECT * INTO c FROM public.source_artifact_confirmations WHERE session_id=s.id
+    ORDER BY confirmed_at DESC,confirmation_id DESC LIMIT 1;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ARTIFACT_NOT_FOUND' USING ERRCODE='P0002';
+  END IF;
+  IF jsonb_array_length(c.result->'sources')<>(SELECT count(*) FROM public.source_questions WHERE session_id=s.id)
+    OR EXISTS (
+    SELECT 1 FROM jsonb_array_elements(c.result->'sources') item
+    LEFT JOIN public.source_artifact_heads h ON h.source_question_id=(item->>'source_question_id')::uuid
+    LEFT JOIN public.source_questions q ON q.id=h.source_question_id
+    WHERE h.source_revision_id IS DISTINCT FROM (item->>'source_revision_id')::uuid
+      OR public._artifact_source_input(q) IS DISTINCT FROM item->'confirmed_input'
+  ) THEN RAISE EXCEPTION 'ARTIFACT_STALE' USING ERRCODE='55000'; END IF;
+  SELECT coalesce(jsonb_agg(h.source_question_id ORDER BY h.source_question_id),'[]'::jsonb)
+    INTO pending FROM public.source_artifact_heads h JOIN public.source_questions q ON q.id=h.source_question_id
+    WHERE q.session_id=s.id AND h.blueprint_revision_id IS NULL;
+  RETURN jsonb_build_object('confirmation',c.result,'pending_source_question_ids',pending,
+    'ready',jsonb_array_length(pending)=0);
+END $$;
+REVOKE ALL ON FUNCTION public.get_source_artifacts(UUID) FROM PUBLIC,anon,authenticated,service_role;
+GRANT EXECUTE ON FUNCTION public.get_source_artifacts(UUID) TO authenticated,service_role;
+
+-- Normalize one candidate as a unit; display permutations never mix with the
+-- immutable canonical answer/solution. IDs remain native UUID JSON strings.
+CREATE OR REPLACE FUNCTION public._review_canonical_variant(p_row public.version_questions)
+RETURNS JSONB LANGUAGE sql IMMUTABLE SET search_path=pg_catalog,public AS $$
+  SELECT jsonb_build_object('id',p_row.id,'version_id',p_row.version_id,'source_question_id',p_row.source_question_id,
+    'content',p_row.content,'stem_latex',p_row.content,'options',p_row.canonical_options,
+    'correct_key',p_row.canonical_correct_key,'solution_md',p_row.canonical_solution_md)
+$$;
+
+CREATE OR REPLACE FUNCTION public._review_frozen_artifacts(p_session_id UUID,p_question_id UUID)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE q public.version_questions; src public.source_questions;
+  r public.source_artifact_revisions; b public.canonical_blueprint_revisions; peers JSONB;
+BEGIN
+  -- Callers hold the parent-session lock. Publication, invalidation and review
+  -- mutations share that lock, so all bindings below come from one transaction.
+  BEGIN
+    IF NOT (public.get_source_artifacts(p_session_id)->>'ready')::boolean THEN
+      RAISE EXCEPTION 'REVIEW_SOURCE_MISMATCH' USING ERRCODE='22023';
+    END IF;
+  EXCEPTION WHEN SQLSTATE 'P0002' OR SQLSTATE '55000' THEN
+    RAISE EXCEPTION 'REVIEW_SOURCE_MISMATCH' USING ERRCODE='22023';
+  END;
+  SELECT q0.* INTO q FROM public.version_questions q0 JOIN public.exam_versions v ON v.id=q0.version_id
+    WHERE q0.id=p_question_id AND v.session_id=p_session_id;
+  IF NOT FOUND THEN RAISE EXCEPTION 'REVIEW_SOURCE_MISMATCH' USING ERRCODE='22023'; END IF;
+  SELECT * INTO src FROM public.source_questions WHERE id=q.source_question_id AND session_id=p_session_id;
+  IF NOT FOUND OR src.has_missing_answer OR src.question_no IS DISTINCT FROM q.canonical_question_no THEN
+    RAISE EXCEPTION 'REVIEW_SOURCE_MISMATCH' USING ERRCODE='22023';
+  END IF;
+  SELECT r0.* INTO r FROM public.source_artifact_heads h
+    JOIN public.source_artifact_revisions r0 ON r0.source_revision_id=h.source_revision_id AND r0.source_question_id=h.source_question_id
+    JOIN public.source_artifact_confirmations c ON c.confirmation_id=r0.confirmation_id
+    WHERE h.source_question_id=src.id AND c.session_id=p_session_id;
+  IF NOT FOUND OR r.confirmed_input IS DISTINCT FROM public._artifact_source_input(src) THEN
+    RAISE EXCEPTION 'REVIEW_SOURCE_MISMATCH' USING ERRCODE='22023';
+  END IF;
+  SELECT b0.* INTO b FROM public.source_artifact_heads h
+    JOIN public.canonical_blueprint_revisions b0 ON b0.blueprint_revision_id=h.blueprint_revision_id
+      AND b0.source_revision_id=h.source_revision_id AND b0.source_question_id=h.source_question_id
+    WHERE h.source_question_id=src.id AND h.source_revision_id=r.source_revision_id;
+  IF NOT FOUND OR b.schema_version<>'0.4.0'
+      OR b.canonical_blueprint->'requirement'->>'schema_version' IS DISTINCT FROM b.schema_version THEN
+    RAISE EXCEPTION 'REVIEW_SOURCE_MISMATCH' USING ERRCODE='22023';
+  END IF;
+  SELECT coalesce(jsonb_agg(public._review_canonical_variant(peer) ORDER BY peer.id),'[]'::jsonb) INTO peers
+    FROM public.version_questions peer JOIN public.exam_versions v ON v.id=peer.version_id
+    WHERE v.session_id=p_session_id AND peer.source_question_id=src.id AND peer.is_current
+      AND peer.version_id<>q.version_id;
+  RETURN jsonb_build_object('format','confirmed_artifacts_v1',
+    'source_revision_id',r.source_revision_id,'blueprint_revision_id',b.blueprint_revision_id,
+    'blueprint_source_revision_id',b.source_revision_id,'blueprint_source_fingerprint',r.source_fingerprint,
+    'source_snapshot',r.confirmed_input || jsonb_build_object('content_hash',r.source_fingerprint),
+    'blueprint',b.canonical_blueprint,'current_variant',public._review_canonical_variant(q),'peer_variants',peers);
+END $$;
+
+CREATE OR REPLACE FUNCTION public._review_check_frozen_artifacts(p_session_id UUID,p_question_id UUID,p_snapshot JSONB)
+RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE live JSONB;
+BEGIN
+  live := public._review_frozen_artifacts(p_session_id,p_question_id);
+  -- Peers deliberately remain frozen; acceptance/revert of a different slot is
+  -- permitted while this operation runs. Never replace frozen inputs with live data.
+  IF (live - 'peer_variants') IS DISTINCT FROM (p_snapshot - 'peer_variants') THEN
+    RAISE EXCEPTION 'REVIEW_SOURCE_MISMATCH' USING ERRCODE='22023';
+  END IF;
+END $$;
+REVOKE ALL ON FUNCTION public._review_canonical_variant(public.version_questions),
+  public._review_frozen_artifacts(UUID,UUID),public._review_check_frozen_artifacts(UUID,UUID,JSONB)
+  FROM PUBLIC,anon,authenticated,service_role;
 
 COMMIT;

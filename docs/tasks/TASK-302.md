@@ -139,3 +139,31 @@ Người phụ trách chọn: **giữ `user_id=NULL` cho log lịch sử không 
 - `python -m pytest backend/tests scripts/blueprint/tests -q -p no:cacheprovider` → **685 passed, 58 skipped, 21 warnings, 93.31s**. 58 skip gồm 57 PostgreSQL opt-in đã chạy riêng ở trên và 1 live API opt-in. Không nhận skip là test DB pass.
 - Dùng Docker không mạng, không publish port/mount `.env`, không gọi Gemini/Supabase thật. Canonical blueprint/hash producer, caller sử dụng RPC mới và E2E vẫn ngoài bằng chứng lần này.
 - Tại thời điểm kiểm thử, thay đổi còn local trên `feat/task-302-schema-foundation`. Sau khi đọc bản nháp trao đổi, người phụ trách đã yêu cầu commit/push và đăng comment bàn giao lên #36; kết quả xuất bản được ghi trên PR. Không thay description, deploy, approve hay merge.
+
+## Continuation plan - 04/11/2026: confirmed artifacts
+
+Author TASK-302, workflow v0.1 proposed (`506384b`), local code base `a2d2fc3`.
+Compared TASK-301 `68b375f` and dev `ac18e72` (Stage 1 frontend; no SQL changes).
+Working tree was clean. Scope: database/tests/docs in #36; producer/public HTTP
+remain TASK-301. No deployment or PR/issue-description changes.
+
+1. Adopt Duy's artifact storage/RPCs and SQL tests from `68b375f` into 006, with attribution.
+2. Emit `confirmed_artifacts_v1` from persisted revisions/hash/document; use one canonical candidate representation. Do not manufacture confirmation at Reject. Preserve historical receipts.
+3. Check revision binding at acquire/complete; retain failure/recovery settlement and conservative charges after supersession. Add progress IDs in the same SQL snapshot.
+4. Run PostgreSQL upgrade/replay/rollback/ACL/concurrency tests and the pinned 004/005 -> 006 -> 007 chain. Feed actual RPC JSON to pinned consumer/adapter with an offline provider.
+5. Update database authority contract, initialization schema, test instructions and change log; distinguish local DB evidence from pending public caller wiring by Duy/Dat.
+
+This plan records intended work. Earlier test counts apply only to `a2d2fc3` until the final verification below is recorded.
+
+### Local implementation and evidence - 04/11/2026
+
+- Adopted Duy's artifact tables/RPCs and 15 SQL tests from `68b375f`; kept producer/HTTP code on TASK-301. Added strict persisted v1 reservation, revision checks, canonical candidate/peer mapping and same-transaction progress IDs. No history/confirmation/quota backfill.
+- Additional DB guards cover missing-answer invalidation, locked source inserts, publication replay after source deletion, changed whole-source-set readiness, and demotion of reviewed -> generated on source changes so pinned approval 007 cannot approve stale confirmation. Fail/recovery still settles superseded work without refunds.
+- PostgreSQL 15: `RUN_POSTGRES_MIGRATION_TESTS=1 RUN_UPSTREAM_MIGRATION_TESTS=1 python -m unittest discover -s backend/tests/migrations -v` -> **88 passed, 0 skipped, 647.335s** before the final deletion/readiness regression was added. Schema/producer storage did not change in that final fix.
+- Final readiness fix: new two-source deletion regression -> **1 passed (8.758s on final trigger)**; rechecked 12 affected progress/accept/revert/complete/fail/recovery/approval paths -> **12 passed, 195.751s**, including actual 007 on fresh/upgrade. The clarified legacy-with-no-artifact-history fixture also passed separately. There are now **89 PostgreSQL cases**; do not present these separate runs as one full 89-case execution.
+- `ruff check --no-cache backend/app scripts/blueprint backend/tests/migrations` passed; `mypy backend/app --ignore-missing-imports --cache-dir /tmp/mypy-cache` passed (68 files).
+- Full backend/blueprint: `python -m pytest backend/tests scripts/blueprint/tests -q -p no:cacheprovider` -> **685 passed, 89 skipped, 19 warnings, 121.80s** before the final DB-only test addition. Skips were 88 separately executed PostgreSQL cases and one live API test. An earlier bind-mount run had two SymPy 5s timeouts; isolated validation suite passed 32/32 and the unchanged full suite passed after copying mounted code into Linux `/tmp/check`. No timeout/code workaround was added to the application.
+- Cross-PR check: actual reservation RPC JSON -> pinned `68b375f` producer hash/schema validation, frozen mapper and real TASK-304 adapter with offline provider/permit -> **pass**. Eight corrupted copies were rejected before permit/dispatch; actual report retained teacher-review/unknown math. Reproduction: `backend/tests/migrations/README.md`; generated receipt: ignored `scratch/task302-handoff/reservation.json`.
+- Environment: existing `task302-backend-check:20261102` and PostgreSQL 15 Docker images, no network/ports, selected code-only mounts, no `.env`/real keys/cloud/provider calls. Temporary test containers removed. Markdown local links/diff checked.
+- Pending at the checked `68b375f` baseline: public confirmation/background/resume, artifact error mapping and R1 caller recovery. Before publication, Duy delivered `553a009` and reported these paths implemented, including lookup/bootstrap/producer lease/retry. This is new author evidence, not independently verified or adopted here. The two versions of 006 overlap: reconcile them under TASK-302 ownership and verify the combined exact head before integration/deployment; do not ask Duy to implement already delivered paths again.
+- Deployment/live JWT/provider/full HTTP E2E and GitHub approval remain outside this checkpoint's evidence. The owner subsequently authorized commit/push and related handoff comments; publication results are recorded on #36. Preserve PR/issue descriptions and keep #36 Draft.
