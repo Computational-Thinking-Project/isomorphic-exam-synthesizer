@@ -45,7 +45,8 @@ def _bounded_logic(candidate: CandidatePayload, timeout: float) -> CheckResult:
     if result.success and isinstance(result.data, CheckResult):
         return result.data
     return CheckResult(
-        check_name="logic_valid", passed=False,
+        check_name="logic_valid",
+        passed=False,
         status="timeout" if result.timed_out else "unknown",
         detail="Option checker could not finish; no proof of validity is available.",
     )
@@ -74,10 +75,17 @@ class CandidateValidator:
                         verify_question_math, candidate.question_text, option_answer, remaining
                     ),
                 )
-                return ValidationReport(checks=[
-                    syntax, logic, math.to_check_result(), *solution_checks,
-                    CheckResult(
-                        check_name="blueprint_equivalence", passed=False, status="unknown",
-                        detail="General Blueprint constraints and pedagogical equivalence need teacher review.",
-                    ),
-                ])
+                return ValidationReport(
+                    checks=[
+                        syntax,
+                        logic,
+                        math.to_check_result(),
+                        *solution_checks,
+                        CheckResult(
+                            check_name="blueprint_equivalence",
+                            passed=False,
+                            status="unknown",
+                            detail="General Blueprint constraints and pedagogical equivalence need teacher review.",
+                        ),
+                    ]
+                )
