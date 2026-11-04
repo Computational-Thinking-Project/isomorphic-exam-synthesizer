@@ -1,7 +1,10 @@
 -- ==============================================================================
 -- Isomorphic Exam Synthesizer - Database Initialization Schema (TASK-002)
 -- Targets: PostgreSQL 15+ on Supabase (Region: Southeast Asia / Singapore)
--- Features: 10 Tables, Strict Relational RLS, Google OAuth Trigger, Invariant Index
+-- Features: application tables, private review/artifact ledgers, RLS and invariant indexes
+-- After initialization, apply backend/migrations in order. Migration 006 installs
+-- canonical immutability and legacy/display answer-key compatibility triggers.
+-- It also creates the private review ledger, artifact RPC functions and their ACLs.
 -- ==============================================================================
 
 -- ------------------------------------------------------------------------------
@@ -153,12 +156,14 @@ CREATE TABLE IF NOT EXISTS public.version_questions (
   is_current BOOLEAN NOT NULL DEFAULT TRUE,
   regenerated_from_id UUID REFERENCES public.version_questions(id) ON DELETE SET NULL,
   is_reverted BOOLEAN NOT NULL DEFAULT FALSE,
+  regeneration_id UUID NULL,
   validation_report JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Invariant Constraint: At any time, exactly one current record exists per version/source pair
+-- At most one current record per version/source pair; atomic lifecycle RPCs must
+-- additionally ensure that replacement failures do not leave zero current rows.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_single_current_version_question 
   ON public.version_questions (version_id, source_question_id) 
   WHERE is_current = TRUE;
@@ -169,6 +174,9 @@ CREATE TABLE IF NOT EXISTS public.answer_keys (
   version_id UUID NOT NULL REFERENCES public.exam_versions(id) ON DELETE CASCADE,
   question_no INT NOT NULL,
   correct_option TEXT NOT NULL,
+  display_no INT NOT NULL,
+  display_correct_key TEXT NOT NULL,
+  canonical_question_no INT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -176,9 +184,17 @@ CREATE TABLE IF NOT EXISTS public.answer_keys (
 CREATE TABLE IF NOT EXISTS public.review_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   version_question_id UUID NOT NULL REFERENCES public.version_questions(id) ON DELETE CASCADE,
+  session_id UUID NOT NULL REFERENCES public.exam_sessions(id) ON DELETE CASCADE,
+  -- Nullable storage permits unknown historical actors on upgraded databases.
+  -- Fresh databases have no such history: the CHECK below requires an actor.
+  -- Migration 006 uses CHECK ... NOT VALID to retain pre-existing NULLs only.
+  user_id UUID REFERENCES public.users(id),
   action_type public.review_action_type NOT NULL,
   reason TEXT,
   latency_ms INT,
+  api_calls_used INT,
+  regenerated_from_id UUID REFERENCES public.version_questions(id),
+  CONSTRAINT ck_review_logs_actor_required CHECK (user_id IS NOT NULL),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -627,4 +643,60 @@ GRANT UPDATE (title, subject, grade) ON TABLE public.exam_sessions TO authentica
 
 
 
+
+
+-- Confirmed source/Blueprint storage (TASK-302). Apply migration 006 for RPCs,
+-- invalidation, snapshots and ACL-protected worker/owner entry points.
+CREATE TABLE IF NOT EXISTS public.source_artifact_confirmations (
+  confirmation_id UUID PRIMARY KEY,
+  session_id UUID NOT NULL REFERENCES public.exam_sessions(id) ON DELETE CASCADE,
+  actor_id UUID NOT NULL REFERENCES public.users(id),
+  confirmed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  result JSONB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS public.source_artifact_revisions (
+  source_revision_id UUID PRIMARY KEY,
+  confirmation_id UUID NOT NULL REFERENCES public.source_artifact_confirmations(confirmation_id) ON DELETE CASCADE,
+  -- Historical identity survives removal/re-ingestion of a source row. Session
+  -- deletion still cascades through its confirmation, not through live sources.
+  source_question_id UUID NOT NULL,
+  confirmed_input JSONB NOT NULL CHECK (jsonb_typeof(confirmed_input)='object'),
+  source_fingerprint TEXT NOT NULL CHECK (source_fingerprint ~ '^[a-f0-9]{64}$'),
+  UNIQUE(source_revision_id,source_question_id)
+);
+ALTER TABLE public.source_artifact_revisions
+  DROP CONSTRAINT IF EXISTS source_artifact_revisions_source_question_id_fkey;
+CREATE TABLE IF NOT EXISTS public.canonical_blueprint_revisions (
+  blueprint_revision_id UUID PRIMARY KEY,
+  source_revision_id UUID NOT NULL,
+  source_question_id UUID NOT NULL,
+  canonical_blueprint JSONB NOT NULL CHECK (jsonb_typeof(canonical_blueprint)='object'),
+  schema_version TEXT NOT NULL CHECK (schema_version='0.4.0'),
+  published_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  FOREIGN KEY(source_revision_id,source_question_id)
+    REFERENCES public.source_artifact_revisions(source_revision_id,source_question_id) ON DELETE CASCADE,
+  UNIQUE(blueprint_revision_id,source_revision_id,source_question_id)
+);
+CREATE TABLE IF NOT EXISTS public.source_artifact_heads (
+  source_question_id UUID PRIMARY KEY REFERENCES public.source_questions(id) ON DELETE CASCADE,
+  source_revision_id UUID NOT NULL,
+  blueprint_revision_id UUID,
+  FOREIGN KEY(source_revision_id,source_question_id)
+    REFERENCES public.source_artifact_revisions(source_revision_id,source_question_id),
+  FOREIGN KEY(blueprint_revision_id,source_revision_id,source_question_id)
+    REFERENCES public.canonical_blueprint_revisions(blueprint_revision_id,source_revision_id,source_question_id)
+);
+ALTER TABLE public.source_artifact_heads
+  ADD COLUMN IF NOT EXISTS producer_job_id UUID,
+  ADD COLUMN IF NOT EXISTS producer_expires_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS producer_error_code TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_source_producer_job ON public.source_artifact_heads(producer_job_id)
+  WHERE producer_job_id IS NOT NULL;
+ALTER TABLE public.source_artifact_confirmations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.source_artifact_revisions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.canonical_blueprint_revisions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.source_artifact_heads ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.source_artifact_confirmations,public.source_artifact_revisions,
+  public.canonical_blueprint_revisions,public.source_artifact_heads
+  FROM PUBLIC,anon,authenticated,service_role;
 
