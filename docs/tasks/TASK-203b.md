@@ -1,10 +1,11 @@
 # TASK-203b — Stage1 Incomplete Loop — M2
 
-- **Checkpoint 04/11/2026: P1–P4 đã hoàn tất implementation và nghiệm thu local trong phạm vi dưới đây.** Full frontend308/308tests/lint/build đạt; sáu file runtime/test giữ nguyên hash của bản đã kiểm. Chưa commit/push phần code mới hoặc xác minh CI/review tương ứng; PR31 chưa được chuyển Ready từ lượt này.
+- **Checkpoint review 04/11/2026:** bản công bố **1fc501c** đã push, PR31 đã **Ready**, 5/5 checks success; chưa merge/Approve. [Review của Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/31#issuecomment-6627687175) nêu F01/F02 blocking, F03/F04 non-blocking. Đây là đề nghị REQUEST_CHANGES trong Conversation, chưa phải review submission trên GitHub.
+- **Bản sửa sau review:** F01 ở commit **5233322**, F03 ở **38c3553**; F02/F04 cập nhật trong tài liệu này. Full frontend **311/311 tests,0fail/skip, lint/build đạt**; bundle961.94kB warning, code/tests khớp bản đã kiểm. Native Chrome fixture đã tái hiện baseline thoát focus và xác nhận candidate chặn focus nền/cleanup/Tab/Escape; picker từ dialog text của panel thật mở được trong fixture. Bản sửa chưa push, chưa có CI hoặc reviewer xác minh tương ứng; không dùng CI1fc501c để nhận bản sửa đã đạt CI. FrontendDocker đã rebuild Healthy, GET phiên test vẫn2câu/keyC,A. Ca user kiểm lại picker/zoom/F5 sau sửa còn chờ phản hồi; không dùng các ca trước review để nhận bản sửa mới đã nghiệm thu thật đầy đủ.
 - Author: Trung Anh / philip-kkk / TV1 / FE1; BE1 Duy phối hợp contract ingestion. User chọn Duy (`johannguyen015`) review chính, Bội Anh (`htbaax`) phối hợp FE khi liên quan. Duy đã nhận review chính tại PR29; ETA review riêng PR31 và dự phòng chưa chốt, không chờ chọn lại reviewer để code.
 - Nhánh `feat/task-203b-incomplete-loop`, [PR31](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/31), target `dev`. Đã ghép dev chứa squash PR29 **ac18e724be377f10a3fecf2e46c2b72074410bed** bằng merge commit **6ca5b25**; không ghép lại nhánh201. Đây là nền đã kiểm, không phải SHA của chính bản cập nhật M2 này.
 - Workflow [v0.1 proposed](../review/WORKFLOW.md), docs506384b; dùng [M2/M3](../review/TEMPLATES.md). Assignment: mục TASK-203b trong w2_21_10.md của Duy, bản workspace W2_ASSIGNMENT_20261026.md; link assignment chung còn TBD, không tạo M1 cạnh tranh.
-- Hạn W2 chuyển tiếp **tối03/11/2026** theo [xác nhận của Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/29#issuecomment-6499240459). Checkpoint04/11 đã qua hạn; implementation và nghiệm thu local203b đã đạt, còn công bố code/CI/review/merge. ETA review/merge mới chưa chốt. Không tự gia hạn hoặc dùng việc đủ đầu vào để cam kết ngày hoàn tất.
+- Hạn W2 chuyển tiếp **tối03/11/2026** theo [xác nhận của Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/29#issuecomment-6499240459). Checkpoint04/11 đã qua hạn; bản gốc đã công bố/nghiệm thu, bản sửa review còn kiểm lại UI thật/công bố/CI/review/merge. ETA review/merge mới chưa chốt. Không tự gia hạn hoặc dùng việc đủ đầu vào để cam kết ngày hoàn tất.
 
 ## Hành vi và phạm vi
 
@@ -13,6 +14,17 @@ Khi một lần nạp file/text trả incomplete422 có danh sách lỗi, hiển
 Nguồn A đã lưu và input B bị lỗi là hai phần riêng. B422 không thay preview/count của A; không xóa input B khi đóng dialog. Đổi session/account/logout/rời trang phải bỏ dialog/lỗi và phản hồi cũ theo cơ chế201. Timeout/cancel/kết quả chưa rõ tiếp tục dùng cảnh báo và khóa của201; GET không chứng minh POST trước đã dừng hoặc rollback.
 
 Ngoài scope: viết lại service/controller/upload/progress201, editor cho câu đã trích xuất, autosave/backup/restore DB từ FE, parser/schema/Storage/AI, confirm/readiness204, Stage2/SSE/export hoặc đổi stack/UI. Source vẫn chỉ đọc, Blueprint ẩn. Nội dung mẫu là Đại số không cần hình; không coi bộ mẫu là coverage đã đạt.
+
+## Xử lý review F01–F04
+
+| ID | Thay đổi và bằng chứng author | Trạng thái bàn giao |
+|---|---|---|
+| F01 | `IncompleteContentDialog` mở bằng `showModal()`, đóng bằng `close()` để trình duyệt cô lập nền. Cleanup khi đóng/unmount; nativecancel/Đóng/Escape không gọi trùng callback. Đóng modal trước callback mở picker/chuyểntext, giữ user gesture. Lifecycle/integration tests và native Chrome fixture kiểm riêng. | Đã sửa và tự kiểm local; chưa reviewer verified. Native API stub trong tests không giả lập inert hoặc thay bằng chứng browser. |
+| F02 | M2 và2README có checkpoint bản công bố/Ready/CI1fc501c, bản sửa và review riêng; phần trước công bố được đánh nhãn lịch sử. | Đã cập nhật local; không tự chuyển author reported thành reviewer Approve. |
+| F03 | Hướng sửa `MISSING_ANSWER` yêu cầu xác định **đáp án đúng (A/B/C/D)** hoặc bổ sung đáp án tương ứng vào bảng cuối đề; tests kiểm ý nghĩa này. | Đã sửa local; không thay contract/parser. |
+| F04 | Native picker đã có bằng chứng Chrome trên Windows; Safari/iOS chưa kiểm. Browsermatrix sản phẩm chưa được chốt từ lượt này. | Ghi nhận giới hạn, không suy Safari có bug hoặc sản phẩm chỉ hỗ trợ Chrome. |
+
+Khi công bố bản sửa, cập nhật M3/CI đúng head mới và phản hồi cùng F-ID/comment. Author chỉ báo claimed_fixed; Duy kiểm lại trước Approve. Không tự resolve review hoặc nhận task đã merge/Done. Hạn03/11 đã qua, không tự gia hạn.
 
 ## Đầu vào đã có
 
@@ -25,21 +37,21 @@ Ngoài scope: viết lại service/controller/upload/progress201, editor cho câ
 
 ## File và thứ tự triển khai P1–P4
 
-Các file203b mới nằm trong `frontend/src/features/stage1-ingestion/`. P1–P3 đã có implementation local; P4 đã khép kiểm tự động, browser fixture và các ca Docker/API thật do user báo. Code mới chưa được công bố.
+Các file203b nằm trong `frontend/src/features/stage1-ingestion/`. Bảng dưới ghi các vòng ban đầu trước review, đã công bố ở1fc501c. Trạng thái bản sửa sau review nằm ở checkpoint và bảng F01–F04 bên trên.
 
 | Lượt / file | Mục đích và output | Đầu vào đủ dùng | Kiểm trước bàn giao |
 |---|---|---|---|
 |P1 — stage1Errors.js và stage1Errors.test.js, local|Hàm thuần đọc rawcause, nhận dạng incomplete và tạo nhãn lỗi/hướng sửa, giữ unknown fallback|Contract/schema/validator hiện hành; không gọi API|9tests/lint đạt: phân loại, vị trí,10mã/unknown/malformed, giữ input và text an toàn|
 |P2 — IncompleteContentDialog.jsx và tests, local|Danh sách lỗi, close/Escape/Tab/focus và hai hành động file/text, theo UI hiện có|Error model P1 và props bên dưới|7tests/lint đạt: đóng/focus/callback/markup và danh sách dài; native kiểm thêm ở P4|
 |P3 — Stage1SourcePanel.jsx và tests, local|Ghép cause/dialog/picker/focus, không đổi controller/service201|Code201 và P1/P2 đã đạt|7integration mới;72ca liên quan đạt, gồm gửi lại cùng error object, không tự POST, lỗi GET/timeout/route/logout|
-|P4 — README/M2/M3 và evidence, đã tự kiểm|Kiểm hồi quy/UI/API, bàn giao đúng bản và giới hạn|P1–P3 đã đạt, frontendDocker mới Healthy|308tests/lint/build đạt; nativefixture374/376CSS; userPASS L01/L02/L03a/L03b/L04a/L04b gồm Chrome200% vàF5. Chờ công bố/CI/review|
+|P4 — README/M2/M3 và evidence trước review|Kiểm hồi quy/UI/API, bàn giao đúng bản và giới hạn|P1–P3 đã đạt, frontendDocker Healthy|308tests/lint/build; userPASS L01–L04b. Đã công bố1fc501c/Ready/CI5xanh; còn F01/F02 từ review sau đó|
 
 ## Interface và hành vi ghép đã chốt cho plan
 
 - P1: `readIncompleteError(cause)` trả `null` khi không có incomplete envelope đủ dùng; với lỗi hợp lệ trả `{message,errors}`, item gồm `location/title/detail/guidance` là string. Không sửa rawcause/source/input/state hoặc gọi mạng/DOM. Unknown code có fallback; danh sách trộn malformed giữ fallback từng item, tất cả item không hữu ích thì dùng thông báo chung. Giữ thứ tự và nhiều lỗi cùng câu, không tự gộp/xóa.
-- P2: props `open`, `errors`, `onClose`, `onChooseFile`, `onSwitchToText`. Component chỉ hiển thị và phát hành động; không tự ingest, GET, sửa nguồn hoặc mở khóa uncertain. Theo cấu trúc/style và cách keyboard của [CloneSessionModal](../../frontend/src/features/dashboard/CloneSessionModal.jsx), không tạo thư viện dialog mới hoặc sửa modal Dashboard.
+- P2: props `open`, `errors`, `onClose`, `onChooseFile`, `onSwitchToText`. Component không tự ingest, GET, sửa nguồn hoặc mở khóa uncertain. Giữ bố cục hiện có, dùng native `dialog.showModal()/close()` để cô lập nền; nativecancel và các hành động đóng đi qua cùng đường callback có guard. Không tạo thư viện dialog hoặc sửa modal Dashboard. Helper `test-support/dialog.stub.js` chỉ theo dõi lifecycleAPI trong Node tests, không giả lập nativeinert.
 - P3: panel tạo model từ cause bằng useMemo, chỉ mở khi `controller.canSubmit()` và cause chưa được đóng. Một `dismissedCause` ghi lỗi đã đóng; reset trước submit được phép để cùng error object ở lần nạp mới vẫn mở được. Controller201 không đổi. Không mở lại từ rerender/mode change hoặc lỗi GET có requiresReload; không lưu dialog vào localStorage hay thêm request state.
-- `onChooseFile`: đóng dialog, giữ source/text/file cho tới khi chọn mới, setModefile và gọi một picker luôn mounted ngay trong click của user; filepanel bị ẩn khỏi hiển thị/tab order ở mode text. Không dùng timer/retry để mở picker hoặc tự upload. `onSwitchToText`: đóng dialog, setMode hiện có và focus textarea sau mount, giữ text chưa gửi. Pending focus chỉ dùng ref và effect ở panel.
+- `onChooseFile`: gọi native`close()` trước callback để input nền hết inert, giữ source/text/file cho tới khi chọn mới, setModefile và gọi một picker luôn mounted ngay trong click của user; filepanel bị ẩn ở mode text. Không dùng timer/retry để mở picker hoặc tự upload. `onSwitchToText`: close trước callback, setMode hiện có và focus textarea sau mount, giữ text chưa gửi. Pending focus vẫn chỉ dùng ref/effect ở panel. ChromeWindows là môi trường native đã kiểm; Safari/iOS chưa kiểm, không tự cam kết browsermatrix.
 - `onClose`: chỉ đóng dialog, không xóa source/input/cause hoặc tự POST. Focus về control đã mở nếu còn hợp lệ; hành động đổi mode focus input đích. Khi account/route đã rời hoặc control disabled/unmount, không cố focus DOM cũ. Có nhãn dialog, aria-modal, Tab/Shift+Tab trong dialog, Escape và focus return.
 - Giữ guard201: submit bắt đầu thì lỗi cũ không tiếp tục mở; đổi session/account/logout/unmount bỏ dialog, response/progress cũ bị bỏ. Không đổi timeout15s/401-refresh chung, không phân loại timeout/5xx/invalid200 thành lỗi có thể gửi lại an toàn.
 
@@ -49,7 +61,7 @@ Các file203b mới nằm trong `frontend/src/features/stage1-ingestion/`. P1–
 
 | ID / người liên quan | Kết luận đủ để bắt đầu | Phần còn lại |
 |---|---|---|
-|203b-Q01 — Trung Anh/TASK201|Resolved về đầu vào:201 đã merge, nhánh203b đã syncdev6ca5b25; interface/callbacks đã ghép local|P1–P4 tự kiểm/nghiệm thu local đã đạt; còn commit/push, CI và review đúng head trước merge|
+|203b-Q01 — Trung Anh/TASK201|Resolved:201 đã merge;203b đã công bố1fc501c/Ready/CI5xanh|Còn công bố bản sửa review và CI/reviewer xác minh đúng head mới trước merge|
 |203b-Q02 — Duy/BE1|Đã có contract/schema/validator và bằng chứng giữ nguồn201 từng phần, đủ code classifier/dialog|Dialog/envelope và vòng sửa→nạp đã kiểm trong phạm vi dưới đây; chưa Storage audit/direct non-owner mutation|
 |203b-Q03 — Duy + Trung Anh|Hạn03/11 và reviewer đã rõ; không chờ quyết định kỹ thuật mới|Assignment link chung, ETA hoàn tất/review/dự phòng còn TBD; không tự gia hạn, không coi là blocker P1|
 |203b-Q04 — Tâm; Duy điều phối|Resolved: PR19/20 merge31/10, gateW1 đạt|Không tiếp tục lấy W1 làm blocker|
@@ -66,7 +78,9 @@ Confirm/hash/Blueprint và readiness Stage2 còn ở TASK-204, không phải blo
 - Giữ giới hạn201: chưa live-test riêng direct non-ownerPOST/RPC, Storage object audit hoặc native upload100%; parser1MiB trailing spaces chạm timeout20s còn cần đánh giá riêng. Không biến các điểm này thành kết quả203b hoặc mở rộng sang sửa backend trong PR31.
 - Mốc commit dự kiến theo quyền user, sau checks: `feat(stage1): classify incomplete ingestion errors`; `feat(stage1): add incomplete content dialog`; `feat(stage1): connect incomplete source recovery`; docs/evidence theo mốc phù hợp. Không tự commit/push từ việc cập nhật M2; không bắt chia commit chỉ theo số file.
 
-## Bàn giao thực tế và phần còn lại
+## Lịch sử tự kiểm trước khi công bố1fc501c
+
+Các ghi nhận bên dưới phản ánh thời điểm trước push/Ready và trước review F01–F04, không phải trạng thái hiện hành. Bằng chứng baseline308 và user L01–L04b không thay kiểm lại phần modal sau sửa; xem checkpoint hiện hành ở đầu file.
 
 - Đã syncdev6ca5b25 trước lượt này: merged tree so devac18e72 chỉ thêm plan203b, không đổi runtime. Baseline mới sau merge đã **285/285frontend tests,0fail/skip, lint/build đạt**, Node22.20/npm10.9.3; bundle956.34kB warning giữ. Full diff từ nhánh cũ có11whitespace entries trong docs upstream; scoped diff-check so dev đạt, không sửa ngoài scope.
 - Sau user giao thực hiện plan, P1/P2/P3 đã code local và qua từng vòng; full **308/308tests,0fail/skip, lint/build** đạt trên candidate hiện tại, bundle961.68kB warning. Các suite9/7/72 đã nằm trong tổng308, không cộng lại. Không đổi service/controller/API/Auth/store/harness/backend hoặc dependencies, không chạy backend/cloud/AI mới.

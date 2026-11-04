@@ -1,12 +1,14 @@
 # Stage1 — source ingestion và session entry
 
-## TASK-203b — local04/11/2026
+## TASK-203b — checkpoint sau review04/11/2026
 
-`stage1Errors.js` đọc riêng incomplete422 envelope, tạo lỗi toàn đề/câu và hướng sửa cho10mã cùng unknown/malformed fallback. `IncompleteContentDialog` chỉ hiển thị/callback và quản lý keyboard/focus; không gọi API. [M2/kiểm/giới hạn203b](../../../../docs/tasks/TASK-203b.md).
+`stage1Errors.js` đọc riêng incomplete422 envelope, tạo lỗi toàn đề/câu và hướng sửa cho10mã cùng unknown/malformed fallback. `MISSING_ANSWER` nhắc xác định đáp án đúng A/B/C/D hoặc bổ sung key tương ứng cuối đề. `IncompleteContentDialog` dùng native`showModal()/close()` để cô lập nền, có Đóng/Escape/nativecancel/Tab/focus và cleanup khi đóng/unmount; không gọi API. [M2/kiểm/giới hạn203b](../../../../docs/tasks/TASK-203b.md).
 
-Panel dùng model từ rawcause và một dismissedCause, reset trước submit được phép; đóng/đổi mode không mở lại lỗi cũ, lần nạp mới cùng error object vẫn mở được. Một picker luôn mounted để click chọn file từ dialog text vẫn thuộc user gesture; filepanel ẩn ở mode text. Giữ source/input, setMode/guards/controller201 nguyên trạng; lỗi GET/timeout không mở nhầm dialog hoặc đổi cảnh báo uncertain. Không thêm dependency/store/hook chung.
+Panel dùng model từ rawcause và một dismissedCause, reset trước submit được phép; đóng/đổi mode không mở lại lỗi cũ, lần nạp mới cùng error object vẫn mở được. Dialog close trước callback để input hết inert; picker luôn mounted và gọi đồng bộ trong click user, không tự POST. Filepanel ẩn ở mode text. Giữ source/input, setMode/guards/controller201 nguyên trạng; lỗi GET/timeout không mở nhầm dialog hoặc đổi cảnh báo uncertain. Không thêm dependency/store/hook chung.
 
-P1/P2/P3 đã tự review/audit9/7/72ca liên quan, full308tests/lint/build đạt, bundle961.68kBwarning. Native Auth/HTTPfixture kiểm keyboard/dialog20lỗi dài ở374/376CSS, không phải API thật/đúng375/zoom200%. FrontendDocker rebuildHealthy; user báoPASS04/11 L01dialog/source-filepreservation, L02picker→validfile/chủđộngnạp/F5, L03afile→textgiữdraft/focus, L03btext→picker/samefile/khôngtựnạp, L04akeyboard/headerclickEscape/focusreturn. L04bzoomChrome200%/cuộn/CTA và trả100%/F5 cũng PASS theo user; P4 chức năng đã khép. Chưa có Storage audit, commit/push code mới, CI/review tương ứng hoặc GitHub Ready/Done203b; TASK201/TASK103 dưới đây là lịch sử nền.
+Bản1fc501c đã push/Ready/CI5success; [review Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/31#issuecomment-6627687175) nêu F01/F02 blocking và F03/F04 non-blocking, chưa Approve/merge. Baseline308tests/user L01–L04b trước review được giữ là lịch sử. Bản sửa F01/F03 ở5233322/38c3553 đã **311tests/lint/build đạt**, bundle961.94kBwarning; native Chrome fixture tái hiện baseline thoát focus và xác nhận candidate chặn focus nền/Tab/Escape/cleanup, picker từ dialog text mở được. Helper `test-support/dialog.stub.js` chỉ spy lifecycleAPI, không giả lập inert; tests còn kiểm close trước picker, cancelpicker giữ file/text và logout cleanup. FrontendDocker mớiHealthy/GETtest2C,A; user kiểm lại picker/zoom/F5 còn chờ phản hồi. Bản sửa chưa push/CI/reviewer xác minh; xem M2 để biết phạm vi.
+
+Native picker mới có bằng chứng ChromeWindows, Safari/iOS chưa kiểm; không tự chốt sản phẩm chỉ hỗ trợ Chrome. Chưa có Storage audit/directmutation/nativeupload100% mới hoặc AI/confirm/Stage2/export end-to-end. TASK201/TASK103 bên dưới là lịch sử nền.
 
 ## TASK-201 checkpoint04/11/2026
 

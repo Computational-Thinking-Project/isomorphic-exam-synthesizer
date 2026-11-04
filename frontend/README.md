@@ -1,9 +1,11 @@
 # Frontend — thiết lập local và checkpoint TASK-101/103
 
-## TASK-203b — implementation local04/11/2026
+## TASK-203b — checkpoint sau review04/11/2026
 
 - Đã thêm classifier incomplete422, dialog hướng sửa và ghép panel201, giữ source/input và guard hiện có. [M2](../docs/tasks/TASK-203b.md), [Stage1 README](src/features/stage1-ingestion/README.md). Không đổi backend/Auth/client/controller hoặc dependency.
-- Full308tests/lint/build đạt, bundle961.68kBwarning. Browser Auth/HTTPfixture đã kiểm keyboard/dialog/mobile374/376CSS; frontendDocker mớiHealthy. User báoPASS04/11 L01dialog/giữnguồn-file, L02sửa-file/nạp/F5,L03a/btext-filecallbacks/samefile/khôngtựnạp,L04akeyboard/headerclickEscape/focusreturn. L04bzoomChrome200%/cuộn/CTA và trả100%/F5 cũng PASS theo user. P4 chức năng đã khép; code chưa commit/push, chưa CI/review head mới hoặc GitHub Ready/Done. Các checkpoint201/103 bên dưới là lịch sử.
+- Bản công bố1fc501c đã push/Ready, CI5/5success; [review của Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/31#issuecomment-6627687175) còn F01/F02 blocking, F03/F04 non-blocking. Chưa Approve/merge. Baseline308tests và userPASS L01–L04b trước review là lịch sử, không thay nghiệm thu bản sửa.
+- Bản sửa F01/F03 ở5233322/38c3553: dialog dùng native`showModal()/close()` để cô lập nền, cleanup khi đóng/unmount và close trước callback mở picker/chuyểntext. Copy thiếu key nhắc đúng **đáp án đúng**. Full **311tests/lint/build đạt**, bundle961.94kBwarning; native Chrome fixture tái hiện baseline thoát focus rồi xác nhận candidate chặn nền/Tab/Escape/cleanup và picker từtext mở được. Node stub chỉ kiểm lifecycleAPI, không thay nativeinert. FrontendDocker đã rebuildHealthy, GET test2C,A; user kiểm lại picker/zoom/F5 còn chờ phản hồi. Bản sửa chưa push/CI/reviewer xác minh.
+- Native picker đã kiểm Chrome trên Windows; Safari/iOS chưa kiểm, không tự chốt browsermatrix sản phẩm. Giới hạn Storage/directmutation/parser và TASK204/Stage2/export giữ nguyên. Các checkpoint201/103 bên dưới là lịch sử.
 
 ## TASK-201 — kiểm cuối local04/11/2026
 
