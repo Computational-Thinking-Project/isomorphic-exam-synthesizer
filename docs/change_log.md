@@ -491,3 +491,16 @@ Full expanded PostgreSQL71 cases passed, including14 producer cases and pinned
 targeted16-case result is recorded on PR. Local170 caller/preparation/config tests,
 Ruff and mypy84 files pass; full backend/Blueprint1007 collect, not execution.
 Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
+
+## DEC-BE1-016: F11 reconcile receipt trước adapter
+
+- Duy/TASK-301: thêm owner-only review_lookup_regeneration(UUID,UUID,UUID), chỉ đọc
+  receipt với shared lock, ownership/resource binding. Không reserve/recovery/audit
+  hoặc charge. Worker không được EXECUTE lookup của owner.
+- Caller xử lý completed/active/failed/recovered replay trước adapter guard;
+  fresh key thiếu adapter chỉ lookup rồi503, không tạo operation. Failure outcome
+  reconciliation cũng dùng lookup thay reserve. Không thay validator F10.
+- Đã kiểm125 tests caller liên quan, ba PostgreSQL lookup cases, Ruff/mypy84 files.
+  HTTP regression thêm adapter unavailable khi completed replay, chờ CI thực thi.
+- Chưa nhận C03/bootstrap/background/frozen-v1 hoặc toàn TASK-301 đã hoàn thành;
+  authority và kế hoạch đã cập nhật thứ tự theo chỉ đạo của Duy.

@@ -431,6 +431,32 @@ BEGIN
     'progress',public._review_progress(s.id));
 END $$;
 
+CREATE OR REPLACE FUNCTION public.review_lookup_regeneration(p_session_id UUID,p_question_id UUID,p_operation_id UUID)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
+SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE s public.exam_sessions; o public.review_operations;
+BEGIN
+  SELECT * INTO s FROM public.exam_sessions WHERE id=p_session_id FOR SHARE;
+  IF NOT FOUND OR auth.uid() IS NULL OR s.user_id IS DISTINCT FROM auth.uid() THEN
+    RAISE EXCEPTION 'REVIEW_NOT_FOUND' USING ERRCODE='P0002';
+  END IF;
+  IF p_operation_id IS NULL THEN RAISE EXCEPTION 'REVIEW_INVALID_PAYLOAD' USING ERRCODE='22023'; END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.version_questions q JOIN public.exam_versions v ON v.id=q.version_id
+    WHERE q.id=p_question_id AND v.session_id=s.id) THEN
+    RAISE EXCEPTION 'REVIEW_NOT_FOUND' USING ERRCODE='P0002';
+  END IF;
+  SELECT * INTO o FROM public.review_operations WHERE operation_id=p_operation_id;
+  IF NOT FOUND THEN RETURN jsonb_build_object('found',false); END IF;
+  IF o.session_id IS DISTINCT FROM s.id OR o.question_id IS DISTINCT FROM p_question_id
+    OR o.actor_id IS DISTINCT FROM auth.uid() THEN
+    RAISE EXCEPTION 'REVIEW_IDEMPOTENCY_CONFLICT' USING ERRCODE='22023';
+  END IF;
+  RETURN jsonb_build_object('found',true,'reservation',o.reservation_result ||
+    jsonb_build_object('replayed',true,'operation_status',o.status,'settlement',o.settlement_result));
+END $$;
+REVOKE ALL ON FUNCTION public.review_lookup_regeneration(UUID,UUID,UUID) FROM PUBLIC,anon,authenticated,service_role;
+GRANT EXECUTE ON FUNCTION public.review_lookup_regeneration(UUID,UUID,UUID) TO authenticated;
+
 CREATE OR REPLACE FUNCTION public.review_reserve_regeneration(p_session_id UUID, p_question_id UUID, p_operation_id UUID)
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, public, pg_temp AS $$

@@ -192,11 +192,11 @@ class ReviewService:
             # A completion may have committed while its response was lost. The
             # owner receipt lookup uses the same IDs and the DB session lock.
             try:
-                replay = await self.repo.reserve_regeneration(sid, qid, op)
-                if replay.operation_status == "completed":
+                replay = await self.repo.lookup_regeneration(sid, qid, op)
+                if replay is not None and replay.operation_status == "completed":
                     result = completion_receipt(replay.settlement, sid, qid, op)
                     return result.question_id
-                if replay.operation_status in ("failed", "recovered"):
+                if replay is not None and replay.operation_status in ("failed", "recovered"):
                     return None
             except ReviewDomainException:
                 pass
@@ -228,11 +228,30 @@ class ReviewService:
                 await asyncio.sleep(0.1 * 2**attempt)
         raise AssertionError("Reservation retry loop did not return")
 
+    async def _replay(self, reservation: ReservationReceipt) -> RegeneratedQuestionResponse:
+        if reservation.operation_status == "completed":
+            result = completion_receipt(
+                reservation.settlement, str(reservation.session_id),
+                str(reservation.question_id), reservation.operation_id,
+            )
+            return await self._result(
+                str(reservation.session_id), str(reservation.question_id), result.question_id
+            )
+        if reservation.operation_status == "active":
+            raise ReviewDomainException(409, "ERR_QUESTION_BUSY", "This operation is already in progress")
+        raise ReviewDomainException(
+            409, "ERR_OPERATION_FINISHED", "This operation has ended; use a new key for a new action"
+        )
+
     async def reject_question(
         self, session_id: str, question_id: str, user_id: str, idempotency_key: str | None = None
     ) -> RegeneratedQuestionResponse:
         op = action_key(idempotency_key)
         await self._question(session_id, question_id)
+        if idempotency_key is not None:
+            existing = await self.repo.lookup_regeneration(session_id, question_id, op)
+            if existing is not None:
+                return await self._replay(existing)
         # Without a key there cannot be a receipt to replay. With a key, the RPC
         # checks for its receipt before the edit guard, including after approval.
         if idempotency_key is None:
@@ -252,19 +271,8 @@ class ReviewService:
                 # every reserve is R1, still awaiting owner acknowledgement.
                 await self.repo.recover_stale_operations(session_id)
                 reservation = await self._reserve_receipt(session_id, question_id, op)
-        if reservation.operation_status == "completed":
-            result = completion_receipt(reservation.settlement, session_id, question_id, op)
-            return await self._result(session_id, question_id, result.question_id)
-        if reservation.operation_status != "active":
-            raise ReviewDomainException(
-                409,
-                "ERR_OPERATION_FINISHED",
-                "This operation has ended; use a new key for a new action",
-            )
-        if reservation.replayed:
-            raise ReviewDomainException(
-                409, "ERR_QUESTION_BUSY", "This operation is already in progress"
-            )
+        if reservation.replayed or reservation.operation_status != "active":
+            return await self._replay(reservation)
 
         committed_id: UUID
         try:

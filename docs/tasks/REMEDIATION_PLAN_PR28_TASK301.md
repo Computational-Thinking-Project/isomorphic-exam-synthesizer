@@ -1,5 +1,26 @@
 # TASK-301 / PR #28 — kế hoạch hoàn thiện hiện hành, 04/11/2026
 
+## Thứ tự thực hiện đã được Duy yêu cầu sau review Đạt tại68b375f
+
+1. Đồng bộ plan và cùng authority; giữ F10 và phần discovery F06 đã verified.
+2. F11: lookup receipt thuần đọc trước adapter guard; fresh action thiếu adapter
+   không tạo operation/charge. Đang triển khai và kiểm caller/SQL.
+3. Bootstrap: xác nhận nguồn không cần legacy Blueprint, không dựng fallback
+   canonical. Giữ một endpoint confirm-source và trạng thái canonical pending rõ.
+4. Nối HTTP và producer nền (Duy đã chọn): durable status/claim/lease dài hơn
+   extraction deadline, publication đúng lượt chạy; status GET và retry/resume.
+5. C03: reserve/assert từ persisted frozen-v1, canonical current/peers, revision
+   binding ở acquire/complete; cập nhật actual DB fixtures, không nới validator.
+6. Recovery trước reserve mới sau lookup/adapter/guards; GET thuần đọc; khép kín
+   settlement/lost response/readiness và handoff approval #33.
+7. Integration public confirmation→producer→DB→reserve→adapter thật/provider giả→
+   permit→complete, rồi full checks/CI đúng final head.
+8. M5 C03/F11 cùng thread/ID, owner #36 adopt authority và reviewer xác minh/Approve.
+
+Đây là thứ tự hiện hành, thay các thứ tự/checklist lịch sử ở dưới. Không còn
+chờ giao owner producer; không có quyền tự deploy, sửa nhánh người khác hoặc merge.
+Chi tiết interface chỉ giữ ở [authority](../api/review-rpc-contract.md).
+
 ## Cập nhật triển khai producer sau kế hoạch
 
 Đã tích hợp SQL baseline #36 a2d2fc3; cùng006 có producer revision/history/head

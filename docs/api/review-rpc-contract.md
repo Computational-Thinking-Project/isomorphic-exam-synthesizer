@@ -555,3 +555,20 @@ Producer verification update: the full expanded PostgreSQL suite completed with
 producer replay races are checked in the subsequent targeted16-case run; final
 results/head are recorded on PR. Caller/preparation/config170 passed, Ruff and
 mypy84 files passed; all backend/Blueprint1007 tests collect (not full execution).
+
+## F11 owner receipt lookup — caller implementation
+
+review_lookup_regeneration(p_session_id UUID,p_question_id UUID,p_operation_id UUID)
+is an authenticated-owner-only read RPC, with the service_role role explicitly
+not granted EXECUTE. It takes a shared parent lock, checks ownership and question
+association, then returns {found:false} or {found:true,reservation:<stored receipt
+with replayed:true/current operation status/settlement>}. Rebinding an existing ID
+to a different resource/actor is an idempotency conflict. No operation, recovery,
+quota, audit or session timestamp is mutated by lookup.
+
+Reject with a supplied key looks up the receipt before requiring an adapter.
+Completed replay reads its committed result; active/failed/recovered outcomes do
+not start a provider. A missing key/receipt still requires the adapter before
+reserve or any other new mutation. Uncertain failure reconciliation also uses this
+read lookup instead of invoking reserve. R1/new-action recovery and the frozen-v1
+integration remain the following implementation steps, not implied complete here.

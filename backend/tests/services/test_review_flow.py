@@ -126,6 +126,15 @@ class State:
         }
         if (name in worker_names) != (role == "worker"):
             raise RuntimeError("42501 permission denied")
+        if name == "review_lookup_regeneration":
+            record = self.operations.get(params["p_operation_id"])
+            if record is None:
+                return {"found": False}
+            if (record["session_id"], record["question_id"]) != (
+                params["p_session_id"], params["p_question_id"]
+            ):
+                raise RuntimeError("REVIEW_IDEMPOTENCY_CONFLICT")
+            return {"found": True, "reservation": deepcopy(record) | {"replayed": True}}
         if name == "review_reserve_regeneration":
             op = params["p_operation_id"]
             if op in self.operations:
@@ -572,6 +581,43 @@ def test_active_replay_does_not_start_another_generator(state):
     with pytest.raises(ReviewDomainException) as error:
         immediate(state.service().reject_question(state.sid, state.qid, "owner", str(key)))
     assert error.value.status_code == 409 and state.provider_calls == 0
+
+
+def test_completed_replay_without_adapter_reads_receipt_without_mutations(state):
+    key = str(uuid4())
+    first = immediate(state.service().reject_question(state.sid, state.qid, "owner", key))
+    state.status = "approved"
+    state.calls.clear()
+    offline = ReviewService(state.owner, state.worker, ai_generator=None)
+    result = immediate(offline.reject_question(state.sid, state.qid, "owner", key))
+    assert result.question_id == first.question_id
+    assert [n for _, n, _ in state.calls] == ["review_lookup_regeneration"]
+    assert state.provider_calls == state.charges == 1
+
+
+@pytest.mark.parametrize("status", ["active", "failed", "recovered"])
+def test_existing_noncompleted_replay_without_adapter_has_no_mutation(state, status):
+    key = uuid4()
+    immediate(state.service().repo.reserve_regeneration(state.sid, state.qid, key))
+    if status != "active":
+        immediate(state.service().repo.settle_failure(state.sid, state.qid, key, "GENERATION_FAILED"))
+        if status == "recovered":
+            state.operations[str(key)]["operation_status"] = status
+            state.operations[str(key)]["settlement"].update(operation_status=status, recovered=True)
+    state.calls.clear()
+    with pytest.raises(ReviewDomainException) as error:
+        immediate(ReviewService(state.owner, state.worker).reject_question(state.sid, state.qid, "owner", str(key)))
+    assert error.value.status_code == 409
+    assert [n for _, n, _ in state.calls] == ["review_lookup_regeneration"]
+    assert state.charges == state.provider_calls == 0
+
+
+def test_fresh_key_without_adapter_only_reads_lookup(state):
+    with pytest.raises(ReviewDomainException) as error:
+        immediate(ReviewService(state.owner, state.worker).reject_question(state.sid, state.qid, "owner", str(uuid4())))
+    assert error.value.error_code == "ERR_AI_SERVICE_UNAVAILABLE"
+    assert [n for _, n, _ in state.calls] == ["review_lookup_regeneration"]
+    assert not state.operations and not state.charges
 
 
 def test_legacy_snapshot_fails_before_permit_and_is_settled(state):

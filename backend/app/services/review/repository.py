@@ -189,6 +189,22 @@ class ReviewRepository:
             raise error from exc
         return rpc_object(response.data)
 
+    async def lookup_regeneration(
+        self, session_id: str, question_id: str, operation_id: UUID
+    ) -> ReservationReceipt | None:
+        data = self._rpc("review_lookup_regeneration", {
+            "p_session_id": session_id, "p_question_id": question_id,
+            "p_operation_id": str(operation_id),
+        })
+        if data == {"found": False} and type(data.get("found")) is bool:
+            return None
+        if set(data) != {"found", "reservation"} or data.get("found") is not True:
+            raise ReviewDomainException(503, "ERR_INVALID_RESERVATION", "Invalid receipt lookup")
+        receipt = reservation_receipt(data["reservation"], session_id, question_id, operation_id)
+        if not receipt.replayed:
+            raise ReviewDomainException(503, "ERR_INVALID_RESERVATION", "Lookup did not return a replay")
+        return receipt
+
     async def reserve_regeneration(
         self, session_id: str, question_id: str, operation_id: UUID
     ) -> ReservationReceipt:

@@ -56,6 +56,7 @@ def test_http_reject_runs_actual_caller_and_replays_completed_receipt(http_revie
     assert len(ownership) == 2
     state.status = "approved"
     state.operations[key]["expires_at"] = "2000-01-01T00:00:00Z"
+    app.dependency_overrides[review.get_ai_generator] = lambda: None
     replay = client.post(action_url(state, "reject"), headers={"Idempotency-Key": key})
     assert replay.status_code == 200, replay.text
     assert replay.json()["question_id"] == first.json()["question_id"]
