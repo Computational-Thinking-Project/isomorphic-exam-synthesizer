@@ -364,7 +364,15 @@ BEGIN
   SELECT count(*) INTO ns FROM public.source_questions WHERE session_id=p_session_id;
   IF config_count <> 1 OR ns=0 OR EXISTS (
     SELECT 1 FROM public.source_questions s LEFT JOIN public.question_blueprints b ON b.source_question_id=s.id
-    WHERE s.session_id=p_session_id AND b.confirmed_at IS NULL
+    WHERE s.session_id=p_session_id AND CASE
+      WHEN EXISTS (SELECT 1 FROM public.source_artifact_confirmations c WHERE c.session_id=p_session_id)
+      THEN NOT EXISTS (
+        SELECT 1 FROM public.source_artifact_heads h
+        JOIN public.source_artifact_revisions r ON r.source_revision_id=h.source_revision_id
+        JOIN public.canonical_blueprint_revisions c ON c.blueprint_revision_id=h.blueprint_revision_id
+        WHERE h.source_question_id=s.id AND public._artifact_source_input(s)=r.confirmed_input
+      )
+      ELSE b.confirmed_at IS NULL END
   ) OR EXISTS (
     SELECT question_no FROM public.source_questions WHERE session_id=p_session_id GROUP BY question_no HAVING count(*)>1
   ) THEN RAISE EXCEPTION 'REVIEW_SOURCE_MISMATCH' USING ERRCODE='22023'; END IF;
@@ -824,7 +832,7 @@ RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
 SET search_path=pg_catalog,public,pg_temp AS $$
 DECLARE s public.exam_sessions; saved public.source_artifact_confirmations;
   element JSONB; result JSONB; receipt JSONB; comparison JSONB; prior_comparison JSONB;
-  revision UUID; source_id UUID; n INT; legacy JSONB; sources JSONB := '[]'::jsonb;
+  revision UUID; source_id UUID; n INT; confirmed TIMESTAMPTZ;
 BEGIN
   -- Only the backend worker can supply Python-computed hashes. Actor comes from
   -- the verified HTTP identity, never an actor/hash field in the public request.
@@ -876,14 +884,23 @@ BEGIN
       RAISE EXCEPTION 'ARTIFACT_SOURCE_MISMATCH' USING ERRCODE='22023';
     END IF;
   END LOOP;
-  -- Existing Stage1 status/security/legacy-blueprint checks stay atomic with the
-  -- source revision write. This function requires migration003 at runtime.
-  legacy := public.confirm_exam_source(s.id,n,true,p_expected_updated_at);
+  -- Confirm SOURCE before canonical extraction. No legacy Blueprint prerequisite
+  -- or fallback row is used as confirmation evidence. Retain ADR004 silent audit.
+  IF EXISTS (SELECT 1 FROM public.source_questions WHERE session_id=s.id AND has_security_warning) THEN
+    INSERT INTO public.security_events(session_id,user_id,event_type,severity,sanitized_detail)
+      SELECT s.id,p_actor_id,'PROMPT_INJECTION_DETECTED','WARN',jsonb_build_object(
+        'action','confirm_source','warning_questions_count',count(*),
+        'flagged_questions',jsonb_agg(jsonb_build_object('id',q.id,'question_no',q.question_no)),
+        'silent_audit',true,'adr_version','ADR-004')
+      FROM public.source_questions q WHERE q.session_id=s.id AND q.has_security_warning;
+  END IF;
+  confirmed := clock_timestamp();
+  UPDATE public.exam_sessions SET status='blueprinted',updated_at=confirmed WHERE id=s.id;
   receipt := jsonb_build_object('confirmation_id',p_confirmation_id,'session_id',s.id,
-    'actor_id',p_actor_id,'confirmed_at',legacy->'confirmed_at','status','blueprinted',
-    'total_questions',n,'total_blueprints',legacy->'total_blueprints','replayed',false,'sources',p_sources);
+    'actor_id',p_actor_id,'confirmed_at',confirmed,'status','blueprinted','canonical_status','pending',
+    'total_questions',n,'total_blueprints',0,'replayed',false,'sources',p_sources);
   INSERT INTO public.source_artifact_confirmations(confirmation_id,session_id,actor_id,confirmed_at,result)
-    VALUES(p_confirmation_id,s.id,p_actor_id,(legacy->>'confirmed_at')::timestamptz,receipt);
+    VALUES(p_confirmation_id,s.id,p_actor_id,confirmed,receipt);
   FOR element IN SELECT value FROM jsonb_array_elements(p_sources) LOOP
     source_id := (element->>'source_question_id')::uuid;
     revision := (element->>'source_revision_id')::uuid;

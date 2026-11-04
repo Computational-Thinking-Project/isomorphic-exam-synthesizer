@@ -64,13 +64,15 @@ class SourceArtifactTests(PostgresCase):
         return self.call("publish_canonical_blueprint", SID,
                          json.dumps(publication or self.publication), check=check)
 
-    def test_confirmation_records_exact_python_input_hash_actor_and_legacy_transition(self):
+    def test_confirmation_records_exact_source_and_pending_canonical(self):
         receipt = self.confirm()
         self.assertEqual(receipt["sources"], self.sources)
         self.assertEqual(receipt["actor_id"], OWNER)
         self.assertEqual(self.value("SELECT status FROM exam_sessions;"), "blueprinted")
         self.assertEqual(self.value("SELECT count(*) FROM source_artifact_revisions;"), "1")
-        self.assertEqual(self.value("SELECT count(*) FROM question_blueprints WHERE confirmed_at IS NOT NULL;"), "1")
+        self.assertEqual(receipt["total_blueprints"], 0)
+        self.assertEqual(receipt["canonical_status"], "pending")
+        self.assertEqual(self.value("SELECT count(*) FROM question_blueprints WHERE confirmed_at IS NOT NULL;"), "0")
         saved = json.loads(self.value("SELECT confirmed_input FROM source_artifact_revisions;"))
         self.assertEqual(saved, self.sources[0]["confirmed_input"])
         self.assertEqual(self.value("SELECT source_fingerprint FROM source_artifact_revisions;"), self.sources[0]["source_fingerprint"])
@@ -193,11 +195,30 @@ class SourceArtifactTests(PostgresCase):
 
     def test_review_progress_returns_same_snapshot_unapproved_ids(self):
         self.confirm()
+        self.publish()
         self.sql(f"INSERT INTO generation_configs(session_id,n_versions) VALUES ('{SID}',1);")
         result = self.call("review_get_progress", SID, worker=False)
         progress = result["progress"]
         self.assertEqual(len(progress["unapproved_question_ids"]), progress["current_slots"]-progress["approved_slots"])
         self.assertEqual(progress["unapproved_question_ids"], [rpc_fixtures.QID])
+
+    def test_bootstrap_needs_neither_legacy_row_nor_old_confirmation_function(self):
+        self.sql("DELETE FROM question_blueprints; DROP FUNCTION confirm_exam_source(UUID,INT,BOOLEAN,TIMESTAMPTZ);")
+        receipt = self.confirm()
+        self.assertEqual(receipt["canonical_status"], "pending")
+        self.assertFalse(self.call("get_source_artifacts", SID)["ready"])
+        self.assertEqual(self.value("SELECT count(*) FROM question_blueprints;"), "0")
+        self.publish()
+        self.assertTrue(self.call("get_source_artifacts", SID)["ready"])
+        self.sql(f"INSERT INTO generation_configs(session_id,n_versions) VALUES ('{SID}',1);")
+        progress = self.call("review_get_progress", SID, worker=False)["progress"]
+        self.assertEqual(progress["expected_slots"], 1)
+
+    def test_bootstrap_silent_security_audit_is_atomic_and_replay_does_not_duplicate(self):
+        self.sql("UPDATE source_questions SET has_security_warning=true; DELETE FROM question_blueprints;")
+        self.confirm()
+        self.confirm()
+        self.assertEqual(self.value("SELECT count(*) FROM security_events WHERE event_type='PROMPT_INJECTION_DETECTED';"), "1")
 
     def test_concurrent_confirmation_replays_one_committed_revision(self):
         script = rpc_fixtures.ReviewRpcTests.auth("service_role") + (

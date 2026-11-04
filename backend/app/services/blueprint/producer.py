@@ -48,13 +48,16 @@ class SourceConfirmation(BaseModel):
     confirmed_at: AwareDatetime
     status: Literal["blueprinted"]
     total_questions: Annotated[StrictInt, Field(ge=1, le=20)]
-    total_blueprints: Annotated[StrictInt, Field(ge=1, le=20)]
+    total_blueprints: Annotated[StrictInt, Field(ge=0, le=20)]
+    # Older confirmation receipts counted legacy rows. They must not imply ready;
+    # only get_source_artifacts' current canonical heads establish readiness.
+    canonical_status: Literal["pending"] = "pending"
     replayed: StrictBool
     sources: list[SourceArtifact]
 
     @model_validator(mode="after")
     def consistent(self) -> "SourceConfirmation":
-        if len(self.sources) != self.total_questions or self.total_blueprints != self.total_questions:
+        if len(self.sources) != self.total_questions or self.total_blueprints > self.total_questions:
             raise ValueError("Confirmation counts do not match its sources")
         if len({s.source_question_id for s in self.sources}) != self.total_questions:
             raise ValueError("Duplicate source artifact")
@@ -126,7 +129,7 @@ class SourceArtifactRepository:
             receipt = SourceConfirmation.model_validate(data)
             if (receipt.session_id, receipt.actor_id, receipt.confirmation_id) != (
                 UUID(session_id), UUID(actor_id), confirmation_id,
-            ) or receipt.total_questions != len(prepared) or receipt.total_blueprints != len(prepared):
+            ) or receipt.total_questions != len(prepared) or (not receipt.replayed and receipt.total_blueprints != 0):
                 raise ValueError("Confirmation identity/count mismatch")
             if len(receipt.sources) != len(expected) or len({s.source_question_id for s in receipt.sources}) != len(expected):
                 raise ValueError("Confirmation source set mismatch")

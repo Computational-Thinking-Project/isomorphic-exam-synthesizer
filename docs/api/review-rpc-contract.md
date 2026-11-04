@@ -572,3 +572,15 @@ not start a provider. A missing key/receipt still requires the adapter before
 reserve or any other new mutation. Uncertain failure reconciliation also uses this
 read lookup instead of invoking reserve. R1/new-action recovery and the frozen-v1
 integration remain the following implementation steps, not implied complete here.
+
+## Bootstrap confirmation — current producer semantics
+
+confirm_source_artifacts confirms source without calling confirm_exam_source003
+or requiring/creating a legacy question_blueprints row. It validates the source
+and writes server actor/time, ADR004 silent security audit, source revisions and
+Stage1 status atomically. The receipt uses status=blueprinted for compatibility,
+canonical_status=pending and total_blueprints=0. Historical receipts that counted
+legacy rows are never used to infer canonical readiness; current heads determine
+ready. Confirmed sessions use canonical heads for review readiness, not legacy
+confirmed_at. Original003 remains unchanged for historical callers until the
+existing public confirm-source route is migrated in the following step.

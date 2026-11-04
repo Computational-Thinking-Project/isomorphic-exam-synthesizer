@@ -504,3 +504,15 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
   HTTP regression thêm adapter unavailable khi completed replay, chờ CI thực thi.
 - Chưa nhận C03/bootstrap/background/frozen-v1 hoặc toàn TASK-301 đã hoàn thành;
   authority và kế hoạch đã cập nhật thứ tự theo chỉ đạo của Duy.
+
+## DEC-BE1-017: Bootstrap nguồn không phụ thuộc legacy Blueprint
+
+- Duy/TASK-301: worker confirm_source_artifacts không gọi003 và không yêu cầu/
+  tạo legacy Blueprint. Source revision, status blueprinted và silent security
+  audit commit cùng transaction; canonical_status pending/total_blueprints0.
+- Python confirmation DTO không coi legacy blueprint count là canonical ready;
+  review readiness của session đã có artifacts dùng canonical heads.
+- PostgreSQL18 cases pass, gồm bootstrap khi xóa legacy row và bỏ hẳn function003,
+  silent audit/replay, rollback, publication/revision và producer→SQL.
+- Public route/background/resume/lease và frozen-v1 vẫn tiếp tục theo kế hoạch;
+  không coi blueprinted là canonical ready hoặc báo task Done.
