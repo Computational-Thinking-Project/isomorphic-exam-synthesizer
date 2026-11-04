@@ -68,6 +68,143 @@ const input = (container, text) => {
 const submit = (container) => container.querySelector('form').dispatchEvent({
   type: 'submit', bubbles: true, cancelable: true, preventDefault() {},
 });
+const selectFile = (container, files) => {
+  const picker = container.querySelector('input[type="file"]');
+  picker.files = files;
+  picker.value = files.length ? `C:\\fakepath\\${files[0].name}` : '';
+  picker.dispatchEvent({ type: 'change', bubbles: true });
+  return picker;
+};
+const dropFiles = (container, files) => container.querySelector('input[type="file"]').parentNode.dispatchEvent({
+  type: 'drop', bubbles: true, dataTransfer: { files }, preventDefault() {},
+});
+
+test('file picker: chỉ chọn/đổi cách nhập không POST; reset chọn lại cùng file, submit gửi đúng multipart', async () => {
+  const app = mount();
+  await app.render();
+  await act(async () => input(app.container, 'Text chưa gửi'));
+  await act(async () => button(app.container, 'Tải tệp').click());
+  const file = new File(['### Câu 1: Giải $3x-5=10$.'], 'đại số.MD');
+  let picker;
+  await act(async () => { picker = selectFile(app.container, [file]); });
+  assert.equal(picker.value, '');
+  assert.equal(picker.getAttribute('accept'), '.docx,.tex,.md');
+  assert(app.container.textContent.includes('Đã chọn: đại số.MD'));
+  assert(app.container.textContent.includes(`(${file.size.toLocaleString('vi-VN')} byte)`));
+  await act(async () => selectFile(app.container, [file]));
+  await act(async () => button(app.container, 'Nhập trực tiếp').click());
+  assert.equal(app.container.querySelector('textarea').value, 'Text chưa gửi');
+  await act(async () => button(app.container, 'Tải tệp').click());
+  assert(app.container.textContent.includes('Đã chọn: đại số.MD'));
+  assert.deepEqual(calls, ['get']);
+  api.defaults.adapter = async (config) => {
+    calls.push(config.method);
+    assert(config.url.endsWith('/ingest-file'));
+    assert(config.data instanceof FormData);
+    assert.deepEqual([...config.data.keys()], ['file']);
+    assert.equal(config.data.get('file').name, file.name);
+    assert.equal(await config.data.get('file').text(), await file.text());
+    return response(config, { session_id: 'session-a', total_questions: 1, questions: [question('qb')] });
+  };
+  await act(async () => submit(app.container));
+  assert(app.container.textContent.includes('Nguồn qb'));
+  assert(!app.container.textContent.includes('Nguồn qa'));
+  assert.deepEqual(calls, ['get', 'post']);
+  await app.unmount();
+});
+
+test('drop/file validation:PDF/đuôi khác/0byte/quá10MiB/nhiều file chặn POST, sát giới hạn và bỏ chọn được', async () => {
+  const app = mount();
+  await app.render();
+  await act(async () => button(app.container, 'Tải tệp').click());
+  for (const files of [[], [new File(['x'], 'de.pdf')], [new File(['x'], 'de.txt')],
+    [new File([], 'de.md')], [new File([new Uint8Array(10 * 1024 * 1024 + 1)], 'de.md')],
+    [new File(['x'], 'a.md'), new File(['y'], 'b.tex')]]) {
+    await act(async () => dropFiles(app.container, files));
+    assert(app.container.querySelector('[role="alert"]'));
+    assert(app.container.textContent.includes('Chưa chọn tệp.'));
+    await act(async () => submit(app.container));
+    assert.deepEqual(calls, ['get']);
+    assert(app.container.textContent.includes('Nguồn qa'));
+  }
+  for (const file of [new File([new Uint8Array(10 * 1024 * 1024)], 'giới hạn.DOCX'), new File(['x'], 'đề.TeX')]) {
+    await act(async () => dropFiles(app.container, [file]));
+    assert.equal(app.container.querySelector('[role="alert"]'), null);
+    assert(app.container.textContent.includes(`Đã chọn: ${file.name}`));
+  }
+  await act(async () => button(app.container, 'Bỏ chọn tệp').click());
+  assert(app.container.textContent.includes('Chưa chọn tệp.'));
+  assert.deepEqual(calls, ['get']);
+  await app.unmount();
+});
+
+test('file progress: không total không phần trăm;100% chỉ đang xử lý,422 giữ nguồn/file để chọn lại', async () => {
+  const app = mount();
+  await app.render();
+  await act(async () => button(app.container, 'Tải tệp').click());
+  const file = new File(['Nguồn sai định dạng'], 'đề.md');
+  await act(async () => selectFile(app.container, [file]));
+  let progress;
+  let rejectPost;
+  api.defaults.adapter = (config) => {
+    calls.push(config.method);
+    progress = config.onUploadProgress;
+    return new Promise((resolve, reject) => { rejectPost = () => reject({ config,
+      response: { status: 422, data: { detail: { errors: [{ question_no: 1, error_type: 'MISSING_ANSWER' }] } } } }); });
+  };
+  await act(async () => submit(app.container));
+  assert.equal(app.container.querySelector('progress').getAttribute('value'), null);
+  await act(async () => progress({ loaded: 4 }));
+  assert(app.container.textContent.includes('Đang tải tệp lên…'));
+  assert.equal(app.container.querySelector('progress').getAttribute('value'), null);
+  await act(async () => progress({ loaded: 5, total: 10 }));
+  assert(app.container.textContent.includes('50%'));
+  await act(async () => progress({ loaded: 10, total: 10 }));
+  assert(app.container.textContent.includes('Đã tải tệp lên. Đang xử lý nguồn…'));
+  assert(!app.container.textContent.includes('Đã nạp'));
+  assert(app.container.textContent.includes('Nguồn qa'));
+  assert.notEqual(button(app.container, 'Nạp nguồn').getAttribute('disabled'), null);
+  assert.notEqual(button(app.container, 'Nhập trực tiếp').getAttribute('disabled'), null);
+  await act(async () => submit(app.container));
+  assert.deepEqual(calls, ['get', 'post']);
+  await act(async () => rejectPost());
+  assert(app.container.textContent.includes('Chưa đọc được đầy đủ'));
+  assert(app.container.textContent.includes('Nguồn qa'));
+  assert(app.container.textContent.includes('Đã chọn: đề.md'));
+  assert.equal(app.container.querySelector('progress'), null);
+  await act(async () => selectFile(app.container, [file]));
+  assert.equal(app.container.querySelector('input[type="file"]').value, '');
+  await app.unmount();
+});
+
+test('file pending: đổi route hủy và bỏ progress/response cũ, không giữ file ở phiên mới', async () => {
+  const app = mount();
+  await app.render();
+  await act(async () => button(app.container, 'Tải tệp').click());
+  await act(async () => selectFile(app.container, [new File(['nguồn A'], 'riêng-A.md')]));
+  let configA;
+  let resolvePost;
+  api.defaults.adapter = (config) => {
+    if (config.method === 'post') {
+      configA = config;
+      return new Promise((resolve) => { resolvePost = () => resolve(response(config, {
+        session_id: 'session-a', total_questions: 1, questions: [question('late-A')],
+      })); });
+    }
+    return Promise.resolve(response(config, detail('session-b', [question('qb', 'session-b')])));
+  };
+  await act(async () => submit(app.container));
+  await app.navigate('session-b');
+  assert(configA.signal.aborted);
+  await act(async () => { configA.onUploadProgress({ loaded: 10, total: 10 }); resolvePost(); });
+  assert(app.container.textContent.includes('Nguồn qb'));
+  assert(!app.container.textContent.includes('late-A'));
+  assert(!app.container.textContent.includes('riêng-A.md'));
+  assert.equal(app.container.querySelector('progress'), null);
+  await act(async () => button(app.container, 'Tải tệp').click());
+  assert(app.container.textContent.includes('Chưa chọn tệp.'));
+  await app.unmount();
+});
 
 test('sự kiện input/submit thật của React gọi service rồi đổi đồng thời nguồn/count;422 giữ nguồn cũ', async () => {
   const app = mount();

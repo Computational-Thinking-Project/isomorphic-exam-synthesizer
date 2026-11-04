@@ -18,6 +18,11 @@ function fixture(overrides = {}) {
   const controller = createSourceIngestionController({
     initialDetail: detail(),
     validateText: (text) => text,
+    validateFile: (file) => {
+      if (!file) throw Object.assign(new Error('Chọn tệp'), { code: 'ERR_INGEST_INPUT' });
+      return file;
+    },
+    ingestFile: async (...args) => { writes.push(args); return { session_id: 'session-a', questions: b }; },
     ingestText: async (...args) => { writes.push(args); return { session_id: 'session-a', questions: b }; },
     load: async (...args) => { reads.push(args); return detail({ source_questions: b }); },
     ...overrides,
@@ -199,3 +204,138 @@ test('nguồn non-draft ban đầu không gửi POST', async () => {
   await controller.submit();
   assert.equal(writes.length, 0);
 });
+
+const file = new File(['Câu 1: Giải 3x-5=10.'], 'đại số.md');
+
+test('file: chọn/đổi cách nhập không POST, giữ text và nguồn; chỉ submit mới gửi file', async () => {
+  const { controller, writes } = fixture();
+  controller.setText('Văn bản chưa gửi');
+  controller.setMode('file');
+  controller.selectFiles([file]);
+  controller.setMode('text');
+  controller.setMode('file');
+  assert.equal(controller.getSnapshot().text, 'Văn bản chưa gửi');
+  assert.equal(controller.getSnapshot().detail.source_questions, a);
+  assert.equal(writes.length, 0);
+  await controller.submit();
+  assert.equal(writes[0][1], file);
+  assert.equal(typeof writes[0][2].onUploadProgress, 'function');
+  assert.equal(controller.getSnapshot().detail.source_questions, b);
+  assert.equal(controller.getSnapshot().upload, null);
+});
+
+test('file: thiếu/chọn nhiều file chặn gửi, bỏ file cũ; chọn lại cùng file và bỏ chọn được', async () => {
+  const { controller, writes } = fixture();
+  controller.setMode('file');
+  await controller.submit();
+  assert.equal(controller.getSnapshot().cause.code, 'ERR_INGEST_INPUT');
+  controller.selectFiles([file]);
+  controller.selectFiles([file, file]);
+  assert.equal(controller.getSnapshot().file, null);
+  assert.match(controller.getSnapshot().error, /đúng một/);
+  await controller.submit();
+  assert.equal(writes.length, 0);
+  controller.selectFiles([file]);
+  controller.clearFile();
+  controller.selectFiles([file]);
+  assert.equal(controller.getSnapshot().error, '');
+  assert.equal(controller.getSnapshot().file, file);
+});
+
+test('file: tiến độ không total/total0 là chưa xác định;100% vẫn pending, không thay nguồn hoặc cho gửi tiếp', async () => {
+  const pending = deferred();
+  let config;
+  const { controller } = fixture({ ingestFile: (id, input, options) => { config = options; return pending.promise; } });
+  controller.setMode('file');
+  controller.selectFiles([file]);
+  const operation = controller.submit();
+  for (const total of [undefined, 0, NaN, Infinity]) {
+    config.onUploadProgress({ loaded: 5, total });
+    assert.equal(controller.getSnapshot().upload.total, null);
+    assert.equal(controller.getSnapshot().upload.complete, false);
+  }
+  config.onUploadProgress({ loaded: 5, total: 10 });
+  assert.deepEqual(controller.getSnapshot().upload, { loaded: 5, total: 10, complete: false });
+  controller.selectFiles([new File(['x'], 'khác.md')]);
+  controller.setMode('text');
+  controller.clearFile();
+  assert.equal(controller.getSnapshot().file, file);
+  assert.equal(controller.getSnapshot().mode, 'file');
+  config.onUploadProgress({ loaded: 10, total: 10 });
+  const complete = controller.getSnapshot();
+  assert.equal(complete.phase, 'submitting');
+  assert.equal(complete.detail.source_questions, a);
+  assert(!controller.canSubmit());
+  config.onUploadProgress({ loaded: 2 });
+  assert.equal(controller.getSnapshot(), complete);
+  pending.resolve({ session_id: 'session-a', questions: b });
+  await operation;
+  const saved = controller.getSnapshot();
+  config.onUploadProgress({ loaded: 3, total: 10 });
+  assert.equal(controller.getSnapshot(), saved);
+});
+
+test('file:422 giữ file/text/nguồn A và raw cause, sửa file rồi chủ động nạp lại', async () => {
+  const cause = httpError(422);
+  let attempts = 0;
+  const { controller } = fixture({ ingestFile: async () => {
+    if (++attempts === 1) throw cause;
+    return { session_id: 'session-a', questions: b };
+  } });
+  controller.setText('text riêng');
+  controller.setMode('file');
+  controller.selectFiles([file]);
+  await controller.submit();
+  assert.equal(controller.getSnapshot().file, file);
+  assert.equal(controller.getSnapshot().text, 'text riêng');
+  assert.equal(controller.getSnapshot().cause, cause);
+  assert.equal(controller.getSnapshot().detail.source_questions, a);
+  controller.selectFiles([file]);
+  await controller.submit();
+  assert.equal(attempts, 2);
+  assert.equal(controller.getSnapshot().detail.source_questions, b);
+});
+
+test('file: cancel sau upload khóa uncertain; chọn file/đổi cách nhập/GET không xóa cảnh báo hay mở khóa', async () => {
+  const pending = deferred();
+  let config;
+  const { controller } = fixture({ ingestFile: (id, input, options) => { config = options; return pending.promise; } });
+  controller.setMode('file');
+  controller.selectFiles([file]);
+  const operation = controller.submit();
+  config.onUploadProgress({ loaded: 10, total: 10 });
+  controller.cancelRequest();
+  assert(config.signal.aborted);
+  controller.selectFiles([file]);
+  controller.selectFiles([]);
+  controller.setMode('text');
+  await controller.reload();
+  const snapshot = controller.getSnapshot();
+  assert(snapshot.uncertain);
+  assert.match(snapshot.error, /Chưa xác nhận/);
+  assert(!controller.canSubmit());
+  config.onUploadProgress({ loaded: 4, total: 10 });
+  pending.resolve({ session_id: 'session-a', questions: a });
+  await operation;
+  assert.equal(controller.getSnapshot(), snapshot);
+});
+
+for (const boundary of ['dispose', 'account']) {
+  test(`file: ${boundary} bỏ cả progress và response muộn`, async () => {
+    const pending = deferred();
+    let config;
+    let current = true;
+    const { controller } = fixture({ isCurrent: () => current,
+      ingestFile: (id, input, options) => { config = options; return pending.promise; } });
+    controller.setMode('file');
+    controller.selectFiles([file]);
+    const operation = controller.submit();
+    const snapshot = controller.getSnapshot();
+    if (boundary === 'dispose') controller.dispose();
+    else current = false;
+    config.onUploadProgress({ loaded: 10, total: 10 });
+    pending.resolve({ session_id: 'session-a', questions: b });
+    await operation;
+    assert.equal(controller.getSnapshot(), snapshot);
+  });
+}

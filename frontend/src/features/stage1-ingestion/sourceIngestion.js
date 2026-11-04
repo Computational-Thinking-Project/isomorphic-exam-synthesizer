@@ -15,10 +15,11 @@ function errorMessage(cause) {
 }
 
 // One instance per account/route. Inputs and last saved source remain separate.
-export function createSourceIngestionController({ initialDetail, ingestText, load, validateText, isCurrent = () => true }) {
+export function createSourceIngestionController({ initialDetail, ingestText, ingestFile, load, validateText, validateFile, isCurrent = () => true }) {
   const id = initialDetail.id;
   let state = {
-    detail: initialDetail, text: '', phase: 'idle', error: '', message: '', cause: null,
+    detail: initialDetail, text: '', mode: 'text', file: null, upload: null,
+    phase: 'idle', error: '', message: '', cause: null,
     uncertain: false, requiresReload: false, unavailable: false,
   };
   const listeners = new Set();
@@ -49,6 +50,31 @@ export function createSourceIngestionController({ initialDetail, ingestText, loa
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     canSubmit,
     dispose: invalidate,
+    setMode(mode) {
+      if (busy() || !isCurrent() || !['text', 'file'].includes(mode)) return;
+      publish({ mode, ...(state.cause?.code === 'ERR_INGEST_INPUT' ? { error: '', cause: null } : {}) });
+    },
+    selectFiles(files) {
+      if (busy() || !isCurrent()) return;
+      try {
+        if (files.length !== 1) {
+          throw Object.assign(new Error('Vui lòng chọn đúng một tệp đề nguồn.'), { code: 'ERR_INGEST_INPUT' });
+        }
+        const file = validateFile(files[0]);
+        publish({ file, upload: null, message: '',
+          ...(state.cause?.code === 'ERR_INGEST_INPUT' ? { error: '', cause: null } : {}) });
+      } catch (cause) {
+        // An invalid replacement must not accidentally submit the previously selected file.
+        publish({ file: null, upload: null, message: '',
+          ...(!state.uncertain && !state.requiresReload && !state.unavailable
+            ? { error: errorMessage(cause), cause } : {}) });
+      }
+    },
+    clearFile() {
+      if (busy() || !isCurrent()) return;
+      publish({ file: null, upload: null,
+        ...(state.cause?.code === 'ERR_INGEST_INPUT' ? { error: '', cause: null } : {}) });
+    },
     setText(text) {
       if (busy() || !isCurrent()) return;
       publish({ text, ...(state.cause?.code === 'ERR_INGEST_INPUT' ? { error: '', cause: null } : {}) });
@@ -57,30 +83,39 @@ export function createSourceIngestionController({ initialDetail, ingestText, loa
       if (!busy() || !isCurrent()) return;
       const wasWriting = state.phase === 'submitting';
       invalidate();
-      publish({ phase: 'idle', message: '',
+      publish({ phase: 'idle', upload: null, message: '',
         ...(wasWriting ? { uncertain: true, error: UNCERTAIN_MESSAGE }
           : { error: 'Đã dừng đọc lại phiên. Nguồn đang hiển thị là bản đã biết trước đó.' }) });
     },
     async submit() {
       if (!canSubmit()) return;
-      let text;
-      try { text = validateText(state.text); }
+      const fileMode = state.mode === 'file';
+      let input;
+      try { input = fileMode ? validateFile(state.file) : validateText(state.text); }
       catch (cause) { publish({ error: errorMessage(cause), cause, message: '' }); return; }
       const operation = begin();
-      publish({ phase: 'submitting', error: '', message: '', cause: null });
+      publish({ phase: 'submitting', upload: fileMode ? { complete: false, loaded: 0, total: null } : null,
+        error: '', message: '', cause: null });
       try {
-        const result = await ingestText(id, text, { signal: operation.signal });
+        const config = { signal: operation.signal };
+        if (fileMode) config.onUploadProgress = (event) => {
+          if (!operation.current() || state.phase !== 'submitting' || state.upload.complete) return;
+          const loaded = Number.isFinite(event.loaded) && event.loaded >= 0 ? event.loaded : 0;
+          const total = Number.isFinite(event.total) && event.total > 0 ? event.total : null;
+          publish({ upload: { loaded, total, complete: total !== null && loaded >= total } });
+        };
+        const result = await (fileMode ? ingestFile(id, input, config) : ingestText(id, input, config));
         if (!operation.current()) return;
         assertSameSession(result.session_id);
         if (!Array.isArray(result.questions)) throw new Error('Unexpected source response');
-        publish({ detail: { ...state.detail, source_questions: result.questions }, phase: 'idle',
+        publish({ detail: { ...state.detail, source_questions: result.questions }, phase: 'idle', upload: null,
           message: `Đã nạp ${result.questions.length} câu nguồn.`, uncertain: false });
       } catch (cause) {
         if (!operation.current()) return;
         const status = cause?.response?.status;
         const uncertain = cause?.code !== 'ERR_INGEST_INPUT'
           && (cause?.outcomeUncertain === true || !status || status >= 500 || status === 408);
-        publish({ phase: 'idle', cause, uncertain,
+        publish({ phase: 'idle', upload: null, cause, uncertain,
           error: uncertain ? UNCERTAIN_MESSAGE : errorMessage(cause),
           requiresReload: status === 409,
           unavailable: [401, 403, 404].includes(status) });
