@@ -141,6 +141,11 @@ async def get_user_db(
     return get_authenticated_client(current_user.access_token)
 
 
+def get_service_db() -> Client:
+    """Dependency that returns a Supabase client with service_role privileges for background worker RPCs."""
+    return get_service_role_client()
+
+
 def assert_ownership(
     table: str,
     resource_id: str,
