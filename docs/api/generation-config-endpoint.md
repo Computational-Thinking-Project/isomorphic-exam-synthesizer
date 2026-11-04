@@ -64,21 +64,36 @@ FUNCTION public.claim_generation_job(
 - **Response:**
 ```json
 {
-  "success": true,
   "session_id": "c1f7b822-7772-4e0e-9411-cf974205c317",
   "job_id": "d1e2f3a4-b5c6-4d7e-8f9a-0b1c2d3e4f5a",
-  "is_retry": false,
+  "status": "generating",
+  "starting_quota": 0,
+  "gemini_call_count": 0,
   "config": {
     "n_versions": 4,
     "active_variation_modes": ["NUMERICAL"],
     "ordering_preferences": {"shuffle_questions": true, "shuffle_options": true}
   },
-  "current_quota": 0,
   "committed_targets": [
-    {"version_code": "101", "source_question_id": "..."}
+    {
+      "version_code": "101",
+      "source_question_id": "8a7b6c5d-4e3f-2a1b-0c9d-8e7f6a5b4c3d",
+      "question_no": 1
+    }
   ]
 }
 ```
+
+#### Chi tiết các trường trong Response của `claim_generation_job`:
+| Trường | Kiểu dữ liệu | Bắt buộc | Mô tả |
+|---|---|---|---|
+| `session_id` | UUID (string) | Có | ID phiên làm việc đang thực thi |
+| `job_id` | UUID (string) | Có | Fencing token duy nhất cho worker instance |
+| `status` | string | Có | Luôn mang giá trị `"generating"` khi claim thành công |
+| `starting_quota` | integer | Có | Số call Gemini đã tiêu thụ trước phiên claim này |
+| `gemini_call_count` | integer | Có | Số call Gemini hiện tại (bằng `starting_quota`) |
+| `config` | object | Có | Toàn bộ object cấu hình sinh đề đã lưu ở bước `save_generation_config` |
+| `committed_targets` | array of objects | Có | Danh sách các vị trí `(version_code, source_question_id, question_no)` đã hoàn thành câu hỏi ở các lượt chạy trước (rỗng nếu lần đầu sinh) |
 
 ### 2.2. `reserve_generation_quota`
 Đặt trước quota gọi Gemini AI (giới hạn cứng 250 calls/session).

@@ -363,7 +363,7 @@ async def clone_session(
     new_session_data: dict[str, Any] = {
         "user_id": current_user.id,
         "title": new_title,
-        "subject": orig.get("subject", "Toán"),
+        "subject": orig.get("subject") or "Toán",
         "grade": orig.get("grade", 12),
         "status": "draft",
         "gemini_call_count": 0,

@@ -661,7 +661,7 @@ def test_clone_session_fails_and_cleans_up_on_db_exception(
 def test_get_session_detail_invalid_blueprint_modes_structure(
     client, mock_auth_user, test_user_id, auth_headers
 ):
-    """GET /api/sessions/{id} returns is_ready=False and supported_modes=None when variation_modes is an object (F02)."""
+    """GET /api/sessions/{id} returns is_ready=False and supported_modes=None when variation_modes is an object (F02/F09)."""
     mock_db = MagicMock()
 
     def table_router(table_name):
@@ -672,7 +672,14 @@ def test_get_session_detail_invalid_blueprint_modes_structure(
                 "id": "session-invalid-modes",
                 "user_id": test_user_id,
                 "title": "Đề kiểm tra",
+                "subject": "Toán",
+                "grade": 12,
                 "status": "blueprinted",
+                "gemini_call_count": 0,
+                "retry_count": 0,
+                "approved_at": None,
+                "created_at": "2026-10-18T10:00:00Z",
+                "updated_at": "2026-10-18T10:00:00Z",
             }]
             mock_t.select.return_value.eq.return_value.execute.return_value = exec_s
         elif table_name == "source_questions":
@@ -718,7 +725,7 @@ def test_get_session_detail_invalid_blueprint_modes_structure(
 def test_clone_session_default_title_and_subject_encoding(
     client, mock_auth_user, test_user_id, auth_headers
 ):
-    """POST /api/sessions/{id}/clone uses correct Vietnamese encoding for default title and subject (F08)."""
+    """POST /api/sessions/{id}/clone uses correct Vietnamese encoding for default title and fallback subject (F08/F09)."""
     mock_db = MagicMock()
     inserted_records = []
 
@@ -730,15 +737,26 @@ def test_clone_session_default_title_and_subject_encoding(
                 "id": "session-orig",
                 "user_id": test_user_id,
                 "title": "Đề toán 12",
-                "subject": "Toán",
+                "subject": None,  # Test fallback to default 'Toán' when subject is absent/None
                 "grade": 12,
+                "status": "draft",
+                "gemini_call_count": 0,
+                "retry_count": 0,
+                "approved_at": None,
+                "created_at": "2026-10-18T10:00:00Z",
+                "updated_at": "2026-10-18T10:00:00Z",
             }]
             mock_t.select.return_value.eq.return_value.execute.return_value = exec_s
 
             def capture_insert(data):
                 inserted_records.append(data)
                 exec_ins = MagicMock()
-                exec_ins.data = [{**data, "id": "session-cloned-new"}]
+                exec_ins.data = [{
+                    **data,
+                    "id": "session-cloned-new",
+                    "created_at": "2026-10-18T12:00:00Z",
+                    "updated_at": "2026-10-18T12:00:00Z",
+                }]
                 m = MagicMock()
                 m.execute.return_value = exec_ins
                 return m
@@ -762,4 +780,7 @@ def test_clone_session_default_title_and_subject_encoding(
     assert len(inserted_records) == 1
     assert inserted_records[0]["title"] == "Đề toán 12 (Bản sao)"
     assert inserted_records[0]["subject"] == "Toán"
+    data = response.json()
+    assert data["title"] == "Đề toán 12 (Bản sao)"
+    assert data["subject"] == "Toán"
 
