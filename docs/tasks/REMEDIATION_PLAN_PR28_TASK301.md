@@ -1,5 +1,21 @@
 # TASK-301 / PR #28 — kế hoạch hoàn thiện hiện hành, 04/11/2026
 
+## Cập nhật triển khai producer sau kế hoạch
+
+Đã tích hợp SQL baseline #36 a2d2fc3; cùng006 có producer revision/history/head
+storage, worker confirmation/publication và read-only resume state. Python producer
+đã kiểm qua RPC PostgreSQL thật với extractor fixture. Progress có IDs cùng snapshot.
+Đây là implementation trên301 để owner review, không phải đã chấp nhận P1–P4/R1.
+Public confirm-source/background flow và frozen-v1 reservation/assertion vẫn chưa
+nối; các phần đó tiếp tục thuộc scope301 đã được Duy giao, không còn chờ phân công.
+Chi tiết interface duy nhất tại [authority](../api/review-rpc-contract.md).
+
+**A12 — configured AI dependency (mới phát hiện khi tích hợp):** route kiểm
+gemini_api_key chữ thường không có trong Settings, khiến adapter luôn unavailable.
+Đã đổi sang get_gemini_api_keys(), có bốn ca dùng Settings thật, kể cả numbered
+keys; thiếu key không khởi tạo gateway. Đây là author self-check, không đóng thay
+reviewer hoặc phủ nhận ca F04 guard thiếu cấu hình đã verified trước đó.
+
 ## 1. Phạm vi, nguồn và mức bằng chứng
 
 - Chế độ **author / lập kế hoạch**, dùng M2; M3/M5 chỉ điền khi thực sự triển khai/kiểm. Lượt này không sửa code, push, đăng comment, approve hoặc merge.

@@ -438,3 +438,56 @@ producer/persistence, progress IDs, integration/conflict and review gates remain
   Prepared payload không phải bằng chứng DB đã confirm; chưa nối write RPC/job/API.
 - Local166 tests caller/producer pass; Ruff pass, mypy83 source files pass.
   CI/final-head/DB acceptance vẫn phải kiểm; không deploy, Approve hoặc merge PR.
+
+
+## DEC-TV7-005: Nền schema Stage 3 tương thích dữ liệu cũ (TASK-302)
+
+- Ngày: 31/10/2026; người đề xuất/triển khai: Hùng (`benalexx007`).
+- Trạng thái: nền schema để bàn giao/review trong Draft PR; không phải toàn bộ TASK-302 đã hoàn tất.
+- Bối cảnh: schema dev đã có canonical nhưng thiếu cột audit của TASK-301; `answer_keys` dùng tên cũ. Migration `CREATE TABLE IF NOT EXISTS` không nâng cấp bảng đã tồn tại.
+- Thực hiện: migration 006 có transaction; backfill session audit và ánh xạ answer key khi suy ra duy nhất, giữ các cột cũ đồng bộ với `display_*`, chặn UPDATE canonical của cùng candidate. Dữ liệu thiếu/mâu thuẫn phải rollback, không tự xóa hay chọn giá trị.
+- Ngoại lệ actor được người phụ trách chốt 31/10/2026: giữ NULL cho lịch sử chưa biết, không suy ra actor từ owner. Dùng CHECK NOT VALID để giữ dữ liệu cũ nhưng chặn INSERT/UPDATE thiếu actor; fresh schema dùng CHECK bình thường. Không tự VALIDATE/SET NOT NULL khi lịch sử chưa có backfill đã xác minh. Đây là ngoại lệ đối với W3 NOT NULL toàn bộ dữ liệu, chưa phải đồng nghiệp đã xác nhận đọc hoặc PR đã approve.
+- Tại mốc nền 31/10: interface RPC, quota/concurrency, revert và readiness còn chờ; các xác nhận/triển khai sau đó ghi ở DEC-TV7-006. Không dùng schema tests để nhận đã có transaction lifecycle an toàn.
+- Phạm vi ảnh hưởng: schema/migration và tests PostgreSQL; không sửa nhánh TASK-301, frontend, cloud hoặc description PR/issue.
+- Plan và kết quả kiểm: [TASK-302](tasks/TASK-302.md). [Contract RPC](api/review-rpc-contract.md) giữ interface hiện tại; ledger/RPC được bổ sung sau mốc nền theo DEC-TV7-006.
+
+## DEC-TV7-006: Ledger và RPC review nguyên tử (TASK-302)
+
+- Ngày: 01/11/2026; triển khai: Hùng (`benalexx007`), theo xác nhận policy/boundary của Duy và callback của Đạt trên [PR #36](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36).
+- Trạng thái: đã code để bàn giao kiểm/tích hợp; chưa deploy, approve hoặc nghiệm thu toàn luồng.
+- Bối cảnh: upfront reservation/local dictionaries không bảo vệ permit sau restart/đa worker; acknowledged count không biết chắc số grant đã commit khi mất response.
+- Thực hiện: mở rộng migration 006 của cùng PR bằng private operation/attempt/action receipts và tám RPC; khóa session trước mutation; reserve không charge, grant charge từng lượt dưới trần 30/session và 4/operation; replay không cấp quyền dispatch lần nữa. Complete gộp candidate/audit/invalidation; fail/recover quyết toán theo ledger, giữ uncertain charge và prior candidate; canonical của candidate mới độc lập.
+- Policy đã xác nhận: JWT-owner cho user actions, service-role worker với actor từ reservation; Model A; binary reject; revert candidate đầu; readiness theo đủ source/version slots; invalidation toàn phiên khi replacement. [Contract](api/review-rpc-contract.md) dẫn từng comment quyết định và mô tả lost-response reconciliation.
+- Cập nhật 02/11: [Tâm đã xác nhận canonical/display và invalidation](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6555305930); [Duy xác nhận actor/thứ tự](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6567937686). Owner quyết định giữ tên 006 hiện có, thứ tự 004/005 → 006 → 007, yêu cầu Duy bỏ implementation ledger/acquire trùng trong 008; [comment phối hợp](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6568374582). Nếu 008 đã được áp dụng thì cần báo trạng thái trước khi chuyển đổi, không reset quota/receipts. 006 có guard dừng an toàn trước ledger không tương thích.
+- Giới hạn: snapshot DB legacy chưa là canonical blueprint/hash đã confirm của TASK-304; Duy/Đạt cần xác nhận mapper/storage, không tự bịa hash hay thêm source columns. TASK-301 đã có acquire wrapper nhưng còn direct lifecycle writes/parser; SQL 007 TASK-305 đã khóa session nhưng còn readiness/config compatibility. Caller/shuffle/Supabase/AI E2E chưa kiểm.
+- Phạm vi: SQL/schema, PostgreSQL tests và docs TASK-302; không sửa nhánh tác giả khác hoặc description PR/issue đã có. Không đánh dấu finding #28 verified thay reviewer; PR giữ Draft đến khi đủ bàn giao/tích hợp.
+- Cập nhật local 03/11: bổ sung worker-only `review_recover_session(UUID)` để discovery + recovery theo session dưới cùng khóa DB, không mở SELECT ledger. Có chín RPC; recovery theo operation ID vẫn giữ nguyên. Kiểm thêm restart, cạnh tranh recovery/completion, rollback, quota và chuỗi 004/005 (`31ed3bc`) → 006 → 007 (`d7a3d3f`) trên fresh/upgrade. Duy đã xác nhận 008 chưa chạy Cloud và đã bỏ. Theo chỉ đạo mới, chỉ hoàn thiện/kiểm local; giao tiếp và commit/push để sau. Không mở rộng source storage hoặc nhận canonical blueprint/hash đã đầy đủ.
+
+## DEC-BE1-015: TASK-301 producer persistence và dependency AI đúng Settings
+
+- 04/11/2026 — Duy/TASK-301, theo scope producer đã giao. Tích hợp baseline #36
+  a2d2fc3 vào nhánh301; không sửa nhánh Hùng, deploy hoặc tự nhận owner accepted.
+- Cùng migration006 thêm private source/Blueprint revision storage và current
+  heads; worker-only confirm_source_artifacts/publish_canonical_blueprint, owner/
+  worker read-only get_source_artifacts. Exact source compare,003 transition/audit
+  và revision commit nguyên tử; publication compare current revision sau AI.
+- Giữ history khi source bị xóa/sửa, chỉ cascade theo xóa session; replay không
+  khôi phục pointer cũ. Producer Python dùng BlueprintService, typed receipt và
+  same-publication retry; chưa nối existing HTTP confirm-source/background flow.
+- Progress cùng snapshot có IDs chưa approved. Reject dependency nay dùng đúng
+  Settings.get_gemini_api_keys(); bốn configuration regressions đạt.
+- Đã kiểm baseline PostgreSQL57 pass, producer12 pass trước bổ sung history/list
+  cases; đang kiểm full expanded suite. Caller/preparation/config170 pass,
+  Ruff/mypy84 files pass. Kết quả cuối/head và CI ghi trên PR; không lấy kết quả
+  cũ hoặc tests skipped để nhận schema/deployment/E2E đã hoàn tất.
+- Authority: docs/api/review-rpc-contract.md. Storage implementation là đề xuất
+  cụ thể trên301 để owner đối chiếu; P1–P4/R1 acceptance, frozen mapping và public
+  endpoint integration vẫn là gate còn mở.
+
+### Verification follow-up for DEC-BE1-015
+
+Full expanded PostgreSQL71 cases passed, including14 producer cases and pinned
+004/005→006→007 chain. Added two producer replay races with independent connections;
+targeted16-case result is recorded on PR. Local170 caller/preparation/config tests,
+Ruff and mypy84 files pass; full backend/Blueprint1007 collect, not execution.
+Public confirm-source/background and frozen-v1 RPC wiring remain in progress.

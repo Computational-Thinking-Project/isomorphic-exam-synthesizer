@@ -1,8 +1,9 @@
 # TASK-302 / TASK-301 review RPC contract
 
 **Status: implemented RPC baseline in TASK-302; proposed source-to-AI extension awaiting owner confirmation.**
-This copy is published on Duy's TASK-301 branch for discussion on PR #36. It does
-not bring TASK-302's SQL into this branch or certify caller integration/deployment.
+This copy is published on Duy's TASK-301 branch for discussion on PR #36. The SQL
+baseline at a2d2fc3 is now integrated on this branch. TASK-301 adds the producer
+write/read extension described below; this is not an owner-accepted deployment.
 Hùng owns database operations; Duy owns ReviewRepository/service/API orchestration.
 No second lifecycle repository or migration is introduced.
 
@@ -14,7 +15,8 @@ of this branch. The versioned snapshot and caller trigger are explicitly propose
 
 Compared on 2026-11-04: TASK-301 `39083c2`, TASK-302 `a2d2fc3`,
 TASK-304 `a8f61d5`, TASK-305 `d7a3d3f`; workflow v0.1 **proposed**
-(docs `506384b`). This change is documentation only.
+(docs `506384b`). Those pins describe the initial documentation comparison;
+subsequent caller/producer implementation and checks are recorded on PR #28.
 
 Decisions: [Duy: boundary, auth, Model A, lifecycle and quota](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6546291626),
 [Đạt: callback/accounting](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6551270882),
@@ -493,3 +495,63 @@ ERR_RESERVATION_UNCERTAIN. Only a validated newly active receipt starts generati
 No private-ledger lookup or inferred receipt/operation ID is introduced. Recovery
 of a crash/unknown active operation still uses the worker RPC and DB lease.
 This caller behavior does not imply acceptance of proposed P1–P4/R1.
+
+## TASK-301 producer write extension — implementation for owner review
+
+Implemented on the TASK-301 branch in the same migration006 after integrating
+TASK-302 a2d2fc3. This supplies a concrete implementation to review; it does not
+claim Hùng/Đạt accepted proposed P1–P4/R1 or that cloud deployment occurred.
+No migration008, second lifecycle repository, client hash algorithm or legacy
+artifact backfill is introduced.
+
+| RPC | Parameters after p_ | API roles | Result / guarantee |
+|---|---|---|---|
+| confirm_source_artifacts | session_id UUID, actor_id UUID, confirmation_id UUID, expected_updated_at TIMESTAMPTZ, sources JSONB | service_role only, plus role-claim check | Typed confirmation receipt; exact source comparison, existing003 confirmation/status/audit and source revision writes commit together |
+| publish_canonical_blueprint | session_id UUID, publication JSONB | service_role only, plus role-claim check | Source/Blueprint revision receipt; validated canonical body and current pointer commit together; superseded source/locked session refused |
+| get_source_artifacts | session_id UUID | authenticated owner or service_role | Read-only confirmation/pending IDs/ready snapshot under shared session lock; stale source set/binding refused |
+
+The public HTTP request must never supply actor_id/hashes/documents to these
+worker writes. Backend orchestration derives actor_id from verified authentication,
+then SQL requires that actor to equal the session owner. This is a worker trust
+boundary: unlike review owner actions, this producer RPC is not called with an
+owner JWT. SQL derives confirmation time; later publication inherits provenance
+through its persisted source revision. Python performs the existing fingerprint
+and full canonical validation; SQL compares exact stored/live source and revision
+binding, not a second implementation of the fingerprint/schema algorithm.
+
+Private RLS tables source_artifact_confirmations, source_artifact_revisions,
+canonical_blueprint_revisions and source_artifact_heads have no direct API-role
+grants, including service_role. Revisions retain exact confirmed input/hash and
+canonical0.4.0 JSON; heads select current associations. Content edits clear heads
+and legacy confirmed_at while retaining history. Removing a source retains its
+historical revisions until the parent session is deleted; this does not keep a
+removed source eligible for regeneration. Reconfirmation uses fresh revision IDs,
+so an edit followed by text reversion does not restore the old association.
+
+Confirmation IDs are durable global receipts: replay validates session/actor/input
+and returns original revisions before new-write guards. Publication retries retain
+one UUID/body; a historical replay does not repoint a newer or cleared head. New
+publication requires the current persisted source revision and exact live content.
+get_source_artifacts lets the producer resume only missing publications from DB
+state; it does not recreate hashes from live rows or mutate GET lifecycle state.
+
+Python blueprint/producer.py confirms through the worker RPC, extracts using the
+existing BlueprintService outside transactions, validates full canonical output,
+and publishes with typed receipts and bounded same-payload retries. Its resume
+method skips already-published sources. HTTP confirm-source/background scheduling
+and the frozen-v1 reservation/acquire/complete mapping still need wiring; the
+existing HTTP confirm-source route still uses003 directly at this checkpoint.
+A Python producer→RPC PostgreSQL test is not proof that the public route is wired.
+
+The same006 progress calculation now returns unapproved_question_ids alongside
+counts, including regenerating current candidates. The list is sorted by UUID,
+contains current rows whose status is not approved, and has current_slots minus
+approved_slots entries. Missing/duplicate/extra-slot readiness rules are unchanged.
+This additive field is implemented for review on301; adoption into owner #36 is
+still pending. Historical settled receipts may lack it and remain historical.
+
+Producer verification update: the full expanded PostgreSQL suite completed with
+71 passed (57 baseline +14 producer cases). Two additional multi-connection
+producer replay races are checked in the subsequent targeted16-case run; final
+results/head are recorded on PR. Caller/preparation/config170 passed, Ruff and
+mypy84 files passed; all backend/Blueprint1007 tests collect (not full execution).

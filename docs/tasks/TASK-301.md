@@ -6,6 +6,27 @@
 
 ## Trạng thái hiện tại — 04/11/2026
 
+### Producer persistence checkpoint — TASK-301
+
+- Integrated TASK-302 SQL baseline a2d2fc3 on this branch, not the Hùng branch.
+- Added worker-only source confirmation / canonical publication RPCs and private
+  revision/history/head storage in the same006; shared-lock read RPC resumes pending
+  publication. Exact source comparison and003 confirmation are one transaction.
+- blueprint/producer.py calls these RPCs and existing BlueprintService. New
+  publication refuses superseded source revision; old publication replay cannot
+  restore a cleared head. Source deletion retains history until session deletion.
+- Added same-snapshot progress IDs. Fixed Reject AI dependency to use real
+  Settings.get_gemini_api_keys(), including numbered keys; four regressions pass.
+- Baseline PostgreSQL57 cases passed before extension; producer12 cases passed
+  including actual Python producer→SQL storage with injected extraction. Full
+  expanded SQL suite71 passed before the two additional race cases; final result
+  for producer16 cases is recorded on PR. Local caller/
+  preparation/config170 tests passed, Ruff/mypy84 files passed.
+- Still required: wire existing confirm-source HTTP/background/retry flow, adopt
+  frozen-v1 reservation/assertion mapping, settle R1 ordering/owner review, run
+  caller→real RPC→real adapter with fixture provider and final CI. Producer storage
+  and service implementation here is not complete endpoint/product acceptance.
+
 ### Scope producer đã được Duy giao cho TASK-301
 
 - Theo chỉ đạo trực tiếp 04/11, TASK-301 triển khai producer confirmed source và

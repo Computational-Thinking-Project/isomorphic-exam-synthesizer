@@ -34,9 +34,8 @@ def get_ai_generator(request: Request) -> Optional[Callable[..., Any]]:
     Tests can override this dependency with an explicit mock fixture.
     """
     ai_services = getattr(request.app.state, "ai_services", None)
-    if not ai_services or not getattr(
-        getattr(ai_services, "settings", None), "gemini_api_key", None
-    ):
+    configured_keys = getattr(getattr(ai_services, "settings", None), "get_gemini_api_keys", None)
+    if ai_services is None or not callable(configured_keys) or not configured_keys():
         return None
     try:
         from app.services.generation.targeted_service import TargetedRegenerator
