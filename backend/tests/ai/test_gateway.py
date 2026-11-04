@@ -2,6 +2,7 @@ import asyncio
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
+from uuid import uuid4
 
 import pytest
 from google.genai import errors, types
@@ -9,6 +10,7 @@ from google.genai import errors, types
 from app.core.config import Settings
 from app.services.ai import gateway as module
 from app.services.ai.gateway import GatewayError, GeminiGateway, RequestBudget, RequestContext
+from app.services.generation.attempts import AttemptPermit, DurableAttemptBudget
 
 
 @pytest.fixture
@@ -44,6 +46,80 @@ def settings(**kwargs):
 
 def context(budget, seconds=1):
     return RequestContext(time.monotonic() + seconds, budget.reserve)
+
+
+@pytest.mark.asyncio
+async def test_durable_grants_cover_provider_failure_and_retry_without_refund(pool):
+    permits = []
+
+    async def acquire(op, attempt):
+        permits.append(attempt)
+        return AttemptPermit(operation_id=op, attempt_id=attempt, dispatch_permitted=True,
+                             calls_used=len(permits), remaining_calls=30-len(permits), replayed=False)
+
+    gateway = GeminiGateway(settings())
+    budget = DurableAttemptBudget(4, uuid4(), acquire)
+    pool[0][1].aio.models.generate_content.side_effect = errors.ClientError(429, {})
+    with pytest.raises(GatewayError, match="API_RATE_LIMIT"):
+        await send(gateway, context(budget))
+    assert await send(gateway, context(budget)) == "response"
+    assert budget.used == len(set(permits)) == 2
+    assert [c.aio.models.generate_content.await_count for _, c in pool] == [1, 1]
+    await gateway.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cancellation_after_grant_keeps_charge_and_propagates(pool):
+    entered = asyncio.Event()
+
+    async def transport(**kwargs):
+        entered.set()
+        await asyncio.Event().wait()
+
+    async def acquire(op, attempt):
+        return AttemptPermit(operation_id=op, attempt_id=attempt, dispatch_permitted=True,
+                             calls_used=1, remaining_calls=29, replayed=False)
+
+    gateway = GeminiGateway(settings())
+    pool[0][1].aio.models.generate_content.side_effect = transport
+    budget = DurableAttemptBudget(4, uuid4(), acquire)
+    task = asyncio.create_task(send(gateway, context(budget)))
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert budget.used == 1
+    assert pool[0][1].aio.models.generate_content.await_count == 1
+    await gateway.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["deny", "replay", "error", "expired"])
+async def test_no_transport_without_valid_timely_initial_permit(pool, outcome):
+    calls = 0
+
+    async def acquire(op, attempt):
+        nonlocal calls
+        calls += 1
+        if outcome == "error":
+            raise OSError("database transport lost")
+        if outcome == "expired":
+            # Force expiry after grant without a scheduler/timing race.
+            object.__setattr__(ctx, "deadline", time.monotonic() - 1)
+        return AttemptPermit(operation_id=op, attempt_id=attempt,
+                             dispatch_permitted=outcome != "deny", calls_used=1,
+                             remaining_calls=29, replayed=outcome == "replay")
+
+    gateway = GeminiGateway(settings())
+    budget = DurableAttemptBudget(4, uuid4(), acquire)
+    ctx = context(budget)
+    with pytest.raises(GatewayError):
+        await send(gateway, ctx)
+    assert calls == 1
+    assert budget.used == (1 if outcome == "expired" else 0)
+    for _, client in pool:
+        client.aio.models.generate_content.assert_not_awaited()
+    await gateway.aclose()
 
 
 async def send(gateway, ctx):

@@ -1,3 +1,7 @@
+## 01/11/2026 — TASK-304: permit bền vững tại boundary dispatch (Draft)
+
+Adapter real nhận operation_id và callback trả AttemptPermit, dùng hook gateway hiện có cho mỗi attempt/retry/repair. Không còn fallback local-only cho review production. DB ledger quyết toán; count adapter chỉ là acknowledged grants, không tự refund khi timeout/cancel hoặc mất response. [Handoff và giới hạn](ai-w3-targeted-regeneration.md), [điều phối #36](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6551270882). Đã triển khai phía adapter; RPC/wrapper/E2E còn phụ thuộc Hùng/Duy, shared contract chưa coi đã được mọi owner chấp nhận.
+
 ## DEC-DAT-W3-307: Boundary bundler và dependency template
 
 - Cập nhật 01/11/2026 — Đạt: tích hợp Typst compiler đã merge từ TASK-306 qua `build_compiled_bundle`. Một validated display snapshot cấp dữ liệu cho toàn bộ PDF/ma trận/TeX/Markdown trước khi đóng ZIP; tái sử dụng `build_bundle`, lỗi compiler không trả gói thiếu. Không thêm DB/API/cloud/dependency/Docker. Kiểm tích hợp module bằng fixture, snapshot đã khóa và Storage E2E vẫn pending; [interface/handoff](export-w3-bundler.md).
@@ -5,6 +9,54 @@
 - Triển khai: typed display snapshot, Jinja2 XeLaTeX/Markdown, ZIP bytes + SHA-256, không DB/AI/cloud. Thêm Jinja2/MarkupSafe vào dependency lock cho Docker hiện hành.
 - Boundary/bytes/giới hạn cần owner Duy/Tâm/Hùng xác nhận khi ráp; không sửa API/SQL của owner khác. [Handoff](export-w3-bundler.md).
 - Chưa nghiệm thu: XeLaTeX compile/layout và E2E snapshot/PDF/Storage thật.
+
+## DEC-BE1-013: Caller review dùng durable receipts và action keys
+
+- CI Pipeline run241 tại be80d1b: backend867 pass/9 skip, lint/typecheck79
+  files và frontend build success. Thêm chín TestClient tests đi qua actual
+  caller/repository; chỉ inject auth/ownership/RPC/provider, không scheduling.
+  Kết quả thực thi các ca mới và Docker/final-head checks được ghi trên PR;
+  không nhận JWT/RLS/SQL/concurrency thật từ các fixtures này.
+
+- Tích hợp 04/11/2026: caller `55449fc` ghép dev `8bdc3b1`; giữ cả ADR bundler
+  và caller khi giải conflict changelog, không thay code review. Kiểm sau ghép:
+  review/exporter/shuffler245 pass/7 skip do thiếu Typst CLI, Ruff pass, mypy79
+  files pass, full suite876 collect. Chưa full async/DB/HTTP/concurrency hoặc CI;
+  P1–P4/R1/progress IDs và owner artifacts vẫn pending.
+
+- Ngày: 04/11/2026; người triển khai: Duy (`johannguyen015`) qua TASK-301.
+- Trạng thái: caller để review, chưa nghiệm thu producer/storage/DB/AI E2E hoặc deployed.
+- Bối cảnh: enum reserve làm mất snapshot/replay; validation tự dựng evidence và failure
+  RPC nhận exception text; các wrapper/table fakes cũ không khớp SQL authority.
+- Thay đổi: typed receipts, strict evidence/counts, worker tách owner, frozen input,
+  same-ID retry/settlement/reconciliation, không local ledger/CAS/direct lifecycle writes.
+  Accept/Revert thêm optional Idempotency-Key; client cũ không gửi header vẫn dùng được.
+- Authority: [review RPC contract](api/review-rpc-contract.md). P1–P4/R1 vẫn proposed;
+  yêu cầu progress IDs trong cùng RPC snapshot cần owner TASK-302 xác nhận. Không thay DDL.
+- Kiểm: 148 caller tests pass, Ruff/mypy pass; 772 tests collect. Fake RPC/scheduling
+  không thay kiểm PostgreSQL/concurrency/ASGI/JWT. Full async local chưa kiểm do quyền
+  chạy ngoài môi trường hạn chế bị từ chối; CI/DB checks vẫn bắt buộc trước merge.
+- Phạm vi: review routes/service/repository/models cục bộ, regression tests và docs.
+  Không sửa nhánh #36/#26, deploy cloud, approve/merge hoặc đóng finding thay reviewer.
+
+## DEC-BE1-012: Đề xuất confirmed artifacts và frozen review payload
+
+- Ngày: 04/11/2026; người đề xuất: Duy (`johannguyen015`).
+- Trạng thái: tài liệu gửi thảo luận #36; chờ Hùng/Đạt xác nhận bổ sung. Chưa
+  triển khai storage/producer/RPC payload v1 hoặc nghiệm thu caller/E2E.
+- Bối cảnh: baseline #36 `a2d2fc3` freeze database_rows; #28 `39083c2` còn đọc
+  nguồn sống/tính hash lúc Reject. Chưa có persistence đúng input canonical #26.
+- Đề xuất: lưu exact confirmed input, per-question fingerprint và immutable
+  revision; lưu validated canonical Blueprint gắn cùng revision/hash; reservation
+  freeze artifacts cho adapter. Caller không tự dựng hash/Blueprint để bù thiếu.
+  Recovery worker theo session trước mỗi Reject; GET progress/list giữ thuần đọc.
+- Authority: [review RPC contract](api/review-rpc-contract.md), kế thừa baseline
+  owner #36 và ghi riêng phần đề xuất. Sau thống nhất, cập nhật cùng authority
+  của owner, không duy trì contract cạnh tranh.
+- Phạm vi: tài liệu TASK-301, liên quan TASK-302/304/305 và producer cần điều phối;
+  không tự phân công thêm thành viên hoặc sửa nhánh Hùng. Giữ SQL 004/005 → 006 → 007.
+- Kiểm: đọc code/trao đổi đúng các commit ghim trong contract; kiểm link/diff.
+  Không chạy product tests trong thay đổi docs, không nhận finding đã verified.
 
 ## 24/10/2026 — AI W2 (thay đổi cục bộ, chưa merge)
 
@@ -37,6 +89,8 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
 - [DEC-BE1-008: Phân Loại Ngoại Lệ Mạng Phân Tán và Chuẩn Hóa Kiểm Quyền Migration 003 (TASK-205 Round 3)](#dec-be1-008-phân-loại-ngoại-lệ-mạng-phân-tán-và-chuẩn-hóa-kiểm-quyền-migration-003-task-205-round-3)
 - [DEC-BE1-009: Loại Trừ PostgreSQL SQLSTATE Class 08 Khỏi Bằng Chứng Rollback CSDL (TASK-202 / TASK-205 Round 5)](#dec-be1-009-loại-trừ-postgresql-sqlstate-class-08-khỏi-bằng-chứng-rollback-csdl-task-202--task-205-round-5)
 - [ADR-004: Tinh Giản Toàn Diện Stage 1 & Stage 2 Sang Kiến Trúc Black-Box, Silent Security Audit, và Chốt Nguồn Nguyên Tử Đơn Điểm](#adr-004-tinh-giản-toàn-diện-stage-1--stage-2-sang-kiến-trúc-black-box-silent-security-audit-và-chốt-nguồn-nguyên-tử-đơn-điểm)
+- [DEC-BE1-010: Khắc Phục Triệt Để Fail-Closed Permit RPC, Strict Operation Binding, và Đồng Bộ Contract TASK-302 (TASK-301 F07 v3.0)](#dec-be1-010)
+- [DEC-BE1-011: Chuyển Dịch Toàn Diện Review Lifecycle Sang Atomic PostgreSQL Stored Procedures và Kiểm Thử Trên CSDL Thật (Stage 3 Production-Ready)](#dec-be1-011)
 
 ---
 
@@ -302,6 +356,90 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
   - Giao diện đạt chuẩn Zero-Friction: Giảng viên chỉ cần nạp đề $\rightarrow$ xem trước KaTeX $\rightarrow$ bấm 1 nút "Xác nhận đề gốc và tiếp tục" để chuyển sang sinh đề.
   - Bảo đảm an toàn tuyệt đối cho CSDL và hệ thống.
 
+<a id="dec-be1-010"></a>
+
+### DEC-BE1-010: Khắc Phục Triệt Để Fail-Closed Permit RPC, Strict Operation Binding, và Đồng Bộ Contract TASK-302 (TASK-301 F07 v3.0)
+* **Mã quyết định:** DEC-BE1-010
+* **Ngày quyết định:** 02/11/2026
+* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
+* **Bối cảnh:**
+  1. Review finding F07 (P1, Changes requested) từ Đạt (@Thanhdat3010) trên PR #28 chỉ ra 3 lỗ hổng bảo mật và toàn vẹn:
+     - Wrapper RPC `acquire_attempt` bắt generic `Exception` và tự động fallback sang bảng CAS khi RPC không tồn tại (PGRST202) hoặc lỗi quyền/mạng, dẫn đến fail-open cấp permit và tăng counter sai trái tại production.
+     - Migration 008 có điều kiện `OR (q.status = 'regenerating' AND q.is_current)` cho phép `operation_id` ngẫu nhiên chiếm đoạt câu hỏi đang tái sinh của phiên khác; thiếu kiểm tra hạn lease 180s và khóa phiên.
+     - Operation identity chưa bền vững và chưa đồng bộ chặt chẽ với schema foundation của TASK-302 (PR #36).
+* **Quyết định:**
+  1. **Fail-Closed Production Policy:** Loại bỏ hoàn toàn fallback ngầm trong production (`allow_table_fallback=False`). Mọi lỗi RPC (PGRST202, lỗi quyền, ngắt kết nối mạng, malformed payload) đều ghi log ERROR đầy đủ context và raise `ReviewAcquireUnavailableError` (HTTP 503 `ERR_AI_GATEWAY_PERMIT_FAILURE`), triệt tiêu rủi ro rò rỉ quota. Nhánh table CAS chỉ được kích hoạt tường minh trong môi trường test (`allow_table_fallback=True`).
+  2. **Strict Operation Binding & Guard trong Stored Procedure (Migration 008):**
+     - Bỏ hoàn toàn nhánh OR nguy hiểm; bắt buộc `q.regeneration_id = p_operation_id AND q.is_current = TRUE`.
+     - Bổ sung các guard nghiêm ngặt: kiểm tra lease hết hạn sau 180s (`OPERATION_EXPIRED`), kiểm tra trạng thái câu hỏi (`OPERATION_INACTIVE`), chặn phiên đã khóa (`SESSION_LOCKED` cho `approved`/`exported`), chặn phiên đang bận sinh (`SESSION_BUSY` cho `generating`).
+     - Trả về mã lỗi từ chối rõ ràng trong payload JSONB (`rejection_reason`), không ném unhandled exception làm crash worker.
+  3. **Đồng Bộ Hoàn Toàn Schema và Contract TASK-302:**
+     - Ghi nhận `regeneration_id` vào `version_questions` trong TX1 (`reserve_max_quota_and_start_regenerating`) và dọn dẹp khi rollback (`emergency_rollback_tx`).
+     - Đồng bộ hóa toàn bộ các cột bổ sung của Migration 006 (`regeneration_id`, `display_no`, `display_correct_key`, `canonical_question_no`, `session_id`, `user_id`, `api_calls_used`, `ck_review_logs_actor_required`) vào `backend/scripts/schema.sql`.
+* **Phạm vi ảnh hưởng:** `backend/app/models/schemas.py`, `backend/app/services/review/repository.py`, `backend/app/services/review/service.py`, `backend/migrations/008_stage3_review_acquire_attempt_rpc.sql`, `backend/scripts/schema.sql`, `backend/tests/services/test_review_lifecycle.py`, `docs/tasks/TASK-301.md`.
+* **Kiểm chứng:** 58/58 unit/lifecycle tests pass, Ruff check pass, Mypy pass (67 files).
+
+<a id="dec-be1-011"></a>
+
+### DEC-BE1-011: Đồng Bộ Toàn Diện Review Lifecycle Caller Với Hợp Đồng RPC CSDL Của Hùng (TASK-302 / Migration 006)
+* **Mã quyết định:** DEC-BE1-011
+* **Ngày quyết định:** 02/11/2026
+* **Người đề xuất:** BE1 (`johannguyen015` / Nguyễn Bá Duy)
+* **Bối cảnh:**
+  1. Hùng (TASK-302, PR #36) đã hoàn tất và bàn giao nền tảng CSDL Stage 3 tại Migration `006_stage3_review_and_shuffle.sql` kèm 45/45 test cases pass trên container PostgreSQL 15 thật và tài liệu hợp đồng `docs/api/review-rpc-contract.md`.
+  2. Để tránh dẫm chân lên phạm vi công việc của Hùng (không tạo 2 migration cạnh tranh, không sửa đè schema CSDL), Duy (TASK-301) xóa bỏ hoàn toàn migration 008 tự tạo và file test real-db trùng lặp.
+  3. Thay vào đó, Duy tập trung làm đúng vai trò Caller: Tái cấu trúc `ReviewRepository` thành Thin Wrapper Client ăn khớp 100% với 8 RPCs chuẩn của Hùng.
+* **Quyết định:**
+  1. **Xóa bỏ triệt để triển khai CSDL cạnh tranh:**
+     - Xóa `backend/migrations/008_stage3_review_acquire_attempt_rpc.sql` và `backend/tests/migrations/test_stage3_lifecycle_real_db.py`.
+     - Hoàn nguyên `backend/scripts/schema.sql` khớp hoàn toàn với bản chuẩn của Hùng.
+     - Xác nhận: Migration 008 chưa từng chạy lên Supabase Cloud dùng chung.
+  2. **Ghép nối Caller `ReviewRepository` với 8 RPCs của Migration 006:**
+     - Tách biệt 2 Client: `self.db` (Owner JWT client) cho các RPC Owner (`reserve`, `accept`, `revert`, `get_progress`), và `self.worker_db` (Worker `service_role` client) cho các RPC Worker (`acquire_attempt`, `complete_regeneration`, `fail_regeneration`, `recover_regeneration`).
+     - Chuẩn hóa tham số gọi RPC theo đúng `review-rpc-contract.md`:
+       - `review_complete_regeneration(p_operation_id, p_candidate)`: Bỏ `p_user_id` và `p_actual_calls` (CSDL tự suy từ ledger và operation context).
+       - `review_fail_regeneration(p_operation_id, p_error_code)`: Bỏ `p_user_id` và `p_actual_calls`.
+       - `review_accept_question(p_session_id, p_question_id, p_action_id)` và `review_revert_question`: Dùng `p_action_id` (CSDL tự lấy actor từ `auth.uid()`).
+     - Chuẩn hóa payload `AttemptPermit` đúng 6 trường: `operation_id, attempt_id, dispatch_permitted, calls_used, remaining_calls, replayed`.
+  3. **Ánh xạ ngoại lệ tập trung (`_map_rpc_exception`):**
+     - Bắt các mã domain exception sanitized do CSDL ném ra (`REVIEW_NOT_FOUND` $ightarrow$ 404, `REVIEW_BUSY` $ightarrow$ 409, `REVIEW_STALE` $ightarrow$ 409, `REVIEW_LOCKED` $ightarrow$ 423, `REVIEW_QUOTA_EXHAUSTED` $ightarrow$ 429, `REVIEW_IDEMPOTENCY_CONFLICT` $ightarrow$ 409) và chuyển thành `ReviewDomainException`.
+* **Phạm vi ảnh hưởng:** `backend/app/services/review/repository.py`, `backend/tests/services/test_review_lifecycle.py`, `docs/tasks/TASK-301.md`.
+* **Kiểm chứng:** 58/58 Stage 3 review tests pass (52 lifecycle + 6 API), ruff check clean.
+
+
+### TASK-301 follow-up to DEC-BE1-013: uncertain reservation response
+
+04/11/2026 — caller draft: bounded reservation reconciliation reuses the original
+IDs. Active replay never authorizes AI or a failure write; unresolved responses
+return sanitized503 with same-key retry guidance. Seven added regression cases;
+five caller modules148 passed, Ruff and mypy69 source files passed. These are
+offline RPC-boundary tests, not DB/HTTP/concurrency proof. Proposed P1–P4/R1,
+producer/persistence, progress IDs, integration/conflict and review gates remain.
+
+
+# DEC-DAT-W3-304: Adapter sinh lại từng câu cho review API
+
+- Ngày/người: 29/10/2026 — Đạt; triển khai theo phản hồi Duy trên PR #26.
+- Quyết định: không text giáo viên; đầu vào snapshot in-memory + canonical Blueprint/hash xác nhận, dùng lại GenerationService. Pydantic result có report trung thực và api_calls_count; mock chỉ inject tường minh.
+- Phạm vi: models/targeted.py, generation/targeted_service.py, giới hạn 2 math retries trong trần 4 attempts ở đường targeted. Không đổi DB/endpoints hoặc sửa nhánh Duy.
+- Tích hợp: [handoff](ai-w3-targeted-regeneration.md). Reservation 3 calls và snapshot mapper trong PR #28 còn cần owner đồng bộ; chưa coi E2E hoàn tất.
+
+## DEC-BE1-014: TASK-301 nhận producer confirmed artifacts và tích hợp adapter
+
+- 04/11/2026 — Duy chỉ đạo đưa producer confirmed source/canonical Blueprint vào
+  TASK-301. Owner update: PR36 comment6621050876. Storage/frozen envelope/R1 còn
+  phối hợp authority TASK-302; chưa nhận persistence đã triển khai/được chấp nhận.
+- Tích hợp adapter #26 pin a8f61d5 vào nhánh301; không sửa nhánh Đạt. Giữ cả ADR
+  TASK-304 và caller khi giải changelog; không đưa lại các bản ADR trùng lịch sử.
+- Repository dùng AttemptPermit thật từ adapter. Hai ca caller→TargetedRegenerator
+  dùng generation/RPC fixtures kiểm input frozen, permit và denial settlement.
+- Producer preparation dùng existing per-question fingerprint, exact source và
+  revision mới; validate canonical0.4.0 cùng source/revision/hash trước publication.
+  Prepared payload không phải bằng chứng DB đã confirm; chưa nối write RPC/job/API.
+- Local166 tests caller/producer pass; Ruff pass, mypy83 source files pass.
+  CI/final-head/DB acceptance vẫn phải kiểm; không deploy, Approve hoặc merge PR.
+
+
 ## DEC-TV7-005: Nền schema Stage 3 tương thích dữ liệu cũ (TASK-302)
 
 - Ngày: 31/10/2026; người đề xuất/triển khai: Hùng (`benalexx007`).
@@ -377,3 +515,70 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
   producer/repository/API code. No application code from another branch was changed.
   Publication, CI and independent review states are recorded on PR #36; no merge
   or cloud rollout is authorized by this record.
+
+## DEC-BE1-015: TASK-301 producer persistence và dependency AI đúng Settings
+
+- 04/11/2026 — Duy/TASK-301, theo scope producer đã giao. Tích hợp baseline #36
+  a2d2fc3 vào nhánh301; không sửa nhánh Hùng, deploy hoặc tự nhận owner accepted.
+- Cùng migration006 thêm private source/Blueprint revision storage và current
+  heads; worker-only confirm_source_artifacts/publish_canonical_blueprint, owner/
+  worker read-only get_source_artifacts. Exact source compare,003 transition/audit
+  và revision commit nguyên tử; publication compare current revision sau AI.
+- Giữ history khi source bị xóa/sửa, chỉ cascade theo xóa session; replay không
+  khôi phục pointer cũ. Producer Python dùng BlueprintService, typed receipt và
+  same-publication retry; chưa nối existing HTTP confirm-source/background flow.
+- Progress cùng snapshot có IDs chưa approved. Reject dependency nay dùng đúng
+  Settings.get_gemini_api_keys(); bốn configuration regressions đạt.
+- Đã kiểm baseline PostgreSQL57 pass, producer12 pass trước bổ sung history/list
+  cases; đang kiểm full expanded suite. Caller/preparation/config170 pass,
+  Ruff/mypy84 files pass. Kết quả cuối/head và CI ghi trên PR; không lấy kết quả
+  cũ hoặc tests skipped để nhận schema/deployment/E2E đã hoàn tất.
+- Authority: docs/api/review-rpc-contract.md. Storage implementation là đề xuất
+  cụ thể trên301 để owner đối chiếu; P1–P4/R1 acceptance, frozen mapping và public
+  endpoint integration vẫn là gate còn mở.
+
+### Verification follow-up for DEC-BE1-015
+
+Full expanded PostgreSQL71 cases passed, including14 producer cases and pinned
+004/005→006→007 chain. Added two producer replay races with independent connections;
+targeted16-case result is recorded on PR. Local170 caller/preparation/config tests,
+Ruff and mypy84 files pass; full backend/Blueprint1007 collect, not execution.
+Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
+
+## DEC-BE1-016: F11 reconcile receipt trước adapter
+
+- Duy/TASK-301: thêm owner-only review_lookup_regeneration(UUID,UUID,UUID), chỉ đọc
+  receipt với shared lock, ownership/resource binding. Không reserve/recovery/audit
+  hoặc charge. Worker không được EXECUTE lookup của owner.
+- Caller xử lý completed/active/failed/recovered replay trước adapter guard;
+  fresh key thiếu adapter chỉ lookup rồi503, không tạo operation. Failure outcome
+  reconciliation cũng dùng lookup thay reserve. Không thay validator F10.
+- Đã kiểm125 tests caller liên quan, ba PostgreSQL lookup cases, Ruff/mypy84 files.
+  HTTP regression thêm adapter unavailable khi completed replay, chờ CI thực thi.
+- Chưa nhận C03/bootstrap/background/frozen-v1 hoặc toàn TASK-301 đã hoàn thành;
+  authority và kế hoạch đã cập nhật thứ tự theo chỉ đạo của Duy.
+
+## DEC-BE1-017: Bootstrap nguồn không phụ thuộc legacy Blueprint
+
+- Duy/TASK-301: worker confirm_source_artifacts không gọi003 và không yêu cầu/
+  tạo legacy Blueprint. Source revision, status blueprinted và silent security
+  audit commit cùng transaction; canonical_status pending/total_blueprints0.
+- Python confirmation DTO không coi legacy blueprint count là canonical ready;
+  review readiness của session đã có artifacts dùng canonical heads.
+- PostgreSQL18 cases pass, gồm bootstrap khi xóa legacy row và bỏ hẳn function003,
+  silent audit/replay, rollback, publication/revision và producer→SQL.
+- Public route/background/resume/lease và frozen-v1 vẫn tiếp tục theo kế hoạch;
+  không coi blueprinted là canonical ready hoặc báo task Done.
+
+
+## DEC-BE1-018: TASK-301 background canonical production and frozen-v1
+
+- Ngày/người đề xuất:04/11/2026, Duy theo kế hoạch đã giao.
+- Ngữ cảnh: nguồn xác nhận chưa bootstrap canonical; reservation database_rows
+  không qua validator, recovery chỉ chạy sau busy.
+- Quyết định triển khai trên301, chờ owner #36 adopt: một public confirmation,
+  worker producer với lease420s/deadline360s, status GET thuần đọc và retry; frozen
+  canonical snapshot từ persisted heads, revision checks ở permit/complete;
+  recovery trước fresh reserve sau replay/adapter/guards. Không backfill legacy.
+- Phạm vi: cùng migration006, source/review caller và HTTP, authority review-rpc-contract.
+  Chưa là chấp nhận của Hùng/Đạt, rollout hay GitHub Approve; kết quả kiểm ở PR #28.
