@@ -6,6 +6,24 @@
 
 ## Trạng thái hiện tại — 04/11/2026
 
+### Scope producer đã được Duy giao cho TASK-301
+
+- Theo chỉ đạo trực tiếp 04/11, TASK-301 triển khai producer confirmed source và
+  canonical Blueprint. Đã thông báo cùng thread #36 tại comment6621050876.
+  Không còn chờ phân công owner producer; storage/envelope/R1 vẫn cần phối hợp
+  authority #36 và kiểm implementation thật.
+- Bản tiếp theo tích hợp adapter #26 đúng pin a8f61d5 trên nhánh Duy, không sửa
+  nhánh Đạt; repository dùng trực tiếp AttemptPermit của adapter, bỏ model copy.
+- Đã chuẩn bị source artifacts bằng hàm fingerprint hiện có, exact input và
+  revision mới; validate full canonical Blueprint/revision/hash trước publication.
+  Đây là payload chuẩn bị, chưa nối confirm-source/RPC/storage/background job.
+- Local166 tests caller/producer passed, gồm16 provenance cases và hai ca callable
+  TargetedRegenerator thật với generation/RPC fixtures; Ruff/mypy83 files pass.
+  Không nhận DB persistence hoặc provider thật từ các fixtures này.
+- Head đã publish trước đó ca5f28f đạt Pipeline243 (876 pass/9 skip) và Docker204
+  (backend842 pass/1 skip, Blueprint41 pass/1 skip, frontend220 tests).
+  Kết quả đó không được dùng thay checks cho bản tích hợp adapter/producer mới.
+
 ### Tích hợp dev sau caller update
 
 - CI Pipeline run241 tại `be80d1b`: backend867 passed/9 skipped, Ruff/mypy79

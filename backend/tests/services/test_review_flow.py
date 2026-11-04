@@ -15,8 +15,10 @@ from uuid import UUID, uuid4
 import pytest
 
 from app.models.schemas import ReviewDomainException, SourceQuestion
+from app.services.ai.gateway import GatewayError
 from app.services.blueprint.adapters import source_to_item
 from app.services.blueprint.service import source_fingerprint
+from app.services.generation.targeted_service import TargetedRegenerator
 from app.services.review import service as service_module
 from app.services.review.service import ReviewService
 from app.services.review.validation import frozen_inputs
@@ -364,6 +366,71 @@ def test_success_uses_frozen_receipt_and_worker_permit(state):
     assert result.question_id != state.qid and result.validation_report["math_verified"] is False
     assert state.charges == state.provider_calls == state.complete_calls == 1
     assert not any(name == "review_fail_regeneration" for _, name, _ in state.calls)
+
+
+def test_real_targeted_callable_uses_frozen_source_and_durable_permit(state):
+    seen = []
+
+    async def generate(source, blueprint, *, confirmed_source_hash, context, excluded_identities):
+        seen.append((source.model_dump(), deepcopy(blueprint), confirmed_source_hash))
+        assert excluded_identities
+        await context.reserve_request()
+        payload = output()
+        return SimpleNamespace(
+            candidate=SimpleNamespace(
+                question_text=payload["stem_latex"],
+                options=payload["options"],
+                correct_key=payload["correct_key"],
+                solution_md=payload["solution_md"],
+            ),
+            validation=SimpleNamespace(failures=[], checks=[]),
+        )
+
+    adapter = TargetedRegenerator(SimpleNamespace(regenerate_from_snapshots=generate))
+    result = immediate(state.service(adapter).reject_question(state.sid, state.qid, "owner"))
+    assert result.question_id in state.rows
+    assert len(seen) == 1 and state.charges == state.complete_calls == 1
+    assert seen[0][0]["id"] == state.snapshot["source_snapshot"]["id"]
+    assert seen[0][1] == state.snapshot["blueprint"]
+    assert seen[0][2] == state.snapshot["source_snapshot"]["content_hash"]
+    assert result.validation_report["math_verified"] is False
+    assert result.validation_report["requires_teacher_review"] is True
+
+
+def test_real_targeted_callable_denied_permit_settles_without_completion(state):
+    original = state.rpc
+
+    def deny(role, name, params):
+        if name == "review_acquire_attempt":
+            state.calls.append((role, name, deepcopy(params)))
+            return dict(
+                operation_id=params["p_operation_id"],
+                attempt_id=params["p_attempt_id"],
+                dispatch_permitted=False,
+                replayed=False,
+                calls_used=30,
+                remaining_calls=0,
+            )
+        return original(role, name, params)
+
+    async def generate(source, blueprint, *, confirmed_source_hash, context, excluded_identities):
+        try:
+            await context.reserve_request()
+        except GatewayError as exc:
+            # GenerationService reports a failed QuestionResult at its gateway
+            # boundary; the adapter translates that public result, not a raw
+            # gateway exception escaping an artificial generation stub.
+            return SimpleNamespace(candidate=None, validation=None, error_code=exc.code)
+        raise AssertionError("Denied permit must stop generation")
+
+    state.rpc = deny
+    adapter = TargetedRegenerator(SimpleNamespace(regenerate_from_snapshots=generate))
+    key = str(uuid4())
+    with pytest.raises(ReviewDomainException) as error:
+        immediate(state.service(adapter).reject_question(state.sid, state.qid, "owner", key))
+    assert error.value.status_code == 429
+    assert state.charges == state.complete_calls == 0
+    assert state.operations[key]["operation_status"] == "failed"
 
 
 def test_lost_completion_response_retries_same_candidate_without_ai(state):

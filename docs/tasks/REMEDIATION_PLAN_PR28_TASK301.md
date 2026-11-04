@@ -32,6 +32,14 @@ Chưa thực hiện DB/HTTP/concurrency gates hoặc nhận P1–P4/R1 đã đư
 
 ## 2. Kết luận để quyết định triển khai
 
+**Cập nhật scope 04/11 từ Duy:** đưa producer vào TASK-301 để triển khai ngay;
+không còn blocker thiếu người phụ trách producer trong B01. Storage/binding,
+snapshot/R1/progress IDs và SQL integration vẫn là gate cần phối hợp #36.
+Đã bắt đầu bằng exact source/fingerprint/revision/canonical preparation và16
+negative/provenance tests; chưa nối persistence/confirm-source. Adapter #26 được
+tích hợp đúng a8f61d5 trên nhánh301, không sửa nhánh Đạt. Các mô tả chờ phân công
+producer trong plan ban đầu là lịch sử, không còn là lý do dừng phần này.
+
 Có thể sửa ngay phần caller, validation, receipt/replay, settlement và tests. Chưa thể nghiệm thu Reject hoàn chỉnh chỉ bằng tài liệu: producer chưa lưu confirmed artifacts theo target, SQL baseline trả `database_rows`, mapping cuối/P1–P4/R1 chưa chốt. Trả lỗi an toàn khi thiếu dependency là cần thiết nhưng chưa hoàn thành chức năng.
 
 Ưu tiên dưới đây: **P1** chặn tính đúng/an toàn hoặc tính năng chính; **P2** sai dữ liệu hiển thị, thiếu kiểm chứng hoặc bàn giao. Mã A/B dùng để quản lý đầu việc, **không thay ID F/C của review**. Đây là danh mục vấn đề đã biết và các gate cần kiểm, không cam kết mọi bug có thể tồn tại đều đã được tìm ra.

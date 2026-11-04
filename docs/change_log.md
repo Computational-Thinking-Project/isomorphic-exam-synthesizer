@@ -1,3 +1,7 @@
+## 01/11/2026 — TASK-304: permit bền vững tại boundary dispatch (Draft)
+
+Adapter real nhận operation_id và callback trả AttemptPermit, dùng hook gateway hiện có cho mỗi attempt/retry/repair. Không còn fallback local-only cho review production. DB ledger quyết toán; count adapter chỉ là acknowledged grants, không tự refund khi timeout/cancel hoặc mất response. [Handoff và giới hạn](ai-w3-targeted-regeneration.md), [điều phối #36](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6551270882). Đã triển khai phía adapter; RPC/wrapper/E2E còn phụ thuộc Hùng/Duy, shared contract chưa coi đã được mọi owner chấp nhận.
+
 ## DEC-DAT-W3-307: Boundary bundler và dependency template
 
 - Cập nhật 01/11/2026 — Đạt: tích hợp Typst compiler đã merge từ TASK-306 qua `build_compiled_bundle`. Một validated display snapshot cấp dữ liệu cho toàn bộ PDF/ma trận/TeX/Markdown trước khi đóng ZIP; tái sử dụng `build_bundle`, lỗi compiler không trả gói thiếu. Không thêm DB/API/cloud/dependency/Docker. Kiểm tích hợp module bằng fixture, snapshot đã khóa và Storage E2E vẫn pending; [interface/handoff](export-w3-bundler.md).
@@ -411,3 +415,26 @@ return sanitized503 with same-key retry guidance. Seven added regression cases;
 five caller modules148 passed, Ruff and mypy69 source files passed. These are
 offline RPC-boundary tests, not DB/HTTP/concurrency proof. Proposed P1–P4/R1,
 producer/persistence, progress IDs, integration/conflict and review gates remain.
+
+
+# DEC-DAT-W3-304: Adapter sinh lại từng câu cho review API
+
+- Ngày/người: 29/10/2026 — Đạt; triển khai theo phản hồi Duy trên PR #26.
+- Quyết định: không text giáo viên; đầu vào snapshot in-memory + canonical Blueprint/hash xác nhận, dùng lại GenerationService. Pydantic result có report trung thực và api_calls_count; mock chỉ inject tường minh.
+- Phạm vi: models/targeted.py, generation/targeted_service.py, giới hạn 2 math retries trong trần 4 attempts ở đường targeted. Không đổi DB/endpoints hoặc sửa nhánh Duy.
+- Tích hợp: [handoff](ai-w3-targeted-regeneration.md). Reservation 3 calls và snapshot mapper trong PR #28 còn cần owner đồng bộ; chưa coi E2E hoàn tất.
+
+## DEC-BE1-014: TASK-301 nhận producer confirmed artifacts và tích hợp adapter
+
+- 04/11/2026 — Duy chỉ đạo đưa producer confirmed source/canonical Blueprint vào
+  TASK-301. Owner update: PR36 comment6621050876. Storage/frozen envelope/R1 còn
+  phối hợp authority TASK-302; chưa nhận persistence đã triển khai/được chấp nhận.
+- Tích hợp adapter #26 pin a8f61d5 vào nhánh301; không sửa nhánh Đạt. Giữ cả ADR
+  TASK-304 và caller khi giải changelog; không đưa lại các bản ADR trùng lịch sử.
+- Repository dùng AttemptPermit thật từ adapter. Hai ca caller→TargetedRegenerator
+  dùng generation/RPC fixtures kiểm input frozen, permit và denial settlement.
+- Producer preparation dùng existing per-question fingerprint, exact source và
+  revision mới; validate canonical0.4.0 cùng source/revision/hash trước publication.
+  Prepared payload không phải bằng chứng DB đã confirm; chưa nối write RPC/job/API.
+- Local166 tests caller/producer pass; Ruff pass, mypy83 source files pass.
+  CI/final-head/DB acceptance vẫn phải kiểm; không deploy, Approve hoặc merge PR.

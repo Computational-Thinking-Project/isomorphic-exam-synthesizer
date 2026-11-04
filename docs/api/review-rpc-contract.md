@@ -156,7 +156,11 @@ replace this with a whole-exam hash, or implement a second SQL hashing algorithm
 The canonical Blueprint producer validates the full 0.4.0 document using
 `validate_math_blueprint` against `source_to_item` for that confirmed input, then
 persists it with its own immutable revision and the source revision/fingerprint.
-Store its schema version. The legacy `question_blueprints` columns produced by
+Store its schema version. Producer implementation is now assigned to Duy/TASK-301
+by the owner's explicit instruction on 04/11/2026, recorded in
+[the ownership update](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6621050876).
+This resolves the implementation-owner question, not acceptance of storage/envelope/R1.
+The legacy `question_blueprints` columns produced by
 `parser/blueprint_service.py` are not that document. Never reconstruct one from
 variables/domains/invariants or call a fallback document canonical.
 
@@ -177,7 +181,8 @@ JSON/schema version/Blueprint revision and its source revision/fingerprint bindi
 Proposed revision IDs are immutable UUIDs serialized as strings. Physical storage,
 column names and DDL are for TASK-302's owner to confirm; `content_hash TEXT` alone
 cannot represent all this evidence. Producer implementation ownership outside the
-existing W3 assignments still needs Duy's coordination; no new member is assigned here.
+existing W3 assignments is assigned to TASK-301 by Duy's instruction above;
+TASK-302 continues to own database authority and storage coordination.
 
 Any edit to source ID, stem, options, answer or solution invalidates the old binding
 for new work. Reconfirmation creates a new source revision even after edit-and-revert;

@@ -16,6 +16,7 @@ from app.models.schemas import (
     ReviewAcquireUnavailableError,
     ReviewDomainException,
 )
+from app.services.generation.attempts import AttemptPermit
 from app.services.review.receipts import (
     ActionReceipt,
     CompletionReceipt,
@@ -29,23 +30,6 @@ from app.services.review.receipts import (
     settlement_receipt,
 )
 from app.services.review.validation import validate_candidate
-
-try:
-    from app.services.generation.attempts import AttemptPermit
-except ImportError:
-    from typing import Annotated
-
-    from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
-
-    class AttemptPermit(BaseModel):  # type: ignore[no-redef]
-        model_config = ConfigDict(extra="forbid", frozen=True)
-        operation_id: UUID
-        attempt_id: UUID
-        dispatch_permitted: StrictBool
-        calls_used: Annotated[StrictInt, Field(ge=0, le=30)]
-        remaining_calls: Annotated[StrictInt, Field(ge=0, le=30)]
-        replayed: StrictBool
-
 
 logger = logging.getLogger(__name__)
 
