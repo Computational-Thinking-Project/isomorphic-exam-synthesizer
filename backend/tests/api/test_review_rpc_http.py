@@ -8,8 +8,8 @@ not prove JWT verification, RLS, SQL transactions or cross-worker concurrency.
 from uuid import UUID, uuid4
 
 import pytest
-from backend.tests.services.test_review_flow import State
 from fastapi.testclient import TestClient
+from services.test_review_flow import State
 
 from app.api.dependencies import get_current_user, get_service_db, get_user_db
 from app.api.routes import review
