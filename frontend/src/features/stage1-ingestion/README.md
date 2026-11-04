@@ -1,5 +1,13 @@
 # Stage1 — source ingestion và session entry
 
+## TASK-203b — local04/11/2026
+
+`stage1Errors.js` đọc riêng incomplete422 envelope, tạo lỗi toàn đề/câu và hướng sửa cho10mã cùng unknown/malformed fallback. `IncompleteContentDialog` chỉ hiển thị/callback và quản lý keyboard/focus; không gọi API. [M2/kiểm/giới hạn203b](../../../../docs/tasks/TASK-203b.md).
+
+Panel dùng model từ rawcause và một dismissedCause, reset trước submit được phép; đóng/đổi mode không mở lại lỗi cũ, lần nạp mới cùng error object vẫn mở được. Một picker luôn mounted để click chọn file từ dialog text vẫn thuộc user gesture; filepanel ẩn ở mode text. Giữ source/input, setMode/guards/controller201 nguyên trạng; lỗi GET/timeout không mở nhầm dialog hoặc đổi cảnh báo uncertain. Không thêm dependency/store/hook chung.
+
+P1/P2/P3 đã tự review/audit9/7/72ca liên quan, full308tests/lint/build đạt, bundle961.68kBwarning. Native Auth/HTTPfixture kiểm keyboard/dialog20lỗi dài ở374/376CSS, không phải API thật/đúng375/zoom200%. FrontendDocker rebuildHealthy; user báoPASS04/11 L01dialog/source-filepreservation, L02picker→validfile/chủđộngnạp/F5, L03afile→textgiữdraft/focus, L03btext→picker/samefile/khôngtựnạp, L04akeyboard/headerclickEscape/focusreturn. L04bzoomChrome200%/cuộn/CTA và trả100%/F5 cũng PASS theo user; P4 chức năng đã khép. Chưa có Storage audit, commit/push code mới, CI/review tương ứng hoặc GitHub Ready/Done203b; TASK201/TASK103 dưới đây là lịch sử nền.
+
 ## TASK-201 checkpoint04/11/2026
 
 `Stage1Route` giữ literalnew/create và GETdetail ban đầu. Với IDdraft, `Stage1SourcePanel` dùng plainJS `sourceIngestion` controller và useSyncExternalStore, tái sử dụng [ingestion service](../../services/ingestion.js), client/Auth/store và MathRenderer hiện có. [M2/acceptance](../../../../docs/tasks/TASK-201.md) là nguồn scope và giới hạn review.

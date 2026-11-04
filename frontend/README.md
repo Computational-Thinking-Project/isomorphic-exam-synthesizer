@@ -1,5 +1,10 @@
 # Frontend — thiết lập local và checkpoint TASK-101/103
 
+## TASK-203b — implementation local04/11/2026
+
+- Đã thêm classifier incomplete422, dialog hướng sửa và ghép panel201, giữ source/input và guard hiện có. [M2](../docs/tasks/TASK-203b.md), [Stage1 README](src/features/stage1-ingestion/README.md). Không đổi backend/Auth/client/controller hoặc dependency.
+- Full308tests/lint/build đạt, bundle961.68kBwarning. Browser Auth/HTTPfixture đã kiểm keyboard/dialog/mobile374/376CSS; frontendDocker mớiHealthy. User báoPASS04/11 L01dialog/giữnguồn-file, L02sửa-file/nạp/F5,L03a/btext-filecallbacks/samefile/khôngtựnạp,L04akeyboard/headerclickEscape/focusreturn. L04bzoomChrome200%/cuộn/CTA và trả100%/F5 cũng PASS theo user. P4 chức năng đã khép; code chưa commit/push, chưa CI/review head mới hoặc GitHub Ready/Done. Các checkpoint201/103 bên dưới là lịch sử.
+
 ## TASK-201 — kiểm cuối local04/11/2026
 
 - Nhập text hoặc một DOCX/TeX/MD vào draft có ID bằng client hiện có. Chọn/sửa/đổi cách nhập không tự gửi; file được kiểm trước POST và upload100% còn chờ xử lý. Preview nguồn/options/key chỉ đọc, Blueprint ẩn. [Plan/acceptance/giới hạn](../docs/tasks/TASK-201.md), [Stage1 README](src/features/stage1-ingestion/README.md).
