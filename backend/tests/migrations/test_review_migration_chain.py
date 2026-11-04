@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from test_review_rpcs import OWNER, QID, SID, SOURCE, candidate, literal
 from test_stage3_schema import BOOTSTRAP, ROOT, SEED, PostgresCase
+from artifact_fixture import publish_fixture
 
 UPSTREAM = (
     ("31ed3bc71188db537c41b547630a6b9dbf5f270f", "004_save_generation_config_rpc.sql"),
@@ -53,6 +54,7 @@ class ReviewMigrationChainTests(PostgresCase):
         INSERT INTO generation_configs(session_id,n_versions) VALUES ('{SID}',1);
         INSERT INTO question_blueprints(source_question_id,confirmed_at) VALUES ('{SOURCE}',now());
         """)
+        publish_fixture(self, SID, SOURCE, OWNER)
 
     def initialize_database(self):
         super().setUp()

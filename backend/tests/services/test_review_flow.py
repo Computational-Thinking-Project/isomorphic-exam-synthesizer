@@ -375,6 +375,8 @@ def test_success_uses_frozen_receipt_and_worker_permit(state):
     assert result.question_id != state.qid and result.validation_report["math_verified"] is False
     assert state.charges == state.provider_calls == state.complete_calls == 1
     assert not any(name == "review_fail_regeneration" for _, name, _ in state.calls)
+    names=[name for _,name,_ in state.calls]
+    assert names.index("review_lookup_regeneration") < names.index("review_recover_session") < names.index("review_reserve_regeneration")
 
 
 def test_real_targeted_callable_uses_frozen_source_and_durable_permit(state):
@@ -521,12 +523,12 @@ def test_all_reservation_responses_lost_preserve_unknown_outcome_and_original_ke
     assert not any(n == "review_fail_regeneration" for _, n, _ in state.calls)
 
 
-def test_deterministic_reservation_error_is_not_retried(state):
+def test_locked_session_stops_before_recovery_and_reservation(state):
     state.status = "approved"
     with pytest.raises(ReviewDomainException) as error:
         immediate(state.service().reject_question(state.sid, state.qid, "owner", str(uuid4())))
     assert error.value.status_code == 423
-    assert sum(n == "review_reserve_regeneration" for _, n, _ in state.calls) == 1
+    assert not any(n in ("review_reserve_regeneration", "review_recover_session") for _, n, _ in state.calls)
     assert state.provider_calls == 0 and not state.operations
 
 

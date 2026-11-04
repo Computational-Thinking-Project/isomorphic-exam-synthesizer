@@ -1,7 +1,7 @@
 """Review orchestration over durable owner/worker RPC receipts.
 
 AI execution is outside the transaction and session lock. Committed permits are
-never refunded. Source-to-AI artifacts remain an explicit TASK-302 dependency.
+never refunded. TASK-301 publishes the confirmed source/canonical artifacts.
 """
 
 import asyncio
@@ -254,23 +254,15 @@ class ReviewService:
                 return await self._replay(existing)
         # Without a key there cannot be a receipt to replay. With a key, the RPC
         # checks for its receipt before the edit guard, including after approval.
-        if idempotency_key is None:
-            await self.check_session_guards(session_id)
         if self.ai_generator is None:
             raise ReviewDomainException(
                 503, "ERR_AI_SERVICE_UNAVAILABLE", "Regeneration adapter unavailable"
             )
+        await self.check_session_guards(session_id)
         lock = session_lock_registry.get_lock(UUID(session_id))
         async with lock:
-            try:
-                reservation = await self._reserve_receipt(session_id, question_id, op)
-            except ReviewDomainException as exc:
-                if exc.error_code != "ERR_SESSION_BUSY_REGENERATING":
-                    raise
-                # Existing busy-trigger recovery is preserved. Moving this before
-                # every reserve is R1, still awaiting owner acknowledgement.
-                await self.repo.recover_stale_operations(session_id)
-                reservation = await self._reserve_receipt(session_id, question_id, op)
+            await self.repo.recover_stale_operations(session_id)
+            reservation = await self._reserve_receipt(session_id, question_id, op)
         if reservation.replayed or reservation.operation_status != "active":
             return await self._replay(reservation)
 

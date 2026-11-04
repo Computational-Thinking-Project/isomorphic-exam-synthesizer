@@ -1,10 +1,14 @@
+> Trạng thái hiện hành: triển khai theo8 bước đầu file; các ma trận/bước bên dưới
+> giữ lịch sử phân tích, không mở lại F10/F06 discovery đã verified. Interface chỉ
+> theo authority, không lấy mô tả checkpoint cũ làm contract hiện hành.
+
 # TASK-301 / PR #28 — kế hoạch hoàn thiện hiện hành, 04/11/2026
 
 ## Thứ tự thực hiện đã được Duy yêu cầu sau review Đạt tại68b375f
 
 1. Đồng bộ plan và cùng authority; giữ F10 và phần discovery F06 đã verified.
 2. F11: lookup receipt thuần đọc trước adapter guard; fresh action thiếu adapter
-   không tạo operation/charge. Đang triển khai và kiểm caller/SQL.
+   không tạo operation/charge. Đã triển khai tại674d3aa; tiếp tục hồi quy trên head tích hợp.
 3. Bootstrap: xác nhận nguồn không cần legacy Blueprint, không dựng fallback
    canonical. Giữ một endpoint confirm-source và trạng thái canonical pending rõ.
 4. Nối HTTP và producer nền (Duy đã chọn): durable status/claim/lease dài hơn
@@ -27,8 +31,9 @@ Chi tiết interface chỉ giữ ở [authority](../api/review-rpc-contract.md).
 storage, worker confirmation/publication và read-only resume state. Python producer
 đã kiểm qua RPC PostgreSQL thật với extractor fixture. Progress có IDs cùng snapshot.
 Đây là implementation trên301 để owner review, không phải đã chấp nhận P1–P4/R1.
-Public confirm-source/background flow và frozen-v1 reservation/assertion vẫn chưa
-nối; các phần đó tiếp tục thuộc scope301 đã được Duy giao, không còn chờ phân công.
+Public confirm-source/background/status/retry và frozen-v1 reservation/assertion
+đã nối trên301; recovery chạy trước reservation mới. Chưa coi owner đã chấp nhận
+hoặc reviewer đã verified C03/F11. Tiếp tục final checks/CI và bàn giao.
 Chi tiết interface duy nhất tại [authority](../api/review-rpc-contract.md).
 
 **A12 — configured AI dependency (mới phát hiện khi tích hợp):** route kiểm
@@ -126,12 +131,12 @@ Nguồn: [review gốc F01–F07/C01–C03](https://github.com/Computational-Thi
 
 1. Ghi branch/status/head/base; giữ snapshot hoặc commit riêng các draft hiện có theo nội dung sau khi kiểm; không trộn/bỏ thay đổi của user. Không dùng số tests local để đóng finding trên remote head.
 2. Map từng diff local vào A01–A11; đọc cả test bị xóa/thay. File caller chính: review/service.py, repository.py, routes/review.py; validator/receipt có thể tách module như draft hiện có.
-3. Đánh dấu gói còn Draft trong M3 khi thực hiện; giữ scope301. Output bước này là danh sách diff rõ nguồn, không phải báo hoàn tất.
+3. Ghi gói chưa đủ điều kiện merge trong M3; giữ trạng thái PR hiện có theo Duy và scope301. Output bước này là danh sách diff rõ nguồn, không phải báo hoàn tất.
 
 ### Bước 1 — chốt đúng phần còn thiếu, không mở lại quyết định đã có
 
 1. Tiếp tục cùng thread #36 P1–P4/R1; yêu cầu phản hồi từng mục, gồm B03 progress IDs. Ghi rõ câu nào đã đồng ý về nguyên tắc và câu nào chưa có schema/code.
-2. Chốt owner implementation producer + persistence và input tối thiểu B01/B02; ETA phải do bên cung cấp xác nhận, không dùng mốc23:00 cũ.
+2. Producer thuộc TASK-301 theo Duy; triển khai và bàn giao persistence/interface B01/B02 cho owner #36 đối chiếu/adopt. Không chờ phân công lại.
 3. Owner cập nhật một authority; TASK-301 dẫn link commit/section được chấp nhận. Có thể làm bước2–4 khi đang chờ, nhưng không nghiệm thu target envelope hoặc R1 bằng im lặng.
 
 ### Bước 2 — receipt/RPC boundary và validation (A01/A02/A07/A08)

@@ -516,3 +516,16 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
   silent audit/replay, rollback, publication/revision và producer→SQL.
 - Public route/background/resume/lease và frozen-v1 vẫn tiếp tục theo kế hoạch;
   không coi blueprinted là canonical ready hoặc báo task Done.
+
+
+## DEC-BE1-018: TASK-301 background canonical production and frozen-v1
+
+- Ngày/người đề xuất:04/11/2026, Duy theo kế hoạch đã giao.
+- Ngữ cảnh: nguồn xác nhận chưa bootstrap canonical; reservation database_rows
+  không qua validator, recovery chỉ chạy sau busy.
+- Quyết định triển khai trên301, chờ owner #36 adopt: một public confirmation,
+  worker producer với lease420s/deadline360s, status GET thuần đọc và retry; frozen
+  canonical snapshot từ persisted heads, revision checks ở permit/complete;
+  recovery trước fresh reserve sau replay/adapter/guards. Không backfill legacy.
+- Phạm vi: cùng migration006, source/review caller và HTTP, authority review-rpc-contract.
+  Chưa là chấp nhận của Hùng/Đạt, rollout hay GitHub Approve; kết quả kiểm ở PR #28.

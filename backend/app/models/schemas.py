@@ -278,6 +278,8 @@ class ConfirmSourceResponse(BaseModel):
     confirmed_at: str = Field(..., description="Thời điểm xác nhận (ISO8601)")
     total_questions: int = Field(..., description="Tổng câu nguồn đã khóa")
     total_blueprints: int = Field(..., description="Tổng blueprints tương ứng")
+    confirmation_id: str | None = None
+    canonical_status: Literal["pending", "running", "ready", "failed"] = "pending"
     message: str = "Source confirmed and blueprints locked successfully"
 
 

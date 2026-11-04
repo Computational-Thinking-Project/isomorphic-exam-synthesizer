@@ -4,6 +4,7 @@ These cases additionally need backend Python dependencies for the real source
 mapper and canonical validator. No Gemini calls or shared database are used.
 """
 
+import asyncio
 import json
 import sys
 import time
@@ -47,6 +48,7 @@ class SourceArtifactTests(PostgresCase):
         self.sql(f"INSERT INTO question_blueprints(source_question_id) VALUES ('{SOURCE}');")
         self.sources = prepare_source_artifacts(SID, [self.row])
         self.publication = prepare_blueprint_artifact(self.sources[0], self.blueprint)
+        self.publication["producer_job_id"] = self.publication["blueprint_revision_id"]
         self.confirmation_id = str(uuid4())
         self.timestamp = self.value(f"SELECT updated_at FROM exam_sessions WHERE id='{SID}';")
 
@@ -61,8 +63,14 @@ class SourceArtifactTests(PostgresCase):
                          self.timestamp, json.dumps(self.sources if sources is None else sources), check=check)
 
     def publish(self, publication=None, check=True):
+        publication = publication or self.publication
+        exists = self.value(f"SELECT count(*) FROM canonical_blueprint_revisions WHERE blueprint_revision_id={literal(publication['blueprint_revision_id'])};")
+        if exists == "0":
+            claimed = self.call("claim_source_production", SID, publication["source_revision_id"], publication["producer_job_id"], check=check)
+            if not check and claimed.returncode:
+                return claimed
         return self.call("publish_canonical_blueprint", SID,
-                         json.dumps(publication or self.publication), check=check)
+                         json.dumps(publication), check=check)
 
     def test_confirmation_records_exact_source_and_pending_canonical(self):
         receipt = self.confirm()
@@ -151,7 +159,8 @@ class SourceArtifactTests(PostgresCase):
         self.sql("""CREATE FUNCTION fail_head_update() RETURNS trigger LANGUAGE plpgsql AS $$
           BEGIN RAISE EXCEPTION 'INJECT_HEAD_FAILURE'; END $$;
           CREATE TRIGGER fail_head BEFORE UPDATE ON source_artifact_heads
-          FOR EACH ROW EXECUTE FUNCTION fail_head_update();""")
+          FOR EACH ROW WHEN (NEW.blueprint_revision_id IS NOT NULL)
+          EXECUTE FUNCTION fail_head_update();""")
         result = self.publish(check=False)
         self.assertIn("INJECT_HEAD_FAILURE", result.stderr)
         self.assertEqual(self.value("SELECT count(*) FROM canonical_blueprint_revisions;"), "0")
@@ -233,6 +242,7 @@ class SourceArtifactTests(PostgresCase):
 
     def test_concurrent_publication_replays_one_document_and_pointer(self):
         self.confirm()
+        self.call("claim_source_production", SID, self.publication["source_revision_id"], self.publication["producer_job_id"])
         script = rpc_fixtures.ReviewRpcTests.auth("service_role") + (
             f"SELECT publish_canonical_blueprint('{SID}',{literal(json.dumps(self.publication))});"
         )
@@ -273,14 +283,7 @@ class SourceArtifactTests(PostgresCase):
             raise AssertionError("This fixture does not dispatch a provider")
 
         def immediate(coroutine):
-            try:
-                coroutine.send(None)
-            except StopIteration as result:
-                return result.value
-            else:
-                raise AssertionError("Unexpected scheduling in direct RPC boundary")
-            finally:
-                coroutine.close()
+            return asyncio.run(coroutine)
 
         repository = SourceArtifactRepository(Worker())
         extractor = Extractor()
@@ -293,3 +296,147 @@ class SourceArtifactTests(PostgresCase):
         self.assertEqual(immediate(producer.resume(SID, RequestContext(time.monotonic()+10, no_provider))), [])
         self.assertEqual(calls.count("publish_canonical_blueprint"), 1)
         self.assertEqual(self.value("SELECT count(*) FROM canonical_blueprint_revisions;"), "1")
+
+    def test_producer_claim_race_grants_one_owner_and_lease_exceeds_extraction(self):
+        self.confirm()
+        revision = self.sources[0]["source_revision_id"]
+        scripts = [rpc_fixtures.ReviewRpcTests.auth("service_role") +
+            f"SELECT claim_source_production('{SID}','{revision}','{uuid4()}');" for _ in range(2)]
+        responses = rpc_fixtures.ReviewRpcTests.concurrent(self, *scripts)
+        self.assertTrue(all(r.returncode == 0 for r in responses), [r.stderr for r in responses])
+        self.assertEqual(sorted(json.loads(r.stdout)["status"] for r in responses), ["busy", "claimed"])
+        self.assertEqual(self.value("SELECT producer_expires_at>clock_timestamp()+interval '360 seconds' FROM source_artifact_heads;"), "t")
+
+    def test_expired_producer_cannot_publish_or_fail_new_job(self):
+        self.confirm()
+        revision = self.sources[0]["source_revision_id"]
+        old = self.publication["producer_job_id"]
+        self.call("claim_source_production", SID, revision, old)
+        self.sql("UPDATE source_artifact_heads SET producer_expires_at=clock_timestamp()-interval '1 second';")
+        new = str(uuid4())
+        self.call("claim_source_production", SID, revision, new)
+        result = self.call("publish_canonical_blueprint", SID, json.dumps(self.publication), check=False)
+        self.assertIn("ARTIFACT_STALE", result.stderr)
+        self.assertEqual(self.call("fail_source_production", SID, revision, old, "PRODUCER_CANCELLED"), {"settled": False})
+        self.assertEqual(self.value("SELECT producer_job_id FROM source_artifact_heads;"), new)
+        publication = self.publication | {"producer_job_id": new, "blueprint_revision_id": new}
+        self.publish(publication)
+        self.assertTrue(self.call("get_source_artifacts", SID)["ready"])
+
+    def test_producer_status_is_read_only_and_failed_job_can_be_retried(self):
+        self.confirm()
+        revision, job = self.sources[0]["source_revision_id"], str(uuid4())
+        self.call("claim_source_production", SID, revision, job)
+        state = self.call("get_source_artifacts", SID, worker=False)
+        self.assertEqual(state["production"][0]["status"], "running")
+        self.call("fail_source_production", SID, revision, job, "BLUEPRINT_PRODUCTION_FAILED")
+        state = self.call("get_source_artifacts", SID, worker=False)
+        self.assertEqual(state["production"][0]["status"], "failed")
+        job2 = str(uuid4())
+        self.call("claim_source_production", SID, revision, job2)
+        before = self.value("SELECT row_to_json(h) FROM source_artifact_heads h;")
+        self.call("get_source_artifacts", SID, worker=False)
+        self.assertEqual(before, self.value("SELECT row_to_json(h) FROM source_artifact_heads h;"))
+        self.assertEqual(self.call("get_source_artifacts", SID)["production"][0]["status"], "running")
+
+    def test_producer_claim_and_failure_require_worker_acl(self):
+        self.confirm()
+        revision, job = self.sources[0]["source_revision_id"], str(uuid4())
+        result = self.call("claim_source_production", SID, revision, job, worker=False, check=False)
+        self.assertIn("permission denied", result.stderr)
+
+        result = self.call("fail_source_production", SID, revision, job, "FAILED", worker=False, check=False)
+        self.assertIn("permission denied", result.stderr)
+
+    def test_public_confirmation_to_real_adapter_and_postgres_completion(self):
+        from unittest.mock import patch
+        from fastapi.testclient import TestClient
+        from sql_client_fixture import SqlClient
+        from app.api.dependencies import get_current_user, get_service_db, get_user_db
+        from app.api.routes import review, source_artifacts
+        from app.main import app
+        from app.models.schemas import CurrentUser
+        from app.services.blueprint.schema_adapter import generation_payload
+        from app.services.blueprint.service import BlueprintService
+        from app.services.generation.service import GenerationService
+        from app.services.generation.targeted_service import TargetedRegenerator
+
+        # Stage2's existing current candidate is seeded by PostgresCase; this
+        # test covers the approved301 producer/review boundary, not generation jobs.
+        case=self
+        fixture=json.loads((Path(__file__).parents[1]/"fixtures/ai_pipeline.json").read_text(encoding="utf-8"))
+        dispatches=[]
+        responses=[generation_payload(self.blueprint),fixture["candidates"][0]]
+        async def generate_content(**kwargs):
+            await kwargs['context'].reserve_request()
+            dispatches.append(kwargs)
+            return SimpleNamespace(text=json.dumps(responses.pop(0)),candidates=[SimpleNamespace(finish_reason="STOP")],usage_metadata=None,model_version="fixture")
+        gateway=SimpleNamespace(model="offline",generate_content=generate_content)
+        blueprints=BlueprintService(gateway)
+        adapter=TargetedRegenerator(GenerationService(gateway))
+        owner,worker=SqlClient(case),SqlClient(case,True)
+        previous=app.dependency_overrides.copy()
+        app.dependency_overrides.update({get_current_user:lambda:CurrentUser(id=OWNER,email="fixture@example.com",name="Fixture",access_token="fixture"),get_user_db:lambda:owner,get_service_db:lambda:worker,review.get_ai_generator:lambda:adapter})
+        try:
+            with patch.object(source_artifacts,"blueprint_service",return_value=blueprints),TestClient(app) as client:
+                if hasattr(app.state,"limiter"): app.state.limiter._storage.reset()
+                confirmed=client.post(f"/api/sessions/{SID}/confirm-source",json={})
+                self.assertEqual(confirmed.status_code,200,confirmed.text)
+                self.assertEqual(confirmed.json()['canonical_status'],'pending')
+                status=client.get(f"/api/sessions/{SID}/source-artifacts")
+                self.assertEqual(status.status_code,200,status.text)
+                self.assertTrue(status.json()['ready'])
+                self.sql(f"UPDATE exam_sessions SET status='generated'; INSERT INTO generation_configs(session_id,n_versions) VALUES ('{SID}',1);")
+                key=str(uuid4())
+                rejected=client.post(f"/api/sessions/{SID}/questions/{rpc_fixtures.QID}/reject",headers={'Idempotency-Key':key})
+                self.assertEqual(rejected.status_code,200,rejected.text)
+                self.assertEqual(self.value('SELECT gemini_review_calls FROM exam_sessions;'),'8')
+                self.assertEqual(self.value('SELECT count(*) FROM review_attempts WHERE dispatch_permitted;'),'1')
+                self.assertEqual(self.value('SELECT count(*) FROM review_operations WHERE status=\'completed\';'),'1')
+                app.dependency_overrides[review.get_ai_generator]=lambda:None
+                replay=client.post(f"/api/sessions/{SID}/questions/{rpc_fixtures.QID}/reject",headers={'Idempotency-Key':key})
+                self.assertEqual(replay.status_code,200,replay.text)
+                self.assertEqual(replay.json()['question_id'],rejected.json()['question_id'])
+                self.assertEqual(len(dispatches),2)
+        finally:
+            app.dependency_overrides.clear();app.dependency_overrides.update(previous)
+
+    def test_partial_producer_failure_and_concurrent_resume_preserve_success(self):
+        from sql_client_fixture import SqlClient
+        from app.services.blueprint.producer import ConfirmedArtifactProducer,SourceArtifactRepository
+        from app.services.blueprint.artifacts import prepare_source_artifacts
+        from app.services.blueprint.adapters import source_to_item
+        from app.models.schemas import SourceQuestion
+        from app.services.ai.gateway import RequestContext
+
+        other=str(uuid4())
+        row2=self.row | dict(id=other)
+        self.sql(f"INSERT INTO source_questions(id,session_id,question_no,raw_content,options,correct_key) VALUES ('{other}','{SID}',10,{literal(row2['raw_content'])},{literal(json.dumps(row2['options']))},'A');")
+        self.sources=prepare_source_artifacts(SID,[self.row,row2])
+        self.confirm()
+        case=self
+        original_id=source_to_item(SourceQuestion.model_validate(self.sources[0]['confirmed_input']))['source']['question_id']
+        failed_id=source_to_item(SourceQuestion.model_validate(self.sources[1]['confirmed_input']))['source']['question_id']
+        seen=[]
+        fail=[True]
+        class Extractor:
+            async def extract_confirmed(self,items,**kwargs):
+                identity=items[0]['source']['question_id'];seen.append(identity)
+                await asyncio.sleep(0)
+                if identity==failed_id and fail[0]: raise RuntimeError('injected per-source failure')
+                blueprint=json.loads(json.dumps(case.blueprint).replace(original_id,identity))
+                return [{'blueprint':blueprint}],[]
+        async def no_provider(): pass
+        async def run():
+            producer=ConfirmedArtifactProducer(SourceArtifactRepository(SqlClient(case,True)),Extractor())
+            context=RequestContext(time.monotonic()+60,no_provider)
+            results=await asyncio.gather(producer.resume(SID,context),producer.resume(SID,context),return_exceptions=True)
+            self.assertTrue(any(isinstance(r,RuntimeError) for r in results))
+            self.assertEqual(case.value('SELECT count(*) FROM canonical_blueprint_revisions;'),'1')
+            self.assertEqual(seen.count(original_id),1)
+            fail[0]=False
+            await producer.resume(SID,context)
+            self.assertEqual(case.value('SELECT count(*) FROM canonical_blueprint_revisions;'),'2')
+            self.assertEqual(seen.count(original_id),1)
+            self.assertTrue((await producer.repository.load(SID)).ready)
+        asyncio.run(run())

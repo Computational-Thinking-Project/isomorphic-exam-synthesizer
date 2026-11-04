@@ -117,17 +117,18 @@ Reserve records the initiating actor, current candidate, prior review status and
 and sets session status generated. The partial active-operation index enforces
 Model A: one active regeneration/session. Other-slot accepts remain allowed.
 
-The returned `snapshot` has `format="database_rows"` and frozen
-`source_snapshot, blueprint, current_variant, peer_variants`. Source/blueprint rows
-must belong to the session; the blueprint must have `confirmed_at`. Peers are current candidates
-from the same source/session. Acquire/complete reject if those source/blueprint
-rows changed after reservation. Neither RPC recomputes a confirmation hash.
+New reservations emit `format="confirmed_artifacts_v1"` from persisted source and
+canonical Blueprint heads. Current/peer options, key and solution are projected
+from canonical columns together. Acquire/complete compare the reserved snapshot
+with the current revision binding under the parent-session lock; they never
+replace an operation's frozen inputs with new heads. Settled historical receipts
+remain replayable; legacy `database_rows` does not authorize provider dispatch.
 
 <a id="confirmed-artifacts-v1"></a>
 
-### Confirmed artifacts and frozen AI payload — proposed v1
+### Confirmed artifacts and frozen AI payload — v1 implementation for owner review
 
-The following proposal answers the remaining PR #36 persistence/snapshot questions.
+The following interface is implemented on TASK-301 for the PR #36 persistence/snapshot handoff.
 The per-question hash, canonical document, frozen inputs and fail-closed semantics
 match Hùng's proposal and Đạt's consumer confirmation. Revision identifiers, envelope
 fields and the trigger in the next section require Hùng/Đạt's explicit response;
@@ -137,10 +138,9 @@ this is not a claim that either owner accepted or implemented these additions.
 
 At the source-confirmation boundary persist the exact validated `SourceQuestion`
 input, a per-question fingerprint, an immutable source revision, and authenticated
-confirmation actor/time. The existing entry points are
-`backend/app/api/routes/sessions.py::confirm_source` and SQL `confirm_exam_source`.
-They currently lock/stamp legacy rows;
-they do **not** persist these artifacts. Existing `confirmed_at` alone is insufficient.
+confirmation actor/time. The existing public entry point is `backend/app/api/routes/sessions.py::confirm_source`.
+It calls worker-only `confirm_source_artifacts`, independent of legacy003 and
+legacy Blueprint existence. Existing `confirmed_at` alone is insufficient.
 
 Use the existing Python expression:
 
@@ -206,11 +206,11 @@ retain the existing 004/005 → 006 → 007 ordering meanwhile.
 
 Keep the existing reservation RPC signature and response identity/lease fields.
 On a new reservation, the RPC verifies persisted artifact ownership, validity and
-revision/hash binding under the session lock, then freezes this proposed snapshot:
+revision/hash binding under the session lock, then freezes this snapshot:
 
 | Field | Required value/meaning |
 |---|---|
-| `format` | Literal `confirmed_artifacts_v1` (new proposal; baseline is still `database_rows`) |
+| `format` | Literal `confirmed_artifacts_v1`; historical `database_rows` remains historical |
 | `source_revision_id` | Immutable persisted revision of confirmed source input |
 | `blueprint_revision_id` | Immutable persisted revision of the validated canonical document |
 | `blueprint_source_revision_id` | Stored Blueprint binding; must equal source_revision_id |
@@ -272,7 +272,8 @@ Deploy storage and producer support, then reservation support, then strict calle
 drain old writers before enabling dispatch. Keep legacy format explicit until cutover;
 do not downgrade or pretend old rows are v1. No superseded receipt is rewritten.
 The baseline 57 DB tests and earlier caller mock suites do not establish these new
-requirements. Producer, storage, RPC and caller integration remain pending.
+requirements. Current integration evidence and remaining checks are recorded in
+PR #28 and its remediation plan; owner adoption on #36 remains pending.
 
 Complete accepts TASK-304's `RegeneratedVariantResult`: `stem_latex`, four distinct
 nonempty option strings, `correct_key` A–D, nonempty `solution_md`, validation report,
@@ -314,7 +315,7 @@ on GET in #28, subject to owner confirmation. Final approval continues to reject
 active operation; this does not add hidden recovery to approve or matrix reads.
 Public-route tests must cover stale same-question retry, unexpired operations,
 worker unavailable, repeated/lost-response recovery, cancellation and late completion.
-SQL discovery is already implemented in #36; the full caller trigger is still pending.
+SQL discovery is implemented in #36; TASK-301 now invokes it before each fresh reservation after lookup, adapter and session guards.
 
 
 When only the session ID survives a worker restart, call
@@ -422,8 +423,8 @@ Do not apply the old competing implementation after 006 or maintain both.
 resetting quota. That guard is not a conversion script or a certificate of deployed compatibility.
 
 Supabase rollout, live JWT/RLS, live AI, caller/adapter E2E and shuffle integration
-are not yet verified. TASK-301 at 39083c2 calls session recovery on one busy branch; the proposed
-pre-reservation trigger and strict fallback gating still need implementation.
+are not deployment evidence. TASK-301 now implements the pre-reservation trigger
+and strict artifact gating; the earlier39083c2 checkpoint used only busy recovery.
 These SQL tests do not certify the caller or the proposed artifact contract.
 
 
@@ -434,7 +435,7 @@ or deployed integration. SQL signatures remain those of pinned TASK-302 a2d2fc3.
 Owner/worker RPC results are parsed as typed receipts, including replay/settlement;
 the caller no longer constructs source snapshots or confirmation hashes from live rows.
 Baseline database_rows is unavailable for provider dispatch and is failure-settled.
-Proposed confirmed_artifacts_v1 parsing is preparatory until producer/RPC handoff.
+confirmed_artifacts_v1 is now emitted by SQL and validated before dispatch.
 
 ### HTTP action keys and error behavior
 
@@ -459,20 +460,15 @@ before reserving or charging; timeout is 504; permit uncertain/invalid keeps exi
 client refund count. A cancelled invocation propagates cancellation after best-effort
 settlement. Read failure after commit never initiates a rollback.
 
-### Remaining progress interface decision
+### Progress and recovery interface
 
-The HTTP contract includes unapproved_question_ids, but baseline review_get_progress
-returns counts only. Proposed additive field: progress.unapproved_question_ids, UUID
-array of current unapproved candidates produced in the same SQL snapshot as counts.
-TASK-302 owner confirmation/implementation is still required. The caller checks the
-array's uniqueness and cardinality against current_slots-approved_slots. Without this
-field, an empty array is only inferred when that difference is zero; otherwise it
-returns ERR_PROGRESS_DETAILS_UNAVAILABLE (503), not a fabricated empty list. This safe
-failure does not complete the pending progress feature.
-
-The caller retains busy-trigger recovery using review_recover_session and read-only
-GET progress. Proposed R1 before every reservation remains awaiting acknowledgement.
-No new RPC, table-write fallback, ledger SELECT grant or alternative SQL is introduced.
+progress.unapproved_question_ids is implemented in006 in the same snapshot as
+counts/readiness. Missing canonical heads make readiness false, including when
+failure/recovery recalculates after source invalidation; they do not block settlement.
+Reserve separately rejects missing/pending/mismatched artifacts before operation creation.
+Owner adoption on #36 remains pending. GET progress is read-only. Fresh Reject
+uses receipt lookup (if a key exists), adapter guard, session guards, session
+recovery, then reservation. Replayed receipts do not run recovery or AI.
 
 ### Evidence and remaining acceptance
 
@@ -506,7 +502,7 @@ artifact backfill is introduced.
 
 | RPC | Parameters after p_ | API roles | Result / guarantee |
 |---|---|---|---|
-| confirm_source_artifacts | session_id UUID, actor_id UUID, confirmation_id UUID, expected_updated_at TIMESTAMPTZ, sources JSONB | service_role only, plus role-claim check | Typed confirmation receipt; exact source comparison, existing003 confirmation/status/audit and source revision writes commit together |
+| confirm_source_artifacts | session_id UUID, actor_id UUID, confirmation_id UUID, expected_updated_at TIMESTAMPTZ, sources JSONB | service_role only, plus role-claim check | Typed confirmation receipt; exact source comparison, source confirmation/status/audit and source revision writes commit together without legacy003 |
 | publish_canonical_blueprint | session_id UUID, publication JSONB | service_role only, plus role-claim check | Source/Blueprint revision receipt; validated canonical body and current pointer commit together; superseded source/locked session refused |
 | get_source_artifacts | session_id UUID | authenticated owner or service_role | Read-only confirmation/pending IDs/ready snapshot under shared session lock; stale source set/binding refused |
 
@@ -538,10 +534,11 @@ state; it does not recreate hashes from live rows or mutate GET lifecycle state.
 Python blueprint/producer.py confirms through the worker RPC, extracts using the
 existing BlueprintService outside transactions, validates full canonical output,
 and publishes with typed receipts and bounded same-payload retries. Its resume
-method skips already-published sources. HTTP confirm-source/background scheduling
-and the frozen-v1 reservation/acquire/complete mapping still need wiring; the
-existing HTTP confirm-source route still uses003 directly at this checkpoint.
-A Python producer→RPC PostgreSQL test is not proof that the public route is wired.
+method skips already-published sources. The existing HTTP confirm-source route now
+uses this producer; frozen-v1 reservation/acquire/complete use the same persisted
+artifacts. A real HTTP→BlueprintService→PostgreSQL→reservation→TargetedRegenerator/
+GenerationService→permit→complete test uses a fake gateway without live Gemini.
+JWT validation and table-read RLS are not certified by that injected-auth transport.
 
 The same006 progress calculation now returns unapproved_question_ids alongside
 counts, including regenerating current candidates. The list is sorted by UUID,
@@ -570,8 +567,8 @@ Reject with a supplied key looks up the receipt before requiring an adapter.
 Completed replay reads its committed result; active/failed/recovered outcomes do
 not start a provider. A missing key/receipt still requires the adapter before
 reserve or any other new mutation. Uncertain failure reconciliation also uses this
-read lookup instead of invoking reserve. R1/new-action recovery and the frozen-v1
-integration remain the following implementation steps, not implied complete here.
+read lookup instead of invoking reserve. R1/new-action recovery and frozen-v1 are
+implemented on301; owner adoption and independent verification remain separate gates.
 
 ## Bootstrap confirmation — current producer semantics
 
@@ -582,5 +579,49 @@ Stage1 status atomically. The receipt uses status=blueprinted for compatibility,
 canonical_status=pending and total_blueprints=0. Historical receipts that counted
 legacy rows are never used to infer canonical readiness; current heads determine
 ready. Confirmed sessions use canonical heads for review readiness, not legacy
-confirmed_at. Original003 remains unchanged for historical callers until the
-existing public confirm-source route is migrated in the following step.
+confirmed_at. Original003 remains unchanged for historical callers. The existing public route
+is migrated; no second confirmation endpoint is introduced.
+
+
+## Background producer/public API — TASK-301 implementation
+
+Confirmation commits before AI. POST /api/sessions/{id}/confirm-source keeps its
+existing request body (deprecated warning acknowledgment ignored per ADR004), and
+accepts an optional UUID Idempotency-Key. Actor comes from CurrentUser; public
+requests cannot set worker actor/hash/canonical content. Response retains Stage1
+status=blueprinted but adds confirmation_id and canonical_status=pending. Missing
+AI configuration leaves the source confirmed/pending. total_blueprints counts
+current published canonical artifacts, not legacy rows.
+
+GET /api/sessions/{id}/source-artifacts is authenticated owner-only and read-only;
+it returns readiness, counts, pending IDs and per-source pending/running/ready/failed
+states. POST on the same path plus /retry resumes only missing sources (202), or
+returns200 when already ready. Missing AI for pending work returns503. Authentication
+and ownership precede all worker mutations. Source changes invalidate old bindings;
+status/retry refuse a stale source set rather than silently reconfirming it.
+
+Worker-only claim_source_production(session_id,source_revision_id,job_id) returns
+claimed/busy/ready. A DB-clock420s lease exceeds the per-source360s extraction
+deadline. Claims serialize under the parent lock, so concurrent triggers cannot
+dispatch two jobs for one revision. Same-job claim retries only reconcile uncertain
+transport before dispatch. Publication uses that job ID as blueprint_revision_id
+and checks the current job/revision and unexpired lease. Historical receipt replay
+does not repoint heads. At most three sources extract concurrently.
+
+Worker-only fail_source_production(session_id,source_revision_id,job_id,error_code)
+records a sanitized failure only for that pending job; stale workers cannot settle
+or overwrite newer jobs. Other sources finish even when one fails. A process crash
+leaves a durable lease; after expiry status is pending and authenticated /retry can
+resume. This is in-process background scheduling with durable DB ownership/status,
+not an autonomous external queue: restart recovery requires a retry/confirm trigger.
+GET never schedules extraction. No producer request consumes the review30/session
+or4/operation ledger; review permits retain their separate180s operation expiry.
+
+Confirmation transport loss/timeouts return504 uncertain; proven SQL rollback is500
+with rollback wording, unknown/gateway/SQLSTATE08 errors are500 uncertain. A read
+failure after committed confirmation returns503 and does not roll back confirmation;
+reconcile with the same key or read status. Publication/claim have bounded same-ID
+availability retries. No raw provider or database error is returned to clients.
+
+All additions in this section are implemented on301 for Hùng/Đạt review/adoption
+on #36. They are not evidence of owner acceptance, live rollout or GitHub Approve.
