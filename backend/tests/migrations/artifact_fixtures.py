@@ -83,3 +83,20 @@ def seed_artifacts(case, session_id, source_id, actor_id):
       INSERT INTO source_artifact_heads VALUES ({lit(source_id)},{lit(artifact["source_revision_id"])},{lit(publication["blueprint_revision_id"])});
     """)
     return artifact, publication
+
+
+def lease_superseding_publication(case, source_id, publication):
+    """Set up a trusted revision change, not a public ready-head retry path.
+
+    Tests model a subsequent canonical revision to stress in-flight guards.
+    The production claim RPC skips already-ready heads; this fixture deliberately
+    grants the new revision a lease without replacing the current Blueprint yet.
+    """
+    job = publication["blueprint_revision_id"]
+    publication = publication | {"producer_job_id": job}
+    case.sql(
+        f"UPDATE source_artifact_heads SET producer_job_id='{job}', "
+        f"producer_expires_at=clock_timestamp()+interval '420 seconds' "
+        f"WHERE source_question_id='{source_id}';"
+    )
+    return publication

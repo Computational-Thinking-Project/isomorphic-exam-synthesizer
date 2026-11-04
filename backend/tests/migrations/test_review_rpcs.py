@@ -111,7 +111,8 @@ class ReviewRpcTests(PostgresCase):
         self.assertEqual(first["snapshot"], second["snapshot"])
         self.assertEqual(first["snapshot"]["format"], "confirmed_artifacts_v1")
         self.assertEqual(
-            first["snapshot"]["source_snapshot"]["content_hash"], self.artifact["source_fingerprint"]
+            first["snapshot"]["source_snapshot"]["content_hash"],
+            self.artifact["source_fingerprint"],
         )
         self.assertEqual(self.value("SELECT gemini_review_calls FROM exam_sessions;"), "0")
         self.assertEqual(self.value("SELECT count(*) FROM review_operations;"), "1")
@@ -772,3 +773,33 @@ class ReviewRpcTests(PostgresCase):
             "REVIEW_IDEMPOTENCY_CONFLICT", next(r.stderr for r in results if r.returncode)
         )
         self.assertEqual(self.value("SELECT count(*) FROM review_action_receipts;"), "1")
+
+    def test_lookup_missing_operation_is_read_only(self):
+        before = self.value("SELECT row_to_json(s) FROM exam_sessions s;")
+        result = self.call("review_lookup_regeneration", SID, QID, uuid4())
+        self.assertEqual(result, {"found": False})
+        self.assertEqual(self.value("SELECT count(*) FROM review_operations;"), "0")
+        self.assertEqual(self.value("SELECT count(*) FROM review_logs;"), "0")
+        self.assertEqual(self.value("SELECT row_to_json(s) FROM exam_sessions s;"), before)
+
+    def test_lookup_completed_receipt_after_approval_does_not_change_state(self):
+        op = uuid4()
+        self.reserve(op)
+        completed = self.complete(op)
+        self.sql("UPDATE exam_sessions SET status='approved',approved_at=now();")
+        before = self.value("SELECT row_to_json(s) FROM exam_sessions s;")
+        result = self.call("review_lookup_regeneration", SID, QID, op)
+        self.assertTrue(result["found"])
+        self.assertEqual(result["reservation"]["operation_status"], "completed")
+        self.assertEqual(result["reservation"]["settlement"], completed)
+        self.assertEqual(self.value("SELECT row_to_json(s) FROM exam_sessions s;"), before)
+
+    def test_lookup_requires_owner_and_never_grants_worker_receipt_access(self):
+        op = uuid4()
+        self.reserve(op)
+        self.expect_error(
+            "REVIEW_NOT_FOUND", "review_lookup_regeneration", SID, QID, op, actor=str(uuid4())
+        )
+        self.expect_error(
+            "permission denied", "review_lookup_regeneration", SID, QID, op, worker=True
+        )

@@ -1,6 +1,6 @@
 """Producer SQL provenance/atomicity on PostgreSQL15 (same explicit Docker opt-in).
 
-Adapted from Duy/TASK-301 commit 68b375f. SQL tests use detached shared
+Adapted from Duy/TASK-301 commits 68b375f and 553a009. SQL tests use detached shared
 fixtures; no backend Python dependencies, Gemini or shared database are used.
 """
 
@@ -28,6 +28,7 @@ class SourceArtifactTests(PostgresCase):
             correct_key=source["correct_answer"],
             solution_md=None,
         )
+        self.publication["producer_job_id"] = self.publication["blueprint_revision_id"]
         self.sources = [artifact]
         self.sql(f"""UPDATE source_questions SET raw_content={literal(self.row["raw_content"])},
             options={literal(json.dumps(self.row["options"]))},correct_key='A',solution_md=NULL;""")
@@ -61,14 +62,23 @@ class SourceArtifactTests(PostgresCase):
         )
 
     def publish(self, publication=None, check=True):
-        return self.call(
-            "publish_canonical_blueprint",
-            SID,
-            json.dumps(publication or self.publication),
-            check=check,
+        publication = publication or self.publication
+        exists = self.value(
+            f"SELECT count(*) FROM canonical_blueprint_revisions WHERE blueprint_revision_id={literal(publication['blueprint_revision_id'])};"
         )
+        if exists == "0":
+            claimed = self.call(
+                "claim_source_production",
+                SID,
+                publication["source_revision_id"],
+                publication["producer_job_id"],
+                check=check,
+            )
+            if not check and claimed.returncode:
+                return claimed
+        return self.call("publish_canonical_blueprint", SID, json.dumps(publication), check=check)
 
-    def test_confirmation_records_exact_python_input_hash_actor_and_legacy_transition(self):
+    def test_confirmation_records_exact_python_input_hash_actor_and_pending_canonical(self):
         receipt = self.confirm()
         self.assertEqual(receipt["sources"], self.sources)
         self.assertEqual(receipt["actor_id"], OWNER)
@@ -76,8 +86,10 @@ class SourceArtifactTests(PostgresCase):
         self.assertEqual(self.value("SELECT count(*) FROM source_artifact_revisions;"), "1")
         self.assertEqual(
             self.value("SELECT count(*) FROM question_blueprints WHERE confirmed_at IS NOT NULL;"),
-            "1",
+            "0",
         )
+        self.assertEqual(receipt["total_blueprints"], 0)
+        self.assertEqual(receipt["canonical_status"], "pending")
         saved = json.loads(self.value("SELECT confirmed_input FROM source_artifact_revisions;"))
         self.assertEqual(saved, self.sources[0]["confirmed_input"])
         self.assertEqual(
@@ -122,8 +134,9 @@ class SourceArtifactTests(PostgresCase):
         result = self.confirm(actor=str(uuid4()), check=False)
         self.assertIn("ARTIFACT_OWNER_MISMATCH", result.stderr)
 
-    def test_confirmation_artifact_failure_rolls_back_legacy_confirmation_and_audit(self):
-        self.sql("""CREATE FUNCTION fail_artifact_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+    def test_confirmation_artifact_failure_rolls_back_source_transition_and_security_audit(self):
+        self.sql("""UPDATE source_questions SET has_security_warning=true;
+          CREATE FUNCTION fail_artifact_insert() RETURNS trigger LANGUAGE plpgsql AS $$
           BEGIN RAISE EXCEPTION 'INJECT_ARTIFACT_FAILURE'; END $$;
           CREATE TRIGGER fail_artifact BEFORE INSERT ON source_artifact_revisions
           FOR EACH ROW EXECUTE FUNCTION fail_artifact_insert();""")
@@ -131,6 +144,7 @@ class SourceArtifactTests(PostgresCase):
         self.assertIn("INJECT_ARTIFACT_FAILURE", result.stderr)
         self.assertEqual(self.value("SELECT status FROM exam_sessions;"), "draft")
         self.assertEqual(self.value("SELECT count(*) FROM source_artifact_confirmations;"), "0")
+        self.assertEqual(self.value("SELECT count(*) FROM security_events;"), "0")
         self.assertEqual(
             self.value("SELECT count(*) FROM question_blueprints WHERE confirmed_at IS NOT NULL;"),
             "0",
@@ -174,6 +188,12 @@ class SourceArtifactTests(PostgresCase):
 
     def test_publication_pointer_and_document_rollback_together(self):
         self.confirm()
+        self.call(
+            "claim_source_production",
+            SID,
+            self.publication["source_revision_id"],
+            self.publication["producer_job_id"],
+        )
         self.sql("""CREATE FUNCTION fail_head_update() RETURNS trigger LANGUAGE plpgsql AS $$
           BEGIN RAISE EXCEPTION 'INJECT_HEAD_FAILURE'; END $$;
           CREATE TRIGGER fail_head BEFORE UPDATE ON source_artifact_heads
@@ -251,6 +271,12 @@ class SourceArtifactTests(PostgresCase):
 
     def test_concurrent_publication_replays_one_document_and_pointer(self):
         self.confirm()
+        self.call(
+            "claim_source_production",
+            SID,
+            self.publication["source_revision_id"],
+            self.publication["producer_job_id"],
+        )
         script = rpc_fixtures.ReviewRpcTests.auth("service_role") + (
             f"SELECT publish_canonical_blueprint('{SID}',{literal(json.dumps(self.publication))});"
         )
@@ -259,3 +285,152 @@ class SourceArtifactTests(PostgresCase):
         receipts = [json.loads(r.stdout) for r in responses]
         self.assertEqual(sorted(r["replayed"] for r in receipts), [False, True])
         self.assertEqual(self.value("SELECT count(*) FROM canonical_blueprint_revisions;"), "1")
+
+    def test_bootstrap_needs_neither_legacy_row_nor_old_confirmation_function(self):
+        self.sql(
+            "DELETE FROM question_blueprints; DROP FUNCTION confirm_exam_source(UUID,INT,BOOLEAN,TIMESTAMPTZ);"
+        )
+        receipt = self.confirm()
+        self.assertEqual(receipt["canonical_status"], "pending")
+        self.assertFalse(self.call("get_source_artifacts", SID)["ready"])
+        self.assertEqual(self.value("SELECT count(*) FROM question_blueprints;"), "0")
+        self.publish()
+        self.assertTrue(self.call("get_source_artifacts", SID)["ready"])
+        self.sql(f"INSERT INTO generation_configs(session_id,n_versions) VALUES ('{SID}',1);")
+        progress = self.call("review_get_progress", SID, worker=False)["progress"]
+        self.assertEqual(progress["expected_slots"], 1)
+        self.sql("UPDATE version_questions SET status='approved';")
+        self.assertTrue(self.call("review_get_progress", SID, worker=False)["progress"]["ready"])
+
+    def test_bootstrap_silent_security_audit_is_atomic_and_replay_does_not_duplicate(self):
+        self.sql(
+            "UPDATE source_questions SET has_security_warning=true; DELETE FROM question_blueprints;"
+        )
+        self.confirm()
+        self.confirm()
+        self.assertEqual(
+            self.value(
+                "SELECT count(*) FROM security_events WHERE event_type='PROMPT_INJECTION_DETECTED';"
+            ),
+            "1",
+        )
+
+    def test_publication_and_reservation_share_the_session_lock(self):
+        self.confirm()
+        self.call(
+            "claim_source_production",
+            SID,
+            self.publication["source_revision_id"],
+            self.publication["producer_job_id"],
+        )
+        self.sql(
+            f"UPDATE exam_sessions SET status='generated'; INSERT INTO generation_configs(session_id,n_versions) VALUES ('{SID}',1);"
+        )
+        publish = (
+            rpc_fixtures.ReviewRpcTests.auth("service_role")
+            + f"SELECT publish_canonical_blueprint('{SID}',{literal(json.dumps(self.publication))});"
+        )
+        reserve = (
+            rpc_fixtures.ReviewRpcTests.auth()
+            + f"SELECT review_reserve_regeneration('{SID}','{rpc_fixtures.QID}','{uuid4()}');"
+        )
+        publication, reservation = rpc_fixtures.ReviewRpcTests.concurrent(self, publish, reserve)
+        self.assertEqual(publication.returncode, 0, publication.stderr)
+        if reservation.returncode:
+            self.assertIn("REVIEW_SOURCE_MISMATCH", reservation.stderr)
+            self.assertEqual(self.value("SELECT count(*) FROM review_operations;"), "0")
+        else:
+            self.assertEqual(
+                json.loads(reservation.stdout)["snapshot"]["blueprint_revision_id"],
+                self.publication["blueprint_revision_id"],
+            )
+        self.assertEqual(self.value("SELECT gemini_review_calls FROM exam_sessions;"), "7")
+
+    def test_locked_confirmation_does_not_create_new_revision_but_replays_old(self):
+        first = self.confirm()
+        self.sql("UPDATE exam_sessions SET status='approved',approved_at=now();")
+        self.assertTrue(self.confirm()["replayed"])
+        self.assertIn("ARTIFACT_LOCKED", self.confirm(key=str(uuid4()), check=False).stderr)
+        self.assertEqual(self.value("SELECT count(*) FROM source_artifact_revisions;"), "1")
+        self.assertEqual(self.confirm()["sources"], first["sources"])
+
+    def test_producer_claim_race_grants_one_owner_and_lease_exceeds_extraction(self):
+        self.confirm()
+        revision = self.sources[0]["source_revision_id"]
+        scripts = [
+            rpc_fixtures.ReviewRpcTests.auth("service_role")
+            + f"SELECT claim_source_production('{SID}','{revision}','{uuid4()}');"
+            for _ in range(2)
+        ]
+        responses = rpc_fixtures.ReviewRpcTests.concurrent(self, *scripts)
+        self.assertTrue(all(r.returncode == 0 for r in responses), [r.stderr for r in responses])
+        self.assertEqual(
+            sorted(json.loads(r.stdout)["status"] for r in responses), ["busy", "claimed"]
+        )
+        self.assertEqual(
+            self.value(
+                "SELECT producer_expires_at>clock_timestamp()+interval '360 seconds' FROM source_artifact_heads;"
+            ),
+            "t",
+        )
+
+    def test_stale_timestamp_and_missing_answers_rollback_confirmation(self):
+        self.timestamp = "2000-01-01T00:00:00Z"
+        self.assertIn("ARTIFACT_STALE", self.confirm(check=False).stderr)
+        self.timestamp = self.value(f"SELECT updated_at FROM exam_sessions WHERE id='{SID}';")
+        self.sql("UPDATE source_questions SET has_missing_answer=true;")
+        self.assertIn("ARTIFACT_SOURCE_MISMATCH", self.confirm(check=False).stderr)
+        self.assertEqual(self.value("SELECT count(*) FROM source_artifact_confirmations;"), "0")
+        self.assertEqual(self.value("SELECT status FROM exam_sessions;"), "draft")
+
+    def test_expired_producer_cannot_publish_or_fail_new_job(self):
+        self.confirm()
+        revision = self.sources[0]["source_revision_id"]
+        old = self.publication["producer_job_id"]
+        self.call("claim_source_production", SID, revision, old)
+        self.sql(
+            "UPDATE source_artifact_heads SET producer_expires_at=clock_timestamp()-interval '1 second';"
+        )
+        new = str(uuid4())
+        self.call("claim_source_production", SID, revision, new)
+        result = self.call(
+            "publish_canonical_blueprint", SID, json.dumps(self.publication), check=False
+        )
+        self.assertIn("ARTIFACT_STALE", result.stderr)
+        self.assertEqual(
+            self.call("fail_source_production", SID, revision, old, "PRODUCER_CANCELLED"),
+            {"settled": False},
+        )
+        self.assertEqual(self.value("SELECT producer_job_id FROM source_artifact_heads;"), new)
+        publication = self.publication | {"producer_job_id": new, "blueprint_revision_id": new}
+        self.publish(publication)
+        self.assertTrue(self.call("get_source_artifacts", SID)["ready"])
+
+    def test_producer_status_is_read_only_and_failed_job_can_be_retried(self):
+        self.confirm()
+        revision, job = self.sources[0]["source_revision_id"], str(uuid4())
+        self.call("claim_source_production", SID, revision, job)
+        state = self.call("get_source_artifacts", SID, worker=False)
+        self.assertEqual(state["production"][0]["status"], "running")
+        self.call("fail_source_production", SID, revision, job, "BLUEPRINT_PRODUCTION_FAILED")
+        state = self.call("get_source_artifacts", SID, worker=False)
+        self.assertEqual(state["production"][0]["status"], "failed")
+        job2 = str(uuid4())
+        self.call("claim_source_production", SID, revision, job2)
+        before = self.value("SELECT row_to_json(h) FROM source_artifact_heads h;")
+        self.call("get_source_artifacts", SID, worker=False)
+        self.assertEqual(before, self.value("SELECT row_to_json(h) FROM source_artifact_heads h;"))
+        self.assertEqual(
+            self.call("get_source_artifacts", SID)["production"][0]["status"], "running"
+        )
+
+    def test_producer_claim_and_failure_require_worker_acl(self):
+        self.confirm()
+        revision, job = self.sources[0]["source_revision_id"], str(uuid4())
+        result = self.call("claim_source_production", SID, revision, job, worker=False, check=False)
+        self.assertIn("permission denied", result.stderr)
+
+        result = self.call(
+            "fail_source_production", SID, revision, job, "FAILED", worker=False, check=False
+        )
+        self.assertIn("permission denied", result.stderr)

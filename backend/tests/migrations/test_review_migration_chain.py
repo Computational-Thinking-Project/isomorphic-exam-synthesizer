@@ -15,8 +15,8 @@ from test_review_rpcs import OWNER, QID, SID, SOURCE, candidate, literal
 from test_stage3_schema import BOOTSTRAP, ROOT, SEED, PostgresCase
 
 UPSTREAM = (
-    ("31ed3bc71188db537c41b547630a6b9dbf5f270f", "004_save_generation_config_rpc.sql"),
-    ("31ed3bc71188db537c41b547630a6b9dbf5f270f", "005_generation_job_operations_rpc.sql"),
+    ("2f6840d42c87d04f55e12d25c1bdd71c9481c652", "004_save_generation_config_rpc.sql"),
+    ("2f6840d42c87d04f55e12d25c1bdd71c9481c652", "005_generation_job_operations_rpc.sql"),
     ("d7a3d3f788972f06552cd21a7e7103eceb2f2a55", "007_finalize_approve_session_rpc.sql"),
 )
 

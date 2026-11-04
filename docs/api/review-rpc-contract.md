@@ -1,6 +1,7 @@
 # TASK-302 / TASK-301 review RPC contract
 
-**Database implementation available on this branch; not deployed, integrated or approved.**
+**Database implementation available on this branch; pinned offline integration checked,
+not deployed or approved.**
 Migration `006_stage3_review_and_shuffle.sql` contains the schema, private ledger
 and RPCs below. Hùng owns these database operations; Duy owns the existing
 ReviewRepository/service/API callers. No parallel repository is introduced.
@@ -8,19 +9,17 @@ ReviewRepository/service/API callers. No parallel repository is introduced.
 Decisions: [Duy: boundary, auth, Model A, lifecycle and quota](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6546291626),
 [Đạt: callback and accounting](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6551270882),
 [adapter handoff](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6551386372).
-Compared on 2026-11-04 against TASK-301 `68b375f`, TASK-305 `d7a3d3f`,
-TASK-207a/b `31ed3bc`, TASK-304 `a8f61d5`, and dev `ac18e72`.
+Compared on 2026-11-04 against TASK-301 `553a009`, TASK-305 `d7a3d3f`,
+TASK-207a/b `2f6840d`, TASK-304 `a8f61d5`, and dev `ac18e72`.
 Database tests and remaining integration work are recorded in [TASK-302](../tasks/TASK-302.md).
 
-**Publication checkpoint, 2026-11-04:** the independently checked artifact baseline
-below is TASK-301 `68b375f`. Duy subsequently delivered
-[TASK-301 `553a009`](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28#issuecomment-6624727072),
-including receipt lookup, independent confirmation bootstrap, producer lease/retry
-and caller recovery. Those changes are author-reported, not yet adopted or
-independently verified on this branch. In particular, this checkpoint still uses
-the legacy confirmation bootstrap and has no producer lease/status RPCs. Do not
-combine these two versions of 006 or deploy this checkpoint with the latest caller
-until TASK-302 reconciles the SQL/contract and verifies the combined head.
+**Adoption update, 2026-11-04:** 006 now adopts the lookup/bootstrap/producer lease
+and status protocol from [TASK-301 `553a009`](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28#issuecomment-6624727072).
+It retains TASK-302's whole-confirmed-source-set readiness, legacy-only review
+compatibility and frozen-peer rules. The older `8fff9da` checkpoint is historical;
+do not use its 006 as the database for the latest caller. Use this single migration
+authority and the pinned combined-head evidence in the task plan. Offline tests
+are not approval, deployment, or evidence of live JWT/provider behavior.
 
 ## Interface and authorization — F02/C03
 
@@ -29,6 +28,7 @@ payloads/results JSONB. Each mutation is one short transaction; AI runs outside 
 
 | RPC | Parameters after `p_` | Allowed caller | Main result |
 |---|---|---|---|
+| `review_lookup_regeneration` | `session_id UUID, question_id UUID, operation_id UUID` | Owner JWT only | `{found:false}` or `{found:true,reservation:<stored receipt with current operation_status/settlement>}`; read only |
 | `review_reserve_regeneration` | `session_id UUID, question_id UUID, operation_id UUID` | Owner JWT | `operation_id, question_id, expires_at, max_attempts, snapshot, operation_status` |
 | `review_acquire_attempt` | `operation_id UUID, attempt_id UUID` | Worker | The six-field permit below |
 | `review_complete_regeneration` | `operation_id UUID, candidate JSONB` | Worker | `operation_id, previous_question_id, question_id, api_calls_used, invalidated_version_ids, progress` |
@@ -39,7 +39,7 @@ payloads/results JSONB. Each mutation is one short transaction; AI runs outside 
 | `review_revert_question` | Same as accept | Owner JWT | Same as accept |
 | `review_get_progress` | `session_id UUID` | Owner JWT | `progress` |
 
-Except the permit and session recovery, results include `session_id, session_status, replayed`.
+Except lookup, the permit and session recovery, results include `session_id, session_status, replayed`.
 Owner calls require the authenticated role and derive the audit actor from
 `auth.uid()`, then check ownership inside the transaction. Worker calls require
 `service_role` EXECUTE privileges and the service-role claim. Their actor is the
@@ -47,10 +47,16 @@ authenticated creator stored in the operation, never an actor supplied in a requ
 Worker functions are unavailable to authenticated/anon; owner functions are not
 granted to service_role. Use separate JWT and worker clients in the wrapper.
 
+Lookup takes a shared session lock and checks ownership, question/session binding,
+then the saved operation's session/question/actor. Missing operations return found=false;
+conflicting existing IDs fail with REVIEW_IDEMPOTENCY_CONFLICT. It does not reserve,
+recover, audit, charge, change status, or grant dispatch. Completed receipts remain
+readable after approval and after the original question ceases to be current.
+
 The three new tables (`review_operations`, `review_attempts`,
 `review_action_receipts`) have RLS enabled and no direct grants to any API role,
 including service_role. Internal `_review_*` helpers have no API-role EXECUTE.
-Only the nine review entry points receive the specific grants above; the three
+Only the ten review entry points receive the specific grants above; the five
 artifact entry points have the separate grants below. SECURITY DEFINER
 functions pin their search path and qualify application tables.
 
@@ -110,7 +116,7 @@ fall back to a mock or local-only budget.
 ## Confirmed artifacts - database authority (P1-P4)
 
 TASK-302 adopts the storage/protocol proposed by Duy in
-[TASK-301 `68b375f`](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/commit/68b375f6fddfc9085dff9be4f2a73c3fa5a7c45d),
+[TASK-301 `553a009`](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/commit/553a0094d9a3c4ddcb30f8f008d964c9362d3c76),
 following [Duy's producer ownership confirmation](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6621050876)
 and [Dat's consumer contract](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6594059670).
 These are implemented locally in 006, not deployed. Duy owns Python producer,
@@ -119,9 +125,11 @@ This document is DB authority; a matching mapper does not establish HTTP E2E.
 
 | RPC | Parameters after `p_` | Caller / result |
 |---|---|---|
-| `confirm_source_artifacts` | `session_id UUID, actor_id UUID, confirmation_id UUID, expected_updated_at TIMESTAMPTZ, sources JSONB` | Worker; confirmation receipt with actor/time, sources, legacy Stage 1 status |
+| `confirm_source_artifacts` | `session_id UUID, actor_id UUID, confirmation_id UUID, expected_updated_at TIMESTAMPTZ, sources JSONB` | Worker; actor/time, sources, status=blueprinted, canonical_status=pending, total_blueprints=0 |
+| `claim_source_production` | `session_id UUID, source_revision_id UUID, job_id UUID` | Worker; session/source/revision/job IDs, status=claimed/busy/ready, expires_at |
+| `fail_source_production` | `session_id UUID, source_revision_id UUID, job_id UUID, error_code TEXT` | Worker; settled boolean; fenced by revision/job |
 | `publish_canonical_blueprint` | `session_id UUID, publication JSONB` | Worker; source/Blueprint revision IDs, replayed |
-| `get_source_artifacts` | `session_id UUID` | Owner JWT or worker; confirmation, pending_source_question_ids, ready; read only |
+| `get_source_artifacts` | `session_id UUID` | Owner JWT or worker; confirmation, pending_source_question_ids, production, ready; read only |
 
 Private, RLS-enabled tables with no API-role grants (including service_role):
 `source_artifact_confirmations` stores owner-derived actor, DB time and durable receipt;
@@ -129,7 +137,9 @@ Private, RLS-enabled tables with no API-role grants (including service_role):
 `canonical_blueprint_revisions` stores full canonical JSON/schema and its source revision;
 `source_artifact_heads` selects current source/Blueprint revisions. IDs are UUID strings.
 History survives source deletion and cascades only with its session. No legacy backfill.
-Only the three entry points above receive grants; `_artifact_*`/snapshot helpers are private.
+Only the five entry points above receive artifact grants; `_artifact_*`/snapshot helpers are private.
+Heads additionally hold producer_job_id, producer_expires_at and producer_error_code;
+these are execution state, not canonical Blueprint status fields.
 
 Each `sources` entry contains `source_question_id, source_revision_id, confirmed_input,
 source_fingerprint`. Input is exactly `id, question_text, options[4], correct_answer,
@@ -137,8 +147,11 @@ solution`; map raw_content -> question_text, correct_key -> correct_answer,
 solution_md NULL -> empty solution. Object options map in A/B/C/D order.
 The backend derives actor from verified HTTP identity; never expose worker hash/actor
 parameters directly to clients. Under the session lock, confirmation checks ownership,
-draft/updated_at, whole source set and exact live content before calling the existing
-`confirm_exam_source` (003). Both legacy confirmation and revision writes are atomic.
+draft/updated_at, whole source set, complete answers and exact live content. It records
+the source revisions, owner/time, status=blueprinted and ADR-004 silent security audit
+atomically, before extraction. It neither calls `confirm_exam_source` (003) nor
+requires/invents legacy Blueprint rows. The receipt says canonical_status=pending,
+total_blueprints=0; only current artifact heads establish canonical readiness.
 Confirmation replay compares source content/fingerprints, ignoring newly proposed revision
 IDs, and returns the original committed revisions. Producers must use returned IDs.
 
@@ -151,9 +164,20 @@ Full 0.4.0 schema/semantic validation is the trusted Python producer's responsib
 binding. API roles cannot directly insert artifacts or assert validation themselves.
 The strict caller independently verifies hash/schema before the first permit.
 
-Publication contains `source_question_id, source_revision_id, source_fingerprint,
+Claim before extraction. One live job per head owns a 420-second DB-clock lease,
+longer than the producer's maximum 360-second extraction deadline. Same-job claim
+replay does not extend a live lease; another job receives busy, and an already-ready
+head receives ready without a new extraction. Expired/failed pending work can be
+claimed by a new job. Failure records a sanitized code matching
+`^[A-Z][A-Z0-9_]{0,79}$` only for that revision/job; an old worker cannot fail its
+replacement. Source reconfirmation clears producer state.
+
+Publication contains `source_question_id, source_revision_id, source_fingerprint, producer_job_id,
 blueprint_revision_id, schema_version="0.4.0", canonical_blueprint`. Extract outside
-DB transactions. Publish only against the still-current confirmed revision/content.
+DB transactions. New publication requires the still-current revision/content,
+matching producer job and an unexpired lease; commit clears expiry/error together
+with the canonical row/head pointer. The producer uses its job UUID as the new
+Blueprint UUID. Ready-head retries do not create another revision.
 A new Blueprint gets a new UUID. Same-ID/same-body replay is read only, including
 after invalidation/locking; it never repoints heads. Different payload -> idempotency
 conflict. Source edits (including number/missing-answer changes) delete the head and
@@ -163,6 +187,13 @@ lock. This adds no Stage 1 edit API or draft transition. Inserts/deletes also
 serialize through the session lock. Approved/exported/non-NULL-approved_at content
 is locked. All writers must lock the parent before child DML; row triggers are a
 final guard, not a substitute for transaction lock order.
+
+`get_source_artifacts.production` contains sorted source_question_id/source_revision_id,
+status=pending/running/ready/failed, expires_at and sanitized error_code. Status reads
+do not claim/extend/recover leases. Background work is in-process: after a crash,
+an authenticated POST retry triggers resume once the lease expires; there is no
+autonomous queue or recovery on GET. Partial success remains published. This phase
+uses the producer's own request budget, not the W3 review counter.
 
 ### Frozen reservation envelope
 
@@ -203,9 +234,9 @@ synthesize solution/report/checks or math verification to force completion.
 Storage errors use `ARTIFACT_NOT_FOUND`, `ARTIFACT_WORKER_REQUIRED`,
 `ARTIFACT_OWNER_MISMATCH`, `ARTIFACT_INVALID_PAYLOAD`, `ARTIFACT_SOURCE_MISMATCH`,
 `ARTIFACT_IDEMPOTENCY_CONFLICT`, `ARTIFACT_STALE`, `ARTIFACT_LOCKED`. Review snapshot
-failure retains `REVIEW_SOURCE_MISMATCH`; caller `frozen_inputs` at `68b375f` maps
-invalid frozen evidence to HTTP 422 `ERR_SOURCE_NOT_CONFIRMED`. Duy must map artifact
-producer errors at the public boundary; do not expose raw SQL/provider exceptions.
+failure retains `REVIEW_SOURCE_MISMATCH`; the pinned strict caller maps invalid
+frozen evidence to HTTP 422 `ERR_SOURCE_NOT_CONFIRMED`. TASK-301's producer maps
+artifact errors at the public boundary; raw SQL/provider exceptions are not public payloads.
 
 ### Caller recovery order (R1)
 
@@ -214,8 +245,12 @@ reservation**, after ownership/session guards, including a retry of the caller's
 own regenerating question. GET progress remains read only. Existing-ID replays
 must reconcile operation_status/settlement before dispatch; an active replay does
 not authorize a second orchestrator. This is lazy recovery, with no automatic
-180-second scheduler. SQL supports it; wiring was pending at `68b375f`.
-Duy reports it implemented at `553a009`; adoption/verification remains pending here.
+180-second scheduler. TASK-301 `553a009` orders lookup/replay before adapter
+availability checks; a fresh request requires the adapter, validates session guards,
+then calls worker recovery before reserve. A missing adapter on a fresh key causes
+no recovery/reservation/charge. Completed replay works without an adapter; other
+replays never dispatch. The pinned caller regressions and combined offline HTTP
+path are checked; these do not certify a deployed Supabase installation.
 Deploy 003/004/005/006 storage and producer, then reservation/strict callers; drain
 old writers before dispatch. Never rewrite old receipts to claim v1 compatibility.
 
@@ -316,7 +351,7 @@ Mutation recalculation sets reviewed only when ready; otherwise generated.
 
 **TASK-305 boundary:** final approval must acquire the same session row lock and
 check complete readiness/no active operation plus finalization within that database
-transaction. The pinned 004/005 at `31ed3bc` and 007 at `d7a3d3f` are tested with
+transaction. The pinned 004/005 at `2f6840d` and 007 at `d7a3d3f` are tested with
 006 on fresh and upgraded databases: charged-receipt replay, recovery followed by
 approval, approval denial during an active operation, and review mutation denial
 after approval. This verifies those paths, not all possible TASK-305 writer inputs.
@@ -355,10 +390,12 @@ Do not apply the old competing implementation after 006 or maintain both.
 006 detects the incompatible attempt ledger and stops without rewriting it or
 resetting quota. That guard is not a conversion script or a certificate of deployed compatibility.
 
-Supabase rollout, live JWT/RLS/AI, public HTTP/background E2E and shuffle-writer
-integration are not yet verified. The pinned mapper/adapter can be checked with
-an actual RPC fixture and offline provider (see the migration-test README). This
-does not certify the public caller, including recovery before every new Reject.
+Supabase rollout, live JWT verification/table-read RLS/PostgREST pooling/provider
+and shuffle-writer E2E are not verified. The combined SQL and pinned TASK-301
+HTTP/background/adapter path are checked with injected authentication, test table
+transport and fake gateway; PostgreSQL RPC roles/ACL are real. See the migration-test
+README and task plan for exact pins, commands, counts and limits. Do not substitute
+author checks for independent GitHub review/approval.
 
 ## Progress IDs and compatibility
 

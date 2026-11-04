@@ -2,13 +2,14 @@
 
 import json
 import os
+import subprocess
 from pathlib import Path
 from uuid import uuid4
 
 import test_review_rpcs as rpc_fixtures
-from artifact_fixtures import seed_artifacts
+from artifact_fixtures import lease_superseding_publication, seed_artifacts
 from test_review_rpcs import OWNER, QID, SID, SOURCE, candidate, literal
-from test_stage3_schema import PostgresCase
+from test_stage3_schema import BOOTSTRAP, LEGACY, ROOT, SEED, PostgresCase
 
 
 class ReviewArtifactTests(PostgresCase):
@@ -30,10 +31,13 @@ class ReviewArtifactTests(PostgresCase):
     concurrent = rpc_fixtures.ReviewRpcTests.concurrent
 
     def publish(self, publication=None, check=True):
+        publication = publication or self.publication
+        if publication["blueprint_revision_id"] != self.publication["blueprint_revision_id"]:
+            publication = lease_superseding_publication(self, SOURCE, publication)
         return self.call(
             "publish_canonical_blueprint",
             SID,
-            json.dumps(publication or self.publication),
+            json.dumps(publication),
             worker=True,
             check=check,
         )
@@ -168,7 +172,9 @@ class ReviewArtifactTests(PostgresCase):
         self.assertEqual(self.value("SELECT count(*) FROM review_attempts;"), "0")
 
     def test_publication_reservation_race_never_dispatches_superseded_revision(self):
-        publication = self.publication | {"blueprint_revision_id": str(uuid4())}
+        publication = lease_superseding_publication(
+            self, SOURCE, self.publication | {"blueprint_revision_id": str(uuid4())}
+        )
         op = str(uuid4())
         results = self.concurrent(
             self.auth() + f"SELECT review_reserve_regeneration('{SID}','{QID}','{op}');",
@@ -240,7 +246,9 @@ class ReviewArtifactTests(PostgresCase):
 
     def test_permit_publication_race_keeps_charge_only_if_permit_won(self):
         op = self.reserve()["operation_id"]
-        publication = self.publication | {"blueprint_revision_id": str(uuid4())}
+        publication = lease_superseding_publication(
+            self, SOURCE, self.publication | {"blueprint_revision_id": str(uuid4())}
+        )
         results = self.concurrent(
             self.auth("service_role") + f"SELECT review_acquire_attempt('{op}','{uuid4()}');",
             self.auth("service_role")
@@ -266,7 +274,9 @@ class ReviewArtifactTests(PostgresCase):
     def test_completion_publication_race_never_commits_stale_completion(self):
         op = self.reserve()["operation_id"]
         self.permit(op)
-        publication = self.publication | {"blueprint_revision_id": str(uuid4())}
+        publication = lease_superseding_publication(
+            self, SOURCE, self.publication | {"blueprint_revision_id": str(uuid4())}
+        )
         results = self.concurrent(
             self.auth("service_role")
             + f"SELECT review_complete_regeneration('{op}',{literal(json.dumps(candidate(1)))});",
@@ -313,3 +323,98 @@ class ReviewArtifactTests(PostgresCase):
         self.assertEqual(result["approved_slots"], result["expected_slots"])
         self.assertFalse(result["ready"])
         self.assertEqual(self.value("SELECT status FROM exam_sessions;"), "generated")
+
+    def test_peer_revert_keeps_reserved_peers_frozen_and_allows_completion(self):
+        version, original, peer = (str(uuid4()) for _ in range(3))
+        self.sql(f"""UPDATE generation_configs SET n_versions=2;
+          INSERT INTO exam_versions(id,session_id,version_code) VALUES ('{version}','{SID}','102');
+          INSERT INTO version_questions(id,version_id,source_question_id,question_no,content,options,correct_key,
+            canonical_question_no,canonical_options,canonical_correct_key,is_current)
+          VALUES ('{original}','{version}','{SOURCE}',1,'Original peer','["1","2","3","4"]','A',
+            9,'["1","2","3","4"]','A',false);
+          INSERT INTO version_questions(id,version_id,source_question_id,question_no,content,options,correct_key,
+            canonical_question_no,canonical_options,canonical_correct_key,is_current,regenerated_from_id)
+          VALUES ('{peer}','{version}','{SOURCE}',1,'Regenerated peer','["1","2","3","4"]','A',
+            9,'["1","2","3","4"]','A',true,'{original}');""")
+        receipt = self.reserve()
+        self.assertEqual([p["id"] for p in receipt["snapshot"]["peer_variants"]], [peer])
+        self.call("review_revert_question", SID, peer, uuid4())
+        op = receipt["operation_id"]
+        self.assertTrue(self.permit(op)["dispatch_permitted"])
+        self.assertEqual(self.reserve(op)["snapshot"], receipt["snapshot"])
+        self.assertEqual(self.complete(op, candidate(1))["api_calls_used"], 1)
+        self.assertEqual(
+            self.value(f"SELECT is_current FROM version_questions WHERE id='{original}';"), "t"
+        )
+
+    def test_lookup_active_failed_and_recovered_receipts_never_mutates_ledger(self):
+        for terminal in ("failed", "recovered"):
+            receipt = self.reserve()
+            op = receipt["operation_id"]
+            self.permit(op)
+            active = self.call("review_lookup_regeneration", SID, QID, op)
+            self.assertEqual(active["reservation"]["operation_status"], "active")
+            if terminal == "failed":
+                self.fail(op)
+            else:
+                self.sql(
+                    "UPDATE review_operations SET expires_at=clock_timestamp()-interval '1 second';"
+                )
+                self.call("review_recover_session", SID, worker=True)
+            before = self.value("""SELECT jsonb_build_array(
+                (SELECT jsonb_agg(to_jsonb(o)) FROM review_operations o),
+                (SELECT jsonb_agg(to_jsonb(a)) FROM review_attempts a),
+                (SELECT jsonb_agg(to_jsonb(l)) FROM review_logs l),
+                (SELECT gemini_review_calls FROM exam_sessions));""")
+            for _ in range(2):
+                result = self.call("review_lookup_regeneration", SID, QID, op)
+                self.assertEqual(result["reservation"]["operation_status"], terminal)
+                self.assertEqual(result["reservation"]["snapshot"], receipt["snapshot"])
+            after = self.value("""SELECT jsonb_build_array(
+                (SELECT jsonb_agg(to_jsonb(o)) FROM review_operations o),
+                (SELECT jsonb_agg(to_jsonb(a)) FROM review_attempts a),
+                (SELECT jsonb_agg(to_jsonb(l)) FROM review_logs l),
+                (SELECT gemini_review_calls FROM exam_sessions));""")
+            self.assertEqual(before, after)
+
+    def test_upgrade_from_published_checkpoint_preserves_receipt_and_adds_leases(self):
+        # Upgrade the exact already-published 006, rather than only a legacy DB.
+        previous = subprocess.run(
+            [
+                "git",
+                "show",
+                "8fff9da5f09217ad047447120b72a2f682e0f8ac:backend/migrations/006_stage3_review_and_shuffle.sql",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
+            timeout=30,
+        ).stdout
+        type(self).db = "upgrade_" + uuid4().hex
+        self.run_docker("exec", self.container, "createdb", "-U", "postgres", self.db)
+        self.sql(BOOTSTRAP + LEGACY.read_text(encoding="utf-8") + SEED)
+        self.sql(previous)
+        self.sql(f"""UPDATE exam_sessions SET status='generated';
+          INSERT INTO generation_configs(session_id,n_versions) VALUES ('{SID}',1);
+          INSERT INTO question_blueprints(source_question_id,confirmed_at) VALUES ('{SOURCE}',now());""")
+        seed_artifacts(self, SID, SOURCE, OWNER)
+        receipt = self.reserve()
+        op = receipt["operation_id"]
+        self.permit(op)
+        before = self.value("SELECT row_to_json(h) FROM source_artifact_heads h;")
+        self.migrate()
+        self.migrate()
+        self.assertEqual(self.reserve(op)["snapshot"], receipt["snapshot"])
+        self.assertEqual(
+            self.call("review_lookup_regeneration", SID, QID, op)["reservation"]["snapshot"],
+            receipt["snapshot"],
+        )
+        heads = json.loads(self.value("SELECT row_to_json(h) FROM source_artifact_heads h;"))
+        self.assertEqual({k: heads[k] for k in json.loads(before)}, json.loads(before))
+        self.assertIsNone(heads["producer_job_id"])
+        self.assertIsNone(heads["producer_expires_at"])
+        self.assertIsNone(heads["producer_error_code"])
+        self.assertEqual(self.value("SELECT gemini_review_calls FROM exam_sessions;"), "8")
+        self.assertEqual(self.complete(op, candidate(1))["api_calls_used"], 1)

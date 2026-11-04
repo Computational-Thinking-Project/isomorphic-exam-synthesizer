@@ -167,3 +167,84 @@ This plan records intended work. Earlier test counts apply only to `a2d2fc3` unt
 - Environment: existing `task302-backend-check:20261102` and PostgreSQL 15 Docker images, no network/ports, selected code-only mounts, no `.env`/real keys/cloud/provider calls. Temporary test containers removed. Markdown local links/diff checked.
 - Pending at the checked `68b375f` baseline: public confirmation/background/resume, artifact error mapping and R1 caller recovery. Before publication, Duy delivered `553a009` and reported these paths implemented, including lookup/bootstrap/producer lease/retry. This is new author evidence, not independently verified or adopted here. The two versions of 006 overlap: reconcile them under TASK-302 ownership and verify the combined exact head before integration/deployment; do not ask Duy to implement already delivered paths again.
 - Deployment/live JWT/provider/full HTTP E2E and GitHub approval remain outside this checkpoint's evidence. The owner subsequently authorized commit/push and related handoff comments; publication results are recorded on #36. Preserve PR/issue descriptions and keep #36 Draft.
+
+## Integration plan - 04/11/2026: TASK-301 final-head adoption
+
+Author TASK-302, workflow v0.1 proposed (`506384b`). Start from clean `8fff9da`;
+TASK-301 input `553a0094d9a3c4ddcb30f8f008d964c9362d3c76`, dev `ac18e72`.
+All CI checks on `8fff9da`, including Docker, passed before this continuation.
+Scope remains 006/schema/tests/DB contract; no edits to another author's branch,
+product caller code, existing descriptions or deployed databases.
+
+1. Adopt Duy's owner-only receipt lookup, source-first confirmation bootstrap,
+   producer claim/failure/publication fencing and production status into one 006.
+2. Preserve TASK-302 source-set invalidation/approval guards, historical receipts,
+   canonical current/peer mapping and frozen peers. Acquire/complete recheck the
+   reserved source/Blueprint/current candidate, not changed peers. V1 readiness
+   uses the entire confirmed source set without legacy Blueprint prerequisites;
+   legacy-only review retains its prior path, but cannot dispatch regeneration.
+3. Adapt detached SQL fixtures/tests to the leased producer protocol. Add tests
+   for lookup purity/ACL/replay, bootstrap/audit, claim/retry/restart/fencing,
+   concurrency, rollback and replay of 006 over the already published checkpoint.
+4. Independently check the combined migration with pinned TASK-301 producer/API/
+   strict mapper/targeted generator in an ignored isolated copy. Keep application
+   source at its original commit; inject auth/transport/provider only in tests.
+5. Run PostgreSQL opt-in suites and pinned 004/005 -> 006 -> 007, then appropriate
+   lint/typechecks/tests. Publish exact results and limits, push on #36, and request
+   independent review. Ready requires the resulting author checks to pass; GitHub
+   approval and merge remain separate gates.
+
+Inspected the latest 004/005 diff and selected `2f6840d` for the migration-chain
+checks. Existing `31ed3bc` evidence remains historical.
+
+### Separate W2 consumer dependency - reproduced, not changed here
+
+Pinned PR #32 `2f6840d` still checks legacy
+`question_blueprints.confirmed_at` inside `save_generation_config`, whereas the
+source-first TASK-301 producer intentionally does not invent those rows. A real
+PostgreSQL probe confirmed source -> claimed/published canonical Blueprint ->
+`get_source_artifacts.ready=true`, with zero legacy rows; owner
+`save_generation_config(session,1,[],ordering)` then failed with
+`Not all source questions have confirmed blueprints`. This is a W2 consumer
+integration blocker, not a failed review-RPC transaction or a reason to fabricate
+legacy confirmation evidence.
+
+Duy owns PR #32's 004/005/config caller; Quynh consumes the W2 batch interface,
+and Dat owns its AI/mode contract. Proposed consumer change: use durable canonical
+readiness and the agreed public-mode mapping, or document a reviewed bridge with
+real provenance. The consumer owners must choose/implement that path before W2
+E2E; TASK-302 does not edit their SQL or decide mode/clone policy. Report the probe
+on #32 and link it from the #36 handoff. Pinned producer/review tests seed the
+Stage-2 current candidate and do not prove this earlier configuration step works.
+
+### Implementation and executed evidence - final adoption
+
+- Implemented lookup, source-first bootstrap and producer lease/status/retry in
+  006; initialization DDL matches. Retained frozen peers, whole-set invalidation,
+  legacy-only review, approval guards and existing accounting/history rules.
+- Real PostgreSQL 15: full opt-in suite and pinned migration chain -> **104 passed,
+  0 skipped, 251.356s**. Afterwards, strengthened the existing confirmation-failure
+  case with a real security warning and asserted that its earlier audit event
+  rolls back too -> **1 passed, 5.871s**. Product SQL behavior was unchanged.
+- Earlier author runs exposed a wrong lineage column in a new test fixture and
+  indentation in ported tests. Both were corrected before the successful full
+  run; no product guard, quota, timeout or validation was relaxed to make it pass.
+- Isolated TASK-301 `553a009` application/tests with local 006/schema overlay:
+  **28 producer/SQL/HTTP integration cases passed, 16.053s**. Includes actual
+  BlueprintService -> PostgreSQL -> strict frozen mapper -> actual
+  TargetedRegenerator/GenerationService with fake gateway -> permit -> complete ->
+  adapter-free replay; partial failure, cancellation/restart, leases and races.
+- Pinned TASK-301 confirmation/review API/service regression suites -> **202 passed,
+  1 deprecation warning, 1.86s**. Actual RPC reservation fixture -> production
+  hash/schema/strict mapper and real adapter with offline provider passed; eight
+  corrupted snapshots failed before permit/dispatch.
+- Final `ruff check --no-cache backend/app scripts/blueprint backend/tests/migrations`
+  passed; `mypy backend/app --ignore-missing-imports --cache-dir /tmp/mypy-cache`
+  passed on 68 files. Local Markdown targets and `git diff --check` passed.
+- Isolated disposable PostgreSQL containers; combined HTTP test used an internal
+  network/test-only SQL transport, with no host Docker socket/ports/real keys or
+  cloud/provider access. Generated evidence stays ignored. No deployed JWT,
+  table-read RLS, PostgREST pooling, real provider or full W2 job-flow claim.
+- Remaining gates: exact published-head CI and independent Duy/Dat review;
+  W2 config dependency above belongs to the consumer handoff. Publishing or
+  marking Ready does not imply GitHub approval, merge, deployment or project Done.

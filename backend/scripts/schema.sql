@@ -672,6 +672,12 @@ CREATE TABLE IF NOT EXISTS public.source_artifact_heads (
   FOREIGN KEY(blueprint_revision_id,source_revision_id,source_question_id)
     REFERENCES public.canonical_blueprint_revisions(blueprint_revision_id,source_revision_id,source_question_id)
 );
+ALTER TABLE public.source_artifact_heads
+  ADD COLUMN IF NOT EXISTS producer_job_id UUID,
+  ADD COLUMN IF NOT EXISTS producer_expires_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS producer_error_code TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_source_producer_job ON public.source_artifact_heads(producer_job_id)
+  WHERE producer_job_id IS NOT NULL;
 ALTER TABLE public.source_artifact_confirmations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.source_artifact_revisions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.canonical_blueprint_revisions ENABLE ROW LEVEL SECURITY;

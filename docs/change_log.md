@@ -346,3 +346,26 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
   SQL/contract is not yet adopted or verified here. Reconcile under TASK-302 ownership
   and check the combined head before deployment; neither branch's test evidence
   alone proves the combined implementation.
+
+## DEC-TV7-008: Adopt TASK-301 lookup/bootstrap/producer protocol in 006
+
+- Date/owner: 04/11/2026, Hung (`benalexx007`), author TASK-302; workflow v0.1 proposed.
+- Context: the published `8fff9da` checkpoint predates TASK-301 `553a009` and cannot
+  supply its lookup or producer lease/status API. Two independently changed copies
+  of 006 must not become competing migrations.
+- Decision: adopt Duy's owner-only read lookup, independent source confirmation,
+  worker claim/failure/publication fencing and status in the existing 006 authority.
+  Align initialization DDL; preserve receipts, unknown historical actors and charges.
+  V1 readiness checks the entire confirmed source set without requiring legacy
+  Blueprint rows; legacy-only review keeps its existing path. Acquire/complete
+  recheck source/Blueprint/current candidate while retaining frozen peers, allowing
+  another slot's Accept/Revert. No source/Blueprint fallback or quota backfill.
+- Evidence: [task plan](tasks/TASK-302.md), [DB contract](api/review-rpc-contract.md),
+  [repeatable SQL and pinned consumer checks](../backend/tests/migrations/README.md).
+  Pinned TASK-301 producer/API/adapter integration uses real PostgreSQL RPCs with
+  injected auth/table transport and an offline gateway. This is not deployed
+  JWT/table-read RLS/PostgREST pooling/live Gemini or W2 generation-job E2E evidence.
+- Impact/ownership: TASK-302 keeps the single migration/DB contract; TASK-301 keeps
+  producer/repository/API code. No application code from another branch was changed.
+  Publication, CI and independent review states are recorded on PR #36; no merge
+  or cloud rollout is authorized by this record.
