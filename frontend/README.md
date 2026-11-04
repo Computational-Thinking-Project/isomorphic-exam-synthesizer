@@ -1,10 +1,14 @@
 # Frontend — thiết lập local và checkpoint TASK-101/103
 
-## TASK201 P1/P2 — service và nhập text, 02/11/2026
+## TASK-201 — kiểm cuối local04/11/2026
 
-- Đã viết [ingestion.js](src/services/ingestion.js) và [22tests service](src/services/ingestion.test.js): text/multipart qua client chung, kiểm Unicode/file/response, signal/progress; lỗi HTTP giữ nguyên và không thêm POST retry ngoài refresh401 chung. P2 đã ghép text vào ID draft qua [panel](src/features/stage1-ingestion/Stage1SourcePanel.jsx), controller và preview chỉ đọc. User đã giao lưu commit/push P1/P2; chưa UIupload/confirm, xem lịch sử nhánh/PR29 để lấy head công bố.
-- Full frontend chạy lại242tests đạt, lint/build đạt; lần full đầu có1ca timerStage2 redirect chưa đạt, chạy riêng và full rerun đạt, không sửa Stage2. Không nhận tests mô phỏng là parser/browser/API thật. Chi tiết phạm vi và bước P2 ở [Stage1 README](src/features/stage1-ingestion/README.md).
-- Checkpoint P2 mới nhất:full274tests/lint/buildđạt, gồm22controller+10component/route/SSR tests mới. Harness thêm nodeValue chuẩnDOM cho cập nhật count. Browser tool lỗi khởi tạo/reset nên native layout/focus/chạyGoogle/API thật chưa kiểm; không nhận controller/DOMfixture thay cho các ca đó. Chi tiết và P3 còn lại ở [Stage1 README](src/features/stage1-ingestion/README.md).
+- Nhập text hoặc một DOCX/TeX/MD vào draft có ID bằng client hiện có. Chọn/sửa/đổi cách nhập không tự gửi; file được kiểm trước POST và upload100% còn chờ xử lý. Preview nguồn/options/key chỉ đọc, Blueprint ẩn. [Plan/acceptance/giới hạn](../docs/tasks/TASK-201.md), [Stage1 README](src/features/stage1-ingestion/README.md).
+- User đã chạy migration002 còn thiếu ở runtime, xác minh RPC/grants rồi kiểm text/ba định dạng file/F5,422giữ nguồn, chặn empty/oversize/nhiều file/đuôi sai/PDF thật, chọn lại file, pending/cancel và đổi tài khoản. Agent bổ sung GET đối chiếu/mode switch/layout. Ghi riêng bằng chứng user, agent, mock và API thật; không suy Storage audit hoặc direct non-owner mutation đã đạt.
+- Source bị ép ở native200% đã sửa bằng chiều cao tối thiểu40rem cho existingID workspace; cuộn dọc tiếp cận được nguồn/CTA/file input. User trả100% kiểm bình thường; agent kiểm lại đúng375×812CSS trên bản cuối, không tràn ngang. Không đổi new/create/Auth/backend/Stage2 hoặc dependency.
+- `npm.cmd test`:285/285pass, `npm.cmd run lint` và `npm.cmd run build` đạt trên candidate sau sửa zoom04/11; bundle956.34kB warning giữ. Kiểm cuối đối chiếu hash với bản đó, không nhận rerun khi chỉ sửa docs. Native mốc100% chưa quan sát riêng; controller/component tests đã kiểm100% vẫn pending.
+- Phép thử parser in-memory với bộ mẫu cộng đệm khoảng trắng1MiB chạm timeout20s; chưa profiling/BEfix hoặc nhận mọi file≤10MiB xử lý trong timeout15s. Reviewer cần thấy giới hạn này. TASK203b dialog và TASK204 confirm/Stage2 chưa ghép từPR29.
+- P1/P2 đã push24cfe3c; P3 đã commit local241a1ae, zoom08f0cb2, tài liệu nghiệm thu ở mốc riêng. Chưa push các mốc mới hoặc có CI tương ứng; chưa Ready/merge. Các checkpoint W1 bên dưới là lịch sử.
+
 
 ## Kiểm cuối W1 — 27/10/2026
 
