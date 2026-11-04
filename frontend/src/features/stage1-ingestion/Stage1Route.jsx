@@ -38,7 +38,7 @@ function SessionEntry({ sessionId, accountKey }) {
   const update = (field, value) => setMetadata((previous) => ({ ...previous, [field]: value }));
 
   return (
-    <main className={isNew ? 'mx-auto max-w-3xl px-4 py-8' : 'mx-auto flex h-dvh max-w-6xl flex-col overflow-hidden px-4 py-4'}>
+    <main className={isNew ? 'mx-auto max-w-3xl px-4 py-8' : 'mx-auto flex h-dvh min-h-[40rem] max-w-6xl flex-col overflow-hidden px-4 py-4'}>
       <Link to="/dashboard" className="text-sky-300 underline">Quay về Dashboard</Link>
       <h1 className="mt-6 text-3xl font-semibold">{isNew ? 'Tạo phiên đề mới' : 'Nguồn đề của phiên'}</h1>
 
