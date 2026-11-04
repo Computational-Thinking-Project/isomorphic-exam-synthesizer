@@ -146,13 +146,13 @@ async def get_current_admin_user(
 ) -> CurrentUser:
     """Verify administrator privileges (SEC-08 / TASK-207c).
 
-    In development and test environments, any authenticated user is granted access.
-    In production/staging environments, strictly checks whether user email is
+    In development environment, any authenticated user is granted access.
+    In test, staging, and production environments, strictly checks whether user email is
     enrolled in ADMIN_EMAILS. Missing privileges return HTTP 403 Forbidden.
     """
     from app.core.config import settings
 
-    if settings.ENVIRONMENT in ("development", "test"):
+    if settings.ENVIRONMENT == "development":
         return current_user
 
     admin_list = [

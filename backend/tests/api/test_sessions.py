@@ -195,6 +195,26 @@ def test_get_session_detail_success(client, mock_auth_user, test_user_id, auth_h
                 "version_code": "101",
             }]
             mock_t.select.return_value.eq.return_value.order.return_value.execute.return_value = exec_v
+        elif table_name == "generation_configs":
+            exec_cfg = MagicMock()
+            exec_cfg.data = [{
+                "id": "cfg-1",
+                "session_id": "session-1",
+                "n_versions": 2,
+                "active_variation_modes": ["parameter_variation"],
+                "ordering_preferences": {"shuffle_questions": True, "shuffle_options": False},
+            }]
+            mock_t.select.return_value.eq.return_value.limit.return_value.execute.return_value = exec_cfg
+        elif table_name == "question_blueprints":
+            exec_bp = MagicMock()
+            exec_bp.data = [{
+                "id": "bp-1",
+                "source_question_id": "sq-1",
+                "confirmed_at": "2026-10-18T10:05:00Z",
+                "is_fallback": False,
+                "variation_modes": ["parameter_variation", "context_swap"],
+            }]
+            mock_t.select.return_value.in_.return_value.execute.return_value = exec_bp
         return mock_t
 
     mock_db.table.side_effect = table_router
@@ -213,6 +233,14 @@ def test_get_session_detail_success(client, mock_auth_user, test_user_id, auth_h
     assert data["source_questions"][0]["id"] == "sq-1"
     assert len(data["exam_versions"]) == 1
     assert data["exam_versions"][0]["version_code"] == "101"
+    assert data["generation_config"] is not None
+    assert data["generation_config"]["n_versions"] == 2
+    assert data["blueprint_summary"] is not None
+    assert data["blueprint_summary"]["is_ready"] is True
+    mode_ids = [m["id"] for m in data["blueprint_summary"]["supported_modes"]]
+    assert "parameter_variation" in mode_ids
+    assert "context_swap" in mode_ids
+    assert all(m["is_available"] is True for m in data["blueprint_summary"]["supported_modes"])
 
 
 def test_get_session_detail_forbidden(client, mock_auth_user, auth_headers):

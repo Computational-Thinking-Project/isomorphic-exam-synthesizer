@@ -50,7 +50,7 @@ CREATE TRIGGER trg_generation_configs_updated_at
 BEFORE UPDATE ON public.generation_configs
 FOR EACH ROW EXECUTE FUNCTION public.tg_set_updated_at();
 
--- 5. Helper: Validate variation modes
+-- 5. Helper: Validate variation modes structure
 CREATE OR REPLACE FUNCTION public.is_valid_variation_modes(p_modes JSONB)
 RETURNS BOOLEAN
 LANGUAGE sql
@@ -60,17 +60,10 @@ AS $$
   SELECT CASE 
     WHEN p_modes IS NULL OR jsonb_typeof(p_modes) != 'array' THEN FALSE
     WHEN jsonb_array_length(p_modes) = 0 THEN TRUE
-    WHEN EXISTS (
-      SELECT 1 
-      FROM jsonb_array_elements(p_modes) AS elem
-      WHERE jsonb_typeof(elem) != 'string'
-    ) THEN FALSE
     ELSE NOT EXISTS (
       SELECT 1 
-      FROM jsonb_array_elements_text(p_modes) AS m(val)
-      WHERE lower(trim(m.val)) NOT IN (
-        'numerical', 'scenario', 'parameter', 'visual', 'structural', 'reverse'
-      )
+      FROM jsonb_array_elements(p_modes) AS elem
+      WHERE jsonb_typeof(elem) != 'string' OR length(trim(elem #>> '{}')) = 0
     )
   END;
 $$;
@@ -161,11 +154,22 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
+  -- Normalize: trim items and preserve distinct values preserving case (contract 207a)
   SELECT COALESCE(
-    jsonb_agg(lower(trim(m.value))),
+    (
+      SELECT jsonb_agg(m.val)
+      FROM (
+        SELECT DISTINCT ON (trim(elem #>> '{}')) trim(elem #>> '{}') AS val, ord
+        FROM jsonb_array_elements(p_active_variation_modes) WITH ORDINALITY AS arr(elem, ord)
+        ORDER BY trim(elem #>> '{}'), ord
+      ) m
+    ),
     '[]'::jsonb
-  ) INTO v_normalized_modes
-  FROM jsonb_array_elements_text(p_active_variation_modes) AS m(value);
+  ) INTO v_normalized_modes;
+
+  IF v_normalized_modes IS NULL THEN
+    v_normalized_modes := '[]'::jsonb;
+  END IF;
 
   -- 6. Validate ordering preferences
   IF p_ordering_preferences IS NULL 
@@ -201,6 +205,28 @@ BEGIN
       )
   ) THEN
     RAISE EXCEPTION 'Not all source questions have confirmed blueprints' USING ERRCODE = '22023';
+  END IF;
+
+  -- 8b. Validate variation modes intersection (TASK-207a contract):
+  -- Any requested mode must be supported by 100% of the session's source blueprints.
+  IF jsonb_array_length(v_normalized_modes) > 0 THEN
+    IF EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements_text(v_normalized_modes) AS req(mode_id)
+      WHERE EXISTS (
+        SELECT 1
+        FROM public.source_questions sq
+        JOIN public.question_blueprints qb ON qb.source_question_id = sq.id
+        WHERE sq.session_id = p_session_id
+          AND qb.confirmed_at IS NOT NULL
+          AND NOT (
+            qb.variation_modes ? req.mode_id
+          )
+      )
+    ) THEN
+      RAISE EXCEPTION 'Requested active_variation_modes contains a mode not supported by all source blueprints'
+        USING ERRCODE = '22023';
+    END IF;
   END IF;
 
   -- 9. Upsert configuration

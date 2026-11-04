@@ -296,6 +296,11 @@ DECLARE
   v_version_id UUID;
   v_question_id UUID;
   v_version_code TEXT;
+  v_existing_id UUID;
+  v_existing_content TEXT;
+  v_existing_options JSONB;
+  v_existing_correct_key TEXT;
+  v_existing_solution_md TEXT;
 BEGIN
   IF public.current_role() != 'service_role' THEN
     RAISE EXCEPTION 'Access denied: persist_version_question is restricted to service_role'
@@ -353,51 +358,67 @@ BEGIN
   FROM public.exam_versions
   WHERE session_id = p_session_id AND version_code = v_version_code;
 
-  -- 5. Atomic upsert into version_questions
-  INSERT INTO public.version_questions (
-    version_id,
-    source_question_id,
-    question_no,
-    content,
-    options,
-    correct_key,
-    solution_md,
-    canonical_question_no,
-    canonical_options,
-    canonical_correct_key,
-    canonical_solution_md,
-    has_warning,
-    status,
-    is_current
-  ) VALUES (
-    v_version_id,
-    p_source_question_id,
-    p_question_no,
-    p_content,
-    p_options,
-    p_correct_key,
-    p_solution_md,
-    p_question_no,
-    p_options,
-    p_correct_key,
-    p_solution_md,
-    COALESCE(p_has_warning, FALSE),
-    'pending_review',
-    TRUE
-  )
-  ON CONFLICT (version_id, source_question_id) WHERE is_current = TRUE DO UPDATE SET
-    question_no = EXCLUDED.question_no,
-    content = EXCLUDED.content,
-    options = EXCLUDED.options,
-    correct_key = EXCLUDED.correct_key,
-    solution_md = EXCLUDED.solution_md,
-    canonical_question_no = EXCLUDED.canonical_question_no,
-    canonical_options = EXCLUDED.canonical_options,
-    canonical_correct_key = EXCLUDED.canonical_correct_key,
-    canonical_solution_md = EXCLUDED.canonical_solution_md,
-    has_warning = EXCLUDED.has_warning,
-    updated_at = now()
-  RETURNING id INTO v_question_id;
+  -- 5. Check if question already committed in this version slot (F03: Protect committed questions)
+  SELECT id, content, options, correct_key, solution_md
+    INTO v_existing_id, v_existing_content, v_existing_options, v_existing_correct_key, v_existing_solution_md
+  FROM public.version_questions
+  WHERE version_id = v_version_id
+    AND source_question_id = p_source_question_id
+    AND is_current = TRUE
+  FOR UPDATE;
+
+  IF FOUND THEN
+    -- If content is identical, idempotent replay succeeds without modification
+    IF v_existing_content = p_content
+       AND v_existing_options = p_options
+       AND v_existing_correct_key = p_correct_key
+       AND (v_existing_solution_md IS NOT DISTINCT FROM p_solution_md) THEN
+      v_question_id := v_existing_id;
+    ELSE
+      -- Overwriting already committed question with different content is forbidden (F03)
+      RAISE EXCEPTION 'Target slot already committed with different content for version % and source %',
+        v_version_code, p_source_question_id USING ERRCODE = '23505';
+    END IF;
+  ELSE
+    -- Insert new question row
+    INSERT INTO public.version_questions (
+      version_id,
+      source_question_id,
+      question_no,
+      content,
+      options,
+      correct_key,
+      solution_md,
+      canonical_question_no,
+      canonical_options,
+      canonical_correct_key,
+      canonical_solution_md,
+      has_warning,
+      status,
+      is_current
+    ) VALUES (
+      v_version_id,
+      p_source_question_id,
+      p_question_no,
+      p_content,
+      p_options,
+      p_correct_key,
+      p_solution_md,
+      p_question_no,
+      p_options,
+      p_correct_key,
+      p_solution_md,
+      COALESCE(p_has_warning, FALSE),
+      'pending_review',
+      TRUE
+    )
+    RETURNING id INTO v_question_id;
+  END IF;
+
+  -- 6. Atomically update session updated_at (F05: Refresh timestamp for stale guard)
+  UPDATE public.exam_sessions
+  SET updated_at = now()
+  WHERE id = p_session_id;
 
   RETURN jsonb_build_object(
     'success', TRUE,
@@ -425,6 +446,9 @@ DECLARE
   v_session_user_id UUID;
   v_session_status public.session_status;
   v_active_job_id UUID;
+  v_n_versions INT;
+  v_source_count INT;
+  v_persisted_count INT;
 BEGIN
   IF p_outcome IS NULL OR p_outcome NOT IN ('generated', 'partial_generated', 'failed') THEN
     RAISE EXCEPTION 'Invalid outcome status: % (must be generated, partial_generated, or failed)', p_outcome
@@ -456,6 +480,38 @@ BEGIN
   IF p_job_token IS DISTINCT FROM v_active_job_id THEN
     RAISE EXCEPTION 'Fencing token mismatch: job % stale for session % (active: %)',
       p_job_token, p_session_id, v_active_job_id USING ERRCODE = '55006';
+  END IF;
+
+  -- 2b. Completeness verification for generated outcome (F04: Verify all targets exist in DB)
+  IF p_outcome = 'generated' THEN
+    SELECT n_versions INTO v_n_versions
+    FROM public.generation_configs
+    WHERE session_id = p_session_id;
+
+    IF v_n_versions IS NULL OR v_n_versions < 1 THEN
+      RAISE EXCEPTION 'Cannot finish as generated: generation config not found or invalid'
+        USING ERRCODE = '22023';
+    END IF;
+
+    SELECT COUNT(*) INTO v_source_count
+    FROM public.source_questions
+    WHERE session_id = p_session_id;
+
+    IF v_source_count IS NULL OR v_source_count < 1 THEN
+      RAISE EXCEPTION 'Cannot finish as generated: session has no source questions'
+        USING ERRCODE = '22023';
+    END IF;
+
+    SELECT COUNT(*) INTO v_persisted_count
+    FROM public.version_questions vq
+    JOIN public.exam_versions ev ON vq.version_id = ev.id
+    WHERE ev.session_id = p_session_id
+      AND vq.is_current = TRUE;
+
+    IF v_persisted_count < (v_n_versions * v_source_count) THEN
+      RAISE EXCEPTION 'Cannot finish as generated: database incomplete (% of % required questions persisted)',
+        v_persisted_count, (v_n_versions * v_source_count) USING ERRCODE = '22023';
+    END IF;
   END IF;
 
   -- 3. Transition status and release active_job_id

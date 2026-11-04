@@ -190,24 +190,74 @@ async def get_session_detail(
     cfg_rows = cast(List[dict[str, Any]], cfg_res.data or [])
     generation_config = cfg_rows[0] if cfg_rows else None
 
-    # Compute blueprint summary for Stage 2 readiness projection
+    # Compute blueprint summary for Stage 2 readiness projection (F02 / TASK-208 contract)
     blueprint_summary = None
     if source_questions:
         source_ids = [str(q.get("id")) for q in source_questions if q.get("id")]
         bp_res = (
             db.table("question_blueprints")
-            .select("id,source_question_id,confirmed_at,is_fallback")
+            .select("id,source_question_id,confirmed_at,is_fallback,variation_modes")
             .in_("source_question_id", source_ids)
             .execute()
         )
         bp_rows = cast(List[dict[str, Any]], bp_res.data or [])
         confirmed_count = sum(1 for bp in bp_rows if bp.get("confirmed_at") is not None)
         total_sources = len(source_questions)
+        is_ready = total_sources > 0 and confirmed_count == total_sources and len(bp_rows) == total_sources
+
+        supported_modes: Optional[List[dict[str, Any]]] = None
+        if not is_ready:
+            # Not ready / Blueprints incomplete
+            supported_modes = None
+        else:
+            # Ready: collect and count modes across all confirmed blueprints
+            mode_counts: dict[str, int] = {}
+            for bp in bp_rows:
+                raw_modes = bp.get("variation_modes")
+                modes_list: List[str] = []
+                if isinstance(raw_modes, list):
+                    modes_list = [str(m).strip() for m in raw_modes if str(m).strip()]
+                # Deduplicate per blueprint while preserving case
+                for m in dict.fromkeys(modes_list):
+                    mode_counts[m] = mode_counts.get(m, 0) + 1
+
+            # Mode labels mapping for common variation modes
+            mode_labels = {
+                "parameter_variation": "Thay đổi số liệu / tham số",
+                "context_swap": "Đổi ngữ cảnh thực tế",
+                "numerical": "Thay đổi số liệu (Numerical)",
+                "scenario": "Đổi tình huống (Scenario)",
+                "structural": "Biến đổi cấu trúc",
+                "reverse": "Bài toán ngược",
+                "visual": "Biến thể hình học / trực quan",
+            }
+
+            supported_modes = []
+            for m, count in mode_counts.items():
+                if m.upper() == "NONE":
+                    continue
+                available = (count == total_sources)
+                mode_item: dict[str, Any] = {
+                    "id": m,
+                    "label": mode_labels.get(m.lower(), m),
+                    "question_count": count,
+                    "is_available": available,
+                }
+                if not available:
+                    mode_item["unavailable_reason"] = (
+                        f"Chỉ hỗ trợ {count}/{total_sources} câu trong đề (yêu cầu toàn bộ câu hỏi hỗ trợ)."
+                    )
+                supported_modes.append(mode_item)
+
+            # Sort supported_modes: available first, then alphabetical by ID
+            supported_modes.sort(key=lambda x: (not x["is_available"], x["id"]))
+
         blueprint_summary = {
-            "total_sources": total_sources,
-            "total_blueprints": len(bp_rows),
+            "is_ready": is_ready,
+            "total_questions": total_sources,
+            "questions_with_blueprint": len(bp_rows),
             "confirmed_blueprints": confirmed_count,
-            "is_ready": total_sources > 0 and confirmed_count == total_sources,
+            "supported_modes": supported_modes,
         }
 
     return SessionDetailResponse(
@@ -295,13 +345,13 @@ async def clone_session(
 
     # 2. Determine new title
     custom_title = payload.new_title.strip() if payload and payload.new_title else None
-    new_title = custom_title if custom_title else f"{orig.get('title', '')} (Bản sao)"
+    new_title = custom_title if custom_title else f"{orig.get('title', '')} (Báº£n sao)"
 
     # 3. Insert cloned session record
     new_session_data: dict[str, Any] = {
         "user_id": current_user.id,
         "title": new_title,
-        "subject": orig.get("subject", "Toán"),
+        "subject": orig.get("subject", "ToĂ¡n"),
         "grade": orig.get("grade", 12),
         "status": "draft",
         "gemini_call_count": 0,
@@ -566,7 +616,7 @@ async def confirm_source(
     2. State Precondition: Session must be in 'draft' status (HTTP 409 if not).
     3. Data Integrity: Session must have source questions and none with missing answers (HTTP 422).
     4. Security (SEC-02 / ADR-004): Security warnings are logged silently for admin audit.
-       Users are NOT required to acknowledge — no checkbox exposed on UI.
+       Users are NOT required to acknowledge â€” no checkbox exposed on UI.
     5. Blueprint Engine: Ensures all questions have active blueprints.
     6. Atomic State Transition: Updates blueprints confirmed_at and session status to 'blueprinted'.
     """
@@ -613,7 +663,7 @@ async def confirm_source(
     # Guard 4: Silent Security Audit Logging (SEC-02 / ADR-004)
     # Per ADR-004: Security warnings are never surfaced to end users.
     # Backend logs them silently for internal admin audit (table: security_events).
-    # Users are NOT required to acknowledge — the UI has no checkbox for this.
+    # Users are NOT required to acknowledge â€” the UI has no checkbox for this.
     security_warning_questions = [q for q in questions if q.get("has_security_warning") is True]
     if security_warning_questions:
         flagged_nos = [q.get("question_no", "?") for q in security_warning_questions]
@@ -655,7 +705,7 @@ async def confirm_source(
     # Guard 6: Atomic state transition (RPC only, strictly transactional)
     # ADR-004: Always pass acknowledged_security_warnings=True to the RPC since
     # user-facing acknowledgment is eliminated. The RPC-level check is bypassed
-    # intentionally — security is handled via silent audit log above.
+    # intentionally â€” security is handled via silent audit log above.
     now_iso = datetime.now(timezone.utc).isoformat()
     try:
         rpc_res = db.rpc(
