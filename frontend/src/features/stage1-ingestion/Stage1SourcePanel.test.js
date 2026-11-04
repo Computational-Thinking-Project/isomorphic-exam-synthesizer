@@ -377,3 +377,181 @@ test('preview read-only dùng MathRenderer cho stem/options, giữ điều kiệ
   assert(!html.includes('<textarea'));
   assert(!html.includes('<button'));
 });
+
+const incompleteResponse = (errors = [{ question_no: 1, error_type: 'MISSING_ANSWER' }]) => ({
+  status: 422, data: { detail: { message: 'Exam incomplete', errors } },
+});
+const dialog = container => container.querySelector('[role="dialog"]');
+const dialogButton = (container, text) => button(dialog(container), text);
+
+test('203b: text422 mở lỗi toàn đề/câu; đóng/đổi mode không POST, sửa rồi nạp thay A đúng lúc', async () => {
+  const app = mount();
+  await app.render();
+  await act(async () => input(app.container, 'Nguồn B thiếu key'));
+  let attempts = 0;
+  api.defaults.adapter = async config => {
+    calls.push(config.method);
+    if (++attempts === 1) throw { config, response: incompleteResponse([
+      { question_no: 0, error_type: 'INVALID_FORMAT' }, { question_no: 3, error_type: 'MISSING_ANSWER' },
+    ]) };
+    return response(config, { session_id: 'session-a', total_questions: 1, questions: [question('qb')] });
+  };
+  await act(async () => submit(app.container));
+  assert(dialog(app.container).textContent.includes('Toàn đề'));
+  assert(dialog(app.container).textContent.includes('Câu 3'));
+  assert(!dialog(app.container).textContent.includes('Câu 0'));
+  assert(app.container.textContent.includes('Nguồn qa'));
+  assert.equal(app.container.querySelector('textarea').value, 'Nguồn B thiếu key');
+  await act(async () => dialogButton(app.container, 'Đóng').click());
+  await act(async () => button(app.container, 'Tải tệp').click());
+  await act(async () => button(app.container, 'Nhập trực tiếp').click());
+  assert.equal(dialog(app.container), null);
+  assert.deepEqual(calls, ['get', 'post']);
+  await act(async () => input(app.container, 'Nguồn B đã sửa'));
+  await act(async () => submit(app.container));
+  assert.equal(dialog(app.container), null);
+  assert(app.container.textContent.includes('Nguồn qb'));
+  assert(!app.container.textContent.includes('Nguồn qa'));
+  assert.deepEqual(calls, ['get', 'post', 'post']);
+  await app.unmount();
+});
+
+test('203b: lần nạp mới có thể mở lại cùng error object, không tự mở khi đóng hoặc rerender', async () => {
+  const app = mount();
+  await app.render();
+  const sameError = { response: incompleteResponse() };
+  api.defaults.adapter = async config => { calls.push(config.method); sameError.config = config; throw sameError; };
+  await act(async () => input(app.container, 'Nguồn sai'));
+  await act(async () => submit(app.container));
+  assert(dialog(app.container));
+  await act(async () => dialogButton(app.container, 'Đóng').click());
+  await act(async () => input(app.container, 'Nguồn vẫn sai'));
+  assert.equal(dialog(app.container), null);
+  assert.deepEqual(calls, ['get', 'post']);
+  await act(async () => submit(app.container));
+  assert(dialog(app.container));
+  assert.deepEqual(calls, ['get', 'post', 'post']);
+  await app.unmount();
+});
+
+test('203b: chọn file từ dialog text dùng cùng picker trong click, giữ text và không tự POST', async () => {
+  const app = mount();
+  await app.render();
+  const picker = app.container.querySelector('input[type="file"]');
+  assert.equal(picker.parentNode.getAttribute('hidden'), '');
+  let pickerClicks = 0;
+  picker.addEventListener('click', () => { pickerClicks++; });
+  await act(async () => input(app.container, 'Text B chưa hoàn chỉnh'));
+  api.defaults.adapter = async config => { calls.push(config.method); throw { config, response: incompleteResponse() }; };
+  await act(async () => submit(app.container));
+  await act(async () => dialogButton(app.container, 'Chọn tệp đã sửa').click());
+  assert.equal(pickerClicks, 1);
+  assert.equal(dialog(app.container), null);
+  assert.equal(app.container.querySelector('input[type="file"]'), picker);
+  assert.equal(picker.parentNode.getAttribute('hidden'), null);
+  assert.equal(document.activeElement, picker);
+  await act(async () => selectFile(app.container, [new File(['B đã sửa'], 'sua-lai.md')]));
+  await act(async () => button(app.container, 'Nhập trực tiếp').click());
+  assert.equal(app.container.querySelector('textarea').value, 'Text B chưa hoàn chỉnh');
+  assert.deepEqual(calls, ['get', 'post']);
+  await app.unmount();
+});
+
+test('203b: file422 → chuyển text đúng focus/giữ input; chọn lại cùng file chỉ gửi khi bấm Nạp', async () => {
+  const app = mount();
+  await app.render();
+  await act(async () => input(app.container, 'Text dự phòng'));
+  await act(async () => button(app.container, 'Tải tệp').click());
+  const file = new File(['B thiếu key'], 'loi.md');
+  await act(async () => selectFile(app.container, [file]));
+  api.defaults.adapter = async config => { calls.push(config.method); throw { config, response: incompleteResponse() }; };
+  await act(async () => submit(app.container));
+  assert(app.container.textContent.includes('Đã chọn: loi.md'));
+  await act(async () => dialogButton(app.container, 'Chuyển sang Nhập trực tiếp').click());
+  const textarea = app.container.querySelector('textarea');
+  assert.equal(textarea.value, 'Text dự phòng');
+  assert.equal(document.activeElement, textarea);
+  await act(async () => button(app.container, 'Tải tệp').click());
+  await act(async () => selectFile(app.container, [file]));
+  assert.equal(app.container.querySelector('input[type="file"]').value, '');
+  assert.equal(dialog(app.container), null);
+  assert(app.container.textContent.includes('Nguồn qa'));
+  assert.deepEqual(calls, ['get', 'post']);
+  api.defaults.adapter = async config => {
+    calls.push(config.method);
+    return response(config, { session_id: 'session-a', total_questions: 1, questions: [question('qb')] });
+  };
+  await act(async () => submit(app.container));
+  assert.equal(dialog(app.container), null);
+  assert(app.container.textContent.includes('Nguồn qb'));
+  assert.deepEqual(calls, ['get', 'post', 'post']);
+  await app.unmount();
+});
+
+test('203b: các lỗi khác không mở dialog; timeout vẫn giữ uncertain/khóa gửi', async () => {
+  for (const failure of [
+    { response: { status: 422, data: { detail: [{ loc: ['body'], msg: 'required' }] } } },
+    { response: { status: 422, data: { detail: 'No questions' } } },
+    { response: incompleteResponse([]) }, { response: { status: 400 } },
+    { response: { status: 409 } }, { response: { status: 429 } }, { code: 'ECONNABORTED' },
+  ]) {
+    calls = [];
+    api.defaults.adapter = async config => { calls.push(config.method); return response(config, detail()); };
+    const app = mount();
+    await app.render();
+    await act(async () => input(app.container, 'B'));
+    api.defaults.adapter = async config => { calls.push(config.method); throw { ...failure, config }; };
+    await act(async () => submit(app.container));
+    assert.equal(dialog(app.container), null);
+    assert(app.container.querySelector('[role="alert"]'));
+    assert(app.container.textContent.includes('Nguồn qa'));
+    if (failure.code === 'ECONNABORTED') {
+      assert(app.container.textContent.includes('Chưa xác nhận được kết quả'));
+      assert.notEqual(button(app.container, 'Nạp nguồn').getAttribute('disabled'), null);
+    }
+    assert.deepEqual(calls, ['get', 'post']);
+    await app.unmount();
+  }
+});
+
+test('203b: lỗi GET có envelope422 không mở nhầm dialog hoặc che cảnh báo đọc lại', async () => {
+  const app = mount();
+  await app.render();
+  await act(async () => input(app.container, 'B'));
+  api.defaults.adapter = async config => { calls.push(config.method); throw { config, response: incompleteResponse() }; };
+  await act(async () => submit(app.container));
+  await act(async () => dialogButton(app.container, 'Đóng').click());
+  await act(async () => button(app.container, 'Đọc lại nguồn đã lưu').click());
+  assert.equal(dialog(app.container), null);
+  assert(app.container.textContent.includes('Chưa đọc lại được phiên'));
+  assert.notEqual(button(app.container, 'Nạp nguồn').getAttribute('disabled'), null);
+  assert.deepEqual(calls, ['get', 'post', 'get']);
+  await app.unmount();
+});
+
+test('203b: đổi route bỏ incomplete trả muộn; logout khi dialog đang mở xóa cả lỗi và input', async () => {
+  const app = mount();
+  await app.render();
+  await act(async () => input(app.container, 'Nguồn A đang gửi'));
+  let rejectOld;
+  api.defaults.adapter = config => {
+    calls.push(config.method);
+    if (config.method === 'post') return new Promise((resolve, reject) => { rejectOld = () => reject({ config, response: incompleteResponse() }); });
+    return Promise.resolve(response(config, detail('session-b', [question('qb', 'session-b')])));
+  };
+  await act(async () => submit(app.container));
+  await app.navigate('session-b');
+  await act(async () => rejectOld());
+  assert.equal(dialog(app.container), null);
+  assert(app.container.textContent.includes('Nguồn qb'));
+  assert.equal(app.container.querySelector('textarea').value, '');
+  api.defaults.adapter = async config => { throw { config, response: incompleteResponse() }; };
+  await act(async () => input(app.container, 'Nguồn B sai'));
+  await act(async () => submit(app.container));
+  assert(dialog(app.container));
+  await act(async () => useAuthStore.getState().setSession(null));
+  assert.equal(dialog(app.container), null);
+  assert(app.container.textContent.includes('Đăng nhập'));
+  assert.equal(app.container.querySelector('textarea'), null);
+  await app.unmount();
+});
