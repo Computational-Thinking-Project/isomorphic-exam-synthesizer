@@ -10,13 +10,13 @@ import subprocess
 import unittest
 from uuid import uuid4
 
+from artifact_fixtures import seed_artifacts
 from test_review_rpcs import OWNER, QID, SID, SOURCE, candidate, literal
 from test_stage3_schema import BOOTSTRAP, ROOT, SEED, PostgresCase
-from artifact_fixture import publish_fixture
 
 UPSTREAM = (
-    ("31ed3bc71188db537c41b547630a6b9dbf5f270f", "004_save_generation_config_rpc.sql"),
-    ("31ed3bc71188db537c41b547630a6b9dbf5f270f", "005_generation_job_operations_rpc.sql"),
+    ("2f6840d42c87d04f55e12d25c1bdd71c9481c652", "004_save_generation_config_rpc.sql"),
+    ("2f6840d42c87d04f55e12d25c1bdd71c9481c652", "005_generation_job_operations_rpc.sql"),
     ("d7a3d3f788972f06552cd21a7e7103eceb2f2a55", "007_finalize_approve_session_rpc.sql"),
 )
 
@@ -54,7 +54,8 @@ class ReviewMigrationChainTests(PostgresCase):
         INSERT INTO generation_configs(session_id,n_versions) VALUES ('{SID}',1);
         INSERT INTO question_blueprints(source_question_id,confirmed_at) VALUES ('{SOURCE}',now());
         """)
-        publish_fixture(self, SID, SOURCE, OWNER)
+
+        seed_artifacts(self, SID, SOURCE, OWNER)
 
     def initialize_database(self):
         super().setUp()

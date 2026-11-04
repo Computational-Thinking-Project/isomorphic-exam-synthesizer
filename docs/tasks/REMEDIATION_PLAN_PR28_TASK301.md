@@ -33,7 +33,7 @@ hành, không phải danh sách yêu cầu sửa lại những ca đã verified.
 |---|---|---|
 |F11 — guard adapter trước durable replay|Owner-only lookup kiểm session/question/operation/actor; không reserve/recover/audit/quota. Completed đọc candidate, active/failed/recovered không gọi AI|Author claimed_fixed, chờ Đạt|
 |Bootstrap — confirmation gọi003 đòi Blueprint sẵn có|Worker confirmation mới trên cùng public endpoint; không cần legacy row/003; rollback audit+revision+status cùng TX|Đã triển khai/kiểm SQL|
-|C03/A01/A02/B01/B02 — legacy rows không phải canonical frozen input|Producer301 lưu validated input/fingerprint/revision; BlueprintService tạo full canonical; SQL reserve xuất v1 từ heads; strict validator trước permit|Đã nối/kiểm luồng thật, chờ reviewer/owner|
+|C03/A01/A02/B01/B02 — legacy rows không phải canonical frozen input|Producer301 lưu validated input/fingerprint/revision; BlueprintService tạo full canonical; SQL reserve xuất v1 từ heads; strict validator trước permit|Author claimed_fixed, reviewer pending_verification (Đồng bộ authority d94f138, 111/111 PostgreSQL passed)|
 |A03/A05/A06 — lỗi sau reserve/mất response để operation treo hoặc settle sai ID|Giữ operation ID gốc, bounded same-ID reconciliation, sanitized fail codes, shield cancellation, postcommit read không rollback|Caller và SQL fault/race tests; giữ hồi quy|
 |A04 — replay bị xem như action mới|Phân nhánh typed receipt, không dùng worker clock để hết hạn historical outcome; active replay luôn không dispatch|Đã triển khai; hồi quy F11|
 |A07/F10 — dựng report/solution/count thay dữ liệu thiếu|Strict candidate/report/checks/count validation; giữ evidence thật, không clamp/default validation|Đạt đã verified tại68b375f; không sửa lại|

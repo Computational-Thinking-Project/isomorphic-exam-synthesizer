@@ -1,30 +1,25 @@
 # TASK-302 / TASK-301 review RPC contract
 
-**Status: implemented RPC baseline in TASK-302; proposed source-to-AI extension awaiting owner confirmation.**
-This copy is published on Duy's TASK-301 branch for discussion on PR #36. The SQL
-baseline at a2d2fc3 is now integrated on this branch. TASK-301 adds the producer
-write/read extension described below; this is not an owner-accepted deployment.
-Hùng owns database operations; Duy owns ReviewRepository/service/API orchestration.
-No second lifecycle repository or migration is introduced.
-
-Baseline authority: [TASK-302 contract at a2d2fc3](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/a2d2fc3c31e3bcc4c3acf178d946c83f0a05b37a/docs/api/review-rpc-contract.md).
-Preserve that baseline; the proposed additions below are to be adopted into the same
-owner-maintained authority after agreement, not maintained as a competing contract.
-Unchanged sections describe the pinned SQL baseline, not the implementation status
-of this branch. The versioned snapshot and caller trigger are explicitly proposed.
-
-Compared on 2026-11-04: TASK-301 `39083c2`, TASK-302 `a2d2fc3`,
-TASK-304 `a8f61d5`, TASK-305 `d7a3d3f`; workflow v0.1 **proposed**
-(docs `506384b`). Those pins describe the initial documentation comparison;
-subsequent caller/producer implementation and checks are recorded on PR #28.
+**Database implementation available on this branch; pinned offline integration checked,
+not deployed or approved.**
+Migration `006_stage3_review_and_shuffle.sql` contains the schema, private ledger
+and RPCs below. Hùng owns these database operations; Duy owns the existing
+ReviewRepository/service/API callers. No parallel repository is introduced.
 
 Decisions: [Duy: boundary, auth, Model A, lifecycle and quota](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6546291626),
-[Đạt: callback/accounting](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6551270882),
-[Hùng: recovery and missing persistence](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6593950942),
-[Đạt: confirmed artifact consumer](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6594059670),
-[Duy: write-boundary proposal](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6604120134).
-Historical DB checks: [TASK-302 results at a2d2fc3](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/a2d2fc3c31e3bcc4c3acf178d946c83f0a05b37a/docs/tasks/TASK-302.md).
-They do not test the proposed extension below.
+[Đạt: callback and accounting](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6551270882),
+[adapter handoff](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6551386372).
+Compared on 2026-11-04 against TASK-301 `553a009`, TASK-305 `d7a3d3f`,
+TASK-207a/b `2f6840d`, TASK-304 `a8f61d5`, and dev `ac18e72`.
+Database tests and remaining integration work are recorded in [TASK-302](../tasks/TASK-302.md).
+
+**Adoption update, 2026-11-04:** 006 now adopts the lookup/bootstrap/producer lease
+and status protocol from [TASK-301 `553a009`](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28#issuecomment-6624727072).
+It retains TASK-302's whole-confirmed-source-set readiness, legacy-only review
+compatibility and frozen-peer rules. The older `8fff9da` checkpoint is historical;
+do not use its 006 as the database for the latest caller. Use this single migration
+authority and the pinned combined-head evidence in the task plan. Offline tests
+are not approval, deployment, or evidence of live JWT/provider behavior.
 
 ## Interface and authorization — F02/C03
 
@@ -33,6 +28,7 @@ payloads/results JSONB. Each mutation is one short transaction; AI runs outside 
 
 | RPC | Parameters after `p_` | Allowed caller | Main result |
 |---|---|---|---|
+| `review_lookup_regeneration` | `session_id UUID, question_id UUID, operation_id UUID` | Owner JWT only | `{found:false}` or `{found:true,reservation:<stored receipt with current operation_status/settlement>}`; read only |
 | `review_reserve_regeneration` | `session_id UUID, question_id UUID, operation_id UUID` | Owner JWT | `operation_id, question_id, expires_at, max_attempts, snapshot, operation_status` |
 | `review_acquire_attempt` | `operation_id UUID, attempt_id UUID` | Worker | The six-field permit below |
 | `review_complete_regeneration` | `operation_id UUID, candidate JSONB` | Worker | `operation_id, previous_question_id, question_id, api_calls_used, invalidated_version_ids, progress` |
@@ -43,7 +39,7 @@ payloads/results JSONB. Each mutation is one short transaction; AI runs outside 
 | `review_revert_question` | Same as accept | Owner JWT | Same as accept |
 | `review_get_progress` | `session_id UUID` | Owner JWT | `progress` |
 
-Except the permit and session recovery, results include `session_id, session_status, replayed`.
+Except lookup, the permit and session recovery, results include `session_id, session_status, replayed`.
 Owner calls require the authenticated role and derive the audit actor from
 `auth.uid()`, then check ownership inside the transaction. Worker calls require
 `service_role` EXECUTE privileges and the service-role claim. Their actor is the
@@ -51,10 +47,17 @@ authenticated creator stored in the operation, never an actor supplied in a requ
 Worker functions are unavailable to authenticated/anon; owner functions are not
 granted to service_role. Use separate JWT and worker clients in the wrapper.
 
+Lookup takes a shared session lock and checks ownership, question/session binding,
+then the saved operation's session/question/actor. Missing operations return found=false;
+conflicting existing IDs fail with REVIEW_IDEMPOTENCY_CONFLICT. It does not reserve,
+recover, audit, charge, change status, or grant dispatch. Completed receipts remain
+readable after approval and after the original question ceases to be current.
+
 The three new tables (`review_operations`, `review_attempts`,
 `review_action_receipts`) have RLS enabled and no direct grants to any API role,
 including service_role. Internal `_review_*` helpers have no API-role EXECUTE.
-Only the nine entry points receive the specific grants above. SECURITY DEFINER
+Only the ten review entry points receive the specific grants above; the five
+artifact entry points have the separate grants below. SECURITY DEFINER
 functions pin their search path and qualify application tables.
 
 ## Durable permit callback — F07
@@ -110,6 +113,147 @@ There is no fixed-four refund or refund based on an adapter exception's count.
 Zero-call fixtures are for explicitly injected mocks; production must not silently
 fall back to a mock or local-only budget.
 
+## Confirmed artifacts - database authority (P1-P4)
+
+TASK-302 adopts the storage/protocol proposed by Duy in
+[TASK-301 `553a009`](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/commit/553a0094d9a3c4ddcb30f8f008d964c9362d3c76),
+following [Duy's producer ownership confirmation](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6621050876)
+and [Dat's consumer contract](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6594059670).
+These are implemented locally in 006, not deployed. Duy owns Python producer,
+public confirmation/background/resume and ReviewRepository/service integration.
+This document is DB authority; a matching mapper does not establish HTTP E2E.
+
+| RPC | Parameters after `p_` | Caller / result |
+|---|---|---|
+| `confirm_source_artifacts` | `session_id UUID, actor_id UUID, confirmation_id UUID, expected_updated_at TIMESTAMPTZ, sources JSONB` | Worker; actor/time, sources, status=blueprinted, canonical_status=pending, total_blueprints=0 |
+| `claim_source_production` | `session_id UUID, source_revision_id UUID, job_id UUID` | Worker; session/source/revision/job IDs, status=claimed/busy/ready, expires_at |
+| `fail_source_production` | `session_id UUID, source_revision_id UUID, job_id UUID, error_code TEXT` | Worker; settled boolean; fenced by revision/job |
+| `publish_canonical_blueprint` | `session_id UUID, publication JSONB` | Worker; source/Blueprint revision IDs, replayed |
+| `get_source_artifacts` | `session_id UUID` | Owner JWT or worker; confirmation, pending_source_question_ids, production, ready; read only |
+
+Private, RLS-enabled tables with no API-role grants (including service_role):
+`source_artifact_confirmations` stores owner-derived actor, DB time and durable receipt;
+`source_artifact_revisions` stores exact confirmed input and per-question fingerprint;
+`canonical_blueprint_revisions` stores full canonical JSON/schema and its source revision;
+`source_artifact_heads` selects current source/Blueprint revisions. IDs are UUID strings.
+History survives source deletion and cascades only with its session. No legacy backfill.
+Only the five entry points above receive artifact grants; `_artifact_*`/snapshot helpers are private.
+Heads additionally hold producer_job_id, producer_expires_at and producer_error_code;
+these are execution state, not canonical Blueprint status fields.
+
+Each `sources` entry contains `source_question_id, source_revision_id, confirmed_input,
+source_fingerprint`. Input is exactly `id, question_text, options[4], correct_answer,
+solution`; map raw_content -> question_text, correct_key -> correct_answer,
+solution_md NULL -> empty solution. Object options map in A/B/C/D order.
+The backend derives actor from verified HTTP identity; never expose worker hash/actor
+parameters directly to clients. Under the session lock, confirmation checks ownership,
+draft/updated_at, whole source set, complete answers and exact live content. It records
+the source revisions, owner/time, status=blueprinted and ADR-004 silent security audit
+atomically, before extraction. It neither calls `confirm_exam_source` (003) nor
+requires/invents legacy Blueprint rows. The receipt says canonical_status=pending,
+total_blueprints=0; only current artifact heads establish canonical readiness.
+Confirmation replay compares source content/fingerprints, ignoring newly proposed revision
+IDs, and returns the original committed revisions. Producers must use returned IDs.
+
+Only the production Python expression computes the fingerprint:
+`source_fingerprint([source_to_item(SourceQuestion.model_validate(confirmed_input))])`.
+It covers one question's canonical source and extraction context; it is not the
+whole-exam hash. SQL stores/compares this evidence, without another hashing algorithm.
+Full 0.4.0 schema/semantic validation is the trusted Python producer's responsibility
+(`prepare_blueprint_artifact`); SQL checks structure/version, exact source/hash and FK
+binding. API roles cannot directly insert artifacts or assert validation themselves.
+The strict caller independently verifies hash/schema before the first permit.
+
+Claim before extraction. One live job per head owns a 420-second DB-clock lease,
+longer than the producer's maximum 360-second extraction deadline. Same-job claim
+replay does not extend a live lease; another job receives busy, and an already-ready
+head receives ready without a new extraction. Expired/failed pending work can be
+claimed by a new job. Failure records a sanitized code matching
+`^[A-Z][A-Z0-9_]{0,79}$` only for that revision/job; an old worker cannot fail its
+replacement. Source reconfirmation clears producer state.
+
+Publication contains `source_question_id, source_revision_id, source_fingerprint, producer_job_id,
+blueprint_revision_id, schema_version="0.4.0", canonical_blueprint`. Extract outside
+DB transactions. New publication requires the still-current revision/content,
+matching producer job and an unexpired lease; commit clears expiry/error together
+with the canonical row/head pointer. The producer uses its job UUID as the new
+Blueprint UUID. Ready-head retries do not create another revision.
+A new Blueprint gets a new UUID. Same-ID/same-body replay is read only, including
+after invalidation/locking; it never repoints heads. Different payload -> idempotency
+conflict. Source edits (including number/missing-answer changes) delete the head and
+clear legacy confirmed_at; edit-and-revert does not revive it. Source changes also
+demote reviewed -> generated, preserving approval 007's state gate under the same
+lock. This adds no Stage 1 edit API or draft transition. Inserts/deletes also
+serialize through the session lock. Approved/exported/non-NULL-approved_at content
+is locked. All writers must lock the parent before child DML; row triggers are a
+final guard, not a substitute for transaction lock order.
+
+`get_source_artifacts.production` contains sorted source_question_id/source_revision_id,
+status=pending/running/ready/failed, expires_at and sanitized error_code. Status reads
+do not claim/extend/recover leases. Background work is in-process: after a crash,
+an authenticated POST retry triggers resume once the lease expires; there is no
+autonomous queue or recovery on GET. Partial success remains published. This phase
+uses the producer's own request budget, not the W3 review counter.
+
+### Frozen reservation envelope
+
+| Snapshot field | Meaning |
+|---|---|
+| `format` | Literal `confirmed_artifacts_v1` |
+| `source_revision_id` | Current persisted confirmed source revision |
+| `blueprint_revision_id` | Current persisted canonical Blueprint revision |
+| `blueprint_source_revision_id` | Stored Blueprint source binding, equals source_revision_id |
+| `blueprint_source_fingerprint` | Stored binding fingerprint, equals source_snapshot.content_hash |
+| `source_snapshot` | Exact confirmed input plus persisted per-question content_hash |
+| `blueprint` | Full canonical 0.4.0 document, unchanged |
+| `current_variant` | id = reserved question_id, version_id, source_question_id = source_snapshot.id, content/stem_latex, canonical options/correct_key/solution_md |
+| `peer_variants` | Same representation; current candidates for this source in other session versions, sorted by UUID; no history/reserved version |
+
+The whole confirmed source set must still match and all canonical publications must
+be ready. Missing/stale artifacts raise `REVIEW_SOURCE_MISMATCH` before reserve;
+no live-row substitution or legacy downgrade. Current/peer options, answer and
+solution come from one canonical candidate; NULL canonical solution stays NULL,
+never replaced with the shuffled display solution. version_id is required by Duy's
+strict mapper for distinct-peer-version validation. Mapping works on detached copies.
+
+Acquire/complete compare persisted revisions/hash/document/source/current candidate
+to the frozen snapshot under the parent lock. New publication supersedes an active
+operation even for an identical body. Peers remain frozen; another slot's permitted
+accept/revert does not rewrite them or the receipt. A grant committed before
+supersession stays charged; later permits/completion fail and worker fail/recover
+settles the original operation. A settled replay never authorizes another dispatch.
+
+Pass only source_snapshot/blueprint/current_variant/peer_variants and the existing
+session_id/question_id/operation_id/acquire_attempt to TASK-304. Revision fields
+are wrapper metadata, not new adapter kwargs. Before permit/provider, reject missing
+fields, invalid hash/revision/schema and current/peer identity mismatch. After a
+successful reserve, any mapper/input/validation failure must best-effort settle the
+original operation with a sanitized error; recovery closes unfinished work. Never
+synthesize solution/report/checks or math verification to force completion.
+
+Storage errors use `ARTIFACT_NOT_FOUND`, `ARTIFACT_WORKER_REQUIRED`,
+`ARTIFACT_OWNER_MISMATCH`, `ARTIFACT_INVALID_PAYLOAD`, `ARTIFACT_SOURCE_MISMATCH`,
+`ARTIFACT_IDEMPOTENCY_CONFLICT`, `ARTIFACT_STALE`, `ARTIFACT_LOCKED`. Review snapshot
+failure retains `REVIEW_SOURCE_MISMATCH`; the pinned strict caller maps invalid
+frozen evidence to HTTP 422 `ERR_SOURCE_NOT_CONFIRMED`. TASK-301's producer maps
+artifact errors at the public boundary; raw SQL/provider exceptions are not public payloads.
+
+### Caller recovery order (R1)
+
+Adopt worker `review_recover_session(session_id)` before **every new Reject
+reservation**, after ownership/session guards, including a retry of the caller's
+own regenerating question. GET progress remains read only. Existing-ID replays
+must reconcile operation_status/settlement before dispatch; an active replay does
+not authorize a second orchestrator. This is lazy recovery, with no automatic
+180-second scheduler. TASK-301 `553a009` orders lookup/replay before adapter
+availability checks; a fresh request requires the adapter, validates session guards,
+then calls worker recovery before reserve. A missing adapter on a fresh key causes
+no recovery/reservation/charge. Completed replay works without an adapter; other
+replays never dispatch. The pinned caller regressions and combined offline HTTP
+path are checked; these do not certify a deployed Supabase installation.
+Deploy 003/004/005/006 storage and producer, then reservation/strict callers; drain
+old writers before dispatch. Never rewrite old receipts to claim v1 compatibility.
+
 ## Operation ownership, snapshots and settlement
 
 Reserve records the initiating actor, current candidate, prior review status and a
@@ -117,163 +261,12 @@ Reserve records the initiating actor, current candidate, prior review status and
 and sets session status generated. The partial active-operation index enforces
 Model A: one active regeneration/session. Other-slot accepts remain allowed.
 
-New reservations emit `format="confirmed_artifacts_v1"` from persisted source and
-canonical Blueprint heads. Current/peer options, key and solution are projected
-from canonical columns together. Acquire/complete compare the reserved snapshot
-with the current revision binding under the parent-session lock; they never
-replace an operation's frozen inputs with new heads. Settled historical receipts
-remain replayable; legacy `database_rows` does not authorize provider dispatch.
-
-<a id="confirmed-artifacts-v1"></a>
-
-### Confirmed artifacts and frozen AI payload — v1 implementation for owner review
-
-The following interface is implemented on TASK-301 for the PR #36 persistence/snapshot handoff.
-The per-question hash, canonical document, frozen inputs and fail-closed semantics
-match Hùng's proposal and Đạt's consumer confirmation. Revision identifiers, envelope
-fields and the trigger in the next section require Hùng/Đạt's explicit response;
-this is not a claim that either owner accepted or implemented these additions.
-
-#### P1. Producer and persistence boundary
-
-At the source-confirmation boundary persist the exact validated `SourceQuestion`
-input, a per-question fingerprint, an immutable source revision, and authenticated
-confirmation actor/time. The existing public entry point is `backend/app/api/routes/sessions.py::confirm_source`.
-It calls worker-only `confirm_source_artifacts`, independent of legacy003 and
-legacy Blueprint existence. Existing `confirmed_at` alone is insufficient.
-
-Use the existing Python expression:
-
-```python
-source_fingerprint([source_to_item(SourceQuestion.model_validate(confirmed_input))])
-```
-
-`confirmed_input` contains `id, question_text, options[4], correct_answer, solution`.
-Map raw_content→question_text, correct_key→correct_answer, solution_md→solution
-(NULL solution maps to the model's empty string). Map options in A/B/C/D order,
-preserving their text and the corresponding answer association. Persist the exact
-validated input used for this expression. Do not sort options, hash only the stem,
-replace this with a whole-exam hash, or implement a second SQL hashing algorithm.
-
-The canonical Blueprint producer validates the full 0.4.0 document using
-`validate_math_blueprint` against `source_to_item` for that confirmed input, then
-persists it with its own immutable revision and the source revision/fingerprint.
-Store its schema version. Producer implementation is now assigned to Duy/TASK-301
-by the owner's explicit instruction on 04/11/2026, recorded in
-[the ownership update](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6621050876).
-This resolves the implementation-owner question, not acceptance of storage/envelope/R1.
-The legacy `question_blueprints` columns produced by
-`parser/blueprint_service.py` are not that document. Never reconstruct one from
-variables/domains/invariants or call a fallback document canonical.
-
-Source confirmation and later Blueprint publication may use separate short DB
-transactions. No AI call runs inside either transaction. If Python prepares an
-input/hash before the DB write, the transaction must compare the exact source
-content/revision under the parent-session lock and reject a concurrent edit before
-recording confirmation. Blueprint publication must likewise reject a superseded
-source revision. The server computes/validates artifacts; a client-supplied hash or
-validation flag is not confirmation evidence. Regeneration is unavailable until
-both artifacts are durably committed and bound to the same revision/hash. This
-proposal does not silently redefine the existing Stage 1 HTTP status machine.
-
-#### P2. Revision, storage and invalidation
-
-Persist source JSON, source revision/fingerprint/actor/time, canonical Blueprint
-JSON/schema version/Blueprint revision and its source revision/fingerprint binding.
-Proposed revision IDs are immutable UUIDs serialized as strings. Physical storage,
-column names and DDL are for TASK-302's owner to confirm; `content_hash TEXT` alone
-cannot represent all this evidence. Producer implementation ownership outside the
-existing W3 assignments is assigned to TASK-301 by Duy's instruction above;
-TASK-302 continues to own database authority and storage coordination.
-
-Any edit to source ID, stem, options, answer or solution invalidates the old binding
-for new work. Reconfirmation creates a new source revision even after edit-and-revert;
-a new Blueprint document creates a new Blueprint revision. Keep old artifacts for
-audit. Do not introduce an edit API or permit editing locked sessions by implication.
-All allowed publication/edit paths serialize with reserve/acquire/complete through
-the parent-session lock, and obey approved/exported/non-NULL-approved_at guards.
-Acquire/complete reject superseded source/Blueprint revisions; fail/recover may still
-settle their active operation and retain charges. Replay of a settled receipt does
-not make that historical revision current again or authorize another AI dispatch.
-
-Legacy rows without verified artifacts stay unavailable for regeneration until the
-real confirmation/Blueprint producer supplies them. No migration may fabricate a
-historical confirmation, reset quota, remove history, or hash at Reject and call it
-previously confirmed. Migration filename/order changes require owner agreement;
-retain the existing 004/005 → 006 → 007 ordering meanwhile.
-
-#### P3. Proposed reservation snapshot envelope
-
-Keep the existing reservation RPC signature and response identity/lease fields.
-On a new reservation, the RPC verifies persisted artifact ownership, validity and
-revision/hash binding under the session lock, then freezes this snapshot:
-
-| Field | Required value/meaning |
-|---|---|
-| `format` | Literal `confirmed_artifacts_v1`; historical `database_rows` remains historical |
-| `source_revision_id` | Immutable persisted revision of confirmed source input |
-| `blueprint_revision_id` | Immutable persisted revision of the validated canonical document |
-| `blueprint_source_revision_id` | Stored Blueprint binding; must equal source_revision_id |
-| `blueprint_source_fingerprint` | Stored Blueprint binding; must equal source_snapshot.content_hash |
-| `source_snapshot` | Exact confirmed input plus content_hash copied from the persisted per-question fingerprint |
-| `blueprint` | Full validated canonical 0.4.0 document, with its native source/item identity and context |
-| `current_variant` | Reserved candidate with id equal to response question_id and source_question_id equal to source_snapshot.id |
-| `peer_variants` | Current candidates of that same source/session in other versions, excluding the reserved candidate and all history |
-
-Candidate IDs and source IDs are canonical UUID strings at the adapter boundary.
-Each current/peer contains content/stem_latex and four option strings from one
-consistent canonical candidate representation. Any included key/solution must use
-that same representation; never pair display options with a canonical answer key.
-Mapping operates on copies, without mutating stored arrays or receipt JSON.
-
-The wrapper validates the envelope, retains its revision metadata for reconciliation,
-and passes only source_snapshot/blueprint/current_variant/peer_variants plus the
-reservation's session_id/question_id/operation_id and injected acquire_attempt to
-TASK-304. These revision fields are wrapper metadata, **not new adapter kwargs**.
-The existing TargetedRegenerator signature is unchanged. No SELECT of live rows
-may replace a missing frozen field. Do not compute a new confirmed hash/Blueprint.
-Replayed reservations return the same frozen payload plus operation_status and
-settlement; callers must inspect those fields, not discard them into an OK enum
-and invoke AI again. An active replay does not authorize a second orchestrator.
-
-#### P4. Failure handling and evidence required for handoff
-
-Before the first permit/provider call, validate format, IDs, revision/hash binding,
-canonical schema and current/peer representation. Missing/mismatched input grants
-no new permit and dispatches no provider call. Reject unknown/legacy formats for AI;
-legacy baseline RPC availability alone does not mean regeneration is ready.
-
-If reserve committed, every later snapshot/mapper/input-validation failure enters
-worker failure settlement with the original operation ID and a sanitized code.
-Cancellation remains cancellation after best-effort settlement; recovery handles
-unfinished operations. Missing report/solution or invalid candidate output is also
-a completion failure, never grounds to synthesize is_valid/math_verified/checks.
-Keep TASK-304's actual validation report/checks/warnings and teacher-review flag.
-Zero newly acknowledged calls does not mean zero charged calls in the operation
-or session. Never refund committed permits; reconcile transport uncertainty using
-the same identity, without creating new work to bypass an unknown outcome.
-
-Keep existing adapter/domain errors (SOURCE_NOT_CONFIRMED, BLUEPRINT_INVALID,
-PREVIOUS_VARIANT_MISMATCH, REVIEW_SOURCE_MISMATCH and other validator codes).
-HTTP mapping of any new wrapper-specific format/revision error must be recorded
-with the caller implementation before rollout; this document introduces no new
-SQL error code. Never expose raw SQL/provider exception text.
-
-Handoff must include JSON **emitted by the real reservation RPC**, not a hand-built
-payload presented as DB evidence: one valid source/Blueprint pair, plus fixtures
-for missing artifacts, wrong revision/hash, invalid Blueprint and candidate/peer
-identity mismatch. Test real TASK-304 adapter with a fake provider: valid dispatch,
-invalid input before acquire, settlement after reserve, unchanged frozen replay,
-source/Blueprint edits after reserve and canonical mapping after shuffle. DB tests
-must cover publication/reserve races, superseded-operation denial and content lock.
-Use independent DB connections for concurrency and the actual JWT/worker ACL split.
-
-Deploy storage and producer support, then reservation support, then strict callers;
-drain old writers before enabling dispatch. Keep legacy format explicit until cutover;
-do not downgrade or pretend old rows are v1. No superseded receipt is rewritten.
-The baseline 57 DB tests and earlier caller mock suites do not establish these new
-requirements. Current integration evidence and remaining checks are recorded in
-PR #28 and its remediation plan; owner adoption on #36 remains pending.
+New reservations return `format="confirmed_artifacts_v1"` as specified below.
+Missing artifacts fail before operation creation or charge. Acquire/complete check
+current source/Blueprint revision bindings and the canonical reserved candidate;
+fail/recover can settle superseded operations without refund. Historical receipts,
+including `database_rows`, remain unchanged/replayable but cannot authorize new AI
+work. No hash or canonical Blueprint is fabricated during reserve or migration.
 
 Complete accepts TASK-304's `RegeneratedVariantResult`: `stem_latex`, four distinct
 nonempty option strings, `correct_key` A–D, nonempty `solution_md`, validation report,
@@ -291,32 +284,7 @@ Fail takes only a sanitized code (`^[A-Z][A-Z0-9_]{0,79}$`), never provider exce
 text. Recovery uses DB time; before expiry it returns `recovered=false` without
 writes. A recovered operation cannot complete late or mutate a new reservation.
 
-<a id="recovery-trigger"></a>
-
 ### Restart-safe recovery discovery — F06
-
-**Proposed caller trigger (R1):** retain read-only GET progress/list. Validate request
-IDs/idempotency key, authenticate the owner and verify question/session ownership
-before any worker operation. Apply existing session guards. Before each new Reject
-reservation, call worker review_recover_session(session_id), including retry of the
-stale question itself rather than only a SESSION_BUSY branch for another question.
-An unexpired operation stays busy. Retained operation IDs are reconciled from the
-receipt before any redispatch; replay never starts a second AI orchestration.
-
-Unavailable/denied/malformed recovery stops new work with a sanitized availability
-error. There is no ledger SELECT, inferred operation UUID, direct-write fallback,
-or new table grant. Offline fixtures require explicit injection; a missing RPC
-method must not activate them implicitly. After a lost recovery response, retry
-the same session: zero new recoveries is valid and does not disprove earlier recovery.
-
-This is lazy recovery on Reject, not a scheduled worker: idle progress may continue
-to show regenerating after 180 seconds. It replaces the earlier proposed recovery
-on GET in #28, subject to owner confirmation. Final approval continues to reject an
-active operation; this does not add hidden recovery to approve or matrix reads.
-Public-route tests must cover stale same-question retry, unexpired operations,
-worker unavailable, repeated/lost-response recovery, cancellation and late completion.
-SQL discovery is implemented in #36; TASK-301 now invokes it before each fresh reservation after lookup, adapter and session guards.
-
 
 When only the session ID survives a worker restart, call
 `review_recover_session(p_session_id)` using the worker client. Do not SELECT the
@@ -383,7 +351,7 @@ Mutation recalculation sets reviewed only when ready; otherwise generated.
 
 **TASK-305 boundary:** final approval must acquire the same session row lock and
 check complete readiness/no active operation plus finalization within that database
-transaction. The pinned 004/005 at `31ed3bc` and 007 at `d7a3d3f` are tested with
+transaction. The pinned 004/005 at `2f6840d` and 007 at `d7a3d3f` are tested with
 006 on fresh and upgraded databases: charged-receipt replay, recovery followed by
 approval, approval denial during an active operation, and review mutation denial
 after approval. This verifies those paths, not all possible TASK-305 writer inputs.
@@ -422,206 +390,22 @@ Do not apply the old competing implementation after 006 or maintain both.
 006 detects the incompatible attempt ledger and stops without rewriting it or
 resetting quota. That guard is not a conversion script or a certificate of deployed compatibility.
 
-Supabase rollout, live JWT/RLS, live AI, caller/adapter E2E and shuffle integration
-are not deployment evidence. TASK-301 now implements the pre-reservation trigger
-and strict artifact gating; the earlier39083c2 checkpoint used only busy recovery.
-These SQL tests do not certify the caller or the proposed artifact contract.
+Supabase rollout, live JWT verification/table-read RLS/PostgREST pooling/provider
+and shuffle-writer E2E are not verified. The combined SQL and pinned TASK-301
+HTTP/background/adapter path are checked with injected authentication, test table
+transport and fake gateway; PostgreSQL RPC roles/ACL are real. See the migration-test
+README and task plan for exact pins, commands, counts and limits. Do not substitute
+author checks for independent GitHub review/approval.
 
+## Progress IDs and compatibility
 
-## TASK-301 caller implementation handoff — 2026-11-04
-
-This is caller work in progress, not owner acceptance of the proposed storage/envelope
-or deployed integration. SQL signatures remain those of pinned TASK-302 a2d2fc3.
-Owner/worker RPC results are parsed as typed receipts, including replay/settlement;
-the caller no longer constructs source snapshots or confirmation hashes from live rows.
-Baseline database_rows is unavailable for provider dispatch and is failure-settled.
-confirmed_artifacts_v1 is now emitted by SQL and validated before dispatch.
-
-### HTTP action keys and error behavior
-
-POST accept/revert now accept the same optional UUID Idempotency-Key header as Reject.
-Invalid resource/key UUIDs return 400 before handler queries. With a supplied key,
-the SQL receipt is checked before its mutation edit guard; a committed replay may be
-read after approval, while a new mutation stays locked. The same key cannot bind to
-another question/session/action. Without a key the server creates an invocation ID;
-separate HTTP requests without a retained key are separate actions.
-
-An active Reject replay returns 409 without dispatching another generator. Completed
-replay reads the committed candidate; failed/recovered replay returns 409 and requires
-a deliberate new key for new work. Receipt expiry is not reinterpreted using worker
-time: DB acquire/complete owns lease validity. Response projection reads may reflect
-later state; idempotency guarantees effects, not byte-identical JSON after later writes.
-
-Malformed/identity-mismatched/uncertain RPC results and post-commit read failures return
-sanitized availability errors (503). Completion retry retains exactly the operation ID
-and validated payload. Source/input/output validation is 422; missing adapter is 503
-before reserving or charging; timeout is 504; permit uncertain/invalid keeps existing
-502 mapping. Failure RPC receives only a sanitized code, never raw exception text or a
-client refund count. A cancelled invocation propagates cancellation after best-effort
-settlement. Read failure after commit never initiates a rollback.
-
-### Progress and recovery interface
-
-progress.unapproved_question_ids is implemented in006 in the same snapshot as
-counts/readiness. Missing canonical heads make readiness false, including when
-failure/recovery recalculates after source invalidation; they do not block settlement.
-Reserve separately rejects missing/pending/mismatched artifacts before operation creation.
-Owner adoption on #36 remains pending. GET progress is read-only. Fresh Reject
-uses receipt lookup (if a key exists), adapter guard, session guards, session
-recovery, then reservation. Replayed receipts do not run recovery or AI.
-
-### Evidence and remaining acceptance
-
-141 local caller/receipt tests pass with actual Python boundaries, explicit fake RPC
-fixtures and stubbed scheduling. They cover typed permits, lost responses, replay,
-settlement, validation, cancellation, direct handlers and OpenAPI keys. They do not
-measure actual DB pool use, locks or concurrency, execute ASGI/JWT, or establish
-producer/storage/adapter integration. 765 backend/Blueprint tests collect successfully;
-collection is not execution. Full async local execution remains unverified after the
-requested unrestricted run was declined. Required CI and PostgreSQL integration are
-still mandatory before Ready/merge; no checks are exempted.
-
-### Reservation response uncertainty — caller handoff
-
-The caller retries an unavailable/malformed reservation response at most three
-times with exactly the original session/question/operation IDs. A validated active
-replay is not permission to dispatch or failure-settle: another request with that
-key may be running. It returns409; unresolved responses return sanitized503
-ERR_RESERVATION_UNCERTAIN. Only a validated newly active receipt starts generation.
-No private-ledger lookup or inferred receipt/operation ID is introduced. Recovery
-of a crash/unknown active operation still uses the worker RPC and DB lease.
-This caller behavior does not imply acceptance of proposed P1–P4/R1.
-
-## TASK-301 producer write extension — implementation for owner review
-
-Implemented on the TASK-301 branch in the same migration006 after integrating
-TASK-302 a2d2fc3. This supplies a concrete implementation to review; it does not
-claim Hùng/Đạt accepted proposed P1–P4/R1 or that cloud deployment occurred.
-No migration008, second lifecycle repository, client hash algorithm or legacy
-artifact backfill is introduced.
-
-| RPC | Parameters after p_ | API roles | Result / guarantee |
-|---|---|---|---|
-| confirm_source_artifacts | session_id UUID, actor_id UUID, confirmation_id UUID, expected_updated_at TIMESTAMPTZ, sources JSONB | service_role only, plus role-claim check | Typed confirmation receipt; exact source comparison, source confirmation/status/audit and source revision writes commit together without legacy003 |
-| publish_canonical_blueprint | session_id UUID, publication JSONB | service_role only, plus role-claim check | Source/Blueprint revision receipt; validated canonical body and current pointer commit together; superseded source/locked session refused |
-| get_source_artifacts | session_id UUID | authenticated owner or service_role | Read-only confirmation/pending IDs/ready snapshot under shared session lock; stale source set/binding refused |
-
-The public HTTP request must never supply actor_id/hashes/documents to these
-worker writes. Backend orchestration derives actor_id from verified authentication,
-then SQL requires that actor to equal the session owner. This is a worker trust
-boundary: unlike review owner actions, this producer RPC is not called with an
-owner JWT. SQL derives confirmation time; later publication inherits provenance
-through its persisted source revision. Python performs the existing fingerprint
-and full canonical validation; SQL compares exact stored/live source and revision
-binding, not a second implementation of the fingerprint/schema algorithm.
-
-Private RLS tables source_artifact_confirmations, source_artifact_revisions,
-canonical_blueprint_revisions and source_artifact_heads have no direct API-role
-grants, including service_role. Revisions retain exact confirmed input/hash and
-canonical0.4.0 JSON; heads select current associations. Content edits clear heads
-and legacy confirmed_at while retaining history. Removing a source retains its
-historical revisions until the parent session is deleted; this does not keep a
-removed source eligible for regeneration. Reconfirmation uses fresh revision IDs,
-so an edit followed by text reversion does not restore the old association.
-
-Confirmation IDs are durable global receipts: replay validates session/actor/input
-and returns original revisions before new-write guards. Publication retries retain
-one UUID/body; a historical replay does not repoint a newer or cleared head. New
-publication requires the current persisted source revision and exact live content.
-get_source_artifacts lets the producer resume only missing publications from DB
-state; it does not recreate hashes from live rows or mutate GET lifecycle state.
-
-Python blueprint/producer.py confirms through the worker RPC, extracts using the
-existing BlueprintService outside transactions, validates full canonical output,
-and publishes with typed receipts and bounded same-payload retries. Its resume
-method skips already-published sources. The existing HTTP confirm-source route now
-uses this producer; frozen-v1 reservation/acquire/complete use the same persisted
-artifacts. A real HTTP→BlueprintService→PostgreSQL→reservation→TargetedRegenerator/
-GenerationService→permit→complete test uses a fake gateway without live Gemini.
-JWT validation and table-read RLS are not certified by that injected-auth transport.
-
-The same006 progress calculation now returns unapproved_question_ids alongside
-counts, including regenerating current candidates. The list is sorted by UUID,
-contains current rows whose status is not approved, and has current_slots minus
-approved_slots entries. Missing/duplicate/extra-slot readiness rules are unchanged.
-This additive field is implemented for review on301; adoption into owner #36 is
-still pending. Historical settled receipts may lack it and remain historical.
-
-Producer verification update: the full expanded PostgreSQL suite completed with
-71 passed (57 baseline +14 producer cases). Two additional multi-connection
-producer replay races are checked in the subsequent targeted16-case run; final
-results/head are recorded on PR. Caller/preparation/config170 passed, Ruff and
-mypy84 files passed; all backend/Blueprint1007 tests collect (not full execution).
-
-## F11 owner receipt lookup — caller implementation
-
-review_lookup_regeneration(p_session_id UUID,p_question_id UUID,p_operation_id UUID)
-is an authenticated-owner-only read RPC, with the service_role role explicitly
-not granted EXECUTE. It takes a shared parent lock, checks ownership and question
-association, then returns {found:false} or {found:true,reservation:<stored receipt
-with replayed:true/current operation status/settlement>}. Rebinding an existing ID
-to a different resource/actor is an idempotency conflict. No operation, recovery,
-quota, audit or session timestamp is mutated by lookup.
-
-Reject with a supplied key looks up the receipt before requiring an adapter.
-Completed replay reads its committed result; active/failed/recovered outcomes do
-not start a provider. A missing key/receipt still requires the adapter before
-reserve or any other new mutation. Uncertain failure reconciliation also uses this
-read lookup instead of invoking reserve. R1/new-action recovery and frozen-v1 are
-implemented on301; owner adoption and independent verification remain separate gates.
-
-## Bootstrap confirmation — current producer semantics
-
-confirm_source_artifacts confirms source without calling confirm_exam_source003
-or requiring/creating a legacy question_blueprints row. It validates the source
-and writes server actor/time, ADR004 silent security audit, source revisions and
-Stage1 status atomically. The receipt uses status=blueprinted for compatibility,
-canonical_status=pending and total_blueprints=0. Historical receipts that counted
-legacy rows are never used to infer canonical readiness; current heads determine
-ready. Confirmed sessions use canonical heads for review readiness, not legacy
-confirmed_at. Original003 remains unchanged for historical callers. The existing public route
-is migrated; no second confirmation endpoint is introduced.
-
-
-## Background producer/public API — TASK-301 implementation
-
-Confirmation commits before AI. POST /api/sessions/{id}/confirm-source keeps its
-existing request body (deprecated warning acknowledgment ignored per ADR004), and
-accepts an optional UUID Idempotency-Key. Actor comes from CurrentUser; public
-requests cannot set worker actor/hash/canonical content. Response retains Stage1
-status=blueprinted but adds confirmation_id and canonical_status=pending. Missing
-AI configuration leaves the source confirmed/pending. total_blueprints counts
-current published canonical artifacts, not legacy rows.
-
-GET /api/sessions/{id}/source-artifacts is authenticated owner-only and read-only;
-it returns readiness, counts, pending IDs and per-source pending/running/ready/failed
-states. POST on the same path plus /retry resumes only missing sources (202), or
-returns200 when already ready. Missing AI for pending work returns503. Authentication
-and ownership precede all worker mutations. Source changes invalidate old bindings;
-status/retry refuse a stale source set rather than silently reconfirming it.
-
-Worker-only claim_source_production(session_id,source_revision_id,job_id) returns
-claimed/busy/ready. A DB-clock420s lease exceeds the per-source360s extraction
-deadline. Claims serialize under the parent lock, so concurrent triggers cannot
-dispatch two jobs for one revision. Same-job claim retries only reconcile uncertain
-transport before dispatch. Publication uses that job ID as blueprint_revision_id
-and checks the current job/revision and unexpired lease. Historical receipt replay
-does not repoint heads. At most three sources extract concurrently.
-
-Worker-only fail_source_production(session_id,source_revision_id,job_id,error_code)
-records a sanitized failure only for that pending job; stale workers cannot settle
-or overwrite newer jobs. Other sources finish even when one fails. A process crash
-leaves a durable lease; after expiry status is pending and authenticated /retry can
-resume. This is in-process background scheduling with durable DB ownership/status,
-not an autonomous external queue: restart recovery requires a retry/confirm trigger.
-GET never schedules extraction. No producer request consumes the review30/session
-or4/operation ledger; review permits retain their separate180s operation expiry.
-
-Confirmation transport loss/timeouts return504 uncertain; proven SQL rollback is500
-with rollback wording, unknown/gateway/SQLSTATE08 errors are500 uncertain. A read
-failure after committed confirmation returns503 and does not roll back confirmation;
-reconcile with the same key or read status. Publication/claim have bounded same-ID
-availability retries. No raw provider or database error is returned to clients.
-
-All additions in this section are implemented on301 for Hùng/Đạt review/adoption
-on #36. They are not evidence of owner acceptance, live rollout or GitHub Approve.
+New progress results include `unapproved_question_ids`: UUIDs of all current
+non-approved candidates, including regenerating, sorted by UUID in the same
+transaction as slot counts. Its length equals current_slots - approved_slots,
+including extra/duplicate current rows if corruption exists. When v1 confirmation
+exists, a changed source set or pending publication also makes
+ready=false, even if every surviving candidate is approved. Legacy-only sessions
+retain their existing confirmation/readiness path; regeneration still requires v1.
+An invalid confirmation does not block settlement of an old operation.
+Historical action/settlement receipts keep their original progress JSON; clients
+needing current IDs must GET progress, never invent [] for an absent field.
