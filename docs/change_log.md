@@ -8,6 +8,12 @@
 
 ## DEC-BE1-013: Caller review dùng durable receipts và action keys
 
+- CI Pipeline run241 tại be80d1b: backend867 pass/9 skip, lint/typecheck79
+  files và frontend build success. Thêm chín TestClient tests đi qua actual
+  caller/repository; chỉ inject auth/ownership/RPC/provider, không scheduling.
+  Kết quả thực thi các ca mới và Docker/final-head checks được ghi trên PR;
+  không nhận JWT/RLS/SQL/concurrency thật từ các fixtures này.
+
 - Tích hợp 04/11/2026: caller `55449fc` ghép dev `8bdc3b1`; giữ cả ADR bundler
   và caller khi giải conflict changelog, không thay code review. Kiểm sau ghép:
   review/exporter/shuffler245 pass/7 skip do thiếu Typst CLI, Ruff pass, mypy79

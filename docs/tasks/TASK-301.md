@@ -8,6 +8,13 @@
 
 ### Tích hợp dev sau caller update
 
+- CI Pipeline run241 tại `be80d1b`: backend867 passed/9 skipped, Ruff/mypy79
+  files và frontend build success. Đây là full suite trên CI Linux, không phải
+  local full async pass hoặc bằng chứng RPC deployment/DB concurrency.
+- Bổ sung chín ca HTTP→actual caller/repository bằng TestClient, auth/ownership,
+  RPC/provider được inject. Không stub scheduling hoặc ReviewService methods;
+  CI của bản có tests mới còn phải chạy, không dùng kết quả be80d1b thay thế.
+
 - Caller update đã publish tại `55449fc`; checkout local đã đối chiếu nội dung và
   đồng bộ, giữ bản dự phòng `task301-published-before-fast-forward` trong stash.
 - Tích hợp `dev@8bdc3b1`: conflict duy nhất ở changelog được giải bằng cách giữ
