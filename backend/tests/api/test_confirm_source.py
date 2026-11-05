@@ -186,6 +186,54 @@ def test_confirm_pending_without_adapter_or_legacy_blueprint(flow):
     assert state.calls[0][1]["p_actor_id"] == state.actor
 
 
+# ---------------------------------------------------------------------------
+# Q01 — source_revision contract tests
+# ---------------------------------------------------------------------------
+
+
+def test_confirm_with_matching_source_revision_succeeds(flow):
+    """FE echoes the exact updated_at token → confirm proceeds normally."""
+    state, client = flow
+    result = client.post(url(state), json={"source_revision": "2026-11-04T00:00:00Z"})
+    assert result.status_code == 200, result.text
+    assert result.json()["status"] == "blueprinted"
+
+
+def test_confirm_with_mismatched_source_revision_returns_409_conflict(flow):
+    """FE sends stale revision → 409 ERR_SOURCE_REVISION_CONFLICT, no RPC called."""
+    state, client = flow
+    result = client.post(url(state), json={"source_revision": "2026-01-01T00:00:00Z"})
+    assert result.status_code == 409, result.text
+    assert "ERR_SOURCE_REVISION_CONFLICT" in result.text
+    # Ensure no RPC was dispatched
+    assert not state.calls
+
+
+def test_confirm_without_source_revision_still_allowed_for_backward_compat(flow):
+    """Omitting source_revision is still accepted (backward compat / retry path)."""
+    state, client = flow
+    result = client.post(url(state), json={})
+    assert result.status_code == 200, result.text
+
+
+def test_idempotent_retry_with_key_ignores_revision_check(flow):
+    """Replay with same Idempotency-Key bypasses revision check (key determines intent)."""
+    state, client = flow
+    key = str(uuid4())
+    # First call succeeds and commits
+    first = client.post(url(state), json={}, headers={"Idempotency-Key": key})
+    assert first.status_code == 200, first.text
+    # Replay with wrong revision but same key should still work (session is now blueprinted,
+    # key carries the replay intent)
+    state.status = "blueprinted"
+    replay = client.post(
+        url(state), json={"source_revision": "1900-01-01T00:00:00Z"},
+        headers={"Idempotency-Key": key}
+    )
+    # With a key the status check path is used; blueprinted + key → allowed to reconcile
+    assert replay.status_code in (200, 503), replay.text  # 503 if post-commit read fails
+
+
 def test_background_publication_and_retry_are_actual_producer(flow, monkeypatch):
     state, client = flow
     client.post(url(state), json={})
@@ -300,3 +348,63 @@ def test_invalid_key_has_no_rpc_effect(flow):
     state, client = flow
     assert client.post(url(state), json={}, headers={"Idempotency-Key": "bad"}).status_code == 400
     assert not state.calls
+
+
+# ---------------------------------------------------------------------------
+# Q02 — supported_modes in source-artifacts status
+# ---------------------------------------------------------------------------
+
+
+def test_source_artifacts_status_pending_has_no_supported_modes(flow):
+    """GET /source-artifacts returns supported_modes=None while not ready."""
+    state, client = flow
+    client.post(url(state), json={})
+    state.calls.clear()
+    status_resp = client.get(url(state, "source-artifacts"))
+    assert status_resp.status_code == 200, status_resp.text
+    data = status_resp.json()
+    assert data["ready"] is False
+    # Not ready → supported_modes must be None (not computed yet)
+    assert data.get("supported_modes") is None
+
+
+def test_source_artifacts_status_ready_has_supported_modes_list(flow, monkeypatch):
+    """GET /source-artifacts returns supported_modes list when ready."""
+    from app.api.routes import source_artifacts
+
+    state, client = flow
+    client.post(url(state), json={})
+    # Publish so it becomes ready
+    monkeypatch.setattr(source_artifacts, "blueprint_service", lambda request: state.extractor)
+    client.post(url(state, "source-artifacts/retry"))
+    # Patch _collect_supported_modes to return a known list
+    monkeypatch.setattr(
+        source_artifacts,
+        "_collect_supported_modes",
+        lambda db, session_id: ["PARAM", "SHUFFLE"],
+    )
+    status_resp = client.get(url(state, "source-artifacts"))
+    assert status_resp.status_code == 200, status_resp.text
+    data = status_resp.json()
+    assert data["ready"] is True
+    assert data["supported_modes"] == ["PARAM", "SHUFFLE"]
+
+
+def test_source_artifacts_ready_with_empty_modes_is_valid(flow, monkeypatch):
+    """ready=True with supported_modes=[] is a valid state (NONE-only blueprint)."""
+    from app.api.routes import source_artifacts
+
+    state, client = flow
+    client.post(url(state), json={})
+    monkeypatch.setattr(source_artifacts, "blueprint_service", lambda request: state.extractor)
+    client.post(url(state, "source-artifacts/retry"))
+    monkeypatch.setattr(
+        source_artifacts,
+        "_collect_supported_modes",
+        lambda db, session_id: [],
+    )
+    status_resp = client.get(url(state, "source-artifacts"))
+    assert status_resp.status_code == 200, status_resp.text
+    data = status_resp.json()
+    assert data["ready"] is True
+    assert data["supported_modes"] == []

@@ -34,6 +34,10 @@ class SourceArtifactStatus(BaseModel):
     completed_count: int
     pending_source_question_ids: list[UUID]
     production: list[SourceProductionState]
+    # Q02: canonical supported generation modes derived from ready canonical Blueprint heads.
+    # Empty list is valid when ready=True and no mode is supported (e.g. NONE-only blueprint).
+    # None when canonical production has not completed yet (pending/running/failed).
+    supported_modes: list[str] | None = None
 
 
 def blueprint_service(request: Request) -> BlueprintService | None:
@@ -59,6 +63,10 @@ def status_payload(state: SourceArtifactState) -> SourceArtifactStatus:
         if "failed" in statuses
         else "pending"
     )
+    # Q02: supported_modes is populated by endpoint callers that have DB access
+    # (get_source_artifact_status, confirm_source_flow response).  We initialise to
+    # None here; None means "not yet computed" (pending/running/failed), while [] means
+    # "ready but no mode declared by any canonical blueprint".
     return SourceArtifactStatus(
         session_id=state.confirmation.session_id,
         ready=state.ready,
@@ -67,7 +75,50 @@ def status_payload(state: SourceArtifactState) -> SourceArtifactStatus:
         completed_count=state.confirmation.total_questions - len(state.pending_source_question_ids),
         pending_source_question_ids=state.pending_source_question_ids,
         production=state.production,
+        supported_modes=None,
     )
+
+
+def _collect_supported_modes(db: Client, session_id: str) -> list[str] | None:
+    """Q02: Read variation_modes from canonical_blueprint_revisions for a ready session.
+
+    Returns sorted list of mode strings, or None if data cannot be read.  Empty list []
+    is a valid result — it means canonical blueprints are ready but declare no mode.
+    """
+    try:
+        # Fetch head blueprint_revision_ids for this session's source questions
+        head_res = (
+            db.table("source_artifact_heads")
+            .select("blueprint_revision_id, source_questions!inner(session_id)")
+            .eq("source_questions.session_id", session_id)
+            .not_.is_("blueprint_revision_id", "null")
+            .execute()
+        )
+        head_rows = cast(list[dict[str, Any]], head_res.data or [])
+        revision_ids = [str(r["blueprint_revision_id"]) for r in head_rows if r.get("blueprint_revision_id")]
+        if not revision_ids:
+            return []
+        bp_res = (
+            db.table("canonical_blueprint_revisions")
+            .select("canonical_blueprint")
+            .in_("blueprint_revision_id", revision_ids)
+            .execute()
+        )
+        bp_rows = cast(list[dict[str, Any]], bp_res.data or [])
+        modes: set[str] = set()
+        for row in bp_rows:
+            blueprint = row.get("canonical_blueprint") or {}
+            if isinstance(blueprint, dict):
+                variation_modes = blueprint.get("variation_modes") or []
+                if isinstance(variation_modes, list):
+                    for m in variation_modes:
+                        if m and isinstance(m, str):
+                            modes.add(m)
+        return sorted(modes)
+    except Exception:
+        # Non-critical: supported_modes is best-effort supplementary data
+        logger.debug("Could not collect supported_modes for session %s", session_id)
+        return None
 
 
 async def run_producer(
@@ -101,6 +152,7 @@ async def confirm_source_flow(
     session_id: str,
     actor_id: str,
     key: str | None,
+    client_revision: str | None,
     db: Client,
     worker: Client,
     request: Request,
@@ -123,6 +175,18 @@ async def confirm_source_flow(
         raise HTTPException(
             409, "Source already confirmed; read artifact status or retry production"
         )
+
+    # Q01: Revision check — only for new confirmations (not idempotent retries with same key).
+    # client_revision is the `updated_at` token the FE received alongside the preview.
+    # If it doesn't match the current DB value, the source was replaced concurrently.
+    if key is None and client_revision is not None:
+        if client_revision != session["updated_at"]:
+            raise ReviewDomainException(
+                409,
+                "ERR_SOURCE_REVISION_CONFLICT",
+                "Source was modified since you previewed it; reload the preview and confirm again",
+            )
+
     rows = query_rows(
         db.table("source_questions")
         .select("*")
@@ -169,7 +233,12 @@ async def get_source_artifact_status(
 ) -> SourceArtifactStatus:
     resource_ids(session_id)
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
-    return status_payload(await SourceArtifactRepository(db).load(session_id))
+    state = await SourceArtifactRepository(db).load(session_id)
+    result = status_payload(state)
+    # Q02: Supplement supported_modes from canonical blueprint documents when ready
+    if state.ready:
+        result.supported_modes = _collect_supported_modes(db, session_id)
+    return result
 
 
 @router.post(

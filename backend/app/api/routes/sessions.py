@@ -149,7 +149,13 @@ async def get_session_detail(
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
 ) -> SessionDetailResponse:
-    """Retrieve session details by ID, validating ownership and fetching nested questions and versions."""
+    """Retrieve session details by ID, validating ownership and fetching nested questions and versions.
+
+    source_revision is derived from exam_sessions.updated_at and is read in the same
+    request so that FE receives a revision token that is consistent with the
+    source_questions snapshot returned here.  The client must echo this token back in
+    POST /confirm-source so the backend can detect concurrent source replacement (Q01).
+    """
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
 
     s_res = db.table("exam_sessions").select("*").eq("id", session_id).execute()
@@ -160,6 +166,11 @@ async def get_session_detail(
             detail="Session not found",
         )
     session_record = s_rows[0]
+
+    # Capture the revision token from the session row *before* reading questions.
+    # replace_source_questions bumps updated_at inside a single transaction, so
+    # any subsequent ingest will produce a different token and trigger 409 on confirm.
+    source_revision: Optional[str] = session_record.get("updated_at") or None
 
     # Fetch source_questions ordered by question_no ASC
     q_res = (
@@ -183,6 +194,7 @@ async def get_session_detail(
 
     return SessionDetailResponse(
         **session_record,
+        source_revision=source_revision,
         source_questions=source_questions,
         exam_versions=exam_versions,
     )
@@ -537,5 +549,6 @@ async def confirm_source(
 ) -> ConfirmSourceResponse:
     # ADR004: deprecated acknowledgment is ignored; SQL records silent audit.
     return await confirm_source_flow(
-        session_id, current_user.id, idempotency_key, db, service_db, request, background_tasks
+        session_id, current_user.id, idempotency_key, payload.source_revision,
+        db, service_db, request, background_tasks
     )

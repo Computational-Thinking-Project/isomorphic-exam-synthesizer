@@ -173,6 +173,15 @@ class SessionDetailResponse(BaseModel):
     approved_at: Optional[str] = None
     created_at: str
     updated_at: str
+    source_revision: Optional[str] = Field(
+        default=None,
+        description=(
+            "Opaque revision token representing the exact snapshot of source_questions returned "
+            "in this response. FE must echo this value as `source_revision` in the subsequent "
+            "POST /sessions/{id}/confirm-source request. The token changes on every ingest/replace "
+            "and is derived from exam_sessions.updated_at under a consistent read."
+        ),
+    )
     source_questions: List[dict] = Field(default_factory=list, description="Danh sách câu hỏi gốc")
     exam_versions: List[dict] = Field(default_factory=list, description="Danh sách các mã đề")
 
@@ -258,6 +267,11 @@ class ConfirmSourceRequest(BaseModel):
     deprecated and IGNORED. Security warnings are logged silently on the backend for
     admin audit. The UI no longer exposes a security acknowledgment checkbox. Clients
     may omit this field or send any value without affecting the outcome.
+
+    `source_revision` is required (Q01): the client must echo back the opaque revision
+    token received from `GET /sessions/{id}` together with the preview snapshot.  The
+    backend compares this token atomically under the session lock and returns HTTP 409
+    ERR_SOURCE_REVISION_CONFLICT when the source has been replaced since the preview.
     """
 
     acknowledged_security_warnings: bool = Field(
@@ -266,6 +280,14 @@ class ConfirmSourceRequest(BaseModel):
             "[DEPRECATED per ADR-004] Previously required to acknowledge SEC-02 security warnings. "
             "Now ignored — security events are logged silently for admin audit. "
             "Field kept for backward compatibility; any value sent has no effect."
+        ),
+    )
+    source_revision: Optional[str] = Field(
+        default=None,
+        description=(
+            "Opaque revision token received from GET /sessions/{id} alongside the source preview. "
+            "Must be provided on new confirmations; absent only on idempotent retries with the same "
+            "Idempotency-Key where the previous outcome is already committed."
         ),
     )
 

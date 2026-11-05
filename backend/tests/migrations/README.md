@@ -260,3 +260,80 @@ transport establishes deployed JWT verification/table-read RLS/PostgREST pooling
 Auth/table transport and gateway are injected; actual PostgreSQL executes RPCs with
 their real roles/ACL. Stage-2 generation-job integration is outside this producer/
 review check; the existing current candidate is seeded by the fixture.
+
+
+---
+
+## TASK-204 Source Confirmation (Q01–Q03)
+
+### Migration chain
+
+Apply migrations in ascending order on a fresh PostgreSQL 15 instance:
+
+| File | Purpose |
+|---|---|
+| `002_replace_source_questions_rpc.sql` | `replace_source_questions` RPC (bumps `updated_at`) |
+| `003_confirm_exam_source_rpc.sql` | Legacy `confirm_exam_source` (deprecated, kept for compat) |
+| `004_confirm_source_artifacts_rpc.sql` | Inventory/guard — verifies 006 objects exist |
+| `006_stage3_review_and_shuffle.sql` | **Authoritative**: `confirm_source_artifacts`, `get_source_artifacts`, canonical RPCs |
+
+> Migration `004` is a no-op guard. Apply `006` first; `004` checks the objects exist.
+
+### Fake AI provider — no quota consumption (Q03)
+
+Integration tests for confirm/canonical production **must not** dispatch real Gemini requests.
+
+**Strategy A — empty API keys (recommended for CI):**
+
+```powershell
+$env:GEMINI_API_KEYS = ""   # empty → blueprint_service returns None → no background production
+$env:RUN_POSTGRES_MIGRATION_TESTS = '1'
+python -m unittest discover -s backend/tests/migrations -p test_source_artifacts.py -v
+```
+
+With no keys, `blueprint_service(request)` returns `None`, so `run_producer` is never scheduled.
+Tests that need production use a `SqlClient`-backed `Extractor` fixture returning JSON from
+`backend/tests/fixtures/ai_pipeline.json` — no real AI call.
+
+**Strategy B — monkeypatch in unit/API tests:**
+
+```python
+monkeypatch.setattr(source_artifacts, "blueprint_service", lambda request: None)
+```
+
+**Verifying no outbound AI request:**
+- No `GEMINI_API_KEY` or `GEMINI_API_KEYS` environment variable is set (or is empty).
+- `state.extracts == 0` in API tests that do not explicitly inject an Extractor.
+- Docker container has `--network none` — outbound connections are physically blocked.
+
+### Q01 revision contract
+
+```
+FE:  GET /sessions/{id}  → { source_revision: "<updated_at>", source_questions: [...] }
+FE:  POST /confirm-source  { source_revision: "<updated_at>" }
+BE:  409 ERR_SOURCE_REVISION_CONFLICT when source replaced since preview
+BE:  200 blueprinted on match
+```
+
+`updated_at` changes on every `replace_source_questions` (migration 002 bumps it atomically).
+Idempotent retries with the same `Idempotency-Key` skip the revision check.
+
+### Q02 `supported_modes` contract
+
+`GET /sessions/{id}/source-artifacts` returns:
+
+```json
+{
+  "ready": true,
+  "canonical_status": "ready",
+  "supported_modes": ["PARAM", "SHUFFLE"],
+  ...
+}
+```
+
+- `null` while pending/running/failed
+- `[]` when ready but no mode declared (valid — NONE-only blueprint)
+- sorted list of mode strings from `variation_modes` in `canonical_blueprint_revisions`
+
+FE2 must gate "Save config / Generate" on `ready === true`. Do NOT treat `supported_modes: []`
+as not-ready.

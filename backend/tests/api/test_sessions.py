@@ -213,6 +213,8 @@ def test_get_session_detail_success(client, mock_auth_user, test_user_id, auth_h
     assert data["source_questions"][0]["id"] == "sq-1"
     assert len(data["exam_versions"]) == 1
     assert data["exam_versions"][0]["version_code"] == "101"
+    # Q01: source_revision must be present and equal to updated_at
+    assert data["source_revision"] == "2026-10-18T10:00:00Z"
 
 
 def test_get_session_detail_forbidden(client, mock_auth_user, auth_headers):
