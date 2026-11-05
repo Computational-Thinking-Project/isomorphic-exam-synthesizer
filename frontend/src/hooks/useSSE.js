@@ -187,8 +187,9 @@ export function useSSE(sessionId, {
             }));
           }
 
-          // F07: Nếu snapshot báo generated hoặc hoàn tất 100% đủ câu (không partial),
-          // tiến trình đã hoàn thành từ phía server -> kết thúc ngay mà không cần chờ done từ stream mới
+          // F07 / F09: Chỉ hoàn tất ngay khi backend XÁC NHẬN generated (status hoặc session_status === 'generated').
+          // Nếu backend vẫn là 'generating' (kể cả khi tiến độ đã 100%), KHÔNG đánh dấu done,
+          // mà tiếp tục nối lại stream để lắng nghe sự kiện done hoặc lỗi máy chủ.
           const freshStatus =
             freshSnapshot.status ||
             freshSnapshot.session_status ||
@@ -196,8 +197,7 @@ export function useSSE(sessionId, {
             freshSnapshot.progress?.status;
 
           const isSnapshotDone =
-            freshStatus === 'generated' ||
-            (freshSnapshot.progress?.percent >= 100 && !freshSnapshot.progress?.is_partial);
+            String(freshStatus || '').trim().toLowerCase() === 'generated';
 
           if (isSnapshotDone) {
             isDoneRef.current = true;

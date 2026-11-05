@@ -356,8 +356,6 @@ export async function fetchSessionDetail(sessionId) {
           snap.progress?.status;
         if (snapStatus) {
           data.status = snapStatus;
-        } else if (snap.progress?.percent === 100 && !snap.progress?.is_partial) {
-          data.status = 'generated';
         }
         data.stream_epoch = snap.stream_epoch;
         data.resume_after_event_id = snap.resume_after_event_id;

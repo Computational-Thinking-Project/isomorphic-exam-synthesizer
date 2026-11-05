@@ -1034,3 +1034,158 @@ test('F06: Callback handleResyncSnapshot của lượt A đầu tiên trả về
 
   await harness.unmount();
 });
+
+test('F09 Ca 1: Stream báo tiến độ 100% (4/4 câu) nhưng chưa có done (status: generating) -> KHÔNG chuyển Stage 3, tiếp tục theo dõi; chỉ chuyển Stage 3 khi sự kiện done xuất hiện', async () => {
+  let sseStateSetter = null;
+  const mockLoadSession = async (sessionId) => ({
+    id: sessionId,
+    title: 'Đề Toán đang sinh 100% chưa done',
+    status: 'generating',
+    source_questions: [{ id: 'q1', question_no: 1 }, { id: 'q2', question_no: 2 }],
+    config: { num_versions: 2 },
+    exam_versions: [{ version_index: 1 }, { version_index: 2 }],
+    blueprint_summary: { total_questions: 2, supported_modes: [], is_ready: true },
+    progress: { percent: 50, completed_count: 2, total_count: 4, hasData: true },
+  });
+
+  function MockSSEHook() {
+    const [state, setState] = React.useState({
+      connectionState: 'connected',
+      progress: {
+        percent: 100,
+        completed_count: 4,
+        total_count: 4,
+        completedCount: 4,
+        totalCount: 4,
+        hasData: true,
+        session_status: 'generating',
+      },
+      questionStatuses: {
+        '1-1': { status: 'done' },
+        '1-2': { status: 'done' },
+        '2-1': { status: 'done' },
+        '2-2': { status: 'done' },
+      },
+      warnings: [],
+      isDone: false, // CHƯA CÓ SỰ KIỆN DONE TỪ STREAM
+      error: null,
+      reconnectCount: 0,
+      reconnect: () => {},
+    });
+    sseStateSetter = setState;
+    return state;
+  }
+
+  const harness = renderPage('session-f09-stream-100-no-done', {
+    loadSession: mockLoadSession,
+    useSSEHook: MockSSEHook,
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('100%'), 'Phải hiển thị 100%');
+  assert.equal(
+    text.includes('Đã hoàn tất sinh đề!'),
+    false,
+    'Tuyệt đối không được hiển thị hoàn tất khi chưa có done',
+  );
+
+  // Đợi 1600ms (khoảng thời gian timer auto-redirect nếu có lỗi)
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 1600));
+  });
+
+  // TIÊU CHÍ ĐẠT: Vẫn ở lại Stage 2, không điều hướng sang Stage 3
+  assert.equal(
+    harness.getLocation(),
+    '/session/session-f09-stream-100-no-done/stage2',
+    'Phải tiếp tục ở lại Stage 2 theo dõi khi job vẫn generating và chưa có done',
+  );
+
+  // Bây giờ stream phát sự kiện done -> isDone = true
+  await act(async () => {
+    sseStateSetter((prev) => ({
+      ...prev,
+      isDone: true,
+      progress: {
+        ...prev.progress,
+        session_status: 'generated',
+      },
+    }));
+  });
+
+  // Đợi timer 1.5s auto-redirect
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 1600));
+  });
+
+  // Sau khi có done, phải chuyển sang Stage 3 thành công
+  assert.equal(
+    harness.getLocation(),
+    '/session/session-f09-stream-100-no-done/stage3',
+    'Sau khi có sự kiện done xác nhận, phải chuyển sang Stage 3',
+  );
+
+  await harness.unmount();
+});
+
+test('F09 Ca 2: Snapshot phục hồi báo 100% nhưng session_status vẫn là generating -> KHÔNG chuyển Stage 3, tiếp tục theo dõi', async () => {
+  const mockLoadSession = async (sessionId) => ({
+    id: sessionId,
+    title: 'Đề Toán phục hồi snapshot generating 100%',
+    status: 'generating',
+    source_questions: [{ id: 'q1', question_no: 1 }, { id: 'q2', question_no: 2 }],
+    config: { num_versions: 2 },
+    exam_versions: [{ version_index: 1 }, { version_index: 2 }],
+    blueprint_summary: { total_questions: 2, supported_modes: [], is_ready: true },
+    progress: null,
+  });
+
+  const mockFetchGenSnapshot = async () => ({
+    status: 'generating',
+    session_status: 'generating', // BACKEND VẪN GENERATING
+    progress: {
+      percent: 100,
+      completed_count: 4,
+      total_count: 4,
+      completedCount: 4,
+      totalCount: 4,
+      session_status: 'generating',
+      hasData: true,
+    },
+    question_statuses: {
+      '1-1': { status: 'done' },
+      '1-2': { status: 'done' },
+      '2-1': { status: 'done' },
+      '2-2': { status: 'done' },
+    },
+  });
+
+  const harness = renderPage('session-f09-snapshot-generating-100', {
+    loadSession: mockLoadSession,
+    fetchGenSnapshot: mockFetchGenSnapshot,
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('100%'), 'Phải hiển thị tiến độ 100%');
+  assert.equal(
+    text.includes('Đã hoàn tất sinh đề!'),
+    false,
+    'Tuyệt đối không hiển thị hoàn tất khi snapshot báo session_status vẫn là generating',
+  );
+
+  // Chờ 1600ms timer
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 1600));
+  });
+
+  // TIÊU CHÍ ĐẠT: Không điều hướng sang Stage 3!
+  assert.equal(
+    harness.getLocation(),
+    '/session/session-f09-snapshot-generating-100/stage2',
+    'Không được chuyển Stage 3 khi snapshot báo 100% nhưng session_status vẫn là generating',
+  );
+
+  await harness.unmount();
+});

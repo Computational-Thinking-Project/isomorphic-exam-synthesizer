@@ -144,8 +144,6 @@ export default function Stage2ConfigPage({
                 snap.progress?.status;
               if (snapStatus) {
                 data.status = snapStatus;
-              } else if (snap.progress?.percent === 100 && !snap.progress?.is_partial) {
-                data.status = 'generated';
               }
               if (snap.stream_epoch) {
                 data.stream_epoch = snap.stream_epoch;
@@ -169,8 +167,7 @@ export default function Stage2ConfigPage({
         if (
           data.status === 'generating' ||
           data.status === 'partial_generated' ||
-          data.status === 'generated' ||
-          (data.progress?.percent === 100 && !data.progress?.is_partial)
+          data.status === 'generated'
         ) {
           setIsGenerating(true);
         }
@@ -231,11 +228,7 @@ export default function Stage2ConfigPage({
             prev
               ? {
                   ...prev,
-                  status:
-                    snapStatus ||
-                    (data.progress?.percent === 100 && !data.progress?.is_partial
-                      ? 'generated'
-                      : prev.status),
+                  status: snapStatus || prev.status,
                   progress: data.progress,
                   question_statuses: {
                     ...(prev.question_statuses || {}),
@@ -385,13 +378,86 @@ export default function Stage2ConfigPage({
     }
   }, [isRetryingGeneration, retryGen, sessionId, sseState]);
 
+
+  // Trích xuất số lượng mã đề thật, không võ đoán mặc định 2 khi F5/reload
+  const restoredStatuses = session?.question_statuses || {};
+  const mergedStatuses = {
+    ...restoredStatuses,
+    ...(sseState.questionStatuses || {}),
+  };
+
+  const statusVersions = Object.keys(mergedStatuses).map((k) =>
+    parseInt(k.split('-')[0], 10),
+  );
+  const maxVersionFromStatuses =
+    statusVersions.length > 0
+      ? Math.max(...statusVersions.filter((n) => !isNaN(n) && n > 0))
+      : null;
+
+  const derivedNumVersions =
+    activeConfig?.n_versions ||
+    activeConfig?.num_versions ||
+    (session?.exam_versions?.length > 0 ? session.exam_versions.length : null) ||
+    sseState.progress?.n_versions ||
+    sseState.progress?.num_versions ||
+    (session?.progress?.totalCount && session?.source_questions?.length
+      ? Math.round(session.progress.totalCount / session.source_questions.length)
+      : null) ||
+    (maxVersionFromStatuses && maxVersionFromStatuses > 0 ? maxVersionFromStatuses : null);
+
+  const mergedProgress =
+    (sseState.progress?.percent > 0 || sseState.progress?.completedCount > 0 || sseState.isDone)
+      ? sseState.progress
+      : session?.progress || (sseState.progress?.hasData ? sseState.progress : null);
+
+  // F03 / F07 / F09: Tách trạng thái kết thúc lượt sinh khỏi trạng thái kết nối SSE.
+  // F09: Chỉ hoàn tất chuyển Stage 3 khi backend xác nhận 'generated' qua snapshot/detail HOẶC sự kiện kết thúc 'done' từ stream SSE.
+  // Khi tiến độ 100% nhưng backend vẫn báo 'generating' (hoặc chưa có done), TUYỆT ĐỐI TIẾP TỤC THEO DÕI, không chuyển Stage 3!
+  const currentSnapshotStatus =
+    session?.status ||
+    session?.progress?.session_status ||
+    session?.progress?.status ||
+    mergedProgress?.session_status ||
+    mergedProgress?.status;
+
+  const normalizedSnapshotStatus = String(currentSnapshotStatus || '').trim().toLowerCase();
+  const isGeneratingStatus =
+    normalizedSnapshotStatus === 'generating' ||
+    String(session?.status || '').trim().toLowerCase() === 'generating';
+
+  const isBackendGenerated =
+    !isGeneratingStatus &&
+    (normalizedSnapshotStatus === 'generated' ||
+      String(session?.status || '').trim().toLowerCase() === 'generated');
+
+  const isStreamDone = Boolean(
+    sseState.isDone &&
+    !sseState.isPartial &&
+    String(sseState.progress?.session_status || '').trim().toLowerCase() !== 'partial_generated'
+  );
+
+  const isCompletedGenerated = Boolean(isBackendGenerated || isStreamDone);
+
+  const isSnapshotFinished = Boolean(
+    !isGeneratingStatus &&
+    (isBackendGenerated ||
+      normalizedSnapshotStatus === 'partial_generated' ||
+      String(session?.status || '').trim().toLowerCase() === 'partial_generated' ||
+      (Boolean(session?.progress?.isDone) && !isGeneratingStatus) ||
+      (Boolean(mergedProgress?.isDone) && !isGeneratingStatus))
+  );
+
+  const effectiveIsDone = isNewRunActive
+    ? sseState.isDone
+    : (isSnapshotFinished || sseState.isDone);
+
   // Tự động chuyển hướng khi hoàn tất ở cấp độ container độc lập — CHỈ KHI hoàn tất 100% (không partial_generated)
   useEffect(() => {
-    if (isGenerating && sseState.isDone) {
+    if (isGenerating && isCompletedGenerated) {
       const isPartial =
-        sseState.progress?.session_status === 'partial_generated' ||
-        Boolean(sseState.progress?.is_partial) ||
-        (sseState.progress?.percent !== undefined && sseState.progress.percent < 100);
+        mergedProgress?.session_status === 'partial_generated' ||
+        Boolean(mergedProgress?.is_partial) ||
+        (mergedProgress?.percent !== undefined && mergedProgress.percent < 100);
 
       if (!isPartial) {
         const timer = setTimeout(() => {
@@ -400,7 +466,7 @@ export default function Stage2ConfigPage({
         return () => clearTimeout(timer);
       }
     }
-  }, [isGenerating, sseState.isDone, sseState.progress, handleCompleteRedirect]);
+  }, [isGenerating, isCompletedGenerated, mergedProgress, handleCompleteRedirect]);
 
   // Giao diện khi đang tải phiên
   if (isLoadingSession) {
@@ -483,66 +549,6 @@ export default function Stage2ConfigPage({
     );
   }
 
-  // Trích xuất số lượng mã đề thật, không võ đoán mặc định 2 khi F5/reload
-  const restoredStatuses = session?.question_statuses || {};
-  const mergedStatuses = {
-    ...restoredStatuses,
-    ...(sseState.questionStatuses || {}),
-  };
-
-  const statusVersions = Object.keys(mergedStatuses).map((k) =>
-    parseInt(k.split('-')[0], 10),
-  );
-  const maxVersionFromStatuses =
-    statusVersions.length > 0
-      ? Math.max(...statusVersions.filter((n) => !isNaN(n) && n > 0))
-      : null;
-
-  const derivedNumVersions =
-    activeConfig?.n_versions ||
-    activeConfig?.num_versions ||
-    (session?.exam_versions?.length > 0 ? session.exam_versions.length : null) ||
-    sseState.progress?.n_versions ||
-    sseState.progress?.num_versions ||
-    (session?.progress?.totalCount && session?.source_questions?.length
-      ? Math.round(session.progress.totalCount / session.source_questions.length)
-      : null) ||
-    (maxVersionFromStatuses && maxVersionFromStatuses > 0 ? maxVersionFromStatuses : null);
-
-  const mergedProgress =
-    (sseState.progress?.percent > 0 || sseState.progress?.completedCount > 0 || sseState.isDone)
-      ? sseState.progress
-      : session?.progress || (sseState.progress?.hasData ? sseState.progress : null);
-
-  // F03 / F07: Tách trạng thái kết thúc lượt sinh khỏi trạng thái kết nối SSE.
-  // Khi snapshot báo generated (100% đủ câu), cho phép tiếp tục sang Stage 3 mà không cần chờ phát lại done.
-  // Khi F5 phiên partial_generated, lượt trước đã kết thúc nên isSnapshotFinished = true -> hiển thị ngay nút Sinh bù (Retry)
-  // Khi người dùng bấm Sinh bù, isNewRunActive = true -> theo dõi lượt mới qua sseState.isDone
-  const currentSnapshotStatus =
-    session?.status ||
-    session?.progress?.session_status ||
-    session?.progress?.status ||
-    mergedProgress?.session_status ||
-    mergedProgress?.status;
-
-  const isCompletedGenerated = Boolean(
-    currentSnapshotStatus === 'generated' ||
-    ((mergedProgress?.percent ?? 0) >= 100 &&
-      !mergedProgress?.is_partial &&
-      (mergedProgress?.completedCount ?? 0) > 0 &&
-      (mergedProgress?.totalCount ? (mergedProgress?.completedCount ?? 0) >= mergedProgress.totalCount : true)),
-  );
-
-  const isSnapshotFinished = Boolean(
-    isCompletedGenerated ||
-    currentSnapshotStatus === 'partial_generated' ||
-    session?.progress?.isDone ||
-    mergedProgress?.isDone,
-  );
-
-  const effectiveIsDone = isNewRunActive
-    ? sseState.isDone
-    : (isSnapshotFinished || sseState.isDone);
 
   return (
     <div className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">

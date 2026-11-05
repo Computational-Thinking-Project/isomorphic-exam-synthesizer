@@ -1164,3 +1164,58 @@ test('F07: Khi snapshot trả về status generated (100%), useSSE chuyển ngay
 
   await harness.unmount();
 });
+
+test('F09: Khi snapshot trong triggerRecovery báo 100% nhưng session_status vẫn là generating -> KHÔNG đánh dấu completed/isDone, tiếp tục thử nối lại SSE', async () => {
+  MockEventSource.instances = [];
+  let onDoneCalled = false;
+
+  const mockOnResync = async () => ({
+    status: 'generating',
+    session_status: 'generating', // BACKEND VẪN GENERATING
+    progress: { percent: 100, completedCount: 4, totalCount: 4, hasData: true },
+  });
+
+  const harness = renderHookHarness(() =>
+    useSSE('session-f09-hook-recovery-generating', {
+      requestTicket: async () => ({ ticket: 't-f09' }),
+      eventSourceFactory: (url) => new MockEventSource(url),
+      onResync: mockOnResync,
+      onDone: () => {
+        onDoneCalled = true;
+      },
+    }),
+  );
+
+  await harness.render();
+  assert.equal(MockEventSource.instances.length, 1);
+  const es = MockEventSource.instances[0];
+
+  // Phát sinh lỗi mất lịch sử trong stream -> kích hoạt onResync
+  await act(async () => {
+    es.simulateOpen();
+    es.emit('error', { error_code: 'ERR_EVENT_HISTORY_LOST' });
+  });
+
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 200));
+  });
+
+  // TIÊU CHÍ ĐẠT:
+  // 1. isDone vẫn phải là false (vì status là generating, chưa kết thúc)
+  // 2. connectionState không được là 'completed', mà chuyển sang 'reconnecting'
+  // 3. onDone callback tuyệt đối không được gọi
+  assert.equal(harness.result.isDone, false, 'isDone vẫn phải là false khi session_status là generating');
+  assert.notEqual(harness.result.connectionState, 'completed', 'connectionState không được là completed');
+  assert.equal(onDoneCalled, false, 'onDone callback tuyệt đối không được gọi');
+  assert.equal(harness.result.progress.percent, 100, 'Phần trăm tiến độ vẫn hiển thị 100%');
+
+  // Đợi timer reconnect 600ms để hook kết nối lại stream SSE
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 700));
+  });
+
+  // Đã tạo kết nối EventSource mới để tiếp tục lắng nghe sự kiện done hoặc error
+  assert.equal(MockEventSource.instances.length, 2, 'Phải mở kết nối SSE mới để tiếp tục theo dõi');
+
+  await harness.unmount();
+});
