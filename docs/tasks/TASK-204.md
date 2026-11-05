@@ -2,9 +2,9 @@
 
 - **Phụ trách:** Trung Anh / `philip-kkk` / TV1 / FE1. Duy (`johannguyen015`) review chính và phụ trách API xác nhận. Bội Anh (`htbaax`) kiểm điểm bàn giao Stage 2. Dự phòng và ETA review riêng TBD.
 - **Nguồn giao việc:** TASK-204 trong `w2_21_10.md` của Duy, bản workspace `project/W2_ASSIGNMENT_20261026.md`. Link phân công chung TBD.
-- **Nhánh:** `feat/task-204-source-confirm` → `dev`. Nền code đã đọc: `99dc8d307cb22b489cb17553d487f0ce5f7573e7`. Link Draft PR bổ sung khi có.
+- **Nhánh:** `feat/task-204-source-confirm` → `dev`. [Draft PR #42](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/42). Nền `dev` đã đồng bộ: `8289971`.
 - **Workflow:** [v0.1 proposed](../review/WORKFLOW.md) (`506384b`), dùng [M2/M3](../review/TEMPLATES.md). Mốc W2 tối 03/11/2026 theo [xác nhận của Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/29#issuecomment-6499240459) đã qua. ETA TASK-204 và ETA giao đầu vào chưa được xác nhận.
-- **Trạng thái 05/11/2026:** plan/input. Đã đọc code và tài liệu tại nền trên. Chưa triển khai TASK-204 hoặc kiểm API trên môi trường tích hợp.
+- **Trạng thái:** scope FE1 đã chốt theo contract BE1 `5b711d2`. P1–P3 triển khai với fixture; P4 tích hợp có điều kiện riêng.
 
 ## Mình cần làm gì?
 
@@ -21,9 +21,9 @@ Ngoài phạm vi: làm lại tạo/mở phiên, ingestion hay dialog 203b, sửa
 
 - [TASK-201](TASK-201.md) / [PR #29](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/29) đã merge. [SourceQuestionPreview](../../frontend/src/features/stage1-ingestion/SourceQuestionPreview.jsx) đã render câu nguồn, phương án và đáp án. [TASK-203b](TASK-203b.md) / [PR #31](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/31) đã merge và cung cấp vòng sửa đầu vào khi incomplete 422.
 - [Stage1Route](../../frontend/src/features/stage1-ingestion/Stage1Route.jsx) đã có key theo tài khoản và phiên. Panel hiện đọc nguồn đã lưu từ [controller ingestion](../../frontend/src/features/stage1-ingestion/sourceIngestion.js). Route chưa có đường tiếp tục cho lần mở lại phiên đã xác nhận.
-- **Confirm và hash.** [Route confirm](../../backend/app/api/routes/sessions.py) gọi [source artifacts flow](../../backend/app/api/routes/source_artifacts.py). Backend xác nhận snapshot/fingerprint và trả `confirmation_id`, `status: blueprinted`, `canonical_status`. `Idempotency-Key` là UUID. [Test backend](../../backend/tests/api/test_confirm_source.py) có ca lỗi đọc sau commit rồi gửi lại cùng key. Giữ một key cho cùng thao tác chưa rõ kết quả nếu contract cho phép gửi lại. FE dùng kết quả từ server và không tự tính hash xác nhận. Cần làm rõ việc gắn confirm với đúng snapshot đã xem nếu nguồn đổi ở tab khác trước khi bấm xác nhận.
-- **Blueprint readiness.** `GET /api/sessions/{id}/source-artifacts` tại base là đường đọc `ready`, `canonical_status` và tiến độ chuẩn bị. `blueprinted`, HTTP 200 và số Blueprint trong response confirm chỉ mô tả kết quả xác nhận hoặc số đã hoàn thành tại thời điểm đó. Điều kiện sẵn sàng cần kiểm riêng. [Tài liệu confirm v1.0](../api/confirm-source-endpoint.md) còn mô tả fallback đồng bộ. Dùng code hiện hành và phản hồi từ BE1 để chốt mẫu payload triển khai.
-- **Bàn giao Stage 2.** Route `/session/:sessionId/stage2` đã có trong [App](../../frontend/src/App.jsx). [Dashboard](../../frontend/src/features/dashboard/sessionDestination.js) đã mở phiên `blueprinted` tại Stage 2. [Adapter Stage 2](../../frontend/src/services/stage2Service.js) hiện đọc `blueprint_summary` hoặc suy từ dữ liệu Blueprint lồng trong câu nguồn, còn GET detail ở base lấy câu nguồn và mã đề. Bội Anh và Duy cần chốt cách cấp readiness và dữ liệu chế độ biến thể trước khi nhận tích hợp. Không tạo summary/mode giả trong 204.
+- **Confirm và snapshot.** [Contract BE1 `5b711d2`](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/5b711d250774446e8e61511174ac738c0a924d71/docs/api/confirm-source-endpoint.md) trả `source_revision` UUID cùng câu nguồn từ GET detail. POST gửi revision đã xem và UUID `Idempotency-Key` bắt buộc. Sau nạp thành công, lấy lại snapshot bằng GET trước khi bật confirm. Key lưu theo tài khoản và phiên qua F5. Đối soát bằng GET trước khi retry cùng key; xung đột revision đòi hỏi xem và xác nhận lại bản mới.
+- **Blueprint readiness.** [Contract canonical](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/5b711d250774446e8e61511174ac738c0a924d71/docs/api/source-artifacts-contract.md) tách xác nhận nguồn khỏi `ready`. Stage 2 đọc `ready`/`supported_modes`; `ready=true` và `[]` hợp lệ. Adapter thuộc FE2.
+- **Bàn giao Stage 2.** Dùng route `/session/:sessionId/stage2` và quy tắc mở lại phiên của [Dashboard](../../frontend/src/features/dashboard/sessionDestination.js). Sau confirm hợp lệ hoặc GET cho biết phiên đã xác nhận, chuyển cùng ID. FE1 không chờ Blueprint và không tự POST khi F5.
 
 ## File và thứ tự triển khai
 
@@ -43,9 +43,9 @@ Các mốc commit dự kiến sau P0, theo từng phần đã tự review và ki
 
 | ID / owner | Cần xác nhận | Cần trước | ETA / phần có thể làm |
 |---|---|---|---|
-| Q01 — Duy / TASK-205 | Chốt mẫu confirm/readiness và lỗi trên bản tích hợp. Xác nhận quy tắc gửi lại cùng UUID khi mất response, cách đối soát sau tải lại và cơ chế phát hiện snapshot đã xem bị đổi ở tab khác. Route tại base dùng `updated_at` đọc phía server, request hiện chưa thấy trường revision do client gửi. | P1/P2, trước khi chốt hành vi ghi. | TBD. Preview hiện có có thể rà độc lập. Dùng [source artifacts flow](../../backend/app/api/routes/source_artifacts.py) làm căn cứ trao đổi. |
-| Q02 — Duy và Bội Anh | Chốt màn chịu trách nhiệm hiển thị chờ/thất bại, lúc điều hướng và nguồn readiness/modes cho Stage 2. Xác nhận hành vi khi vào từ Dashboard hoặc F5. Nếu có retry chuẩn bị Blueprint, chốt owner, màn và phạm vi trước khi ghép. | P3, trước khi công bố luồng Stage 2 tích hợp. | TBD. Rà route và adapter trước. Đề xuất Stage 2 nhận phiên đang chuẩn bị chỉ khi FE2 có thể chặn cấu hình ở mọi đường vào. |
-| Q03 — Duy và Trung Anh | Xác nhận runtime có migration/RPC source artifacts và môi trường được phép kiểm. Các POST nạp/xác nhận có thể lên lịch worker khi runtime có cấu hình AI. Chốt môi trường dùng fixture hoặc tắt provider trước khi kiểm các POST này. | P4, trước khi ghi đã kiểm API thật. | TBD. Dùng fixture đã thống nhất cho các ca tự động và ghi rõ phần còn chờ môi trường. |
+| Q01 — Duy / TASK-205 | Đã chốt `source_revision` và key UUID. Thiếu key/revision trả 422, xung đột trả 409. Sau timeout/F5 đọc phiên và artifact trước khi retry; giữ key cho cùng thao tác. | P1/P2 | Có thể kiểm với fixture theo [PR BE1 #43](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/43). |
+| Q02 — Duy và Bội Anh | Đã chốt chuyển Stage 2 cùng ID sau confirm và dùng readiness/modes từ `source-artifacts`. | P3 | Có thể kiểm route với fixture. Adapter FE2 là điều kiện tích hợp thật. |
+| Q03 — Duy và Trung Anh | Xác nhận runtime đã ghép BE1/BE2, gồm migration và Auth/JWT/RLS; chạy với provider tắt hoặc giả lập. Kiểm preflight `Idempotency-Key` nếu FE/API khác origin. | P4 | Chờ runtime được giao. BE1 đã báo kiểm PostgreSQL với AI giả lập, tách khỏi nghiệm thu FE và runtime đã triển khai. |
 
 Silent audit đã chốt, không mở lại câu hỏi checkbox của assignment cũ. [ADR 0001](../adr/0001-confirm-before-blueprint.md) và [change log](../change_log.md#dec-be1-018-task-301-background-canonical-production-and-frozen-v1) giữ quyết định backend. Q01–Q03 hỏi phần tích hợp và hành vi giao diện còn thiếu.
 
@@ -59,4 +59,4 @@ Silent audit đã chốt, không mở lại câu hỏi checkbox của assignment
 
 - **Output cho FE2:** cùng `sessionId`, đường vào Stage 2 và quy tắc khi đang chuẩn bị/đã sẵn sàng theo Q02. Mốc giao TBD.
 - **Đã làm:** lập M2 từ assignment, code tại base và checkpoint của 201/203b. Kết quả đọc tĩnh dùng để khoanh điểm cần chốt, chưa có kết quả kiểm triển khai 204.
-- **Bước tiếp:** mở Draft với M2 và M3 theo quyền, giải đáp Q01–Q03, rồi bắt đầu P1 khi đã đủ đầu vào.
+- **Bước tiếp:** triển khai P1–P3 theo scope Draft và ghi bằng chứng P4 theo đúng commit đã kiểm.
