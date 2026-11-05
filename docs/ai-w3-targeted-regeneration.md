@@ -1,5 +1,16 @@
 # TASK-304 — Handoff cho Review API
 
+## Bàn giao tích hợp 05/11/2026
+
+TASK-301 [PR28](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28) đã merge vào dev. Đối chiếu production schema/TargetedRegenerator/AttemptPermit và các targeted tests: nội dung304 đã được tiếp nhận qua PR28. Đồng bộ dev99dc8d3 vào nhánh304 để giải quyết conflict, không viết lại adapter.
+
+Canonical authority d94f138 đã được Duy adopt tại31b7f4d. Reviewer Đạt đã kiểm frozen-v1 receipt qua mapper và TargetedRegenerator thật với provider offline;8 payload bị làm sai bị chặn trước dispatch. [Bằng chứng/giới hạn](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28#pullrequestreview-5766746441). Producer/mapper/permit không còn là blocker chờ triển khai.
+
+PR26 chỉ còn cập nhật bàn giao; production adapter304 đã có trên dev. Checks combined branch được ghi trên PR sau thực thi. Deployed Supabase/JWT/RLS/PostgREST, live Gemini và full Stage2→review→shuffle→export vẫn là gate sản phẩm riêng. Không coi fixture/PGlite là cloud hoặc concurrency nhiều connection. W2 modes/NONE/persistence thuộc PR30/32/41.
+
+Các checkpoint chờ tích hợp bên dưới là lịch sử trước PR28, không thay trạng thái hiện tại này.
+
+
 Owner AI: Đạt. Quyết định đầu vào: [Duy trên PR #26](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/26#issuecomment-6485507631). Không có trường reason/prompt giáo viên.
 
 ## Callable và schema

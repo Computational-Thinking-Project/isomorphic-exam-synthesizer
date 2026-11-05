@@ -1,6 +1,17 @@
 # TASK-304 — Plan và bàn giao: Targeted Regeneration
 
-- Trạng thái: **Draft — adapter/schema/mock và durable-permit hook đã triển khai**, cập nhật 01/11/2026; chưa tích hợp DB thật, chưa review độc lập.
+## Bàn giao tích hợp 05/11/2026
+
+TASK-301 [PR28](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28) đã merge vào dev. Đối chiếu production schema/TargetedRegenerator/AttemptPermit và các targeted tests: nội dung304 đã được tiếp nhận qua PR28. Đồng bộ dev99dc8d3 vào nhánh304 để giải quyết conflict, không viết lại adapter.
+
+Canonical authority d94f138 đã được Duy adopt tại31b7f4d. Reviewer Đạt đã kiểm frozen-v1 receipt qua mapper và TargetedRegenerator thật với provider offline;8 payload bị làm sai bị chặn trước dispatch. [Bằng chứng/giới hạn](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/28#pullrequestreview-5766746441). Producer/mapper/permit không còn là blocker chờ triển khai.
+
+PR26 chỉ còn cập nhật bàn giao; production adapter304 đã có trên dev. Checks combined branch được ghi trên PR sau thực thi. Deployed Supabase/JWT/RLS/PostgREST, live Gemini và full Stage2→review→shuffle→export vẫn là gate sản phẩm riêng. Không coi fixture/PGlite là cloud hoặc concurrency nhiều connection. W2 modes/NONE/persistence thuộc PR30/32/41.
+
+Các checkpoint chờ tích hợp bên dưới là lịch sử trước PR28, không thay trạng thái hiện tại này.
+
+
+- Trạng thái: **Adapter đã tích hợp qua PR28; PR26 cập nhật bàn giao**,05/11/2026.
 - Nguồn: W3_ASSIGNMENT.md v2.1 (28/10/2026) và w3.md do Đạt cung cấp ngoài repo. Bản v2.1 chưa có đường dẫn GitHub được xác minh; chờ Duy cung cấp nguồn chung. Không dùng bản W3 cũ làm assignment v2.1.
 - Owner: Trương Thành Đạt (`Thanhdat3010`); reviewer: Tâm (`AI-WFox`), **đề xuất**, chưa coi đã nhận review.
 - Nhánh: `feat/dat-task-304-targeted-regeneration`, target `dev`; baseline `dc62d3c1d8616316771f8c1dc5a8a1ab56a2ff8c`.

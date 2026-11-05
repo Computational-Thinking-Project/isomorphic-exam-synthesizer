@@ -11,6 +11,12 @@ export class DOMNode {
     this.parentNode = null;
     this.ownerDocument = null;
   }
+  get nodeValue() {
+    return this.nodeType === 3 || this.nodeType === 8 ? (this._text || '') : null;
+  }
+  set nodeValue(value) {
+    if (this.nodeType === 3 || this.nodeType === 8) this._text = String(value ?? '');
+  }
   appendChild(child) {
     this.childNodes.push(child);
     child.parentNode = this;
