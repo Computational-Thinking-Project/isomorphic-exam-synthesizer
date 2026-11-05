@@ -1,3 +1,7 @@
+## 05/11/2026 — TASK-304: tiếp nhận vào dev qua TASK-301
+
+Production adapter/schema/permit tests của PR26 đã có trên dev qua PR28. Đạt đồng bộ nhánh304, cập nhật [bàn giao](ai-w3-targeted-regeneration.md) và [trạng thái](tasks/TASK-304.md), không đổi production code hoặc contract. Consumer đã được kiểm tại31b7f4d; cloud/live Gemini/full product E2E vẫn là gate riêng.
+
 ## DEC-TASK305-001: Final approval display-key and principal guards (proposed)
 
 - Date / owner: 04/11/2026, TASK-305 author; pending independent review.
