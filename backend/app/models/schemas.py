@@ -173,7 +173,7 @@ class SessionDetailResponse(BaseModel):
     approved_at: Optional[str] = None
     created_at: str
     updated_at: str
-    source_revision: Optional[str] = Field(
+    source_revision: str = Field(
         ...,
         min_length=1,
         description="Revision of the source preview being confirmed.",

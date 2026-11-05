@@ -149,67 +149,36 @@ async def get_session_detail(
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
 ) -> SessionDetailResponse:
-    """Retrieve session details by ID, validating ownership and fetching nested questions and versions.
+    """Read source rows and their UUID revision under one RPC-held parent lock.
 
-    source_revision is derived from exam_sessions.updated_at and is read in the same
-    request so that FE receives a revision token that is consistent with the
-    source_questions snapshot returned here.  The client must echo this token back in
-    POST /confirm-source so the backend can detect concurrent source replacement (Q01).
+    Exam versions are fetched separately and are outside the source snapshot.
     """
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
+    from app.services.blueprint.producer import artifact_error
+    from app.services.review.receipts import rpc_object
 
-    s_res = db.table("exam_sessions").select("*").eq("id", session_id).execute()
-    s_rows = cast(List[dict[str, Any]], s_res.data or [])
-    if not s_rows:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found",
-        )
-    session_record = s_rows[0]
-
-    # Capture the revision token from the session row *before* reading questions.
-    # replace_source_questions bumps updated_at inside a single transaction, so
-    # any subsequent ingest will produce a different token and trigger 409 on confirm.
-    source_revision: str = session_record["updated_at"]
-
-    # Fetch source_questions ordered by question_no ASC
-    q_res = (
-        db.table("source_questions")
-        .select("*")
-        .eq("session_id", session_id)
-        .order("question_no", desc=False)
-        .execute()
-    )
-    source_questions = cast(List[dict[str, Any]], q_res.data or [])
-
-    # Fetch exam_versions ordered by created_at ASC
+    try:
+        preview = rpc_object(db.rpc("get_session_source_preview", {
+            "p_session_id": session_id,
+        }).execute().data)
+        session_record = preview["session"]
+        source_revision = str(preview["source_revision"])
+        source_questions = preview["source_questions"]
+        from uuid import UUID
+        UUID(source_revision)
+        if session_record["id"] != session_id or session_record["user_id"] != current_user.id:
+            raise ValueError("Preview identity mismatch")
+        if not isinstance(source_questions, list):
+            raise ValueError("Invalid source rows")
+    except (KeyError, ValueError, TypeError) as exc:
+        raise ReviewDomainException(503, "ERR_SOURCE_UNAVAILABLE", "Invalid source preview") from exc
+    except Exception as exc:
+        raise artifact_error(exc) from exc
     v_res = (
-        db.table("exam_versions")
-        .select("*")
-        .eq("session_id", session_id)
-        .order("created_at", desc=False)
-        .execute()
+        db.table("exam_versions").select("*").eq("session_id", session_id)
+        .order("created_at", desc=False).execute()
     )
     exam_versions = cast(List[dict[str, Any]], v_res.data or [])
-
-    check_res = (
-        db.table("exam_sessions")
-        .select("updated_at")
-        .eq("id", session_id)
-        .execute()
-    )
-
-    check_rows = cast(List[dict[str, Any]], check_res.data or [])
-
-    if (
-        len(check_rows) != 1
-        or check_rows[0].get("updated_at") != source_revision
-    ):
-        raise ReviewDomainException(
-            409,
-            "ERR_SOURCE_SNAPSHOT_CHANGED",
-            "Source changed while loading preview; reload required",
-        )
 
     return SessionDetailResponse(
         **session_record,
