@@ -26,6 +26,7 @@ def get_service_role_client() -> Client:
     - Background workers
     - Security event logging
     - Administrative operations & resource ownership verification
+    - Server-computed shuffle persistence through the service-only finalize RPC
     """
     key = settings.SUPABASE_SERVICE_ROLE_KEY.get_secret_value()
     if not settings.SUPABASE_URL or not key:
