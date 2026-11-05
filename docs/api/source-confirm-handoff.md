@@ -38,3 +38,18 @@ then use a new operation/key. Do not infer rollback from a lost response.
 
 Local SQL role stubs test RPC ACL/ownership; they do not prove deployed Supabase
 JWT verification, PostgREST overload dispatch or real table-read RLS.
+
+## Checkpoints and acceptance
+
+Implementation commits and exact executed results are kept in the short
+[test evidence](source-confirm-test-evidence.md). Q01/Q02 backend behavior is
+locally verified; FE1/FE2 integration and independent acceptance remain pending.
+No change was made to [TASK-204 PR42](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/42)
+or its review state.
+
+Modes use [profile1.0](source-artifacts-contract.md), pinned to BE2 remote7e9377f.
+FE2 must use the canonical endpoint and object adapter, including explicit
+`ready === true` and valid `[]`. Legacy readiness inference remains a FE owner task.
+Migration009 already prevents an authenticated owner from resetting the new token;
+the real-DB tamper test grants UPDATE explicitly and still verifies rejection.
+Current readers require migration012. Deploy011/012 and the UUID API together.

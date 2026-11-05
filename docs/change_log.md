@@ -1,3 +1,19 @@
+## DEC-TASK204-001: Atomic source preview revision and canonical mode profile (proposed)
+
+- Date: 05/11/2026. Author implementation on `fix/be1-source-confirm-contract`;
+  independent review and FE/BE2 integration acceptance pending.
+- Context: updated_at can repeat and independently queried preview rows can mix
+  revisions; canonical readiness and FE mode metadata used incompatible shapes.
+- Decision: additive migration011 introduces a per-session source UUID, transactional
+  mutation trigger, locked preview RPC and worker-only UUID confirmation wrapper.
+  Migration012 extends the existing canonical readiness RPC with public profile1.0
+  mode objects, pinned to BE2 `7e9377f`, without reading legacy Blueprint modes.
+- Impact: sessions/confirm/artifact APIs, repository validation, offline PostgreSQL
+  tests and [handoff](api/source-confirm-handoff.md). Historical migrations006–010
+  are unchanged. Deploy011/012 and the updated API together; old timestamp caller
+  access is revoked. Supabase/PostgREST/JWT/RLS, FE integration and GitHub approval
+  are not established by local SQL evidence.
+
 ## 05/11/2026 — TASK-304: tiếp nhận vào dev qua TASK-301
 
 Production adapter/schema/permit tests của PR26 đã có trên dev qua PR28. Đạt đồng bộ nhánh304, cập nhật [bàn giao](ai-w3-targeted-regeneration.md) và [trạng thái](tasks/TASK-304.md), không đổi production code hoặc contract. Consumer đã được kiểm tại31b7f4d; cloud/live Gemini/full product E2E vẫn là gate riêng.

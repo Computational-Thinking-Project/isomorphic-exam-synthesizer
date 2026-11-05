@@ -266,74 +266,110 @@ review check; the existing current candidate is seeded by the fixture.
 
 ## TASK-204 Source Confirmation (Q01–Q03)
 
-### Migration chain
+Use PostgreSQL 15 only in disposable containers. No deployed Supabase evidence
+is implied. These modules require the backend's locked Python dependencies.
 
-Apply migrations in ascending order on a fresh PostgreSQL 15 instance:
+### Actual migration inventory and setup
 
-| File | Purpose |
-|---|---|
-| `002_replace_source_questions_rpc.sql` | `replace_source_questions` RPC (bumps `updated_at`) |
-| `003_confirm_exam_source_rpc.sql` | Legacy `confirm_exam_source` (deprecated, kept for compat) |
-| `004_confirm_source_artifacts_rpc.sql` | Inventory/guard — verifies 006 objects exist |
-| `006_stage3_review_and_shuffle.sql` | **Authoritative**: `confirm_source_artifacts`, `get_source_artifacts`, canonical RPCs |
+- **Fresh current schema:** role/auth/storage stubs from `test_stage3_schema.py`,
+  `backend/scripts/schema.sql`, then 006, 007, 008, 009, **011**, **012**.
+  `schema.sql` already defines replace_source_questions and legacy confirm_exam_source;
+  do not apply 003 again as an invented prerequisite. 010 is retained empty.
+- **Upgrade fixture:** `fixtures/legacy_schema.sql` plus synthetic source seed,
+  then 006 and 003 (the existing artifact fixture's deliberate legacy compatibility
+  setup), followed by 007–009, 002 (to test the actual replacement RPC), 011, 012.
+  A real deployment already at 006–009 only needs the new 011 and 012.
+- There is no `004_confirm_source_artifacts_rpc.sql` in this branch. Do not
+  fabricate or execute it. Migration numbering must be reconciled with BE2's
+  unmerged migration 010 before cross-branch deployment.
+- 011 revokes direct worker access to the timestamp overload. Deploy it together
+  with the UUID API caller, after stopping/draining old callers. Existing receipts,
+  fingerprint comparison, audit and 006–009 functions remain authoritative.
+- Q01 tests prove fresh bootstrap, populated upgrade and transactional rollback.
+  Q02 uses only current canonical heads. Never read legacy Blueprint modes.
 
-> Migration `004` is a no-op guard. Apply `006` first; `004` checks the objects exist.
+### Commands executed in this session
 
-### Fake AI provider — no quota consumption (Q03)
+Host Python was absent, so the existing backend image supplied Python/dependencies.
+All 82 installed pinned packages matched `backend/requirements.lock`. Prepare that
+image using the existing [Docker setup](../../../docs/setup-docker.md) on a fresh
+clone; this session reused the already built image and did not rebuild it.
+Docker Desktop/WSL supplied the existing Linux CLI, copied into ignored scratch.
+The **runner** has a Docker socket to create/remove fixtures; PostgreSQL containers
+have `--network none`, no ports, no host mounts and no external credentials.
+The runner also has `--network none`. Never mount the socket into product services.
 
-Integration tests for confirm/canonical production **must not** dispatch real Gemini requests.
-
-**Strategy A — empty API keys (recommended for CI):**
+PowerShell from the repository root (adjust only the local CLI source if needed):
 
 ```powershell
-$env:GEMINI_API_KEYS = ""   # empty → blueprint_service returns None → no background production
-$env:RUN_POSTGRES_MIGRATION_TESTS = '1'
-python -m unittest discover -s backend/tests/migrations -p test_source_artifacts.py -v
-```
+$repo = (Get-Location).Path
+New-Item -ItemType Directory -Force -Path (Join-Path $repo 'scratch') | Out-Null
+$drive = $repo.Substring(0,1).ToLowerInvariant()
+$wslRepo = '/mnt/host/' + $drive + $repo.Substring(2).Replace('\','/')
+wsl --exec cp /mnt/host/wsl/docker-desktop/cli-tools/usr/bin/docker "$wslRepo/scratch/docker-linux"
 
-With no keys, `blueprint_service(request)` returns `None`, so `run_producer` is never scheduled.
-Tests that need production use a `SqlClient`-backed `Extractor` fixture returning JSON from
-`backend/tests/fixtures/ai_pipeline.json` — no real AI call.
-
-**Strategy B — monkeypatch in unit/API tests:**
-
-```python
-monkeypatch.setattr(source_artifacts, "blueprint_service", lambda request: None)
-```
-
-**Verifying no outbound AI request:**
-- No `GEMINI_API_KEY` or `GEMINI_API_KEYS` environment variable is set (or is empty).
-- `state.extracts == 0` in API tests that do not explicitly inject an Extractor.
-- Docker container has `--network none` — outbound connections are physically blocked.
-
-### Q01 revision contract
-
-```
-FE:  GET /sessions/{id}  → { source_revision: "<updated_at>", source_questions: [...] }
-FE:  POST /confirm-source  { source_revision: "<updated_at>" }
-BE:  409 ERR_SOURCE_REVISION_CONFLICT when source replaced since preview
-BE:  200 blueprinted on match
-```
-
-`updated_at` changes on every `replace_source_questions` (migration 002 bumps it atomically).
-Idempotent retries with the same `Idempotency-Key` skip the revision check.
-
-### Q02 `supported_modes` contract
-
-`GET /sessions/{id}/source-artifacts` returns:
-
-```json
-{
-  "ready": true,
-  "canonical_status": "ready",
-  "supported_modes": ["PARAM", "SHUFFLE"],
-  ...
+# Run modules sequentially, each creates and tears down its own disposable container.
+$modules = @(
+  'test_source_confirmation_revision.py',
+  'test_source_supported_modes.py',
+  'test_source_no_ai_integration.py',
+  'test_source_artifacts.py'
+)
+foreach ($module in $modules) {
+  docker run --rm --network none `
+    --mount "type=bind,source=$repo,target=/workspace" `
+    --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock `
+    -e DOCKER_BIN=/workspace/scratch/docker-linux -e RUN_POSTGRES_MIGRATION_TESTS=1 `
+    -e PYTHONPATH=/workspace/backend -e ENVIRONMENT=test `
+    -e GEMINI_API_KEY= -e GEMINI_API_KEYS= -w /workspace `
+    --entrypoint python isomorphic-exam-synthesizer-backend:latest `
+    -m unittest discover -s backend/tests/migrations -p $module -v
+  if ($LASTEXITCODE -ne 0) { throw "Failed: $module" }
 }
 ```
 
-- `null` while pending/running/failed
-- `[]` when ready but no mode declared (valid — NONE-only blueprint)
-- sorted list of mode strings from `variation_modes` in `canonical_blueprint_revisions`
+The command above combines the same per-module invocations used during development;
+targeted reruns used `-m unittest module.Class.test_method` with working directory
+`/workspace/backend/tests/migrations`. With a Python/dependency/Docker installation
+on the host, the identical `python -m unittest discover ...` commands work without
+the outer container; keep the transport guards in the no-AI integration test.
+Missing `RUN_POSTGRES_MIGRATION_TESTS=1` means **SKIP**, never real-DB PASS.
 
-FE2 must gate "Save config / Generate" on `ready === true`. Do NOT treat `supported_modes: []`
-as not-ready.
+API/regression command executed in the offline backend container, working directory
+`/workspace/backend`:
+
+```sh
+python -m pytest tests/api tests/services/test_confirmed_artifacts.py \
+  tests/services/test_review_ai_dependency.py tests/services/test_review_contract_parsers.py \
+  tests/services/test_review_flow.py tests/services/test_review_lifecycle.py \
+  tests/services/test_review_receipts.py tests/services/test_review_validation.py -q --tb=short
+python -m pytest tests/ai tests/generation -q --tb=short
+```
+
+### Fake provider and proof boundary
+
+`test_source_no_ai_integration.py` uses the actual HTTP routes/repository/producer,
+SQL role/ACL execution via `SqlClient`, canonical fixture `ai_pipeline.json` validated
+by the real artifact mapper, and a fake `Extractor`. It first leaves production
+pending, claims a real running lease, records failure, retries with the fake,
+then observes ready modes and replays the confirmation. Stale confirm has zero
+receipts; injected postcommit read loss retains one receipt and same-key replay
+reconciles. Silent audit remains exactly once.
+
+Three defenses: empty API key variables, injected fake extractor, and network-none
+runner plus synchronous/asynchronous HTTP, Gemini gateway and socket transport
+guards. Spy asserts **zero outbound attempts**, fake extracts exactly once,
+and one canonical document in PostgreSQL. Disabling the provider alone would leave
+production pending and would not prove the ready path.
+
+SQL fixture identifiers are synthetic OWNER `00000000-0000-0000-0000-000000000001`,
+SID `10000000-0000-0000-0000-000000000001`, SOURCE `20000000-0000-0000-0000-000000000001`;
+per-test database/container names are random. Canonical schema version is 0.4.0,
+public mode mapping 1.0. Runtime observed: PostgreSQL **15.19** (`postgres:15-alpine`).
+
+JWT verification and PostgREST are injected. Table reads in SqlClient use the fixture
+superuser; RPCs use authenticated/service_role principals. This proves RPC ACL and
+ownership, **not** deployed JWT/table-read RLS or PostgREST overload dispatch. FE2
+integration/acceptance and BE2 generation-config integration are separate gates.
+See [contract](../../../docs/api/source-artifacts-contract.md) and
+[handoff/evidence](../../../docs/api/source-confirm-handoff.md).
