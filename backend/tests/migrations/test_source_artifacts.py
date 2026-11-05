@@ -72,7 +72,7 @@ class SourceArtifactTests(PostgresCase):
 
     def adopt_current_source_contract(self):
         """Current Python consumers need Q01/Q02; legacy SQL cases stay on 006."""
-        for name in ('011_source_confirmation_revision.sql', '012_source_artifact_supported_modes.sql'):
+        for name in ('011_source_confirmation_revision.sql', '012_source_artifact_supported_modes.sql', '013_source_freeze_guard.sql'):
             self.sql((ROOT / 'backend/migrations' / name).read_text(encoding='utf-8'))
         return self.value(f"SELECT source_content_revision FROM exam_sessions WHERE id='{SID}';")
 

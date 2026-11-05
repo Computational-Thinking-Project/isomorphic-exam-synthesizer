@@ -74,15 +74,11 @@ class SupportedModeTests(revision_fixtures.SourceRevisionTests):
 
         self.confirm()
         self.publish()
-        # Real invalidation, edit-and-revert and confirmation establish a new head.
+        # Test-admin historical-head fixture: preserve the old canonical revision
+        # while a new lease publishes the replacement. Source stays frozen.
         self.sql(
-            "UPDATE source_questions SET raw_content=raw_content||'x'; UPDATE source_questions SET raw_content=left(raw_content,-1); UPDATE exam_sessions SET status='draft';"
+            "UPDATE source_artifact_heads SET blueprint_revision_id=NULL,producer_job_id=NULL,producer_expires_at=NULL;"
         )
-        self.revision, self.confirmation_id = self.token(), str(uuid4())
-        from app.services.blueprint.artifacts import prepare_source_artifacts
-
-        self.sources = prepare_source_artifacts(SID, [self.row])
-        self.confirm()
         self.assertIsNone(self.state()["supported_modes"])
         doc = deepcopy(self.blueprint)
         transforms = doc["requirement"]["variation_policy"]["allowed_transformations"]

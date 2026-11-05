@@ -29,6 +29,8 @@ class SourceRevisionTests(artifact_fixtures.SourceArtifactTests):
         ):
             self.sql((ROOT / "backend/migrations" / name).read_text(encoding="utf-8"))
         self.sql(Q01.read_text(encoding="utf-8"))
+        freeze = ROOT / "backend/migrations/013_source_freeze_guard.sql"
+        self.sql(freeze.read_text(encoding="utf-8"))
         self.revision = self.token()
 
     def token(self):
@@ -49,7 +51,7 @@ class SourceRevisionTests(artifact_fixtures.SourceArtifactTests):
             + ",".join(f"{k}=>{literal(v)}" for k, v in args.items())
             + ");"
         )
-        result = self.sql(sql, check=check)
+        result = self.sql("SET statement_timeout='6s';" + sql, check=check)
         return json.loads(result.stdout) if check else result
 
     def preview(self):
@@ -260,6 +262,8 @@ class SourceRevisionTests(artifact_fixtures.SourceArtifactTests):
             "008_finalize_persist_shuffle_rpc.sql",
             "009_finalize_security_boundary.sql",
             "011_source_confirmation_revision.sql",
+            "012_source_artifact_supported_modes.sql",
+            "013_source_freeze_guard.sql",
         ):
             self.sql((ROOT / "backend/migrations" / name).read_text(encoding="utf-8"), db=db)
         self.assertEqual(
@@ -313,6 +317,95 @@ class SourceRevisionTests(artifact_fixtures.SourceArtifactTests):
         self.assertEqual(len({r["confirmation_id"] for r in results}), 1)
         self.assertEqual(self.value("SELECT count(*) FROM source_artifact_confirmations;"), "1")
         self.assertEqual(self.value("SELECT count(*) FROM source_artifact_revisions;"), "1")
+
+    def frozen_snapshot(self):
+        return self.value(f"""SELECT jsonb_build_object(
+          'session',(SELECT to_jsonb(s) FROM exam_sessions s WHERE id='{SID}'),
+          'source',(SELECT jsonb_agg(to_jsonb(q) ORDER BY id) FROM source_questions q WHERE session_id='{SID}'),
+          'receipts',(SELECT jsonb_agg(to_jsonb(c) ORDER BY confirmation_id) FROM source_artifact_confirmations c),
+          'heads',(SELECT jsonb_agg(to_jsonb(h) ORDER BY source_question_id) FROM source_artifact_heads h),
+          'canonical',(SELECT jsonb_agg(to_jsonb(b) ORDER BY blueprint_revision_id) FROM canonical_blueprint_revisions b),
+          'audit',(SELECT jsonb_agg(to_jsonb(e) ORDER BY id) FROM security_events e));""")
+
+    def install_source_owner_rls(self):
+        # The legacy table-only fixture omits policies; use the actual current ones.
+        schema = (ROOT / 'backend/scripts/schema.sql').read_text(encoding='utf-8')
+        self.sql('ALTER TABLE exam_sessions ENABLE ROW LEVEL SECURITY; ALTER TABLE source_questions ENABLE ROW LEVEL SECURITY;' +
+                 schema[schema.index('-- 4.2. exam_sessions'):schema.index('-- 4.4. question_blueprints')])
+
+    def test_postreview_freeze_preserves_ready_state_for_owner_and_worker(self):
+        self.install_source_owner_rls()
+        self.sql((ROOT / 'backend/migrations/012_source_artifact_supported_modes.sql').read_text(encoding='utf-8'))
+        self.sql('UPDATE source_questions SET has_security_warning=true;')
+        self.revision = self.token()
+        self.confirm()
+        self.publish()
+        self.sql('GRANT SELECT,UPDATE ON exam_sessions TO authenticated,service_role; GRANT SELECT,INSERT,UPDATE,DELETE ON source_questions TO authenticated,service_role;')
+        state = self.call('get_source_artifacts', SID, worker=False)
+        self.assertTrue(state['ready'])
+        before = self.frozen_snapshot()
+        statements = (
+            "UPDATE source_questions SET raw_content='forbidden'",
+            "UPDATE source_questions SET has_security_warning=false",
+            "UPDATE source_questions SET raw_content=raw_content",
+            "DELETE FROM source_questions",
+            f"INSERT INTO source_questions(session_id,question_no,raw_content,options,correct_key) VALUES ('{SID}',2,'forbidden','[\"1\",\"2\",\"3\",\"4\"]','A')",
+        )
+        for role in ('authenticated', 'service_role'):
+            for statement in statements:
+                with self.subTest(role=role, statement=statement):
+                    result = self.sql(rpc_fixtures.ReviewRpcTests.auth(role, OWNER) + statement, check=False)
+                    self.assertIn('ARTIFACT_SOURCE_LOCKED', result.stderr)
+                    self.assertEqual(self.frozen_snapshot(), before)
+                    self.assertEqual(self.call('get_source_artifacts', SID, worker=False), state)
+
+    def test_postreview_draft_warning_clone_cascade_and_foreign_owner(self):
+        self.install_source_owner_rls()
+        self.sql('GRANT SELECT,UPDATE ON exam_sessions TO authenticated,service_role; GRANT SELECT,INSERT,UPDATE,DELETE ON source_questions TO authenticated,service_role;')
+        before = self.token()
+        self.sql(rpc_fixtures.ReviewRpcTests.auth('authenticated', OWNER) +
+                 f"UPDATE source_questions SET has_security_warning=true WHERE id='{SOURCE}';")
+        self.assertNotEqual(before, self.token())
+        self.revision = self.token()
+        self.sql('UPDATE exam_sessions SET approved_at=clock_timestamp();')
+        locked = self.sql("UPDATE source_questions SET has_security_warning=false;", check=False)
+        self.assertIn('ARTIFACT_SOURCE_LOCKED', locked.stderr)
+        self.assertEqual(self.token(), self.revision)
+        self.sql('UPDATE exam_sessions SET approved_at=NULL;')
+        foreign = str(uuid4())
+        self.sql(rpc_fixtures.ReviewRpcTests.auth('authenticated', foreign) +
+                 f"UPDATE source_questions SET raw_content='foreign' WHERE id='{SOURCE}';")
+        self.assertEqual(self.token(), self.revision)
+        denied = self.sql(rpc_fixtures.ReviewRpcTests.auth('authenticated', foreign) +
+            f"INSERT INTO source_questions(session_id,question_no,raw_content,options,correct_key) VALUES ('{SID}',2,'foreign','[\"1\",\"2\",\"3\",\"4\"]','A');", check=False)
+        self.assertIn('row-level security', denied.stderr)
+        self.confirm()
+        self.confirm()
+        self.assertEqual(self.value('SELECT count(*) FROM security_events;'), '1')
+        clone = str(uuid4())
+        self.sql(f"INSERT INTO exam_sessions(id,user_id,title) VALUES ('{clone}','{OWNER}','Clone');")
+        self.sql(rpc_fixtures.ReviewRpcTests.auth('authenticated', OWNER) +
+            f"INSERT INTO source_questions(session_id,question_no,raw_content,options,correct_key,has_security_warning) SELECT '{clone}',question_no,raw_content,options,correct_key,has_security_warning FROM source_questions WHERE session_id='{SID}';")
+        self.assertEqual(self.value(f"SELECT count(*) FROM source_questions WHERE session_id='{clone}';"), '1')
+        self.sql(rpc_fixtures.ReviewRpcTests.auth('authenticated', OWNER) +
+            f"UPDATE source_questions SET raw_content='draft edit' WHERE session_id='{clone}';")
+        self.sql(f"DELETE FROM exam_sessions WHERE id IN ('{SID}','{clone}');")
+        self.assertEqual(self.value('SELECT count(*) FROM source_questions;'), '0')
+
+    def test_postreview_confirm_first_direct_writer_is_locked(self):
+        prepared = literal(json.dumps(self.sources))
+        held = self.hold(rpc_fixtures.ReviewRpcTests.auth('service_role', OWNER) +
+            f"SELECT confirm_source_artifacts('{SID}'::uuid,'{OWNER}'::uuid,'{self.confirmation_id}'::uuid,'{self.revision}'::uuid,{prepared}::jsonb)")
+        try:
+            result = self.sql("SET statement_timeout='6s'; UPDATE source_questions SET has_security_warning=true;", check=False)
+            held.communicate(timeout=8)
+            self.assertIn('ARTIFACT_SOURCE_LOCKED', result.stderr)
+            self.assertEqual(self.token(), self.revision)
+            self.assertEqual(self.value('SELECT count(*) FROM source_artifact_confirmations;'), '1')
+            self.assertTrue(self.confirm()['replayed'])
+        finally:
+            if held.poll() is None:
+                held.kill()
 
 
 def load_tests(loader, tests, pattern):
