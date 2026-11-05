@@ -6,15 +6,19 @@ DECLARE
   result text := coalesce(p_text, '');
   suffix text := $re$((?:\})?[\*_\]\)]*)(?=[\s\.,;:\n\)]|$)(?!\s*(?:[=!<>]|<=|>=|!=|==|\\le|\\ge|\\in|\\notin|[\+\-\*/\\~]))$re$;
   wrapper text := $re$([\*_\[\(]*(?:\\textbf\{)?)$re$;
+  -- Python re uses Unicode whitespace, including NBSP and C0 separators;
+  -- PostgreSQL's locale-dependent \s does not. Keep the shuffler contract.
+  spaces text := U&'\0009-\000D\001C-\0020\0085\00A0\1680\2000-\200A\2028\2029\202F\205F\3000';
 BEGIN
   IF p_canonical = p_display OR result = '' THEN RETURN result; END IF;
+  suffix := replace(suffix, $re$[\s$re$, '[' || spaces);
   result := regexp_replace(result,
-    $re$(\m(?:đáp\s+án|phương\s+án|câu\s+trả\s+lời|chọn(?:\s+đáp\s+án|\s+phương\s+án)?)(?:\s+đúng|\s+cần\s+chọn)?(?:\s+là)?\s*[:\.]?\s*)$re$
-      || wrapper || '(' || p_canonical || ')' || suffix,
+    replace($re$(\m(?:đáp\s+án|phương\s+án|câu\s+trả\s+lời|chọn(?:\s+đáp\s+án|\s+phương\s+án)?)(?:\s+đúng|\s+cần\s+chọn)?(?:\s+là)?\s*[:\.]?\s*)$re$
+      || wrapper || '(' || p_canonical || ')' || suffix, $re$\s$re$, '[' || spaces || ']'),
     E'\\1\\2' || p_display || E'\\4', 'gi');
   result := regexp_replace(result,
-    $re$(\m(?:kết\s+luận|suy\s+ra|do\s+đó|vậy)\s*[:]\s*)$re$
-      || wrapper || '(' || p_canonical || ')' || suffix,
+    replace($re$(\m(?:kết\s+luận|suy\s+ra|do\s+đó|vậy)\s*[:]\s*)$re$
+      || wrapper || '(' || p_canonical || ')' || suffix, $re$\s$re$, '[' || spaces || ']'),
     E'\\1\\2' || p_display || E'\\4', 'gi');
   RETURN result;
 END $$;
@@ -52,6 +56,14 @@ BEGIN
   END IF;
   IF s.status <> 'reviewed' OR (public._review_progress(p_session_id)->>'ready')::boolean IS NOT TRUE THEN
     RAISE EXCEPTION 'ERR_SHUFFLE_NOT_READY';
+  END IF;
+  IF jsonb_typeof(p_payload) IS DISTINCT FROM 'object'
+     OR jsonb_typeof(snap) IS DISTINCT FROM 'object'
+     OR jsonb_typeof(snap->'config') IS DISTINCT FROM 'object'
+     OR jsonb_typeof(snap->'versions') IS DISTINCT FROM 'array'
+     OR jsonb_typeof(snap->'sources') IS DISTINCT FROM 'array'
+     OR jsonb_typeof(snap->'questions') IS DISTINCT FROM 'array' THEN
+    RAISE EXCEPTION 'ERR_SHUFFLE_INPUT_INCOMPLETE';
   END IF;
   SELECT count(*) INTO cnt FROM public.generation_configs WHERE session_id=p_session_id;
   IF cnt <> 1 THEN RAISE EXCEPTION 'ERR_SHUFFLE_INPUT_INCOMPLETE'; END IF;
@@ -113,7 +125,7 @@ BEGIN
     SELECT * INTO v FROM public.exam_versions WHERE id=(vr->>'version_id')::uuid AND session_id=p_session_id;
     IF NOT FOUND OR vr->>'version_code' IS DISTINCT FROM v.version_code
        OR vr->>'shuffle_seed' IS DISTINCT FROM encode(sha256(convert_to(p_session_id::text || '_' || v.version_code,'UTF8')),'hex')
-       OR (vr->>'total_questions')::integer IS DISTINCT FROM m
+       OR vr->'total_questions' IS DISTINCT FROM to_jsonb(m)
        OR jsonb_typeof(vr->'questions') IS DISTINCT FROM 'array'
        OR jsonb_typeof(vr->'answer_keys') IS DISTINCT FROM 'array'
        OR jsonb_array_length(vr->'questions') <> m OR jsonb_array_length(vr->'answer_keys') <> m THEN
@@ -133,6 +145,9 @@ BEGIN
         AND is_current AND status='approved';
       IF NOT FOUND OR qr->>'source_question_id' IS DISTINCT FROM q.source_question_id::text
          OR qr->'is_current' IS DISTINCT FROM 'true'::jsonb
+         OR jsonb_typeof(qr->'display_no') IS DISTINCT FROM 'number'
+         OR (qr->>'display_no') !~ '^[1-9][0-9]*$'
+         OR qr->'canonical_question_no' IS DISTINCT FROM to_jsonb(q.canonical_question_no)
          OR (qr->>'canonical_question_no')::int IS DISTINCT FROM q.canonical_question_no
          OR qr->'canonical_options' IS DISTINCT FROM q.canonical_options
          OR qr->>'canonical_correct_key' IS DISTINCT FROM q.canonical_correct_key
@@ -164,7 +179,8 @@ BEGIN
         WHERE (x->>'display_no')::int=(qr->>'display_no')::int;
       IF NOT FOUND OR ak->>'version_id' IS DISTINCT FROM v.id::text
          OR ak->>'display_correct_key' IS DISTINCT FROM qr->>'display_correct_key'
-         OR (ak->>'canonical_question_no')::int IS DISTINCT FROM q.canonical_question_no THEN
+         OR ak->'display_no' IS DISTINCT FROM qr->'display_no'
+         OR ak->'canonical_question_no' IS DISTINCT FROM to_jsonb(q.canonical_question_no) THEN
         RAISE EXCEPTION 'ERR_SHUFFLE_INPUT_INCOMPLETE';
       END IF;
       IF qr->>'solution_md' IS DISTINCT FROM public._finalize_sync_solution(
@@ -206,11 +222,14 @@ BEGIN
   FOR vr IN SELECT value FROM jsonb_array_elements(p_payload->'versions') LOOP
     UPDATE public.exam_versions SET shuffle_seed=vr->>'shuffle_seed', permutations=vr->'permutations'
       WHERE id=(vr->>'version_id')::uuid AND session_id=p_session_id;
+    GET DIAGNOSTICS cnt = ROW_COUNT;
+    IF cnt <> 1 THEN RAISE EXCEPTION 'ERR_SHUFFLE_STALE_INPUT'; END IF;
     DELETE FROM public.answer_keys WHERE version_id=(vr->>'version_id')::uuid;
     FOR qr IN SELECT value FROM jsonb_array_elements(vr->'questions') LOOP
       UPDATE public.version_questions SET question_no=(qr->>'display_no')::int, options=qr->'options',
         correct_key=qr->>'display_correct_key', solution_md=qr->>'solution_md', updated_at=clock_timestamp()
-        WHERE id=(qr->>'id')::uuid AND version_id=(vr->>'version_id')::uuid AND is_current AND status='approved';
+        WHERE id=(qr->>'id')::uuid AND version_id=(vr->>'version_id')::uuid
+          AND source_question_id=(qr->>'source_question_id')::uuid AND is_current AND status='approved';
       GET DIAGNOSTICS cnt = ROW_COUNT;
       IF cnt <> 1 THEN RAISE EXCEPTION 'ERR_SHUFFLE_STALE_INPUT'; END IF;
       INSERT INTO public.answer_keys(version_id,question_no,correct_option,display_no,display_correct_key,canonical_question_no)
@@ -219,6 +238,31 @@ BEGIN
     END LOOP;
     receipt := receipt || jsonb_build_array(jsonb_build_object('version_id',vr->>'version_id',
       'version_code',vr->>'version_code','total_questions',m));
+  END LOOP;
+  -- Re-read persisted output too: an UPDATE trigger may silently change or
+  -- suppress a row. A valid request alone must never authorize finalized=true.
+  FOR vr IN SELECT value FROM jsonb_array_elements(p_payload->'versions') LOOP
+    SELECT * INTO v FROM public.exam_versions WHERE id=(vr->>'version_id')::uuid AND session_id=p_session_id;
+    IF NOT FOUND OR v.shuffle_seed IS DISTINCT FROM vr->>'shuffle_seed'
+       OR v.permutations IS DISTINCT FROM vr->'permutations' THEN
+      RAISE EXCEPTION 'ERR_SHUFFLE_INPUT_INCOMPLETE';
+    END IF;
+    FOR qr IN SELECT value FROM jsonb_array_elements(vr->'questions') LOOP
+      SELECT * INTO q FROM public.version_questions WHERE id=(qr->>'id')::uuid AND version_id=v.id;
+      IF NOT FOUND OR q.is_current IS NOT TRUE OR q.status <> 'approved'
+         OR q.source_question_id::text IS DISTINCT FROM qr->>'source_question_id'
+         OR q.content IS DISTINCT FROM qr->>'content'
+         OR q.canonical_question_no IS DISTINCT FROM (qr->>'canonical_question_no')::int
+         OR q.canonical_options IS DISTINCT FROM qr->'canonical_options'
+         OR q.canonical_correct_key IS DISTINCT FROM qr->>'canonical_correct_key'
+         OR q.canonical_solution_md IS DISTINCT FROM qr->>'canonical_solution_md'
+         OR q.question_no IS DISTINCT FROM (qr->>'display_no')::int
+         OR q.options IS DISTINCT FROM qr->'options'
+         OR q.correct_key IS DISTINCT FROM qr->>'display_correct_key'
+         OR q.solution_md IS DISTINCT FROM qr->>'solution_md' THEN
+        RAISE EXCEPTION 'ERR_SHUFFLE_INPUT_INCOMPLETE';
+      END IF;
+    END LOOP;
   END LOOP;
   IF (SELECT count(*) FROM public.answer_keys a JOIN public.exam_versions v0 ON v0.id=a.version_id
       WHERE v0.session_id=p_session_id) <> n*m OR EXISTS (
@@ -235,7 +279,16 @@ BEGIN
   UPDATE public.exam_versions SET is_finalized=true WHERE session_id=p_session_id;
   GET DIAGNOSTICS cnt = ROW_COUNT;
   IF cnt <> n THEN RAISE EXCEPTION 'ERR_SHUFFLE_STALE_INPUT'; END IF;
+  IF (SELECT count(*) FROM public.exam_versions WHERE session_id=p_session_id AND is_finalized) <> n THEN
+    RAISE EXCEPTION 'ERR_SHUFFLE_INPUT_INCOMPLETE';
+  END IF;
   RETURN jsonb_build_object('session_id',p_session_id,'status','reviewed','is_finalized',true,'versions',receipt);
+EXCEPTION
+  -- Malformed JSON/UUID/integer inputs remain domain errors. This block also
+  -- rolls back every write in the function; never translate an error to success.
+  WHEN invalid_text_representation OR numeric_value_out_of_range
+       OR invalid_parameter_value OR datatype_mismatch THEN
+    RAISE EXCEPTION 'ERR_SHUFFLE_INPUT_INCOMPLETE' USING ERRCODE='22023';
 END $$;
 
 REVOKE ALL ON FUNCTION public.finalize_persist_shuffle(uuid,jsonb) FROM PUBLIC, anon, service_role;

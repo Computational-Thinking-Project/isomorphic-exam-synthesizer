@@ -40,7 +40,7 @@ class FinalizeService:
     async def shuffle_session(self, session_id: str, user_id: str) -> FinalizeShuffleResponse:
         """Compute from canonical inputs and return only a validated RPC receipt."""
         try:
-            UUID(session_id)
+            session_id = str(UUID(session_id))
         except (ValueError, TypeError, AttributeError) as exc:
             raise ReviewDomainException(
                 400, "ERR_INVALID_SESSION_ID", "Mã phiên không hợp lệ"

@@ -544,3 +544,26 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
   recovery trước fresh reserve sau replay/adapter/guards. Không backfill legacy.
 - Phạm vi: cùng migration006, source/review caller và HTTP, authority review-rpc-contract.
   Chưa là chấp nhận của Hùng/Đạt, rollout hay GitHub Approve; kết quả kiểm ở PR #28.
+
+## DEC-T305-AB-001: Shuffle receipt, SQL parity và post-write integrity
+
+- Ngày: 05/11/2026; phạm vi author/self-review TASK-305 A+B trên PR #33,
+  baseline `3bb481a`; proposed, chưa thay GitHub review/Approve hoặc deployment.
+- Giữ nguyên shuffler TASK-303 và một RPC `finalize_persist_shuffle(uuid,jsonb)`;
+  không thay SQL006/007 hay thêm writer/fallback. SQL008 thuộc PR chưa merge;
+  thay đổi này không chứng nhận ledger của môi trường đã triển khai.
+- Receipt parser thu hẹp kiểu trước khi đọc/hash metadata; malformed receipt
+  tiếp tục fail-closed. Chuẩn hóa UUID tại shuffle service để uppercase UUID
+  hợp lệ không trở thành lỗi receipt sau khi DB đã commit.
+- SQL phải kiểm JSON shape/type, dịch lỗi cast/overflow thành input error và
+  đọc lại display/canonical/seed/permutations sau ghi, kiểm số finalized thực;
+  trigger sửa âm thầm hoặc bỏ UPDATE phải rollback toàn bộ.
+- SQL validator vẫn cần đồng bộ solution độc lập để không tin payload owner.
+  Giữ regex SQL với corpus parity chạy qua PostgreSQL thật thay vì bỏ guard
+  hay viết lại Fisher-Yates. Đã tái hiện Python/SQL lệch với NBSP; SQL dùng tập
+  whitespace Unicode của Python. Corpus regression không phải chứng minh mọi
+  Unicode/locale hoặc deployed Supabase/PostgREST.
+- Retry khi mất receipt sau commit: trả lỗi transport, không giả định rollback;
+  retry cùng snapshot xác minh no-op qua state đầy đủ. Race tests xác nhận
+  blocking PID thật và timeout hữu hạn, không suy khóa từ sleep.
+- Bằng chứng và gate từng mục: [TASK-305 A+B](tasks/TASK-305_A_B_GATE_2026-11-05.md).

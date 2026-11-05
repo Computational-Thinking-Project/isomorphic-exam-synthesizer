@@ -158,23 +158,38 @@ class FinalizeRepository:
         receipt = getattr(response, "data", None)
         if isinstance(receipt, list) and len(receipt) == 1:
             receipt = receipt[0]
-        expected = {(v["id"], v["version_code"], question_count) for v in expected_versions}
-        try:
-            versions = receipt["versions"]
-            actual = {(v["version_id"], v["version_code"], v["total_questions"]) for v in versions}
-            valid = (
-                receipt["session_id"] == session_id
-                and receipt["status"] == "reviewed"
-                and receipt["is_finalized"] is True
-                and question_count > 0
-                and len(expected) == len(expected_versions) > 0
-                and len(actual) == len(versions)
-                and actual == expected
-                and all(type(v["total_questions"]) is int for v in versions)
+
+        def invalid_receipt() -> ReviewDomainException:
+            return ReviewDomainException(
+                502, "ERR_INVALID_SHUFFLE_RECEIPT", "Phản hồi hoán vị không hợp lệ"
             )
-        except (KeyError, TypeError):
-            valid = False
-        if not valid:
+
+        if not isinstance(receipt, dict):
+            raise invalid_receipt()
+        versions = receipt.get("versions")
+        if not isinstance(versions, list) or not versions:
+            raise invalid_receipt()
+        actual = set()
+        for version in versions:
+            if (
+                not isinstance(version, dict)
+                or not isinstance(version.get("version_id"), str)
+                or not isinstance(version.get("version_code"), str)
+                or type(version.get("total_questions")) is not int
+            ):
+                raise invalid_receipt()
+            actual.add((version["version_id"], version["version_code"], version["total_questions"]))
+        expected = {(v["id"], v["version_code"], question_count) for v in expected_versions}
+        if not (
+            receipt.get("session_id") == session_id
+            and receipt.get("status") == "reviewed"
+            and receipt.get("is_finalized") is True
+            and type(question_count) is int
+            and question_count > 0
+            and len(expected) == len(expected_versions) > 0
+            and len(actual) == len(versions)
+            and actual == expected
+        ):
             raise ReviewDomainException(
                 502, "ERR_INVALID_SHUFFLE_RECEIPT", "Phản hồi hoán vị không hợp lệ"
             )

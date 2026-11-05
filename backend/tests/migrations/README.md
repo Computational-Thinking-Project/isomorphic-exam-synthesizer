@@ -20,6 +20,37 @@ same container network namespace with `RUN_TASK305_WRITER_DB_TEST=1` and
 `TASK305_WRITER_TEST_DSN` set to the test database on `127.0.0.1`. The test
 performs destructive setup in that database; never point it at a shared service.
 
+`test_shuffle_writer_adversarial.py` uses the same explicit writer opt-in and
+loopback-only `task305_isolated` DSN. It creates a separate 2 x 3 session per
+case, checks full-row rollback (including history/timestamps), real PostgreSQL
+ACLs, malformed/live/stale input, Unicode solution parity, repair/no-op retries,
+lost receipts, silent-trigger faults and `pg_blocking_pids` interleavings.
+Run it together with `test_shuffle_writer_db.py`, sequentially: its fault
+triggers are cluster-test fixtures and must not run against shared data or in
+parallel workers.
+
+For a Python runner sharing the network namespace of that **new disposable,
+network-none** PostgreSQL container, without a Docker CLI inside the runner:
+
+```sh
+# Working directory: backend; asyncpg is required (verified with 0.32.0).
+RUN_TASK305_WRITER_DB_TEST=1 \
+TASK305_WRITER_TEST_DSN=postgresql://postgres@127.0.0.1/task305_isolated \
+python -m pytest tests/migrations/test_shuffle_writer_db.py \
+  tests/migrations/test_shuffle_writer_adversarial.py -q -p no:cacheprovider
+
+RUN_TASK305_REAL_DB_TESTS=1 EXAM_TEST_DB_DESTRUCTIVE=1 \
+python tests/migrations/run_task305_real_db_suites.py
+```
+
+The second command replaces only the pytest fixture's Docker-launch step with
+random `task305_test_<uuid>` databases in that verified local test cluster.
+The existing suites and their `assert_disposable_database` guard still run
+before destructive DDL. It drops only the random databases it creates. This
+alternate runner does not verify the default fixture's Docker-launch path;
+`test_isolated_postgres_fixture.py` separately checks that path's refusal and
+cleanup guards. No external DSN or production/staging database is accepted.
+
 These tests execute SQL against **PostgreSQL 15**, rather than mocking Supabase.
 Each suite class creates a disposable container with no network, published ports, host mounts,
 or real credentials, and remove it on completion (including test failures).

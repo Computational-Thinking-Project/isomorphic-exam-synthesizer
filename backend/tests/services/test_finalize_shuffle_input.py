@@ -121,7 +121,25 @@ async def test_snapshot_reads_current_candidates_for_session(snapshot):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "case", ["valid", "empty", "wrong_session", "false_finalized", "duplicate", "missing_rpc"]
+    "case",
+    [
+        "valid",
+        "empty",
+        "wrong_session",
+        "false_finalized",
+        "duplicate",
+        "missing_rpc",
+        "scalar",
+        "list_empty",
+        "list_two",
+        "versions_object",
+        "version_scalar",
+        "unhashable_id",
+        "bool_count",
+        "string_count",
+        "zero_versions",
+        "missing_field",
+    ],
 )
 async def test_shuffle_rpc_receipt_fails_closed(snapshot, case):
     session, _, versions, sources, _ = snapshot
@@ -146,6 +164,24 @@ async def test_shuffle_rpc_receipt_fails_closed(snapshot, case):
         receipt["is_finalized"] = False
     elif case == "duplicate":
         receipt["versions"].append(receipt["versions"][0])
+    elif case == "scalar":
+        receipt = 1
+    elif case == "list_empty":
+        receipt = []
+    elif case == "list_two":
+        receipt = [receipt, receipt]
+    elif case == "versions_object":
+        receipt["versions"] = {}
+    elif case == "version_scalar":
+        receipt["versions"] = [1]
+    elif case == "unhashable_id":
+        receipt["versions"][0]["version_id"] = []
+    elif case in ("bool_count", "string_count"):
+        receipt["versions"][0]["total_questions"] = True if case == "bool_count" else "3"
+    elif case == "zero_versions":
+        receipt["versions"] = []
+    elif case == "missing_field":
+        del receipt["versions"][0]["version_code"]
 
     class Client:
         def table(self, name):
@@ -233,7 +269,30 @@ async def test_shuffle_writer_failure_never_returns_success(snapshot):
 
 
 @pytest.mark.parametrize(
-    "mutation", ["missing", "duplicate", "foreign", "invalid_key", "bad_options", "bad_preferences"]
+    "mutation",
+    [
+        "missing",
+        "duplicate",
+        "foreign",
+        "invalid_key",
+        "bad_options",
+        "bad_preferences",
+        "unknown_pref",
+        "noncurrent",
+        "unapproved",
+        "number",
+        "key_bool",
+        "short_options",
+        "long_options",
+        "nonstring_options",
+        "missing_version",
+        "duplicate_version",
+        "missing_source",
+        "duplicate_source",
+        "duplicate_number",
+        "blank_code",
+        "count_bool",
+    ],
 )
 def test_rejects_incomplete_or_invalid_snapshot(snapshot, mutation):
     questions = snapshot[4]
@@ -247,8 +306,90 @@ def test_rejects_incomplete_or_invalid_snapshot(snapshot, mutation):
         questions[0]["canonical_correct_key"] = "E"
     elif mutation == "bad_options":
         questions[0]["canonical_options"] = {"A": "a", "B": "b", "C": "c", "D": "d"}
-    else:
+    elif mutation == "bad_preferences":
         snapshot[1]["ordering_preferences"] = {"shuffle_questions": "yes"}
+    elif mutation == "unknown_pref":
+        snapshot[1]["ordering_preferences"] = {"unexpected": True}
+    elif mutation == "noncurrent":
+        questions[0]["is_current"] = False
+    elif mutation == "unapproved":
+        questions[0]["status"] = "pending_review"
+    elif mutation == "number":
+        questions[0]["canonical_question_no"] = 99
+    elif mutation == "key_bool":
+        questions[0]["canonical_correct_key"] = True
+    elif mutation.endswith("options"):
+        questions[0]["canonical_options"] = {
+            "short_options": ["a"],
+            "long_options": ["a"] * 5,
+            "nonstring_options": [1, 2, 3, 4],
+        }[mutation]
+    elif mutation == "missing_version":
+        snapshot[2].pop()
+    elif mutation == "duplicate_version":
+        snapshot[2][1] = deepcopy(snapshot[2][0])
+    elif mutation == "missing_source":
+        snapshot[3].pop()
+    elif mutation == "duplicate_source":
+        snapshot[3].append(deepcopy(snapshot[3][0]))
+    elif mutation == "duplicate_number":
+        snapshot[3][1]["question_no"] = snapshot[3][0]["question_no"]
+    elif mutation == "blank_code":
+        snapshot[2][0]["version_code"] = ""
+    elif mutation == "count_bool":
+        snapshot[1]["n_versions"] = True
     with pytest.raises(ReviewDomainException) as exc_info:
         prepare_shuffle(*snapshot)
     assert exc_info.value.error_code == "ERR_SHUFFLE_INPUT_INCOMPLETE"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,stamp,ready,expected",
+    [
+        ("generated", None, True, 409),
+        ("approved", None, True, 423),
+        ("exported", None, True, 423),
+        ("reviewed", "2026-11-05T00:00:00Z", True, 423),
+        ("reviewed", None, False, 409),
+    ],
+)
+async def test_shuffle_service_state_and_readiness_fail_before_writer(
+    status, stamp, ready, expected
+):
+    repo = MagicMock()
+    repo.get_session_meta = AsyncMock(
+        return_value={"user_id": "owner", "status": status, "approved_at": stamp}
+    )
+    repo.persist_shuffle_rpc = AsyncMock()
+    with patch("app.services.finalize.service.ReviewRepository") as review:
+        review.return_value.progress = AsyncMock(return_value={"ready": ready})
+        with pytest.raises(ReviewDomainException) as exc:
+            await FinalizeService(MagicMock(), repo).shuffle_session(str(uuid4()), "owner")
+    assert exc.value.status_code == expected
+    repo.persist_shuffle_rpc.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error,code",
+    [
+        (TimeoutError("timeout"), "ERR_UPSTREAM_TIMEOUT"),
+        (ConnectionError("lost"), "ERR_UPSTREAM_TIMEOUT"),
+        (RuntimeError("42501 permission denied"), "ERR_UNAUTHORIZED"),
+        (RuntimeError("ERR_SHUFFLE_STALE_INPUT"), "ERR_SHUFFLE_STALE_INPUT"),
+        (RuntimeError("ERR_SESSION_LOCKED"), "ERR_SESSION_LOCKED"),
+        (RuntimeError("boom"), "ERR_SHUFFLE_TRANSACTION_FAILED"),
+    ],
+)
+async def test_shuffle_transport_errors_have_no_table_fallback(snapshot, error, code):
+    class Client:
+        def rpc(self, *args):
+            return SimpleNamespace(execute=lambda: (_ for _ in ()).throw(error))
+
+        def table(self, name):
+            raise AssertionError("table write fallback forbidden")
+
+    with pytest.raises(ReviewDomainException) as exc:
+        await FinalizeRepository(Client()).persist_shuffle_rpc(snapshot[0], {}, snapshot[2], 3)
+    assert exc.value.error_code == code

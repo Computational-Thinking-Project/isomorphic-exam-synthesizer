@@ -15,6 +15,7 @@ from app.models.schemas import CurrentUser
 from app.services.finalize.service import FinalizeService
 from app.services.finalize.shuffle_input import prepare_shuffle
 from app.services.shuffler.service import sync_solution_text
+from tests.migrations.test_shuffle_writer_adversarial import wait_blocked
 from tests.services.test_finalize_real_db_integration import AsyncpgSupabaseAdapter
 
 asyncpg = pytest.importorskip("asyncpg")
@@ -177,8 +178,7 @@ async def _exercise(dsn):
         await lock.start()
         assert (await persist(a))["is_finalized"] is True
         waiting = asyncio.create_task(persist(b))
-        await asyncio.sleep(0.2)
-        assert not waiting.done()
+        await wait_blocked(admin, b, a)
         await lock.commit()
         assert (await asyncio.wait_for(waiting, 5))["is_finalized"] is True
         timestamp = await admin.fetchval("SELECT updated_at FROM public.version_questions LIMIT 1")
@@ -194,8 +194,7 @@ async def _exercise(dsn):
         approval = asyncio.create_task(
             b.fetchval("SELECT public.finalize_approve_session($1::uuid,NULL,NULL)", SESSION)
         )
-        await asyncio.sleep(0.2)
-        assert not approval.done()
+        await wait_blocked(admin, b, a)
         await lock.commit()
         assert json.loads(await asyncio.wait_for(approval, 5))["status"] == "approved"
         await admin.execute(
@@ -210,8 +209,7 @@ async def _exercise(dsn):
             "SELECT id FROM public.exam_sessions WHERE id=$1::uuid FOR UPDATE", SESSION
         )
         waiting = asyncio.create_task(persist(b))
-        await asyncio.sleep(0.2)
-        assert not waiting.done()
+        await wait_blocked(a, b, admin)
         await admin.execute("SET LOCAL ROLE authenticated")
         await admin.execute("SELECT set_config('request.jwt.claim.sub',$1,true)", OWNER)
         await admin.fetchval("SELECT public.finalize_approve_session($1::uuid,NULL,NULL)", SESSION)
