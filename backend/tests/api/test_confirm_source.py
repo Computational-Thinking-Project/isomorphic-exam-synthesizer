@@ -87,42 +87,43 @@ def flow(monkeypatch):
                 if state.confirmation is not None:
                     saved = state.confirmation
 
-                # Replay phải dùng đúng key, actor và source đã xác nhận.
-                if (
-                    params["p_confirmation_id"] != saved["confirmation_id"]
-                    or params["p_actor_id"] != saved["actor_id"]
-                    or params["p_sources"] != saved["sources"]
-                ):
-                    raise RuntimeError("ARTIFACT_IDEMPOTENCY_CONFLICT")
-
-                data = deepcopy(saved)
-                data["replayed"] = True
-
-            else:
-                # Mô phỏng revision guard trong PostgreSQL RPC.
-                if params["p_expected_updated_at"] != state.revision:
-                    raise RuntimeError("ARTIFACT_STALE")
-
-                if state.status != "draft":
-                    raise RuntimeError("ARTIFACT_STALE")
-
-                data = dict(
-                    confirmation_id=params["p_confirmation_id"],
-                    session_id=sid,
-                    actor_id=params["p_actor_id"],
-                    confirmed_at="2026-11-04T00:00:00Z",
-                    status="blueprinted",
-                    total_questions=1,
-                    total_blueprints=0,
-                    canonical_status="pending",
-                    replayed=False,
-                    sources=params["p_sources"],
-                )
-
-                state.confirmation = deepcopy(data)
-                state.status = "blueprinted"
-
-            return SimpleNamespace(data=data)
+                    # Replay phải dùng đúng key, actor và source đã xác nhận.
+                    if (
+                        params["p_confirmation_id"] != saved["confirmation_id"]
+                        or params["p_actor_id"] != saved["actor_id"]
+                        or params["p_sources"] != saved["sources"]
+                    ):
+                        raise RuntimeError("ARTIFACT_IDEMPOTENCY_CONFLICT")
+    
+                    data = deepcopy(saved)
+                    data["replayed"] = True
+    
+                else:
+                    # Mô phỏng revision guard trong PostgreSQL RPC.
+                    if params["p_expected_updated_at"] != state.revision:
+                        raise RuntimeError("ARTIFACT_STALE")
+    
+                    if state.status != "draft":
+                        raise RuntimeError("ARTIFACT_STALE")
+    
+                    data = dict(
+                        confirmation_id=params["p_confirmation_id"],
+                        session_id=sid,
+                        actor_id=params["p_actor_id"],
+                        confirmed_at="2026-11-04T00:00:00Z",
+                        status="blueprinted",
+                        total_questions=1,
+                        total_blueprints=0,
+                        canonical_status="pending",
+                        replayed=False,
+                        sources=params["p_sources"],
+                    )
+    
+                    state.confirmation = deepcopy(data)
+                    state.status = "blueprinted"
+    
+                return SimpleNamespace(data=data)
+    
             if name == "get_source_artifacts":
                 if state.read_error:
                     raise ConnectionError("lost response")
@@ -218,7 +219,7 @@ def url(state, suffix="confirm-source"):
 
 def test_confirm_pending_without_adapter_or_legacy_blueprint(flow):
     state, client = flow
-    result = client.post(url(state), json={})
+    result = client.post(url(state), json={"source_revision": state.revision})
     assert result.status_code == 200, result.text
     assert result.json()["canonical_status"] == "pending"
     assert result.json()["total_blueprints"] == 0
@@ -319,7 +320,7 @@ def test_idempotent_retry_with_same_key_and_revision(flow):
 
 def test_background_publication_and_retry_are_actual_producer(flow, monkeypatch):
     state, client = flow
-    client.post(url(state), json={})
+    client.post(url(state), json={"source_revision": state.revision})
     monkeypatch.setattr(source_artifacts, "blueprint_service", lambda request: state.extractor)
     result = client.post(url(state, "source-artifacts/retry"))
     assert result.status_code == 202, result.text
@@ -355,7 +356,7 @@ def test_postcommit_read_failure_retains_confirmation_and_same_key_reconciles(fl
 def test_without_key_reconfirmation_refused(flow, status):
     state, client = flow
     state.status = status
-    assert client.post(url(state), json={}).status_code == 409
+    assert client.post(url(state), json={"source_revision": state.revision}).status_code == 409
     assert not state.calls
 
 
@@ -366,7 +367,7 @@ def test_missing_source_or_answer_is_rejected_before_worker(flow, missing):
         state.row["has_missing_answer"] = True
     else:
         state.row = None
-    assert client.post(url(state), json={}).status_code == 422
+    assert client.post(url(state), json={"source_revision": state.revision}).status_code == 422
     assert not state.calls
 
 
@@ -404,7 +405,7 @@ def test_source_endpoints_require_authentication(flow, suffix, method):
 
 def test_status_is_read_only_and_retry_without_adapter_is_503(flow):
     state, client = flow
-    client.post(url(state), json={})
+    client.post(url(state), json={"source_revision": state.revision})
     state.calls.clear()
     assert client.get(url(state, "source-artifacts")).json()["ready"] is False
     assert client.post(url(state, "source-artifacts/retry")).status_code == 503
@@ -414,7 +415,7 @@ def test_status_is_read_only_and_retry_without_adapter_is_503(flow):
 @pytest.mark.parametrize("status,code", [("approved", 423), ("exported", 423), ("generating", 409)])
 def test_pending_retry_checks_session_guard_before_scheduling(flow, monkeypatch, status, code):
     state, client = flow
-    assert client.post(url(state), json={}).status_code == 200
+    assert client.post(url(state), json={"source_revision": state.revision}).status_code == 200
     state.status = status
     monkeypatch.setattr(source_artifacts, "blueprint_service", lambda request: state.extractor)
     state.calls.clear()
@@ -438,7 +439,7 @@ def test_pending_retry_checks_session_guard_before_scheduling(flow, monkeypatch,
 def test_confirmation_error_never_claims_unproven_rollback(flow, error, status, rolled_back):
     state, client = flow
     state.error = error
-    result = client.post(url(state), json={})
+    result = client.post(url(state), json={"source_revision": state.revision})
     assert result.status_code == status, result.text
     assert ("rolled back" in result.text) == rolled_back
     assert state.extracts == 0
@@ -446,7 +447,7 @@ def test_confirmation_error_never_claims_unproven_rollback(flow, error, status, 
 
 def test_invalid_key_has_no_rpc_effect(flow):
     state, client = flow
-    assert client.post(url(state), json={}, headers={"Idempotency-Key": "bad"}).status_code == 400
+    assert client.post(url(state), json={"source_revision": state.revision}, headers={"Idempotency-Key": "bad"}).status_code == 400
     assert not state.calls
 
 
@@ -458,7 +459,7 @@ def test_invalid_key_has_no_rpc_effect(flow):
 def test_source_artifacts_status_pending_has_no_supported_modes(flow):
     """GET /source-artifacts returns supported_modes=None while not ready."""
     state, client = flow
-    client.post(url(state), json={})
+    client.post(url(state), json={"source_revision": state.revision})
     state.calls.clear()
     status_resp = client.get(url(state, "source-artifacts"))
     assert status_resp.status_code == 200, status_resp.text
@@ -473,7 +474,7 @@ def test_source_artifacts_status_ready_has_supported_modes_list(flow, monkeypatc
     from app.api.routes import source_artifacts
 
     state, client = flow
-    client.post(url(state), json={})
+    client.post(url(state), json={"source_revision": state.revision})
     # Publish so it becomes ready
     monkeypatch.setattr(source_artifacts, "blueprint_service", lambda request: state.extractor)
     client.post(url(state, "source-artifacts/retry"))
@@ -495,7 +496,7 @@ def test_source_artifacts_ready_with_empty_modes_is_valid(flow, monkeypatch):
     from app.api.routes import source_artifacts
 
     state, client = flow
-    client.post(url(state), json={})
+    client.post(url(state), json={"source_revision": state.revision})
     monkeypatch.setattr(source_artifacts, "blueprint_service", lambda request: state.extractor)
     client.post(url(state, "source-artifacts/retry"))
     monkeypatch.setattr(

@@ -192,7 +192,7 @@ async def get_session_detail(
     )
     exam_versions = cast(List[dict[str, Any]], v_res.data or [])
 
-        check_res = (
+    check_res = (
         db.table("exam_sessions")
         .select("updated_at")
         .eq("id", session_id)
