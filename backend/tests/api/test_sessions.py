@@ -788,3 +788,169 @@ def test_clone_session_default_title_and_subject_encoding(
     assert data["title"] == "Đề toán 12 (Bản sao)"
     assert data["subject"] == "Toán"
 
+
+
+def test_get_session_detail_tc_ready_02_original_clone(
+    client, mock_auth_user, test_user_id, auth_headers
+):
+    """TC-READY-02: Confirmed blueprints with no common variation modes yield is_ready=True, supported_modes=[]."""
+    mock_db = MagicMock()
+
+    def table_router(table_name):
+        mock_t = MagicMock()
+        if table_name == "exam_sessions":
+            exec_s = MagicMock()
+            exec_s.data = [{
+                "id": "session-clone-ready",
+                "user_id": test_user_id,
+                "title": "Session Clone Ready",
+                "subject": "Toán",
+                "grade": 12,
+                "status": "blueprinted",
+                "gemini_call_count": 0,
+                "retry_count": 0,
+                "approved_at": None,
+                "created_at": "2026-11-01T00:00:00Z",
+                "updated_at": "2026-11-01T00:00:00Z",
+            }]
+            mock_t.select.return_value.eq.return_value.execute.return_value = exec_s
+        elif table_name == "source_questions":
+            exec_q = MagicMock()
+            exec_q.data = [
+                {"id": "q-1", "session_id": "session-clone-ready", "question_no": 1},
+                {"id": "q-2", "session_id": "session-clone-ready", "question_no": 2},
+            ]
+            mock_t.select.return_value.eq.return_value.order.return_value.execute.return_value = exec_q
+        elif table_name == "exam_versions":
+            exec_v = MagicMock()
+            exec_v.data = []
+            mock_t.select.return_value.eq.return_value.order.return_value.execute.return_value = exec_v
+        elif table_name == "generation_configs":
+            exec_c = MagicMock()
+            exec_c.data = []
+            mock_t.select.return_value.eq.return_value.limit.return_value.execute.return_value = exec_c
+        elif table_name == "question_blueprints":
+            exec_bp = MagicMock()
+            # q-1 supports NONE, q-2 supports NONE (or disjoint modes) -> no common variable mode
+            exec_bp.data = [
+                {
+                    "id": "bp-1",
+                    "source_question_id": "q-1",
+                    "confirmed_at": "2026-11-01T00:00:00Z",
+                    "is_fallback": False,
+                    "variation_modes": ["NONE"],
+                },
+                {
+                    "id": "bp-2",
+                    "source_question_id": "q-2",
+                    "confirmed_at": "2026-11-01T00:00:00Z",
+                    "is_fallback": False,
+                    "variation_modes": ["NONE"],
+                },
+            ]
+            mock_t.select.return_value.in_.return_value.execute.return_value = exec_bp
+        return mock_t
+
+    mock_db.table.side_effect = table_router
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.get("/api/sessions/session-clone-ready", headers=auth_headers)
+
+    assert response.status_code == 200
+    bp_summary = response.json()["blueprint_summary"]
+    assert bp_summary is not None
+    assert bp_summary["is_ready"] is True
+    assert bp_summary["supported_modes"] == []
+
+
+def test_get_session_detail_tc_ready_03_available_and_unavailable_modes(
+    client, mock_auth_user, test_user_id, auth_headers
+):
+    """TC-READY-03: Confirmed blueprints classify supported modes into available (100% sources) and unavailable."""
+    mock_db = MagicMock()
+
+    def table_router(table_name):
+        mock_t = MagicMock()
+        if table_name == "exam_sessions":
+            exec_s = MagicMock()
+            exec_s.data = [{
+                "id": "session-modes-ready",
+                "user_id": test_user_id,
+                "title": "Session Modes Ready",
+                "subject": "Toán",
+                "grade": 12,
+                "status": "blueprinted",
+                "gemini_call_count": 0,
+                "retry_count": 0,
+                "approved_at": None,
+                "created_at": "2026-11-01T00:00:00Z",
+                "updated_at": "2026-11-01T00:00:00Z",
+            }]
+            mock_t.select.return_value.eq.return_value.execute.return_value = exec_s
+        elif table_name == "source_questions":
+            exec_q = MagicMock()
+            exec_q.data = [
+                {"id": "q-1", "session_id": "session-modes-ready", "question_no": 1},
+                {"id": "q-2", "session_id": "session-modes-ready", "question_no": 2},
+            ]
+            mock_t.select.return_value.eq.return_value.order.return_value.execute.return_value = exec_q
+        elif table_name == "exam_versions":
+            exec_v = MagicMock()
+            exec_v.data = []
+            mock_t.select.return_value.eq.return_value.order.return_value.execute.return_value = exec_v
+        elif table_name == "generation_configs":
+            exec_c = MagicMock()
+            exec_c.data = []
+            mock_t.select.return_value.eq.return_value.limit.return_value.execute.return_value = exec_c
+        elif table_name == "question_blueprints":
+            exec_bp = MagicMock()
+            # q-1 has NUMERICAL and context_swap; q-2 only has NUMERICAL
+            exec_bp.data = [
+                {
+                    "id": "bp-1",
+                    "source_question_id": "q-1",
+                    "confirmed_at": "2026-11-01T00:00:00Z",
+                    "is_fallback": False,
+                    "variation_modes": ["NUMERICAL", "context_swap"],
+                },
+                {
+                    "id": "bp-2",
+                    "source_question_id": "q-2",
+                    "confirmed_at": "2026-11-01T00:00:00Z",
+                    "is_fallback": False,
+                    "variation_modes": ["NUMERICAL"],
+                },
+            ]
+            mock_t.select.return_value.in_.return_value.execute.return_value = exec_bp
+        return mock_t
+
+    mock_db.table.side_effect = table_router
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.get("/api/sessions/session-modes-ready", headers=auth_headers)
+
+    assert response.status_code == 200
+    bp_summary = response.json()["blueprint_summary"]
+    assert bp_summary is not None
+    assert bp_summary["is_ready"] is True
+    modes = bp_summary["supported_modes"]
+    assert isinstance(modes, list)
+    assert len(modes) == 2
+
+    # Available mode: NUMERICAL (supported by 2/2)
+    num_mode = next(m for m in modes if m["id"] == "NUMERICAL")
+    assert num_mode["is_available"] is True
+    assert num_mode["question_count"] == 2
+    assert "unavailable_reason" not in num_mode
+
+    # Unavailable mode: context_swap (supported by 1/2)
+    ctx_mode = next(m for m in modes if m["id"] == "context_swap")
+    assert ctx_mode["is_available"] is False
+    assert ctx_mode["question_count"] == 1
+    assert "Chỉ hỗ trợ 1/2 câu trong đề" in ctx_mode["unavailable_reason"]

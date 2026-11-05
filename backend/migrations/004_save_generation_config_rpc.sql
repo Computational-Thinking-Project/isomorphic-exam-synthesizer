@@ -154,18 +154,32 @@ BEGIN
       USING ERRCODE = '22023';
   END IF;
 
-  -- Normalize: trim items and preserve distinct values preserving case (contract 207a)
-  SELECT COALESCE(
-    (
-      SELECT jsonb_agg(m.val)
-      FROM (
-        SELECT DISTINCT ON (trim(elem #>> '{}')) trim(elem #>> '{}') AS val, ord
-        FROM jsonb_array_elements(p_active_variation_modes) WITH ORDINALITY AS arr(elem, ord)
-        ORDER BY trim(elem #>> '{}'), ord
-      ) m
-    ),
-    '[]'::jsonb
-  ) INTO v_normalized_modes;
+  -- 5a. Handle ["NONE"] normalization:
+  -- If p_active_variation_modes contains "NONE" (case-insensitive), it must be the only element,
+  -- and it normalizes to '[]'::jsonb (Original Clone). Mixed modes like ["NONE", "values"] are invalid.
+  IF EXISTS (
+    SELECT 1 FROM jsonb_array_elements_text(p_active_variation_modes) AS elem
+    WHERE upper(trim(elem)) = 'NONE'
+  ) THEN
+    IF jsonb_array_length(p_active_variation_modes) > 1 THEN
+      RAISE EXCEPTION 'Invalid active_variation_modes: NONE cannot be combined with other variation modes'
+        USING ERRCODE = '22023';
+    END IF;
+    v_normalized_modes := '[]'::jsonb;
+  ELSE
+    -- Normalize: trim items and preserve distinct values preserving case (contract 207a)
+    SELECT COALESCE(
+      (
+        SELECT jsonb_agg(m.val)
+        FROM (
+          SELECT DISTINCT ON (trim(elem #>> '{}')) trim(elem #>> '{}') AS val, ord
+          FROM jsonb_array_elements(p_active_variation_modes) WITH ORDINALITY AS arr(elem, ord)
+          ORDER BY trim(elem #>> '{}'), ord
+        ) m
+      ),
+      '[]'::jsonb
+    ) INTO v_normalized_modes;
+  END IF;
 
   IF v_normalized_modes IS NULL THEN
     v_normalized_modes := '[]'::jsonb;
