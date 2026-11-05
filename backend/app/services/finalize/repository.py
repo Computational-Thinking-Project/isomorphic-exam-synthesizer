@@ -4,7 +4,7 @@ Provides data access methods for:
 - Fetching session metadata (status, approved_at, user_id)
 - Aggregating pre-condition states (unapproved questions, regenerating questions, finalized versions)
 - Atomic session status transition to 'approved'
-- Retrieving answer matrix cross-version data (priority to answer_keys, fallback to version_questions)
+- Retrieving validated cross-version display answer keys
 """
 
 import logging
@@ -21,6 +21,15 @@ logger = logging.getLogger(__name__)
 def _now_iso() -> str:
     """Return current UTC time in ISO-8601 format."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def _valid_timestamp(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).utcoffset() is not None
+    except ValueError:
+        return False
 
 
 def _get_rows(res: Any) -> List[Dict[str, Any]]:
@@ -51,6 +60,126 @@ class FinalizeRepository:
         rows = _get_rows(res)
         return rows[0] if rows else None
 
+    async def fetch_shuffle_snapshot(self, session_id: str) -> Dict[str, Any]:
+        """Read inputs for computation; the writer must revalidate them under lock."""
+        configs = _get_rows(
+            self.db.table("generation_configs")
+            .select("id,session_id,n_versions,ordering_preferences")
+            .eq("session_id", session_id)
+            .execute()
+        )
+        if len(configs) != 1:
+            raise ReviewDomainException(
+                409, "ERR_SHUFFLE_INPUT_INCOMPLETE", "Cấu hình hoán vị không hợp lệ"
+            )
+        versions = _get_rows(
+            self.db.table("exam_versions")
+            .select("id,session_id,version_code")
+            .eq("session_id", session_id)
+            .execute()
+        )
+        sources = _get_rows(
+            self.db.table("source_questions")
+            .select("id,session_id,question_no")
+            .eq("session_id", session_id)
+            .execute()
+        )
+        ids = [v["id"] for v in versions if v.get("id")]
+        questions = (
+            _get_rows(
+                self.db.table("version_questions")
+                .select(
+                    "id,version_id,source_question_id,content,canonical_question_no,canonical_options,"
+                    "canonical_correct_key,canonical_solution_md,status,is_current"
+                )
+                .in_("version_id", ids)
+                .eq("is_current", True)
+                .execute()
+            )
+            if ids
+            else []
+        )
+        return {
+            "config": configs[0],
+            "versions": versions,
+            "sources": sources,
+            "questions": questions,
+        }
+
+    async def persist_shuffle_rpc(
+        self,
+        session_id: str,
+        payload: Dict[str, Any],
+        expected_versions: List[Dict[str, Any]],
+        question_count: int,
+    ) -> Dict[str, Any]:
+        """Accept only a complete receipt from the transactional shuffle writer."""
+        try:
+            response = self.db.rpc(
+                "finalize_persist_shuffle",
+                {
+                    "p_session_id": session_id,
+                    "p_payload": payload,
+                },
+            ).execute()
+        except Exception as exc:
+            message = str(exc)
+            if "ERR_SESSION_LOCKED" in message:
+                raise ReviewDomainException(
+                    423, "ERR_SESSION_LOCKED", "Phiên đề đã được khóa"
+                ) from exc
+            if "ERR_SHUFFLE_STALE_INPUT" in message:
+                raise ReviewDomainException(
+                    409, "ERR_SHUFFLE_STALE_INPUT", "Dữ liệu đã thay đổi; vui lòng thử lại"
+                ) from exc
+            if "ERR_SHUFFLE_NOT_READY" in message:
+                raise ReviewDomainException(
+                    409, "ERR_SHUFFLE_NOT_READY", "Phiên đề chưa sẵn sàng"
+                ) from exc
+            if "ERR_SHUFFLE_INPUT_INCOMPLETE" in message:
+                raise ReviewDomainException(
+                    409, "ERR_SHUFFLE_INPUT_INCOMPLETE", "Dữ liệu hoán vị không hợp lệ"
+                ) from exc
+            if "ERR_UNAUTHORIZED" in message or "42501" in message:
+                raise ReviewDomainException(
+                    403, "ERR_UNAUTHORIZED", "Không có quyền hoán vị"
+                ) from exc
+            if "PGRST202" in message or "Could not find the function" in message:
+                raise ReviewDomainException(
+                    503, "ERR_SHUFFLE_UNAVAILABLE", "Giao dịch hoán vị chưa sẵn sàng"
+                ) from exc
+            if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+                raise ReviewDomainException(
+                    504, "ERR_UPSTREAM_TIMEOUT", "Mất kết nối khi hoán vị"
+                ) from exc
+            raise ReviewDomainException(
+                500, "ERR_SHUFFLE_TRANSACTION_FAILED", "Giao dịch hoán vị thất bại"
+            ) from exc
+        receipt = getattr(response, "data", None)
+        if isinstance(receipt, list) and len(receipt) == 1:
+            receipt = receipt[0]
+        expected = {(v["id"], v["version_code"], question_count) for v in expected_versions}
+        try:
+            versions = receipt["versions"]
+            actual = {(v["version_id"], v["version_code"], v["total_questions"]) for v in versions}
+            valid = (
+                receipt["session_id"] == session_id
+                and receipt["status"] == "reviewed"
+                and receipt["is_finalized"] is True
+                and question_count > 0
+                and len(expected) == len(expected_versions) > 0
+                and len(actual) == len(versions)
+                and actual == expected
+                and all(type(v["total_questions"]) is int for v in versions)
+            )
+        except (KeyError, TypeError):
+            valid = False
+        if not valid:
+            raise ReviewDomainException(
+                502, "ERR_INVALID_SHUFFLE_RECEIPT", "Phản hồi hoán vị không hợp lệ"
+            )
+        return receipt
+
     async def check_preconditions(self, session_id: str) -> Dict[str, Any]:
         """Aggregate counts for approval preconditions across versions and questions.
 
@@ -76,6 +205,9 @@ class FinalizeRepository:
         config_error: Optional[str] = None
         if not cfg_rows:
             config_error = "ERR_CONFIG_NOT_FOUND"
+            expected_n_versions = None
+        elif len(cfg_rows) != 1:
+            config_error = "ERR_CONFIG_AMBIGUOUS"
             expected_n_versions = None
         else:
             n_versions_list = [
@@ -119,10 +251,7 @@ class FinalizeRepository:
 
         # 2. Discover required source questions (F02 invariant completeness)
         sq_res = (
-            self.db.table("source_questions")
-            .select("id")
-            .eq("session_id", session_id)
-            .execute()
+            self.db.table("source_questions").select("id").eq("session_id", session_id).execute()
         )
         all_source_ids = {str(s["id"]) for s in _get_rows(sq_res) if s.get("id")}
 
@@ -138,9 +267,7 @@ class FinalizeRepository:
             if s_id:
                 all_source_ids.add(str(s_id))
 
-        required_pairs = {
-            (v_id, s_id) for v_id in version_ids for s_id in all_source_ids
-        }
+        required_pairs = {(v_id, s_id) for v_id in version_ids for s_id in all_source_ids}
 
         # 3. Fetch current questions across all versions
         q_res = (
@@ -179,7 +306,7 @@ class FinalizeRepository:
         return {
             "total_versions": total_versions,
             "expected_n_versions": expected_n_versions,
-                "config_error": config_error,
+            "config_error": config_error,
             "unfinalized_versions_count": unfinalized_versions_count,
             "total_questions": total_questions,
             "unapproved_count": unapproved_count,
@@ -209,7 +336,9 @@ class FinalizeRepository:
         """
         if not hasattr(self.db, "rpc"):
             raise ReviewDomainException(
-                503, "ERR_FINALIZATION_UNAVAILABLE", "Hệ thống CSDL không hỗ trợ RPC giao dịch chốt đề"
+                503,
+                "ERR_FINALIZATION_UNAVAILABLE",
+                "Hệ thống CSDL không hỗ trợ RPC giao dịch chốt đề",
             )
 
         try:
@@ -224,12 +353,16 @@ class FinalizeRepository:
             rpc_data = getattr(rpc_res, "data", None)
             if isinstance(rpc_data, list) and len(rpc_data) == 1:
                 rpc_data = rpc_data[0]
-            if (isinstance(rpc_data, dict) and rpc_data.get("status") == "approved"
-                    and rpc_data.get("session_id") == session_id
-                    and isinstance(rpc_data.get("approved_at"), str)
-                    and rpc_data["approved_at"].strip()):
+            if (
+                isinstance(rpc_data, dict)
+                and rpc_data.get("status") == "approved"
+                and rpc_data.get("session_id") == session_id
+                and _valid_timestamp(rpc_data.get("approved_at"))
+            ):
                 return rpc_data
-            raise ReviewDomainException(502, "ERR_INVALID_FINALIZATION_RECEIPT", "Phản hồi phê duyệt không hợp lệ")
+            raise ReviewDomainException(
+                502, "ERR_INVALID_FINALIZATION_RECEIPT", "Phản hồi phê duyệt không hợp lệ"
+            )
         except ReviewDomainException:
             raise
         except Exception as exc:
@@ -238,11 +371,15 @@ class FinalizeRepository:
             # 1. Domain invariant exceptions from Stored Procedure
             if "ERR_SESSION_LOCKED" in err_msg:
                 raise ReviewDomainException(
-                    423, "ERR_SESSION_LOCKED", "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn"
+                    423,
+                    "ERR_SESSION_LOCKED",
+                    "Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn",
                 ) from exc
             if "ERR_QUESTION_REGENERATING" in err_msg:
                 raise ReviewDomainException(
-                    409, "ERR_QUESTION_REGENERATING", "Còn câu hỏi đang trong tiến trình sinh lại bởi AI"
+                    409,
+                    "ERR_QUESTION_REGENERATING",
+                    "Còn câu hỏi đang trong tiến trình sinh lại bởi AI",
                 ) from exc
             if "ERR_CONFIG_NOT_FOUND" in err_msg:
                 raise ReviewDomainException(
@@ -252,9 +389,17 @@ class FinalizeRepository:
                 raise ReviewDomainException(
                     422, "ERR_CONFIG_AMBIGUOUS", "Cấu hình sinh đề không đồng nhất"
                 ) from exc
+            if "ERR_INCONSISTENT_ANSWER_KEYS" in err_msg:
+                raise ReviewDomainException(
+                    409,
+                    "ERR_INCONSISTENT_ANSWER_KEYS",
+                    "Ma trận đáp án không đầy đủ hoặc không hợp lệ",
+                ) from exc
             if "ERR_NOT_ALL_QUESTIONS_APPROVED" in err_msg or "REVIEW_SOURCE_MISMATCH" in err_msg:
                 raise ReviewDomainException(
-                    400, "ERR_NOT_ALL_QUESTIONS_APPROVED", "Còn câu hỏi chưa được thẩm định phê duyệt"
+                    400,
+                    "ERR_NOT_ALL_QUESTIONS_APPROVED",
+                    "Còn câu hỏi chưa được thẩm định phê duyệt",
                 ) from exc
             if "ERR_VERSIONS_NOT_FINALIZED" in err_msg:
                 raise ReviewDomainException(
@@ -262,7 +407,9 @@ class FinalizeRepository:
                 ) from exc
             if "ERR_INVALID_SESSION_STATE" in err_msg:
                 raise ReviewDomainException(
-                    409, "ERR_INVALID_SESSION_STATE", "Trạng thái phiên đề đã thay đổi hoặc không hợp lệ"
+                    409,
+                    "ERR_INVALID_SESSION_STATE",
+                    "Trạng thái phiên đề đã thay đổi hoặc không hợp lệ",
                 ) from exc
             if "ERR_SESSION_NOT_FOUND" in err_msg:
                 raise ReviewDomainException(
@@ -275,49 +422,83 @@ class FinalizeRepository:
 
             # 2. Strict Fail-Closed Infrastructure & Transport Exceptions
             if "PGRST202" in err_msg or "Could not find the function" in err_msg:
-                logger.critical("RPC finalize_approve_session missing in database schema (PGRST202): %s", exc)
+                logger.critical(
+                    "RPC finalize_approve_session missing in database schema (PGRST202): %s", exc
+                )
                 raise ReviewDomainException(
-                    503, "ERR_FINALIZATION_UNAVAILABLE", "Hệ thống giao dịch chốt đề chưa sẵn sàng trên CSDL (PGRST202)"
+                    503,
+                    "ERR_FINALIZATION_UNAVAILABLE",
+                    "Hệ thống giao dịch chốt đề chưa sẵn sàng trên CSDL (PGRST202)",
                 ) from exc
             if "42501" in err_msg or "permission denied" in err_msg:
-                logger.critical("Database permission denied for finalize_approve_session (42501): %s", exc)
+                logger.critical(
+                    "Database permission denied for finalize_approve_session (42501): %s", exc
+                )
                 raise ReviewDomainException(
-                    500, "ERR_DATABASE_PERMISSION_DENIED", "Không có quyền thực thi thủ tục phê duyệt CSDL"
+                    500,
+                    "ERR_DATABASE_PERMISSION_DENIED",
+                    "Không có quyền thực thi thủ tục phê duyệt CSDL",
                 ) from exc
             if isinstance(exc, (TimeoutError, ConnectionError, OSError)) or any(
                 term in err_msg.lower()
-                for term in ("timeout", "clientconnectorerror", "connection reset", "connection refused", "connection error")
+                for term in (
+                    "timeout",
+                    "clientconnectorerror",
+                    "connection reset",
+                    "connection refused",
+                    "connection error",
+                )
             ):
-                logger.error("Upstream timeout or connection drop during finalize_approve_session: %s", exc)
+                logger.error(
+                    "Upstream timeout or connection drop during finalize_approve_session: %s", exc
+                )
                 raise ReviewDomainException(
-                    504, "ERR_UPSTREAM_TIMEOUT", "Mất kết nối với dịch vụ giao dịch CSDL trong quá trình chốt đề"
+                    504,
+                    "ERR_UPSTREAM_TIMEOUT",
+                    "Mất kết nối với dịch vụ giao dịch CSDL trong quá trình chốt đề",
                 ) from exc
 
             # 3. Catch-all: Fail-closed on any unexpected database error
             logger.critical("RPC finalize_approve_session unexpected error: %s", exc, exc_info=True)
             raise ReviewDomainException(
-                500, "ERR_DATABASE_TRANSACTION_FAILED", f"Lỗi giao dịch phê duyệt CSDL: {exc}"
+                500, "ERR_DATABASE_TRANSACTION_FAILED", "Lỗi giao dịch phê duyệt CSDL"
             ) from exc
 
     # Contract alias for TASK-305 / TASK-302 alignment (F13)
     finalize_approve_rpc = update_session_approved
 
-    async def fetch_matrix_raw(
-        self, session_id: str
-    ) -> Tuple[List[str], List[Dict[str, Any]]]:
+    async def fetch_matrix_raw(self, session_id: str) -> Tuple[List[str], List[Dict[str, Any]]]:
         """Read only complete, validated display keys produced by shuffle."""
-        def inconsistent() -> ReviewDomainException:
-            return ReviewDomainException(409, "ERR_INCONSISTENT_ANSWER_KEYS", "Ma tr?n ??p ?n kh?ng ??y ?? ho?c kh?ng h?p l?")
 
-        configs = _get_rows(self.db.table("generation_configs").select("n_versions").eq("session_id", session_id).execute())
-        versions = _get_rows(self.db.table("exam_versions").select("id, version_code, is_finalized").eq("session_id", session_id).execute())
-        sources = _get_rows(self.db.table("source_questions").select("id").eq("session_id", session_id).execute())
+        def inconsistent() -> ReviewDomainException:
+            return ReviewDomainException(
+                409, "ERR_INCONSISTENT_ANSWER_KEYS", "Ma tr?n ??p ?n kh?ng ??y ?? ho?c kh?ng h?p l?"
+            )
+
+        configs = _get_rows(
+            self.db.table("generation_configs")
+            .select("n_versions")
+            .eq("session_id", session_id)
+            .execute()
+        )
+        versions = _get_rows(
+            self.db.table("exam_versions")
+            .select("id, version_code, is_finalized")
+            .eq("session_id", session_id)
+            .execute()
+        )
+        sources = _get_rows(
+            self.db.table("source_questions").select("id").eq("session_id", session_id).execute()
+        )
         if len(configs) != 1 or not sources or not versions:
             raise inconsistent()
         n = configs[0].get("n_versions")
         if not isinstance(n, int) or isinstance(n, bool) or n != len(versions):
             raise inconsistent()
-        if any(not v.get("id") or not v.get("version_code") or v.get("is_finalized") is not True for v in versions):
+        if any(
+            not v.get("id") or not v.get("version_code") or v.get("is_finalized") is not True
+            for v in versions
+        ):
             raise inconsistent()
         ids = [str(v["id"]) for v in versions]
         codes = [str(v["version_code"]) for v in versions]
@@ -329,12 +510,19 @@ class FinalizeRepository:
         seen: set[tuple[str, int]] = set()
         rows: List[Dict[str, Any]] = []
         for key in keys:
-            vid, number, display_no = str(key.get("version_id", "")), key.get("question_no"), key.get("display_no")
+            vid, number, display_no = (
+                str(key.get("version_id", "")),
+                key.get("question_no"),
+                key.get("display_no"),
+            )
             answer, display_answer = key.get("correct_option"), key.get("display_correct_key")
-            if (not isinstance(number, int) or isinstance(number, bool) or
-                (display_no is not None and display_no != number) or
-                answer not in ("A", "B", "C", "D") or
-                (display_answer is not None and display_answer != answer)):
+            if (
+                not isinstance(number, int)
+                or isinstance(number, bool)
+                or (display_no is not None and display_no != number)
+                or answer not in ("A", "B", "C", "D")
+                or (display_answer is not None and display_answer != answer)
+            ):
                 raise inconsistent()
             pair = (vid, number)
             if pair not in expected or pair in seen:

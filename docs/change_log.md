@@ -1,3 +1,18 @@
+## DEC-TASK305-001: Final approval display-key and principal guards (proposed)
+
+- Date / owner: 04/11/2026, TASK-305 author; pending independent review.
+- Context: a reviewed session could be approved without display answer keys; a
+  caller able to set a JWT claim GUC could impersonate the service role in a
+  local PostgreSQL test.
+- Decision: migration 007 checks the structural display-key matrix under the
+  session lock and uses the actual database role to identify service calls.
+  Missing or inconsistent keys return `ERR_INCONSISTENT_ANSWER_KEYS` (HTTP 409).
+  Matrix reads do not infer display answers from canonical questions.
+- Impact: finalize SQL, repository, API and regression tests. The shuffle writer
+  is implemented in migration 008, but its complete A+B gate, displayed-answer
+  semantics, deployed PostgREST role behavior and immutable export integration
+  remain unverified. Local PostgreSQL checks do not establish deployed behavior.
+
 ## 01/11/2026 — TASK-304: permit bền vững tại boundary dispatch (Draft)
 
 Adapter real nhận operation_id và callback trả AttemptPermit, dùng hook gateway hiện có cho mỗi attempt/retry/repair. Không còn fallback local-only cho review production. DB ledger quyết toán; count adapter chỉ là acknowledged grants, không tự refund khi timeout/cancel hoặc mất response. [Handoff và giới hạn](ai-w3-targeted-regeneration.md), [điều phối #36](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6551270882). Đã triển khai phía adapter; RPC/wrapper/E2E còn phụ thuộc Hùng/Duy, shared contract chưa coi đã được mọi owner chấp nhận.

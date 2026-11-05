@@ -21,8 +21,11 @@ from app.models.schemas import (
     MatrixItem,
     ReviewDomainException,
 )
-from app.services.finalize.repository import FinalizeRepository
+from app.services.finalize.repository import FinalizeRepository, _valid_timestamp
+from app.services.finalize.shuffle_input import prepare_shuffle
+from app.services.review.repository import ReviewRepository
 from app.services.review.service import session_lock_registry
+from app.services.shuffler.schemas import FinalizeShuffleResponse
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +37,45 @@ class FinalizeService:
         self.db = db
         self.repo = repo or FinalizeRepository(db)
 
-    async def approve_session(
-        self, session_id: str, user_id: str
-    ) -> FinalizeApproveResponse:
+    async def shuffle_session(self, session_id: str, user_id: str) -> FinalizeShuffleResponse:
+        """Compute from canonical inputs and return only a validated RPC receipt."""
+        try:
+            UUID(session_id)
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ReviewDomainException(
+                400, "ERR_INVALID_SESSION_ID", "Mã phiên không hợp lệ"
+            ) from exc
+        meta = await self.repo.get_session_meta(session_id)
+        if not meta or str(meta.get("user_id")) != user_id:
+            raise ReviewDomainException(404, "ERR_SESSION_NOT_FOUND", "Không tìm thấy phiên đề")
+        if meta.get("status") in ("approved", "exported") or meta.get("approved_at") is not None:
+            raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Phiên đề đã được khóa")
+        if meta.get("status") != "reviewed":
+            raise ReviewDomainException(409, "ERR_INVALID_SESSION_STATE", "Phiên đề chưa sẵn sàng")
+        progress = await ReviewRepository(self.db).progress(session_id)
+        if progress.get("ready") is not True:
+            raise ReviewDomainException(409, "ERR_SHUFFLE_NOT_READY", "Phiên đề chưa sẵn sàng")
+        snapshot = await self.repo.fetch_shuffle_snapshot(session_id)
+        results = prepare_shuffle(
+            session_id,
+            snapshot["config"],
+            snapshot["versions"],
+            snapshot["sources"],
+            snapshot["questions"],
+        )
+        payload = {"snapshot": snapshot, "versions": [r.model_dump(mode="json") for r in results]}
+        receipt = await self.repo.persist_shuffle_rpc(
+            session_id, payload, snapshot["versions"], len(snapshot["sources"])
+        )
+        return FinalizeShuffleResponse.model_validate(receipt)
+
+    async def approve_session(self, session_id: str, user_id: str) -> FinalizeApproveResponse:
         """Approve an exam session and permanently lock its contents.
 
         Enforces:
         1. Session existence (404 ERR_SESSION_NOT_FOUND)
         2. Idempotency: if already 'approved', return 200 with stored approved_at
-        3. Allowed state: must be 'reviewed' or 'generated' (409 ERR_INVALID_SESSION_STATE)
+        3. Allowed state: must be 'reviewed' (409 ERR_INVALID_SESSION_STATE)
         4. Pre-conditions:
            - Total versions > 0 and 100% versions is_finalized=true (400 ERR_VERSIONS_NOT_FINALIZED)
            - 0 questions regenerating (409 ERR_QUESTION_REGENERATING)
@@ -75,8 +108,10 @@ class FinalizeService:
             # Step 2: Idempotent return if already approved
             if current_status == "approved":
                 approved_at = str(session_meta.get("approved_at") or "")
-                if not approved_at.strip():
-                    raise ReviewDomainException(409, "ERR_INVALID_SESSION_STATE", "Phiên đã duyệt thiếu thời điểm phê duyệt")
+                if not _valid_timestamp(approved_at):
+                    raise ReviewDomainException(
+                        409, "ERR_INVALID_SESSION_STATE", "Phiên đã duyệt thiếu thời điểm phê duyệt"
+                    )
                 logger.info(
                     "FinalizeService: Session %s is already approved (approved_at=%s), returning idempotent response",
                     session_id,
@@ -94,11 +129,20 @@ class FinalizeService:
                 raise ReviewDomainException(
                     409,
                     "ERR_INVALID_SESSION_STATE",
-                    f"Phiên đề ở trạng thái '{current_status}' không thể phê duyệt. Cần ở trạng thái 'reviewed' hoặc 'generated'.",
+                    f"Phiên đề ở trạng thái '{current_status}' không thể phê duyệt. Cần ở trạng thái 'reviewed'.",
                 )
 
             # Step 4: Verify pre-conditions
             stats = await self.repo.check_preconditions(session_id)
+
+            if stats.get("config_error") == "ERR_CONFIG_NOT_FOUND":
+                raise ReviewDomainException(
+                    422, "ERR_CONFIG_NOT_FOUND", "Không tìm thấy cấu hình sinh đề của phiên thi"
+                )
+            if stats.get("config_error") == "ERR_CONFIG_AMBIGUOUS":
+                raise ReviewDomainException(
+                    422, "ERR_CONFIG_AMBIGUOUS", "Cấu hình sinh đề không đồng nhất"
+                )
 
             # 4a. Check versions finalized (TASK-303)
             total_versions = stats.get("total_versions", 0)
@@ -129,7 +173,9 @@ class FinalizeService:
             unapproved_count = stats.get("unapproved_count", 0)
             total_questions = stats.get("total_questions", 0)
             truly_missing_count = stats.get("truly_missing_count", 0)
-            total_defective_count = stats.get("total_defective_count", unapproved_count + truly_missing_count)
+            total_defective_count = stats.get(
+                "total_defective_count", unapproved_count + truly_missing_count
+            )
 
             if total_questions == 0:
                 raise ReviewDomainException(
@@ -142,20 +188,6 @@ class FinalizeService:
                     400,
                     "ERR_NOT_ALL_QUESTIONS_APPROVED",
                     f"Còn {total_defective_count} câu hỏi chưa được thẩm định phê duyệt hoặc bị thiếu trong các mã đề",
-                )
-
-            # 4d. F19 Fail-Closed config check (must have unique valid config)
-            if stats.get("config_error") == "ERR_CONFIG_NOT_FOUND":
-                raise ReviewDomainException(
-                    422,
-                    "ERR_CONFIG_NOT_FOUND",
-                    "Không tìm thấy cấu hình sinh đề của phiên thi",
-                )
-            if stats.get("config_error") == "ERR_CONFIG_AMBIGUOUS":
-                raise ReviewDomainException(
-                    422,
-                    "ERR_CONFIG_AMBIGUOUS",
-                    "Cấu hình sinh đề không đồng nhất",
                 )
 
             expected_n_versions = stats.get("expected_n_versions")
@@ -173,23 +205,23 @@ class FinalizeService:
                 user_id=user_id,
             )
 
-            # If update returned None, check if race occurred and it got approved concurrently
+            # An indeterminate RPC response must never be presented as a receipt.
             if not updated_row:
-                latest_meta = await self.repo.get_session_meta(session_id)
-                if latest_meta and str(latest_meta.get("status", "")).lower() == "approved":
-                    return FinalizeApproveResponse(
-                        session_id=session_id,
-                        status="approved",
-                        approved_at=str(latest_meta.get("approved_at") or ""),
-                        message="Phiên đề đã được phê duyệt",
-                    )
                 raise ReviewDomainException(
-                    409,
-                    "ERR_INVALID_SESSION_STATE",
-                    "Trạng thái phiên đề đã thay đổi trong quá trình xử lý, vui lòng thử lại",
+                    502,
+                    "ERR_INVALID_FINALIZATION_RECEIPT",
+                    "Phản hồi phê duyệt không hợp lệ",
                 )
 
             approved_at_res = str(updated_row.get("approved_at") or "")
+            if (
+                updated_row.get("session_id") != session_id
+                or updated_row.get("status") != "approved"
+                or not _valid_timestamp(approved_at_res)
+            ):
+                raise ReviewDomainException(
+                    502, "ERR_INVALID_FINALIZATION_RECEIPT", "Phản hồi phê duyệt không hợp lệ"
+                )
             logger.info(
                 "FinalizeService: Successfully approved session %s at %s",
                 session_id,
@@ -203,9 +235,7 @@ class FinalizeService:
                 message="Phê duyệt phiên thi thành công và đã khóa nội dung",
             )
 
-    async def get_answers_matrix(
-        self, session_id: str, user_id: str
-    ) -> AnswersMatrixResponse:
+    async def get_answers_matrix(self, session_id: str, user_id: str) -> AnswersMatrixResponse:
         """Fetch and structure cross-version answer key matrix.
 
         Returns a sorted matrix of answers per question_no across all version_codes.
@@ -228,7 +258,9 @@ class FinalizeService:
             )
 
         if session_meta.get("status") not in ("approved", "exported"):
-            raise ReviewDomainException(409, "ERR_INVALID_SESSION_STATE", "Phiên chưa được phê duyệt")
+            raise ReviewDomainException(
+                409, "ERR_INVALID_SESSION_STATE", "Phiên chưa được phê duyệt"
+            )
 
         # Step 2: Fetch raw rows
         version_codes, rows = await self.repo.fetch_matrix_raw(session_id)
@@ -241,12 +273,20 @@ class FinalizeService:
             q_no = r["question_no"]
             v_code = r["version_code"]
             ans = r["answer"]
-            if v_code in grouped[q_no] or v_code not in version_codes or ans not in ("A", "B", "C", "D"):
-                raise ReviewDomainException(409, "ERR_INCONSISTENT_ANSWER_KEYS", "Ma trận đáp án không hợp lệ")
+            if (
+                v_code in grouped[q_no]
+                or v_code not in version_codes
+                or ans not in ("A", "B", "C", "D")
+            ):
+                raise ReviewDomainException(
+                    409, "ERR_INCONSISTENT_ANSWER_KEYS", "Ma trận đáp án không hợp lệ"
+                )
             grouped[q_no][v_code] = ans
 
         if any(set(answers) != set(version_codes) for answers in grouped.values()):
-            raise ReviewDomainException(409, "ERR_INCONSISTENT_ANSWER_KEYS", "Ma trận đáp án không đầy đủ")
+            raise ReviewDomainException(
+                409, "ERR_INCONSISTENT_ANSWER_KEYS", "Ma trận đáp án không đầy đủ"
+            )
 
         # Step 4: Build sorted matrix items
         sorted_q_numbers = sorted(grouped.keys())

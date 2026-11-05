@@ -509,7 +509,8 @@ class AnswersMatrixResponse(BaseModel):
     session_id: str = Field(..., description="Mã phiên làm việc (UUID)")
     total_questions: int = Field(..., ge=0, description="Tổng số câu hỏi trong ma trận")
     version_codes: List[str] = Field(
-        ..., description="Danh sách các mã đề thi đã được sắp xếp (ví dụ: ['101', '102', '103', '104'])"
+        ...,
+        description="Danh sách các mã đề thi đã được sắp xếp (ví dụ: ['101', '102', '103', '104'])",
     )
     matrix: List[MatrixItem] = Field(
         ..., description="Danh sách đáp án từng câu hỏi cho tất cả mã đề"

@@ -31,15 +31,10 @@ AS $$
 DECLARE
   v_session RECORD;
   v_caller_id UUID;
-  v_role TEXT := COALESCE(
-    NULLIF(current_setting('request.jwt.claim.role', true), ''),
-    CASE 
-      WHEN NULLIF(current_setting('request.jwt.claims', true), '') IS NOT NULL 
-           AND (current_setting('request.jwt.claims', true)::jsonb ? 'role')
-      THEN current_setting('request.jwt.claims', true)::jsonb->>'role'
-      ELSE ''
-    END
-  );
+  -- JWT claim GUCs can be set by a SQL caller; they must not elevate the
+  -- database principal. SECURITY DEFINER changes current_user, so retain the
+  -- role selected by the connection, falling back to the login role.
+  v_role TEXT := COALESCE(NULLIF(current_setting('role', true), 'none'), session_user);
   v_config_count INT := 0;
   v_min_n_versions INT;
   v_max_n_versions INT;
@@ -50,6 +45,7 @@ DECLARE
   v_total_current_q INT := 0;
   v_approved_current_q INT := 0;
   v_progress JSONB;
+  v_source_count INT;
   v_now TIMESTAMPTZ := clock_timestamp();
 BEGIN
   -- 1. Resolve authenticated caller ID (F16 Actor Spoofing Fix)
@@ -207,6 +203,37 @@ BEGIN
   v_progress := public._review_progress(p_session_id);
   IF (v_progress->>'ready')::boolean IS DISTINCT FROM TRUE THEN
     RAISE EXCEPTION 'ERR_NOT_ALL_QUESTIONS_APPROVED' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- Only structural checks are possible until the shuffle writer's display
+  -- mapping is confirmed. Never infer displayed answers from canonical keys.
+  SELECT count(*) INTO v_source_count FROM public.source_questions
+    WHERE session_id = p_session_id;
+  IF EXISTS (
+    SELECT 1 FROM public.exam_versions v
+    CROSS JOIN generate_series(1, v_source_count) slot(display_no)
+    LEFT JOIN public.answer_keys k ON k.version_id = v.id AND k.display_no = slot.display_no
+    WHERE v.session_id = p_session_id
+    GROUP BY v.id, slot.display_no HAVING count(k.id) <> 1
+  ) OR EXISTS (
+    SELECT 1 FROM public.answer_keys k
+    JOIN public.exam_versions v ON v.id = k.version_id
+    WHERE v.session_id = p_session_id AND (
+      k.question_no IS DISTINCT FROM k.display_no
+      OR k.display_no IS NULL OR k.display_no NOT BETWEEN 1 AND v_source_count
+      OR k.correct_option IS DISTINCT FROM k.display_correct_key
+      OR k.display_correct_key IS NULL OR k.display_correct_key NOT IN ('A','B','C','D')
+      OR NOT EXISTS (
+        SELECT 1 FROM public.source_questions s
+        WHERE s.session_id = p_session_id AND s.question_no = k.canonical_question_no
+      )
+    )
+  ) OR EXISTS (
+    SELECT 1 FROM public.answer_keys k JOIN public.exam_versions v ON v.id = k.version_id
+    WHERE v.session_id = p_session_id
+    GROUP BY k.version_id, k.canonical_question_no HAVING count(*) <> 1
+  ) THEN
+    RAISE EXCEPTION 'ERR_INCONSISTENT_ANSWER_KEYS' USING ERRCODE = 'P0001';
   END IF;
 
   -- 9. Atomic State Transition

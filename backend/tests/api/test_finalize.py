@@ -15,7 +15,7 @@ Tests:
    - Review operations (/accept, /reject, /revert) return 423 ERR_SESSION_LOCKED
 4. GET /api/sessions/{session_id}/finalize/matrix:
    - Reads matrix from answer_keys (correct_option)
-   - Fallback to version_questions (correct_key) when answer_keys is empty
+   - Rejects missing or inconsistent answer_keys
    - Proper sort order by question_no and version_codes
 """
 
@@ -34,14 +34,13 @@ from app.models.schemas import (
     CurrentUser,
     FinalizeApproveResponse,
     MatrixItem,
-    ReserveResult,
     ReviewDomainException,
 )
 from app.services.finalize.repository import FinalizeRepository, _now_iso
 from app.services.finalize.service import FinalizeService
 from app.services.review.repository import ReviewRepository
 from app.services.review.service import ReviewService
-from tests.services.test_review_lifecycle import MockSupabaseClient
+from tests.services.finalize_test_client import MockSupabaseClient
 
 MOCK_SESSION_ID = "00000000-0000-0000-0000-000000000001"
 MOCK_QUESTION_ID = "11111111-1111-1111-1111-111111111111"
@@ -317,14 +316,14 @@ def test_get_answers_matrix_success(
 
 
 @pytest.mark.asyncio
-async def test_finalize_service_matrix_fallback_logic():
+async def test_finalize_service_matrix_ordering():
     """FinalizeService.get_answers_matrix builds matrix properly from repository fetch_matrix_raw."""
     mock_db = MagicMock()
     mock_repo = MagicMock()
     mock_repo.get_session_meta = AsyncMock(
         return_value={"id": MOCK_SESSION_ID, "status": "approved"}
     )
-    # Simulate repository fallback data
+    # Repository supplies validated display-key rows in arbitrary order.
     mock_repo.fetch_matrix_raw = AsyncMock(
         return_value=(
             ["101", "102"],
@@ -373,7 +372,7 @@ async def test_finalize_service_happy_path_unit():
     )
     mock_repo.update_session_approved = AsyncMock(
         return_value={
-            "id": MOCK_SESSION_ID,
+            "session_id": MOCK_SESSION_ID,
             "status": "approved",
             "approved_at": "2026-10-30T01:30:00Z",
         }
@@ -409,11 +408,14 @@ async def test_f01_interleaving_mutation_prevents_approval():
         ],
         "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 1}],
         "exam_versions": [
-            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+            {
+                "id": "v-101",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "101",
+                "is_finalized": True,
+            }
         ],
-        "source_questions": [
-            {"id": "s-1", "session_id": MOCK_SESSION_ID}
-        ],
+        "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
         "version_questions": [
             {
                 "id": "q-1",
@@ -436,9 +438,7 @@ async def test_f01_interleaving_mutation_prevents_approval():
         # Worker B mutates in the background
         db_state["exam_sessions"][0]["status"] = "generated"
         db_state["exam_sessions"][0]["updated_at"] = "2026-10-30T00:01:00+00:00"
-        return await original_update(
-            session_id, expected_updated_at=expected_updated_at, **kwargs
-        )
+        return await original_update(session_id, expected_updated_at=expected_updated_at, **kwargs)
 
     repo.update_session_approved = hooked_update
 
@@ -492,7 +492,9 @@ async def test_f01_post_approval_mutations_blocked():
 
     # 3. Reserve quota / reject phase 1 must be rejected
     with pytest.raises(ReviewDomainException) as exc_reserve:
-        await review_repo.reserve_max_quota_and_start_regenerating(MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID)
+        await review_repo.reserve_max_quota_and_start_regenerating(
+            MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID
+        )
     assert exc_reserve.value.status_code == 423
     assert exc_reserve.value.error_code == "ERR_SESSION_LOCKED"
 
@@ -511,11 +513,14 @@ async def test_f01_reverse_interleaving_approval_blocks_concurrent_reserve():
             }
         ],
         "exam_versions": [
-            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+            {
+                "id": "v-101",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "101",
+                "is_finalized": True,
+            }
         ],
-        "source_questions": [
-            {"id": "s-1", "session_id": MOCK_SESSION_ID}
-        ],
+        "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
         "version_questions": [
             {
                 "id": MOCK_QUESTION_ID,
@@ -557,16 +562,23 @@ async def test_f01_reverse_interleaving_approval_blocks_concurrent_reserve():
 async def test_f02_missing_current_question_for_a_version_aborts_approval():
     """F02: Reject approval when a version is missing an active approved variant for a source question."""
     db_state = {
-        "exam_sessions": [
-            {"id": MOCK_SESSION_ID, "status": "reviewed", "user_id": MOCK_USER_ID}
-        ],
+        "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 2}],
+        "exam_sessions": [{"id": MOCK_SESSION_ID, "status": "reviewed", "user_id": MOCK_USER_ID}],
         "exam_versions": [
-            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True},
-            {"id": "v-102", "session_id": MOCK_SESSION_ID, "version_code": "102", "is_finalized": True},
+            {
+                "id": "v-101",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "101",
+                "is_finalized": True,
+            },
+            {
+                "id": "v-102",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "102",
+                "is_finalized": True,
+            },
         ],
-        "source_questions": [
-            {"id": "s-1", "session_id": MOCK_SESSION_ID}
-        ],
+        "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
         "version_questions": [
             # Version 101 has current approved question for s-1
             {
@@ -602,16 +614,23 @@ async def test_f02_missing_current_question_for_a_version_aborts_approval():
 async def test_f03_partial_answer_keys_missing_version_raises_409():
     """F03: If answer_keys is partially populated (missing a version), raise 409."""
     db_state = {
-        "exam_sessions": [
-            {"id": MOCK_SESSION_ID, "status": "approved", "user_id": MOCK_USER_ID}
-        ],
+        "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 2}],
+        "exam_sessions": [{"id": MOCK_SESSION_ID, "status": "approved", "user_id": MOCK_USER_ID}],
         "exam_versions": [
-            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101"},
-            {"id": "v-102", "session_id": MOCK_SESSION_ID, "version_code": "102"},
+            {
+                "id": "v-101",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "101",
+                "is_finalized": True,
+            },
+            {
+                "id": "v-102",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "102",
+                "is_finalized": True,
+            },
         ],
-        "source_questions": [
-            {"id": "s-1", "session_id": MOCK_SESSION_ID}
-        ],
+        "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
         "answer_keys": [
             # Only version 101 has an answer key record; version 102 is missing!
             {"version_id": "v-101", "question_no": 1, "correct_option": "B"}
@@ -632,12 +651,21 @@ async def test_f03_partial_answer_keys_missing_version_raises_409():
 async def test_f03_partial_answer_keys_missing_question_raises_409():
     """F03: If answer_keys is missing a question for one version, raise 409."""
     db_state = {
-        "exam_sessions": [
-            {"id": MOCK_SESSION_ID, "status": "approved", "user_id": MOCK_USER_ID}
-        ],
+        "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 2}],
+        "exam_sessions": [{"id": MOCK_SESSION_ID, "status": "approved", "user_id": MOCK_USER_ID}],
         "exam_versions": [
-            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101"},
-            {"id": "v-102", "session_id": MOCK_SESSION_ID, "version_code": "102"},
+            {
+                "id": "v-101",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "101",
+                "is_finalized": True,
+            },
+            {
+                "id": "v-102",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "102",
+                "is_finalized": True,
+            },
         ],
         "source_questions": [
             {"id": "s-1", "session_id": MOCK_SESSION_ID},
@@ -665,12 +693,21 @@ async def test_f03_partial_answer_keys_missing_question_raises_409():
 async def test_f03_complete_answer_keys_success():
     """F03: When answer_keys is complete across all versions and questions, matrix returns normally."""
     db_state = {
-        "exam_sessions": [
-            {"id": MOCK_SESSION_ID, "status": "approved", "user_id": MOCK_USER_ID}
-        ],
+        "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 2}],
+        "exam_sessions": [{"id": MOCK_SESSION_ID, "status": "approved", "user_id": MOCK_USER_ID}],
         "exam_versions": [
-            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101"},
-            {"id": "v-102", "session_id": MOCK_SESSION_ID, "version_code": "102"},
+            {
+                "id": "v-101",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "101",
+                "is_finalized": True,
+            },
+            {
+                "id": "v-102",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "102",
+                "is_finalized": True,
+            },
         ],
         "source_questions": [
             {"id": "s-1", "session_id": MOCK_SESSION_ID},
@@ -697,19 +734,26 @@ async def test_f03_complete_answer_keys_success():
 
 
 @pytest.mark.asyncio
-async def test_f03_empty_answer_keys_fallback_to_version_questions():
-    """F03: When answer_keys is empty, safely fallback to version_questions."""
+async def test_f03_empty_answer_keys_rejected():
+    """Missing keys fail closed even when display questions are available."""
     db_state = {
-        "exam_sessions": [
-            {"id": MOCK_SESSION_ID, "status": "approved", "user_id": MOCK_USER_ID}
-        ],
+        "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 2}],
+        "exam_sessions": [{"id": MOCK_SESSION_ID, "status": "approved", "user_id": MOCK_USER_ID}],
         "exam_versions": [
-            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101"},
-            {"id": "v-102", "session_id": MOCK_SESSION_ID, "version_code": "102"},
+            {
+                "id": "v-101",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "101",
+                "is_finalized": True,
+            },
+            {
+                "id": "v-102",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "102",
+                "is_finalized": True,
+            },
         ],
-        "source_questions": [
-            {"id": "s-1", "session_id": MOCK_SESSION_ID}
-        ],
+        "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
         "answer_keys": [],
         "version_questions": [
             {"version_id": "v-101", "question_no": 1, "correct_key": "A", "is_current": True},
@@ -720,10 +764,10 @@ async def test_f03_empty_answer_keys_fallback_to_version_questions():
     repo = FinalizeRepository(client)
     service = FinalizeService(client, repo=repo)
 
-    res = await service.get_answers_matrix(MOCK_SESSION_ID, MOCK_USER_ID)
-    assert res.total_questions == 1
-    assert res.version_codes == ["101", "102"]
-    assert res.matrix[0].answers == {"101": "A", "102": "C"}
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_answers_matrix(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
 
 
 # ==============================================================================
@@ -745,7 +789,12 @@ async def test_f01_rpc_transaction_happy_path_approves_and_locks():
         ],
         "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 1}],
         "exam_versions": [
-            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+            {
+                "id": "v-101",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "101",
+                "is_finalized": True,
+            }
         ],
         "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
         "version_questions": [
@@ -773,6 +822,7 @@ async def test_f01_rpc_transaction_happy_path_approves_and_locks():
 async def test_f01_rpc_transaction_prevents_crash_failure_window():
     """F01: When question is regenerating, RPC atomically rejects approval without partial state."""
     db_state = {
+        "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 1}],
         "exam_sessions": [
             {
                 "id": MOCK_SESSION_ID,
@@ -782,7 +832,12 @@ async def test_f01_rpc_transaction_prevents_crash_failure_window():
             }
         ],
         "exam_versions": [
-            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+            {
+                "id": "v-101",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "101",
+                "is_finalized": True,
+            }
         ],
         "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
         "version_questions": [
@@ -827,7 +882,12 @@ async def test_f01_controlled_interleaving_blocks_worker_b_and_prevents_corrupt_
         ],
         "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 1}],
         "exam_versions": [
-            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+            {
+                "id": "v-101",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "101",
+                "is_finalized": True,
+            }
         ],
         "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
         "version_questions": [
@@ -881,7 +941,12 @@ async def test_f01_strict_fail_closed_when_finalize_rpc_missing_pgrst202():
         ],
         "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 1}],
         "exam_versions": [
-            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+            {
+                "id": "v-101",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "101",
+                "is_finalized": True,
+            }
         ],
         "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
         "version_questions": [
@@ -900,7 +965,9 @@ async def test_f01_strict_fail_closed_when_finalize_rpc_missing_pgrst202():
     def broken_rpc(name: str, params: Optional[Dict[str, Any]] = None):
         class BrokenBuilder:
             def execute(self):
-                raise RuntimeError("PGRST202: Could not find the function finalize_approve_session in schema cache")
+                raise RuntimeError(
+                    "PGRST202: Could not find the function finalize_approve_session in schema cache"
+                )
 
         return BrokenBuilder()
 
@@ -932,7 +999,12 @@ async def test_f01_strict_fail_closed_when_finalize_rpc_timeouts():
         ],
         "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 1}],
         "exam_versions": [
-            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+            {
+                "id": "v-101",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "101",
+                "is_finalized": True,
+            }
         ],
         "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
         "version_questions": [
@@ -951,7 +1023,9 @@ async def test_f01_strict_fail_closed_when_finalize_rpc_timeouts():
     def timeout_rpc(name: str, params: Optional[Dict[str, Any]] = None):
         class TimeoutBuilder:
             def execute(self):
-                raise TimeoutError("ClientConnectorError: Upstream connection timeout to PostgreSQL RPC")
+                raise TimeoutError(
+                    "ClientConnectorError: Upstream connection timeout to PostgreSQL RPC"
+                )
 
         return TimeoutBuilder()
 
@@ -983,7 +1057,12 @@ async def test_f01_strict_fail_closed_when_reserve_rpc_missing_or_timeouts():
             }
         ],
         "exam_versions": [
-            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+            {
+                "id": "v-101",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "101",
+                "is_finalized": True,
+            }
         ],
         "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
         "version_questions": [
@@ -1009,12 +1088,14 @@ async def test_f01_strict_fail_closed_when_reserve_rpc_missing_or_timeouts():
 
     client.rpc = missing_rpc  # type: ignore
     with pytest.raises(ReviewDomainException) as exc_info:
-        await repo.reserve_max_quota_and_start_regenerating(MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID)
+        await repo.reserve_max_quota_and_start_regenerating(
+            MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID
+        )
     assert exc_info.value.status_code == 503
-    assert exc_info.value.error_code == "ERR_REGENERATION_UNAVAILABLE"
+    assert exc_info.value.error_code == "ERR_DATABASE_UNAVAILABLE"
     assert db_state["version_questions"][0]["status"] == "approved"
 
-    # 2. Timeout RPC -> 504
+    # 2. Connection loss is also reported as unavailable by Review RPC.
     def timeout_rpc(name: str, params: Optional[Dict[str, Any]] = None):
         class TimeoutBuilder:
             def execute(self):
@@ -1024,9 +1105,11 @@ async def test_f01_strict_fail_closed_when_reserve_rpc_missing_or_timeouts():
 
     client.rpc = timeout_rpc  # type: ignore
     with pytest.raises(ReviewDomainException) as exc_info:
-        await repo.reserve_max_quota_and_start_regenerating(MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID)
-    assert exc_info.value.status_code == 504
-    assert exc_info.value.error_code == "ERR_UPSTREAM_TIMEOUT"
+        await repo.reserve_max_quota_and_start_regenerating(
+            MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID
+        )
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.error_code == "ERR_DATABASE_UNAVAILABLE"
     assert db_state["version_questions"][0]["status"] == "approved"
 
 
@@ -1055,7 +1138,12 @@ async def test_f01_interleaved_revert_blocked_when_session_approved():
         ],
         "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 1}],
         "exam_versions": [
-            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+            {
+                "id": "v-101",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "101",
+                "is_finalized": True,
+            }
         ],
         "source_questions": [
             {
@@ -1119,7 +1207,12 @@ async def test_f04_reservation_rpc_denied_or_empty_fails_closed():
             }
         ],
         "exam_versions": [
-            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True}
+            {
+                "id": "v-101",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "101",
+                "is_finalized": True,
+            }
         ],
         "source_questions": [{"id": "s-1", "session_id": MOCK_SESSION_ID}],
         "version_questions": [
@@ -1135,7 +1228,7 @@ async def test_f04_reservation_rpc_denied_or_empty_fails_closed():
     client = MockSupabaseClient(db_state)
     repo = ReviewRepository(client)
 
-    # Ca 1: RPC returns None -> raises 500 ERR_DATABASE_TRANSACTION_FAILED
+    # Missing or malformed durable receipts must fail closed.
     def rpc_returns_none(name: str, params: Optional[Dict[str, Any]] = None):
         class NoneBuilder:
             def execute(self):
@@ -1148,11 +1241,12 @@ async def test_f04_reservation_rpc_denied_or_empty_fails_closed():
 
     client.rpc = rpc_returns_none  # type: ignore
     with pytest.raises(ReviewDomainException) as exc_info:
-        await repo.reserve_max_quota_and_start_regenerating(MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID)
-    assert exc_info.value.status_code == 500
-    assert exc_info.value.error_code == "ERR_DATABASE_TRANSACTION_FAILED"
+        await repo.reserve_max_quota_and_start_regenerating(
+            MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID
+        )
+    assert exc_info.value.status_code == 503
 
-    # Ca 2: RPC returns empty list [] -> raises 500
+    # An empty list is not a receipt either.
     def rpc_returns_empty(name: str, params: Optional[Dict[str, Any]] = None):
         class EmptyBuilder:
             def execute(self):
@@ -1165,11 +1259,12 @@ async def test_f04_reservation_rpc_denied_or_empty_fails_closed():
 
     client.rpc = rpc_returns_empty  # type: ignore
     with pytest.raises(ReviewDomainException) as exc_info:
-        await repo.reserve_max_quota_and_start_regenerating(MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID)
-    assert exc_info.value.status_code == 500
-    assert exc_info.value.error_code == "ERR_DATABASE_TRANSACTION_FAILED"
+        await repo.reserve_max_quota_and_start_regenerating(
+            MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID
+        )
+    assert exc_info.value.status_code == 503
 
-    # Ca 3: RPC returns {"status": "denied"} -> returns ReserveResult.QUOTA_EXHAUSTED
+    # A legacy denial object is not a valid durable reservation receipt.
     def rpc_returns_denied(name: str, params: Optional[Dict[str, Any]] = None):
         class DeniedBuilder:
             def execute(self):
@@ -1181,34 +1276,34 @@ async def test_f04_reservation_rpc_denied_or_empty_fails_closed():
         return DeniedBuilder()
 
     client.rpc = rpc_returns_denied  # type: ignore
-    res = await repo.reserve_max_quota_and_start_regenerating(MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID)
-    assert res == ReserveResult.QUOTA_EXHAUSTED
-
-    # Ca 4: Integration with ReviewService: When denied, AI generator is NEVER dispatched
-    generator_called = False
-
-    async def fake_generator(**kwargs: Any):
-        nonlocal generator_called
-        generator_called = True
-        return {}
-
-    service = ReviewService(client, ai_generator=fake_generator)
     with pytest.raises(ReviewDomainException) as exc_info:
-        await service.reject_question(MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID)
-    assert exc_info.value.status_code == 429
-    assert exc_info.value.error_code == "ERR_REVIEW_QUOTA_EXHAUSTED"
-    assert generator_called is False  # AI Generator was NEVER invoked!
+        await repo.reserve_max_quota_and_start_regenerating(
+            MOCK_SESSION_ID, MOCK_QUESTION_ID, MOCK_USER_ID
+        )
+    assert exc_info.value.status_code == 503
+    assert db_state["version_questions"][0]["status"] == "approved"
 
 
 @pytest.mark.asyncio
 async def test_f08_error_message_reports_exact_unapproved_count():
     """F08 Precision: If exactly 1 question is unapproved, error message reports 'Còn 1 câu hỏi...', not '2'."""
     db_state = {
+        "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 1}],
         "exam_sessions": [
-            {"id": MOCK_SESSION_ID, "status": "reviewed", "user_id": MOCK_USER_ID, "updated_at": "2026-11-01T00:00:00Z"}
+            {
+                "id": MOCK_SESSION_ID,
+                "status": "reviewed",
+                "user_id": MOCK_USER_ID,
+                "updated_at": "2026-11-01T00:00:00Z",
+            }
         ],
         "exam_versions": [
-            {"id": "v-101", "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True},
+            {
+                "id": "v-101",
+                "session_id": MOCK_SESSION_ID,
+                "version_code": "101",
+                "is_finalized": True,
+            },
         ],
         "source_questions": [
             {"id": "s-1", "session_id": MOCK_SESSION_ID},
@@ -1248,13 +1343,14 @@ async def test_f09_matrix_endpoint_invalid_uuid_raises_400():
 
 
 @pytest.mark.asyncio
-async def test_f11_matrix_normalizes_lowercase_and_whitespace_keys():
-    """F11 Data Normalization: fetch_matrix_raw normalizes lowercase and padded answer keys to uppercase clean characters."""
+async def test_f11_matrix_rejects_noncanonical_keys():
+    """Malformed display keys fail closed rather than being silently normalized."""
     session_id = "00000000-0000-0000-0000-000000000999"
     db_state = {
+        "generation_configs": [{"session_id": session_id, "n_versions": 1}],
         "exam_sessions": [{"id": session_id, "status": "approved"}],
         "exam_versions": [
-            {"id": "v-1", "session_id": session_id, "version_code": "101"},
+            {"id": "v-1", "session_id": session_id, "version_code": "101", "is_finalized": True},
         ],
         "source_questions": [{"id": "s-1", "session_id": session_id}],
         "answer_keys": [
@@ -1264,9 +1360,10 @@ async def test_f11_matrix_normalizes_lowercase_and_whitespace_keys():
     client = MockSupabaseClient(db_state)
     repo = FinalizeRepository(client)
 
-    _, rows = await repo.fetch_matrix_raw(session_id)
-    assert len(rows) == 1
-    assert rows[0]["answer"] == "A", f"Expected normalized 'A', got {rows[0]['answer']!r}"
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await repo.fetch_matrix_raw(session_id)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
 
 
 # ==============================================================================
@@ -1292,7 +1389,9 @@ def test_f18_adversarial_router_prevalidates_uuid_before_assert_ownership(
                 "/api/sessions/not-a-valid-uuid/finalize/approve",
                 headers=auth_headers,
             )
-            assert res_approve.status_code == 400, f"Expected 400, got {res_approve.status_code}: {res_approve.text}"
+            assert res_approve.status_code == 400, (
+                f"Expected 400, got {res_approve.status_code}: {res_approve.text}"
+            )
             data_approve = res_approve.json()
             assert data_approve.get("error_code") == "ERR_INVALID_SESSION_ID"
             assert "not-a-valid-uuid" in data_approve.get("detail", "")
@@ -1303,7 +1402,9 @@ def test_f18_adversarial_router_prevalidates_uuid_before_assert_ownership(
                 "/api/sessions/not-a-valid-uuid/finalize/matrix",
                 headers=auth_headers,
             )
-            assert res_matrix.status_code == 400, f"Expected 400, got {res_matrix.status_code}: {res_matrix.text}"
+            assert res_matrix.status_code == 400, (
+                f"Expected 400, got {res_matrix.status_code}: {res_matrix.text}"
+            )
             data_matrix = res_matrix.json()
             assert data_matrix.get("error_code") == "ERR_INVALID_SESSION_ID"
             assert "not-a-valid-uuid" in data_matrix.get("detail", "")
@@ -1389,17 +1490,19 @@ async def test_f16_adversarial_actor_spoofing_prevented_in_rpc():
                 "updated_at": _now_iso(),
             }
         ],
-        "generation_configs": [
-            {"session_id": session_id, "n_versions": 1}
-        ],
+        "generation_configs": [{"session_id": session_id, "n_versions": 1}],
         "exam_versions": [
             {"id": "v-1", "session_id": session_id, "version_code": "101", "is_finalized": True}
         ],
-        "source_questions": [
-            {"id": "s-1", "session_id": session_id}
-        ],
+        "source_questions": [{"id": "s-1", "session_id": session_id}],
         "version_questions": [
-            {"id": "q-1", "version_id": "v-1", "source_question_id": "s-1", "status": "approved", "is_current": True}
+            {
+                "id": "q-1",
+                "version_id": "v-1",
+                "source_question_id": "s-1",
+                "status": "approved",
+                "is_current": True,
+            }
         ],
     }
 
@@ -1422,8 +1525,3 @@ async def test_f16_adversarial_actor_spoofing_prevented_in_rpc():
     # Verify session A was NOT approved and remains in reviewed status
     assert db_state["exam_sessions"][0]["status"] == "reviewed"
     assert db_state["exam_sessions"][0].get("approved_at") is None
-
-
-
-
-

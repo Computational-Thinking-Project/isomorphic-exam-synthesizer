@@ -1,5 +1,25 @@
 # TASK-302 PostgreSQL schema and RPC tests
 
+### TASK-305 async integration fixtures
+
+The two `tests/services/test_*_real_db_integration.py` modules require `asyncpg`
+and opt in with `RUN_TASK305_REAL_DB_TESTS=1` and
+`EXAM_TEST_DB_DESTRUCTIVE=1`. Each module starts its own
+`postgres:15-alpine` container with a randomly named database and loopback-only
+port, verifies the connected database name, and removes that container in fixture
+cleanup. `PG_TEST_DSN` is not used. Without the opt-in, Docker CLI, or `asyncpg`,
+these tests skip and are not evidence of database verification. This isolation
+does not apply to other tests or demonstrate deployed Supabase behavior.
+
+The TASK-305 shuffle writer test, `test_shuffle_writer_db.py`, additionally
+requires `asyncpg` and an explicitly isolated PostgreSQL 15 container with no
+external network. Provision the disposable `task305_isolated` database using
+`task305_shuffle_bootstrap.sql`, `backend/scripts/schema.sql`, migrations 006,
+007 and 008 in order, then `task305_shuffle_smoke.sql`. Run the test in the
+same container network namespace with `RUN_TASK305_WRITER_DB_TEST=1` and
+`TASK305_WRITER_TEST_DSN` set to the test database on `127.0.0.1`. The test
+performs destructive setup in that database; never point it at a shared service.
+
 These tests execute SQL against **PostgreSQL 15**, rather than mocking Supabase.
 Each suite class creates a disposable container with no network, published ports, host mounts,
 or real credentials, and remove it on completion (including test failures).

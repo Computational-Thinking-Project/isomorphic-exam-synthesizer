@@ -50,4 +50,3 @@ app.include_router(sessions.router, prefix="/api/sessions", tags=["Sessions"])
 app.include_router(source_artifacts.router, prefix="/api/sessions", tags=["Sources"])
 app.include_router(review.router, prefix="/api/sessions", tags=["Review"])
 app.include_router(finalize.router, prefix="/api/sessions", tags=["Finalize"])
-

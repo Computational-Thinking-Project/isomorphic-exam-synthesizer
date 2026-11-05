@@ -24,11 +24,12 @@ from app.models.schemas import (
 from app.services.finalize.repository import FinalizeRepository
 from app.services.finalize.service import FinalizeService
 from app.services.review.repository import ReviewRepository
+from tests.services.isolated_postgres import assert_disposable_database, isolated_pg_dsn  # noqa: F401
 
 asyncpg = pytest.importorskip("asyncpg")
 
 OWNER_ID = "00000000-0000-0000-0000-000000000001"
-PG_DSN = os.getenv("PG_TEST_DSN", "postgresql://postgres@exam_pg:5432/postgres")
+PG_DSN = ""
 
 
 def _literal(val: Any) -> str:
@@ -43,7 +44,9 @@ class AsyncpgRpcResult:
 
 
 class AsyncpgRpcBuilder:
-    def __init__(self, dsn: str, fn_name: str, params: Dict[str, Any], role: str, actor: str) -> None:
+    def __init__(
+        self, dsn: str, fn_name: str, params: Dict[str, Any], role: str, actor: str
+    ) -> None:
         self.dsn = dsn
         self.fn_name = fn_name
         self.params = params
@@ -60,6 +63,7 @@ class AsyncpgRpcBuilder:
 
         if loop and loop.is_running():
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 return pool.submit(asyncio.run, self._execute_async()).result()
         return asyncio.run(self._execute_async())
@@ -144,6 +148,7 @@ class AsyncpgTableBuilder:
 
         if loop and loop.is_running():
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 return pool.submit(asyncio.run, self._execute_async()).result()
         return asyncio.run(self._execute_async())
@@ -179,17 +184,23 @@ class AsyncpgSupabaseAdapter:
 
 
 @pytest.fixture(scope="module", autouse=True)
-async def setup_real_postgres_database():
+async def setup_real_postgres_database(isolated_pg_dsn):  # noqa: F811
     """Initializes schema, roles, migration 006, and migration 007 on real PostgreSQL."""
+    global PG_DSN
+    PG_DSN, expected_database = isolated_pg_dsn
+    conn = await asyncpg.connect(PG_DSN)
     try:
-        conn = await asyncpg.connect(PG_DSN)
-    except Exception as exc:
-        pytest.skip(f"PostgreSQL container not reachable at {PG_DSN}: {exc}")
+        await assert_disposable_database(conn, expected_database)
+    except Exception:
+        await conn.close()
+        raise
 
     mig006_path = "/app/backend/migrations/006_stage3_review_and_shuffle.sql"
     if not os.path.exists(mig006_path):
         mig006_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "../../migrations/006_stage3_review_and_shuffle.sql")
+            os.path.join(
+                os.path.dirname(__file__), "../../migrations/006_stage3_review_and_shuffle.sql"
+            )
         )
     if not os.path.exists(mig006_path):
         pytest.skip("Migration 006 not found on filesystem")
@@ -197,7 +208,9 @@ async def setup_real_postgres_database():
     mig007_path = "/app/backend/migrations/007_finalize_approve_session_rpc.sql"
     if not os.path.exists(mig007_path):
         mig007_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "../../migrations/007_finalize_approve_session_rpc.sql")
+            os.path.join(
+                os.path.dirname(__file__), "../../migrations/007_finalize_approve_session_rpc.sql"
+            )
         )
     if not os.path.exists(mig007_path):
         pytest.skip("Migration 007 not found on filesystem")
@@ -306,6 +319,7 @@ async def reviewed_exam_session():
         INSERT INTO answer_keys(version_id, question_no, correct_option, display_no, display_correct_key)
             VALUES ('{v101_id}', 1, 'A', 1, 'A'),
                    ('{v102_id}', 1, 'B', 1, 'B');
+        UPDATE exam_sessions SET status='reviewed' WHERE id='{s_id}';
         """)
         return {
             "session_id": s_id,
@@ -324,7 +338,9 @@ async def reviewed_exam_session():
 
 @pytest.mark.asyncio
 async def test_f01_interleaving_mutation_blocked_by_approval_on_real_pg(
-    owner_client: AsyncpgSupabaseAdapter, worker_client: AsyncpgSupabaseAdapter, reviewed_exam_session
+    owner_client: AsyncpgSupabaseAdapter,
+    worker_client: AsyncpgSupabaseAdapter,
+    reviewed_exam_session,
 ):
     """F01 Verification on Real PostgreSQL:
     1. Approval commits via finalize_approve_session -> session transitions to 'approved'.
@@ -341,7 +357,9 @@ async def test_f01_interleaving_mutation_blocked_by_approval_on_real_pg(
     q_id = s_info["question_ids"][0]
 
     finalize_svc = FinalizeService(owner_client)
-    review_repo = ReviewRepository(db=owner_client, service_db=worker_client, allow_table_fallback=False)
+    review_repo = ReviewRepository(
+        db=owner_client, service_db=worker_client, allow_table_fallback=False
+    )
 
     # 1. Approval commits
     app_res = await finalize_svc.approve_session(s_id, OWNER_ID)
@@ -351,7 +369,9 @@ async def test_f01_interleaving_mutation_blocked_by_approval_on_real_pg(
     # 2. Worker attempts review reservation on approved session
     op_id = uuid4()
     with pytest.raises(ReviewDomainException) as exc_info:
-        await review_repo.reserve_max_quota_and_start_regenerating(s_id, q_id, OWNER_ID, operation_id=op_id)
+        await review_repo.reserve_max_quota_and_start_regenerating(
+            s_id, q_id, OWNER_ID, operation_id=op_id
+        )
 
     assert exc_info.value.status_code == 423
     assert exc_info.value.error_code == "ERR_SESSION_LOCKED"
@@ -359,7 +379,9 @@ async def test_f01_interleaving_mutation_blocked_by_approval_on_real_pg(
     # 3. Verify PostgreSQL Invariants
     conn = await asyncpg.connect(PG_DSN)
     try:
-        sess_row = await conn.fetchrow(f"SELECT status, approved_at FROM public.exam_sessions WHERE id = '{s_id}'")
+        sess_row = await conn.fetchrow(
+            f"SELECT status, approved_at FROM public.exam_sessions WHERE id = '{s_id}'"
+        )
         assert sess_row["status"] == "approved"
 
         unfinalized_count = await conn.fetchval(
@@ -470,7 +492,7 @@ async def test_idempotent_reapproval_on_real_pg(
 
 @pytest.mark.asyncio
 async def test_generated_session_cannot_be_approved_on_real_pg(
-    owner_client: AsyncpgSupabaseAdapter
+    owner_client: AsyncpgSupabaseAdapter,
 ):
     """State Machine Guard: Session in 'generated' status cannot be approved,
     must raise ERR_INVALID_SESSION_STATE (409).
@@ -491,4 +513,3 @@ async def test_generated_session_cannot_be_approved_on_real_pg(
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.error_code == "ERR_INVALID_SESSION_STATE"
-

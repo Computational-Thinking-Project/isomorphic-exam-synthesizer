@@ -2,6 +2,7 @@
 
 Exposes:
 - POST /api/sessions/{session_id}/finalize/approve: Final approval and content lock
+- POST /api/sessions/{session_id}/finalize/shuffle: Persist a reviewed exam shuffle
 - GET  /api/sessions/{session_id}/finalize/matrix: Answers matrix cross-check
 """
 
@@ -19,6 +20,7 @@ from app.models.schemas import (
     ReviewDomainException,
 )
 from app.services.finalize.service import FinalizeService
+from app.services.shuffler.schemas import FinalizeShuffleResponse
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,22 @@ def validate_session_uuid(session_id: str) -> str:
             detail=f"Mã phiên làm việc '{session_id}' không đúng định dạng UUID",
         )
     return session_id
+
+
+@router.post(
+    "/{session_id}/finalize/shuffle",
+    response_model=FinalizeShuffleResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Shuffle and finalize reviewed exam versions",
+    description="Hoán vị xác định từ dữ liệu canonical của phiên reviewed; ghi nguyên tử trước khi trả kết quả.",
+)
+async def finalize_shuffle_endpoint(
+    session_id: str = Depends(validate_session_uuid),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_user_db),
+) -> FinalizeShuffleResponse:
+    assert_ownership("exam_sessions", session_id, current_user.id, db=db)
+    return await FinalizeService(db).shuffle_session(session_id, current_user.id)
 
 
 @router.post(
@@ -70,7 +88,7 @@ async def finalize_approve_endpoint(
     summary="Get cross-version answers matrix (TASK-305)",
     description=(
         "Truy xuất bảng ma trận đối soát đáp án của tất cả các đề sau hoán vị. "
-        "Ưu tiên lấy từ bảng answer_keys, tự động fallback sang version_questions."
+        "Đọc answer_keys đầy đủ và hợp lệ; trả lỗi 409 nếu dữ liệu không nhất quán."
     ),
 )
 async def finalize_matrix_endpoint(

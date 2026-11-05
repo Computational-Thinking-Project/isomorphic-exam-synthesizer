@@ -18,11 +18,11 @@ from uuid import uuid4
 import pytest
 
 from app.models.schemas import (
-    ReserveResult,
     ReviewAcquireUnavailableError,
     ReviewDomainException,
 )
 from app.services.review.repository import ReviewRepository
+from tests.services.isolated_postgres import assert_disposable_database, isolated_pg_dsn  # noqa: F401
 
 asyncpg = pytest.importorskip("asyncpg")
 
@@ -31,7 +31,7 @@ SESSION_ID = "10000000-0000-0000-0000-000000000001"
 SOURCE_ID = "20000000-0000-0000-0000-000000000001"
 VERSION_ID = "30000000-0000-0000-0000-000000000001"
 QUESTION_ID = "40000000-0000-0000-0000-000000000001"
-PG_DSN = os.getenv("PG_TEST_DSN", "postgresql://postgres@exam_pg:5432/postgres")
+PG_DSN = ""
 
 
 def _literal(val: Any) -> str:
@@ -46,7 +46,9 @@ class AsyncpgRpcResult:
 
 
 class AsyncpgRpcBuilder:
-    def __init__(self, dsn: str, fn_name: str, params: Dict[str, Any], role: str, actor: str) -> None:
+    def __init__(
+        self, dsn: str, fn_name: str, params: Dict[str, Any], role: str, actor: str
+    ) -> None:
         self.dsn = dsn
         self.fn_name = fn_name
         self.params = params
@@ -63,6 +65,7 @@ class AsyncpgRpcBuilder:
 
         if loop and loop.is_running():
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 return pool.submit(asyncio.run, self._execute_async()).result()
         return asyncio.run(self._execute_async())
@@ -112,11 +115,20 @@ class AsyncpgTableBuilder:
         self._limit: Optional[int] = None
 
     def select(self, cols: str) -> "AsyncpgTableBuilder":
-        self._select_cols = cols.replace("!inner", "")
+        if self.table_name == "version_questions" and "exam_versions!inner(session_id)" in cols:
+            self._select_cols = cols.replace(", exam_versions!inner(session_id)", "")
+        else:
+            self._select_cols = cols.replace("!inner", "")
         return self
 
     def eq(self, col: str, val: Any) -> "AsyncpgTableBuilder":
-        self._filters.append(f"{col} = {_literal(val)}")
+        if col == "exam_versions.session_id" and self.table_name == "version_questions":
+            self._filters.append(
+                "EXISTS (SELECT 1 FROM public.exam_versions v WHERE v.id=version_questions.version_id "
+                f"AND v.session_id={_literal(val)})"
+            )
+        else:
+            self._filters.append(f"{col} = {_literal(val)}")
         return self
 
     def neq(self, col: str, val: Any) -> "AsyncpgTableBuilder":
@@ -142,6 +154,7 @@ class AsyncpgTableBuilder:
 
         if loop and loop.is_running():
             import concurrent.futures
+
             with concurrent.futures.ThreadPoolExecutor() as pool:
                 return pool.submit(asyncio.run, self._execute_async()).result()
         return asyncio.run(self._execute_async())
@@ -176,9 +189,16 @@ class AsyncpgSupabaseAdapter:
 
 
 @pytest.fixture(scope="module", autouse=True)
-async def setup_real_postgres_database():
+async def setup_real_postgres_database(isolated_pg_dsn):  # noqa: F811
     """Initializes schema, roles, and migration 006 on real PostgreSQL."""
+    global PG_DSN
+    PG_DSN, expected_database = isolated_pg_dsn
     conn = await asyncpg.connect(PG_DSN)
+    try:
+        await assert_disposable_database(conn, expected_database)
+    except Exception:
+        await conn.close()
+        raise
     try:
         # 1. Setup Roles
         await conn.execute("""
@@ -227,7 +247,9 @@ async def setup_real_postgres_database():
         mig_path = "/app/backend/migrations/006_stage3_review_and_shuffle.sql"
         if not os.path.exists(mig_path):
             mig_path = os.path.abspath(
-                os.path.join(os.path.dirname(__file__), "../../migrations/006_stage3_review_and_shuffle.sql")
+                os.path.join(
+                    os.path.dirname(__file__), "../../migrations/006_stage3_review_and_shuffle.sql"
+                )
             )
         if os.path.exists(mig_path):
             with open(mig_path, "r", encoding="utf-8-sig") as f:
@@ -291,6 +313,54 @@ async def fresh_session():
             VALUES ('{q_id}','{v_id}','{src_id}',1,'Candidate 1','["1","2","3","4"]','A',
                     1,'["1","2","3","4"]','A',NULL,'Sol 1','pending_review',true);
         """)
+        # Review RPCs require immutable confirmed source and Blueprint evidence.
+        from tests.migrations.artifact_fixtures import artifact_payload
+
+        artifact, publication = artifact_payload(src_id)
+        confirmation = str(uuid4())
+        source = artifact["confirmed_input"]
+        receipt = {
+            "confirmation_id": confirmation,
+            "session_id": s_id,
+            "actor_id": OWNER_ID,
+            "sources": [artifact],
+        }
+        await conn.execute(
+            "UPDATE source_questions SET raw_content=$1,options=$2::jsonb,correct_key=$3,solution_md=$4 WHERE id=$5::uuid",
+            source["question_text"],
+            json.dumps(source["options"]),
+            source["correct_answer"],
+            source["solution"],
+            src_id,
+        )
+        await conn.execute(
+            "INSERT INTO source_artifact_confirmations(confirmation_id,session_id,actor_id,result) VALUES ($1::uuid,$2::uuid,$3::uuid,$4::jsonb)",
+            confirmation,
+            s_id,
+            OWNER_ID,
+            json.dumps(receipt),
+        )
+        await conn.execute(
+            "INSERT INTO source_artifact_revisions(source_revision_id,confirmation_id,source_question_id,confirmed_input,source_fingerprint) VALUES ($1::uuid,$2::uuid,$3::uuid,$4::jsonb,$5)",
+            artifact["source_revision_id"],
+            confirmation,
+            src_id,
+            json.dumps(source),
+            artifact["source_fingerprint"],
+        )
+        await conn.execute(
+            "INSERT INTO canonical_blueprint_revisions(blueprint_revision_id,source_revision_id,source_question_id,canonical_blueprint,schema_version) VALUES ($1::uuid,$2::uuid,$3::uuid,$4::jsonb,'0.4.0')",
+            publication["blueprint_revision_id"],
+            artifact["source_revision_id"],
+            src_id,
+            json.dumps(publication["canonical_blueprint"]),
+        )
+        await conn.execute(
+            "INSERT INTO source_artifact_heads(source_question_id,source_revision_id,blueprint_revision_id) VALUES ($1::uuid,$2::uuid,$3::uuid)",
+            src_id,
+            artifact["source_revision_id"],
+            publication["blueprint_revision_id"],
+        )
         return s_id, src_id, v_id, q_id
     finally:
         await conn.close()
@@ -311,20 +381,23 @@ async def test_f09_role_separation_on_real_postgresql(
     """
     s_id, src_id, v_id, q_id = fresh_session
     repo = ReviewRepository(db=owner_client, service_db=worker_client, allow_table_fallback=False)
-    repo_owner_only = ReviewRepository(db=owner_client, service_db=owner_client, allow_table_fallback=False)
+    repo_owner_only = ReviewRepository(
+        db=owner_client, service_db=owner_client, allow_table_fallback=False
+    )
 
     op_id = uuid4()
     # 1. Owner reserve succeeds (authenticated has grant on review_reserve_regeneration)
     reserve_res = await repo.reserve_max_quota_and_start_regenerating(
         s_id, q_id, OWNER_ID, operation_id=op_id
     )
-    assert reserve_res == ReserveResult.OK
+    assert str(reserve_res.operation_id) == str(op_id)
+    assert reserve_res.operation_status == "active"
 
     # 2. Owner attempting to call review_acquire_attempt fails with permission denied (SQL 42501)
     attempt_owner = uuid4()
     with pytest.raises(ReviewAcquireUnavailableError) as exc_info:
         await repo_owner_only.acquire_attempt(op_id, attempt_owner)
-    assert "42501" in str(exc_info.value) or "permission denied" in str(exc_info.value).lower()
+    assert exc_info.value.status_code == 503
 
     # 3. Worker calling review_acquire_attempt succeeds
     attempt_worker = uuid4()
@@ -358,7 +431,8 @@ async def test_f10_candidate_completion_contract_on_real_postgresql(
     res = await repo.reserve_max_quota_and_start_regenerating(
         s_id, q_id, OWNER_ID, operation_id=op_id
     )
-    assert res == ReserveResult.OK
+    assert str(res.operation_id) == str(op_id)
+    assert res.operation_status == "active"
 
     att_id = uuid4()
     permit = await repo.acquire_attempt(op_id, att_id)
@@ -369,12 +443,13 @@ async def test_f10_candidate_completion_contract_on_real_postgresql(
         "options": ["A. $x = 1$", "B. $x = 2$", "C. $x = 5$", "D. $x = 10$"],
         "correct_key": "C",
         "solution_md": "**Lời giải:** Thay $x=5$ vào phương trình thỏa mãn.",
+        "api_calls_count": 1,
         "validation_report": {
             "is_valid": True,
-            "math_verified": True,
+            "math_verified": False,
             "requires_teacher_review": True,
             "warnings": [],
-            "checks": ["algebraic_check", "boundary_check"],
+            "checks": [],
         },
     }
 
@@ -426,14 +501,21 @@ async def test_f02_f06_fail_closed_guarantee(
                 "options": ["A", "B", "C", "D"],
                 "correct_key": "A",
                 "solution_md": "HDG",
-                "validation_report": {"is_valid": True, "math_verified": True},
+                "api_calls_count": 1,
+                "validation_report": {
+                    "is_valid": True,
+                    "math_verified": False,
+                    "requires_teacher_review": True,
+                    "checks": [],
+                    "warnings": [],
+                },
             },
             regeneration_id=fake_op,
             actual_calls=1,
             user_id=OWNER_ID,
         )
 
-    assert exc_info.value.status_code in (404, 500)
+    assert exc_info.value.status_code in (404, 503)
 
 
 # ==============================================================================
@@ -453,4 +535,5 @@ async def test_f04_reservation_lease_validation_real_postgresql(
     res = await repo.reserve_max_quota_and_start_regenerating(
         s_id, q_id, OWNER_ID, operation_id=op_id
     )
-    assert res == ReserveResult.OK
+    assert str(res.operation_id) == str(op_id)
+    assert res.operation_status == "active"
