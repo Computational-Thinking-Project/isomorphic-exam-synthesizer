@@ -206,13 +206,19 @@ The server derives `clone_fingerprint = SHA256(UTF8(_generation_json(record)))`.
 This hashes the entire exact record with the canonical JSON semantics above;
 it is separate from the AI request fingerprint. The stored request_fingerprint
 is NULL. AI rows are backfilled with `result_kind="AI_RESULT"`; their raw_result,
-AI request_fingerprint and persist_generation_result signature/semantics stay intact.
+AI request_fingerprint and persist_generation_result signature stay intact.
+Migration 011 rejects both successful and failed AI writes for frozen clone jobs
+(`public_modes=[]` and `canonical_dimensions=[]`) before any result/projection write
+with `22023 / ERR_CONFIG_CONFLICT: clone job requires ORIGINAL_CLONE result kind`.
+Ordinary AI-mode jobs retain 010's result validation and persistence behavior.
 
 Response: success, replayed, session_id, snapshot_id, version_index,
 source_question_id, version_question_id, result_kind and clone_fingerprint.
 Identical replay under the current token returns the same display ID without a
 write; conflicting input is rejected. Committed success of either kind cannot be
-overwritten. A failed/missing slot may be persisted; a stale token cannot replay.
+overwritten. A failed/missing slot of the valid kind may be persisted; a stale token cannot replay.
+Any prior wrong-kind row, including a failed AI row, conflicts instead of being
+replaced by clone persistence. Preserve it for explicit reconciliation.
 If a committed projection was changed or removed, reconcile explicitly; retry
 must not regenerate/replace that success.
 
@@ -236,7 +242,14 @@ Preserve raw_result in full. Branch on result_kind **before** parsing raw_result
 `AI_RESULT` uses the existing QuestionResult and AI model/prompt/fingerprint cache
 checks; `ORIGINAL_CLONE` uses the clone record, context/slot/source binding and
 clone_fingerprint, and must never enter the AI `completed` cache. Unknown kinds
-fail closed. The DB completed list contains both kinds, not an AI-only cache.
+fail closed. Each job accepts only its frozen mode's kind: `ORIGINAL_CLONE` for
+clone jobs and `AI_RESULT` for other jobs. Before claim/resume/finish returns,
+any active-snapshot row of the wrong kind (successful or failed) raises
+`55006 / ERR_CONFIG_CONFLICT: result kind differs from frozen job`.
+This conflict preserves existing rows, session status/token and projections;
+claim's transaction rolls back any attempted state change. No historical row is
+silently excluded or automatically converted. The committed-slot query also
+filters by the expected kind before checking projection integrity.
 A cache hit does not spend quota or overwrite the persisted provenance.
 
 finish_generation_job accepts generated/partial_generated/failed under the active
@@ -262,7 +275,7 @@ inspect the code as well as SQLSTATE, since 22023 covers multiple business error
 | 22023 | ERR_SOURCE_NOT_READY | 409 |
 | 22023 | ERR_CONFIG_CONFLICT: modes/input/result invalid | 422 |
 | 22023 | ERR_SOURCE_NOT_READY: malformed frozen clone source/options/key/solution | 409 |
-| 55006 | ERR_CONFIG_CONFLICT: missing/changed manifest, retry/state mismatch; stale token | 409 |
+| 55006 | ERR_CONFIG_CONFLICT: missing/changed manifest, retry/state mismatch, persisted wrong result kind; stale token | 409 |
 | 23505 | Immutable target/display-only conflict | 409 |
 | 54000 | Provider quota above 250 | 429 |
 
@@ -275,7 +288,7 @@ not silent data conversion. No down migration or automatic historical backfill i
 011 adds a checked discriminator and separate nullable clone fingerprint to the
 existing result table, relaxing request_fingerprint only for clone rows. Existing
 AI result bytes/projections remain unchanged. Replaying 010 must be followed by
-011 to restore the final public wrappers; private 010 claim/finish wrappers retain
+011 to restore the final public wrappers; private 010 claim/finish/AI-persist wrappers retain
 their original state/legacy checks and are not executable by API roles. Fresh,
 populated-010 upgrade, 011 replay and 010→011 replay are covered by DB tests.
 The base schema deliberately keeps W2 tables in the migration chain, as before.

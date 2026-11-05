@@ -9,6 +9,12 @@
   Frozen source and original display commit atomically; claim/resume/finish check
   exact current projections. Keep 010, AI result serialization/writer, owner/worker
   permissions, current-token fencing and session quota behavior.
+- F12 remediation (06/11/2026, author implementation pending review): 011 wraps
+  the unchanged 010 AI writer to reject clone-job AI success/failure before writes.
+  Completed slots must match the frozen job's result kind. Claim/resume/finish
+  report `55006 / ERR_CONFIG_CONFLICT` for historical wrong-kind rows, including
+  failures; clone persistence preserves them for explicit reconciliation.
+  New clone-job AI writes use the existing `22023 / ERR_CONFIG_CONFLICT` convention.
 - Boundary: persist before shuffle. PR #30 owns Python record/adapter/worker,
   shuffle sequencing and answer/solution remapping. No AI validation/provider
   metadata is invented. No cloud writes, push, merge or review approval is implied.

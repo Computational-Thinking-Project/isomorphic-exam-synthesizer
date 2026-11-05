@@ -15,6 +15,22 @@ DO $$ BEGIN
  END IF;
 END $$;
 
+-- Historical wrong-kind rows require reconciliation, including failed results.
+-- Never hide them as missing slots or mutate them while recovering a job.
+CREATE OR REPLACE FUNCTION public._generation_assert_result_kind(p_session_id uuid,p_snapshot_id uuid)
+RETURNS void LANGUAGE plpgsql STABLE SET search_path=pg_catalog,public,pg_temp AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM public.generation_target_results r
+  JOIN public.generation_job_snapshots j ON j.id=r.snapshot_id AND j.session_id=r.session_id
+  WHERE r.session_id=p_session_id AND r.snapshot_id=p_snapshot_id
+   AND r.result_kind IS DISTINCT FROM CASE
+    WHEN j.public_modes='[]'::jsonb AND j.canonical_dimensions='[]'::jsonb THEN 'ORIGINAL_CLONE'
+    ELSE 'AI_RESULT' END) THEN
+  RAISE EXCEPTION 'ERR_CONFIG_CONFLICT: result kind differs from frozen job; explicit reconciliation required' USING ERRCODE='55006';
+ END IF;
+END $$;
+REVOKE ALL ON FUNCTION public._generation_assert_result_kind(uuid,uuid) FROM PUBLIC,anon,authenticated,service_role;
+
 -- Only exact snapshot slots with an intact generation projection are resumable.
 -- Review/shuffle may change the projection after generation; those lifecycle
 -- changes are not an invitation to regenerate/overwrite an already committed slot.
@@ -31,6 +47,8 @@ LANGUAGE sql STABLE SET search_path=pg_catalog,public,pg_temp AS $$
    'correct_key',r.raw_result->'correct_key','solution_md',r.raw_result->'solution_md','has_warning',false)
   ELSE r.raw_result->'candidate' END c) payload
  WHERE r.session_id=p_session_id AND r.snapshot_id=p_snapshot_id AND r.is_success
+ AND r.result_kind=CASE WHEN j.public_modes='[]'::jsonb AND j.canonical_dimensions='[]'::jsonb
+  THEN 'ORIGINAL_CLONE' ELSE 'AI_RESULT' END
  AND r.version_index BETWEEN 1 AND j.n_versions AND src->>'source_question_id'=r.source_question_id::text
  AND r.question_no=(src->>'question_no')::int AND q.source_question_id=r.source_question_id
  AND q.question_no=r.question_no AND q.canonical_question_no=r.question_no
@@ -88,6 +106,8 @@ BEGIN
  digest:=encode(sha256(convert_to(public._generation_json(expected),'UTF8')),'hex');
  SELECT * INTO prior FROM public.generation_target_results WHERE session_id=s.id AND version_index=ver
   AND source_question_id=(src->>'source_question_id')::uuid;
+ IF prior.id IS NOT NULL AND prior.result_kind IS DISTINCT FROM 'ORIGINAL_CLONE' THEN
+  RAISE EXCEPTION 'ERR_CONFIG_CONFLICT: result kind differs from frozen job; explicit reconciliation required' USING ERRCODE='55006'; END IF;
  IF prior.is_success THEN
   IF prior.result_kind<>'ORIGINAL_CLONE' OR prior.snapshot_id<>job.id OR prior.raw_result IS DISTINCT FROM expected
    OR prior.clone_fingerprint IS DISTINCT FROM digest THEN
@@ -122,6 +142,39 @@ END $$;
 REVOKE ALL ON FUNCTION public.persist_generation_clone(uuid,uuid,jsonb) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.persist_generation_clone(uuid,uuid,jsonb) TO service_role;
 
+-- Retain 010's AI signature and validation, but disallow both AI success and
+-- failure for clone snapshots before delegating any target/projection writes.
+DO $$ BEGIN
+ IF to_regprocedure('public._generation_persist_010(uuid,uuid,integer,uuid,integer,boolean,text,integer,integer,text,jsonb,text,jsonb,text,text,boolean)') IS NULL THEN
+  ALTER FUNCTION public.persist_generation_result(uuid,uuid,int,uuid,int,boolean,text,int,int,text,jsonb,text,jsonb,text,text,boolean)
+   RENAME TO _generation_persist_010;
+ END IF;
+END $$;
+REVOKE ALL ON FUNCTION public._generation_persist_010(uuid,uuid,int,uuid,int,boolean,text,int,int,text,jsonb,text,jsonb,text,text,boolean)
+ FROM PUBLIC,anon,authenticated,service_role;
+CREATE OR REPLACE FUNCTION public.persist_generation_result(p_session_id uuid,p_job_token uuid,p_version_index int,p_source_question_id uuid,
+ p_question_no int,p_is_success boolean,p_error_code text,p_attempts int,p_seed int,p_request_fingerprint text,p_raw_result jsonb,
+ p_content text,p_options jsonb,p_correct_key text,p_solution_md text,p_has_warning boolean DEFAULT false) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE s public.exam_sessions; job public.generation_job_snapshots;
+BEGIN
+ IF public.current_role()<>'service_role' THEN RAISE EXCEPTION 'Worker only' USING ERRCODE='42501'; END IF;
+ SELECT * INTO s FROM public.exam_sessions WHERE id=p_session_id FOR UPDATE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'Session not found' USING ERRCODE='P0002'; END IF;
+ IF s.status<>'generating' OR p_job_token IS NULL OR s.active_job_id IS DISTINCT FROM p_job_token THEN
+  RAISE EXCEPTION 'Fencing token mismatch' USING ERRCODE='55006'; END IF;
+ SELECT * INTO job FROM public.generation_job_snapshots WHERE session_id=s.id;
+ IF job.public_modes='[]'::jsonb AND job.canonical_dimensions='[]'::jsonb THEN
+  RAISE EXCEPTION 'ERR_CONFIG_CONFLICT: clone job requires ORIGINAL_CLONE result kind' USING ERRCODE='22023'; END IF;
+ PERFORM public._generation_assert_result_kind(s.id,job.id);
+ RETURN public._generation_persist_010(p_session_id,p_job_token,p_version_index,p_source_question_id,
+  p_question_no,p_is_success,p_error_code,p_attempts,p_seed,p_request_fingerprint,p_raw_result,
+  p_content,p_options,p_correct_key,p_solution_md,p_has_warning);
+END $$;
+REVOKE ALL ON FUNCTION public.persist_generation_result(uuid,uuid,int,uuid,int,boolean,text,int,int,text,jsonb,text,jsonb,text,text,boolean)
+ FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.persist_generation_result(uuid,uuid,int,uuid,int,boolean,text,int,int,text,jsonb,text,jsonb,text,text,boolean) TO service_role;
+
 -- Keep 010's state, manifest, retry and legacy behavior behind private wrappers.
 DO $$ BEGIN
  IF to_regprocedure('public._generation_claim_010(uuid,boolean)') IS NULL THEN
@@ -136,6 +189,7 @@ DECLARE result jsonb; completed jsonb;
 BEGIN
  result:=public._generation_claim_010(p_session_id,p_is_retry);
  IF result->>'snapshot_id' IS NULL THEN RETURN result; END IF;
+ PERFORM public._generation_assert_result_kind(p_session_id,(result->>'snapshot_id')::uuid);
  SELECT coalesce(jsonb_agg(jsonb_build_object('version_code',(100+r.version_index)::text,'version_index',r.version_index,
   'source_question_id',r.source_question_id,'question_no',r.question_no,'result_kind',r.result_kind)
   ORDER BY r.version_index,r.question_no),'[]') INTO completed
@@ -155,6 +209,7 @@ BEGIN
   RAISE EXCEPTION 'Access denied' USING ERRCODE='42501'; END IF;
  SELECT * INTO job FROM public.generation_job_snapshots WHERE session_id=s.id;
  IF job.id IS NULL THEN RAISE EXCEPTION 'ERR_CONFIG_CONFLICT: missing resume snapshot' USING ERRCODE='55006'; END IF;
+ PERFORM public._generation_assert_result_kind(s.id,job.id);
  SELECT coalesce(jsonb_agg(jsonb_build_object('snapshot_id',r.snapshot_id,'version_index',r.version_index,'source_question_id',r.source_question_id,
   'question_no',r.question_no,'is_success',true,'seed',r.seed,'request_fingerprint',r.request_fingerprint,'raw_result',r.raw_result,
   'result_kind',r.result_kind,'clone_fingerprint',r.clone_fingerprint) ORDER BY r.version_index,r.question_no),'[]') INTO completed
@@ -178,6 +233,7 @@ BEGIN
  IF s.status<>'generating' OR p_job_token IS NULL OR s.active_job_id IS DISTINCT FROM p_job_token THEN
   RAISE EXCEPTION 'Fencing token mismatch' USING ERRCODE='55006'; END IF;
  SELECT * INTO job FROM public.generation_job_snapshots WHERE session_id=s.id;
+ PERFORM public._generation_assert_result_kind(s.id,job.id);
  IF job.id IS NOT NULL AND p_outcome='generated' AND EXISTS(
   SELECT 1 FROM generate_series(1,job.n_versions) ver(idx) CROSS JOIN jsonb_array_elements(job.snapshot_payload->'confirmed_sources') src
   WHERE NOT EXISTS(SELECT 1 FROM public._generation_committed(s.id,job.id) r

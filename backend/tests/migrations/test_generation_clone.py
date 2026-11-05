@@ -64,6 +64,85 @@ async def assert_empty(env):
         assert await env.admin.fetchval(f"SELECT count(*) FROM {table}") == 0
 
 
+async def generation_state(env):
+    return {
+        table: await env.admin.fetchval(
+            f"SELECT coalesce(jsonb_agg(to_jsonb(r) ORDER BY id),'[]')::text FROM {table} r"
+        )
+        for table in (
+            "exam_sessions",
+            "generation_job_snapshots",
+            "generation_target_results",
+            "version_questions",
+            "exam_versions",
+        )
+    }
+
+
+async def assert_kind_conflict(env, operation):
+    before = await generation_state(env)
+    with pytest.raises(asyncpg.PostgresError, match="ERR_CONFIG_CONFLICT: result kind") as error:
+        await operation
+    assert error.value.sqlstate == "55006"
+    assert await generation_state(env) == before
+
+
+async def assert_lifecycle_kind_conflicts(env, job):
+    await assert_kind_conflict(env, rpc(env.owner, "load_generation_completed_results", env.sid))
+    for outcome in ("generated", "partial_generated", "failed"):
+        await assert_kind_conflict(
+            env, rpc(env.worker, "finish_generation_job", env.sid, outcome, job["job_id"])
+        )
+    # Model an already interrupted historical job without calling finish.
+    await env.admin.execute("UPDATE exam_sessions SET status='partial_generated'")
+    await assert_kind_conflict(env, rpc(env.owner, "claim_generation_job", env.sid, True))
+
+
+@pytest.mark.parametrize("db", ["pre_clone"], indirect=True)
+async def test_f12_mixed_clone_results_conflict_on_claim_resume_finish(db):
+    # Seed the historical defect through 010, never bypass the new public guard.
+    job = await start(db, versions=1)
+    ai = result_for(db, job)
+    ai["candidate"]["question_text"] += " AI variant"
+    await persist(db, job, ai)
+    await db.admin.execute(MIGRATION.read_text(encoding="utf-8"))
+    await save(db, job, clone_record(job, index=1))
+    assert await db.admin.fetchval(
+        "SELECT array_agg(result_kind) FROM _generation_committed($1::uuid,$2::uuid)",
+        db.sid,
+        job["snapshot_id"],
+    ) == ["ORIGINAL_CLONE"]
+    await assert_lifecycle_kind_conflicts(db, job)
+
+
+@pytest.mark.parametrize("success", [False, True])
+async def test_clone_rejects_new_ai_results_without_writes(db, success):
+    job = await start(db, versions=1)
+    before = await generation_state(db)
+    with pytest.raises(asyncpg.PostgresError, match="ERR_CONFIG_CONFLICT: clone job") as error:
+        await persist(db, job, result_for(db, job, success=success))
+    assert error.value.sqlstate == "22023"
+    await assert_empty(db)
+    assert await generation_state(db) == before
+
+
+async def test_ai_job_rejects_historical_clone_kind_without_writes(db):
+    await configure(db)
+    job = await rpc(db.owner, "claim_generation_job", db.sid, False)
+    await persist(db, job, result_for(db, job))
+    # Controlled admin fixture: a wrong discriminator in an AI-mode snapshot.
+    await db.admin.execute("""UPDATE generation_target_results SET
+        result_kind='ORIGINAL_CLONE', request_fingerprint=NULL,
+        clone_fingerprint=repeat('a',64), attempts=0""")
+    assert await db.admin.fetchval(
+        "SELECT count(*) FROM _generation_committed($1::uuid,$2::uuid)",
+        db.sid,
+        job["snapshot_id"],
+    ) == 0
+    await assert_kind_conflict(db, persist(db, job, result_for(db, job, index=1)))
+    await assert_lifecycle_kind_conflicts(db, job)
+
+
 @pytest.mark.parametrize("solution", [None, "", "Đáp án A; giữ nguyên $x^2$."])
 async def test_clone_matrix_resume_and_finish_without_quota_or_ai(db, solution):
     for row, blueprint in zip(db.rows, db.blueprints):
@@ -225,7 +304,7 @@ async def test_clone_conflict_and_ai_writer_cannot_overwrite_success(db):
     changed["content"] += " changed"
     with pytest.raises(asyncpg.PostgresError, match="ERR_CONFIG_CONFLICT"):
         await save(db, job, changed)
-    with pytest.raises(asyncpg.PostgresError, match="immutable"):
+    with pytest.raises(asyncpg.PostgresError, match="ERR_CONFIG_CONFLICT: clone job"):
         await persist(db, job, result_for(db, job))
     assert (
         await db.admin.fetchval("SELECT row_to_json(r)::text FROM generation_target_results r")
@@ -234,19 +313,14 @@ async def test_clone_conflict_and_ai_writer_cannot_overwrite_success(db):
 
 
 @pytest.mark.parametrize("success", [False, True])
-async def test_clone_retries_failed_slot_but_preserves_ai_success(db, success):
-    job = await start(db)
-    # Compatibility probe for a slot written through the unchanged 010 AI RPC.
+@pytest.mark.parametrize("db", ["pre_clone"], indirect=True)
+async def test_clone_preserves_historical_wrong_kind_even_when_failed(db, success):
+    job = await start(db, versions=1)
+    # Historical 010 rows survive upgrade, including failed AI writes.
     await persist(db, job, result_for(db, job, success=success))
-    if success:
-        with pytest.raises(asyncpg.PostgresError, match="immutable"):
-            await save(db, job)
-    else:
-        await save(db, job)
-        loaded = await rpc(db.worker, "load_generation_completed_results", db.sid)
-        assert loaded["failures"] == []
-        assert loaded["completed"][0]["result_kind"] == "ORIGINAL_CLONE"
-        assert loaded["completed"][0]["request_fingerprint"] is None
+    await db.admin.execute(MIGRATION.read_text(encoding="utf-8"))
+    await assert_kind_conflict(db, save(db, job))
+    await assert_lifecycle_kind_conflicts(db, job)
 
 
 async def test_clone_acl_nonclone_config_and_wrong_session(db):
@@ -264,6 +338,8 @@ async def test_clone_acl_nonclone_config_and_wrong_session(db):
         for signature in (
             "persist_generation_clone(uuid,uuid,jsonb)",
             "_generation_committed(uuid,uuid)",
+            "_generation_assert_result_kind(uuid,uuid)",
+            "_generation_persist_010(uuid,uuid,int,uuid,int,boolean,text,int,int,text,jsonb,text,jsonb,text,text,boolean)",
             "_generation_claim_010(uuid,boolean)",
             "_generation_finish_010(uuid,text,uuid)",
         ):
@@ -276,6 +352,13 @@ async def test_clone_acl_nonclone_config_and_wrong_session(db):
     )
     with pytest.raises(asyncpg.PostgresError, match="Worker only"):
         await save(db, job, conn=db.owner)
+    for signature in (
+        "_generation_assert_result_kind(uuid,uuid)",
+        "_generation_persist_010(uuid,uuid,int,uuid,int,boolean,text,int,int,text,jsonb,text,jsonb,text,text,boolean)",
+    ):
+        assert not await db.admin.fetchval(
+            "SELECT has_function_privilege('service_role',$1,'EXECUTE')", "public." + signature
+        )
     await assert_empty(db)
 
 
@@ -380,6 +463,14 @@ async def test_clone_replay_migrations_preserves_results_and_resume(db):
             )
         )
         await db.admin.execute(MIGRATION.read_text(encoding="utf-8"))
+        # Reapplying 011 alone and the full 010->011 chain must retain the guard.
+        await db.admin.execute(MIGRATION.read_text(encoding="utf-8"))
+        for success in (False, True):
+            before_rejection = await generation_state(db)
+            with pytest.raises(asyncpg.PostgresError, match="ERR_CONFIG_CONFLICT: clone job") as error:
+                await persist(db, job, result_for(db, job, success=success))
+            assert error.value.sqlstate == "22023"
+            assert await generation_state(db) == before_rejection
     assert (
         await db.admin.fetchval(
             "SELECT jsonb_agg(to_jsonb(r) ORDER BY question_no)::text FROM generation_target_results r"
