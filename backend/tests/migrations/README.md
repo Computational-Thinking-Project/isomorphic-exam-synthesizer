@@ -1,5 +1,82 @@
 # TASK-302 PostgreSQL schema and RPC tests
 
+### TASK-305 async integration fixtures
+
+The two `tests/services/test_*_real_db_integration.py` modules require `asyncpg`
+and opt in with `RUN_TASK305_REAL_DB_TESTS=1` and
+`EXAM_TEST_DB_DESTRUCTIVE=1`. Each module starts its own
+`postgres:15-alpine` container with a randomly named database and loopback-only
+port, verifies the connected database name, and removes that container in fixture
+cleanup. `PG_TEST_DSN` is not used. Without the opt-in, Docker CLI, or `asyncpg`,
+these tests skip and are not evidence of database verification. This isolation
+does not apply to other tests or demonstrate deployed Supabase behavior.
+
+The TASK-305 shuffle writer test, `test_shuffle_writer_db.py`, additionally
+requires `asyncpg` and an explicitly isolated PostgreSQL 15 container with no
+external network. Provision the disposable `task305_isolated` database using
+`task305_shuffle_bootstrap.sql`, `backend/scripts/schema.sql`, migrations 006,
+007 and 008 in order, then `task305_shuffle_smoke.sql`. Run the test in the
+same container network namespace with `RUN_TASK305_WRITER_DB_TEST=1` and
+`TASK305_WRITER_TEST_DSN` set to the test database on `127.0.0.1`. The test
+performs destructive setup in that database; never point it at a shared service.
+
+### PR33 security remediation (migration009)
+
+The current application additionally requires
+`009_finalize_security_boundary.sql`. For this test fixture, provision bootstrap,
+schema,006,007,008 and the existing shuffle smoke seed first, then apply009 last.
+The smoke seed intentionally exercises the historical008 interface; current tests
+exercise the service-only writer introduced by009. Production uses no test seed.
+
+Run `test_finalize_security_boundary.py` alongside the two writer modules below
+with the same explicit disposable opt-in. It adds real authenticated/service-role
+DML and RLS tests, wrong-display-key approval cases, forged-role/body attempts,
+and fresh/legacy forward-upgrade rollback/replay. Upgrade cases create and drop
+only their own random `task305_test_upgrade_<uuid>` database in the verified local
+cluster. Test fixtures emulate broad Supabase table/column grants **before**009;
+they do not infer deployed privileges or relax production guards.
+
+`run_task305_real_db_suites.py` now applies006–009 in its random databases. The
+writer fixtures explicitly switch only their test connection's principal to model
+the trusted backend; raw client-denial cases do not use that helper. Local SQL
+execution results are separate from opt-in skips in ordinary CI.
+
+See [Finalize RPC contract](../../../docs/api/finalize-rpc-contract.md) for the
+owner-reader/service-writer split and coordinated rollout requirement. Run these
+DB suites sequentially without pytest-xdist because fault triggers are shared
+test fixtures inside the disposable database.
+
+`test_shuffle_writer_adversarial.py` uses the same explicit writer opt-in and
+loopback-only `task305_isolated` DSN. It creates a separate 2 x 3 session per
+case, checks full-row rollback (including history/timestamps), real PostgreSQL
+ACLs, malformed/live/stale input, Unicode solution parity, repair/no-op retries,
+lost receipts, silent-trigger faults and `pg_blocking_pids` interleavings.
+Run it together with `test_shuffle_writer_db.py`, sequentially: its fault
+triggers are cluster-test fixtures and must not run against shared data or in
+parallel workers.
+
+For a Python runner sharing the network namespace of that **new disposable,
+network-none** PostgreSQL container, without a Docker CLI inside the runner:
+
+```sh
+# Working directory: backend; asyncpg is required (verified with 0.32.0).
+RUN_TASK305_WRITER_DB_TEST=1 \
+TASK305_WRITER_TEST_DSN=postgresql://postgres@127.0.0.1/task305_isolated \
+python -m pytest tests/migrations/test_shuffle_writer_db.py \
+  tests/migrations/test_shuffle_writer_adversarial.py -q -p no:cacheprovider
+
+RUN_TASK305_REAL_DB_TESTS=1 EXAM_TEST_DB_DESTRUCTIVE=1 \
+python tests/migrations/run_task305_real_db_suites.py
+```
+
+The second command replaces only the pytest fixture's Docker-launch step with
+random `task305_test_<uuid>` databases in that verified local test cluster.
+The existing suites and their `assert_disposable_database` guard still run
+before destructive DDL. It drops only the random databases it creates. This
+alternate runner does not verify the default fixture's Docker-launch path;
+`test_isolated_postgres_fixture.py` separately checks that path's refusal and
+cleanup guards. No external DSN or production/staging database is accepted.
+
 These tests execute SQL against **PostgreSQL 15**, rather than mocking Supabase.
 Each suite class creates a disposable container with no network, published ports, host mounts,
 or real credentials, and remove it on completion (including test failures).
