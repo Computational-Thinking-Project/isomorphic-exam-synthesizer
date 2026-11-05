@@ -1,5 +1,3 @@
-> Cập nhật AI W2 24/10/2026: xác nhận đề nguồn trước khi sinh Blueprint; không có Blueprint editor/prompt giáo viên; candidate và solution cùng request. [ADR chính thức](adr/0001-confirm-before-blueprint.md) và [contract hiện tại](ai-w2-integration.md) thay các mô tả flow cũ bên dưới.
-
 # Isomorphic Exam Synthesizer — Architecture & Component Breakdown
 
 > **Tài liệu phân rã kiến trúc chi tiết (Architecture Breakdown) — Phiên bản hoàn chỉnh**
@@ -21,7 +19,7 @@ flowchart TB
         direction TB
         FE_Auth["1.1 Auth & Session Manager"]
         FE_Dash["1.2 Dashboard & Statistics"]
-        FE_S1["1.3 Stage 1: Ingestion, Edit & Blueprint Confirmation"]
+        FE_S1["1.3 Stage 1: Ingestion, Source Preview & Confirmation"]
         FE_S2["1.4 Stage 2: Generation Configurator"]
         FE_S3["1.5 Stage 3: 1-to-1 Side-by-Side Review"]
         FE_Approve["1.6 Final Approval & Package Preview"]
@@ -34,7 +32,7 @@ flowchart TB
         direction TB
         BE_Gateway["2.1 API Router & Auth Middleware"]
         BE_Parser["2.2 Document Parser Service"]
-        BE_Blueprint["2.3 Blueprint Correction & Management"]
+        BE_Blueprint["2.3 Auto-Blueprint & Source Confirmation"]
         BE_ConfigVal["2.4 Config Validator"]
         BE_Orchestrator["2.5 Generation Orchestrator (Auto-retry)"]
         BE_JobStream["2.6 Background Job & Progress Streamer (SSE)"]
@@ -105,7 +103,7 @@ flowchart TB
 | **FE-02** | **Dashboard & History** | Danh sách đề thi đã lưu: ngày tạo, trạng thái (Draft → Reviewed → Exported). Cho phép xem lại, tải về hoặc **tái sử dụng phiên** (reuse session — bắt đầu phiên mới từ source đã xác nhận). | UC03 |
 | **FE-03** | **Analytics & Metrics View** | Thống kê: tổng số mã đề đã tạo, tỷ lệ duyệt lần đầu (*first-pass acceptance rate*), tần suất sinh lại câu (*regeneration frequency*). **Không** hiển thị "comparative time savings". | UC04 |
 | **FE-04** | **Stage 1: Document Ingestor** | Kéo thả upload file (`.docx`, `.tex`, `.md`) hoặc nhập text trực tiếp. **Chặn nhận file PDF** (Chỉ hỗ trợ xuất PDF, không nhận input PDF để đảm bảo độ chính xác bóc tách). Giới hạn MIME types cho phép và kích thước file tối đa. | UC05 |
-| **FE-05** | **Stage 1: Source Editor & Blueprint Confirmer** | Hiển thị câu hỏi đã bóc tách kèm Blueprint (biến số, khoảng giá trị, điều kiện bất biến). Cho phép giảng viên **chỉnh sửa nội dung nguồn và blueprint** trước khi bấm "Confirm". Bao gồm **Blueprint Rule Renderer** hiển thị quy tắc biến thể dạng ngôn ngữ tự nhiên / toán học thân thiện. | UC05, UC06 |
+| **FE-05** | **Stage 1: Source Question Previewer & Confirmer** | Hiển thị danh sách câu hỏi và đáp án nguồn đã bóc tách bằng KaTeX ở chế độ chỉ đọc (Read-only), cho phép giảng viên kiểm tra độ chính xác của đề gốc. Toàn bộ cơ chế Blueprint được chuyển thành **hộp đen (black box)** ngầm phía sau: không hiển thị thẻ tham số/quy tắc và không có nút trích xuất lại Blueprint. Giảng viên chỉ có 1 thao tác chính: bấm **"Xác nhận đề gốc và tiếp tục"** (kèm checkbox an ninh bắt buộc nếu có cảnh báo) để chuyển sang Stage 2. | UC05, UC06 |
 | **FE-06** | **Stage 2: Configurator** | Form cấu hình: chọn số lượng mã đề ($N \in [1, 4]$), bật/tắt chế độ biến thể (variation modes) từ Blueprint đã xác nhận, thiết lập ordering preferences. Validation phía client + server-side (BE-04). | UC07 |
 | **FE-07** | **Stage 3: Side-by-Side Reviewer** | Giao diện cốt lõi: so sánh song song **ánh xạ 1-1** (1-to-1 question mapping) giữa câu gốc và câu biến thể. Hiển thị **warning badges** từ `validation_report` cho các câu bị lỗi syntax/duplicate/domain. **KHÔNG** cho phép chỉnh sửa text thủ công trên câu sinh nhằm bảo toàn tính toàn vẹn của Blueprint. | UC09 |
 | **FE-08** | **Stage 3: Review Action Bar** | Cung cấp thao tác nhị phân nghiêm ngặt cho từng câu: **Accept** (chấp nhận) hoặc **Reject** (từ chối → kích hoạt targeted regeneration). Nút khẩn cấp **Revert to Source** để quay về câu gốc đã xác thực khi AI sinh lại liên tục thất bại. **Tuyệt đối không** có ô nhập text thủ công. | UC09 |
@@ -122,14 +120,14 @@ flowchart TB
 | :--- | :--- | :--- | :--- |
 | **BE-01** | **API Router & Auth Middleware** | Điểm tiếp nhận request, kiểm tra JWT token (Supabase), xử lý CORS, phân quyền user. Tất cả endpoints sử dụng **async** (`async def`). | Tất cả |
 | **BE-02** | **Document Parsing Service** | Bóc tách câu hỏi, 4 phương án A/B/C/D, đáp án, và lời giải gốc (nếu có) từ file tải lên. Sử dụng `python-docx` (DOCX), regex/AST (LaTeX), parser (Markdown). **Chặn** file PDF ở tầng server (validate MIME + extension). Giới hạn kích thước file. | UC05 |
-| **BE-03** | **Blueprint Correction & Management Service** | Quản lý vòng đời Blueprint: nhận bản trích xuất từ AI-02, cung cấp **PATCH API** cho giảng viên chỉnh sửa source và blueprint trước khi xác nhận, lưu bản đã duyệt dạng JSONB. | UC06 |
+| **BE-03** | **Source Confirmation & Auto-Blueprint Engine** | Vận hành động cơ Blueprint hộp đen: tự động kích hoạt AI-02 trích xuất quy tắc ngầm sau khi nạp đề nguồn thành công và lưu vào `question_blueprints`. Cung cấp API xác nhận đề gốc (`POST /api/sessions/{session_id}/confirm-source`) để khóa dữ liệu đề nguồn, kiểm tra Blueprint nội bộ sẵn sàng, xác thực cảnh báo an ninh và chuyển trạng thái session sang `blueprinted` / sẵn sàng cấu hình. Loại bỏ các endpoint người dùng can thiệp/sửa đổi Blueprint. | UC06 |
 | **BE-04** | **Config Validator** | Kiểm tra tính hợp lệ **server-side** cho cấu hình sinh đề: $N \in [1, 4]$, variation modes phải thuộc tập cho phép từ Blueprint đã xác nhận, ordering preferences hợp lệ. Trả thông báo xung đột rõ ràng nếu cấu hình vi phạm ràng buộc. | UC07 |
 | **BE-05** | **Generation Orchestrator** | Điều phối luồng sinh $N \le 4$ mã đề: gửi prompt đến AI (AI-03, AI-04) → nhận kết quả → chuyển sang Validator (VAL-01..04) → kích hoạt Auto-retry nếu lỗi (tối đa 3 lần). **Sau 3 lần retry thất bại: vẫn trả draft kèm `validation_report` chứa warning badges** để giảng viên xem xét — KHÔNG chặn pipeline. | UC08 |
-| **BE-06** | **Background Job & Progress Streamer** | Sinh đề cho $N$ mã đề × nhiều câu hỏi có thể mất hàng chục giây đến vài phút. Module này quản lý **background task** (FastAPI `BackgroundTasks` hoặc task queue) và **stream tiến trình real-time** qua **Server-Sent Events (SSE)** endpoint: trạng thái từng câu (generating → validating → done / retrying), phần trăm hoàn thành, thông báo lỗi. | UC08 |
+| **BE-06** | **Background Job & Progress Streamer** | Sinh đề cho $N$ mã đề × nhiều câu hỏi có thể mất hàng chục giây đến vài phút. Module này quản lý **background task** (FastAPI `BackgroundTasks` hoặc task queue) và **stream tiến trình real-time** qua **Server-Sent Events (SSE)** endpoint (`GET /api/sessions/{session_id}/events?ticket={ticket}&last_event_id={id}`) với cơ chế cấp ticket xác thực ngắn hạn (`POST /api/sessions/{session_id}/events/ticket`): trạng thái từng câu (generating → validating → done / retrying), phần trăm hoàn thành, thông báo lỗi và cơ chế replay sự kiện. | UC08 |
 | **BE-07** | **Targeted Regeneration Service** | Tiếp nhận sự kiện Reject một câu cụ thể từ FE-08: gọi AI sinh lại **duy nhất câu đó** (giữ nguyên toàn bộ các câu còn lại), chạy validate → lưu `validation_report` mới → trả kết quả về màn hình Review để giảng viên re-review bắt buộc. | UC09 |
 | **BE-08** | **Fallback & Revert Handler** | Khi AI sinh lại liên tục thất bại cho một câu cụ thể: cho phép phục hồi (revert) câu biến thể về lại **nguyên bản câu hỏi gốc đã xác thực** (truy xuất qua FK `source_question_id`). Cập nhật trạng thái câu thành `approved` (với flag `is_reverted = true`). | UC09 |
 | **BE-09** | **Shuffler & Key Synchronizer** | Chỉ chạy **sau khi 100% câu hỏi được Approve** thực hiện hoán vị ngẫu nhiên thứ tự câu và thứ tự các lựa chọn A/B/C/D cho từng mã đề; tự động đồng bộ lại bảng ma trận đáp án (`answer_keys`) và ánh xạ lời giải khớp chính xác với từng mã đề mới. | UC09 |
-| **BE-10** | **Audit, Statistics & Observability Logger** | Ghi nhật ký tương tác chi tiết với enum `action_type` (`ACCEPT`, `REJECT`, `REGENERATE`, `REVERT`). Tổng hợp dữ liệu thống kê cho UC04: first-pass acceptance rate, regeneration frequency. Đo **latency** (thời gian phản hồi AI, thời gian validate), **failure rate** (tỷ lệ retry/revert), **recovery**. | UC04 |
+| **BE-10** | **Audit, Statistics & Observability Logger** | Ghi nhật ký tương tác chi tiết với enum `action_type` (`ACCEPT`, `REJECT`, `REVERT`, `REJECT_FAILED`) vào bảng `review_logs`, ghi sự kiện bảo mật vào `security_events`. Cung cấp dữ liệu thống kê cho UC04 thông qua PostgreSQL Stored Function (RPC) `get_user_analytics`. Đo latency, first-pass acceptance rate, recovery rate. | UC04 |
 
 ---
 
@@ -138,7 +136,7 @@ flowchart TB
 | Mã | Tên Module | Mô tả & Trách nhiệm | Ánh xạ UC |
 | :--- | :--- | :--- | :--- |
 | **AI-01** | **Gemini Client Wrapper** | Quản lý kết nối SDK (`google-genai`), xử lý API Key, thiết lập timeout. Cơ chế **exponential backoff** khi bị rate limit. **Chiến lược batch/concurrent** cho pipeline $N \le 4$ mã đề × nhiều câu: dùng `asyncio.gather` với semaphore để kiểm soát số lượng request song song, tránh vượt rate limit. Hỗ trợ Prompt Caching nếu API cho phép (giảm token chi phí cho phần Blueprint lặp lại). | Tất cả |
-| **AI-02** | **Blueprint Extraction Pipeline** | Prompt chuyên biệt phân tích câu hỏi gốc: trích xuất hằng số, biến số, khoảng giá trị tham số, điều kiện bất biến. Là **include** của UC05 (UC05 → UC11). Có cơ chế **retry/fallback** nếu AI trích xuất sai: gửi lại prompt với phản hồi lỗi; nếu thất bại, trả kết quả rỗng để giảng viên nhập tay. | UC11 |
+| **AI-02** | **Blueprint Extraction Pipeline** | Prompt chuyên biệt phân tích câu hỏi gốc: trích xuất hằng số, biến số, khoảng giá trị tham số, điều kiện bất biến (chạy như hộp đen tự động ở backend). Là **include** của UC05 (UC05 → UC11). Tự động retry nội bộ với schema repair nếu AI trích xuất sai để đảm bảo blueprint sẵn sàng cho Stage 2 mà không yêu cầu giảng viên can thiệp. | UC11 |
 | **AI-03** | **Isomorphic Variant Generator** | Prompt sinh câu hỏi biến thể dựa trên Blueprint đã xác nhận: đảm bảo cùng phương pháp giải, thay đổi dữ liệu theo quy tắc cho phép, tạo 3 phương án nhiễu (distractors) hợp lý. | UC12 |
 | **AI-04** | **Step-by-Step Solver** | Prompt giải chi tiết từng bước cho từng câu biến thể: phục vụ giảng viên chấm thi, kiểm tra đối chiếu, và xuất bản kèm gói lời giải. | UC12 |
 | **AI-05** | **Structured Output Enforcer & Schema Repair** | Ràng buộc phản hồi Gemini theo **JSON Schema** chuẩn (Pydantic models). Khi Gemini trả JSON sai schema lần đầu: thực hiện **schema repair pass** — gửi lại prompt kèm thông báo lỗi schema cụ thể (trường thiếu, kiểu sai) để AI tự sửa, trước khi kích hoạt full retry ở tầng Orchestrator. | Tất cả |
@@ -193,22 +191,23 @@ Mỗi câu hỏi được validate sẽ sinh ra một `validation_report` (JSONB
 
 | Bảng | Trách nhiệm | Các cột / quan hệ chính |
 | :--- | :--- | :--- |
-| **`users`** | Định danh giảng viên từ Google OAuth. | `id` (UUID PK), `email`, `name`, `avatar_url`, `created_at` |
-| **`exam_sessions`** | Phiên làm việc chính. | `id` (UUID PK), `user_id` (FK → users), `title`, `subject`, `status` (ENUM: `draft`, `blueprinted`, `configured`, `generated`, `reviewed`, `approved`, `exported`), `created_at`, `updated_at` |
-| **`source_questions`** | Câu hỏi gốc bóc tách từ đề ban đầu. | `id` (UUID PK), `session_id` (FK), `question_no` (INT), `stem_latex` (TEXT), `options` (JSONB — mảng 4 phương án), `correct_option` (CHAR: A/B/C/D), `solution_md` (TEXT, nullable — lời giải gốc nếu có), `raw_source` (TEXT) |
-| **`question_blueprints`** | Cấu trúc Blueprint dạng JSONB. | `id` (UUID PK), `source_question_id` (FK → source_questions, **1-to-1**), `parameters` (JSONB — danh sách biến, khoảng giá trị), `invariants` (JSONB — điều kiện bất biến), `variation_modes` (JSONB — các chế độ biến đổi cho phép), `readable_summary` (TEXT — mô tả thân thiện), `confirmed_at` (TIMESTAMP, nullable) |
-| **`generation_configs`** | Cấu hình sinh đề cho phiên. | `id` (UUID PK), `session_id` (FK → exam_sessions, **1-to-1**), `n_versions` (INT, 1–4), `active_variation_modes` (JSONB — chế độ biến thể đang bật), `ordering_preferences` (JSONB), `created_at` |
-| **`exam_versions`** | Thông tin $N$ mã đề đã sinh. | `id` (UUID PK), `session_id` (FK), `version_label` (VARCHAR — "101", "102", ...), `shuffle_seed` (INT, nullable — ghi lại seed hoán vị), `is_finalized` (BOOL) |
-| **`version_questions`** | Chi tiết từng câu của từng mã đề. **Bảng trung tâm của hệ thống.** | `id` (UUID PK), `version_id` (FK → exam_versions), **`source_question_id`** (FK → source_questions — **ánh xạ 1-to-1 bắt buộc**, phục vụ side-by-side và Revert), `question_no` (INT — thứ tự sau shuffle), `original_no` (INT — thứ tự trước shuffle), `stem_latex` (TEXT), `options` (JSONB), `correct_option` (CHAR), **`solution_md`** (TEXT — lời giải chi tiết), **`solution_latex`** (TEXT, nullable), `status` (ENUM: `pending`, `approved`, `rejected`), `is_reverted` (BOOL DEFAULT false — đánh dấu câu đã revert về gốc), **`validation_report`** (JSONB — kết quả kiểm tra tự động, phục vụ warning badges), `retry_count` (INT DEFAULT 0) |
-| **`answer_keys`** | Ma trận đáp án chính thức sau shuffle. | `id` (UUID PK), `version_id` (FK → exam_versions), `question_no` (INT — thứ tự sau shuffle), `correct_option` (CHAR: A/B/C/D) |
-| **`review_logs`** | Nhật ký hành động duyệt chi tiết. | `id` (UUID PK), `version_question_id` (FK → version_questions), `user_id` (FK → users), **`action_type`** (ENUM: `ACCEPT`, `REJECT`, `REGENERATE`, `REVERT` — cần thiết để tính first-pass acceptance rate), `reason` (TEXT, nullable), `regenerated_from_id` (FK → version_questions, nullable — liên kết câu cũ bị thay thế), `latency_ms` (INT, nullable — đo thời gian phản hồi), `created_at` |
+| **`users`** | Định danh giảng viên từ Google OAuth. | `id` (UUID PK), `email` (TEXT UNIQUE), `full_name` (TEXT), `avatar_url` (TEXT), `created_at` (TIMESTAMPTZ) |
+| **`exam_sessions`** | Phiên làm việc chính của đề thi. | `id` (UUID PK), `user_id` (UUID FK → users), `title` (TEXT), `subject` (TEXT), `status` (ENUM `session_status`: `draft`, `blueprinted`, `configured`, `generating`, `partial_generated`, `generated`, `reviewed`, `approved`, `exported`, `failed`), `gemini_call_count` (INT DEFAULT 0), `retry_count` (INT DEFAULT 0), `gemini_review_calls` (INT DEFAULT 0), `approved_at` (TIMESTAMPTZ NULL), `created_at`, `updated_at` |
+| **`source_questions`** | Câu hỏi gốc bóc tách từ đề ban đầu. | `id` (UUID PK), `session_id` (UUID FK), `question_no` (INT), `stem_latex` (TEXT), `options` (JSONB — mảng 4 phương án `[{"key": "A", "text": "..."}]`), `correct_option` (CHAR(1)), `solution_md` (TEXT NULL), `raw_source` (TEXT NULL), `has_missing_answer` (BOOL DEFAULT false), `has_unparsed_omml` (BOOL DEFAULT false), `has_security_warning` (BOOL DEFAULT false), `created_at` |
+| **`question_blueprints`** | Cấu trúc quy tắc biến thể dạng JSONB. | `id` (UUID PK), `source_question_id` (UUID FK → source_questions, **1-to-1**), `parameters` (JSONB — danh sách biến, khoảng giá trị), `invariants` (JSONB — điều kiện bất biến), `variation_modes` (JSONB — các chế độ cho phép), `readable_summary` (TEXT), `confirmed_at` (TIMESTAMPTZ NULL), `created_at` |
+| **`generation_configs`** | Cấu hình sinh đề cho phiên. | `id` (UUID PK), `session_id` (UUID FK → exam_sessions, **1-to-1**), `n_versions` (INT 1–4), `active_variation_modes` (JSONB), `ordering_preferences` (JSONB), `created_at` |
+| **`exam_versions`** | Thông tin $N$ mã đề đã sinh. | `id` (UUID PK), `session_id` (UUID FK), `version_label` (VARCHAR — "101", "102"...), `shuffle_seed` (TEXT NULL — seed ngẫu nhiên xác định), `permutations` (JSONB NULL — ma trận hoán vị câu và phương án), `is_finalized` (BOOL DEFAULT false), `created_at` |
+| **`version_questions`** | Chi tiết từng câu của từng mã đề. **Bảng trung tâm của hệ thống.** | `id` (UUID PK), `version_id` (UUID FK → exam_versions), **`source_question_id`** (UUID FK → source_questions — **ánh xạ 1-to-1 bắt buộc**), `canonical_question_no` (INT — thứ tự câu chuẩn 1..M từ đề gốc, bất biến), `question_no` (INT — thứ tự câu hiển thị trên đề thi; cập nhật theo hoán vị sau shuffle), `canonical_options` (JSONB — mảng 4 phương án gốc chuẩn `[{"key": "A", "text": "..."}]`), `canonical_correct_key` (CHAR(1) — đáp án đúng gốc "A".."D"), `canonical_solution_md` (TEXT NULL — lời giải chuẩn gốc), `stem_latex` (TEXT), `options` (JSONB — mảng 4 phương án hiển thị sau shuffle), `correct_option` (CHAR(1) — đáp án đúng hiển thị sau shuffle), `solution_md` (TEXT — lời giải hiển thị sau shuffle, lưu trong DB), `status` (ENUM `question_status`: `pending_review`, `approved`, `rejected`, `regenerating`), `is_current` (BOOL DEFAULT true), `regenerated_from_id` (UUID NULL FK), `is_reverted` (BOOL DEFAULT false), `has_warning` (BOOL DEFAULT false), `validation_report` (JSONB), `retry_count` (INT DEFAULT 0), `updated_at` (TIMESTAMPTZ DEFAULT now()), `created_at`. *Chỉ mục duy nhất: Partial Index `(version_id, source_question_id) WHERE is_current = TRUE`.* |
+| **`answer_keys`** | Ma trận đáp án chính thức sau shuffle. | `id` (UUID PK), `version_id` (UUID FK), `display_no` (INT — thứ tự câu sau shuffle), `display_correct_key` (CHAR(1) — A/B/C/D sau shuffle), `canonical_question_no` (INT — thứ tự câu gốc để đối chiếu), `created_at` |
+| **`review_logs`** | Nhật ký hành động duyệt chi tiết. | `id` (UUID PK), `version_question_id` (UUID FK), `user_id` (UUID FK), `action_type` (ENUM `review_action_type`: `ACCEPT`, `REJECT`, `REVERT`, `REJECT_FAILED`), `reason` (TEXT NULL), `regenerated_from_id` (UUID NULL), `latency_ms` (INT NULL), `created_at` |
+| **`security_events`** | Nhật ký an ninh & chống can thiệp (Append-only). | `id` (UUID PK), `session_id` (UUID NULL FK), `user_id` (UUID NULL FK), `event_type` (TEXT), `severity` (TEXT: `INFO`, `WARN`, `CRITICAL`), `sanitized_details` (JSONB NOT NULL DEFAULT '{}'::jsonb), `ip_address` (TEXT NULL), `created_at` (TIMESTAMPTZ NOT NULL DEFAULT now()) |
 
 #### 2.6.2. Storage Buckets
 
 | Bucket | Trách nhiệm | Chính sách |
 | :--- | :--- | :--- |
 | **`exam-raw-files`** | File gốc tải lên (`.docx`, `.tex`, `.md`). | RLS: chỉ user sở hữu session mới truy cập. **Chặn MIME PDF.** |
-| **`exam-export-bundles`** | Gói PDF/ZIP thành phẩm sẵn sàng tải về. | RLS: chỉ user sở hữu session mới truy cập. **Retention policy:** tự động xóa sau 90 ngày không truy cập (cấu hình lifecycle rule). |
+| **`exam-export-bundles`** | Gói PDF/ZIP thành phẩm sẵn sàng tải về. | RLS: chỉ user sở hữu session mới truy cập. **Retention policy:** tự động xóa sau **90 ngày kể từ ngày tạo file (`created_at`)** (cấu hình lifecycle rule). |
 
 #### 2.6.3. Bảo mật — Row Level Security (RLS)
 
@@ -238,6 +237,7 @@ erDiagram
     exam_sessions ||--o{ source_questions : "contains"
     exam_sessions ||--|| generation_configs : "has config"
     exam_sessions ||--o{ exam_versions : "produces"
+    exam_sessions ||--o{ security_events : "records"
 
     source_questions ||--|| question_blueprints : "has blueprint"
     source_questions ||--o{ version_questions : "is source of (1-to-1 mapping)"
@@ -250,13 +250,19 @@ erDiagram
     users {
         uuid id PK
         text email
-        text name
+        text full_name
+        text avatar_url
     }
     exam_sessions {
         uuid id PK
         uuid user_id FK
         text title
+        text subject
         enum status
+        int gemini_call_count
+        int retry_count
+        int gemini_review_calls
+        timestamptz approved_at
     }
     source_questions {
         uuid id PK
@@ -266,13 +272,18 @@ erDiagram
         jsonb options
         char correct_option
         text solution_md
+        bool has_missing_answer
+        bool has_unparsed_omml
+        bool has_security_warning
     }
     question_blueprints {
         uuid id PK
         uuid source_question_id FK
         jsonb parameters
         jsonb invariants
+        jsonb variation_modes
         text readable_summary
+        timestamptz confirmed_at
     }
     generation_configs {
         uuid id PK
@@ -285,32 +296,56 @@ erDiagram
         uuid id PK
         uuid session_id FK
         varchar version_label
+        text shuffle_seed
+        jsonb permutations
         bool is_finalized
     }
     version_questions {
         uuid id PK
         uuid version_id FK
         uuid source_question_id FK
+        int question_no
+        int original_no
+        int canonical_question_no
+        jsonb canonical_options
+        char canonical_correct_key
+        text canonical_solution_md
         text stem_latex
         jsonb options
         char correct_option
         text solution_md
         enum status
+        bool is_current
+        uuid regenerated_from_id FK
         bool is_reverted
+        bool has_warning
         jsonb validation_report
+        int retry_count
+        timestamptz updated_at
     }
     answer_keys {
         uuid id PK
         uuid version_id FK
-        int question_no
-        char correct_option
+        int display_no
+        char display_correct_key
+        int canonical_question_no
     }
     review_logs {
         uuid id PK
         uuid version_question_id FK
+        uuid user_id FK
         enum action_type
         text reason
         int latency_ms
+    }
+    security_events {
+        uuid id PK
+        uuid session_id FK
+        uuid user_id FK
+        text event_type
+        text severity
+        jsonb details
+        text ip_address
     }
 ```
 
@@ -392,27 +427,36 @@ sequenceDiagram
     Note over I, S: ── Stage 1: Source Exam Preparation ──
 
     I ->> FE: Upload file (.docx/.tex/.md)
-    FE ->> BE: POST /api/ingest (file + session_id)
-    BE ->> BE: Parse document (BE-02)
-    BE ->> AI: Analyze & extract blueprints (AI-02 / UC11)
-    AI -->> BE: Structured blueprint JSON
-    BE ->> DB: Save source_questions + question_blueprints
-    BE -->> FE: Return parsed questions + blueprints
-    FE -->> I: Display editable source & Blueprint Rule Renderer
+    FE ->> BE: POST /api/sessions/{session_id}/ingest-file
+    BE ->> BE: Validate in-memory (BE-02)
+    alt Validation failed (missing answer, OMML error)
+        BE -->> FE: HTTP 422 Unprocessable Entity (DB untouched)
+        FE -->> I: Show Content Incomplete popup (Re-upload required)
+    else Ingestion Valid
+        BE ->> DB: Transaction: Delete old draft -> Insert source_questions
+        BE ->> AI: Extract blueprints (AI-02 / UC11 - Black box)
+        AI -->> BE: Structured blueprint JSON
+        BE ->> DB: Save question_blueprints (Internal)
+        BE -->> FE: Return parsed source questions & answers
+        FE -->> I: Render read-only source preview (KaTeX)
+    end
 
-    I ->> FE: Edit source/blueprint → Confirm
-    FE ->> BE: PATCH /api/blueprints/:id (BE-03)
-    BE ->> DB: Update & set confirmed_at
+    I ->> FE: Click "Confirm Source & Proceed"
+    FE ->> BE: POST /api/sessions/{session_id}/confirm-source (BE-03)
+    BE ->> DB: Lock source & set session status -> blueprinted
 
     Note over I, S: ── Stage 2: Isomorphic Generation ──
 
     I ->> FE: Set N, variation modes, ordering
-    FE ->> BE: POST /api/config (BE-04)
+    FE ->> BE: POST /api/sessions/{session_id}/config (BE-04)
     BE ->> BE: Validate config server-side
-    BE ->> DB: Save generation_configs
+    BE ->> DB: Save generation_configs (status -> configured)
     I ->> FE: Click "Generate"
-    FE ->> BE: POST /api/generate (BE-05)
-    BE ->> BE: Start background job (BE-06)
+    FE ->> BE: POST /api/sessions/{session_id}/generate (BE-05)
+    BE ->> BE: Start background worker (BE-06, status -> generating)
+    FE ->> BE: POST /api/sessions/{session_id}/events/ticket (BE-06)
+    BE -->> FE: { ticket, expires_at } (TTL 60s)
+    FE ->> BE: Connect SSE (GET /api/sessions/{session_id}/events?ticket={ticket})
 
     loop For each question × N versions
         BE ->> AI: Generate variant (AI-03) + Solution (AI-04)
@@ -423,14 +467,19 @@ sequenceDiagram
         alt Validation failed & retry < 3
             BE ->> AI: Retry with error context
         else Retry exhausted
-            Note over BE: Return draft + warning badges
+            Note over BE: Set has_warning = true (do not block)
         end
 
-        BE -->> FE: SSE event (progress update)
+        BE -->> FE: SSE event (progress / question_done / warning)
     end
 
-    BE ->> DB: Save exam_versions + version_questions (with validation_report)
-    BE -->> FE: SSE event (generation complete)
+    alt Quota reached or unrecoverable error
+        BE ->> DB: Save finished questions, status -> partial_generated
+        BE -->> FE: SSE event (partial_generated warning)
+    else All M × N questions finished
+        BE ->> DB: Save exam_versions + version_questions, status -> generated
+        BE -->> FE: SSE event (generation complete)
+    end
 
     Note over I, S: ── Stage 3: Review & Final Export ──
 
@@ -439,38 +488,42 @@ sequenceDiagram
     loop For each question
         alt Accept
             I ->> FE: Click Accept
-            FE ->> BE: POST /api/review/accept
-            BE ->> DB: review_logs (ACCEPT) + update status
+            FE ->> BE: POST /api/sessions/{session_id}/questions/{version_question_id}/accept
+            BE ->> DB: review_logs (ACCEPT) + update status -> approved
         else Reject → Regenerate
             I ->> FE: Click Reject
-            FE ->> BE: POST /api/review/reject (BE-07)
+            FE ->> BE: POST /api/sessions/{session_id}/questions/{version_question_id}/reject (BE-07)
+            BE ->> DB: Lock row: status = 'regenerating', updated_at = now()
             BE ->> AI: Regenerate single question
             BE ->> V: Re-validate
-            BE ->> DB: review_logs (REGENERATE) + save new draft
+            BE ->> DB: review_logs (REJECT) + insert new version_question (is_current=true)
             BE -->> FE: Updated question for re-review
         else Revert
             I ->> FE: Click Revert to Source
-            FE ->> BE: POST /api/review/revert (BE-08)
-            BE ->> DB: Copy source → version_question (is_reverted=true)
+            FE ->> BE: POST /api/sessions/{session_id}/questions/{version_question_id}/revert (BE-08)
+            BE ->> DB: Copy source -> version_question (is_reverted=true, status=approved)
             BE ->> DB: review_logs (REVERT)
         end
     end
 
-    Note over BE: All items approved
+    Note over BE: All M × N items approved -> status = reviewed
 
-    BE ->> BE: Shuffle questions & options (BE-09)
-    BE ->> DB: Update question_no + Save answer_keys
+    I ->> FE: Click "Shuffle"
+    FE ->> BE: POST /api/sessions/{session_id}/finalize/shuffle (BE-09)
+    BE ->> BE: Deterministic shuffle questions & options
+    BE ->> DB: Save permutations + sync answer_keys
 
     FE -->> I: Final Approval preview (FE-09)
     I ->> FE: Click "Approve Final Package"
-    FE ->> BE: POST /api/finalize/approve
-    BE ->> DB: Update session status → approved
+    FE ->> BE: POST /api/sessions/{session_id}/finalize/approve
+    BE ->> DB: Update session status -> approved (locked)
 
     I ->> FE: Click "Download" (FE-10)
-    FE ->> BE: POST /api/export
-    BE ->> BE: Build LaTeX/MD (EXP-01) → Compile PDF (EXP-02) → ZIP (EXP-03)
+    FE ->> BE: POST /api/sessions/{session_id}/export
+    BE ->> BE: Build LaTeX/MD (EXP-01) -> Compile Typst PDF (EXP-02) -> ZIP (EXP-03)
     BE ->> S: Upload ZIP to exam-export-bundles
-    BE ->> DB: Update session status → exported
-    BE -->> FE: Download URL
+    BE ->> DB: Update session status -> exported
+    FE ->> BE: GET /api/sessions/{session_id}/export/download
+    BE -->> FE: Signed Download URL (valid 1h)
     FE -->> I: Download .zip package
 ```
