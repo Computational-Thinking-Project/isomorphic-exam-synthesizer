@@ -1,3 +1,18 @@
+## DEC-TASK305-001: Final approval display-key and principal guards (proposed)
+
+- Date / owner: 04/11/2026, TASK-305 author; pending independent review.
+- Context: a reviewed session could be approved without display answer keys; a
+  caller able to set a JWT claim GUC could impersonate the service role in a
+  local PostgreSQL test.
+- Decision: migration 007 checks the structural display-key matrix under the
+  session lock and uses the actual database role to identify service calls.
+  Missing or inconsistent keys return `ERR_INCONSISTENT_ANSWER_KEYS` (HTTP 409).
+  Matrix reads do not infer display answers from canonical questions.
+- Impact: finalize SQL, repository, API and regression tests. The shuffle writer
+  is implemented in migration 008, but its complete A+B gate, displayed-answer
+  semantics, deployed PostgREST role behavior and immutable export integration
+  remain unverified. Local PostgreSQL checks do not establish deployed behavior.
+
 ## 01/11/2026 — TASK-304: permit bền vững tại boundary dispatch (Draft)
 
 Adapter real nhận operation_id và callback trả AttemptPermit, dùng hook gateway hiện có cho mỗi attempt/retry/repair. Không còn fallback local-only cho review production. DB ledger quyết toán; count adapter chỉ là acknowledged grants, không tự refund khi timeout/cancel hoặc mất response. [Handoff và giới hạn](ai-w3-targeted-regeneration.md), [điều phối #36](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/36#issuecomment-6551270882). Đã triển khai phía adapter; RPC/wrapper/E2E còn phụ thuộc Hùng/Duy, shared contract chưa coi đã được mọi owner chấp nhận.
@@ -529,3 +544,51 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
   recovery trước fresh reserve sau replay/adapter/guards. Không backfill legacy.
 - Phạm vi: cùng migration006, source/review caller và HTTP, authority review-rpc-contract.
   Chưa là chấp nhận của Hùng/Đạt, rollout hay GitHub Approve; kết quả kiểm ở PR #28.
+
+## DEC-T305-AB-001: Shuffle receipt, SQL parity và post-write integrity
+
+- Ngày: 05/11/2026; phạm vi author/self-review TASK-305 A+B trên PR #33,
+  baseline `3bb481a`; proposed, chưa thay GitHub review/Approve hoặc deployment.
+- Giữ nguyên shuffler TASK-303 và một RPC `finalize_persist_shuffle(uuid,jsonb)`;
+  không thay SQL006/007 hay thêm writer/fallback. SQL008 thuộc PR chưa merge;
+  thay đổi này không chứng nhận ledger của môi trường đã triển khai.
+- Receipt parser thu hẹp kiểu trước khi đọc/hash metadata; malformed receipt
+  tiếp tục fail-closed. Chuẩn hóa UUID tại shuffle service để uppercase UUID
+  hợp lệ không trở thành lỗi receipt sau khi DB đã commit.
+- SQL phải kiểm JSON shape/type, dịch lỗi cast/overflow thành input error và
+  đọc lại display/canonical/seed/permutations sau ghi, kiểm số finalized thực;
+  trigger sửa âm thầm hoặc bỏ UPDATE phải rollback toàn bộ.
+- SQL validator vẫn cần đồng bộ solution độc lập để không tin payload owner.
+  Giữ regex SQL với corpus parity chạy qua PostgreSQL thật thay vì bỏ guard
+  hay viết lại Fisher-Yates. Đã tái hiện Python/SQL lệch với NBSP; SQL dùng tập
+  whitespace Unicode của Python. Corpus regression không phải chứng minh mọi
+  Unicode/locale hoặc deployed Supabase/PostgREST.
+- Retry khi mất receipt sau commit: trả lỗi transport, không giả định rollback;
+  retry cùng snapshot xác minh no-op qua state đầy đủ. Race tests xác nhận
+  blocking PID thật và timeout hữu hạn, không suy khóa từ sleep.
+- Bằng chứng và gate từng mục: [TASK-305 A+B](tasks/TASK-305_A_B_GATE_2026-11-05.md).
+
+## DEC-T305-SEC-002: Forward remediation F01–F03, PR #33
+
+- Ngày/người phụ trách: 05/11/2026, TASK-305/Duy; user yêu cầu xử lý review
+  tại `9e9ec146`. Implemented/local verified, **proposed pending independent
+  review**, không thay GitHub Approve hoặc rollout cloud.
+- Repro PostgreSQL15: owner UPDATE nội dung và xóa approved_at sau approval được;
+  key sai vẫn approve; một permutation khác nhưng tự nhất quán vẫn persist.
+- Giữ nguyên lịch sử006–008; migration009 forward-upgrade atomic thay definitions
+  Finalize, ACL, owner SELECT-only policies và direct-DML triggers. Revoke cả
+  column grants, TRUNCATE/TRIGGER và profile DELETE cascade; quyền đọc owner giữ.
+- Approval kiểm đúng current display slot, đáp án thực và canonical mapping dưới
+  root lock trước timestamp/audit. Không dùng canonical key làm display fallback.
+- Contract TASK-303 yêu cầu tái lập theo seed. Chọn **trusted backend attestation**:
+  HTTP owner JWT/RLS reader → Python shuffler hiện có → service-only writer với
+  actor từ CurrentUser đã xác thực. SQL revalidates owner/snapshot/integrity dưới
+  lock. Không viết lại Python RNG trong SQL, không cho browser gửi permutation,
+  không tin JWT role claim để nâng principal, không owner-client fallback.
+- Thay đổi caller cần backend và009 rollout đồng bộ; mixed versions fail closed.
+  Config finalized cần RPC invalidation riêng nếu muốn reconfigure; export cần
+  legal transition qua RPC. Không triển khai thêm hai workflow đó trong lượt này.
+- Ảnh hưởng/handoff: TASK-305 caller/migration/tests; owner SQL006 (#36) và TASK-303
+  giữ nguyên code nhưng cần biết principal boundary mới. Contract chuẩn tại
+  [Finalize RPC](api/finalize-rpc-contract.md); evidence/M5 tại
+  [remediation](tasks/TASK-305_REVIEW_REMEDIATION_2026-11-05.md).
