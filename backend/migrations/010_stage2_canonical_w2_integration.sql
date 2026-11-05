@@ -38,8 +38,10 @@ $$;
 
 -- Match the existing Python canonical JSON contract (no jsonb::text hash).
 CREATE OR REPLACE FUNCTION public._generation_json(p_value jsonb) RETURNS text
-LANGUAGE plpgsql IMMUTABLE STRICT SET search_path=pg_catalog,public,pg_temp AS $$
-DECLARE result text;
+LANGUAGE plpgsql IMMUTABLE STRICT SET search_path=pg_catalog,public,pg_temp
+SET extra_float_digits=3 AS $$
+DECLARE result text; number_text text; rendered text; coefficient text; sign_prefix text;
+ digits text; exponent int; decimal_position int; precision int; rounded_digits text; binary_value float8;
 BEGIN
  CASE jsonb_typeof(p_value)
  WHEN 'object' THEN
@@ -48,6 +50,55 @@ BEGIN
  WHEN 'array' THEN
   SELECT '['||coalesce(string_agg(public._generation_json(value),',' ORDER BY ord),'')||']'
    INTO result FROM jsonb_array_elements(p_value) WITH ORDINALITY a(value,ord);
+ WHEN 'number' THEN
+  number_text:=p_value::text;
+  IF strpos(number_text,'.')=0 THEN
+   -- JSONB integer tokens are arbitrary-precision ints in Python, not floats.
+   result:=number_text;
+  ELSE
+   BEGIN
+    binary_value:=number_text::float8; rendered:=binary_value::text;
+   EXCEPTION WHEN numeric_value_out_of_range THEN
+    IF abs(number_text::numeric)>=1 THEN RAISE; END IF;
+    rendered:=CASE WHEN left(number_text,1)='-' THEN '-0' ELSE '0' END;
+   END;
+   coefficient:=split_part(rendered,'e',1);
+   sign_prefix:='';
+   IF left(coefficient,1)='-' THEN sign_prefix:='-'; coefficient:=substr(coefficient,2); END IF;
+   decimal_position:=strpos(coefficient,'.');
+   IF decimal_position=0 THEN decimal_position:=length(coefficient)+1; END IF;
+   exponent:=coalesce(nullif(split_part(rendered,'e',2),'')::int,0)+decimal_position-2;
+   digits:=replace(coefficient,'.','');
+   WHILE length(digits)>1 AND left(digits,1)='0' LOOP
+    digits:=substr(digits,2); exponent:=exponent-1;
+   END LOOP;
+   -- PostgreSQL avoids midpoint representations (1e23); Python accepts them.
+   -- Shorten only if rounding recovers the exact same binary64 value.
+   FOR precision IN 1..(length(digits)-1) LOOP
+    rounded_digits:=round(digits::numeric,precision-length(digits))::text;
+    BEGIN
+     IF (sign_prefix||rounded_digits||'e'||(exponent-length(digits)+1)::text)::float8=binary_value THEN
+      exponent:=exponent+length(rounded_digits)-length(digits);
+      digits:=rounded_digits;
+      EXIT;
+     END IF;
+    EXCEPTION WHEN numeric_value_out_of_range THEN
+     NULL;
+    END;
+   END LOOP;
+   digits:=rtrim(digits,'0');
+   IF digits='' THEN result:=sign_prefix||'0.0';
+   ELSIF exponent < -4 OR exponent >= 16 THEN
+    result:=sign_prefix||left(digits,1)||CASE WHEN length(digits)>1 THEN '.'||substr(digits,2) ELSE '' END
+     ||'e'||CASE WHEN exponent<0 THEN '-' ELSE '+' END
+     ||CASE WHEN abs(exponent)<10 THEN '0' ELSE '' END||abs(exponent)::text;
+   ELSIF exponent<0 THEN
+    result:=sign_prefix||'0.'||repeat('0',-exponent-1)||digits;
+   ELSIF length(digits)<=exponent+1 THEN
+    result:=sign_prefix||digits||repeat('0',exponent+1-length(digits))||'.0';
+   ELSE result:=sign_prefix||left(digits,exponent+1)||'.'||substr(digits,exponent+2);
+   END IF;
+  END IF;
  ELSE result:=p_value::text;
  END CASE;
  RETURN result;

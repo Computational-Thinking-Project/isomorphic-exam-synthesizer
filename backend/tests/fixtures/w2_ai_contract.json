@@ -1,4 +1,4 @@
-﻿{
+{
   "fixture_version": 1,
   "reference_fixture": "ai_pipeline.json",
   "provenance": "Offline GenerationService with injected provider/check outcomes; no CAS or Gemini proof.",
@@ -11,7 +11,7 @@
     "ordered_sources": [
       {
         "id": "123e4567-e89b-12d3-a456-426614174000",
-        "question_text": "Má»™t khung hĂ¬nh trang trĂ­ cĂ³ dáº¡ng má»™t Ä‘a giĂ¡c Ä‘á»u 12 cáº¡nh Ä‘Æ°á»£c gáº¯n cá»‘ Ä‘á»‹nh trĂªn má»™t tráº§n nhĂ . Báº¡n DÅ©ng cĂ³ 12 bĂ³ng Ä‘Ă¨n gá»“m bá»‘n bĂ³ng mĂ u Ä‘á» vĂ  tĂ¡m bĂ³ng mĂ u xanh, cĂ³ cĂ´ng suáº¥t Ä‘Ă´i má»™t khĂ¡c nhau. Báº¡n DÅ©ng láº¯p ngáº«u nhiĂªn 12 bĂ³ng Ä‘Ă¨n trĂªn vĂ o 12 Ä‘á»‰nh sao cho má»—i Ä‘á»‰nh cĂ³ Ä‘Ăºng má»™t bĂ³ng Ä‘Ă¨n. Gá»i P lĂ  xĂ¡c suáº¥t Ä‘á»ƒ má»—i hĂ¬nh vuĂ´ng (cĂ³ bá»‘n Ä‘á»‰nh lĂ  cĂ¡c Ä‘á»‰nh cá»§a Ä‘a giĂ¡c Ä‘Ă£ cho) Ä‘á»u cĂ³ Ă­t nháº¥t má»™t bĂ³ng Ä‘Ă¨n mĂ u Ä‘á». GiĂ¡ trá»‹ cá»§a 3190P báº±ng bao nhiĂªu?",
+        "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Dũng có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Dũng lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
         "options": [
           "1856",
           "1334",
@@ -25,7 +25,7 @@
       },
       {
         "id": "123e4567-e89b-12d3-a456-426614174001",
-        "question_text": "Má»™t khung hĂ¬nh trang trĂ­ cĂ³ dáº¡ng má»™t Ä‘a giĂ¡c Ä‘á»u 12 cáº¡nh Ä‘Æ°á»£c gáº¯n cá»‘ Ä‘á»‹nh trĂªn má»™t tráº§n nhĂ . Báº¡n DÅ©ng cĂ³ 12 bĂ³ng Ä‘Ă¨n gá»“m bá»‘n bĂ³ng mĂ u Ä‘á» vĂ  tĂ¡m bĂ³ng mĂ u xanh, cĂ³ cĂ´ng suáº¥t Ä‘Ă´i má»™t khĂ¡c nhau. Báº¡n DÅ©ng láº¯p ngáº«u nhiĂªn 12 bĂ³ng Ä‘Ă¨n trĂªn vĂ o 12 Ä‘á»‰nh sao cho má»—i Ä‘á»‰nh cĂ³ Ä‘Ăºng má»™t bĂ³ng Ä‘Ă¨n. Gá»i P lĂ  xĂ¡c suáº¥t Ä‘á»ƒ má»—i hĂ¬nh vuĂ´ng (cĂ³ bá»‘n Ä‘á»‰nh lĂ  cĂ¡c Ä‘á»‰nh cá»§a Ä‘a giĂ¡c Ä‘Ă£ cho) Ä‘á»u cĂ³ Ă­t nháº¥t má»™t bĂ³ng Ä‘Ă¨n mĂ u Ä‘á». GiĂ¡ trá»‹ cá»§a 3190P báº±ng bao nhiĂªu?",
+        "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Dũng có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Dũng lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
         "options": [
           "1856",
           "1334",
@@ -53,7 +53,7 @@
         "source_question_id": "123e4567-e89b-12d3-a456-426614174000",
         "request_fingerprint": "2c08bece1eb165b440b086249080f0bc44e67cb77e23c41ef984ef5a0b042906",
         "candidate": {
-          "question_text": "Má»™t khung hĂ¬nh trang trĂ­ cĂ³ dáº¡ng má»™t Ä‘a giĂ¡c Ä‘á»u 12 cáº¡nh Ä‘Æ°á»£c gáº¯n cá»‘ Ä‘á»‹nh trĂªn má»™t tráº§n nhĂ . Báº¡n Lan cĂ³ 12 bĂ³ng Ä‘Ă¨n gá»“m bá»‘n bĂ³ng mĂ u Ä‘á» vĂ  tĂ¡m bĂ³ng mĂ u xanh, cĂ³ cĂ´ng suáº¥t Ä‘Ă´i má»™t khĂ¡c nhau. Báº¡n Lan láº¯p ngáº«u nhiĂªn 12 bĂ³ng Ä‘Ă¨n trĂªn vĂ o 12 Ä‘á»‰nh sao cho má»—i Ä‘á»‰nh cĂ³ Ä‘Ăºng má»™t bĂ³ng Ä‘Ă¨n. Gá»i P lĂ  xĂ¡c suáº¥t Ä‘á»ƒ má»—i hĂ¬nh vuĂ´ng (cĂ³ bá»‘n Ä‘á»‰nh lĂ  cĂ¡c Ä‘á»‰nh cá»§a Ä‘a giĂ¡c Ä‘Ă£ cho) Ä‘á»u cĂ³ Ă­t nháº¥t má»™t bĂ³ng Ä‘Ă¨n mĂ u Ä‘á». GiĂ¡ trá»‹ cá»§a 3190P báº±ng bao nhiĂªu?",
+          "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Lan có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Lan lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
           "options": [
             "1856",
             "1334",
@@ -66,15 +66,15 @@
             "final_answer": "1856",
             "steps": [
               {
-                "explanation": "Ba hĂ¬nh vuĂ´ng táº¡o thĂ nh tá»« cĂ¡c Ä‘á»‰nh chia mÆ°á»i hai Ä‘á»‰nh thĂ nh ba nhĂ³m rá»i nhau, má»—i nhĂ³m bá»‘n Ä‘á»‰nh. Bá»‘n vá»‹ trĂ­ Ä‘á» pháº£i phĂ¢n bá»‘ theo dáº¡ng 2,1,1.",
+                "explanation": "Ba hình vuông tạo thành từ các đỉnh chia mười hai đỉnh thành ba nhóm rời nhau, mỗi nhóm bốn đỉnh. Bốn vị trí đỏ phải phân bố theo dạng 2,1,1.",
                 "latex": null
               },
               {
-                "explanation": "Chá»n nhĂ³m cĂ³ hai vá»‹ trĂ­ Ä‘á», hai vá»‹ trĂ­ trong nhĂ³m Ä‘Ă³ vĂ  má»™t vá»‹ trĂ­ trong má»—i nhĂ³m cĂ²n láº¡i. CĂ³ 288 cĂ¡ch thuáº­n lá»£i trĂªn 495 cĂ¡ch chá»n bá»‘n vá»‹ trĂ­ Ä‘á».",
+                "explanation": "Chọn nhóm có hai vị trí đỏ, hai vị trí trong nhóm đó và một vị trí trong mỗi nhóm còn lại. Có 288 cách thuận lợi trên 495 cách chọn bốn vị trí đỏ.",
                 "latex": "P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}"
               },
               {
-                "explanation": "NhĂ¢n xĂ¡c suáº¥t vá»›i há»‡ sá»‘ cá»§a Ä‘á».",
+                "explanation": "Nhân xác suất với hệ số của đề.",
                 "latex": "3190P=1856"
               }
             ]
@@ -83,7 +83,7 @@
           "source_question_id": "123e4567-e89b-12d3-a456-426614174000",
           "blueprint_fingerprint": "989a2bba680994e28dc11d18e0e5c8c3fddda017dc106c8acaca12a39c02253e",
           "seed": 1100,
-          "solution_md": "1. Ba hĂ¬nh vuĂ´ng táº¡o thĂ nh tá»« cĂ¡c Ä‘á»‰nh chia mÆ°á»i hai Ä‘á»‰nh thĂ nh ba nhĂ³m rá»i nhau, má»—i nhĂ³m bá»‘n Ä‘á»‰nh. Bá»‘n vá»‹ trĂ­ Ä‘á» pháº£i phĂ¢n bá»‘ theo dáº¡ng 2,1,1.\n\n2. Chá»n nhĂ³m cĂ³ hai vá»‹ trĂ­ Ä‘á», hai vá»‹ trĂ­ trong nhĂ³m Ä‘Ă³ vĂ  má»™t vá»‹ trĂ­ trong má»—i nhĂ³m cĂ²n láº¡i. CĂ³ 288 cĂ¡ch thuáº­n lá»£i trĂªn 495 cĂ¡ch chá»n bá»‘n vá»‹ trĂ­ Ä‘á».\n\n   $$P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}$$\n\n3. NhĂ¢n xĂ¡c suáº¥t vá»›i há»‡ sá»‘ cá»§a Ä‘á».\n\n   $$3190P=1856$$\n\nÄĂ¡p Ă¡n A: 1856",
+          "solution_md": "1. Ba hình vuông tạo thành từ các đỉnh chia mười hai đỉnh thành ba nhóm rời nhau, mỗi nhóm bốn đỉnh. Bốn vị trí đỏ phải phân bố theo dạng 2,1,1.\n\n2. Chọn nhóm có hai vị trí đỏ, hai vị trí trong nhóm đó và một vị trí trong mỗi nhóm còn lại. Có 288 cách thuận lợi trên 495 cách chọn bốn vị trí đỏ.\n\n   $$P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}$$\n\n3. Nhân xác suất với hệ số của đề.\n\n   $$3190P=1856$$\n\nĐáp án A: 1856",
           "has_warning": true,
           "requires_teacher_review": true
         },
@@ -128,7 +128,7 @@
         "source_question_id": "123e4567-e89b-12d3-a456-426614174000",
         "request_fingerprint": "2c08bece1eb165b440b086249080f0bc44e67cb77e23c41ef984ef5a0b042906",
         "candidate": {
-          "question_text": "Má»™t khung hĂ¬nh trang trĂ­ cĂ³ dáº¡ng má»™t Ä‘a giĂ¡c Ä‘á»u 12 cáº¡nh Ä‘Æ°á»£c gáº¯n cá»‘ Ä‘á»‹nh trĂªn má»™t tráº§n nhĂ . Báº¡n Lan cĂ³ 12 bĂ³ng Ä‘Ă¨n gá»“m bá»‘n bĂ³ng mĂ u Ä‘á» vĂ  tĂ¡m bĂ³ng mĂ u xanh, cĂ³ cĂ´ng suáº¥t Ä‘Ă´i má»™t khĂ¡c nhau. Báº¡n Lan láº¯p ngáº«u nhiĂªn 12 bĂ³ng Ä‘Ă¨n trĂªn vĂ o 12 Ä‘á»‰nh sao cho má»—i Ä‘á»‰nh cĂ³ Ä‘Ăºng má»™t bĂ³ng Ä‘Ă¨n. Gá»i P lĂ  xĂ¡c suáº¥t Ä‘á»ƒ má»—i hĂ¬nh vuĂ´ng (cĂ³ bá»‘n Ä‘á»‰nh lĂ  cĂ¡c Ä‘á»‰nh cá»§a Ä‘a giĂ¡c Ä‘Ă£ cho) Ä‘á»u cĂ³ Ă­t nháº¥t má»™t bĂ³ng Ä‘Ă¨n mĂ u Ä‘á». GiĂ¡ trá»‹ cá»§a 3190P báº±ng bao nhiĂªu?",
+          "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Lan có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Lan lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
           "options": [
             "1856",
             "1334",
@@ -141,15 +141,15 @@
             "final_answer": "1856",
             "steps": [
               {
-                "explanation": "Ba hĂ¬nh vuĂ´ng táº¡o thĂ nh tá»« cĂ¡c Ä‘á»‰nh chia mÆ°á»i hai Ä‘á»‰nh thĂ nh ba nhĂ³m rá»i nhau, má»—i nhĂ³m bá»‘n Ä‘á»‰nh. Bá»‘n vá»‹ trĂ­ Ä‘á» pháº£i phĂ¢n bá»‘ theo dáº¡ng 2,1,1.",
+                "explanation": "Ba hình vuông tạo thành từ các đỉnh chia mười hai đỉnh thành ba nhóm rời nhau, mỗi nhóm bốn đỉnh. Bốn vị trí đỏ phải phân bố theo dạng 2,1,1.",
                 "latex": null
               },
               {
-                "explanation": "Chá»n nhĂ³m cĂ³ hai vá»‹ trĂ­ Ä‘á», hai vá»‹ trĂ­ trong nhĂ³m Ä‘Ă³ vĂ  má»™t vá»‹ trĂ­ trong má»—i nhĂ³m cĂ²n láº¡i. CĂ³ 288 cĂ¡ch thuáº­n lá»£i trĂªn 495 cĂ¡ch chá»n bá»‘n vá»‹ trĂ­ Ä‘á».",
+                "explanation": "Chọn nhóm có hai vị trí đỏ, hai vị trí trong nhóm đó và một vị trí trong mỗi nhóm còn lại. Có 288 cách thuận lợi trên 495 cách chọn bốn vị trí đỏ.",
                 "latex": "P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}"
               },
               {
-                "explanation": "NhĂ¢n xĂ¡c suáº¥t vá»›i há»‡ sá»‘ cá»§a Ä‘á».",
+                "explanation": "Nhân xác suất với hệ số của đề.",
                 "latex": "3190P=1856"
               }
             ]
@@ -158,7 +158,7 @@
           "source_question_id": "123e4567-e89b-12d3-a456-426614174000",
           "blueprint_fingerprint": "989a2bba680994e28dc11d18e0e5c8c3fddda017dc106c8acaca12a39c02253e",
           "seed": 1100,
-          "solution_md": "1. Ba hĂ¬nh vuĂ´ng táº¡o thĂ nh tá»« cĂ¡c Ä‘á»‰nh chia mÆ°á»i hai Ä‘á»‰nh thĂ nh ba nhĂ³m rá»i nhau, má»—i nhĂ³m bá»‘n Ä‘á»‰nh. Bá»‘n vá»‹ trĂ­ Ä‘á» pháº£i phĂ¢n bá»‘ theo dáº¡ng 2,1,1.\n\n2. Chá»n nhĂ³m cĂ³ hai vá»‹ trĂ­ Ä‘á», hai vá»‹ trĂ­ trong nhĂ³m Ä‘Ă³ vĂ  má»™t vá»‹ trĂ­ trong má»—i nhĂ³m cĂ²n láº¡i. CĂ³ 288 cĂ¡ch thuáº­n lá»£i trĂªn 495 cĂ¡ch chá»n bá»‘n vá»‹ trĂ­ Ä‘á».\n\n   $$P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}$$\n\n3. NhĂ¢n xĂ¡c suáº¥t vá»›i há»‡ sá»‘ cá»§a Ä‘á».\n\n   $$3190P=1856$$\n\nÄĂ¡p Ă¡n A: 1856",
+          "solution_md": "1. Ba hình vuông tạo thành từ các đỉnh chia mười hai đỉnh thành ba nhóm rời nhau, mỗi nhóm bốn đỉnh. Bốn vị trí đỏ phải phân bố theo dạng 2,1,1.\n\n2. Chọn nhóm có hai vị trí đỏ, hai vị trí trong nhóm đó và một vị trí trong mỗi nhóm còn lại. Có 288 cách thuận lợi trên 495 cách chọn bốn vị trí đỏ.\n\n   $$P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}$$\n\n3. Nhân xác suất với hệ số của đề.\n\n   $$3190P=1856$$\n\nĐáp án A: 1856",
           "has_warning": true,
           "requires_teacher_review": true
         },
@@ -269,7 +269,7 @@
     }
   },
   "public_mode_proposal": {
-    "status": "proposed_pending_owner_confirmation",
+    "status": "policy_confirmed_implementation_pending",
     "case_sensitive_aliases": {
       "NUMERICAL": [
         "values"
@@ -295,7 +295,92 @@
       ],
       "proposed_execution": "deterministic_clone_outside_generator",
       "provider_calls": 0,
-      "implemented": false
-    }
+      "implemented": false,
+      "worker_owner": "nhatquynh1107_PR30"
+    },
+    "confirmed_by": {
+      "BE_API": "https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6646768276",
+      "FE2": "https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6647147329",
+      "worker": "https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6635728977"
+    },
+    "rejected_public_ids": [
+      "STRUCTURAL",
+      "variable_inversion"
+    ],
+    "fixture_profile": "ai_w2_confirmed_2026_11_05",
+    "acceptance_cases": [
+      {
+        "input": [
+          "NUMERICAL",
+          "parameter_variation"
+        ],
+        "normalized_public": [
+          "NUMERICAL",
+          "parameter_variation"
+        ],
+        "resolved_dimensions": [
+          "values"
+        ],
+        "execution": "generate"
+      },
+      {
+        "input": [
+          "context_swap"
+        ],
+        "normalized_public": [
+          "context_swap"
+        ],
+        "resolved_dimensions": [
+          "context"
+        ],
+        "execution": "generate"
+      },
+      {
+        "input": [
+          "NONE"
+        ],
+        "normalized_public": [],
+        "resolved_dimensions": [],
+        "execution": "clone",
+        "provider_calls": 0
+      },
+      {
+        "input": [],
+        "normalized_public": [],
+        "resolved_dimensions": [],
+        "execution": "clone",
+        "provider_calls": 0
+      }
+    ],
+    "reject_cases": [
+      [
+        "NONE",
+        "NUMERICAL"
+      ],
+      [
+        "numerical"
+      ],
+      [
+        "STRUCTURAL"
+      ],
+      [
+        "variable_inversion"
+      ],
+      [
+        "unknown"
+      ]
+    ],
+    "readiness_cases": [
+      {
+        "is_ready": false,
+        "supported_modes": null,
+        "submit_allowed": false
+      },
+      {
+        "is_ready": true,
+        "supported_modes": [],
+        "clone_allowed": true
+      }
+    ]
   }
 }

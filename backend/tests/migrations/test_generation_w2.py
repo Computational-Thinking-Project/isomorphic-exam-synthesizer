@@ -229,8 +229,9 @@ def result_for(env, job, index=0, version=1, success=True):
     result["candidate"].update(
         source_question_id=src["source_question_id"],
         seed=100 + version * 1000 + index,
-        blueprint_fingerprint=src["blueprint_fingerprint"],
+        blueprint_fingerprint=fingerprint(src["canonical_blueprint"]),
     )
+    # Synthetic SQL-slot identifier, not a GenerationService cache key.
     result["request_fingerprint"] = fingerprint(
         {"slot": src["source_question_id"], "version": version}
     )
@@ -712,7 +713,8 @@ async def test_rpc_receipt_for_worker_handoff(db):
     if output:
         # Explicit opt-in artifact from actual SQL responses; no credentials.
         receipt = {
-            "provenance": "PostgreSQL 15, real RPC roles, offline AI fixture; no worker/provider/SSE E2E",
+            "provenance": "Real PostgreSQL RPC excerpt; offline AI fixture; synthetic slot/version request hash, not GenerationService cache evidence",
+            "synthetic_request_fingerprint": True,
             "source_snapshot": snap,
             "claim": job,
             "persist": persisted,
@@ -786,3 +788,114 @@ async def test_mode_must_be_supported_by_every_canonical_source(db):
     )
     assert json.loads(config["active_variation_modes"]) == ["NUMERICAL", "parameter_variation"]
     assert json.loads(config["canonical_dimensions"]) == ["values"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        0,
+        0.0,
+        1.0,
+        -0.0,
+        0.1,
+        -12.5,
+        1e-4,
+        1e-5,
+        1e-7,
+        1e15,
+        1e16,
+        1e20,
+        1e-300,
+        5e-324,
+        1.7976931348623157e308,
+        9007199254740993,
+        10**80 + 1,
+    ],
+)
+async def test_numeric_json_matches_python_after_database_roundtrip(db, value):
+    supplied = {"z": [value, {"tiếng Việt": value}], "a": True, "none": None}
+    stored = json.loads(await db.admin.fetchval("SELECT $1::jsonb::text", json.dumps(supplied)))
+    expected = canonical(stored)
+    for precision in (-1, 3):
+        await db.admin.execute(f"SET extra_float_digits={precision}")
+        actual = await db.admin.fetchval(
+            "SELECT public._generation_json($1::jsonb)", json.dumps(stored)
+        )
+        assert actual == expected
+
+
+async def test_f11_small_tolerance_persists_python_fingerprint_and_resumes(db):
+    for blueprint in db.blueprints:
+        blueprint["requirement"]["response_spec"]["grading"]["numeric_tolerance"] = {
+            "absolute": 1e-7,
+            "relative": 0.0,
+        }
+    snapshot = await configure(db)
+    for source in snapshot["confirmed_sources"]:
+        assert source["blueprint_fingerprint"] == fingerprint(source["canonical_blueprint"])
+    job = await rpc(db.owner, "claim_generation_job", db.sid, False)
+    result = result_for(db, job)
+    expected = fingerprint(job["context"]["confirmed_sources"][0]["canonical_blueprint"])
+    assert result["candidate"]["blueprint_fingerprint"] == expected
+    bad = deepcopy(result)
+    bad["candidate"]["blueprint_fingerprint"] = "0" * 64
+    with pytest.raises(asyncpg.PostgresError, match="invalid successful result"):
+        await persist(db, job, bad)
+    assert await db.admin.fetchval("SELECT count(*) FROM generation_target_results") == 0
+    assert await db.admin.fetchval("SELECT count(*) FROM version_questions") == 0
+    await persist(db, job, result)
+    assert (await persist(db, job, result))["replayed"]
+    saved = await db.admin.fetchval("SELECT row_to_json(r)::text FROM generation_target_results r")
+    await db.admin.execute(
+        (ROOT / "backend/migrations/010_stage2_canonical_w2_integration.sql").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert (
+        await db.admin.fetchval("SELECT row_to_json(r)::text FROM generation_target_results r")
+        == saved
+    )
+    await rpc(db.worker, "finish_generation_job", db.sid, "partial_generated", job["job_id"])
+    retry = await rpc(db.owner, "claim_generation_job", db.sid, True)
+    assert retry["snapshot_id"] == job["snapshot_id"]
+    assert retry["context"] == job["context"]
+    resumed = await rpc(db.worker, "load_generation_completed_results", db.sid)
+    assert resumed["completed"][0]["raw_result"] == result
+    assert (await persist(db, retry, result))["replayed"]
+
+
+@pytest.mark.parametrize(
+    "literal",
+    [
+        "10000000000000000.0",
+        "100000000000000000000000.0",
+        "1.234567890123456789012345",
+        "-1e-400",
+        "1e-400",
+        "2.4703282292062328e-324",
+    ],
+)
+async def test_decimal_storage_preserves_python_float_semantics(db, literal):
+    stored = await db.admin.fetchval("SELECT $1::jsonb::text", literal)
+    actual = await db.admin.fetchval("SELECT public._generation_json($1::jsonb)", stored)
+    assert actual == canonical(json.loads(stored))
+
+
+async def test_seeded_binary64_sample_matches_python(db):
+    import math
+    import random
+    import struct
+    from decimal import Decimal
+
+    random_bits = random.Random(207)
+    for _ in range(256):
+        value = struct.unpack(">d", random_bits.getrandbits(64).to_bytes(8, "big"))[0]
+        if not math.isfinite(value):
+            continue
+        literal = format(Decimal.from_float(value), "f")
+        if "." not in literal:
+            literal += ".0"
+        stored = await db.admin.fetchval("SELECT $1::jsonb::text", literal)
+        assert await db.admin.fetchval(
+            "SELECT public._generation_json($1::jsonb)", stored
+        ) == canonical(json.loads(stored))
