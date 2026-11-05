@@ -1,10 +1,12 @@
-import pytest
 import json
+
+import pytest
+
 from app.models.schemas import GeneratedVariant
 from app.services.ai.schema_repair import (
-    repair_json_output,
+    SchemaRepairFailedError,
     extract_json_str,
-    SchemaRepairFailedError
+    repair_json_output,
 )
 
 
@@ -71,7 +73,7 @@ class MockRepairAIClient:
 def test_ai_repair_loop_success():
     """Kiểm tra vòng lặp AI repair khi JSON hỏng cú pháp hoàn toàn."""
     broken_json = '{"variant_id": "v2", "source_question_id": "q2", options: [broken'
-    
+
     fixed_data = {
         "variant_id": "v2_repaired",
         "source_question_id": "q2",

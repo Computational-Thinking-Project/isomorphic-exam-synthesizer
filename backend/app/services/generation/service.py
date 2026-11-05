@@ -100,7 +100,7 @@ class GenerationService:
         self, source: SourceQuestion, item: dict[str, Any], blueprint: dict[str, Any],
         context: RequestContext, seed: int, version_index: int, variation_modes: list[str],
         previous: GeneratedQuestion | None = None, accept: AcceptCandidate | None = None,
-        excluded_identities: set[str] | None = None,
+        excluded_identities: set[str] | None = None, max_math_retries: int | None = None,
     ) -> QuestionResult:
         result = QuestionResult(
             version_index=version_index, source_question_id=source.id,
@@ -116,7 +116,7 @@ class GenerationService:
         feedback: list[dict[str, str]] = []
         previous_payload: Any = previous.model_dump() if previous else None
         repair_candidate: CandidatePayload | None = None
-        solution_repairs = schema_failures = 0
+        solution_repairs = schema_failures = math_failures = 0
         last_code = "GENERATION_INVALID"
         try:
             async with asyncio.timeout_at(context.deadline):
@@ -177,6 +177,11 @@ class GenerationService:
                             has_warning=result.validation.has_warning,
                         )
                         return result
+                    if any(check.check_name == "answer_verified" for check in failures):
+                        math_failures += 1
+                        if max_math_retries is not None and math_failures > max_math_retries:
+                            last_code = "MATH_RETRIES_EXHAUSTED"
+                            break
                     previous_payload = candidate.model_dump()
                     feedback = [
                         {"check": check.check_name, "code": check.status or "failed",
@@ -201,6 +206,22 @@ class GenerationService:
             last_code = "GENERATION_INTERNAL"
         result.error_code = last_code
         return result
+
+    async def regenerate_from_snapshots(
+        self, source: SourceQuestion, blueprint: dict[str, Any], *,
+        confirmed_source_hash: str, context: RequestContext,
+        excluded_identities: set[str],
+    ) -> QuestionResult:
+        """Regenerate persisted content without inventing old structured solutions."""
+        source = source.model_copy(deep=True)
+        blueprint = deepcopy(blueprint)
+        item = self._prepare(source, blueprint, [])
+        if not confirmed_source_hash or source_fingerprint([item]) != confirmed_source_hash:
+            raise ToolError("SOURCE_NOT_CONFIRMED", "Nguồn chưa được xác nhận hoặc đã thay đổi.")
+        return await self._generate(
+            source, item, blueprint, context, secrets.randbelow(2 ** 31), 1, [],
+            excluded_identities=set(excluded_identities), max_math_retries=2,
+        )
 
     async def regenerate_question(
         self, source: SourceQuestion, blueprint: dict[str, Any], previous: GeneratedQuestion, *,

@@ -1,5 +1,15 @@
 # Frontend — thiết lập local và checkpoint TASK-101/103
 
+## TASK-203b — trạng thái sau re-review04/11/2026
+
+**Checkpoint công bố tại re-review 04/11/2026,14:16:47UTC (21:16:47 giờ Việt Nam):** code head đã công bố **b9bbd5ac2d2b9b65b34a6c9bd8cb3a74f2cf1e5c**, PR31 Open/Ready, target dev **ac18e724**; chưa Approve/merge. [Re-review của Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/31#pullrequestreview-5769824230) là review submission **CHANGES_REQUESTED**, không phải chỉ đề nghị trong Conversation. Reviewer đã đọc code và log CI: CI Pipeline/Docker success, merge ref **6cba8c2** của b9bbd5a vào ac18e724 có **311/311 frontend tests,0fail/skip, lint/build đạt**. Đây là kết quả được reviewer xác minh từ log, không phải native browser coverage. Checkpoint này gắn với head đã được re-review; lần bổ sung regression tiếp theo phải có kết quả/head riêng trước yêu cầu kiểm lại.
+
+Bản sửa F01 ở **5233322**, F03 ở **38c3553**, tài liệu/nghiệm thu ở **86d8cb4/b9bbd5a** đã nằm trong head công bố. Local311tests/lint/build đạt, bundle961.94kBwarning. Native Chrome fixture ngoài repo và user Docker đã báo đạt focus/picker/Hủy/giữnháp/chuyểntext/Tab/Escape/zoom200/F5 giữURL/2câuC,A. Giữ đúng phạm vi author/user reported; reviewer chưa tái chạy native evidence đó. Node dialog stub chỉ kiểm lifecycle, không mô phỏng inert. **F01 còn mở vì thiếu regression native tái chạy được trong gói review; chưa có bằng chứng code showModal hiện tại vẫn lỗi. F02 đã đồng bộ tài liệu theo re-review, chờ reviewer xác minh bản cập nhật; F03 reviewer xác nhận từ code/test; F04 non-blocking, browser matrix chưa chốt.**
+
+Classifier incomplete422 tạo lỗi/hướng sửa; native dialog đóng trước callback mở picker/chuyểntext. Panel giữ nguồn/input và guard201, không tự POST khi đóng/đổi mode/chọn file. [M2, plan native regression và browser matrix](../docs/tasks/TASK-203b.md).
+
+Browser evidence hiện có: Chrome trên Windows (author fixture/user Docker); Safari/iOS và browser khác chưa kiểm, matrix hỗ trợ sản phẩm chưa chốt. Đã thêm harness native tái chạy trong frontend/test-support/stage1-native: Chrome156/Windows10 candidate8/8assertions PASS, baseline phát hiện focus-out FAIL; reviewer chưa xác minh bản bổ sung. Xem M2 để biết kết quả bàn phím/picker và phần manual chưa chạy lại. Giữ giới hạn screen reader/Storage/directmutation/parser/AI/confirm/Stage2/export. Các checkpoint TASK201/TASK103 bên dưới là lịch sử, không mô tả trạng thái PR31 hiện hành.
+
 ## TASK-201 — kiểm cuối local04/11/2026
 
 - Nhập text hoặc một DOCX/TeX/MD vào draft có ID bằng client hiện có. Chọn/sửa/đổi cách nhập không tự gửi; file được kiểm trước POST và upload100% còn chờ xử lý. Preview nguồn/options/key chỉ đọc, Blueprint ẩn. [Plan/acceptance/giới hạn](../docs/tasks/TASK-201.md), [Stage1 README](src/features/stage1-ingestion/README.md).

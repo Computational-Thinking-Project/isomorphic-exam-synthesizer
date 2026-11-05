@@ -1,5 +1,14 @@
 # AI W2 — triển khai và hợp đồng tích hợp
 
+## Cập nhật phối hợp 05/11/2026
+
+[Quỳnh đã phản hồi và tiếp nhận bộ fixture](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6635728977): hash, seed, full QuestionResult và resume/cache đủ để chuẩn bị adapter. Quỳnh nhận nhánh clone riêng trong worker PR30, giữ nội dung/đáp án/lời giải, zero Gemini, remap đáp án khi shuffle và lưu record clone riêng. Đây là ownership được Quỳnh xác nhận; không còn chờ người nhận đường clone.
+
+Quỳnh đồng ý hướng alias và chuẩn hóa NONE đã đề xuất; Duy và Bội Anh vẫn cần xác nhận API/UI trước khi coi policy chung đã chốt. Bảng/fixture public-mode tiếp tục proposed, không sửa generator hoặc triển khai public adapter ở PR41. Duy/Hùng còn chốt read snapshot/RPC, revision, ordered batch hash và full-result persistence; Quỳnh giữ preflight/worker/integration. Không coi tiếp nhận fixture là DB/SSE E2E đã đạt.
+
+CI tại implementation41a6677 đã đạt5/5 checks. Chưa có independent review/Approve cho PR41. Đồng bộ dev chứa TASK301 đã merge chỉ cập nhật nền; checks cho head mới phải ghi riêng trong PR.
+
+
 ## Bàn giao contract W2 ngày 04/11/2026 — I-B-AI / I-B-POLICY
 
 Đạt phụ trách boundary AI; Quỳnh giữ worker/preflight/persistence adapter,
