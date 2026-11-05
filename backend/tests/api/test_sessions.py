@@ -954,3 +954,92 @@ def test_get_session_detail_tc_ready_03_available_and_unavailable_modes(
     assert ctx_mode["is_available"] is False
     assert ctx_mode["question_count"] == 1
     assert "Chỉ hỗ trợ 1/2 câu trong đề" in ctx_mode["unavailable_reason"]
+
+
+def test_get_session_detail_canonical_readiness(
+    client, mock_auth_user, test_user_id, auth_headers
+):
+    """Canonical session without legacy blueprints correctly reports ready and supported_modes."""
+    mock_db = MagicMock()
+
+    def table_router(table_name):
+        mock_t = MagicMock()
+        if table_name == "exam_sessions":
+            exec_s = MagicMock()
+            exec_s.data = [{
+                "id": "session-canonical-only",
+                "user_id": test_user_id,
+                "title": "Canonical Session",
+                "subject": "Toán",
+                "grade": 12,
+                "status": "blueprinted",
+                "gemini_call_count": 0,
+                "retry_count": 0,
+                "approved_at": None,
+                "created_at": "2026-11-01T00:00:00Z",
+                "updated_at": "2026-11-01T00:00:00Z",
+            }]
+            mock_t.select.return_value.eq.return_value.execute.return_value = exec_s
+        elif table_name == "source_questions":
+            exec_q = MagicMock()
+            exec_q.data = [
+                {"id": "q-1", "session_id": "session-canonical-only", "question_no": 1},
+                {"id": "q-2", "session_id": "session-canonical-only", "question_no": 2},
+            ]
+            mock_t.select.return_value.eq.return_value.order.return_value.execute.return_value = exec_q
+        elif table_name == "exam_versions":
+            exec_v = MagicMock()
+            exec_v.data = []
+            mock_t.select.return_value.eq.return_value.order.return_value.execute.return_value = exec_v
+        elif table_name == "generation_configs":
+            exec_c = MagicMock()
+            exec_c.data = []
+            mock_t.select.return_value.eq.return_value.limit.return_value.execute.return_value = exec_c
+        return mock_t
+
+    mock_db.table.side_effect = table_router
+
+    # RPC get_generation_source_snapshot returns ready=True with 2 confirmed canonical blueprints
+    mock_rpc = MagicMock()
+    mock_rpc.data = {
+        "session_id": "session-canonical-only",
+        "ready": True,
+        "confirmed_sources": [
+            {
+                "source_question_id": "q-1",
+                "canonical_blueprint": {
+                    "requirement": {
+                        "variation_policy": {
+                            "allowed_transformations": [{"dimension": "values"}]
+                        }
+                    }
+                }
+            },
+            {
+                "source_question_id": "q-2",
+                "canonical_blueprint": {
+                    "requirement": {
+                        "variation_policy": {
+                            "allowed_transformations": [{"dimension": "values"}]
+                        }
+                    }
+                }
+            }
+        ]
+    }
+    mock_db.rpc.return_value.execute.return_value = mock_rpc
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.get("/api/sessions/session-canonical-only", headers=auth_headers)
+
+    assert response.status_code == 200
+    bp_summary = response.json()["blueprint_summary"]
+    assert bp_summary is not None
+    assert bp_summary["is_ready"] is True
+    assert bp_summary["confirmed_blueprints"] == 2
+    assert len(bp_summary["supported_modes"]) == 1
+    assert bp_summary["supported_modes"][0]["id"] == "values"
+    assert bp_summary["supported_modes"][0]["is_available"] is True
