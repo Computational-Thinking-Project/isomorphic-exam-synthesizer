@@ -36,7 +36,7 @@ class CanonicalQuestionInput(BaseModel):
     All shuffling algorithms read strictly from canonical_* fields.
     """
 
-    model_config = ConfigDict(extra="allow", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="allow")
 
     id: Optional[str] = Field(default=None, description="UUID of version question if available")
     source_question_id: Optional[str] = Field(default=None, description="UUID of source question")
@@ -82,7 +82,7 @@ class OptionPermutation(BaseModel):
 class ShuffledQuestionOutput(BaseModel):
     """Shuffled version question ready for database persistence and rendering."""
 
-    model_config = ConfigDict(extra="allow", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="allow")
 
     id: Optional[str] = None
     source_question_id: Optional[str] = None
