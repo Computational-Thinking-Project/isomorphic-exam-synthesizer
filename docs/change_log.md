@@ -622,3 +622,29 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
 - **Impact:** SQL/session detail/test contract PR #32; Python preflight/worker PR #30;
   canonical producer ownership giữ nguyên. [Contract](api/generation-config-endpoint.md),
   [implementation/evidence](tasks/TASK-207.md).
+
+
+## DEC-207-002 — F11 numeric fingerprint parity and AI fixture evidence
+
+- **Ngày / phụ trách:** 05/11/2026, Duy / PR #32; author remediation, pending
+  independent F11 verification and GitHub Approve.
+- **Context:** Quỳnh reproduced a valid Blueprint tolerance 1e-7 whose SQL hash
+  differed from Python, rejecting a valid result at persist. The old result_for
+  copied SQL's fingerprint, concealing cross-language mismatch.
+- **Decision:** change only migration010's number serialization: preserve integer
+  precision; match Python decimal/binary64 roundtrip, notation, exponent padding,
+  signed underflow and midpoint shortening under a pinned output GUC. Keep
+  fingerprint validation; do not coerce numbers to strings.
+- **Regression:** independent Python expected hashes, full 1e-7 RPC lifecycle,
+  wrong-hash no-write, exact immutable replay/retry/resume, nested JSON/Unicode,
+  precision boundaries and a deterministic 256-pattern binary64 sample.
+- **AI fixture follow-up:** restore w2_ai_contract.json byte-identically from
+  owner handoff 6b0558b (blob 3b0ac5b2117001285b2eb72b37c2c790b6091991).
+  Re-export SQL receipt; verify QuestionResult/rendered solution/key/seed evidence.
+  Explicitly label the SQL sample's synthetic slot/version hash; it is not native
+  GenerationService completed-cache evidence.
+- **Compatibility:** same SHA256, RPC signatures, manifest, mapping version and
+  seed. No generator/worker changes, new migration, immutable-context rewrite,
+  historical backfill or deployed Supabase claim. Existing F02/F07/F09/F10 remain
+  reviewer verified; F11 stays in its original
+  [thread](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/32#discussion_r4479665885).

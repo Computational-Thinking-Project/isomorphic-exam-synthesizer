@@ -31,7 +31,7 @@ Private wrappers retain the prior legacy implementations; canonical W2 cannot
 use display-only persistence. No generic snapshot/mapping framework or automatic
 historical conversion is introduced.
 
-## Self-check evidence
+## Self-check evidence — original implementation at 7a8f886
 
 Environment: existing backend image, Python 3.11; PostgreSQL 15 disposable
 network-none container. asyncpg 0.32.0 is an optional test dependency, not a new
@@ -81,13 +81,36 @@ is a W2 RPC in migration 010, not public table access.
 
 ## M5 / completion gates
 
-- F02 — author claimed_fixed: exact legacy IDs and canonical no-fallback semantics;
-  public mode intersection and malformed/not-ready API regressions.
-- F07 — author claimed_fixed: column privileges/guards retained across 005/009,
-  actual role/GUC attack probes and legitimate owner CRUD verified locally.
-- F09 — author self-check passed: final Auth/ownership/sessions fixtures execute
-  through assertions; RPC doubles now explicitly model NO_CONFIRMATION.
-- F10 — actual RPC examples/signatures supersede the stale description.
-- Independent finding verification and GitHub Approve remain reviewer actions.
-- Merge readiness also requires applicable remote CI green on the final head.
-- DB/Python self-check is not worker/provider/SSE/FE E2E or Supabase rollout.
+- Quỳnh verified F02/F07/F09/F10 at 7a8f886; their existing threads are resolved.
+- F11 is the current remediation; independent verification and GitHub Approve remain required.
+- Final-head CI and PR #30 worker/clone/SSE/FE integration remain separate gates.
+
+## F11 — numeric fingerprint remediation
+
+- Source: [F11](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/32#discussion_r4479665885);
+  reproduced on 7a8f886 with a valid Blueprint absolute tolerance of 1e-7.
+- Code fix: 1de15d6. Only migration010's JSON number serialization changes:
+  precise integer tokens, Python binary64 roundtrip/notation, exponent padding,
+  signed underflow, midpoint shortening and pinned float output configuration.
+  SHA256, public interfaces, seed/mapping version and worker ownership are unchanged.
+- result_for now uses the real Python Blueprint fingerprint, not SQL's expected
+  field. The regression rejects a wrong hash without writing either store, then
+  verifies persist, lost-response replay, migration replay, retry and full resume.
+- AI review follow-up: restore w2_ai_contract.json byte-identically from owner
+  handoff 6b0558b (blob 3b0ac5b2117001285b2eb72b37c2c790b6091991). Regenerate
+  the UTF-8 SQL receipt; add five offline model/render/key/seed evidence tests.
+  The receipt explicitly labels its synthetic slot/version request hash; it is
+  not direct GenerationService completed-cache evidence.
+- Fresh final author checks:
+  - PostgreSQL15 W2 suite: **71 passed, 0 skipped**.
+  - PostgreSQL17 W2 suite: **71 passed, 0 skipped**.
+  - Full backend + scripts/blueprint: **1084 passed, 341 skipped**,
+    19 deprecation warnings. DB/live opt-ins are distinct from the SQL runs above.
+  - API/Auth/ownership/mode regression: **77 passed**.
+  - Ruff and Mypy passed (91 application source files); git diff --check passed.
+- Numeric parity includes nested JSON/Unicode/key ordering, exact large integers,
+  notation boundaries, caller GUC changes, underflow/subnormals and a deterministic
+  sample of 256 binary64 patterns.
+- F11 is author claimed_fixed, pending Quỳnh's independent verification and final
+  CI/GitHub Approve. F02/F07/F09/F10 remain reviewer verified. No immutable context
+  rewrite, historical backfill, worker/SSE/FE E2E or cloud deployment is claimed.
