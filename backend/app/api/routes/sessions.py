@@ -192,30 +192,41 @@ async def get_session_detail(
         source_ids = [str(q.get("id")) for q in source_questions if q.get("id")]
         total_sources = len(source_questions)
 
-        # 1. Check canonical blueprint confirmation (Stage 3 schema)
-        canonical_snapshot_res = None
+        from app.services.generation.mode_mapper import (
+            compute_supported_modes_summary,
+            supported_modes_from_counts,
+        )
+
+        # Only a successful NO_CONFIRMATION receipt authorizes legacy lookup.
+        # Transport errors, malformed responses and canonical not-ready fail closed.
+        snapshot: object = None
         try:
-            canonical_snapshot_res = db.rpc("get_generation_source_snapshot", {"p_session_id": session_id}).execute()
+            snapshot = db.rpc("get_generation_source_snapshot", {"p_session_id": session_id}).execute().data
         except Exception:
-            canonical_snapshot_res = None
-
-        if canonical_snapshot_res and canonical_snapshot_res.data and canonical_snapshot_res.data.get("ready") is True:
-            snap = canonical_snapshot_res.data
-            confirmed_sources = snap.get("confirmed_sources") or []
-            canonical_bps = [cs.get("canonical_blueprint") for cs in confirmed_sources if isinstance(cs, dict) and cs.get("canonical_blueprint")]
-
-            from app.services.generation.mode_mapper import compute_supported_modes_summary
-            supported_modes = compute_supported_modes_summary(canonical_bps, total_sources)
-
-            blueprint_summary = {
-                "is_ready": True,
-                "total_questions": total_sources,
-                "questions_with_blueprint": len(canonical_bps),
-                "confirmed_blueprints": len(canonical_bps),
-                "supported_modes": supported_modes,
-            }
-        else:
-            # 2. Legacy blueprint fallback
+            logger.warning("Generation snapshot unavailable for session %s", session_id)
+        supported_modes: Optional[List[dict[str, Any]]] = None
+        is_ready = False
+        blueprint_count = confirmed_count = 0
+        if isinstance(snapshot, dict) and snapshot.get("ready") is True:
+            confirmed_sources = snapshot.get("confirmed_sources")
+            if (
+                isinstance(confirmed_sources, list)
+                and len(confirmed_sources) == total_sources
+                and all(isinstance(source, dict) for source in confirmed_sources)
+                and {source.get("source_question_id") for source in confirmed_sources} == set(source_ids)
+            ):
+                canonical_bps = [
+                    source["canonical_blueprint"]
+                    for source in confirmed_sources
+                    if isinstance(source, dict) and isinstance(source.get("canonical_blueprint"), dict)
+                ]
+                blueprint_count = confirmed_count = len(canonical_bps)
+                try:
+                    supported_modes = compute_supported_modes_summary(canonical_bps, total_sources)
+                    is_ready = True
+                except ValueError:
+                    pass
+        elif isinstance(snapshot, dict) and snapshot.get("reason") == "NO_CONFIRMATION":
             bp_res = (
                 db.table("question_blueprints")
                 .select("id,source_question_id,confirmed_at,is_fallback,variation_modes")
@@ -223,69 +234,31 @@ async def get_session_detail(
                 .execute()
             )
             bp_rows = cast(List[dict[str, Any]], bp_res.data or [])
-            confirmed_count = sum(1 for bp in bp_rows if bp.get("confirmed_at") is not None)
-
-            # F02: Validate variation_modes structure across all blueprints
-            has_invalid_modes_structure = any(
-                not isinstance(bp.get("variation_modes"), list)
-                or any(not isinstance(m, str) or not m.strip() for m in bp.get("variation_modes", []))
+            blueprint_count = len(bp_rows)
+            confirmed_count = sum(bp.get("confirmed_at") is not None for bp in bp_rows)
+            valid_modes = all(
+                isinstance(bp.get("variation_modes"), list)
+                and all(isinstance(mode, str) and bool(mode.strip()) for mode in bp["variation_modes"])
                 for bp in bp_rows
             )
-
             is_ready = (
-                total_sources > 0
-                and confirmed_count == total_sources
-                and len(bp_rows) == total_sources
-                and not has_invalid_modes_structure
+                valid_modes and confirmed_count == total_sources
+                and blueprint_count == total_sources
+                and {bp.get("source_question_id") for bp in bp_rows} == set(source_ids)
             )
-
-            supported_modes: Optional[List[dict[str, Any]]] = None
-            if not is_ready:
-                supported_modes = None
-            else:
-                mode_counts: dict[str, int] = {}
+            if is_ready:
+                counts: dict[str, int] = {}
                 for bp in bp_rows:
-                    raw_modes = bp.get("variation_modes") or []
-                    modes_list: List[str] = [str(m).strip() for m in raw_modes if str(m).strip()]
-                    for m in dict.fromkeys(modes_list):
-                        mode_counts[m] = mode_counts.get(m, 0) + 1
-
-                mode_labels = {
-                    "parameter_variation": "Thay đổi số liệu / tham số",
-                    "context_swap": "Đổi ngữ cảnh thực tế",
-                    "numerical": "Thay đổi số liệu (Numerical)",
-                    "scenario": "Đổi tình huống (Scenario)",
-                    "structural": "Biến đổi cấu trúc",
-                    "reverse": "Bài toán ngược",
-                    "visual": "Biến thể hình học / trực quan",
-                }
-
-                supported_modes = []
-                for m, count in mode_counts.items():
-                    if m.upper() == "NONE":
-                        continue
-                    available = (count == total_sources)
-                    mode_item: dict[str, Any] = {
-                        "id": m,
-                        "label": mode_labels.get(m.lower(), m),
-                        "question_count": count,
-                        "is_available": available,
-                    }
-                    if not available:
-                        mode_item["unavailable_reason"] = (
-                            f"Chỉ hỗ trợ {count}/{total_sources} câu trong đề (yêu cầu toàn bộ câu hỏi hỗ trợ)."
-                        )
-                    supported_modes.append(mode_item)
-
-                supported_modes.sort(key=lambda x: (not x["is_available"], x["id"]))
-
-            blueprint_summary = {
-                "is_ready": is_ready,
-                "total_questions": total_sources,
-                "questions_with_blueprint": len(bp_rows),
-                "confirmed_blueprints": confirmed_count,
-                "supported_modes": supported_modes,
-            }
+                    for mode in set(bp["variation_modes"]):
+                        counts[mode] = counts.get(mode, 0) + 1
+                supported_modes = supported_modes_from_counts(counts, total_sources)
+        blueprint_summary = {
+            "is_ready": is_ready,
+            "total_questions": total_sources,
+            "questions_with_blueprint": blueprint_count,
+            "confirmed_blueprints": confirmed_count,
+            "supported_modes": supported_modes,
+        }
 
     return SessionDetailResponse(
         **session_record,

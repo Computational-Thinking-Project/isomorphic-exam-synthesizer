@@ -5,3 +5,8 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
 ignore = ["E501", "EXE002"]
+
+# CI collects backend and scripts/blueprint together from the repository root.
+# Match backend/pyproject.toml so async DB fixtures are handled in that invocation.
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

@@ -138,7 +138,7 @@ BEGIN
   END IF;
 
   -- 2.6 Client functions: save_generation_config & claim_generation_job
-  SELECT has_function_privilege('authenticated', 'public.save_generation_config(UUID, INT, JSONB, JSONB)', 'EXECUTE') INTO v_has_auth;
+  SELECT has_function_privilege('authenticated', coalesce(to_regprocedure('public.save_generation_config(UUID, INT, JSONB, JSONB, JSONB)'), to_regprocedure('public.save_generation_config(UUID, INT, JSONB, JSONB)')), 'EXECUTE') INTO v_has_auth;
   IF v_has_auth = FALSE THEN
     RAISE EXCEPTION 'Permission failure: authenticated role must have EXECUTE on save_generation_config!';
   END IF;

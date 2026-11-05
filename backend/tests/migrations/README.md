@@ -260,3 +260,51 @@ transport establishes deployed JWT verification/table-read RLS/PostgREST pooling
 Auth/table transport and gateway are injected; actual PostgreSQL executes RPCs with
 their real roles/ACL. Stage-2 generation-job integration is outside this producer/
 review check; the existing current candidate is seeded by the fixture.
+
+
+## TASK-207 W2 generation RPCs
+
+The asyncpg driver is the same optional real-DB test dependency used by TASK-305.
+Install it in the test environment (not production requirements), e.g.
+python -m pip install asyncpg==0.32.0.
+
+Provision a disposable PostgreSQL 15 container, never a shared database. Example
+PowerShell from the repository root with backend test dependencies available:
+
+~~~powershell
+$token = [guid]::NewGuid().ToString('N')
+$pg = "task207-test-$token"
+$db = "task207_cluster_$token"
+docker run --detach --name $pg --publish 127.0.0.1::5432 -e POSTGRES_HOST_AUTH_METHOD=trust -e "POSTGRES_DB=$db" postgres:15-alpine
+try {
+  for ($attempt = 0; $attempt -lt 40; $attempt++) {
+    docker exec $pg pg_isready -U postgres -d $db
+    if ($LASTEXITCODE -eq 0) { break }
+    Start-Sleep -Milliseconds 250
+  }
+  if ($LASTEXITCODE -ne 0) { throw "PostgreSQL unavailable" }
+  docker exec $pg psql -U postgres -d $db -v ON_ERROR_STOP=1 -c 'CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;'
+  if ($LASTEXITCODE -ne 0) { throw "Role setup failed" }
+  $port = (docker port $pg 5432/tcp).Trim().Split(':')[-1]
+  $env:RUN_TASK207_REAL_DB_TESTS = '1'
+  $env:TASK207_TEST_DSN = "postgresql://postgres@127.0.0.1:$port/$db"
+  python -m pytest backend/tests/migrations/test_generation_w2.py -q
+} finally {
+  Remove-Item Env:RUN_TASK207_REAL_DB_TESTS -ErrorAction SilentlyContinue
+  Remove-Item Env:TASK207_TEST_DSN -ErrorAction SilentlyContinue
+  docker rm --force $pg
+}
+~~~
+
+The fixture requires explicit opt-in, verifies the localhost task207_cluster_*
+database, and creates a separate random task207_case_* database per test.
+No test drops public or accepts the postgres default database.
+Missing driver/provisioning is not SQL verification. The local author run used a
+network-none cluster and backend runner sharing only its network namespace, without
+host ports, cloud credentials or a Docker socket.
+
+To regenerate the compact actual-RPC handoff fixture, additionally set
+TASK207_CONTRACT_OUTPUT to backend/tests/fixtures/w2_rpc_receipt.json in the test
+runner's filesystem and run only -k rpc_receipt_for_worker_handoff.
+This explicit artifact option is off by default; omitted_fields identifies removed
+large document repetitions. Normal CI never rewrites the fixture.

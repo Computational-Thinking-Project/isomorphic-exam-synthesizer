@@ -1,0 +1,294 @@
+{
+  "provenance": "PostgreSQL 15, real RPC roles, offline AI fixture; no worker/provider/SSE E2E",
+  "source_snapshot": {
+    "ready": true,
+    "reason": null,
+    "manifest": {
+      "sources": [
+        {
+          "question_no": 1,
+          "source_question_id": "acba6fd2-ee2c-4bb5-81a7-603fd441d9e3",
+          "source_revision_id": "01557f5a-8502-43d1-9fcc-dfe24514750a",
+          "blueprint_revision_id": "8da8d412-b112-4bcd-afe4-acd3fc1d1aad"
+        },
+        {
+          "question_no": 2,
+          "source_question_id": "966a59fc-8367-48e7-b351-82f99973e8bb",
+          "source_revision_id": "392d2f9a-a7a0-4df5-bd92-32e858e89092",
+          "blueprint_revision_id": "7d18a8cd-8906-4ad5-b1c4-51c93d1f526a"
+        }
+      ],
+      "confirmation_id": "a1ff4227-20ff-4519-b766-51cafd51d196"
+    },
+    "session_id": "05e00e46-65b6-49ec-a916-851acb469fb2",
+    "source_order": [
+      "acba6fd2-ee2c-4bb5-81a7-603fd441d9e3",
+      "966a59fc-8367-48e7-b351-82f99973e8bb"
+    ],
+    "confirmation_id": "a1ff4227-20ff-4519-b766-51cafd51d196",
+    "confirmed_sources": [
+      {
+        "question_no": 1,
+        "confirmed_input": {
+          "id": "acba6fd2-ee2c-4bb5-81a7-603fd441d9e3",
+          "options": [
+            "1856",
+            "1334",
+            "928",
+            "2552"
+          ],
+          "solution": "",
+          "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Dũng có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Dũng lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
+          "correct_answer": "A"
+        },
+        "source_fingerprint": "f8b9d1a91d2eeb8f5bf087d8a41f11a1aaf63e6b482bd1418a3f9de546aaaa0a",
+        "source_question_id": "acba6fd2-ee2c-4bb5-81a7-603fd441d9e3",
+        "source_revision_id": "01557f5a-8502-43d1-9fcc-dfe24514750a",
+        "blueprint_fingerprint": "d13407be6207275599e615498aa24d2e3b94ff05dde179a34b8c239d45b7cda8",
+        "blueprint_revision_id": "8da8d412-b112-4bcd-afe4-acd3fc1d1aad"
+      },
+      {
+        "question_no": 2,
+        "confirmed_input": {
+          "id": "966a59fc-8367-48e7-b351-82f99973e8bb",
+          "options": [
+            "1856",
+            "1334",
+            "928",
+            "2552"
+          ],
+          "solution": "",
+          "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Dũng có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Dũng lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
+          "correct_answer": "A"
+        },
+        "source_fingerprint": "876f058dc9d6debd8ceb3f8f69dc6ebc8f8a8c6ce69aa2a7a7c46a9b56cb09f0",
+        "source_question_id": "966a59fc-8367-48e7-b351-82f99973e8bb",
+        "source_revision_id": "392d2f9a-a7a0-4df5-bd92-32e858e89092",
+        "blueprint_fingerprint": "391abea633b2c4eeff25f1b53fd0a2a3227ad6cdcb6c105f089a51b4bab3e837",
+        "blueprint_revision_id": "7d18a8cd-8906-4ad5-b1c4-51c93d1f526a"
+      }
+    ],
+    "confirmed_source_hash": "801dae92a9f6ed5418fc63a71133e283a331672070fdf417dbd4eeb739ec970e"
+  },
+  "claim": {
+    "config": {
+      "n_versions": 1,
+      "ordering_preferences": {
+        "shuffle_options": false,
+        "shuffle_questions": true
+      },
+      "active_variation_modes": [
+        "context_swap"
+      ]
+    },
+    "job_id": "99d93868-6d92-4de7-962b-5d22bebec0e0",
+    "status": "generating",
+    "context": {
+      "ready": true,
+      "reason": null,
+      "manifest": {
+        "sources": [
+          {
+            "question_no": 1,
+            "source_question_id": "acba6fd2-ee2c-4bb5-81a7-603fd441d9e3",
+            "source_revision_id": "01557f5a-8502-43d1-9fcc-dfe24514750a",
+            "blueprint_revision_id": "8da8d412-b112-4bcd-afe4-acd3fc1d1aad"
+          },
+          {
+            "question_no": 2,
+            "source_question_id": "966a59fc-8367-48e7-b351-82f99973e8bb",
+            "source_revision_id": "392d2f9a-a7a0-4df5-bd92-32e858e89092",
+            "blueprint_revision_id": "7d18a8cd-8906-4ad5-b1c4-51c93d1f526a"
+          }
+        ],
+        "confirmation_id": "a1ff4227-20ff-4519-b766-51cafd51d196"
+      },
+      "base_seed": 100,
+      "n_versions": 1,
+      "session_id": "05e00e46-65b6-49ec-a916-851acb469fb2",
+      "public_modes": [
+        "context_swap"
+      ],
+      "source_order": [
+        "acba6fd2-ee2c-4bb5-81a7-603fd441d9e3",
+        "966a59fc-8367-48e7-b351-82f99973e8bb"
+      ],
+      "confirmation_id": "a1ff4227-20ff-4519-b766-51cafd51d196",
+      "mapping_version": "1.0",
+      "canonical_dimensions": [
+        "context"
+      ],
+      "ordering_preferences": {
+        "shuffle_options": false,
+        "shuffle_questions": true
+      },
+      "confirmed_source_hash": "801dae92a9f6ed5418fc63a71133e283a331672070fdf417dbd4eeb739ec970e"
+    },
+    "session_id": "05e00e46-65b6-49ec-a916-851acb469fb2",
+    "snapshot_id": "20918af4-6f3c-4ec7-ae33-4361490bd4e1",
+    "starting_quota": 0,
+    "committed_targets": [],
+    "gemini_call_count": 0
+  },
+  "persist": {
+    "success": true,
+    "replayed": false,
+    "session_id": "05e00e46-65b6-49ec-a916-851acb469fb2",
+    "snapshot_id": "20918af4-6f3c-4ec7-ae33-4361490bd4e1",
+    "version_index": 1,
+    "source_question_id": "acba6fd2-ee2c-4bb5-81a7-603fd441d9e3",
+    "version_question_id": "9f359484-57fd-4504-828b-98d04c0220fd"
+  },
+  "resume": {
+    "context": {
+      "ready": true,
+      "reason": null,
+      "manifest": {
+        "sources": [
+          {
+            "question_no": 1,
+            "source_question_id": "acba6fd2-ee2c-4bb5-81a7-603fd441d9e3",
+            "source_revision_id": "01557f5a-8502-43d1-9fcc-dfe24514750a",
+            "blueprint_revision_id": "8da8d412-b112-4bcd-afe4-acd3fc1d1aad"
+          },
+          {
+            "question_no": 2,
+            "source_question_id": "966a59fc-8367-48e7-b351-82f99973e8bb",
+            "source_revision_id": "392d2f9a-a7a0-4df5-bd92-32e858e89092",
+            "blueprint_revision_id": "7d18a8cd-8906-4ad5-b1c4-51c93d1f526a"
+          }
+        ],
+        "confirmation_id": "a1ff4227-20ff-4519-b766-51cafd51d196"
+      },
+      "base_seed": 100,
+      "n_versions": 1,
+      "session_id": "05e00e46-65b6-49ec-a916-851acb469fb2",
+      "public_modes": [
+        "context_swap"
+      ],
+      "source_order": [
+        "acba6fd2-ee2c-4bb5-81a7-603fd441d9e3",
+        "966a59fc-8367-48e7-b351-82f99973e8bb"
+      ],
+      "confirmation_id": "a1ff4227-20ff-4519-b766-51cafd51d196",
+      "mapping_version": "1.0",
+      "canonical_dimensions": [
+        "context"
+      ],
+      "ordering_preferences": {
+        "shuffle_options": false,
+        "shuffle_questions": true
+      },
+      "confirmed_source_hash": "801dae92a9f6ed5418fc63a71133e283a331672070fdf417dbd4eeb739ec970e"
+    },
+    "failures": [
+      {
+        "seed": 1101,
+        "is_success": false,
+        "raw_result": {
+          "attempts": 1,
+          "candidate": null,
+          "error_code": "PROVIDER_FAILED",
+          "validation": null,
+          "version_index": 1,
+          "source_question_id": "966a59fc-8367-48e7-b351-82f99973e8bb",
+          "request_fingerprint": "29753c584e7822b5de14b0adeb0469e8bccadb105edeee7c189ff0069f8e51b1"
+        },
+        "question_no": 2,
+        "snapshot_id": "20918af4-6f3c-4ec7-ae33-4361490bd4e1",
+        "version_index": 1,
+        "source_question_id": "966a59fc-8367-48e7-b351-82f99973e8bb",
+        "request_fingerprint": "29753c584e7822b5de14b0adeb0469e8bccadb105edeee7c189ff0069f8e51b1"
+      }
+    ],
+    "completed": [
+      {
+        "seed": 1100,
+        "is_success": true,
+        "raw_result": {
+          "attempts": 1,
+          "candidate": {
+            "seed": 1100,
+            "options": [
+              "1856",
+              "1334",
+              "928",
+              "2552"
+            ],
+            "solution": {
+              "steps": [
+                {
+                  "latex": null,
+                  "explanation": "Ba hĂ¬nh vuĂ´ng táº¡o thĂ nh tá»« cĂ¡c Ä‘á»‰nh chia mÆ°á»i hai Ä‘á»‰nh thĂ nh ba nhĂ³m rá»i nhau, má»—i nhĂ³m bá»‘n Ä‘á»‰nh. Bá»‘n vá»‹ trĂ­ Ä‘á» pháº£i phĂ¢n bá»‘ theo dáº¡ng 2,1,1."
+                },
+                {
+                  "latex": "P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}",
+                  "explanation": "Chá»n nhĂ³m cĂ³ hai vá»‹ trĂ­ Ä‘á», hai vá»‹ trĂ­ trong nhĂ³m Ä‘Ă³ vĂ  má»™t vá»‹ trĂ­ trong má»—i nhĂ³m cĂ²n láº¡i. CĂ³ 288 cĂ¡ch thuáº­n lá»£i trĂªn 495 cĂ¡ch chá»n bá»‘n vá»‹ trĂ­ Ä‘á»."
+                },
+                {
+                  "latex": "3190P=1856",
+                  "explanation": "NhĂ¢n xĂ¡c suáº¥t vá»›i há»‡ sá»‘ cá»§a Ä‘á»."
+                }
+              ],
+              "correct_key": "A",
+              "final_answer": "1856"
+            },
+            "variant_id": "var_contract_success",
+            "correct_key": "A",
+            "has_warning": true,
+            "solution_md": "1. Ba hĂ¬nh vuĂ´ng táº¡o thĂ nh tá»« cĂ¡c Ä‘á»‰nh chia mÆ°á»i hai Ä‘á»‰nh thĂ nh ba nhĂ³m rá»i nhau, má»—i nhĂ³m bá»‘n Ä‘á»‰nh. Bá»‘n vá»‹ trĂ­ Ä‘á» pháº£i phĂ¢n bá»‘ theo dáº¡ng 2,1,1.\n\n2. Chá»n nhĂ³m cĂ³ hai vá»‹ trĂ­ Ä‘á», hai vá»‹ trĂ­ trong nhĂ³m Ä‘Ă³ vĂ  má»™t vá»‹ trĂ­ trong má»—i nhĂ³m cĂ²n láº¡i. CĂ³ 288 cĂ¡ch thuáº­n lá»£i trĂªn 495 cĂ¡ch chá»n bá»‘n vá»‹ trĂ­ Ä‘á».\n\n   $$P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}$$\n\n3. NhĂ¢n xĂ¡c suáº¥t vá»›i há»‡ sá»‘ cá»§a Ä‘á».\n\n   $$3190P=1856$$\n\nÄĂ¡p Ă¡n A: 1856",
+            "question_text": "Má»™t khung hĂ¬nh trang trĂ­ cĂ³ dáº¡ng má»™t Ä‘a giĂ¡c Ä‘á»u 12 cáº¡nh Ä‘Æ°á»£c gáº¯n cá»‘ Ä‘á»‹nh trĂªn má»™t tráº§n nhĂ . Báº¡n Lan cĂ³ 12 bĂ³ng Ä‘Ă¨n gá»“m bá»‘n bĂ³ng mĂ u Ä‘á» vĂ  tĂ¡m bĂ³ng mĂ u xanh, cĂ³ cĂ´ng suáº¥t Ä‘Ă´i má»™t khĂ¡c nhau. Báº¡n Lan láº¯p ngáº«u nhiĂªn 12 bĂ³ng Ä‘Ă¨n trĂªn vĂ o 12 Ä‘á»‰nh sao cho má»—i Ä‘á»‰nh cĂ³ Ä‘Ăºng má»™t bĂ³ng Ä‘Ă¨n. Gá»i P lĂ  xĂ¡c suáº¥t Ä‘á»ƒ má»—i hĂ¬nh vuĂ´ng (cĂ³ bá»‘n Ä‘á»‰nh lĂ  cĂ¡c Ä‘á»‰nh cá»§a Ä‘a giĂ¡c Ä‘Ă£ cho) Ä‘á»u cĂ³ Ă­t nháº¥t má»™t bĂ³ng Ä‘Ă¨n mĂ u Ä‘á». GiĂ¡ trá»‹ cá»§a 3190P báº±ng bao nhiĂªu?",
+            "source_question_id": "acba6fd2-ee2c-4bb5-81a7-603fd441d9e3",
+            "blueprint_fingerprint": "d13407be6207275599e615498aa24d2e3b94ff05dde179a34b8c239d45b7cda8",
+            "requires_teacher_review": true
+          },
+          "error_code": null,
+          "validation": {
+            "checks": [
+              {
+                "detail": "Solution key and final_answer must match the designated option content.",
+                "errors": [],
+                "passed": true,
+                "status": "verified",
+                "check_name": "solution_consistency",
+                "confidence": null
+              },
+              {
+                "detail": null,
+                "errors": [],
+                "passed": true,
+                "status": null,
+                "check_name": "solution_latex",
+                "confidence": null
+              },
+              {
+                "detail": "Free-form reasoning steps require teacher review.",
+                "errors": [],
+                "passed": false,
+                "status": "unknown",
+                "check_name": "solution_reasoning",
+                "confidence": null
+              }
+            ],
+            "requires_teacher_review": true
+          },
+          "version_index": 1,
+          "source_question_id": "acba6fd2-ee2c-4bb5-81a7-603fd441d9e3",
+          "request_fingerprint": "4665f5a5b8353d4cac6a618e107e240a1b29afb5beff31b03c25de34c20e2160"
+        },
+        "question_no": 1,
+        "snapshot_id": "20918af4-6f3c-4ec7-ae33-4361490bd4e1",
+        "version_index": 1,
+        "source_question_id": "acba6fd2-ee2c-4bb5-81a7-603fd441d9e3",
+        "request_fingerprint": "4665f5a5b8353d4cac6a618e107e240a1b29afb5beff31b03c25de34c20e2160"
+      }
+    ],
+    "session_id": "05e00e46-65b6-49ec-a916-851acb469fb2",
+    "snapshot_id": "20918af4-6f3c-4ec7-ae33-4361490bd4e1"
+  },
+  "omitted_fields": [
+    "source_snapshot.confirmed_sources[].canonical_blueprint",
+    "claim.context.confirmed_sources",
+    "resume.context.confirmed_sources"
+  ]
+}

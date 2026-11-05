@@ -592,3 +592,33 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
   giữ nguyên code nhưng cần biết principal boundary mới. Contract chuẩn tại
   [Finalize RPC](api/finalize-rpc-contract.md); evidence/M5 tại
   [remediation](tasks/TASK-305_REVIEW_REMEDIATION_2026-11-05.md).
+
+
+## DEC-207-001 — Canonical generation snapshot and durable W2 results
+
+- **Ngày / người phụ trách:** 05/11/2026, Duy / TASK-207a/b, PR #32.
+- **Trạng thái:** implementation và author self-check; chờ independent review,
+  GitHub Approve và CI trên head được push. Không phải rollout Supabase/E2E worker.
+- **Context:** canonical producer không tạo legacy Blueprint rows; config/preflight
+  cũ có thể báo readiness lệch nhau, và display-only persistence không đủ resume.
+- **Decision:** migration 010 sau 004–009; canonical source manifest được so sánh
+  dưới parent lock ở save/initial claim. Snapshot cố định giữ seed/config/source/
+  Blueprint/public modes/resolved dimensions/mapping version; retry chỉ đổi token.
+  SQL hash projection có parity tests với helper AI hiện có.
+- **Policy:** public profile 1.0 chỉ NUMERICAL/parameter_variation→values,
+  context_swap→context; exact ["NONE"]→[]; unknown/mixed/sai case bị từ chối.
+  GET không fallback legacy khi canonical lỗi/not-ready.
+- **Persistence/security:** full QuestionResult và display projection nguyên tử;
+  successful target immutable; finish kiểm đúng successful slots. Private wrappers
+  giữ đường legacy. Quyền service dựa connection principal, không JWT role GUC.
+  Authenticated không ghi config trực tiếp để bypass manifest validation.
+- **Compatibility:** canonical caller PR #30 phải truyền p_expected_snapshot và
+  tiêu thụ context/result envelopes; bốn tham số legacy vẫn resolve qua default.
+  Clone worker/record không bị viết lại hoặc giả lập AI validation trong PR này.
+  Giữ 006–009; không automatic backfill/down migration/new-generation workflow.
+- **Tests/CI:** đồng bộ asyncio_mode=auto ở root với backend để lệnh CI thu cả
+  backend và scripts/blueprint xử lý async fixtures đúng. SQL opt-in chạy riêng,
+  bao gồm review/shuffle/final approval; không coi skipped DB tests là pass.
+- **Impact:** SQL/session detail/test contract PR #32; Python preflight/worker PR #30;
+  canonical producer ownership giữ nguyên. [Contract](api/generation-config-endpoint.md),
+  [implementation/evidence](tasks/TASK-207.md).

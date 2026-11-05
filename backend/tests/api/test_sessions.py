@@ -37,6 +37,7 @@ def test_create_session_validation_error(client, mock_auth_user, auth_headers):
 def test_create_session_success(client, mock_auth_user, test_user_id, auth_headers):
     """POST /api/sessions creates session with draft status and returns 201."""
     mock_db = MagicMock()
+    mock_db.rpc.return_value.execute.return_value.data = {"ready": False, "reason": "NO_CONFIRMATION"}
     mock_exec = MagicMock()
     mock_exec.data = [{
         "id": "new-session-uuid-1",
@@ -74,6 +75,7 @@ def test_create_session_success(client, mock_auth_user, test_user_id, auth_heade
 def test_list_sessions_success(client, mock_auth_user, test_user_id, auth_headers):
     """GET /api/sessions returns paginated session list for current user."""
     mock_db = MagicMock()
+    mock_db.rpc.return_value.execute.return_value.data = {"ready": False, "reason": "NO_CONFIRMATION"}
     mock_exec = MagicMock()
     mock_exec.data = [
         {
@@ -129,6 +131,7 @@ def test_list_sessions_success(client, mock_auth_user, test_user_id, auth_header
 def test_list_sessions_empty(client, mock_auth_user, auth_headers):
     """GET /api/sessions returns empty list when user has no sessions."""
     mock_db = MagicMock()
+    mock_db.rpc.return_value.execute.return_value.data = {"ready": False, "reason": "NO_CONFIRMATION"}
     mock_exec = MagicMock()
     mock_exec.data = []
     mock_exec.count = 0
@@ -154,6 +157,7 @@ def test_list_sessions_empty(client, mock_auth_user, auth_headers):
 def test_get_session_detail_success(client, mock_auth_user, test_user_id, auth_headers):
     """GET /api/sessions/{id} returns full detail with source questions and versions."""
     mock_db = MagicMock()
+    mock_db.rpc.return_value.execute.return_value.data = {"ready": False, "reason": "NO_CONFIRMATION"}
 
     # Route calls:
     # 1. assert_ownership -> table("exam_sessions").select("user_id").eq("id", "session-1") -> [{"user_id": test_user_id}]
@@ -246,6 +250,7 @@ def test_get_session_detail_success(client, mock_auth_user, test_user_id, auth_h
 def test_get_session_detail_forbidden(client, mock_auth_user, auth_headers):
     """GET /api/sessions/{id} returns 403 when session belongs to another user."""
     mock_db = MagicMock()
+    mock_db.rpc.return_value.execute.return_value.data = {"ready": False, "reason": "NO_CONFIRMATION"}
     exec_res = MagicMock()
     exec_res.data = [{"user_id": "different-user-uuid"}]
     mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = exec_res
@@ -262,6 +267,7 @@ def test_get_session_detail_forbidden(client, mock_auth_user, auth_headers):
 def test_get_session_detail_not_found(client, mock_auth_user, auth_headers):
     """GET /api/sessions/{id} returns 404 when session does not exist."""
     mock_db = MagicMock()
+    mock_db.rpc.return_value.execute.return_value.data = {"ready": False, "reason": "NO_CONFIRMATION"}
     exec_res = MagicMock()
     exec_res.data = []
     mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = exec_res
@@ -278,6 +284,7 @@ def test_get_session_detail_not_found(client, mock_auth_user, auth_headers):
 def test_update_session_success(client, mock_auth_user, test_user_id, auth_headers):
     """PATCH /api/sessions/{id} updates title and returns updated session."""
     mock_db = MagicMock()
+    mock_db.rpc.return_value.execute.return_value.data = {"ready": False, "reason": "NO_CONFIRMATION"}
 
     # assert_ownership check
     exec_owner = MagicMock()
@@ -319,6 +326,7 @@ def test_update_session_success(client, mock_auth_user, test_user_id, auth_heade
 def test_delete_session_success(client, mock_auth_user, test_user_id, auth_headers):
     """DELETE /api/sessions/{id} deletes session and returns 204 No Content."""
     mock_db = MagicMock()
+    mock_db.rpc.return_value.execute.return_value.data = {"ready": False, "reason": "NO_CONFIRMATION"}
     exec_owner = MagicMock()
     exec_owner.data = [{"user_id": test_user_id}]
     mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = exec_owner
@@ -336,6 +344,7 @@ def test_delete_session_success(client, mock_auth_user, test_user_id, auth_heade
 def test_clone_session_default_title(client, mock_auth_user, test_user_id, auth_headers):
     """POST /api/sessions/{id}/clone copies session and appends '(Bản sao)' to title."""
     mock_db = MagicMock()
+    mock_db.rpc.return_value.execute.return_value.data = {"ready": False, "reason": "NO_CONFIRMATION"}
 
     # Route interactions:
     # 1. assert_ownership -> user_id check
@@ -423,6 +432,7 @@ def test_clone_session_default_title(client, mock_auth_user, test_user_id, auth_
 def test_clone_session_custom_title(client, mock_auth_user, test_user_id, auth_headers):
     """POST /api/sessions/{id}/clone with new_title uses the provided title."""
     mock_db = MagicMock()
+    mock_db.rpc.return_value.execute.return_value.data = {"ready": False, "reason": "NO_CONFIRMATION"}
 
     def table_router(table_name):
         mock_t = MagicMock()
@@ -520,6 +530,7 @@ def test_clone_session_fails_and_cleans_up_when_question_insert_returns_empty(
 ):
     """POST /api/sessions/{id}/clone triggers cleanup when question insert returns empty data."""
     mock_db = MagicMock()
+    mock_db.rpc.return_value.execute.return_value.data = {"ready": False, "reason": "NO_CONFIRMATION"}
     deleted_session_ids = []
 
     def table_router(table_name):
@@ -601,6 +612,7 @@ def test_clone_session_fails_and_cleans_up_on_db_exception(
 ):
     """POST /api/sessions/{id}/clone triggers cleanup when DB raises unexpected exception during copying."""
     mock_db = MagicMock()
+    mock_db.rpc.return_value.execute.return_value.data = {"ready": False, "reason": "NO_CONFIRMATION"}
     deleted_session_ids = []
 
     def table_router(table_name):
@@ -663,6 +675,7 @@ def test_get_session_detail_invalid_blueprint_modes_structure(
 ):
     """GET /api/sessions/{id} returns is_ready=False and supported_modes=None when variation_modes is an object (F02/F09)."""
     mock_db = MagicMock()
+    mock_db.rpc.return_value.execute.return_value.data = {"ready": False, "reason": "NO_CONFIRMATION"}
 
     def table_router(table_name):
         mock_t = MagicMock()
@@ -727,6 +740,7 @@ def test_clone_session_default_title_and_subject_encoding(
 ):
     """POST /api/sessions/{id}/clone uses correct Vietnamese encoding for default title and fallback subject (F08/F09)."""
     mock_db = MagicMock()
+    mock_db.rpc.return_value.execute.return_value.data = {"ready": False, "reason": "NO_CONFIRMATION"}
     inserted_records = []
 
     def table_router(table_name):
@@ -795,6 +809,7 @@ def test_get_session_detail_tc_ready_02_original_clone(
 ):
     """TC-READY-02: Confirmed blueprints with no common variation modes yield is_ready=True, supported_modes=[]."""
     mock_db = MagicMock()
+    mock_db.rpc.return_value.execute.return_value.data = {"ready": False, "reason": "NO_CONFIRMATION"}
 
     def table_router(table_name):
         mock_t = MagicMock()
@@ -871,6 +886,7 @@ def test_get_session_detail_tc_ready_03_available_and_unavailable_modes(
 ):
     """TC-READY-03: Confirmed blueprints classify supported modes into available (100% sources) and unavailable."""
     mock_db = MagicMock()
+    mock_db.rpc.return_value.execute.return_value.data = {"ready": False, "reason": "NO_CONFIRMATION"}
 
     def table_router(table_name):
         mock_t = MagicMock()
@@ -961,6 +977,7 @@ def test_get_session_detail_canonical_readiness(
 ):
     """Canonical session without legacy blueprints correctly reports ready and supported_modes."""
     mock_db = MagicMock()
+    mock_db.rpc.return_value.execute.return_value.data = {"ready": False, "reason": "NO_CONFIRMATION"}
 
     def table_router(table_name):
         mock_t = MagicMock()
@@ -1040,6 +1057,90 @@ def test_get_session_detail_canonical_readiness(
     assert bp_summary is not None
     assert bp_summary["is_ready"] is True
     assert bp_summary["confirmed_blueprints"] == 2
-    assert len(bp_summary["supported_modes"]) == 1
-    assert bp_summary["supported_modes"][0]["id"] == "values"
-    assert bp_summary["supported_modes"][0]["is_available"] is True
+    assert {mode["id"] for mode in bp_summary["supported_modes"]} == {"NUMERICAL", "parameter_variation"}
+    assert all(mode["is_available"] for mode in bp_summary["supported_modes"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("snapshot", [
+    {"ready": False, "reason": "CANONICAL_BLUEPRINTS_INCOMPLETE"},
+    {"ready": False, "reason": "ARTIFACT_STALE"},
+    {"ready": True, "confirmed_sources": [{"source_question_id": "q", "canonical_blueprint": {}}]},
+    ["malformed"],
+    None,
+    RuntimeError("RPC unavailable"),
+])
+async def test_canonical_unavailable_never_falls_back_to_legacy(snapshot):
+    from app.api.routes.sessions import get_session_detail
+    from app.models.schemas import CurrentUser
+
+    session = {
+        "id": "s", "user_id": "u", "title": "Session", "subject": "Toán", "grade": 12,
+        "status": "blueprinted", "created_at": "2026-11-01T00:00:00Z", "updated_at": "2026-11-01T00:00:00Z",
+    }
+    mock_db = MagicMock()
+    tables = []
+
+    def table(name):
+        tables.append(name)
+        query = MagicMock()
+        query.select.return_value = query
+        query.eq.return_value = query
+        query.order.return_value = query
+        query.limit.return_value = query
+        query.execute.return_value.data = {
+            "exam_sessions": [session], "source_questions": [{"id": "q", "question_no": 1}],
+            "exam_versions": [], "generation_configs": [],
+        }[name]
+        return query
+
+    mock_db.table.side_effect = table
+    if isinstance(snapshot, Exception):
+        mock_db.rpc.return_value.execute.side_effect = snapshot
+    else:
+        mock_db.rpc.return_value.execute.return_value.data = snapshot
+    with patch("app.api.routes.sessions.assert_ownership"):
+        response = await get_session_detail("s", CurrentUser(id="u", email="owner@example.invalid", access_token="fixture-token"), mock_db)
+    assert response.blueprint_summary["is_ready"] is False
+    assert response.blueprint_summary["supported_modes"] is None
+    assert "question_blueprints" not in tables
+
+
+@pytest.mark.asyncio
+async def test_legacy_whitespace_id_does_not_publish_a_selectable_alias():
+    from app.api.routes.sessions import get_session_detail
+    from app.models.schemas import CurrentUser
+
+    mock_db = MagicMock()
+    mock_db.rpc.return_value.execute.return_value.data = {"ready": False, "reason": "NO_CONFIRMATION"}
+    session = {
+        "id": "s", "user_id": "u", "title": "Session", "subject": "Toán", "grade": 12,
+        "status": "blueprinted", "created_at": "2026-11-01T00:00:00Z", "updated_at": "2026-11-01T00:00:00Z",
+    }
+
+    def table(name):
+        query = MagicMock()
+        query.select.return_value = query
+        query.eq.return_value = query
+        query.order.return_value = query
+        query.limit.return_value = query
+        query.in_.return_value = query
+        query.execute.return_value.data = {
+            "exam_sessions": [session],
+            "source_questions": [{"id": "q1"}, {"id": "q2"}],
+            "exam_versions": [], "generation_configs": [],
+            "question_blueprints": [
+                {"source_question_id": "q1", "confirmed_at": "confirmed", "variation_modes": [" NUMERICAL "]},
+                {"source_question_id": "q2", "confirmed_at": "confirmed", "variation_modes": ["NUMERICAL"]},
+            ],
+        }[name]
+        return query
+
+    mock_db.table.side_effect = table
+    with patch("app.api.routes.sessions.assert_ownership"):
+        response = await get_session_detail("s", CurrentUser(id="u", email="owner@example.invalid", access_token="fixture-token"), mock_db)
+    assert response.blueprint_summary["is_ready"]
+    assert response.blueprint_summary["supported_modes"] == [{
+        "id": "NUMERICAL", "label": "Thay đổi số liệu", "question_count": 1, "is_available": False,
+        "unavailable_reason": "Chỉ hỗ trợ 1/2 câu trong đề (yêu cầu toàn bộ câu hỏi hỗ trợ).",
+    }]

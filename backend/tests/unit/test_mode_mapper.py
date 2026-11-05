@@ -1,4 +1,4 @@
-"""Unit and property tests for mode_mapper.py."""
+"""Public mode profile and readiness regression tests."""
 
 import pytest
 
@@ -9,69 +9,69 @@ from app.services.generation.mode_mapper import (
 )
 
 
-def test_normalize_empty_and_none():
-    assert normalize_variation_modes(None) == []
-    assert normalize_variation_modes([]) == []
-    assert normalize_variation_modes(["NONE"]) == []
-    assert normalize_variation_modes(["none"]) == []
-    assert normalize_variation_modes([" NONE "]) == []
+def test_clone_normalization_is_exact():
+    for modes in (None, [], ["NONE"]):
+        assert normalize_variation_modes(modes) == []
 
 
-def test_normalize_mixed_none_raises():
-    with pytest.raises(ValueError, match="NONE cannot be combined"):
-        normalize_variation_modes(["NONE", "values"])
-    with pytest.raises(ValueError, match="NONE cannot be combined"):
-        normalize_variation_modes(["values", "none"])
+@pytest.mark.parametrize(
+    "modes",
+    [
+        ["none"],
+        [" NONE "],
+        ["NONE", "context_swap"],
+        ["STRUCTURAL"],
+        ["variable_inversion"],
+        ["values"],
+        ["context"],
+        ["wording"],
+        [" NUMERICAL "],
+        [None],
+        ["unknown"],
+    ],
+)
+def test_reject_unpublished_or_mixed_modes(modes):
+    with pytest.raises(ValueError):
+        normalize_variation_modes(modes)
 
 
-def test_normalize_unsupported_modes_raises():
-    with pytest.raises(ValueError, match="is unsupported"):
-        normalize_variation_modes(["STRUCTURAL"])
-    with pytest.raises(ValueError, match="is unsupported"):
-        normalize_variation_modes(["variable_inversion"])
+def test_preserves_public_ids_and_deduplicates_dimensions():
+    modes = ["NUMERICAL", "parameter_variation", "NUMERICAL", "context_swap"]
+    assert normalize_variation_modes(modes) == ["NUMERICAL", "parameter_variation", "context_swap"]
+    assert resolve_modes_to_canonical_dimensions(modes) == ["values", "context"]
 
 
-def test_normalize_valid_modes():
-    modes = [" NUMERICAL ", "context_swap", "NUMERICAL"]
-    assert normalize_variation_modes(modes) == ["NUMERICAL", "context_swap"]
-
-
-def test_resolve_modes_to_canonical():
-    assert resolve_modes_to_canonical_dimensions(["NUMERICAL"]) == ["values"]
-    assert resolve_modes_to_canonical_dimensions(["parameter_variation"]) == ["values"]
-    assert resolve_modes_to_canonical_dimensions(["context_swap"]) == ["context"]
-    assert resolve_modes_to_canonical_dimensions(["values", "context"]) == ["values", "context"]
-
-
-def test_compute_supported_modes_summary():
-    bp1 = {
+def blueprint(*dimensions):
+    return {
         "requirement": {
             "variation_policy": {
-                "allowed_transformations": [
-                    {"dimension": "values"},
-                    {"dimension": "context"},
-                ]
+                "allowed_transformations": [{"dimension": dimension} for dimension in dimensions],
             }
         }
     }
-    bp2 = {
-        "requirement": {
-            "variation_policy": {
-                "allowed_transformations": [
-                    {"dimension": "values"},
-                ]
-            }
-        }
-    }
-    summary = compute_supported_modes_summary([bp1, bp2], 2)
-    assert len(summary) == 2
-    # values is available (2/2)
-    val_item = next(m for m in summary if m["id"] == "values")
-    assert val_item["is_available"] is True
-    assert val_item["question_count"] == 2
 
-    # context is unavailable (1/2)
-    ctx_item = next(m for m in summary if m["id"] == "context")
-    assert ctx_item["is_available"] is False
-    assert ctx_item["question_count"] == 1
-    assert "1/2" in ctx_item["unavailable_reason"]
+
+def test_projection_exposes_only_public_aliases_and_batch_intersection():
+    summary = compute_supported_modes_summary(
+        [
+            blueprint("values", "context", "wording"),
+            blueprint("values"),
+        ],
+        2,
+    )
+    by_id = {mode["id"]: mode for mode in summary}
+    assert set(by_id) == {"NUMERICAL", "parameter_variation", "context_swap"}
+    assert by_id["NUMERICAL"]["is_available"]
+    assert by_id["parameter_variation"]["question_count"] == 2
+    assert not by_id["context_swap"]["is_available"]
+    assert "1/2" in by_id["context_swap"]["unavailable_reason"]
+
+
+def test_ready_without_public_dimensions_is_clone_only():
+    assert compute_supported_modes_summary([blueprint("wording")], 1) == []
+
+
+@pytest.mark.parametrize("blueprints,total", [([], 1), ([{}], 1), ([blueprint("values")], 2)])
+def test_incomplete_or_malformed_evidence_cannot_be_clone(blueprints, total):
+    with pytest.raises(ValueError):
+        compute_supported_modes_summary(blueprints, total)
