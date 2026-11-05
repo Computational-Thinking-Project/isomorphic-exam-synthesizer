@@ -14,7 +14,7 @@ after(installDialogLifecycleStub());
 document.oninput = null;
 const { createRoot } = await import('react-dom/client');
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { MemoryRouter, Route, Routes, useNavigate } = await import('react-router-dom');
+const { MemoryRouter, Route, Routes, useNavigate, useParams } = await import('react-router-dom');
 register('../../test-loader.mjs', import.meta.url);
 register('../../services/test-support/auth-loader.js', import.meta.url);
 const { api } = await import('../../services/api.js');
@@ -52,15 +52,19 @@ function mount(id = 'session-a') {
   const root = createRoot(container);
   let navigate;
   function Navigation() { navigate = useNavigate(); return null; }
+  function Stage2Fixture() { return React.createElement('h1', null, `Stage 2 · ${useParams().sessionId}`); }
   return {
     container,
     render: () => act(async () => root.render(React.createElement(MemoryRouter,
-      { initialEntries: [`/session/${id}/stage1`] }, React.createElement(Navigation),
+      { initialEntries: ['/dashboard', `/session/${id}/stage1`], initialIndex: 1 }, React.createElement(Navigation),
       React.createElement(Routes, null,
         React.createElement(Route, { element: React.createElement(ProtectedRoute) },
-          React.createElement(Route, { path: '/session/:sessionId/stage1', element: React.createElement(Stage1Route) })),
+          React.createElement(Route, { path: '/session/:sessionId/stage1', element: React.createElement(Stage1Route) }),
+          React.createElement(Route, { path: '/session/:sessionId/stage2', element: React.createElement(Stage2Fixture) })),
+        React.createElement(Route, { path: '/dashboard', element: React.createElement('h1', null, 'Dashboard fixture') }),
         React.createElement(Route, { path: '/login', element: React.createElement('p', null, 'Đăng nhập') }))))),
     navigate: (next) => act(async () => navigate(`/session/${next}/stage1`)),
+    back: () => act(async () => navigate(-1)),
     unmount: () => act(async () => root.unmount()),
   };
 }
@@ -416,6 +420,91 @@ test('204: 422 confirm không mở dialog incomplete và không làm mất nháp
   assert.equal(dialog(app.container), null);
   assert.deepEqual(calls, ['get', 'post']);
   await app.unmount();
+});
+
+function confirmedResponse(config) {
+  return response(config, { session_id: confirmSessionId, confirmation_id: config.headers.get('Idempotency-Key'),
+    status: 'blueprinted', canonical_status: 'pending', total_blueprints: 0 });
+}
+
+test('204: confirm pending sang Stage 2 đúng phiên và thay mục Stage 1 trong lịch sử', async () => {
+  api.defaults.adapter = async (config) => {
+    calls.push(config.method);
+    return config.method === 'get' ? response(config, confirmDetail()) : confirmedResponse(config);
+  };
+  const app = mount(confirmSessionId);
+  await app.render();
+  await act(async () => button(app.container, confirmLabel).click());
+  assert.equal(app.container.textContent, `Stage 2 · ${confirmSessionId}`);
+  await app.back();
+  assert.equal(app.container.textContent, 'Dashboard fixture');
+  assert.deepEqual(calls, ['get', 'post']);
+  await app.unmount();
+});
+
+test('204: F5 sau POST mất response đã commit, GET chuyển Stage 2 và dọn đúng key', async () => {
+  let committed = false;
+  let writes = 0;
+  api.defaults.adapter = async (config) => {
+    if (config.method === 'get') return response(config, confirmDetail(committed ? 'blueprinted' : 'draft'));
+    writes++;
+    committed = true;
+    throw new Error('Response lost after commit');
+  };
+  const otherAccount = 'stage1-confirm:["account-b","other-session"]';
+  window.sessionStorage.setItem(otherAccount, 'leave untouched');
+  const first = mount(confirmSessionId);
+  await first.render();
+  await act(async () => button(first.container, confirmLabel).click());
+  await first.unmount();
+  const storageKey = `stage1-confirm:${JSON.stringify(['account-a', confirmSessionId])}`;
+  assert(JSON.parse(window.sessionStorage.getItem(storageKey)).idempotencyKey);
+  const refreshed = mount(confirmSessionId);
+  await refreshed.render();
+  assert.equal(refreshed.container.textContent, `Stage 2 · ${confirmSessionId}`);
+  assert.equal(writes, 1);
+  assert.equal(window.sessionStorage.getItem(storageKey), null);
+  assert.equal(window.sessionStorage.getItem(otherAccount), 'leave untouched');
+  await refreshed.unmount();
+});
+
+test('204: F5 còn nháp, chỉ thao tác retry mới POST với đúng key cũ', async () => {
+  const keys = [];
+  api.defaults.adapter = async (config) => {
+    if (config.url.endsWith('/source-artifacts')) throw { config, response: { status: 404 } };
+    if (config.method === 'get') return response(config, confirmDetail());
+    keys.push(config.headers.get('Idempotency-Key'));
+    if (keys.length === 1) throw new Error('Connection lost');
+    return confirmedResponse(config);
+  };
+  const first = mount(confirmSessionId);
+  await first.render();
+  await act(async () => button(first.container, confirmLabel).click());
+  await first.unmount();
+  const refreshed = mount(confirmSessionId);
+  await refreshed.render();
+  assert.equal(keys.length, 1);
+  await act(async () => button(refreshed.container, 'Thử xác nhận lại').click());
+  assert.equal(refreshed.container.textContent, `Stage 2 · ${confirmSessionId}`);
+  assert.deepEqual(keys, [keys[0], keys[0]]);
+  await refreshed.unmount();
+});
+
+test('204: GET khi mở lại chỉ chuyển Stage 2 cho các trạng thái Dashboard đã hỗ trợ', async () => {
+  for (const status of ['blueprinted', 'configured', 'generating', 'approved']) {
+    let reads = 0;
+    api.defaults.adapter = async (config) => {
+      assert.equal(config.method, 'get');
+      reads++;
+      return response(config, confirmDetail(status));
+    };
+    const app = mount(confirmSessionId);
+    await app.render();
+    if (status === 'approved') assert.match(app.container.textContent, /Phiên không còn ở trạng thái nháp/);
+    else assert.equal(app.container.textContent, `Stage 2 · ${confirmSessionId}`);
+    assert.equal(reads, 1);
+    await app.unmount();
+  }
 });
 
 test('203b: text422 mở lỗi toàn đề/câu; đóng/đổi mode không POST, sửa rồi nạp thay A đúng lúc', async () => {
