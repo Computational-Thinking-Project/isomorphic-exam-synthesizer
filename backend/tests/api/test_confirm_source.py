@@ -50,6 +50,8 @@ def flow(monkeypatch):
         error=None,
         read_error=False,
         ready=False,
+        revision="2026-11-04T00:00:00Z",
+        supported_modes=None,
         extracts=0,
     )
     db = MagicMock()
@@ -62,7 +64,7 @@ def flow(monkeypatch):
             return SimpleNamespace(
                 data=[
                     dict(
-                        user_id=state.owner, status=state.status, updated_at="2026-11-04T00:00:00Z"
+                        user_id=state.owner, status=state.status, updated_at=state.revision
                     )
                 ]
                 if name == "exam_sessions"
@@ -81,25 +83,46 @@ def flow(monkeypatch):
             if name == "confirm_source_artifacts":
                 if state.error:
                     raise state.error
-                if state.confirmation:
-                    data = deepcopy(state.confirmation)
-                    data["replayed"] = True
-                else:
-                    data = dict(
-                        confirmation_id=params["p_confirmation_id"],
-                        session_id=sid,
-                        actor_id=params["p_actor_id"],
-                        confirmed_at="2026-11-04T00:00:00Z",
-                        status="blueprinted",
-                        total_questions=1,
-                        total_blueprints=0,
-                        canonical_status="pending",
-                        replayed=False,
-                        sources=params["p_sources"],
-                    )
-                    state.confirmation = deepcopy(data)
-                    state.status = "blueprinted"
-                return SimpleNamespace(data=data)
+
+                if state.confirmation is not None:
+                    saved = state.confirmation
+
+                # Replay phải dùng đúng key, actor và source đã xác nhận.
+                if (
+                    params["p_confirmation_id"] != saved["confirmation_id"]
+                    or params["p_actor_id"] != saved["actor_id"]
+                    or params["p_sources"] != saved["sources"]
+                ):
+                    raise RuntimeError("ARTIFACT_IDEMPOTENCY_CONFLICT")
+
+                data = deepcopy(saved)
+                data["replayed"] = True
+
+            else:
+                # Mô phỏng revision guard trong PostgreSQL RPC.
+                if params["p_expected_updated_at"] != state.revision:
+                    raise RuntimeError("ARTIFACT_STALE")
+
+                if state.status != "draft":
+                    raise RuntimeError("ARTIFACT_STALE")
+
+                data = dict(
+                    confirmation_id=params["p_confirmation_id"],
+                    session_id=sid,
+                    actor_id=params["p_actor_id"],
+                    confirmed_at="2026-11-04T00:00:00Z",
+                    status="blueprinted",
+                    total_questions=1,
+                    total_blueprints=0,
+                    canonical_status="pending",
+                    replayed=False,
+                    sources=params["p_sources"],
+                )
+
+                state.confirmation = deepcopy(data)
+                state.status = "blueprinted"
+
+            return SimpleNamespace(data=data)
             if name == "get_source_artifacts":
                 if state.read_error:
                     raise ConnectionError("lost response")
@@ -190,49 +213,91 @@ def test_confirm_pending_without_adapter_or_legacy_blueprint(flow):
 # Q01 — source_revision contract tests
 # ---------------------------------------------------------------------------
 
-
 def test_confirm_with_matching_source_revision_succeeds(flow):
-    """FE echoes the exact updated_at token → confirm proceeds normally."""
     state, client = flow
-    result = client.post(url(state), json={"source_revision": "2026-11-04T00:00:00Z"})
-    assert result.status_code == 200, result.text
-    assert result.json()["status"] == "blueprinted"
+    key = str(uuid4())
+
+    response = client.post(
+        url(state),
+        json={"source_revision": state.revision},
+        headers={"Idempotency-Key": key},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "blueprinted"
+
+    rpc_calls = [
+        params for name, params in state.calls
+        if name == "confirm_source_artifacts"
+    ]
+    assert len(rpc_calls) == 1
+    assert rpc_calls[0]["p_expected_updated_at"] == state.revision
 
 
 def test_confirm_with_mismatched_source_revision_returns_409_conflict(flow):
-    """FE sends stale revision → 409 ERR_SOURCE_REVISION_CONFLICT, no RPC called."""
     state, client = flow
-    result = client.post(url(state), json={"source_revision": "2026-01-01T00:00:00Z"})
-    assert result.status_code == 409, result.text
-    assert "ERR_SOURCE_REVISION_CONFLICT" in result.text
-    # Ensure no RPC was dispatched
+    stale_revision = "2026-01-01T00:00:00Z"
+
+    response = client.post(
+        url(state),
+        json={"source_revision": stale_revision},
+        headers={"Idempotency-Key": str(uuid4())},
+    )
+
+    assert response.status_code == 409, response.text
+    assert "ERR_SOURCE_REVISION_CONFLICT" in response.text
+    assert state.confirmation is None
+    assert state.status == "draft"
+
+    rpc_calls = [
+        params for name, params in state.calls
+        if name == "confirm_source_artifacts"
+    ]
+    assert len(rpc_calls) == 1
+    assert rpc_calls[0]["p_expected_updated_at"] == stale_revision
+
+
+def test_confirm_without_source_revision_returns_422(flow):
+    state, client = flow
+
+    response = client.post(url(state), json={})
+
+    assert response.status_code == 422
+    assert state.confirmation is None
     assert not state.calls
 
 
-def test_confirm_without_source_revision_still_allowed_for_backward_compat(flow):
-    """Omitting source_revision is still accepted (backward compat / retry path)."""
-    state, client = flow
-    result = client.post(url(state), json={})
-    assert result.status_code == 200, result.text
-
-
-def test_idempotent_retry_with_key_ignores_revision_check(flow):
-    """Replay with same Idempotency-Key bypasses revision check (key determines intent)."""
+def test_idempotent_retry_with_same_key_and_revision(flow):
     state, client = flow
     key = str(uuid4())
-    # First call succeeds and commits
-    first = client.post(url(state), json={}, headers={"Idempotency-Key": key})
-    assert first.status_code == 200, first.text
-    # Replay with wrong revision but same key should still work (session is now blueprinted,
-    # key carries the replay intent)
-    state.status = "blueprinted"
-    replay = client.post(
-        url(state), json={"source_revision": "1900-01-01T00:00:00Z"},
-        headers={"Idempotency-Key": key}
-    )
-    # With a key the status check path is used; blueprinted + key → allowed to reconcile
-    assert replay.status_code in (200, 503), replay.text  # 503 if post-commit read fails
+    payload = {"source_revision": state.revision}
+    headers = {"Idempotency-Key": key}
 
+    first = client.post(
+        url(state),
+        json=payload,
+        headers=headers,
+    )
+    assert first.status_code == 200, first.text
+
+    replay = client.post(
+        url(state),
+        json=payload,
+        headers=headers,
+    )
+    assert replay.status_code == 200, replay.text
+
+    assert first.json()["confirmation_id"] == key
+    assert replay.json()["confirmation_id"] == key
+
+    confirm_calls = [
+        params for name, params in state.calls
+        if name == "confirm_source_artifacts"
+    ]
+    assert len(confirm_calls) == 2
+    assert confirm_calls[0]["p_confirmation_id"] == key
+    assert confirm_calls[1]["p_confirmation_id"] == key
+    assert confirm_calls[0]["p_sources"] == confirm_calls[1]["p_sources"]
 
 def test_background_publication_and_retry_are_actual_producer(flow, monkeypatch):
     state, client = flow
@@ -250,14 +315,23 @@ def test_background_publication_and_retry_are_actual_producer(flow, monkeypatch)
 def test_postcommit_read_failure_retains_confirmation_and_same_key_reconciles(flow):
     state, client = flow
     state.read_error = True
+
     key = str(uuid4())
-    first = client.post(url(state), json={}, headers={"Idempotency-Key": key})
-    assert first.status_code == 503 and state.confirmation is not None
+    payload = {"source_revision": state.revision}
+    headers = {"Idempotency-Key": key}
+
+    first = client.post(url(state), json=payload, headers=headers)
+
+    assert first.status_code == 503
+    assert state.confirmation is not None
+
     state.read_error = False
-    replay = client.post(url(state), json={}, headers={"Idempotency-Key": key})
+
+    replay = client.post(url(state), json=payload, headers=headers)
+
     assert replay.status_code == 200, replay.text
     assert replay.json()["confirmation_id"] == key
-
+    assert state.confirmation["confirmation_id"] == key
 
 @pytest.mark.parametrize("status", ["blueprinted", "generating", "approved"])
 def test_without_key_reconfirmation_refused(flow, status):
@@ -285,7 +359,11 @@ def test_missing_source_or_answer_is_rejected_before_worker(flow, missing):
 def test_owner_guard_before_worker(flow, suffix, method):
     state, client = flow
     state.owner = str(uuid4())
-    options = {"json": {}} if method == "post" else {}
+    options = (
+    {"json": {"source_revision": state.revision}}
+    if suffix == "confirm-source"
+    else {}
+)
     assert getattr(client, method)(url(state, suffix), **options).status_code == 403
     assert not state.calls
 
@@ -297,7 +375,11 @@ def test_owner_guard_before_worker(flow, suffix, method):
 def test_source_endpoints_require_authentication(flow, suffix, method):
     state, client = flow
     app.dependency_overrides.pop(get_current_user)
-    options = {"json": {}} if method == "post" else {}
+    options = (
+    {"json": {"source_revision": state.revision}}
+    if suffix == "confirm-source"
+    else {}
+)
     assert getattr(client, method)(url(state, suffix), **options).status_code == 401
     assert not state.calls
 
@@ -408,3 +490,20 @@ def test_source_artifacts_ready_with_empty_modes_is_valid(flow, monkeypatch):
     data = status_resp.json()
     assert data["ready"] is True
     assert data["supported_modes"] == []
+
+def test_changed_source_after_preview_returns_409(flow):
+    state, client = flow
+    preview_revision = state.revision
+
+    # Một tab khác đã thay thế đề nguồn.
+    state.revision = "2026-11-05T01:00:00Z"
+
+    response = client.post(
+        url(state),
+        json={"source_revision": preview_revision},
+        headers={"Idempotency-Key": str(uuid4())},
+    )
+
+    assert response.status_code == 409
+    assert "ERR_SOURCE_REVISION_CONFLICT" in response.text
+    assert state.confirmation is None

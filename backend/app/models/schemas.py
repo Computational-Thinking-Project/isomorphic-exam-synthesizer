@@ -174,7 +174,7 @@ class SessionDetailResponse(BaseModel):
     created_at: str
     updated_at: str
     source_revision: Optional[str] = Field(
-        default=None,
+        ...,
         min_length=1,
         description="Revision of the source preview being confirmed.",
     )
@@ -278,13 +278,10 @@ class ConfirmSourceRequest(BaseModel):
             "Field kept for backward compatibility; any value sent has no effect."
         ),
     )
-    source_revision: Optional[str] = Field(
-        default=None,
-        description=(
-            "Opaque revision token received from GET /sessions/{id} alongside the source preview. "
-            "Must be provided on new confirmations; absent only on idempotent retries with the same "
-            "Idempotency-Key where the previous outcome is already committed."
-        ),
+    source_revision: str = Field(
+        ...,
+        min_length=1,
+        description="Revision token received with the source preview.",
     )
 
 

@@ -170,7 +170,7 @@ async def get_session_detail(
     # Capture the revision token from the session row *before* reading questions.
     # replace_source_questions bumps updated_at inside a single transaction, so
     # any subsequent ingest will produce a different token and trigger 409 on confirm.
-    source_revision: Optional[str] = session_record.get("updated_at") or None
+    source_revision: str = session_record["updated_at"]
 
     # Fetch source_questions ordered by question_no ASC
     q_res = (
@@ -191,6 +191,25 @@ async def get_session_detail(
         .execute()
     )
     exam_versions = cast(List[dict[str, Any]], v_res.data or [])
+
+        check_res = (
+        db.table("exam_sessions")
+        .select("updated_at")
+        .eq("id", session_id)
+        .execute()
+    )
+
+    check_rows = cast(List[dict[str, Any]], check_res.data or [])
+
+    if (
+        len(check_rows) != 1
+        or check_rows[0].get("updated_at") != source_revision
+    ):
+        raise ReviewDomainException(
+            409,
+            "ERR_SOURCE_SNAPSHOT_CHANGED",
+            "Source changed while loading preview; reload required",
+        )
 
     return SessionDetailResponse(
         **session_record,
