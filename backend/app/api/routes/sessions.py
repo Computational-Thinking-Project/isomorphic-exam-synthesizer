@@ -37,6 +37,7 @@ from app.models.schemas import (
     CurrentUser,
     IngestSuccessResponse,
     IngestTextRequest,
+    ReviewDomainException,
     SessionCloneRequest,
     SessionCreate,
     SessionDetailResponse,
@@ -211,9 +212,14 @@ async def update_session(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
         return SessionItem(**rows[0])
 
-    response = (
-        db.table("exam_sessions").update(cast(Any, update_data)).eq("id", session_id).execute()
-    )
+    try:
+        response = (
+            db.table("exam_sessions").update(cast(Any, update_data)).eq("id", session_id).execute()
+        )
+    except Exception as exc:
+        if "ERR_SESSION_LOCKED" in str(exc):
+            raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session content is locked") from exc
+        raise
     rows = cast(List[dict[str, Any]], response.data or [])
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
@@ -233,7 +239,12 @@ async def delete_session(
 ) -> None:
     """Delete an exam session and cascade all associated questions, blueprints, and versions."""
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
-    db.table("exam_sessions").delete().eq("id", session_id).execute()
+    try:
+        db.table("exam_sessions").delete().eq("id", session_id).execute()
+    except Exception as exc:
+        if "ERR_SESSION_LOCKED" in str(exc):
+            raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session content is locked") from exc
+        raise
     return None
 
 
