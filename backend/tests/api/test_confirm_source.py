@@ -56,6 +56,7 @@ def flow(monkeypatch):
         table_calls=[],
         mutate_after_preview=False,
         preview_failure=False,
+        production_status=None,
     )
     db = MagicMock()
 
@@ -158,9 +159,9 @@ def flow(monkeypatch):
                     dict(
                         source_question_id=source["id"],
                         source_revision_id=source_revision_id,
-                        status="ready" if state.ready else "pending",
-                        expires_at=None,
-                        error_code=None,
+                        status="ready" if state.ready else (state.production_status or "pending"),
+                        expires_at="2099-01-01T00:00:00Z" if state.production_status == "running" else None,
+                        error_code="FIXTURE_FAILURE" if state.production_status == "failed" else None,
                     )
                 ]
                 return SimpleNamespace(
@@ -598,3 +599,55 @@ def test_changed_source_after_preview_returns_409(flow):
     assert response.status_code == 409
     assert "ERR_SOURCE_REVISION_CONFLICT" in response.text
     assert state.confirmation is None
+
+
+def mode(**updates):
+    return dict(id="context_swap", label="Context", description="Fixture mode",
+                question_count=1, is_available=True, **updates)
+
+
+@pytest.mark.parametrize("production_status", ["pending", "running", "failed"])
+def test_status_states_keep_modes_null_from_single_rpc(flow, production_status):
+    state, client = flow
+    assert client.post(url(state), json={"source_revision": state.revision}).status_code == 200
+    state.production_status = production_status
+    state.calls.clear()
+    response = client.get(url(state, "source-artifacts"))
+    assert response.status_code == 200, response.text
+    assert response.json()["canonical_status"] == production_status
+    assert response.json()["supported_modes"] is None
+    assert [name for name, _ in state.calls] == ["get_source_artifacts"]
+
+
+def test_canonical_mode_object_shape_is_preserved(flow):
+    state, client = flow
+    assert client.post(url(state), json={"source_revision": state.revision}).status_code == 200
+    state.ready, state.supported_modes = True, [mode()]
+    state.calls.clear()
+    response = client.get(url(state, "source-artifacts"))
+    assert response.status_code == 200
+    assert response.json()["supported_modes"] == [mode()]
+    assert len(state.calls) == 1
+
+
+@pytest.mark.parametrize("modes", [
+    None, ["context_swap"], [{}],
+    [dict(mode(), id="SHUFFLE")],
+    [dict(mode(), question_count=True)],
+    [dict(mode(), question_count=2)],
+    [dict(mode(), is_available=False)],
+    [dict(mode(), is_available="true")],
+    [dict(mode(), label=1)], [mode(), mode()],
+])
+def test_ready_mode_contract_invalid_fails_closed(flow, modes):
+    state, client = flow
+    assert client.post(url(state), json={"source_revision": state.revision}).status_code == 200
+    state.ready, state.supported_modes = True, modes
+    assert client.get(url(state, "source-artifacts")).status_code == 503
+
+
+def test_pending_cannot_advertise_even_empty_mode_array(flow):
+    state, client = flow
+    assert client.post(url(state), json={"source_revision": state.revision}).status_code == 200
+    state.supported_modes = []
+    assert client.get(url(state, "source-artifacts")).status_code == 503
