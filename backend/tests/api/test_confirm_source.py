@@ -186,6 +186,8 @@ def flow(monkeypatch):
                 )
             if name == "publish_canonical_blueprint":
                 state.ready = True
+                if state.supported_modes is None:
+                    state.supported_modes = []
                 publication = params["p_publication"]
                 return SimpleNamespace(
                     data=dict(

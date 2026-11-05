@@ -18,6 +18,7 @@ from app.services.blueprint.producer import (
     SourceArtifactRepository,
     SourceArtifactState,
     SourceProductionState,
+    SupportedSourceMode,
 )
 from app.services.blueprint.service import BlueprintService
 from app.services.review.service import action_key, resource_ids
@@ -37,7 +38,7 @@ class SourceArtifactStatus(BaseModel):
     # Q02: canonical supported generation modes derived from ready canonical Blueprint heads.
     # Empty list is valid when ready=True and no mode is supported (e.g. NONE-only blueprint).
     # None when canonical production has not completed yet (pending/running/failed).
-    supported_modes: list[str] | None = None
+    supported_modes: list[SupportedSourceMode] | None
 
 
 def blueprint_service(request: Request) -> BlueprintService | None:
@@ -63,10 +64,7 @@ def status_payload(state: SourceArtifactState) -> SourceArtifactStatus:
         if "failed" in statuses
         else "pending"
     )
-    # Q02: supported_modes is populated by endpoint callers that have DB access
-    # (get_source_artifact_status, confirm_source_flow response).  We initialise to
-    # None here; None means "not yet computed" (pending/running/failed), while [] means
-    # "ready but no mode declared by any canonical blueprint".
+    # Readiness and modes come from the same canonical RPC snapshot.
     return SourceArtifactStatus(
         session_id=state.confirmation.session_id,
         ready=state.ready,

@@ -18,6 +18,7 @@ from pydantic import (
     Field,
     StrictBool,
     StrictInt,
+    StrictStr,
     model_validator,
 )
 from supabase import Client
@@ -84,6 +85,15 @@ class SourceProductionState(BaseModel):
     error_code: Annotated[str, Field(pattern=r"^[A-Z][A-Z0-9_]{0,79}$")] | None
 
 
+class SupportedSourceMode(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: Literal["NUMERICAL", "parameter_variation", "context_swap"]
+    label: Annotated[StrictStr, Field(min_length=1)]
+    description: Annotated[StrictStr, Field(min_length=1)]
+    question_count: Annotated[StrictInt, Field(ge=1, le=20)]
+    is_available: StrictBool
+
+
 class SourceArtifactState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -91,7 +101,7 @@ class SourceArtifactState(BaseModel):
     pending_source_question_ids: list[UUID]
     ready: StrictBool
     production: list[SourceProductionState] = Field(default_factory=list)
-    supported_modes: list[str] | None = None
+    supported_modes: list[SupportedSourceMode] | None
 
 
 class SourceProductionClaim(BaseModel):
@@ -219,6 +229,17 @@ class SourceArtifactRepository:
                 raise ValueError("Artifact state identity mismatch")
             if not pending <= {s.source_question_id for s in state.confirmation.sources} or state.ready != (not pending):
                 raise ValueError("Artifact readiness mismatch")
+            if state.ready != (state.supported_modes is not None):
+                raise ValueError("Artifact mode readiness mismatch")
+            if state.supported_modes is not None:
+                ids = [mode.id for mode in state.supported_modes]
+                if ids != sorted(set(ids)):
+                    raise ValueError("Duplicate or unordered supported modes")
+                for mode in state.supported_modes:
+                    if mode.question_count > state.confirmation.total_questions or mode.is_available != (
+                        mode.question_count == state.confirmation.total_questions
+                    ):
+                        raise ValueError("Supported mode availability mismatch")
             if state.production:
                 revisions = {s.source_question_id: s.source_revision_id for s in state.confirmation.sources}
                 if len(state.production) != len(revisions) or {s.source_question_id for s in state.production} != set(revisions):
