@@ -537,6 +537,6 @@ async def confirm_source(
 ) -> ConfirmSourceResponse:
     # ADR004: deprecated acknowledgment is ignored; SQL records silent audit.
     return await confirm_source_flow(
-        session_id, current_user.id, idempotency_key, payload.source_revision,
+        session_id, current_user.id, idempotency_key, str(payload.source_revision),
         db, service_db, request, background_tasks
     )

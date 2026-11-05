@@ -153,14 +153,14 @@ class SourceArtifactRepository:
 
     async def confirm(
         self, session_id: str, actor_id: str, confirmation_id: UUID,
-        expected_updated_at: str, prepared: list[dict[str, Any]],
+        expected_source_revision: str, prepared: list[dict[str, Any]],
     ) -> SourceConfirmation:
         expected = {p["source_question_id"]: p for p in prepared}
         data = await self._call("confirm_source_artifacts", {
             "p_session_id": session_id,
             "p_actor_id": actor_id,
             "p_confirmation_id": str(confirmation_id),
-            "p_expected_updated_at": expected_updated_at,
+            "p_expected_source_revision": expected_source_revision,
             "p_sources": prepared,
         })
         try:
@@ -272,11 +272,11 @@ class ConfirmedArtifactProducer:
 
     async def confirm(
         self, session_id: str, actor_id: str, confirmation_id: UUID,
-        expected_updated_at: str, source_rows: list[dict[str, Any]],
+        expected_source_revision: str, source_rows: list[dict[str, Any]],
     ) -> SourceConfirmation:
         prepared = prepare_source_artifacts(session_id, source_rows)
         return await self.repository.confirm(
-            session_id, actor_id, confirmation_id, expected_updated_at, prepared
+            session_id, actor_id, confirmation_id, expected_source_revision, prepared
         )
 
     async def produce(

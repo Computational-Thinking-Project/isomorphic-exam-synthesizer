@@ -109,7 +109,7 @@ async def confirm_source_flow(
     session_id: str,
     actor_id: str,
     key: str | None,
-    client_revision: str | None,
+    client_revision: str,
     db: Client,
     worker: Client,
     request: Request,
@@ -119,15 +119,11 @@ async def confirm_source_flow(
     confirmation_id = action_key(key)
     assert_ownership("exam_sessions", session_id, actor_id, db=db)
     sessions = query_rows(
-        db.table("exam_sessions").select("status,updated_at").eq("id", session_id).execute().data
+        db.table("exam_sessions").select("status").eq("id", session_id).execute().data
     )
     if len(sessions) != 1:
         raise HTTPException(404, "Session not found")
     session = sessions[0]
-    if not isinstance(session.get("updated_at"), str):
-        raise ReviewDomainException(
-            503, "ERR_SOURCE_UNAVAILABLE", "Missing source concurrency token"
-        )
     if session["status"] != "draft" and key is None:
         raise HTTPException(
             409, "Source already confirmed; read artifact status or retry production"
@@ -153,7 +149,9 @@ async def confirm_source_flow(
             rows,
         )
     except ToolError as exc:
-        raise HTTPException(422, "Source input is invalid") from exc
+        if exc.code == "SOURCE_ARTIFACT_INVALID":
+            raise HTTPException(422, "Source input is invalid") from exc
+        raise ReviewDomainException(503, "ERR_SOURCE_UNAVAILABLE", "Source preparation unavailable") from exc
     # A read failure here is a post-commit uncertainty, not a rollback. The client
     # can reconcile with the same key or read the session's artifact status.
     state = await repository.load(session_id)

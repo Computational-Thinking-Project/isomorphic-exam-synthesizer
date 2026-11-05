@@ -278,10 +278,9 @@ class ConfirmSourceRequest(BaseModel):
             "Field kept for backward compatibility; any value sent has no effect."
         ),
     )
-    source_revision: str = Field(
+    source_revision: UUID = Field(
         ...,
-        min_length=1,
-        description="Revision token received with the source preview.",
+        description="UUID revision token received with the source preview.",
     )
 
 
