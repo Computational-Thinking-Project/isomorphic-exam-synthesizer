@@ -7,7 +7,7 @@ and [real test evidence](source-confirm-test-evidence.md).
 1. GET `/api/sessions/{id}` with owner JWT. Echo its UUID `source_revision`.
    Revision and ordered source questions come from one locked RPC snapshot.
 2. POST `/api/sessions/{id}/confirm-source` with owner JWT, JSON content type,
-   stable UUID `Idempotency-Key`, and `{"source_revision":"<UUID from preview>"}`.
+   **required** stable UUID `Idempotency-Key`, and `{"source_revision":"<UUID from preview>"}`.
    The deprecated `acknowledged_security_warnings` boolean is ignored; audit is silent.
 3. Success: HTTP 200 with `session_id`, `status="blueprinted"`, `confirmation_id`,
    `confirmed_at`, `total_questions`, `total_blueprints`, `canonical_status`, `message`.
@@ -21,6 +21,7 @@ and [real test evidence](source-confirm-test-evidence.md).
 | HTTP | Meaning |
 |---|---|
 | 400 | malformed Idempotency-Key |
+| 422 | missing Idempotency-Key (rejected before worker RPC) |
 | 401 / 403 / 404 | unauthenticated / foreign owner / missing resource |
 | 409 `ERR_SOURCE_REVISION_CONFLICT` | stale preview or a new action on non-draft source |
 | 409 `ERR_SOURCE_CHANGED` | prepared source differs from locked live content |
@@ -48,3 +49,14 @@ checks revision before delegating to the original 006 receipt/validation/audit
 implementation. It does not call legacy `confirm_exam_source` or require rows in
 question_blueprints. Apply 011 + 012 with the updated API as a coordinated rollout;
 old timestamp callers are revoked and new readers require the modes field.
+
+Postreview P1/P2 adds migration013: all source INSERT/UPDATE/DELETE, including
+warning flags and no-op writes, are refused after confirmation with
+`ARTIFACT_SOURCE_LOCKED` (SQLSTATE55000). Draft edits/clone and parent FK cascade
+remain supported. Ingest races map this error to HTTP409 with that explicit detail.
+Source confirmation preserves its silent audit and stable-key replay.
+
+**Breaking FE1 contract / release gate:** a missing key used to generate a server
+UUID; it now returns422. FE1 must send and persist the UUID by authenticated
+user/session/operation across F5 and timeout. FE1 acceptance has not been verified;
+do not claim integrated release readiness. Shared review endpoints are unchanged.

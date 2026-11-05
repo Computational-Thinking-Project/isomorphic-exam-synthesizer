@@ -8,18 +8,9 @@ from uuid import uuid4
 
 import test_source_confirmation_revision as revision_fixtures
 from test_review_rpcs import OWNER, SID, literal
-from test_stage3_schema import ROOT
 
 
 class SupportedModeTests(revision_fixtures.SourceRevisionTests):
-    def setUp(self):
-        super().setUp()
-        self.sql(
-            (ROOT / "backend/migrations/012_source_artifact_supported_modes.sql").read_text(
-                encoding="utf-8"
-            )
-        )
-
     def state(self):
         return self.call("get_source_artifacts", SID, worker=False)
 

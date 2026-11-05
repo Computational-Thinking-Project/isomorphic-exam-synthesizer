@@ -29,6 +29,7 @@ class SourceRevisionTests(artifact_fixtures.SourceArtifactTests):
         ):
             self.sql((ROOT / "backend/migrations" / name).read_text(encoding="utf-8"))
         self.sql(Q01.read_text(encoding="utf-8"))
+        self.sql((ROOT / "backend/migrations/012_source_artifact_supported_modes.sql").read_text(encoding="utf-8"))
         freeze = ROOT / "backend/migrations/013_source_freeze_guard.sql"
         self.sql(freeze.read_text(encoding="utf-8"))
         self.revision = self.token()
@@ -335,7 +336,6 @@ class SourceRevisionTests(artifact_fixtures.SourceArtifactTests):
 
     def test_postreview_freeze_preserves_ready_state_for_owner_and_worker(self):
         self.install_source_owner_rls()
-        self.sql((ROOT / 'backend/migrations/012_source_artifact_supported_modes.sql').read_text(encoding='utf-8'))
         self.sql('UPDATE source_questions SET has_security_warning=true;')
         self.revision = self.token()
         self.confirm()

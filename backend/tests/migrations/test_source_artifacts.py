@@ -616,7 +616,7 @@ class SourceArtifactTests(PostgresCase):
             ):
                 if hasattr(app.state, "limiter"):
                     app.state.limiter._storage.reset()
-                confirmed = client.post(f"/api/sessions/{SID}/confirm-source", json={'source_revision': revision})
+                confirmed = client.post(f"/api/sessions/{SID}/confirm-source", json={'source_revision': revision}, headers={'Idempotency-Key': str(uuid4())})
                 self.assertEqual(confirmed.status_code, 200, confirmed.text)
                 self.assertEqual(confirmed.json()["canonical_status"], "pending")
                 status = client.get(f"/api/sessions/{SID}/source-artifacts")

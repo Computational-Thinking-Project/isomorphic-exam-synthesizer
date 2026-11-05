@@ -1,3 +1,33 @@
+# TASK-204 postreview P1/P2/P3 — 05/11/2026
+
+Baseline ab9f09a, P1/P2 commit48d1d63; final P3 commit contains the exact code tested.
+Only additive013 changes SQL; migrations002–012 retain their prior bytes.
+
+- Red: source mutation after confirm and confirm-first writer were accepted;
+  missing key returned200; ingest lock race returned500. Fixture SQL permissions
+  and missing legacy RLS policies were corrected before interpreting ownership tests.
+- Targeted green API: 11 PASS / 0 FAIL / 0 SKIP (87 deselected).
+- Final backend regression ran once: 474 PASS / 0 FAIL / 0 SKIP. It combines the
+  documented API/artifact/review set with tests/ai and tests/generation.
+- Final PostgreSQL run once: 50 PASS / 0 FAIL / 0 SKIP (265.239s), using
+  `python -m unittest discover -s backend/tests/migrations -p 'test_source_*.py' -q`.
+  Fresh/upgrade chains include013; owner/service frozen writes preserve all state,
+  foreign writes are denied by actual local RLS policy, draft edits/clone/cascade work,
+  both race directions serialize, audit/replay remain atomic, fake extraction=1 / outbound=0.
+- Final Ruff, mypy (90 source files), diff-check: PASS.
+- No real AI requests, no push/deploy; FE2/BE2 unchanged.
+
+Migration013 SHA256 (checkout bytes): `1a04b5ff975a68605cd8eed9b1fc579a33f1b3f5897b738863a41989413e39ff`.
+
+Required header is a breaking FE1 change: missing422, malformed400; stable UUID
+persistence across F5/timeout remains unverified. Integrated release verdict:
+**NOT READY** until FE1 acceptance; existing FE2/BE2, migration010 reconciliation
+and deployed JWT/RLS/PostgREST gates remain separate and unresolved.
+
+The previous implementation results/checksums below are historical evidence for
+ab9f09a, not a second regression run during this remediation.
+
+---
 # TASK-204 local test evidence — 05/11/2026
 
 Branch `fix/be1-source-confirm-contract`, initial head `ab15447`, fetched base

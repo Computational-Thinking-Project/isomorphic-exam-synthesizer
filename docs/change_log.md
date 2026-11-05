@@ -1,3 +1,13 @@
+## TASK-204 postreview P1/P2/P3 — 05/11/2026 (proposed)
+
+Migration013 freezes source rows and warning flags once confirmed, preserving draft
+clone/edit and parent cascade. Ingestion lock races map to409. Confirmation now
+requires a stable UUID Idempotency-Key (missing422, malformed400); shared review
+endpoints are unchanged. This is a breaking FE1 contract pending owner adoption
+and F5/timeout persistence acceptance. Existing migrations are unchanged; no public
+reset workflow, FE2/BE2 changes or deployment is introduced. See the
+[confirmation contract](api/confirm-source-endpoint.md).
+
 ## DEC-TASK204-001: Atomic source preview revision and canonical mode profile (proposed)
 
 - Date: 05/11/2026. Author implementation on `fix/be1-source-confirm-contract`;

@@ -272,13 +272,13 @@ is implied. These modules require the backend's locked Python dependencies.
 ### Actual migration inventory and setup
 
 - **Fresh current schema:** role/auth/storage stubs from `test_stage3_schema.py`,
-  `backend/scripts/schema.sql`, then 006, 007, 008, 009, **011**, **012**.
+  `backend/scripts/schema.sql`, then 006, 007, 008, 009, **011**, **012**, **013**.
   `schema.sql` already defines replace_source_questions and legacy confirm_exam_source;
   do not apply 003 again as an invented prerequisite. 010 is retained empty.
 - **Upgrade fixture:** `fixtures/legacy_schema.sql` plus synthetic source seed,
   then 006 and 003 (the existing artifact fixture's deliberate legacy compatibility
-  setup), followed by 007–009, 002 (to test the actual replacement RPC), 011, 012.
-  A real deployment already at 006–009 only needs the new 011 and 012.
+  setup), followed by 007–009, 002 (to test the actual replacement RPC), 011, 012, 013.
+  A real deployment already at 006–009 needs 011, 012 and 013.
 - There is no `004_confirm_source_artifacts_rpc.sql` in this branch. Do not
   fabricate or execute it. Migration numbering must be reconciled with BE2's
   unmerged migration 010 before cross-branch deployment.
@@ -373,3 +373,23 @@ ownership, **not** deployed JWT/table-read RLS or PostgREST overload dispatch. F
 integration/acceptance and BE2 generation-config integration are separate gates.
 See [contract](../../../docs/api/source-artifacts-contract.md) and
 [handoff/evidence](../../../docs/api/source-confirm-handoff.md).
+### Postreview P1/P2/P3 (baseline ab9f09a)
+
+Migration013 adds an early BEFORE guard: all source writes require draft with no
+approved_at, including warning flag and no-op updates. Owner/service attempts after
+confirm leave source UUID, content, receipt, heads, readiness and audit unchanged.
+Draft flag changes still rotate the UUID and audit once on first confirmation.
+The new tests load the actual owner RLS policies from schema.sql; clone, foreign
+owner denial and parent cascade are verified locally. Two real connections test
+writer-first stale/no receipt and confirm-first source-locked outcomes with bounded
+SQL timeouts. Historical-head coverage uses a private test-admin head fixture,
+not edits to a confirmed source or a public reset workflow.
+
+Confirm requires a client UUID Idempotency-Key: missing422, malformed400.
+Ingest race ARTIFACT_SOURCE_LOCKED is HTTP409; network/unknown-outcome mappings
+stay unchanged. FE1 persistence/adoption is a breaking-contract acceptance gate.
+The same four PostgreSQL modules above now contain 50 cases (47 prior + 3 new).
+The four current Python consumer cases in test_source_artifacts.py apply011–013;
+its remaining SQL-only cases intentionally pin historical006 behavior.
+For the final backend regression, add tests/ai and tests/generation to the first
+pytest command above in the same invocation; do not repeat already-passing suites.

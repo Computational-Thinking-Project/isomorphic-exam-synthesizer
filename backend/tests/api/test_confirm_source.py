@@ -229,6 +229,8 @@ def flow(monkeypatch):
     if hasattr(app.state, "limiter"):
         app.state.limiter._storage.reset()
     client = TestClient(app)
+    # One stable operation key by default; negative cases explicitly remove it.
+    client.headers["Idempotency-Key"] = str(uuid4())
     try:
         yield state, client
     finally:
@@ -239,6 +241,14 @@ def flow(monkeypatch):
 
 def url(state, suffix="confirm-source"):
     return f"/api/sessions/{state.sid}/{suffix}"
+
+
+def test_postreview_missing_key_is_rejected_before_worker(flow):
+    state, client = flow
+    client.headers.pop("Idempotency-Key")
+    result = client.post(url(state), json={"source_revision": state.revision})
+    assert result.status_code == 422, result.text
+    assert not state.calls
 
 
 def test_preview_is_one_rpc_snapshot_even_if_another_tab_changes_source(flow):
@@ -438,7 +448,8 @@ def test_postcommit_read_failure_retains_confirmation_and_same_key_reconciles(fl
 def test_without_key_reconfirmation_refused(flow, status):
     state, client = flow
     state.status = status
-    assert client.post(url(state), json={"source_revision": state.revision}).status_code == 409
+    client.headers.pop("Idempotency-Key")
+    assert client.post(url(state), json={"source_revision": state.revision}).status_code == 422
     assert not state.calls
 
 

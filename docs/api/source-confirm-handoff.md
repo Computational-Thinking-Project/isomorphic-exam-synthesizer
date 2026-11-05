@@ -53,3 +53,10 @@ FE2 must use the canonical endpoint and object adapter, including explicit
 Migration009 already prevents an authenticated owner from resetting the new token;
 the real-DB tamper test grants UPDATE explicitly and still verifies rejection.
 Current readers require migration012. Deploy011/012 and the UUID API together.
+
+Postreview remediation (baseline ab9f09a): migration013 freezes source and warning
+flags after confirmation; draft writes, clone and parent cascade remain valid.
+Ingest freeze races return409 `ARTIFACT_SOURCE_LOCKED`. Confirm now requires the
+stable UUID header: missing422, malformed400. This is a breaking FE1 change;
+header persistence/adoption remains unverified and blocks integrated readiness.
+No FE2/BE2 code or shared review action-key behavior is changed.
