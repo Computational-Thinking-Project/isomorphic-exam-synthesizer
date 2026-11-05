@@ -79,6 +79,7 @@ export default function Stage2ConfigPage({
     isMountedRef.current = true;
     activeSessionIdRef.current = sessionId;
     const thisOp = ++sessionOpRef.current;
+    resyncOpRef.current += 1;
     let active = true;
 
     // Vô hiệu hóa mọi lượt submit và retry đang chờ của phiên trước
@@ -112,8 +113,12 @@ export default function Stage2ConfigPage({
           return;
         }
 
-        // F02: Khi mở lại phiên partial_generated hoặc generating, chủ động nạp snapshot tiến độ
-        if (data && (data.status === 'generating' || data.status === 'partial_generated')) {
+        // F02 / F08: Khi mở lại phiên partial_generated hoặc generating mà chưa có snapshot progress, nạp snapshot
+        if (
+          data &&
+          (data.status === 'generating' || data.status === 'partial_generated') &&
+          !data.progress
+        ) {
           try {
             const snap = await fetchGenSnapshot(sessionId);
             if (
@@ -131,6 +136,16 @@ export default function Stage2ConfigPage({
                   ...(data.question_statuses || {}),
                   ...snap.question_statuses,
                 };
+              }
+              const snapStatus =
+                snap.status ||
+                snap.session_status ||
+                snap.progress?.session_status ||
+                snap.progress?.status;
+              if (snapStatus) {
+                data.status = snapStatus;
+              } else if (snap.progress?.percent === 100 && !snap.progress?.is_partial) {
+                data.status = 'generated';
               }
               if (snap.stream_epoch) {
                 data.stream_epoch = snap.stream_epoch;
@@ -150,8 +165,13 @@ export default function Stage2ConfigPage({
 
         setSession(data);
 
-        // Nếu session đã ở trạng thái generating hoặc hoàn thành một phần (partial_generated)
-        if (data.status === 'generating' || data.status === 'partial_generated') {
+        // F07: Nếu session đã ở trạng thái generating, generated hoặc hoàn thành một phần (partial_generated)
+        if (
+          data.status === 'generating' ||
+          data.status === 'partial_generated' ||
+          data.status === 'generated' ||
+          (data.progress?.percent === 100 && !data.progress?.is_partial)
+        ) {
           setIsGenerating(true);
         }
         if (data.config) {
@@ -184,6 +204,7 @@ export default function Stage2ConfigPage({
   // F04 / F06: Callback tải lại snapshot phiên khi mất lịch sử SSE / nhận tín hiệu resync
   const handleResyncSnapshot = useCallback(
     async (sid) => {
+      const thisSessionOp = sessionOpRef.current;
       const thisResyncOp = ++resyncOpRef.current;
       let data;
       try {
@@ -192,17 +213,29 @@ export default function Stage2ConfigPage({
         data = await loadSession(sid);
       }
 
-      // F06: Kiểm tra lượt tải chính xác trước khi cập nhật state
+      // F06: Kiểm tra lượt nạp phiên (sessionOpRef) và lượt resync (resyncOpRef) cùng sessionId
       if (
         isMountedRef.current &&
+        sessionOpRef.current === thisSessionOp &&
         resyncOpRef.current === thisResyncOp &&
         activeSessionIdRef.current === sid
       ) {
+        const snapStatus =
+          data?.status ||
+          data?.session_status ||
+          data?.progress?.session_status ||
+          data?.progress?.status;
+
         if (data?.progress) {
           setSession((prev) =>
             prev
               ? {
                   ...prev,
+                  status:
+                    snapStatus ||
+                    (data.progress?.percent === 100 && !data.progress?.is_partial
+                      ? 'generated'
+                      : prev.status),
                   progress: data.progress,
                   question_statuses: {
                     ...(prev.question_statuses || {}),
@@ -219,8 +252,9 @@ export default function Stage2ConfigPage({
         } else if (data) {
           setSession(data);
         }
+        return data;
       }
-      return data;
+      return null;
     },
     [fetchGenSnapshot, loadSession],
   );
@@ -480,13 +514,30 @@ export default function Stage2ConfigPage({
       ? sseState.progress
       : session?.progress || (sseState.progress?.hasData ? sseState.progress : null);
 
-  // F03: Tách trạng thái kết thúc lượt sinh khỏi trạng thái kết nối SSE.
+  // F03 / F07: Tách trạng thái kết thúc lượt sinh khỏi trạng thái kết nối SSE.
+  // Khi snapshot báo generated (100% đủ câu), cho phép tiếp tục sang Stage 3 mà không cần chờ phát lại done.
   // Khi F5 phiên partial_generated, lượt trước đã kết thúc nên isSnapshotFinished = true -> hiển thị ngay nút Sinh bù (Retry)
   // Khi người dùng bấm Sinh bù, isNewRunActive = true -> theo dõi lượt mới qua sseState.isDone
+  const currentSnapshotStatus =
+    session?.status ||
+    session?.progress?.session_status ||
+    session?.progress?.status ||
+    mergedProgress?.session_status ||
+    mergedProgress?.status;
+
+  const isCompletedGenerated = Boolean(
+    currentSnapshotStatus === 'generated' ||
+    ((mergedProgress?.percent ?? 0) >= 100 &&
+      !mergedProgress?.is_partial &&
+      (mergedProgress?.completedCount ?? 0) > 0 &&
+      (mergedProgress?.totalCount ? (mergedProgress?.completedCount ?? 0) >= mergedProgress.totalCount : true)),
+  );
+
   const isSnapshotFinished = Boolean(
-    session?.status === 'partial_generated' ||
-    session?.status === 'generated' ||
-    session?.progress?.isDone,
+    isCompletedGenerated ||
+    currentSnapshotStatus === 'partial_generated' ||
+    session?.progress?.isDone ||
+    mergedProgress?.isDone,
   );
 
   const effectiveIsDone = isNewRunActive

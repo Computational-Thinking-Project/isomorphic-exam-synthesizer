@@ -186,6 +186,27 @@ export function useSSE(sessionId, {
               ...freshSnapshot.question_statuses,
             }));
           }
+
+          // F07: Nếu snapshot báo generated hoặc hoàn tất 100% đủ câu (không partial),
+          // tiến trình đã hoàn thành từ phía server -> kết thúc ngay mà không cần chờ done từ stream mới
+          const freshStatus =
+            freshSnapshot.status ||
+            freshSnapshot.session_status ||
+            freshSnapshot.progress?.session_status ||
+            freshSnapshot.progress?.status;
+
+          const isSnapshotDone =
+            freshStatus === 'generated' ||
+            (freshSnapshot.progress?.percent >= 100 && !freshSnapshot.progress?.is_partial);
+
+          if (isSnapshotDone) {
+            isDoneRef.current = true;
+            setIsDone(true);
+            setConnectionState('completed');
+            isRecoveringRef.current = false;
+            callbacksRef.current.onDone?.(freshSnapshot);
+            return;
+          }
         }
       }
 

@@ -841,3 +841,196 @@ test('F06 Ca còn lỗi: Điều hướng A -> B -> A, snapshot của lượt A 
 
   await harness.unmount();
 });
+
+test('F07: Khi GET detail trả generating nhưng snapshot báo generated (100%, 4/4), trang hoàn tất và điều hướng Stage 3 mà không cần chờ done từ stream', async () => {
+  const mockLoadSession = async (sessionId) => ({
+    id: sessionId,
+    title: 'Đề Toán hoàn thành nền',
+    status: 'generating', // GET detail trả generating
+    source_questions: [{ id: 'q1', question_no: 1 }, { id: 'q2', question_no: 2 }],
+    config: { num_versions: 2 },
+    exam_versions: [{ version_index: 1 }, { version_index: 2 }],
+    blueprint_summary: { total_questions: 2, supported_modes: [], is_ready: true },
+    progress: null,
+  });
+
+  const mockFetchGenSnapshot = async () => ({
+    status: 'generated',
+    progress: {
+      percent: 100,
+      completed_count: 4,
+      total_count: 4,
+      completedCount: 4,
+      totalCount: 4,
+      session_status: 'generated',
+      hasData: true,
+    },
+    question_statuses: {
+      '1-1': { version_index: 1, question_no: 1, status: 'done' },
+      '1-2': { version_index: 1, question_no: 2, status: 'done' },
+      '2-1': { version_index: 2, question_no: 1, status: 'done' },
+      '2-2': { version_index: 2, question_no: 2, status: 'done' },
+    },
+  });
+
+  const harness = renderPage('session-f07-done-without-stream', {
+    loadSession: mockLoadSession,
+    fetchGenSnapshot: mockFetchGenSnapshot,
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('100%'), 'Phải hiển thị tiến độ 100%');
+  assert.ok(text.includes('Đã hoàn tất'), 'Phải hiển thị trạng thái Đã hoàn tất');
+
+  // Chờ timer 1.5s tự động chuyển sang Stage 3
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 1600));
+  });
+
+  assert.equal(
+    harness.getLocation(),
+    '/session/session-f07-done-without-stream/stage3',
+    'Phải tự động điều hướng sang Stage 3 khi snapshot đã hoàn tất',
+  );
+
+  await harness.unmount();
+});
+
+test('F08: Một lần F5/mở trang chỉ gọi endpoint snapshot đúng 1 lần khi loadSession đã có sẵn snapshot', async () => {
+  let fetchGenSnapshotCalls = 0;
+  const mockLoadSession = async (sessionId) => ({
+    id: sessionId,
+    title: 'Đề F5 không lặp snapshot',
+    status: 'partial_generated',
+    source_questions: [{ id: 'q1', question_no: 1 }, { id: 'q2', question_no: 2 }],
+    config: { num_versions: 2 },
+    exam_versions: [{ version_index: 1 }, { version_index: 2 }],
+    blueprint_summary: { total_questions: 2, supported_modes: [], is_ready: true },
+    progress: {
+      percent: 75,
+      completed_count: 3,
+      total_count: 4,
+      completedCount: 3,
+      totalCount: 4,
+      hasData: true,
+    },
+  });
+
+  const mockFetchGenSnapshot = async () => {
+    fetchGenSnapshotCalls += 1;
+    return {
+      progress: { percent: 75, completed_count: 3, total_count: 4, hasData: true },
+    };
+  };
+
+  const harness = renderPage('session-f08-single-snapshot', {
+    loadSession: mockLoadSession,
+    fetchGenSnapshot: mockFetchGenSnapshot,
+  });
+  await harness.render();
+
+  // TIÊU CHÍ ĐẠT: Khi loadSession đã có snapshot (từ fetchSessionDetail), Stage2ConfigPage không gọi lặp endpoint
+  assert.equal(fetchGenSnapshotCalls, 0, 'Tuyệt đối không gọi lặp lại generation-snapshot khi đã có sẵn snapshot');
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('75%'), 'Vẫn hiển thị đầy đủ tiến độ 75%');
+  assert.ok(text.includes('3 / 4'), 'Vẫn hiển thị 3 / 4');
+
+  await harness.unmount();
+});
+
+test('F06: Callback handleResyncSnapshot của lượt A đầu tiên trả về muộn sau khi chuyển A -> B -> A không được ghi đè vào lượt A thứ hai', async () => {
+  let resolveFirstResync;
+  const firstResyncPromise = new Promise((resolve) => {
+    resolveFirstResync = resolve;
+  });
+
+  let capturedResyncCallback = null;
+  const mockUseSSE = (sid, options) => {
+    capturedResyncCallback = options.onResync;
+    return {
+      connectionState: 'connected',
+      progress: {
+        percent: sid === 'session-A' ? 25 : 10,
+        completedCount: 1,
+        totalCount: 4,
+        hasData: true,
+      },
+      questionStatuses: {
+        '1-1': { status: 'done', message: `Câu của ${sid} mới` },
+      },
+      warnings: [],
+      isDone: false,
+      isPartial: false,
+      error: null,
+      reconnectCount: 0,
+      reconnect: () => {},
+    };
+  };
+
+  let resyncCallCount = 0;
+  const mockFetchGenSnapshot = async (sid) => {
+    resyncCallCount += 1;
+    if (sid === 'session-A' && resyncCallCount === 1) {
+      return await firstResyncPromise;
+    }
+    return {
+      progress: { percent: 25, completed_count: 1, total_count: 4, hasData: true },
+      question_statuses: { '1-1': { status: 'done', message: 'Câu mới 25%' } },
+    };
+  };
+
+  const mockLoadSession = async (sid) => ({
+    id: sid,
+    title: `Phiên ${sid}`,
+    status: 'partial_generated',
+    source_questions: [{ id: 'q1', question_no: 1 }, { id: 'q2', question_no: 2 }],
+    config: { num_versions: 2 },
+    exam_versions: [{ version_index: 1 }, { version_index: 2 }],
+    blueprint_summary: { total_questions: 2, supported_modes: [], is_ready: true },
+    progress: { percent: 25, completed_count: 1, total_count: 4, hasData: true },
+  });
+
+  const harness = renderPage('session-A', {
+    loadSession: mockLoadSession,
+    fetchGenSnapshot: mockFetchGenSnapshot,
+    useSSEHook: mockUseSSE,
+  });
+  await harness.render();
+
+  // Kích hoạt resync ở lượt A đầu tiên (bị hoãn lại bởi firstResyncPromise)
+  assert.ok(capturedResyncCallback, 'Phải có capturedResyncCallback');
+  const resyncPromise1 = capturedResyncCallback('session-A');
+
+  // Chuyển sang phiên B rồi quay lại phiên A
+  await harness.navigate('session-B');
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+
+  await harness.navigate('session-A');
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+
+  // Bây giờ snapshot của lượt A đầu tiên mới hoàn tất (trả 90% và câu cũ)
+  await act(async () => {
+    resolveFirstResync({
+      progress: { percent: 90, completed_count: 9, total_count: 10, hasData: true },
+      question_statuses: { '1-1': { status: 'done', message: 'Dữ liệu cũ 90% của lượt 1' } },
+    });
+    await resyncPromise1;
+    await new Promise((r) => setTimeout(r, 100));
+  });
+
+  // TIÊU CHÍ ĐẠT: Lưới câu của lượt A thứ hai không nhận dữ liệu cũ của lượt 1!
+  const text = harness.container.textContent;
+  assert.equal(
+    text.includes('Dữ liệu cũ 90% của lượt 1'),
+    false,
+    'Lưới câu của lượt A thứ hai tuyệt đối không được nhận dữ liệu cũ của lượt 1',
+  );
+
+  await harness.unmount();
+});

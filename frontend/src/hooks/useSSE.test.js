@@ -1121,3 +1121,46 @@ test('F06 Ca còn lỗi: Bắt đầu tải snapshot ở A, chuyển A -> B -> A
 
   await harness.unmount();
 });
+
+test('F07: Khi snapshot trả về status generated (100%), useSSE chuyển ngay sang completed và isDone mà không cần nối lại SSE', async () => {
+  MockEventSource.instances = [];
+  let onDoneCalled = false;
+
+  const mockOnResync = async () => ({
+    status: 'generated',
+    session_status: 'generated',
+    progress: { percent: 100, completedCount: 4, totalCount: 4, hasData: true },
+  });
+
+  const harness = renderHookHarness(() =>
+    useSSE('session-f07-hook-done', {
+      requestTicket: async () => ({ ticket: 't-f07' }),
+      eventSourceFactory: (url) => new MockEventSource(url),
+      onResync: mockOnResync,
+      onDone: () => {
+        onDoneCalled = true;
+      },
+    }),
+  );
+
+  await harness.render();
+  const es = MockEventSource.instances[0];
+
+  // Phát sinh lỗi mất lịch sử trong stream -> kích hoạt onResync
+  await act(async () => {
+    es.simulateOpen();
+    es.emit('error', { error_code: 'ERR_EVENT_HISTORY_LOST' });
+  });
+
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 200));
+  });
+
+  // TIÊU CHÍ ĐẠT: snapshot báo generated -> hook hoàn tất ngay, không cố nối lại SSE
+  assert.equal(harness.result.isDone, true, 'isDone phải là true');
+  assert.equal(harness.result.connectionState, 'completed', 'connectionState phải là completed');
+  assert.equal(onDoneCalled, true, 'onDone callback phải được gọi');
+  assert.equal(harness.result.progress.percent, 100);
+
+  await harness.unmount();
+});
