@@ -18,7 +18,6 @@ from typing import Any, List, Optional, Set
 PUBLIC_TO_CANONICAL_DIMENSIONS = {
     "NUMERICAL": "values",
     "parameter_variation": "values",
-    "numerical": "values",
     "context_swap": "context",
     "values": "values",
     "context": "context",
@@ -94,7 +93,7 @@ def compute_supported_modes_summary(
         policy = req.get("variation_policy") or {}
         transforms = policy.get("allowed_transformations") or []
         dims_in_bp = {
-            t.get("dimension") for t in transforms if isinstance(t, dict) and t.get("dimension")
+            str(t.get("dimension")) for t in transforms if isinstance(t, dict) and t.get("dimension")
         }
         for d in dims_in_bp:
             dim_counts[d] = dim_counts.get(d, 0) + 1
