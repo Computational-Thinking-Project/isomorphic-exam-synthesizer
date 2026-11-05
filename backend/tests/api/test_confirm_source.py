@@ -651,3 +651,20 @@ def test_pending_cannot_advertise_even_empty_mode_array(flow):
     assert client.post(url(state), json={"source_revision": state.revision}).status_code == 200
     state.supported_modes = []
     assert client.get(url(state, "source-artifacts")).status_code == 503
+
+
+def test_ready_requires_per_question_production_evidence(flow, monkeypatch):
+    from app.services.blueprint.producer import SourceArtifactRepository
+    state, client = flow
+    assert client.post(url(state), json={"source_revision": state.revision}).status_code == 200
+    state.ready, state.supported_modes = True, []
+    original = SourceArtifactRepository._call
+
+    async def corrupt(self, name, params):
+        data = await original(self, name, params)
+        if name == "get_source_artifacts":
+            data["production"] = []
+        return data
+
+    monkeypatch.setattr(SourceArtifactRepository, "_call", corrupt)
+    assert client.get(url(state, "source-artifacts")).status_code == 503

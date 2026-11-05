@@ -100,7 +100,7 @@ class SourceArtifactState(BaseModel):
     confirmation: SourceConfirmation
     pending_source_question_ids: list[UUID]
     ready: StrictBool
-    production: list[SourceProductionState] = Field(default_factory=list)
+    production: list[SourceProductionState]
     supported_modes: list[SupportedSourceMode] | None
 
 
@@ -240,17 +240,16 @@ class SourceArtifactRepository:
                         mode.question_count == state.confirmation.total_questions
                     ):
                         raise ValueError("Supported mode availability mismatch")
-            if state.production:
-                revisions = {s.source_question_id: s.source_revision_id for s in state.confirmation.sources}
-                if len(state.production) != len(revisions) or {s.source_question_id for s in state.production} != set(revisions):
-                    raise ValueError("Producer state source set mismatch")
-                for item in state.production:
-                    if item.source_revision_id != revisions[item.source_question_id] or (item.status == "ready") != (item.source_question_id not in pending):
-                        raise ValueError("Producer state revision/readiness mismatch")
-                    if item.status == "running" and item.expires_at is None:
-                        raise ValueError("Running producer lacks lease")
-                    if item.status == "failed" and item.error_code is None:
-                        raise ValueError("Failed producer lacks error code")
+            revisions = {s.source_question_id: s.source_revision_id for s in state.confirmation.sources}
+            if len(state.production) != len(revisions) or {s.source_question_id for s in state.production} != set(revisions):
+                raise ValueError("Producer state source set mismatch")
+            for item in state.production:
+                if item.source_revision_id != revisions[item.source_question_id] or (item.status == "ready") != (item.source_question_id not in pending):
+                    raise ValueError("Producer state revision/readiness mismatch")
+                if item.status == "running" and item.expires_at is None:
+                    raise ValueError("Running producer lacks lease")
+                if item.status == "failed" and item.error_code is None:
+                    raise ValueError("Failed producer lacks error code")
             return state
         except (ValueError, TypeError) as exc:
             raise ReviewDomainException(
