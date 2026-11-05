@@ -1,6 +1,15 @@
 # AI W2 — contract/fixtures bàn giao cho TASK-207
 
-## Cập nhật phối hợp 05/11/2026
+## Policy phối hợp đã xác nhận — 05/11/2026
+
+[Duy xác nhận BE/API](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6646768276) và [Bội Anh xác nhận FE2](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6647147329), tiếp nối Quỳnh6635728977. Alias case-sensitive: NUMERICAL/parameter_variation→values, context_swap→context; chỉ selectable khi toàn bộ canonical batch ready và mọi Blueprint cho phép. STRUCTURAL/variable_inversion không công bố ở profile hiện tại; canonical IDs chỉ pass-through nếu public API công bố tường minh. Unknown/unsupported/mixed NONE phải ERR_CONFIG_CONFLICT, không đổi thành rỗng.
+
+Public [] chủ đích là Original Clone; ["NONE"] chuẩn hóa thành [] trước validate/persist. Thiếu metadata không phải clone: is_ready=false/supported_modes=null khóa submit; ready=true/supported_modes=[] cho phép chọn clone. FE gửi hai ordering booleans tường minh. Quỳnh sở hữu worker clone zero Gemini/quota, giữ nguồn/options/key/lời giải nếu có, remap key khi shuffle và không chế lời giải/evidence. AI callable hiện có vẫn nhận canonical dimensions; [] trong callable không có nghĩa clone. Không đưa public aliases/NONE trực tiếp vào generator.
+
+Policy đã chốt khác implementation đã đạt: worker/SQL/FE integration và PostgreSQL E2E còn chờ owners. Đạt cập nhật fixture AI, không viết trùng mapper/preflight/clone của Quỳnh. Snapshot persist riêng public IDs, resolved dimensions/mapping version, ordered source/hash/revisions/config/seed; canonical DB read RPC/ACL/migration vẫn do Duy/Hùng chốt. Mapping profile định danh trong fixture chỉ là tên bàn giao AI, chưa thay DB mapping-version authority.
+
+
+## Checkpoint trước xác nhận policy (lịch sử)
 
 [Quỳnh đã phản hồi và tiếp nhận bộ fixture](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6635728977): hash, seed, full QuestionResult và resume/cache đủ để chuẩn bị adapter. Quỳnh nhận nhánh clone riêng trong worker PR30, giữ nội dung/đáp án/lời giải, zero Gemini, remap đáp án khi shuffle và lưu record clone riêng. Đây là ownership được Quỳnh xác nhận; không còn chờ người nhận đường clone.
 
@@ -20,7 +29,7 @@ CI tại implementation41a6677 đã đạt5/5 checks. Chưa có independent revi
 | Hash/provenance | Thuật toán canonical và ordered batch/per-question/Blueprint/request/cache fingerprints, manifest cần persist | Fixture hai nguồn, đảo order, so hash thực tế |
 | Resume/result | Full success/warning/hard-failure records và rule giữ evidence, slot seed, callback commit | Roundtrip thật và actual GenerationService với persisted completed |
 | Guard seed | Từ chối persisted candidate.seed khác slot dù request fingerprint giữ nguyên | Regression trước dispatch/quota |
-| Modes/clone | Bảng mapping đề xuất và giới hạn canonical, giữ nguyên generator | Chặn unsupported IDs; chờ owner thống nhất public semantics |
+| Modes/clone | Policy public IDs/clone đã được BE/API và FE2 xác nhận; giữ nguyên generator | Fixture acceptance/rejection/readiness; worker/preflight do Quỳnh triển khai |
 | Bàn giao | PR riêng của Đạt và phản hồi link commit/checks tại PR30 | CI/reviewer trước merge |
 
 Không đổi generator architecture, SQL/RPC, worker orchestration, validator aggregator,
@@ -30,14 +39,13 @@ frontend, gateway instrumentation hoặc Docker dependencies. Bảo toàn file d
 
 [Đề xuất đã đăng trước khi sửa public behavior](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6629611144):
 
-- Quỳnh/Duy/FE2: alias public IDs, NONE normalization, supported_modes và owner clone branch.
-- STRUCTURAL/variable_inversion chưa có mapping an toàn; cần định nghĩa/fixtures hoặc loại khỏi profile.
+- Quỳnh/Duy/FE2: triển khai và kiểm tra integration theo policy đã xác nhận ở đầu tài liệu; không còn chờ chốt alias/NONE/owner clone.
+- STRUCTURAL/variable_inversion đã loại khỏi profile hiện tại; chỉ mở lại khi có định nghĩa và fixtures được owners xác nhận.
 - Duy/Quỳnh/Hùng: map ordered batch snapshot/hash/provenance và full QuestionResult vào W2 storage; W3 per-question revisions không thay batch store.
 - Tâm/Quỳnh: report aggregator khác AI checks; giữ adapter rõ nếu adopt, không tự chế confidence.
 - Quỳnh: instrumentation observer tại shared gateway; Đạt review khi có patch. Không viết trùng collector.
 
-Phần hash/resume hiện có đủ input để bàn giao; phần mode/clone dependent vẫn proposed
-đến khi owner phản hồi. Không tự đặt ETA của đồng đội hoặc coi im lặng là đồng ý.
+Phần hash/resume và policy mode/clone đã đủ input để bàn giao. Implementation worker/SQL/FE và kiểm tra tích hợp vẫn thuộc owners tương ứng; không coi xác nhận policy là integration đã hoàn tất.
 
 ## Checks / tiến độ
 

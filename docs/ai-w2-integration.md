@@ -1,6 +1,15 @@
 # AI W2 — triển khai và hợp đồng tích hợp
 
-## Cập nhật phối hợp 05/11/2026
+## Policy phối hợp đã xác nhận — 05/11/2026
+
+[Duy xác nhận BE/API](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6646768276) và [Bội Anh xác nhận FE2](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6647147329), tiếp nối Quỳnh6635728977. Alias case-sensitive: NUMERICAL/parameter_variation→values, context_swap→context; chỉ selectable khi toàn bộ canonical batch ready và mọi Blueprint cho phép. STRUCTURAL/variable_inversion không công bố ở profile hiện tại; canonical IDs chỉ pass-through nếu public API công bố tường minh. Unknown/unsupported/mixed NONE phải ERR_CONFIG_CONFLICT, không đổi thành rỗng.
+
+Public [] chủ đích là Original Clone; ["NONE"] chuẩn hóa thành [] trước validate/persist. Thiếu metadata không phải clone: is_ready=false/supported_modes=null khóa submit; ready=true/supported_modes=[] cho phép chọn clone. FE gửi hai ordering booleans tường minh. Quỳnh sở hữu worker clone zero Gemini/quota, giữ nguồn/options/key/lời giải nếu có, remap key khi shuffle và không chế lời giải/evidence. AI callable hiện có vẫn nhận canonical dimensions; [] trong callable không có nghĩa clone. Không đưa public aliases/NONE trực tiếp vào generator.
+
+Policy đã chốt khác implementation đã đạt: worker/SQL/FE integration và PostgreSQL E2E còn chờ owners. Đạt cập nhật fixture AI, không viết trùng mapper/preflight/clone của Quỳnh. Snapshot persist riêng public IDs, resolved dimensions/mapping version, ordered source/hash/revisions/config/seed; canonical DB read RPC/ACL/migration vẫn do Duy/Hùng chốt. Mapping profile định danh trong fixture chỉ là tên bàn giao AI, chưa thay DB mapping-version authority.
+
+
+## Checkpoint trước xác nhận policy (lịch sử)
 
 [Quỳnh đã phản hồi và tiếp nhận bộ fixture](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6635728977): hash, seed, full QuestionResult và resume/cache đủ để chuẩn bị adapter. Quỳnh nhận nhánh clone riêng trong worker PR30, giữ nội dung/đáp án/lời giải, zero Gemini, remap đáp án khi shuffle và lưu record clone riêng. Đây là ownership được Quỳnh xác nhận; không còn chờ người nhận đường clone.
 
@@ -16,7 +25,7 @@ Duy giữ SQL/RPC/detail, Hùng giữ canonical schema/migration, FE2 giữ API/
 Phản hồi đang phối hợp tại [PR30](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6629611144),
 theo [yêu cầu của Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6629393300).
 Phần dưới là hiện trạng AI và yêu cầu dữ liệu của consumer. Bảng public modes và
-clone ghi rõ **proposed**, chưa có bằng chứng các owner đã cùng chấp nhận.
+clone đã được các owner xác nhận theo mục policy hiện hành ở đầu tài liệu; checkpoint04/11 giữ như lịch sử.
 [Plan/bàn giao](tasks/TASK-AI-W2-CONTRACT.md) giữ scope và phần còn chờ.
 
 ### 1. Snapshot nguồn và các loại hash
@@ -78,7 +87,7 @@ có index/source ID/requests0/cachedtrue; merge phần invocation này, không x
 thay thế provenance gốc bằng record rút gọn. `requests` của metadata cache-hit
 không có nghĩa extraction gốc chưa từng tiêu quota.
 
-### 3. Variation modes — hiện trạng và đề xuất cần chốt
+### 3. Variation modes — policy đã chốt, implementation còn tích hợp
 
 AI callable **hiện có** nhận canonical dimension IDs, so case-sensitive với
 `requirement.variation_policy.allowed_transformations[].dimension` của từng câu.
@@ -88,13 +97,13 @@ Mode không hỗ trợ trả `ERR_CONFIG_CONFLICT` trước provider.
 
 | Public ID | Canonical dimension / hành vi đề xuất | Trạng thái |
 |---|---|---|
-| `NUMERICAL`, `parameter_variation` | `values`, chỉ khi mọi Blueprint cho phép values | Proposed alias, chưa nối adapter |
-| `context_swap` | `context`, chỉ khi mọi Blueprint cho phép context | Proposed alias, chưa nối adapter |
+| `NUMERICAL`, `parameter_variation` | `values`, chỉ khi mọi Blueprint cho phép values | Policy đã xác nhận; worker adapter thuộc Quỳnh |
+| `context_swap` | `context`, chỉ khi mọi Blueprint cho phép context | Policy đã xác nhận; worker adapter thuộc Quỳnh |
 | Canonical IDs đúng case | Giữ nguyên nếu API công bố và mọi câu cho phép | Callable hiện hỗ trợ; public exposure cần owner xác nhận |
-| `STRUCTURAL`, `variable_inversion` | Chưa có mapping an toàn; không đoán thành representation/names | Chờ định nghĩa/fixture hoặc loại khỏi supported modes |
-| `[]` / `["NONE"]` | Clone xác định ở orchestration, zero Gemini | Proposed, chưa implement nhánh clone |
+| `STRUCTURAL`, `variable_inversion` | Chưa có mapping an toàn; không đoán thành representation/names | Không công bố ở profile hiện tại |
+| `[]` / `["NONE"]` | Clone xác định ở orchestration, zero Gemini | Policy đã xác nhận; Quỳnh triển khai worker riêng |
 
-Quỳnh/Duy/FE2 cần chốt alias, cách chuẩn hóa NONE và supported_modes; danh sách
+Quỳnh/Duy/FE2 đã xác nhận alias, chuẩn hóa NONE và supported_modes; danh sách
 khả dụng phải theo giao của các mode được hỗ trợ trên **toàn bộ** nguồn. Lưu public
 IDs nguyên trong config và resolved canonical dimensions/mapping version trong
 job snapshot; generator nhận dimensions đã resolve. Không lower-case tùy ý,
@@ -103,10 +112,10 @@ không biến unsupported ID thành `[]`, không coi thiếu modes là none-only
 của generator từ chối; không dùng nó thay đường shuffle xác định.
 
 AI hiện hiểu `[]` là không thêm constraint mode và vẫn sinh câu khác nguồn;
-`NONE` chưa có nhánh đặc biệt. Nếu chọn clone theo đề xuất, worker phải tách trước
+`NONE` chưa có nhánh đặc biệt. Theo policy clone đã xác nhận, worker phải tách trước
 generator, bảo toàn source text/options/key/solution, shuffle theo ordering và
 remap key đồng bộ; không dựng solution steps hay validation proof giả khi nguồn
-không có lời giải. `NONE` trộn mode biến thể nên bị từ chối. Clone phải có result
+không có lời giải. `NONE` trộn mode biến thể phải bị từ chối. Clone phải có result
 /resume contract riêng do owner orchestration phối hợp chốt; không gọi nó là
 QuestionResult do AI sinh. Không bỏ anti-duplicate của generation để làm clone.
 

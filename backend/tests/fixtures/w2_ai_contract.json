@@ -269,7 +269,7 @@
     }
   },
   "public_mode_proposal": {
-    "status": "proposed_pending_owner_confirmation",
+    "status": "policy_confirmed_implementation_pending",
     "case_sensitive_aliases": {
       "NUMERICAL": [
         "values"
@@ -295,7 +295,92 @@
       ],
       "proposed_execution": "deterministic_clone_outside_generator",
       "provider_calls": 0,
-      "implemented": false
-    }
+      "implemented": false,
+      "worker_owner": "nhatquynh1107_PR30"
+    },
+    "confirmed_by": {
+      "BE_API": "https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6646768276",
+      "FE2": "https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6647147329",
+      "worker": "https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6635728977"
+    },
+    "rejected_public_ids": [
+      "STRUCTURAL",
+      "variable_inversion"
+    ],
+    "fixture_profile": "ai_w2_confirmed_2026_11_05",
+    "acceptance_cases": [
+      {
+        "input": [
+          "NUMERICAL",
+          "parameter_variation"
+        ],
+        "normalized_public": [
+          "NUMERICAL",
+          "parameter_variation"
+        ],
+        "resolved_dimensions": [
+          "values"
+        ],
+        "execution": "generate"
+      },
+      {
+        "input": [
+          "context_swap"
+        ],
+        "normalized_public": [
+          "context_swap"
+        ],
+        "resolved_dimensions": [
+          "context"
+        ],
+        "execution": "generate"
+      },
+      {
+        "input": [
+          "NONE"
+        ],
+        "normalized_public": [],
+        "resolved_dimensions": [],
+        "execution": "clone",
+        "provider_calls": 0
+      },
+      {
+        "input": [],
+        "normalized_public": [],
+        "resolved_dimensions": [],
+        "execution": "clone",
+        "provider_calls": 0
+      }
+    ],
+    "reject_cases": [
+      [
+        "NONE",
+        "NUMERICAL"
+      ],
+      [
+        "numerical"
+      ],
+      [
+        "STRUCTURAL"
+      ],
+      [
+        "variable_inversion"
+      ],
+      [
+        "unknown"
+      ]
+    ],
+    "readiness_cases": [
+      {
+        "is_ready": false,
+        "supported_modes": null,
+        "submit_allowed": false
+      },
+      {
+        "is_ready": true,
+        "supported_modes": [],
+        "clone_allowed": true
+      }
+    ]
   }
 }

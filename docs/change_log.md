@@ -1,3 +1,7 @@
+## 05/11/2026 — W2 AI policy: owner confirmations
+
+Duy/BE và Bội Anh/FE đã xác nhận mode aliases/NONE theo các link trong [contract AI](ai-w2-integration.md). Đạt cập nhật policy status và acceptance fixtures; không đổi generator/worker/SQL. Quỳnh giữ clone branch, DB read/persistence contract vẫn cần Duy/Hùng; xác nhận policy không phải nghiệm thu triển khai/E2E.
+
 ## DEC-DAT-W2-HANDOFF: Contract hash/resume và public-mode proposal
 
 - Ngày/người: 04/11/2026 — Trương Thành Đạt, theo yêu cầu phối hợp I-B-AI/I-B-POLICY trên PR30.
