@@ -1,3 +1,21 @@
+## DEC-BE1-016: Original Clone SQL persistence (local implementation, pending review)
+
+- Date / owner: 05/11/2026, TASK-207 / Duy, PR #32. Source:
+  [PR #30 integration requirement](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6635728977).
+- Context: frozen W2 snapshots existed, but AI-only persistence could not store
+  an honest Original Clone record for modes=[] or resume it after a restart.
+- Decision: forward migration 011 adds persist_generation_clone, a result-kind
+  discriminator and separate clone fingerprint in the existing result table.
+  Frozen source and original display commit atomically; claim/resume/finish check
+  exact current projections. Keep 010, AI result serialization/writer, owner/worker
+  permissions, current-token fencing and session quota behavior.
+- Boundary: persist before shuffle. PR #30 owns Python record/adapter/worker,
+  shuffle sequencing and answer/solution remapping. No AI validation/provider
+  metadata is invented. No cloud writes, push, merge or review approval is implied.
+- Evidence and limits: [local author handoff](tasks/TASK-207.md#original-clone-follow-up--local-author-handoff-05112026)
+  and [RPC contract](api/generation-config-endpoint.md#original-clone-persistence-migration-011).
+  Independent review, CI on a pushed head, worker integration and deployed E2E remain gates.
+
 ## DEC-TASK305-001: Final approval display-key and principal guards (proposed)
 
 - Date / owner: 04/11/2026, TASK-305 author; pending independent review.

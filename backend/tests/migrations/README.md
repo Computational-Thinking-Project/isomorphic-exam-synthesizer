@@ -289,6 +289,7 @@ try {
   $env:RUN_TASK207_REAL_DB_TESTS = '1'
   $env:TASK207_TEST_DSN = "postgresql://postgres@127.0.0.1:$port/$db"
   python -m pytest backend/tests/migrations/test_generation_w2.py -q
+  python -m pytest backend/tests/migrations/test_generation_clone.py -q
 } finally {
   Remove-Item Env:RUN_TASK207_REAL_DB_TESTS -ErrorAction SilentlyContinue
   Remove-Item Env:TASK207_TEST_DSN -ErrorAction SilentlyContinue
@@ -308,3 +309,15 @@ TASK207_CONTRACT_OUTPUT to backend/tests/fixtures/w2_rpc_receipt.json in the tes
 runner's filesystem and run only -k rpc_receipt_for_worker_handoff.
 This explicit artifact option is off by default; omitted_fields identifies removed
 large document repetitions. Normal CI never rewrites the fixture.
+
+The same disposable fixture now applies 010 then 011. `test_generation_clone.py`
+covers Original Clone without a Python worker/provider implementation: exact 2×2
+slots, no-solution sources, zero additional quota, role/token/input guards,
+concurrent replay, new-connection resume/retry, atomic rollback, intact projection
+completion and populated-010 AI upgrade/replay. Skips do not count as DB evidence.
+To export the separate actual clone RPC sample, set `TASK207_CLONE_CONTRACT_OUTPUT`
+to a writable test-runner path and run
+`-k test_clone_matrix_resume_and_finish_without_quota_or_ai`; only the case with
+a supplied solution writes the sample. Copy the emitted JSON to
+`backend/tests/fixtures/w2_clone_rpc_receipt.json` after reviewing it. The sample
+lists omitted context and uses synthetic source data, with no AI cache claim.

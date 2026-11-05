@@ -73,7 +73,8 @@ AI model/prompt/request fingerprint against that context before cache acceptance
 DB validates slot/seed/Blueprint/projection consistency without duplicating the
 complete Python model validator.
 
-Clone orchestration and its distinct record contract remain PR #30 work.
+Clone SQL persistence/record contract is supplied by forward migration 011 (see
+the local follow-up below); Python record/adapter/orchestration remain PR #30 work.
 This PR does not fabricate an AI QuestionResult or validation proof for clone.
 Unknown historic/display-only output is not silently promoted into resume evidence.
 Canonical schema/producer ownership remains with migration 006; read exposure
@@ -114,3 +115,76 @@ is a W2 RPC in migration 010, not public table access.
 - F11 is author claimed_fixed, pending Quỳnh's independent verification and final
   CI/GitHub Approve. F02/F07/F09/F10 remain reviewer verified. No immutable context
   rewrite, historical backfill, worker/SSE/FE E2E or cloud deployment is claimed.
+
+## Original Clone follow-up — local author handoff, 05/11/2026
+
+- Source of truth: [Quỳnh's integration requirement](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6635728977),
+  read live before designing the SQL contract. Mode: author; workflow v0.1
+  proposed/docs 506384b. PR #32 base 426ca0c, starting/current Git head 7e9377f;
+  these follow-up changes are uncommitted local work, not a new GitHub head.
+- Authorized: SQL/RPC/schema, DB tests and contract/handoff docs. No push, merge,
+  cloud writes, PR comments or Python worker/adapter/record implementation.
+  Three existing untracked Q01/Q02-Q03/TASK204 plans are preserved.
+- Root cause: 010 persists full AI QuestionResult only; Original Clone cannot
+  supply that record honestly without invented AI request/validation metadata.
+- Decision: forward 011, leaving 010 and the base schema unchanged. Reuse
+  generation_target_results/version_questions; introduce AI_RESULT/ORIGINAL_CLONE
+  discriminator, separate clone_fingerprint and persist_generation_clone.
+  AI raw_result bytes and existing writer stay unchanged. Clone source/slot,
+  record/display and timestamp commit atomically without quota or AI proof.
+- Snapshot/provenance: exact frozen source revision, source/Blueprint IDs, ordered
+  batch hash, slot and seed; same record under a new active token can replay.
+  A committed success cannot be overwritten. Resume/claim/finish share exact
+  current-projection checks, including identity and persisted content/options/key.
+- Shuffle boundary: persist original canonical/display values first. PR #30
+  sequences shuffle separately with the existing lifecycle; this RPC rejects a
+  pre-shuffled payload. Option/key/solution remapping and SSE/FE remain integration
+  work, not completed behavior inferred from these SQL tests.
+
+### M3 draft for PR description — prepared locally, not posted
+
+- Scope/output: [011](../../backend/migrations/011_stage2_original_clone.sql),
+  [contract](../api/generation-config-endpoint.md#original-clone-persistence-migration-011),
+  [actual RPC sample](../../backend/tests/fixtures/w2_clone_rpc_receipt.json),
+  [clone tests](../../backend/tests/migrations/test_generation_clone.py), W2 fixture
+  adoption and [test instructions](../../backend/tests/migrations/README.md#task-207-w2-generation-rpcs).
+- Environment: existing backend image, Python 3.11, asyncpg 0.32.0 from existing
+  test artifacts; PostgreSQL15 network-none disposable container. Read-only repo
+  mount; separate random task207_case_* database per test. No shared/cloud DB.
+- Checks (author self-check on local worktree):
+  - `RUN_TASK207_REAL_DB_TESTS=1 TASK207_TEST_DSN=<verified disposable cluster>`
+    `python -m pytest backend/tests/migrations/test_generation_clone.py -q`
+    — **40 passed, 0 skipped**, including integer-only slot/seed guards to keep
+    the replay fingerprint unambiguous.
+  - Same opt-in, `python -m pytest backend/tests/migrations/test_generation_w2.py -q`
+    — **71 passed, 0 skipped** (AI writer/load/finish, permissions and migration chain).
+  - Opt-ins off, `python -m pytest backend/tests scripts/blueprint/tests -q`
+    — **1084 passed, 379 skipped**, 19 existing deprecation warnings. DB/live skips
+    are not counted as SQL verification; the two explicit runs above supply DB evidence.
+    This regression run preceded the final two numeric DB-only cases; those were
+    subsequently run in the 40-case real PostgreSQL suite, not inferred from skips.
+  - `ruff check backend/app scripts/blueprint backend/tests/migrations/test_generation_clone.py backend/tests/migrations/test_generation_w2.py`
+    — passed. `mypy backend/app --ignore-missing-imports` — passed, 91 app files.
+    SymPy LaTeX smoke and `git diff --check` — passed.
+- Covered: two sources × two versions, supplied/absent solution, unchanged quota,
+  missing/wrong/altered projection, fresh connection/retry/token fencing,
+  same/conflicting replay, failed-slot replacement, AI success immutability,
+  malformed source/payload, roles/GUC spoof, concurrent calls, transaction rollback,
+  populated-010 upgrade and repeated 010→011 chain replay.
+- [x] SQL/contract and local self-check evidence prepared.
+- [ ] Independent review/GitHub Approve and CI on a future pushed head.
+- [ ] PR #30 Python record/adapter/worker + shuffle/SSE/FE integration.
+- [ ] Deployed Supabase JWT/RLS/PostgREST and live end-to-end validation.
+
+### Copyable response to Quỳnh — not sent
+
+> PR #32 đã bổ sung local migration 011 cho Original Clone theo comment
+> 6635728977. Gọi persist_generation_clone(p_session_id, p_job_token,
+> p_clone_record) bằng service_role; record ORIGINAL_CLONE lấy nguyên nguồn/slot
+> và revision từ frozen context. SQL trả clone_fingerprint riêng, không fake
+> QuestionResult/validation/request fingerprint, không tăng quota. Load/claim trả
+> result_kind; adapter cần tách clone khỏi AI completed cache. Persist nguyên bản
+> trước shuffle; Python record/adapter/worker, shuffle đồng bộ đáp án/lời giải và
+> test tích hợp vẫn thuộc PR #30. Contract và mẫu RPC thật có link ở trên.
+> Tự kiểm PostgreSQL15: clone40 + W2 71 passed, 0 skipped; chưa push, chưa có
+> reviewer xác minh hoặc deployed/SSE/FE E2E. ETA tích hợp chưa được owner xác nhận.

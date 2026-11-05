@@ -30,6 +30,7 @@ TYPES = {
     "claim_generation_job": ["uuid", "boolean"],
     "finish_generation_job": ["uuid", "text", "uuid"],
     "load_generation_completed_results": ["uuid"],
+    "persist_generation_clone": ["uuid", "uuid", "jsonb"],
     "confirm_source_artifacts": ["uuid", "uuid", "uuid", "timestamptz", "jsonb"],
     "claim_source_production": ["uuid", "uuid", "uuid"],
     "publish_canonical_blueprint": ["uuid", "jsonb"],
@@ -158,6 +159,12 @@ async def db(request):
                 encoding="utf-8-sig"
             )
         )
+        if getattr(request, "param", None) != "pre_clone":
+            await admin.execute(
+                (ROOT / "backend/migrations/011_stage2_original_clone.sql").read_text(
+                    encoding="utf-8-sig"
+                )
+            )
         owner, worker = await asyncpg.connect(case_dsn), await asyncpg.connect(case_dsn)
         await role(owner, "authenticated")
         await role(worker)
@@ -456,6 +463,9 @@ async def test_migration_replay_preserves_result(db):
         (ROOT / "backend/migrations/010_stage2_canonical_w2_integration.sql").read_text(
             encoding="utf-8"
         )
+    )
+    await db.admin.execute(
+        (ROOT / "backend/migrations/011_stage2_original_clone.sql").read_text(encoding="utf-8")
     )
     assert (
         await db.admin.fetchval("SELECT row_to_json(r)::text FROM generation_target_results r")
