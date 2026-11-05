@@ -91,6 +91,7 @@ class SourceArtifactState(BaseModel):
     pending_source_question_ids: list[UUID]
     ready: StrictBool
     production: list[SourceProductionState] = Field(default_factory=list)
+    supported_modes: list[str] | None = None
 
 
 class SourceProductionClaim(BaseModel):
@@ -109,7 +110,11 @@ def artifact_error(exc: Exception, *, confirmation: bool = False) -> ReviewDomai
         ("ARTIFACT_OWNER_MISMATCH", 403, "ERR_FORBIDDEN"),
         ("ARTIFACT_IDEMPOTENCY_CONFLICT", 409, "ERR_IDEMPOTENCY_CONFLICT"),
         ("ARTIFACT_SOURCE_MISMATCH", 409, "ERR_SOURCE_CHANGED"),
-        ("ARTIFACT_STALE", 409, "ERR_SOURCE_CHANGED"),
+        (
+            "ARTIFACT_STALE",
+            409,
+            "ERR_SOURCE_REVISION_CONFLICT" if confirmation else "ERR_SOURCE_CHANGED",
+        ),
         ("ARTIFACT_LOCKED", 423, "ERR_SESSION_LOCKED"),
         ("ARTIFACT_INVALID_PAYLOAD", 422, "ERR_SOURCE_ARTIFACT_INVALID"),
         ("P0002", 404, "ERR_SESSION_NOT_FOUND"),

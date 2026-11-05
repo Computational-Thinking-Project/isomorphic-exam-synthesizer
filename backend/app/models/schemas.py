@@ -175,12 +175,8 @@ class SessionDetailResponse(BaseModel):
     updated_at: str
     source_revision: Optional[str] = Field(
         default=None,
-        description=(
-            "Opaque revision token representing the exact snapshot of source_questions returned "
-            "in this response. FE must echo this value as `source_revision` in the subsequent "
-            "POST /sessions/{id}/confirm-source request. The token changes on every ingest/replace "
-            "and is derived from exam_sessions.updated_at under a consistent read."
-        ),
+        min_length=1,
+        description="Revision of the source preview being confirmed.",
     )
     source_questions: List[dict] = Field(default_factory=list, description="Danh sách câu hỏi gốc")
     exam_versions: List[dict] = Field(default_factory=list, description="Danh sách các mã đề")
