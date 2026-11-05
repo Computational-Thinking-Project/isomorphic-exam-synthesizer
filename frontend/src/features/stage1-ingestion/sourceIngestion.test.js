@@ -6,6 +6,10 @@ const a = [{ id: 'qa', session_id: 'session-a', question_no: 1, raw_content: 'Ng
 const b = [{ id: 'qb', session_id: 'session-a', question_no: 1, raw_content: 'Nguồn B' }];
 const detail = (overrides = {}) => ({ id: 'session-a', status: 'draft', source_questions: a, ...overrides });
 const httpError = (status) => ({ response: { status, data: { detail: 'private backend text' } } });
+const revA = '20000000-0000-4000-8000-000000000002';
+const revB = '20000000-0000-4000-8000-000000000003';
+const firstKey = '30000000-0000-4000-8000-000000000001';
+const secondKey = '30000000-0000-4000-8000-000000000002';
 function deferred() {
   let resolve;
   let reject;
@@ -29,6 +33,162 @@ function fixture(overrides = {}) {
   });
   return { controller, writes, reads };
 }
+
+function confirmationFixture(overrides = {}, memory = { intent: null }) {
+  const keys = [firstKey, secondKey];
+  const confirms = [];
+  const navigations = [];
+  const result = fixture({
+    initialDetail: detail({ source_revision: revA }),
+    load: async () => detail({ source_revision: revA }),
+    confirmSource: async (...args) => { confirms.push(args); },
+    readArtifacts: async () => { throw httpError(404); },
+    confirmationStore: {
+      read: () => memory.intent,
+      save: (intent) => { memory.intent = intent; },
+      clear: () => { memory.intent = null; },
+    },
+    newConfirmationKey: () => keys.shift(),
+    onConfirmed: (session) => navigations.push(session.id),
+    ...overrides,
+  });
+  return { ...result, confirms, navigations, memory };
+}
+
+test('sau nạp chỉ thay câu và revision khi GET hợp lệ; GET lỗi giữ A và khóa confirm', async () => {
+  let read = async () => { throw new Error('Offline'); };
+  const { controller, writes } = confirmationFixture({ load: () => read() });
+  assert(controller.canConfirm());
+  await controller.submit();
+  assert.equal(writes.length, 1);
+  assert.equal(controller.getSnapshot().detail.source_questions, a);
+  assert(!controller.canConfirm());
+  assert.match(controller.getSnapshot().error, /Đã nạp/);
+  read = async () => detail({ source_questions: b, source_revision: revB });
+  await controller.reload();
+  assert.equal(controller.getSnapshot().detail.source_questions, b);
+  assert.equal(controller.getSnapshot().detail.source_revision, revB);
+  assert(controller.canConfirm());
+});
+
+test('hai nút ghi loại trừ nhau trước cả khi React render lại', async () => {
+  const pending = deferred();
+  let calls = 0;
+  const { controller, memory, writes } = confirmationFixture({ confirmSource: () => {
+    calls++;
+    return pending.promise;
+  } });
+  const confirming = controller.confirm();
+  assert.deepEqual(memory.intent, { sourceRevision: revA, idempotencyKey: firstKey });
+  await controller.confirm();
+  await controller.submit();
+  assert.equal(calls, 1);
+  assert.equal(writes.length, 0);
+  pending.resolve();
+  await confirming;
+  assert.equal(memory.intent, null);
+  assert(!controller.canSubmit());
+  const ingest = deferred();
+  const duringIngest = confirmationFixture({ ingestText: () => ingest.promise });
+  const submitting = duringIngest.controller.submit();
+  await duringIngest.controller.confirm();
+  assert.equal(duringIngest.confirms.length, 0);
+  ingest.resolve({ session_id: 'session-a', questions: b });
+  await submitting;
+});
+
+test('mất response, F5 đọc trạng thái và chỉ retry cùng key khi người dùng bấm', async () => {
+  const first = confirmationFixture({ confirmSource: async () => { throw new Error('Lost response'); } });
+  await first.controller.confirm();
+  assert(!first.controller.canConfirm());
+  assert(!first.controller.canSubmit());
+  const restarted = confirmationFixture({}, first.memory);
+  await restarted.controller.restoreConfirmation();
+  assert.deepEqual(restarted.confirms, []);
+  assert(restarted.controller.canConfirm());
+  assert(!restarted.controller.canSubmit());
+  await restarted.controller.confirm();
+  assert.equal(restarted.confirms[0][1].idempotencyKey, firstKey);
+  assert.equal(restarted.confirms[0][1].sourceRevision, revA);
+  assert.equal(first.memory.intent, null);
+});
+
+test('artifact xuất hiện giữa hai lần đọc, chỉ bàn giao khi GET phiên xác nhận đã commit', async () => {
+  let reads = 0;
+  const { controller, navigations, confirms, memory } = confirmationFixture({
+    load: async () => detail({ source_revision: revA, status: ++reads === 1 ? 'draft' : 'blueprinted' }),
+    readArtifacts: async () => ({ ready: false, canonical_status: 'pending' }),
+  }, { intent: { sourceRevision: revA, idempotencyKey: firstKey } });
+  await controller.restoreConfirmation();
+  assert.equal(reads, 2);
+  assert.deepEqual(navigations, ['session-a']);
+  assert.deepEqual(confirms, []);
+  assert.equal(memory.intent, null);
+});
+
+test('409 tải lại bản B, cần click mới và dùng key mới; 422 confirm giữ preview/nháp', async () => {
+  const attempts = [];
+  const { controller, memory } = confirmationFixture({
+    load: async () => detail({ source_questions: b, source_revision: revB }),
+    confirmSource: async (id, input) => {
+      attempts.push(input);
+      throw httpError(attempts.length === 1 ? 409 : 422);
+    },
+  });
+  controller.setText('Nháp riêng');
+  await controller.confirm();
+  assert.equal(attempts.length, 1);
+  assert.equal(controller.getSnapshot().detail.source_questions, b);
+  assert.match(controller.getSnapshot().confirmationError, /xác nhận lại/);
+  await controller.confirm();
+  assert.equal(attempts[1].sourceRevision, revB);
+  assert.equal(attempts[1].idempotencyKey, secondKey);
+  assert.equal(controller.getSnapshot().text, 'Nháp riêng');
+  assert.equal(controller.getSnapshot().cause, null);
+  assert.equal(memory.intent, null);
+});
+
+test('storage lỗi không POST; phản hồi muộn sau đổi tài khoản không điều hướng', async () => {
+  const blocked = confirmationFixture({ confirmationStore: { read: () => null, save: () => { throw new Error('Denied'); } } });
+  await blocked.controller.confirm();
+  assert.deepEqual(blocked.confirms, []);
+  assert.match(blocked.controller.getSnapshot().confirmationError, /lưu/);
+  let current = true;
+  const pending = deferred();
+  const active = confirmationFixture({ confirmSource: () => pending.promise, isCurrent: () => current });
+  const submitting = active.controller.confirm();
+  current = false;
+  active.controller.dispose();
+  pending.resolve();
+  await submitting;
+  assert.deepEqual(active.navigations, []);
+  assert.equal(active.memory.intent.idempotencyKey, firstKey);
+});
+
+test('GET sau 409 lỗi không mở nút ghi; đọc lại rồi cần một xác nhận mới', async () => {
+  let readable = false;
+  const keys = [];
+  const { controller, memory } = confirmationFixture({
+    load: async () => {
+      if (!readable) throw new Error('Offline');
+      return detail({ source_revision: revB, source_questions: b });
+    },
+    confirmSource: async (_id, input) => {
+      keys.push(input.idempotencyKey);
+      if (keys.length === 1) throw httpError(409);
+    },
+  });
+  await controller.confirm();
+  assert(!controller.canConfirm());
+  assert(!controller.canSubmit());
+  assert.equal(memory.intent, null);
+  readable = true;
+  await controller.reload();
+  assert.deepEqual(keys, [firstKey]);
+  assert.match(controller.getSnapshot().confirmationError, /xác nhận lại/);
+  await controller.confirm();
+  assert.deepEqual(keys, [firstKey, secondKey]);
+});
 
 test('khởi tạo/sửa input không gọi API hoặc xóa nguồn; success thay cùng snapshot nguồn', async () => {
   const { controller, writes, reads } = fixture();
@@ -170,7 +330,8 @@ test('hủy POST giữ A và khóa gửi lại, phản hồi muộn không đổ
 
 test('GET cũ bị hủy không ghi đè POST mới, GET pending cũng chặn gửi', async () => {
   const pending = deferred();
-  const { controller, writes } = fixture({ load: () => pending.promise });
+  let reads = 0;
+  const { controller, writes } = fixture({ load: () => ++reads === 1 ? pending.promise : detail({ source_questions: b }) });
   const reading = controller.reload();
   await controller.submit();
   assert.equal(writes.length, 0);

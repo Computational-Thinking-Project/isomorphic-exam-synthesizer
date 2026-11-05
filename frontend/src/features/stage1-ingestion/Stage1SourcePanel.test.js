@@ -35,6 +35,9 @@ const response = (config, data) => ({ status: 200, data, headers: {}, config });
 let calls;
 beforeEach(() => {
   calls = [];
+  const storage = new Map();
+  window.sessionStorage = { getItem: (key) => storage.get(key) ?? null,
+    setItem: (key, value) => storage.set(key, value), removeItem: (key) => storage.delete(key) };
   useAuthStore.getState().setSession({ user: { id: 'account-a' }, access_token: 'fixture-token-a' });
   useAuthStore.getState().setProfile({ id: 'account-a', email: 'teacher@example.test' }, useAuthStore.getState().sessionVersion);
   auth.getSession = async () => ({ data: { session: useAuthStore.getState().session }, error: null });
@@ -101,6 +104,7 @@ test('file picker: chỉ chọn/đổi cách nhập không POST; reset chọn l�
   assert.deepEqual(calls, ['get']);
   api.defaults.adapter = async (config) => {
     calls.push(config.method);
+    if (config.method === 'get') return response(config, detail('session-a', [question('qb')]));
     assert(config.url.endsWith('/ingest-file'));
     assert(config.data instanceof FormData);
     assert.deepEqual([...config.data.keys()], ['file']);
@@ -111,7 +115,7 @@ test('file picker: chỉ chọn/đổi cách nhập không POST; reset chọn l�
   await act(async () => submit(app.container));
   assert(app.container.textContent.includes('Nguồn qb'));
   assert(!app.container.textContent.includes('Nguồn qa'));
-  assert.deepEqual(calls, ['get', 'post']);
+  assert.deepEqual(calls, ['get', 'post', 'get']);
   await app.unmount();
 });
 
@@ -215,16 +219,17 @@ test('sự kiện input/submit thật của React gọi service rồi đổi đ�
   assert.equal(app.container.querySelector('textarea').value, 'Nguồn B');
   api.defaults.adapter = async (config) => {
     calls.push(config.method);
+    const questions = [question('qb'), { ...question('qc'), question_no: 2 }];
+    if (config.method === 'get') return response(config, detail('session-a', questions));
     assert.equal(config.method, 'post');
     assert.deepEqual(JSON.parse(config.data), { raw_text: 'Nguồn B' });
-    return response(config, { session_id: 'session-a', total_questions: 2,
-      questions: [question('qb'), { ...question('qc'), question_no: 2 }] });
+    return response(config, { session_id: 'session-a', total_questions: 2, questions });
   };
   await act(async () => submit(app.container));
   assert(app.container.textContent.includes('2 câu nguồn'));
   assert(!app.container.textContent.includes('Nguồn qa'));
   assert(app.container.textContent.includes('Nguồn qb'));
-  assert.deepEqual(calls, ['get', 'post']);
+  assert.deepEqual(calls, ['get', 'post', 'get']);
   await act(async () => input(app.container, 'Nguồn lỗi C'));
   api.defaults.adapter = async (config) => {
     throw { config, response: { status: 422, data: { detail: { errors: [{ question_no: 0 }] } } } };
@@ -385,6 +390,33 @@ const incompleteResponse = (errors = [{ question_no: 1, error_type: 'MISSING_ANS
 });
 const dialog = container => container.querySelector('[role="dialog"]');
 const dialogButton = (container, text) => button(dialog(container), text);
+const confirmSessionId = '10000000-0000-4000-8000-000000000001';
+const confirmRevision = '20000000-0000-4000-8000-000000000001';
+const confirmLabel = 'Xác nhận đề gốc và tiếp tục';
+const confirmDetail = (status = 'draft') => ({
+  ...detail(confirmSessionId, [question('qa', confirmSessionId)], status), source_revision: confirmRevision,
+});
+
+test('204: 422 confirm không mở dialog incomplete và không làm mất nháp', async () => {
+  api.defaults.adapter = async (config) => {
+    calls.push(config.method);
+    if (config.method === 'get') return response(config, confirmDetail());
+    assert.equal(config.url, `/sessions/${confirmSessionId}/confirm-source`);
+    assert.deepEqual(JSON.parse(config.data), { source_revision: confirmRevision });
+    assert.match(config.headers.get('Idempotency-Key'), /^[0-9a-f-]{36}$/i);
+    throw { config, response: incompleteResponse() };
+  };
+  const app = mount(confirmSessionId);
+  await app.render();
+  await act(async () => input(app.container, 'Nháp chưa nạp'));
+  await act(async () => button(app.container, confirmLabel).click());
+  assert.match(app.container.textContent, /Không thể xác nhận bản đề/);
+  assert.match(app.container.textContent, /Nguồn qa/);
+  assert.equal(app.container.querySelector('textarea').value, 'Nháp chưa nạp');
+  assert.equal(dialog(app.container), null);
+  assert.deepEqual(calls, ['get', 'post']);
+  await app.unmount();
+});
 
 test('203b: text422 mở lỗi toàn đề/câu; đóng/đổi mode không POST, sửa rồi nạp thay A đúng lúc', async () => {
   const app = mount();
@@ -393,6 +425,7 @@ test('203b: text422 mở lỗi toàn đề/câu; đóng/đổi mode không POST,
   let attempts = 0;
   api.defaults.adapter = async config => {
     calls.push(config.method);
+    if (config.method === 'get') return response(config, detail('session-a', [question('qb')]));
     if (++attempts === 1) throw { config, response: incompleteResponse([
       { question_no: 0, error_type: 'INVALID_FORMAT' }, { question_no: 3, error_type: 'MISSING_ANSWER' },
     ]) };
@@ -414,7 +447,7 @@ test('203b: text422 mở lỗi toàn đề/câu; đóng/đổi mode không POST,
   assert.equal(dialog(app.container), null);
   assert(app.container.textContent.includes('Nguồn qb'));
   assert(!app.container.textContent.includes('Nguồn qa'));
-  assert.deepEqual(calls, ['get', 'post', 'post']);
+  assert.deepEqual(calls, ['get', 'post', 'post', 'get']);
   await app.unmount();
 });
 
@@ -484,12 +517,13 @@ test('203b: file422 → chuyển text đúng focus/giữ input; chọn lại cù
   assert.deepEqual(calls, ['get', 'post']);
   api.defaults.adapter = async config => {
     calls.push(config.method);
+    if (config.method === 'get') return response(config, detail('session-a', [question('qb')]));
     return response(config, { session_id: 'session-a', total_questions: 1, questions: [question('qb')] });
   };
   await act(async () => submit(app.container));
   assert.equal(dialog(app.container), null);
   assert(app.container.textContent.includes('Nguồn qb'));
-  assert.deepEqual(calls, ['get', 'post', 'post']);
+  assert.deepEqual(calls, ['get', 'post', 'post', 'get']);
   await app.unmount();
 });
 
