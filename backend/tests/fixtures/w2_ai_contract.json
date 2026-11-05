@@ -1,0 +1,301 @@
+﻿{
+  "fixture_version": 1,
+  "reference_fixture": "ai_pipeline.json",
+  "provenance": "Offline GenerationService with injected provider/check outcomes; no CAS or Gemini proof.",
+  "model": "offline-contract-v1",
+  "base_seed": 100,
+  "variation_modes": [
+    "context"
+  ],
+  "source_hashes": {
+    "ordered_sources": [
+      {
+        "id": "123e4567-e89b-12d3-a456-426614174000",
+        "question_text": "Má»™t khung hĂ¬nh trang trĂ­ cĂ³ dáº¡ng má»™t Ä‘a giĂ¡c Ä‘á»u 12 cáº¡nh Ä‘Æ°á»£c gáº¯n cá»‘ Ä‘á»‹nh trĂªn má»™t tráº§n nhĂ . Báº¡n DÅ©ng cĂ³ 12 bĂ³ng Ä‘Ă¨n gá»“m bá»‘n bĂ³ng mĂ u Ä‘á» vĂ  tĂ¡m bĂ³ng mĂ u xanh, cĂ³ cĂ´ng suáº¥t Ä‘Ă´i má»™t khĂ¡c nhau. Báº¡n DÅ©ng láº¯p ngáº«u nhiĂªn 12 bĂ³ng Ä‘Ă¨n trĂªn vĂ o 12 Ä‘á»‰nh sao cho má»—i Ä‘á»‰nh cĂ³ Ä‘Ăºng má»™t bĂ³ng Ä‘Ă¨n. Gá»i P lĂ  xĂ¡c suáº¥t Ä‘á»ƒ má»—i hĂ¬nh vuĂ´ng (cĂ³ bá»‘n Ä‘á»‰nh lĂ  cĂ¡c Ä‘á»‰nh cá»§a Ä‘a giĂ¡c Ä‘Ă£ cho) Ä‘á»u cĂ³ Ă­t nháº¥t má»™t bĂ³ng Ä‘Ă¨n mĂ u Ä‘á». GiĂ¡ trá»‹ cá»§a 3190P báº±ng bao nhiĂªu?",
+        "options": [
+          "1856",
+          "1334",
+          "928",
+          "2552"
+        ],
+        "correct_answer": "A",
+        "solution": "",
+        "topic": null,
+        "has_security_warning": false
+      },
+      {
+        "id": "123e4567-e89b-12d3-a456-426614174001",
+        "question_text": "Má»™t khung hĂ¬nh trang trĂ­ cĂ³ dáº¡ng má»™t Ä‘a giĂ¡c Ä‘á»u 12 cáº¡nh Ä‘Æ°á»£c gáº¯n cá»‘ Ä‘á»‹nh trĂªn má»™t tráº§n nhĂ . Báº¡n DÅ©ng cĂ³ 12 bĂ³ng Ä‘Ă¨n gá»“m bá»‘n bĂ³ng mĂ u Ä‘á» vĂ  tĂ¡m bĂ³ng mĂ u xanh, cĂ³ cĂ´ng suáº¥t Ä‘Ă´i má»™t khĂ¡c nhau. Báº¡n DÅ©ng láº¯p ngáº«u nhiĂªn 12 bĂ³ng Ä‘Ă¨n trĂªn vĂ o 12 Ä‘á»‰nh sao cho má»—i Ä‘á»‰nh cĂ³ Ä‘Ăºng má»™t bĂ³ng Ä‘Ă¨n. Gá»i P lĂ  xĂ¡c suáº¥t Ä‘á»ƒ má»—i hĂ¬nh vuĂ´ng (cĂ³ bá»‘n Ä‘á»‰nh lĂ  cĂ¡c Ä‘á»‰nh cá»§a Ä‘a giĂ¡c Ä‘Ă£ cho) Ä‘á»u cĂ³ Ă­t nháº¥t má»™t bĂ³ng Ä‘Ă¨n mĂ u Ä‘á». GiĂ¡ trá»‹ cá»§a 3190P báº±ng bao nhiĂªu?",
+        "options": [
+          "1856",
+          "1334",
+          "928",
+          "2552"
+        ],
+        "correct_answer": "A",
+        "solution": "",
+        "topic": null,
+        "has_security_warning": false
+      }
+    ],
+    "ordered_batch_hash": "889cfd1ffa287318caa3b3b013f77fe49c62fe82f81e1e4083d1837166de01ca",
+    "reversed_batch_hash": "9140f2379241b98d2c4217cd0f8c45d63d3677e01f156a258733f320554154de",
+    "per_question_hashes": {
+      "123e4567-e89b-12d3-a456-426614174000": "34ef314fbca05393b2e39f6bbaee1144dbb1169dfd6a154d88fbb9de420bb49f",
+      "123e4567-e89b-12d3-a456-426614174001": "8b8d9dfd9b24055edad5935879907d92dd8ad72655892c1720025c2ff50a02ce"
+    }
+  },
+  "blueprint_fingerprint": "989a2bba680994e28dc11d18e0e5c8c3fddda017dc106c8acaca12a39c02253e",
+  "cases": {
+    "success": {
+      "result": {
+        "version_index": 1,
+        "source_question_id": "123e4567-e89b-12d3-a456-426614174000",
+        "request_fingerprint": "2c08bece1eb165b440b086249080f0bc44e67cb77e23c41ef984ef5a0b042906",
+        "candidate": {
+          "question_text": "Má»™t khung hĂ¬nh trang trĂ­ cĂ³ dáº¡ng má»™t Ä‘a giĂ¡c Ä‘á»u 12 cáº¡nh Ä‘Æ°á»£c gáº¯n cá»‘ Ä‘á»‹nh trĂªn má»™t tráº§n nhĂ . Báº¡n Lan cĂ³ 12 bĂ³ng Ä‘Ă¨n gá»“m bá»‘n bĂ³ng mĂ u Ä‘á» vĂ  tĂ¡m bĂ³ng mĂ u xanh, cĂ³ cĂ´ng suáº¥t Ä‘Ă´i má»™t khĂ¡c nhau. Báº¡n Lan láº¯p ngáº«u nhiĂªn 12 bĂ³ng Ä‘Ă¨n trĂªn vĂ o 12 Ä‘á»‰nh sao cho má»—i Ä‘á»‰nh cĂ³ Ä‘Ăºng má»™t bĂ³ng Ä‘Ă¨n. Gá»i P lĂ  xĂ¡c suáº¥t Ä‘á»ƒ má»—i hĂ¬nh vuĂ´ng (cĂ³ bá»‘n Ä‘á»‰nh lĂ  cĂ¡c Ä‘á»‰nh cá»§a Ä‘a giĂ¡c Ä‘Ă£ cho) Ä‘á»u cĂ³ Ă­t nháº¥t má»™t bĂ³ng Ä‘Ă¨n mĂ u Ä‘á». GiĂ¡ trá»‹ cá»§a 3190P báº±ng bao nhiĂªu?",
+          "options": [
+            "1856",
+            "1334",
+            "928",
+            "2552"
+          ],
+          "correct_key": "A",
+          "solution": {
+            "correct_key": "A",
+            "final_answer": "1856",
+            "steps": [
+              {
+                "explanation": "Ba hĂ¬nh vuĂ´ng táº¡o thĂ nh tá»« cĂ¡c Ä‘á»‰nh chia mÆ°á»i hai Ä‘á»‰nh thĂ nh ba nhĂ³m rá»i nhau, má»—i nhĂ³m bá»‘n Ä‘á»‰nh. Bá»‘n vá»‹ trĂ­ Ä‘á» pháº£i phĂ¢n bá»‘ theo dáº¡ng 2,1,1.",
+                "latex": null
+              },
+              {
+                "explanation": "Chá»n nhĂ³m cĂ³ hai vá»‹ trĂ­ Ä‘á», hai vá»‹ trĂ­ trong nhĂ³m Ä‘Ă³ vĂ  má»™t vá»‹ trĂ­ trong má»—i nhĂ³m cĂ²n láº¡i. CĂ³ 288 cĂ¡ch thuáº­n lá»£i trĂªn 495 cĂ¡ch chá»n bá»‘n vá»‹ trĂ­ Ä‘á».",
+                "latex": "P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}"
+              },
+              {
+                "explanation": "NhĂ¢n xĂ¡c suáº¥t vá»›i há»‡ sá»‘ cá»§a Ä‘á».",
+                "latex": "3190P=1856"
+              }
+            ]
+          },
+          "variant_id": "var_contract_success",
+          "source_question_id": "123e4567-e89b-12d3-a456-426614174000",
+          "blueprint_fingerprint": "989a2bba680994e28dc11d18e0e5c8c3fddda017dc106c8acaca12a39c02253e",
+          "seed": 1100,
+          "solution_md": "1. Ba hĂ¬nh vuĂ´ng táº¡o thĂ nh tá»« cĂ¡c Ä‘á»‰nh chia mÆ°á»i hai Ä‘á»‰nh thĂ nh ba nhĂ³m rá»i nhau, má»—i nhĂ³m bá»‘n Ä‘á»‰nh. Bá»‘n vá»‹ trĂ­ Ä‘á» pháº£i phĂ¢n bá»‘ theo dáº¡ng 2,1,1.\n\n2. Chá»n nhĂ³m cĂ³ hai vá»‹ trĂ­ Ä‘á», hai vá»‹ trĂ­ trong nhĂ³m Ä‘Ă³ vĂ  má»™t vá»‹ trĂ­ trong má»—i nhĂ³m cĂ²n láº¡i. CĂ³ 288 cĂ¡ch thuáº­n lá»£i trĂªn 495 cĂ¡ch chá»n bá»‘n vá»‹ trĂ­ Ä‘á».\n\n   $$P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}$$\n\n3. NhĂ¢n xĂ¡c suáº¥t vá»›i há»‡ sá»‘ cá»§a Ä‘á».\n\n   $$3190P=1856$$\n\nÄĂ¡p Ă¡n A: 1856",
+          "has_warning": true,
+          "requires_teacher_review": true
+        },
+        "validation": {
+          "checks": [
+            {
+              "check_name": "solution_consistency",
+              "passed": true,
+              "detail": "Solution key and final_answer must match the designated option content.",
+              "errors": [],
+              "status": "verified",
+              "confidence": null
+            },
+            {
+              "check_name": "solution_latex",
+              "passed": true,
+              "detail": null,
+              "errors": [],
+              "status": null,
+              "confidence": null
+            },
+            {
+              "check_name": "solution_reasoning",
+              "passed": false,
+              "detail": "Free-form reasoning steps require teacher review.",
+              "errors": [],
+              "status": "unknown",
+              "confidence": null
+            }
+          ],
+          "requires_teacher_review": true
+        },
+        "error_code": null,
+        "attempts": 1
+      },
+      "batch_status": "generated",
+      "offline_gateway_calls": 1
+    },
+    "warning_timeout": {
+      "result": {
+        "version_index": 1,
+        "source_question_id": "123e4567-e89b-12d3-a456-426614174000",
+        "request_fingerprint": "2c08bece1eb165b440b086249080f0bc44e67cb77e23c41ef984ef5a0b042906",
+        "candidate": {
+          "question_text": "Má»™t khung hĂ¬nh trang trĂ­ cĂ³ dáº¡ng má»™t Ä‘a giĂ¡c Ä‘á»u 12 cáº¡nh Ä‘Æ°á»£c gáº¯n cá»‘ Ä‘á»‹nh trĂªn má»™t tráº§n nhĂ . Báº¡n Lan cĂ³ 12 bĂ³ng Ä‘Ă¨n gá»“m bá»‘n bĂ³ng mĂ u Ä‘á» vĂ  tĂ¡m bĂ³ng mĂ u xanh, cĂ³ cĂ´ng suáº¥t Ä‘Ă´i má»™t khĂ¡c nhau. Báº¡n Lan láº¯p ngáº«u nhiĂªn 12 bĂ³ng Ä‘Ă¨n trĂªn vĂ o 12 Ä‘á»‰nh sao cho má»—i Ä‘á»‰nh cĂ³ Ä‘Ăºng má»™t bĂ³ng Ä‘Ă¨n. Gá»i P lĂ  xĂ¡c suáº¥t Ä‘á»ƒ má»—i hĂ¬nh vuĂ´ng (cĂ³ bá»‘n Ä‘á»‰nh lĂ  cĂ¡c Ä‘á»‰nh cá»§a Ä‘a giĂ¡c Ä‘Ă£ cho) Ä‘á»u cĂ³ Ă­t nháº¥t má»™t bĂ³ng Ä‘Ă¨n mĂ u Ä‘á». GiĂ¡ trá»‹ cá»§a 3190P báº±ng bao nhiĂªu?",
+          "options": [
+            "1856",
+            "1334",
+            "928",
+            "2552"
+          ],
+          "correct_key": "A",
+          "solution": {
+            "correct_key": "A",
+            "final_answer": "1856",
+            "steps": [
+              {
+                "explanation": "Ba hĂ¬nh vuĂ´ng táº¡o thĂ nh tá»« cĂ¡c Ä‘á»‰nh chia mÆ°á»i hai Ä‘á»‰nh thĂ nh ba nhĂ³m rá»i nhau, má»—i nhĂ³m bá»‘n Ä‘á»‰nh. Bá»‘n vá»‹ trĂ­ Ä‘á» pháº£i phĂ¢n bá»‘ theo dáº¡ng 2,1,1.",
+                "latex": null
+              },
+              {
+                "explanation": "Chá»n nhĂ³m cĂ³ hai vá»‹ trĂ­ Ä‘á», hai vá»‹ trĂ­ trong nhĂ³m Ä‘Ă³ vĂ  má»™t vá»‹ trĂ­ trong má»—i nhĂ³m cĂ²n láº¡i. CĂ³ 288 cĂ¡ch thuáº­n lá»£i trĂªn 495 cĂ¡ch chá»n bá»‘n vá»‹ trĂ­ Ä‘á».",
+                "latex": "P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}"
+              },
+              {
+                "explanation": "NhĂ¢n xĂ¡c suáº¥t vá»›i há»‡ sá»‘ cá»§a Ä‘á».",
+                "latex": "3190P=1856"
+              }
+            ]
+          },
+          "variant_id": "var_contract_warning_timeout",
+          "source_question_id": "123e4567-e89b-12d3-a456-426614174000",
+          "blueprint_fingerprint": "989a2bba680994e28dc11d18e0e5c8c3fddda017dc106c8acaca12a39c02253e",
+          "seed": 1100,
+          "solution_md": "1. Ba hĂ¬nh vuĂ´ng táº¡o thĂ nh tá»« cĂ¡c Ä‘á»‰nh chia mÆ°á»i hai Ä‘á»‰nh thĂ nh ba nhĂ³m rá»i nhau, má»—i nhĂ³m bá»‘n Ä‘á»‰nh. Bá»‘n vá»‹ trĂ­ Ä‘á» pháº£i phĂ¢n bá»‘ theo dáº¡ng 2,1,1.\n\n2. Chá»n nhĂ³m cĂ³ hai vá»‹ trĂ­ Ä‘á», hai vá»‹ trĂ­ trong nhĂ³m Ä‘Ă³ vĂ  má»™t vá»‹ trĂ­ trong má»—i nhĂ³m cĂ²n láº¡i. CĂ³ 288 cĂ¡ch thuáº­n lá»£i trĂªn 495 cĂ¡ch chá»n bá»‘n vá»‹ trĂ­ Ä‘á».\n\n   $$P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}$$\n\n3. NhĂ¢n xĂ¡c suáº¥t vá»›i há»‡ sá»‘ cá»§a Ä‘á».\n\n   $$3190P=1856$$\n\nÄĂ¡p Ă¡n A: 1856",
+          "has_warning": true,
+          "requires_teacher_review": true
+        },
+        "validation": {
+          "checks": [
+            {
+              "check_name": "solution_consistency",
+              "passed": true,
+              "detail": "Solution key and final_answer must match the designated option content.",
+              "errors": [],
+              "status": "verified",
+              "confidence": null
+            },
+            {
+              "check_name": "solution_latex",
+              "passed": true,
+              "detail": null,
+              "errors": [],
+              "status": null,
+              "confidence": null
+            },
+            {
+              "check_name": "solution_reasoning",
+              "passed": false,
+              "detail": "Free-form reasoning steps require teacher review.",
+              "errors": [],
+              "status": "unknown",
+              "confidence": null
+            },
+            {
+              "check_name": "answer_verified",
+              "passed": false,
+              "detail": "Injected timeout fixture; no mathematical proof.",
+              "errors": [],
+              "status": "timeout",
+              "confidence": null
+            }
+          ],
+          "requires_teacher_review": true
+        },
+        "error_code": null,
+        "attempts": 1
+      },
+      "batch_status": "generated",
+      "offline_gateway_calls": 1
+    },
+    "hard_failure": {
+      "result": {
+        "version_index": 1,
+        "source_question_id": "123e4567-e89b-12d3-a456-426614174000",
+        "request_fingerprint": "2c08bece1eb165b440b086249080f0bc44e67cb77e23c41ef984ef5a0b042906",
+        "candidate": null,
+        "validation": {
+          "checks": [
+            {
+              "check_name": "solution_consistency",
+              "passed": true,
+              "detail": "Solution key and final_answer must match the designated option content.",
+              "errors": [],
+              "status": "verified",
+              "confidence": null
+            },
+            {
+              "check_name": "solution_latex",
+              "passed": true,
+              "detail": null,
+              "errors": [],
+              "status": null,
+              "confidence": null
+            },
+            {
+              "check_name": "solution_reasoning",
+              "passed": false,
+              "detail": "Free-form reasoning steps require teacher review.",
+              "errors": [],
+              "status": "unknown",
+              "confidence": null
+            },
+            {
+              "check_name": "fixture_required_rule",
+              "passed": false,
+              "detail": "Injected hard failure; must not persist a draft.",
+              "errors": [],
+              "status": "failed",
+              "confidence": null
+            }
+          ],
+          "requires_teacher_review": true
+        },
+        "error_code": "VALIDATION_FAILED",
+        "attempts": 4
+      },
+      "batch_status": "failed",
+      "offline_gateway_calls": 4
+    },
+    "provider_failure": {
+      "result": {
+        "version_index": 1,
+        "source_question_id": "123e4567-e89b-12d3-a456-426614174000",
+        "request_fingerprint": "2c08bece1eb165b440b086249080f0bc44e67cb77e23c41ef984ef5a0b042906",
+        "candidate": null,
+        "validation": null,
+        "error_code": "PROVIDER_AUTH",
+        "attempts": 1
+      },
+      "batch_status": "failed",
+      "offline_gateway_calls": 1
+    }
+  },
+  "public_mode_proposal": {
+    "status": "proposed_pending_owner_confirmation",
+    "case_sensitive_aliases": {
+      "NUMERICAL": [
+        "values"
+      ],
+      "parameter_variation": [
+        "values"
+      ],
+      "context_swap": [
+        "context"
+      ]
+    },
+    "unresolved_ids": [
+      "STRUCTURAL",
+      "variable_inversion"
+    ],
+    "require_support_on_all_sources": true,
+    "none_policy": {
+      "inputs": [
+        [],
+        [
+          "NONE"
+        ]
+      ],
+      "proposed_execution": "deterministic_clone_outside_generator",
+      "provider_calls": 0,
+      "implemented": false
+    }
+  }
+}
