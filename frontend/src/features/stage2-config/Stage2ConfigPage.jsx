@@ -69,13 +69,16 @@ export default function Stage2ConfigPage({
 
   const submitOperationRef = useRef(0);
   const retryOperationRef = useRef(0);
+  const sessionOpRef = useRef(0);
+  const resyncOpRef = useRef(0);
   const isMountedRef = useRef(true);
   const activeSessionIdRef = useRef(sessionId);
 
-  // Tải dữ liệu phiên làm việc với khả năng cô lập tuyệt đối theo sessionId
+  // Tải dữ liệu phiên làm việc với khả năng cô lập tuyệt đối theo sessionId và số lượt tải (sessionOpRef)
   useEffect(() => {
     isMountedRef.current = true;
     activeSessionIdRef.current = sessionId;
+    const thisOp = ++sessionOpRef.current;
     let active = true;
 
     // Vô hiệu hóa mọi lượt submit và retry đang chờ của phiên trước
@@ -105,7 +108,46 @@ export default function Stage2ConfigPage({
 
       try {
         const data = await loadSession(sessionId);
-        if (!active) return;
+        if (!active || !isMountedRef.current || sessionOpRef.current !== thisOp || activeSessionIdRef.current !== sessionId) {
+          return;
+        }
+
+        // F02: Khi mở lại phiên partial_generated hoặc generating, chủ động nạp snapshot tiến độ
+        if (data && (data.status === 'generating' || data.status === 'partial_generated')) {
+          try {
+            const snap = await fetchGenSnapshot(sessionId);
+            if (
+              active &&
+              isMountedRef.current &&
+              sessionOpRef.current === thisOp &&
+              activeSessionIdRef.current === sessionId &&
+              snap
+            ) {
+              if (snap.progress) {
+                data.progress = snap.progress;
+              }
+              if (snap.question_statuses && Object.keys(snap.question_statuses).length > 0) {
+                data.question_statuses = {
+                  ...(data.question_statuses || {}),
+                  ...snap.question_statuses,
+                };
+              }
+              if (snap.stream_epoch) {
+                data.stream_epoch = snap.stream_epoch;
+              }
+              if (snap.resume_after_event_id !== undefined && snap.resume_after_event_id !== null) {
+                data.resume_after_event_id = snap.resume_after_event_id;
+              }
+            }
+          } catch {
+            // Không có generation-snapshot hoặc chưa triển khai -> giữ nguyên data
+          }
+        }
+
+        if (!active || !isMountedRef.current || sessionOpRef.current !== thisOp || activeSessionIdRef.current !== sessionId) {
+          return;
+        }
+
         setSession(data);
 
         // Nếu session đã ở trạng thái generating hoặc hoàn thành một phần (partial_generated)
@@ -116,10 +158,12 @@ export default function Stage2ConfigPage({
           setActiveConfig(data.config);
         }
       } catch (err) {
-        if (!active) return;
+        if (!active || !isMountedRef.current || sessionOpRef.current !== thisOp || activeSessionIdRef.current !== sessionId) {
+          return;
+        }
         setSessionError(err?.message || 'Không thể tải thông tin phiên làm việc.');
       } finally {
-        if (active) {
+        if (active && isMountedRef.current && sessionOpRef.current === thisOp && activeSessionIdRef.current === sessionId) {
           setIsLoadingSession(false);
         }
       }
@@ -135,20 +179,43 @@ export default function Stage2ConfigPage({
       setIsSubmittingConfig(false);
       setIsRetryingGeneration(false);
     };
-  }, [sessionId, loadSession]);
+  }, [sessionId, loadSession, fetchGenSnapshot]);
 
-  // F04: Callback tải lại snapshot phiên khi mất lịch sử SSE / nhận tín hiệu resync
+  // F04 / F06: Callback tải lại snapshot phiên khi mất lịch sử SSE / nhận tín hiệu resync
   const handleResyncSnapshot = useCallback(
     async (sid) => {
+      const thisResyncOp = ++resyncOpRef.current;
       let data;
       try {
         data = await fetchGenSnapshot(sid);
       } catch {
         data = await loadSession(sid);
       }
-      if (isMountedRef.current && activeSessionIdRef.current === sid) {
+
+      // F06: Kiểm tra lượt tải chính xác trước khi cập nhật state
+      if (
+        isMountedRef.current &&
+        resyncOpRef.current === thisResyncOp &&
+        activeSessionIdRef.current === sid
+      ) {
         if (data?.progress) {
-          setSession((prev) => (prev ? { ...prev, progress: data.progress, question_statuses: data.question_statuses } : prev));
+          setSession((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  progress: data.progress,
+                  question_statuses: {
+                    ...(prev.question_statuses || {}),
+                    ...(data.question_statuses || {}),
+                  },
+                  stream_epoch: data.stream_epoch ?? prev.stream_epoch,
+                  resume_after_event_id:
+                    data.resume_after_event_id !== undefined
+                      ? data.resume_after_event_id
+                      : prev.resume_after_event_id,
+                }
+              : prev,
+          );
         } else if (data) {
           setSession(data);
         }
@@ -163,6 +230,10 @@ export default function Stage2ConfigPage({
     enabled: isGenerating,
     initialProgress: session?.progress,
     initialQuestionStatuses: session?.question_statuses,
+    initialResumeAfterEventId:
+      session?.resume_after_event_id ?? session?.progress?.resume_after_event_id ?? null,
+    initialStreamEpoch:
+      session?.stream_epoch ?? session?.progress?.stream_epoch ?? null,
     onResync: handleResyncSnapshot,
   });
 

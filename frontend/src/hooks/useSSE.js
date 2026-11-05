@@ -16,6 +16,8 @@ export function useSSE(sessionId, {
   enabled = true,
   initialProgress = null,
   initialQuestionStatuses = null,
+  initialResumeAfterEventId = null,
+  initialStreamEpoch = null,
   requestTicket = requestEventTicket,
   eventSourceFactory = (url) => new EventSource(url),
   maxReconnectAttempts = 5,
@@ -63,18 +65,26 @@ export function useSSE(sessionId, {
 
   const eventSourceRef = useRef(null);
   const reconnectTimerRef = useRef(null);
-  const lastEventIdRef = useRef(null);
-  const epochRef = useRef(null);
+  const lastEventIdRef = useRef(
+    initialResumeAfterEventId ?? initialProgress?.resume_after_event_id ?? null,
+  );
+  const epochRef = useRef(
+    initialStreamEpoch ?? initialProgress?.stream_epoch ?? null,
+  );
   const isMountedRef = useRef(true);
   const reconnectAttemptRef = useRef(0);
   const isDoneRef = useRef(false);
   const isRecoveringRef = useRef(false);
   const hasOpenedRef = useRef(false);
   const connectRef = useRef(null);
+  const recoveryFlightTokenRef = useRef(0);
 
   // Bộ định danh phiên và lượt kết nối để cô lập tuyệt đối tác vụ
   const activeSessionIdRef = useRef(sessionId);
   const connectionTokenRef = useRef(0);
+  const prevSessionIdRef = useRef(sessionId);
+  const lastInitialProgressRef = useRef(initialProgress);
+  const lastInitialStatusesRef = useRef(initialQuestionStatuses);
 
   // Safe callback refs to avoid re-triggering effects
   const callbacksRef = useRef({
@@ -120,21 +130,21 @@ export function useSSE(sessionId, {
       return;
     }
     isRecoveringRef.current = true;
-    lastEventIdRef.current = null;
-    epochRef.current = null;
     cleanupConnection();
 
     const currentToken = connectionTokenRef.current;
     const targetSessionId = activeSessionIdRef.current;
+    const thisFlight = ++recoveryFlightTokenRef.current;
 
     try {
       if (callbacksRef.current.onResync) {
         const freshSnapshot = await callbacksRef.current.onResync(targetSessionId);
 
-        // F06: Kiểm tra phiên và token sau khi onResync hoàn tất (await network)
-        // Nếu đã unmount hoặc chuyển sang phiên khác -> HỦY BỎ kết quả snapshot cũ!
+        // F06: Kiểm tra phiên, token kết nối và flight sau khi onResync hoàn tất (await network)
+        // Nếu đã unmount, đổi phiên hoặc có lượt phục hồi mới -> HỦY BỎ kết quả snapshot cũ!
         if (
           !isMountedRef.current ||
+          recoveryFlightTokenRef.current !== thisFlight ||
           connectionTokenRef.current !== currentToken ||
           activeSessionIdRef.current !== targetSessionId
         ) {
@@ -182,6 +192,7 @@ export function useSSE(sessionId, {
       // F06: Tái kiểm tra trước khi lên lịch kết nối lại
       if (
         !isMountedRef.current ||
+        recoveryFlightTokenRef.current !== thisFlight ||
         connectionTokenRef.current !== currentToken ||
         activeSessionIdRef.current !== targetSessionId
       ) {
@@ -206,6 +217,7 @@ export function useSSE(sessionId, {
       isRecoveringRef.current = false;
       if (
         !isMountedRef.current ||
+        recoveryFlightTokenRef.current !== thisFlight ||
         connectionTokenRef.current !== currentToken ||
         activeSessionIdRef.current !== targetSessionId
       ) {
@@ -566,22 +578,24 @@ export function useSSE(sessionId, {
 
       cleanupConnection();
 
-      // F04: Nhận diện lỗi mất lịch sử hoặc bị từ chối khi mở stream
-      // Browser EventSource che giấu HTTP 409 thành onerror thông thường trước khi onopen.
-      // Do đó, nếu stream thất bại trước khi open trong khi đang gửi cursor, hoặc có mã 409 -> kích hoạt phục hồi!
+      // F04: Chỉ kích hoạt phục hồi ngay nếu server phát tín hiệu rõ ràng về mã 409 hoặc mất lịch sử
       const errStatus = err?.status ?? err?.target?.status;
       const isExplicit409 =
         errStatus === 409 ||
         err?.message?.includes('409') ||
         err?.code === 'ERR_EVENT_HISTORY_LOST' ||
-        err?.error_code === 'ERR_EVENT_HISTORY_LOST';
-      const isStreamOpenRejectionWithCursor =
-        !hasOpenedRef.current && Boolean(lastEventIdRef.current);
+        err?.error_code === 'ERR_EVENT_HISTORY_LOST' ||
+        err?.code === 'ERR_CURSOR_OUTDATED' ||
+        err?.error_code === 'ERR_CURSOR_OUTDATED';
 
-      if (isExplicit409 || isStreamOpenRejectionWithCursor) {
+      if (isExplicit409) {
         void triggerRecovery();
         return;
       }
+
+      // F04 Ca còn lỗi 2: Với lỗi kết nối mạng thông thường (kể cả trước onopen), FE thử kết nối lại từ mốc cũ.
+      // Quá trình connect() sẽ gửi ticket request kèm lastEventIdRef.current và epochRef.current.
+      // Nếu backend báo mất lịch sử (HTTP 409), connect() sẽ bắt lỗi và kích hoạt triggerRecovery().
 
       if (reconnectAttemptRef.current < maxReconnectAttempts) {
         reconnectAttemptRef.current += 1;
@@ -602,38 +616,105 @@ export function useSSE(sessionId, {
     connectRef.current = connect;
   }, [connect]);
 
-  // Kích hoạt kết nối và RESET state sạch sẽ khi sessionId hoặc enabled thay đổi
+  // F04 / F06: Quản lý khởi tạo marks và cô lập trạng thái khi đổi phiên (A -> B -> A)
+  useEffect(() => {
+    const isNewSession = prevSessionIdRef.current !== sessionId;
+    prevSessionIdRef.current = sessionId;
+
+    if (isNewSession) {
+      activeSessionIdRef.current = sessionId;
+      connectionTokenRef.current += 1;
+      recoveryFlightTokenRef.current += 1;
+      isDoneRef.current = false;
+      isRecoveringRef.current = false;
+      hasOpenedRef.current = false;
+      reconnectAttemptRef.current = 0;
+
+      // Reset sạch sẽ trạng thái của phiên cũ để tránh rò rỉ sang phiên mới
+      setProgress(createDefaultProgress(initialProgress));
+      setQuestionStatuses(initialQuestionStatuses || {});
+      setWarnings([]);
+      setError(null);
+      setIsDone(false);
+      setReconnectCount(0);
+
+      lastEventIdRef.current =
+        initialResumeAfterEventId ?? initialProgress?.resume_after_event_id ?? null;
+      epochRef.current =
+        initialStreamEpoch ?? initialProgress?.stream_epoch ?? null;
+    } else {
+      // Cùng phiên: Khi trang nạp snapshot ban đầu bất đồng bộ (hoặc áp dụng snapshot)
+      // KHÔNG reset null cursor/epoch, mà bảo tồn hoặc áp dụng marks từ snapshot
+      if (
+        lastEventIdRef.current === null &&
+        initialResumeAfterEventId !== null &&
+        initialResumeAfterEventId !== undefined
+      ) {
+        lastEventIdRef.current = initialResumeAfterEventId;
+      }
+      if (
+        epochRef.current === null &&
+        initialStreamEpoch !== null &&
+        initialStreamEpoch !== undefined
+      ) {
+        epochRef.current = initialStreamEpoch;
+      }
+
+      const isProgressEqual = (a, b) => {
+        if (a === b) return true;
+        if (!a || !b) return false;
+        const pa = a.percent ?? a.percent_complete ?? 0;
+        const pb = b.percent ?? b.percent_complete ?? 0;
+        const ca = a.completedCount ?? a.completed_count ?? 0;
+        const cb = b.completedCount ?? b.completed_count ?? 0;
+        const ta = a.totalCount ?? a.total_count ?? null;
+        const tb = b.totalCount ?? b.total_count ?? null;
+        return pa === pb && ca === cb && ta === tb && Boolean(a.hasData) === Boolean(b.hasData);
+      };
+
+      if (
+        (initialProgress?.hasData ||
+          (initialProgress?.percent !== undefined && initialProgress?.percent !== null)) &&
+        !isProgressEqual(lastInitialProgressRef.current, initialProgress)
+      ) {
+        lastInitialProgressRef.current = initialProgress;
+        if (!hasOpenedRef.current) {
+          setProgress(createDefaultProgress(initialProgress));
+        }
+      }
+
+      if (
+        initialQuestionStatuses &&
+        Object.keys(initialQuestionStatuses).length > 0 &&
+        JSON.stringify(lastInitialStatusesRef.current) !== JSON.stringify(initialQuestionStatuses)
+      ) {
+        lastInitialStatusesRef.current = initialQuestionStatuses;
+        if (!hasOpenedRef.current) {
+          setQuestionStatuses(initialQuestionStatuses);
+        }
+      }
+    }
+  }, [sessionId, initialProgress, initialQuestionStatuses, initialResumeAfterEventId, initialStreamEpoch]);
+
+  // Quản lý kết nối SSE: CHỈ chạy khi sessionId hoặc enabled thay đổi, KHÔNG phụ thuộc snapshot props
   useEffect(() => {
     isMountedRef.current = true;
     activeSessionIdRef.current = sessionId;
-    connectionTokenRef.current += 1;
-    isDoneRef.current = false;
-    isRecoveringRef.current = false;
-    hasOpenedRef.current = false;
-    reconnectAttemptRef.current = 0;
-
-    // F02 / F06: Reset sạch sẽ trạng thái của phiên cũ để tránh rò rỉ sang phiên mới
-    setProgress(createDefaultProgress(initialProgress));
-    setQuestionStatuses(initialQuestionStatuses || {});
-    setWarnings([]);
-    setError(null);
-    setIsDone(false);
-    setReconnectCount(0);
-    lastEventIdRef.current = null;
-    epochRef.current = null;
 
     if (enabled && sessionId) {
       connect();
     } else {
       cleanupConnection();
-      setConnectionState('idle');
+      if (!enabled) {
+        setConnectionState((prev) => (prev === 'completed' ? prev : 'idle'));
+      }
     }
 
     return () => {
       isMountedRef.current = false;
       cleanupConnection();
     };
-  }, [sessionId, enabled, connect, cleanupConnection, initialProgress, initialQuestionStatuses]);
+  }, [sessionId, enabled, connect, cleanupConnection]);
 
   // Hàm thủ công cho phép người dùng bấm "Kết nối lại" hoặc kích hoạt vòng theo dõi mới khi sinh bù trong cùng một phiên
   const manualReconnect = useCallback(() => {

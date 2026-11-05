@@ -739,13 +739,17 @@ test('F04: useSSE xóa cursor và gọi onResync khi xin ticket gặp lỗi HTTP
   await harness.unmount();
 });
 
-test('F04: useSSE xử lý lỗi từ chối khi mở stream (EventSource lỗi trước khi onopen mang cursor): chỉ kích hoạt 1 lần phục hồi và đồng bộ mốc mới', async () => {
+test('F04 Ca còn lỗi 2: EventSource báo lỗi chung trước onopen và ticket API vẫn hợp lệ thì FE thử nối lại từ mốc cũ, KHÔNG tải lại snapshot', async () => {
   MockEventSource.instances = [];
   let resyncCalled = 0;
+  const ticketRequests = [];
 
-  const mockRequestTicket = async (sessionId, lastEventId, epoch) => ({
-    ticket: `ticket-${lastEventId || 'clean'}-${epoch || 'noepoch'}`,
-  });
+  const mockRequestTicket = async (sessionId, lastEventId, epoch) => {
+    ticketRequests.push({ sessionId, lastEventId, epoch });
+    return {
+      ticket: `ticket-${lastEventId || 'clean'}-${epoch || 'noepoch'}`,
+    };
+  };
 
   const mockOnResync = async () => {
     resyncCalled += 1;
@@ -757,18 +761,90 @@ test('F04: useSSE xử lý lỗi từ chối khi mở stream (EventSource lỗi 
   };
 
   const harness = renderHookHarness(() =>
-    useSSE('session-f04-open-rejection', {
+    useSSE('session-f04-ticket-valid', {
       requestTicket: mockRequestTicket,
-      eventSourceFactory: (url) => {
-        const es = new MockEventSource(url);
-        // Nếu URL có chứa cursor cũ 'cursor-old', mô phỏng backend broker trả 409 khiến EventSource lập tức báo lỗi trước khi open
-        if (url.includes('last_event_id=cursor-old')) {
-          setTimeout(() => {
-            es.simulateError(new Error('EventSource failed before open'));
-          }, 10);
-        }
-        return es;
-      },
+      eventSourceFactory: (url) => new MockEventSource(url),
+      onResync: mockOnResync,
+    }),
+  );
+
+  await harness.render();
+  const es1 = MockEventSource.instances[0];
+
+  // Phát sinh event ghi nhận cursor 'cursor-10'
+  await act(async () => {
+    es1.simulateOpen();
+    es1.emit('progress', { percent: 50 }, 'cursor-10');
+  });
+
+  // Mô phỏng rớt mạng
+  await act(async () => {
+    es1.simulateError(new Error('Network drop'));
+  });
+
+  // EventSource thứ hai được tạo để reconnect
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+  });
+
+  const es2 = MockEventSource.instances[1];
+  assert.ok(es2, 'Phải tạo kết nối EventSource thứ hai để thử lại');
+
+  // Mô phỏng es2 bị lỗi chung trước khi onopen (nhưng ticket API vẫn hợp lệ)
+  await act(async () => {
+    es2.simulateError(new Error('Connection failed before open'));
+  });
+
+  // Chờ reconnect timer tiếp theo chạy
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 2200));
+  });
+
+  // TIÊU CHÍ ĐẠT: FE không được nhảy thẳng vào tải snapshot khi ticket API vẫn hợp lệ!
+  assert.equal(resyncCalled, 0, 'Tuyệt đối KHÔNG được gọi onResync khi ticket API vẫn hợp lệ');
+
+  // FE phải thử kết nối lại mang theo cursor cũ 'cursor-10'
+  const latestEs = MockEventSource.instances[MockEventSource.instances.length - 1];
+  assert.ok(
+    latestEs.url.includes('last_event_id=cursor-10'),
+    'Phải thử kết nối lại mang theo cursor cũ cursor-10',
+  );
+
+  await harness.unmount();
+});
+
+test('F04 Ca còn lỗi 2: Khi backend báo mất lịch sử (HTTP 409 / ERR_EVENT_HISTORY_LOST) trong ticket request, tải snapshot 1 lần và dùng mốc mới cho cả ticket và stream', async () => {
+  MockEventSource.instances = [];
+  let resyncCalled = 0;
+  const ticketRequests = [];
+
+  const mockRequestTicket = async (sessionId, lastEventId, epoch) => {
+    ticketRequests.push({ sessionId, lastEventId, epoch });
+    // Nếu gửi cursor-old đã bị trôi / mất lịch sử: backend trả HTTP 409 ERR_EVENT_HISTORY_LOST
+    if (lastEventId === 'cursor-old') {
+      const err = new Error('Event history lost');
+      err.status = 409;
+      err.code = 'ERR_EVENT_HISTORY_LOST';
+      throw err;
+    }
+    return {
+      ticket: `ticket-${lastEventId || 'clean'}-${epoch || 'noepoch'}`,
+    };
+  };
+
+  const mockOnResync = async () => {
+    resyncCalled += 1;
+    return {
+      resume_after_event_id: 72,
+      stream_epoch: 'epoch-v2',
+      progress: { percent: 75, completedCount: 3, totalCount: 4, hasData: true },
+    };
+  };
+
+  const harness = renderHookHarness(() =>
+    useSSE('session-f04-ticket-409', {
+      requestTicket: mockRequestTicket,
+      eventSourceFactory: (url) => new MockEventSource(url),
       onResync: mockOnResync,
     }),
   );
@@ -781,24 +857,73 @@ test('F04: useSSE xử lý lỗi từ chối khi mở stream (EventSource lỗi 
     es1.emit('progress', { percent: 50 }, 'cursor-old');
   });
 
-  // Giả lập rớt mạng và kết nối lại mang theo cursor-old
+  // Giả lập rớt mạng và kích hoạt reconnect
   await act(async () => {
     es1.simulateError(new Error('Network drop'));
   });
 
-  // Chờ timer và lượt phục hồi chạy
+  // Chờ timer thử lại và chạy quy trình phục hồi sau khi requestTicket bị 409
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 1800));
+    await new Promise((resolve) => setTimeout(resolve, 2000));
   });
 
-  // onResync phải được kích hoạt đúng 1 lần khi stream bị từ chối
-  assert.equal(resyncCalled, 1, 'Phục hồi phải được kích hoạt khi mở stream bị từ chối với cursor');
+  // TIÊU CHÍ ĐẠT:
+  // 1. onResync được gọi đúng 1 lần khi backend báo mất lịch sử
+  assert.equal(resyncCalled, 1, 'onResync phải được gọi đúng 1 lần khi ticket API trả 409');
   assert.equal(harness.result.progress.percent, 75, 'Progress phải đồng bộ từ snapshot mới');
 
-  // Lần kết nối sau phải sử dụng mốc đồng bộ từ snapshot mới (resume_after_event_id=72) chứ không lặp lại cursor-old
+  // 2. Ticket API lần tiếp theo phải dùng đúng cursor và epoch từ snapshot (72, epoch-v2)
+  const lastTicketReq = ticketRequests[ticketRequests.length - 1];
+  assert.equal(lastTicketReq.lastEventId, 72, 'Ticket request mới phải dùng resume_after_event_id=72 từ snapshot');
+  assert.equal(lastTicketReq.epoch, 'epoch-v2', 'Ticket request mới phải dùng stream_epoch=epoch-v2 từ snapshot');
+
+  // 3. Stream URL mới cũng phải dùng đúng cursor và epoch từ snapshot
   const latestEs = MockEventSource.instances[MockEventSource.instances.length - 1];
-  assert.equal(latestEs.url.includes('cursor-old'), false, 'Không được gửi lại cursor cũ đã hết hạn');
-  assert.ok(latestEs.url.includes('last_event_id=72'), 'Phải gửi mốc đồng bộ resume_after_event_id từ snapshot');
+  assert.equal(latestEs.url.includes('cursor-old'), false, 'Không gửi lại cursor cũ đã mất');
+  assert.ok(latestEs.url.includes('last_event_id=72'), 'Stream URL mới phải mang last_event_id=72');
+  assert.ok(latestEs.url.includes('stream_epoch=epoch-v2'), 'Stream URL mới phải mang stream_epoch=epoch-v2');
+
+  await harness.unmount();
+});
+
+test('F04 Ca còn lỗi 1: Khi snapshot trả resume_after_event_id=72 và stream_epoch=epoch-2, hook bảo tồn cả hai mốc cho cả ticket và stream mới, không xóa về null', async () => {
+  MockEventSource.instances = [];
+  const ticketRequests = [];
+
+  const mockRequestTicket = async (sessionId, lastEventId, epoch) => {
+    ticketRequests.push({ sessionId, lastEventId, epoch });
+    return {
+      ticket: `ticket-${lastEventId}-${epoch}`,
+    };
+  };
+
+  const harness = renderHookHarness(() =>
+    useSSE('session-f04-preserve-marks', {
+      initialResumeAfterEventId: 72,
+      initialStreamEpoch: 'epoch-2',
+      initialProgress: {
+        hasData: true,
+        percent: 75,
+        completedCount: 3,
+        totalCount: 4,
+      },
+      requestTicket: mockRequestTicket,
+      eventSourceFactory: (url) => new MockEventSource(url),
+    }),
+  );
+
+  await harness.render();
+
+  // TIÊU CHÍ ĐẠT:
+  // 1. Ticket request ban đầu phải gửi resume_after_event_id=72 và stream_epoch=epoch-2
+  assert.equal(ticketRequests.length, 1);
+  assert.equal(ticketRequests[0].lastEventId, 72, 'Ticket request phải nhận lastEventId=72');
+  assert.equal(ticketRequests[0].epoch, 'epoch-2', 'Ticket request phải nhận stream_epoch=epoch-2');
+
+  // 2. Stream URL phải chứa đầy đủ ticket, last_event_id=72 và stream_epoch=epoch-2
+  const es = MockEventSource.instances[0];
+  assert.ok(es.url.includes('last_event_id=72'), 'Stream URL phải mang last_event_id=72');
+  assert.ok(es.url.includes('stream_epoch=epoch-2'), 'Stream URL phải mang stream_epoch=epoch-2');
 
   await harness.unmount();
 });
@@ -909,6 +1034,89 @@ test('F06: Snapshot trả về muộn của phiên A khi đã chuyển sang phi�
     harness.result.questionStatuses['1-1']?.variant_id,
     undefined,
     'Dữ liệu câu hỏi của phiên A không được lọt vào phiên B',
+  );
+
+  await harness.unmount();
+});
+
+test('F06 Ca còn lỗi: Bắt đầu tải snapshot ở A, chuyển A -> B -> A, snapshot của lượt A đầu tiên trả về muộn không được ghi đè vào lượt A thứ hai', async () => {
+  MockEventSource.instances = [];
+  let resolveSessionAFirstResync;
+  const sessionAFirstPromise = new Promise((resolve) => {
+    resolveSessionAFirstResync = resolve;
+  });
+
+  let resyncCallCount = 0;
+  const mockOnResync = async (sid) => {
+    resyncCallCount += 1;
+    if (sid === 'session-A' && resyncCallCount === 1) {
+      // Lượt A đầu tiên: trả về muộn
+      return await sessionAFirstPromise;
+    }
+    if (sid === 'session-A' && resyncCallCount > 1) {
+      // Lượt A thứ hai: trả về bình thường (25%)
+      return {
+        progress: { percent: 25, completedCount: 1, totalCount: 4, hasData: true },
+        question_statuses: { '1-1': { status: 'done', variant_id: 'A2-q1' } },
+      };
+    }
+    return { progress: { percent: 10, completedCount: 1, totalCount: 10, hasData: true } };
+  };
+
+  let currentId = 'session-A';
+  const harness = renderHookHarness(() =>
+    useSSE(currentId, {
+      requestTicket: async (sid) => ({ ticket: `ticket-${sid}` }),
+      eventSourceFactory: (url) => new MockEventSource(url),
+      onResync: mockOnResync,
+    }),
+  );
+
+  await harness.render();
+  const esA1 = MockEventSource.instances[0];
+
+  // Lượt A đầu tiên: nhận lỗi mất lịch sử -> bắt đầu tải snapshot lượt 1
+  await act(async () => {
+    esA1.simulateOpen();
+    esA1.emit('error', { error_code: 'ERR_EVENT_HISTORY_LOST' });
+  });
+
+  // Chuyển sang phiên B
+  currentId = 'session-B';
+  await harness.render();
+
+  // Chuyển quay lại phiên A (lượt A thứ hai)
+  currentId = 'session-A';
+  await harness.render();
+
+  // Giả lập lượt A thứ hai cập nhật tiến độ (ví dụ 25%)
+  await act(async () => {
+    const esA2 = MockEventSource.instances[MockEventSource.instances.length - 1];
+    esA2.simulateOpen();
+    esA2.emit('progress', { percent: 25, completed_count: 1, total_count: 4 });
+  });
+
+  assert.equal(harness.result.progress.percent, 25, 'Lượt A thứ hai đang ở 25%');
+
+  // Bây giờ request snapshot của lượt A đầu tiên mới trả về (chứa 90%)
+  await act(async () => {
+    resolveSessionAFirstResync({
+      progress: { percent: 90, completedCount: 9, totalCount: 10, hasData: true },
+      question_statuses: { '1-1': { status: 'done', variant_id: 'A1-stale' } },
+    });
+    await new Promise((r) => setTimeout(r, 100));
+  });
+
+  // TIÊU CHÍ ĐẠT: Lượt A hiện tại (25%) không được bị 90% ghi đè!
+  assert.equal(
+    harness.result.progress.percent,
+    25,
+    'Tiến độ của lượt A hiện tại phải giữ nguyên 25%, không bị 90% của lượt cũ ghi đè',
+  );
+  assert.notEqual(
+    harness.result.questionStatuses['1-1']?.variant_id,
+    'A1-stale',
+    'Dữ liệu câu hỏi cũ không được ghi đè',
   );
 
   await harness.unmount();

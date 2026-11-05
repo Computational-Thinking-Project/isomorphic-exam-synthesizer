@@ -338,12 +338,33 @@ export async function fetchSessionDetail(sessionId) {
     restoredQuestionStatuses = computedStatuses;
   }
 
+  // F02: Nếu phiên partial_generated hoặc generating chưa có progress (ví dụ PR #32 chỉ có metadata mã đề),
+  // thử tải generation-snapshot nếu endpoint đã có kết quả
+  if (!restoredProgress && (data.status === 'partial_generated' || data.status === 'generating')) {
+    try {
+      const snap = await fetchGenerationSnapshot(sessionId);
+      if (snap?.progress) {
+        restoredProgress = snap.progress;
+        restoredQuestionStatuses = {
+          ...restoredQuestionStatuses,
+          ...(snap.question_statuses || {}),
+        };
+        data.stream_epoch = snap.stream_epoch;
+        data.resume_after_event_id = snap.resume_after_event_id;
+      }
+    } catch {
+      // Bỏ qua nếu endpoint generation-snapshot chưa có
+    }
+  }
+
   return {
     ...data,
     blueprint_summary: blueprintSummary,
     config: savedConfig,
     progress: restoredProgress,
     question_statuses: restoredQuestionStatuses,
+    stream_epoch: data.stream_epoch || null,
+    resume_after_event_id: data.resume_after_event_id ?? null,
   };
 }
 
