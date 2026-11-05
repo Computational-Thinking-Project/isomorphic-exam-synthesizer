@@ -205,3 +205,44 @@ test('GenerationProgressView trong phiên partial_generated: câu chưa có kế
 
   await harness.unmount();
 });
+
+test('F02: GenerationProgressView hiển thị Chưa có dữ liệu tiến độ khi thiếu snapshot (progress null hoặc hasData: false), KHÔNG hiển thị 0/4', async () => {
+  const harness = renderProgress({
+    sessionId: 'session-prog-no-snapshot',
+    numVersions: 2,
+    totalSourceQuestions: 2, // totalVariants = 4
+    progress: null,
+    connectionState: 'connected',
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('Chưa có dữ liệu tiến độ'), 'Phải báo Chưa có dữ liệu tiến độ khi thiếu snapshot');
+  assert.equal(/0\s*\/\s*4/.test(text), false, 'Tuyệt đối không được hiển thị 0 / 4 khi chưa có snapshot');
+  assert.ok(text.includes('--%'), 'Hiển thị --% thay vì 0%');
+
+  await harness.unmount();
+});
+
+test('F02: GenerationProgressView CHỈ hiển thị 0/4 khi backend xác nhận rõ ràng đã lưu 0 câu hỏi (hasData: true, completedCount: 0)', async () => {
+  const harness = renderProgress({
+    sessionId: 'session-prog-confirmed-zero',
+    numVersions: 2,
+    totalSourceQuestions: 2, // totalVariants = 4
+    progress: {
+      hasData: true,
+      completedCount: 0,
+      percent: 0,
+      totalCount: 4,
+    },
+    connectionState: 'connected',
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('0 / 4'), 'Phải hiển thị 0 / 4 khi backend xác nhận 0 câu');
+  assert.ok(text.includes('0%'), 'Phải hiển thị 0%');
+  assert.equal(text.includes('Chưa có dữ liệu tiến độ'), false, 'Không được hiển thị Chưa có dữ liệu tiến độ khi backend đã xác nhận');
+
+  await harness.unmount();
+});

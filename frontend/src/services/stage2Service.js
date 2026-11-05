@@ -305,6 +305,7 @@ export async function fetchSessionDetail(sessionId) {
     );
 
     restoredProgress = {
+      hasData: true,
       percent: percentVal,
       completedCount,
       totalCount: finalTotal,
@@ -323,6 +324,7 @@ export async function fetchSessionDetail(sessionId) {
     const isPartial = data.status === 'partial_generated' || (data.status === 'generated' && computedCompleted < totalCount);
 
     restoredProgress = {
+      hasData: true,
       percent: percentVal,
       completedCount: computedCompleted,
       totalCount,
@@ -405,12 +407,58 @@ export async function retryGeneration(sessionId) {
   return response.data;
 }
 
-export async function requestEventTicket(sessionId, lastEventId = null) {
+export async function fetchGenerationSnapshot(sessionId) {
   if (!sessionId) {
     throw new Error('Mã phiên làm việc (sessionId) không được để trống.');
   }
 
-  const query = lastEventId ? `?last_event_id=${encodeURIComponent(lastEventId)}` : '';
+  const response = await api.get(`/sessions/${encodeURIComponent(sessionId)}/generation-snapshot`);
+  const data = response.data;
+  const rawProgress = data.progress;
+
+  let normalizedProgress = null;
+  if (rawProgress) {
+    const completedCount = rawProgress.completed_count ?? rawProgress.completedCount ?? 0;
+    const totalCount = rawProgress.total_count ?? rawProgress.totalCount ?? 0;
+    const percentVal =
+      rawProgress.percent_complete ??
+      rawProgress.percent ??
+      (totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0);
+
+    normalizedProgress = {
+      hasData: true,
+      completedCount,
+      totalCount,
+      percent: percentVal,
+      session_status: data.session_status || data.status,
+      is_partial: Boolean(data.session_status === 'partial_generated' || data.is_partial),
+      message: rawProgress.message || '',
+    };
+  }
+
+  return {
+    session_id: data.session_id || sessionId,
+    session_status: data.session_status || data.status,
+    progress: normalizedProgress,
+    question_statuses: data.question_statuses || {},
+    stream_epoch: data.stream_epoch || null,
+    resume_after_event_id: data.resume_after_event_id ?? null,
+  };
+}
+
+export async function requestEventTicket(sessionId, lastEventId = null, streamEpoch = null) {
+  if (!sessionId) {
+    throw new Error('Mã phiên làm việc (sessionId) không được để trống.');
+  }
+
+  const params = new URLSearchParams();
+  if (lastEventId !== null && lastEventId !== undefined) {
+    params.set('last_event_id', lastEventId);
+  }
+  if (streamEpoch !== null && streamEpoch !== undefined) {
+    params.set('stream_epoch', streamEpoch);
+  }
+  const query = params.toString() ? `?${params.toString()}` : '';
   const response = await api.post(
     `/sessions/${encodeURIComponent(sessionId)}/events/ticket${query}`,
   );

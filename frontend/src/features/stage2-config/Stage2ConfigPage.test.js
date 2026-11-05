@@ -658,3 +658,39 @@ test('Stage2ConfigPage xử lý lỗi 409 sinh bù dạng object detail: {code, 
 
   await harness.unmount();
 });
+
+test('F02: Stage2ConfigPage mở phiên partial_generated với response chỉ có metadata mã đề (PR32) hiển thị Chưa có dữ liệu tiến độ, không hiển thị 0/4 và vẫn có nút Sinh bù', async () => {
+  // Mô phỏng response GET detail từ PR #32: chỉ có exam_versions rỗng (metadata mã đề), không có progress hay questions
+  const mockLoadSession = async () => ({
+    id: 'session-pr32-meta-only',
+    title: 'Đề thi PR32',
+    status: 'partial_generated',
+    source_questions: [{ id: 'q1', question_no: 1 }, { id: 'q2', question_no: 2 }],
+    config: { num_versions: 2 },
+    exam_versions: [{ version_index: 1 }, { version_index: 2 }],
+    blueprint_summary: {
+      total_questions: 2,
+      supported_modes: [],
+      is_ready: true,
+    },
+    progress: null, // Không có snapshot DB
+  });
+
+  const harness = renderPage('session-pr32-meta-only', {
+    loadSession: mockLoadSession,
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  // 1. Phải báo "Chưa có dữ liệu tiến độ"
+  assert.ok(text.includes('Chưa có dữ liệu tiến độ'), 'Phải thông báo Chưa có dữ liệu tiến độ');
+  // 2. Tuyệt đối không hiện "0 / 4" hoặc "0/4"
+  assert.equal(/0\s*\/\s*4/.test(text), false, 'Không được hiển thị 0/4 khi thiếu snapshot');
+  // 3. Vẫn hiển thị nút "Sinh bù các câu còn thiếu" vì session.status là partial_generated
+  const retryBtn = Array.from(harness.container.querySelectorAll('button')).find(
+    (b) => b.textContent.includes('Sinh bù các câu còn thiếu'),
+  );
+  assert.ok(retryBtn, 'Phải có nút Sinh bù các câu còn thiếu');
+
+  await harness.unmount();
+});

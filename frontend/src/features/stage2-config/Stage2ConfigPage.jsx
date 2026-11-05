@@ -11,6 +11,7 @@ import Stage2ConfigCard from './Stage2ConfigCard.jsx';
 import GenerationProgressView from './GenerationProgressView.jsx';
 import { useSSE } from '../../hooks/useSSE.js';
 import {
+  fetchGenerationSnapshot,
   fetchSessionDetail,
   retryGeneration,
   saveSessionConfig,
@@ -43,6 +44,7 @@ function extractErrorString(err, fallback = 'Không thể thực hiện thao tá
 
 export default function Stage2ConfigPage({
   loadSession = fetchSessionDetail,
+  fetchGenSnapshot = fetchGenerationSnapshot,
   saveConfig = saveSessionConfig,
   startGen = startGeneration,
   retryGen = retryGeneration,
@@ -138,13 +140,22 @@ export default function Stage2ConfigPage({
   // F04: Callback tải lại snapshot phiên khi mất lịch sử SSE / nhận tín hiệu resync
   const handleResyncSnapshot = useCallback(
     async (sid) => {
-      const data = await loadSession(sid);
+      let data;
+      try {
+        data = await fetchGenSnapshot(sid);
+      } catch {
+        data = await loadSession(sid);
+      }
       if (isMountedRef.current && activeSessionIdRef.current === sid) {
-        setSession(data);
+        if (data?.progress) {
+          setSession((prev) => (prev ? { ...prev, progress: data.progress, question_statuses: data.question_statuses } : prev));
+        } else if (data) {
+          setSession(data);
+        }
       }
       return data;
     },
-    [loadSession],
+    [fetchGenSnapshot, loadSession],
   );
 
   // Hook SSE kết nối khi ở trạng thái isGenerating
@@ -396,7 +407,7 @@ export default function Stage2ConfigPage({
   const mergedProgress =
     (sseState.progress?.percent > 0 || sseState.progress?.completedCount > 0 || sseState.isDone)
       ? sseState.progress
-      : session?.progress || sseState.progress;
+      : session?.progress || (sseState.progress?.hasData ? sseState.progress : null);
 
   // F03: Tách trạng thái kết thúc lượt sinh khỏi trạng thái kết nối SSE.
   // Khi F5 phiên partial_generated, lượt trước đã kết thúc nên isSnapshotFinished = true -> hiển thị ngay nút Sinh bù (Retry)
@@ -433,7 +444,12 @@ export default function Stage2ConfigPage({
           totalSourceQuestions={
             session?.source_questions?.length || session?.blueprint_summary?.total_questions || 10
           }
-          progress={mergedProgress}
+          progress={
+            mergedProgress ||
+            (session?.status === 'partial_generated'
+              ? { session_status: 'partial_generated', is_partial: true }
+              : null)
+          }
           questionStatuses={mergedStatuses}
           warnings={sseState.warnings}
           connectionState={sseState.connectionState}

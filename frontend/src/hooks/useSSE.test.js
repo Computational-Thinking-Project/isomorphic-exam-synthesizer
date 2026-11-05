@@ -738,3 +738,178 @@ test('F04: useSSE xóa cursor và gọi onResync khi xin ticket gặp lỗi HTTP
 
   await harness.unmount();
 });
+
+test('F04: useSSE xử lý lỗi từ chối khi mở stream (EventSource lỗi trước khi onopen mang cursor): chỉ kích hoạt 1 lần phục hồi và đồng bộ mốc mới', async () => {
+  MockEventSource.instances = [];
+  let resyncCalled = 0;
+
+  const mockRequestTicket = async (sessionId, lastEventId, epoch) => ({
+    ticket: `ticket-${lastEventId || 'clean'}-${epoch || 'noepoch'}`,
+  });
+
+  const mockOnResync = async () => {
+    resyncCalled += 1;
+    return {
+      resume_after_event_id: 72,
+      stream_epoch: 'epoch-v2',
+      progress: { percent: 75, completedCount: 3, totalCount: 4, hasData: true },
+    };
+  };
+
+  const harness = renderHookHarness(() =>
+    useSSE('session-f04-open-rejection', {
+      requestTicket: mockRequestTicket,
+      eventSourceFactory: (url) => {
+        const es = new MockEventSource(url);
+        // Nếu URL có chứa cursor cũ 'cursor-old', mô phỏng backend broker trả 409 khiến EventSource lập tức báo lỗi trước khi open
+        if (url.includes('last_event_id=cursor-old')) {
+          setTimeout(() => {
+            es.simulateError(new Error('EventSource failed before open'));
+          }, 10);
+        }
+        return es;
+      },
+      onResync: mockOnResync,
+    }),
+  );
+
+  await harness.render();
+  const es1 = MockEventSource.instances[0];
+
+  await act(async () => {
+    es1.simulateOpen();
+    es1.emit('progress', { percent: 50 }, 'cursor-old');
+  });
+
+  // Giả lập rớt mạng và kết nối lại mang theo cursor-old
+  await act(async () => {
+    es1.simulateError(new Error('Network drop'));
+  });
+
+  // Chờ timer và lượt phục hồi chạy
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 1800));
+  });
+
+  // onResync phải được kích hoạt đúng 1 lần khi stream bị từ chối
+  assert.equal(resyncCalled, 1, 'Phục hồi phải được kích hoạt khi mở stream bị từ chối với cursor');
+  assert.equal(harness.result.progress.percent, 75, 'Progress phải đồng bộ từ snapshot mới');
+
+  // Lần kết nối sau phải sử dụng mốc đồng bộ từ snapshot mới (resume_after_event_id=72) chứ không lặp lại cursor-old
+  const latestEs = MockEventSource.instances[MockEventSource.instances.length - 1];
+  assert.equal(latestEs.url.includes('cursor-old'), false, 'Không được gửi lại cursor cũ đã hết hạn');
+  assert.ok(latestEs.url.includes('last_event_id=72'), 'Phải gửi mốc đồng bộ resume_after_event_id từ snapshot');
+
+  await harness.unmount();
+});
+
+test('F04: useSSE đảm bảo 1 sự kiện mất lịch sử có payload (ERR_EVENT_HISTORY_LOST) chỉ gọi onResync đúng 1 lần (Single-Flight)', async () => {
+  MockEventSource.instances = [];
+  let resyncCalled = 0;
+
+  const mockOnResync = async () => {
+    resyncCalled += 1;
+    // Tạm dừng 50ms để kiểm tra single-flight lock
+    await new Promise((r) => setTimeout(r, 50));
+    return {
+      progress: { percent: 80, completedCount: 4, totalCount: 5, hasData: true },
+    };
+  };
+
+  const harness = renderHookHarness(() =>
+    useSSE('session-f04-single-flight', {
+      requestTicket: async () => ({ ticket: 't-sf' }),
+      eventSourceFactory: (url) => new MockEventSource(url),
+      onResync: mockOnResync,
+    }),
+  );
+
+  await harness.render();
+  const es = MockEventSource.instances[0];
+
+  await act(async () => {
+    es.simulateOpen();
+    // Bắn đồng thời qua cả event listener và onerror
+    es.emit('error', { error_code: 'ERR_EVENT_HISTORY_LOST' });
+    es.simulateError({ data: JSON.stringify({ error_code: 'ERR_EVENT_HISTORY_LOST' }) });
+  });
+
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 800));
+  });
+
+  assert.equal(resyncCalled, 1, 'onResync chỉ được gọi chính xác 1 lần, không bị cộng đôi');
+
+  await harness.unmount();
+});
+
+test('F06: Snapshot trả về muộn của phiên A khi đã chuyển sang phiên B bị hủy bỏ, không ghi đè tiến độ của phiên B', async () => {
+  MockEventSource.instances = [];
+  let resolveSessionAResync;
+  const sessionAResyncPromise = new Promise((resolve) => {
+    resolveSessionAResync = resolve;
+  });
+
+  const mockOnResync = async (sid) => {
+    if (sid === 'session-A') {
+      return await sessionAResyncPromise;
+    }
+    return { progress: { percent: 30, completedCount: 3, totalCount: 10, hasData: true } };
+  };
+
+  let activeId = 'session-A';
+  const harness = renderHookHarness(() =>
+    useSSE(activeId, {
+      requestTicket: async (sid) => ({ ticket: `ticket-${sid}` }),
+      eventSourceFactory: (url) => new MockEventSource(url),
+      onResync: mockOnResync,
+    }),
+  );
+
+  await harness.render();
+  const esA = MockEventSource.instances[0];
+
+  // Phiên A mở stream và nhận lỗi mất lịch sử
+  await act(async () => {
+    esA.simulateOpen();
+    esA.emit('error', { error_code: 'ERR_EVENT_HISTORY_LOST' });
+  });
+
+  // Phiên A đang chờ onResync... Ngay lúc này người dùng chuyển sang phiên B!
+  activeId = 'session-B';
+  await harness.render();
+
+  const esB = MockEventSource.instances.find((inst) => inst.url.includes('session-B'));
+  assert.ok(esB, 'Phiên B phải được kết nối');
+
+  // Phiên B nhận tiến độ 20%
+  await act(async () => {
+    esB.simulateOpen();
+    esB.emit('progress', { percent: 20, completed_count: 2, total_count: 10 });
+  });
+
+  assert.equal(harness.result.progress.percent, 20, 'Phiên B đang ở 20%');
+
+  // Bây giờ snapshot muộn của phiên A mới hoàn tất (trả về 90% và câu hỏi của A)
+  await act(async () => {
+    resolveSessionAResync({
+      progress: { percent: 90, completedCount: 9, totalCount: 10, hasData: true },
+      question_statuses: { '1-1': { status: 'done', variant_id: 'A-variant-1' } },
+    });
+    await new Promise((r) => setTimeout(r, 100));
+  });
+
+  // TIÊU CHÍ ĐẠT F06: Snapshot phiên A trả về muộn tuyệt đối KHÔNG được ghi đè vào phiên B!
+  assert.equal(
+    harness.result.progress.percent,
+    20,
+    'Tiến độ của phiên B vẫn phải là 20%, không bị 90% của phiên A ghi đè',
+  );
+  assert.equal(
+    harness.result.questionStatuses['1-1']?.variant_id,
+    undefined,
+    'Dữ liệu câu hỏi của phiên A không được lọt vào phiên B',
+  );
+
+  await harness.unmount();
+});

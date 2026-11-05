@@ -13,13 +13,14 @@
 
 | Hạng mục | Trạng thái | Chi tiết & Phạm vi kiểm |
 |---|---|---|
-| **1. Payload Config & Ordering** | **Confirmed & FE Verified** | Gửi tường minh `shuffle_questions` và `shuffle_options` dạng boolean; `active_variation_modes` gửi `[]` khi chọn NONE / không biến thể. Đã kiểm 222+ tests. |
+| **1. Payload Config & Ordering** | **Confirmed & FE Verified** | Gửi tường minh `shuffle_questions` và `shuffle_options` dạng boolean; `active_variation_modes` gửi `[]` khi chọn NONE / không biến thể. Đã kiểm 235 tests. |
 | **2. Case-sensitive Mode IDs** | **Confirmed & FE Verified** | Giữ nguyên chữ hoa/thường theo đúng Policy 207a (ví dụ `NUMERICAL`). |
 | **3. Fallback Modes từ Đề Nguồn** | **Confirmed & FE Verified** | Bóc tách modes từ `source_questions`. Nếu thiếu metadata ở bất kỳ câu nào $\rightarrow$ khóa submit (`is_ready: false`, `supported_modes: null`). |
-| **4. Snapshot Reload & Grid Lưới** | **Confirmed & FE Verified** | Chuẩn hóa `percent`, `completedCount`, `totalCount`. Dựng lưới từ `exam_versions`, câu `failed` không tăng count, metadata rỗng không tạo 0/4. |
-| **5. Nút Sinh Bù (Retry) khi F5** | **Confirmed & FE Verified** | Tách trạng thái kết thúc lượt sinh khỏi SSE `idle` để giữ nút Sinh bù ngay khi F5 phiên `partial_generated`. |
-| **6. Trình tự Resync Mất Lịch Sử SSE** | **Proposed & FE Implemented** | FE bắt tín hiệu `ERR_CURSOR_OUTDATED`, `ERR_EVENT_HISTORY_LOST`, 409 $\rightarrow$ xóa cursor, gọi `GET /sessions/{id}` cập nhật snapshot trước khi mở stream mới. Chờ backend PR #30 phát tín hiệu tương ứng. |
-| **7. Hành vi Original Clone Mode** | **Proposed (Chờ BE/AI)** | Đề xuất: backend/AI giữ nguyên bài toán verbatim, chỉ chạy xáo trộn câu/đáp án theo ordering preferences. Phần triển khai thực tế thuộc worker của PR #30. |
+| **4. Snapshot Reload & Grid Lưới (F02)** | **Confirmed & FE Verified** | Chuẩn hóa `percent`, `completedCount`, `totalCount`. Dựng lưới từ `exam_versions`, câu `failed` không tăng count. Thiếu snapshot báo "Chưa có dữ liệu tiến độ", chỉ hiện `0/4` khi backend xác nhận đã lưu 0 câu. |
+| **5. Nút Sinh Bù (Retry) khi F5 (F03)** | **Confirmed & FE Verified** | Tách trạng thái kết thúc lượt sinh khỏi SSE `idle` để giữ nút Sinh bù ngay khi F5 phiên `partial_generated`. |
+| **6. Trình tự Resync Mất Lịch Sử SSE (F04)** | **Confirmed & FE Verified** | Single-flight recovery lock: bắt tín hiệu `ERR_EVENT_HISTORY_LOST`, HTTP 409 khi mở stream hoặc trong stream $\rightarrow$ xóa cursor cũ, nạp snapshot, đồng bộ lại theo `resume_after_event_id` và `stream_epoch`. |
+| **7. Cô Lập Phiên Trả Muộn (F06)** | **Confirmed & FE Verified** | Hủy bỏ snapshot trả muộn của phiên A nếu đã chuyển sang phiên B hoặc unmount, chặn hoàn toàn rò rỉ state/lưới câu hỏi giữa các phiên. |
+| **8. Hành vi Original Clone Mode** | **Proposed (Chờ BE/AI)** | Đề xuất: backend/AI giữ nguyên bài toán verbatim, chỉ chạy xáo trộn câu/đáp án theo ordering preferences. Phần triển khai thực tế thuộc worker của PR #30. |
 
 ---
 
@@ -234,26 +235,12 @@ sequenceDiagram
 ```
 
 ### 3.3. Hiện thực hóa mã nguồn trong `frontend/src/hooks/useSSE.js`
-- **Xử lý `reset_cursor` từ Ticket:**
-  ```javascript
-  ticket = ticketRes?.ticket;
-  if (ticketRes?.reset_cursor) {
-    lastEventIdRef.current = null;
-  }
-  ```
-- **Xử lý sự kiện `ERR_CURSOR_OUTDATED`:**
-  ```javascript
-  if (
-    data?.error_code === 'ERR_CURSOR_OUTDATED' ||
-    data?.requires_resync === true ||
-    data?.reset_cursor === true
-  ) {
-    lastEventIdRef.current = null;
-    cleanupConnection();
-    reconnectTimerRef.current = setTimeout(connect, 600);
-    return;
-  }
-  ```
+- **Single-Flight Recovery Lock (`isRecoveringRef`):**
+  Đảm bảo mỗi sự kiện mất lịch sử chỉ kích hoạt một lượt phục hồi duy nhất, kể cả khi cả hai handler `addEventListener('error')` và `onerror` cùng phát tín hiệu.
+- **Xử lý từ chối mở stream (HTTP 409):**
+  Nếu `EventSource` lỗi trước khi `onopen` (`!hasOpenedRef.current`) trong khi đang mang cursor `last_event_id`, hook nhận diện bị từ chối kết nối do con trỏ hết hạn $\rightarrow$ kích hoạt phục hồi, xóa cursor cũ, nạp snapshot và đồng bộ mốc tiếp tục `resume_after_event_id` và `stream_epoch`.
+- **Cô lập phiên trả muộn (F06):**
+  Kiểm tra token và session ID sau khi `await onResync(...)`. Nếu người dùng đã chuyển sang phiên khác hoặc unmount, kết quả snapshot của phiên cũ bị hủy bỏ hoàn toàn.
 
 ---
 
@@ -289,7 +276,8 @@ sequenceDiagram
 
 - **Đại diện Frontend (FE2):** Bội Anh (`@htbaax`).
 - **Mã nguồn đã cập nhật:**
-  - `frontend/src/services/stage2Service.js`: Hỗ trợ snapshot phục hồi F5, tương thích cả backend summary lẫn fallback bóc tách từ `source_questions`, bảo toàn case-sensitivity.
-  - `frontend/src/hooks/useSSE.js`: Bổ sung cơ chế chống tràn buffer với `ERR_CURSOR_OUTDATED` và `reset_cursor`.
-  - `frontend/src/features/stage2-config/Stage2ConfigPage.jsx`: Tự động nạp màn hình tiến trình khi mở phiên `partial_generated`.
-- **Bộ kiểm thử tự động:** Toàn bộ 220 tests DOM harness và mock client đạt 100% pass; bổ sung test cases kiểm định payload summary và reload snapshot.
+  - `frontend/src/services/stage2Service.js`: Hỗ trợ snapshot phục hồi F5, bổ sung `fetchGenerationSnapshot`, chuẩn hóa cờ `hasData`, tương thích cả backend summary lẫn fallback bóc tách từ `source_questions`, bảo toàn case-sensitivity.
+  - `frontend/src/features/stage2-config/GenerationProgressView.jsx`: Phân biệt rõ ràng chưa có dữ liệu tiến độ (báo "Chưa có dữ liệu tiến độ", không hiện `0/4`) với trường hợp backend xác nhận lưu 0 câu (`0/4`).
+  - `frontend/src/hooks/useSSE.js`: Single-flight recovery lock (`isRecoveringRef`), tự động nhận diện từ chối mở stream HTTP 409 qua `!hasOpened`, đồng bộ mốc `resume_after_event_id` / `stream_epoch`, và cô lập tuyệt đối snapshot trả muộn giữa phiên A và B (F06).
+  - `frontend/src/features/stage2-config/Stage2ConfigPage.jsx`: Tự động nạp màn hình tiến trình khi mở phiên `partial_generated`, giữ nút Sinh bù và hiển thị đúng dữ liệu snapshot.
+- **Bộ kiểm thử tự động:** Toàn bộ 235 tests DOM harness và mock client đạt 100% pass; bổ sung test cases kiểm định F02 (thiếu snapshot vs confirmed zero), F04 (single flight & stream rejection recovery), F06 (session isolation chống ghi đè).
