@@ -255,6 +255,17 @@ async def setup_real_postgres_database(isolated_pg_dsn):  # noqa: F811
             with open(mig_path, "r", encoding="utf-8-sig") as f:
                 await conn.execute(f.read().lstrip("\ufeff"))
 
+        for migration in (
+            "007_finalize_approve_session_rpc.sql",
+            "008_finalize_persist_shuffle_rpc.sql",
+            "009_finalize_security_boundary.sql",
+        ):
+            path = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "../../migrations", migration)
+            )
+            with open(path, "r", encoding="utf-8-sig") as f:
+                await conn.execute(f.read().lstrip("\ufeff"))
+
         # 5. Seed Test Session
         await conn.execute(f"""
         INSERT INTO auth.users(id,email) VALUES ('{OWNER_ID}','teacher@school.edu.vn') ON CONFLICT (id) DO NOTHING;

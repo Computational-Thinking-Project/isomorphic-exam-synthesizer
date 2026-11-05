@@ -567,3 +567,28 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
   retry cùng snapshot xác minh no-op qua state đầy đủ. Race tests xác nhận
   blocking PID thật và timeout hữu hạn, không suy khóa từ sleep.
 - Bằng chứng và gate từng mục: [TASK-305 A+B](tasks/TASK-305_A_B_GATE_2026-11-05.md).
+
+## DEC-T305-SEC-002: Forward remediation F01–F03, PR #33
+
+- Ngày/người phụ trách: 05/11/2026, TASK-305/Duy; user yêu cầu xử lý review
+  tại `9e9ec146`. Implemented/local verified, **proposed pending independent
+  review**, không thay GitHub Approve hoặc rollout cloud.
+- Repro PostgreSQL15: owner UPDATE nội dung và xóa approved_at sau approval được;
+  key sai vẫn approve; một permutation khác nhưng tự nhất quán vẫn persist.
+- Giữ nguyên lịch sử006–008; migration009 forward-upgrade atomic thay definitions
+  Finalize, ACL, owner SELECT-only policies và direct-DML triggers. Revoke cả
+  column grants, TRUNCATE/TRIGGER và profile DELETE cascade; quyền đọc owner giữ.
+- Approval kiểm đúng current display slot, đáp án thực và canonical mapping dưới
+  root lock trước timestamp/audit. Không dùng canonical key làm display fallback.
+- Contract TASK-303 yêu cầu tái lập theo seed. Chọn **trusted backend attestation**:
+  HTTP owner JWT/RLS reader → Python shuffler hiện có → service-only writer với
+  actor từ CurrentUser đã xác thực. SQL revalidates owner/snapshot/integrity dưới
+  lock. Không viết lại Python RNG trong SQL, không cho browser gửi permutation,
+  không tin JWT role claim để nâng principal, không owner-client fallback.
+- Thay đổi caller cần backend và009 rollout đồng bộ; mixed versions fail closed.
+  Config finalized cần RPC invalidation riêng nếu muốn reconfigure; export cần
+  legal transition qua RPC. Không triển khai thêm hai workflow đó trong lượt này.
+- Ảnh hưởng/handoff: TASK-305 caller/migration/tests; owner SQL006 (#36) và TASK-303
+  giữ nguyên code nhưng cần biết principal boundary mới. Contract chuẩn tại
+  [Finalize RPC](api/finalize-rpc-contract.md); evidence/M5 tại
+  [remediation](tasks/TASK-305_REVIEW_REMEDIATION_2026-11-05.md).

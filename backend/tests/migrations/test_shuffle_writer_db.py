@@ -9,12 +9,14 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.dependencies import get_current_user, get_user_db
+from app.api.dependencies import get_current_user, get_service_db, get_user_db
 from app.main import app
 from app.models.schemas import CurrentUser
+from app.services.finalize.repository import FinalizeRepository
 from app.services.finalize.service import FinalizeService
 from app.services.finalize.shuffle_input import prepare_shuffle
 from app.services.shuffler.service import sync_solution_text
+from tests.migrations.test_shuffle_writer_adversarial import persist as trusted_persist
 from tests.migrations.test_shuffle_writer_adversarial import wait_blocked
 from tests.services.test_finalize_real_db_integration import AsyncpgSupabaseAdapter
 
@@ -78,15 +80,13 @@ async def _exercise(dsn):
             await conn.execute("SELECT set_config('request.jwt.claim.sub',$1,false)", OWNER)
 
         async def persist(conn, value=payload):
-            return json.loads(
-                await conn.fetchval(
-                    "SELECT public.finalize_persist_shuffle($1::uuid,$2::jsonb)", SESSION, value
-                )
-            )
+            return await trusted_persist(conn, SESSION, json.loads(value))
 
         await anon.execute("SET ROLE anon")
         with pytest.raises(asyncpg.InsufficientPrivilegeError):
-            await persist(anon)
+            await anon.fetchval(
+                "SELECT public.finalize_persist_shuffle($1::uuid,$2::jsonb)", SESSION, payload
+            )
 
         # Stale pre-read config is rejected and no writer state changes.
         before = await admin.fetchval(
@@ -116,7 +116,12 @@ async def _exercise(dsn):
             "00000000-0000-0000-0000-000000000002",
         )
         with pytest.raises(asyncpg.PostgresError, match="ERR_UNAUTHORIZED"):
-            await persist(b)
+            await persist(
+                b,
+                json.dumps(
+                    {**json.loads(payload), "actor_id": "00000000-0000-0000-0000-000000000002"}
+                ),
+            )
         await b.execute("SELECT set_config('request.jwt.claim.sub',$1,false)", OWNER)
         corrupt = json.loads(payload)
         corrupt["versions"][0]["questions"][0]["display_correct_key"] = "B"
@@ -311,28 +316,26 @@ async def _multi_version(admin, owner, dsn):
     )
     try:
         with pytest.raises(asyncpg.PostgresError, match="TASK305_INSERT_FAILURE"):
-            await owner.fetchval(
-                "SELECT public.finalize_persist_shuffle($1::uuid,$2::jsonb)", session, payload
-            )
+            await trusted_persist(owner, session, json.loads(payload))
         assert await admin.fetchval(state_sql, session) == before
     finally:
         await admin.execute(
             "DROP TRIGGER task305_test_fail_later ON public.answer_keys; DROP FUNCTION public.task305_test_fail_later()"
         )
-    receipt = json.loads(
-        await owner.fetchval(
-            "SELECT public.finalize_persist_shuffle($1::uuid,$2::jsonb)", session, payload
-        )
-    )
+    receipt = await trusted_persist(owner, session, json.loads(payload))
     assert receipt["is_finalized"] and len(receipt["versions"]) == 2
-    via_service = await FinalizeService(AsyncpgSupabaseAdapter(dsn, actor=OWNER)).shuffle_session(
-        session, OWNER
-    )
+    writer = FinalizeRepository(AsyncpgSupabaseAdapter(dsn, role="service_role", actor=OWNER))
+    via_service = await FinalizeService(
+        AsyncpgSupabaseAdapter(dsn, actor=OWNER), writer_repo=writer
+    ).shuffle_session(session, OWNER)
     assert via_service.is_finalized is True and len(via_service.versions) == 2
     app.dependency_overrides[get_current_user] = lambda: CurrentUser(
         id=OWNER, email="teacher@example.invalid", name="Teacher", access_token="test"
     )
     app.dependency_overrides[get_user_db] = lambda: AsyncpgSupabaseAdapter(dsn, actor=OWNER)
+    app.dependency_overrides[get_service_db] = lambda: AsyncpgSupabaseAdapter(
+        dsn, role="service_role", actor=OWNER
+    )
     try:
         response = TestClient(app).post(f"/api/sessions/{session}/finalize/shuffle")
         assert response.status_code == 200, response.text

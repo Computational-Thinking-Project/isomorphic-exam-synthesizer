@@ -12,13 +12,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 from supabase import Client
 
-from app.api.dependencies import assert_ownership, get_current_user, get_user_db
+from app.api.dependencies import assert_ownership, get_current_user, get_service_db, get_user_db
 from app.models.schemas import (
     AnswersMatrixResponse,
     CurrentUser,
     FinalizeApproveResponse,
     ReviewDomainException,
 )
+from app.services.finalize.repository import FinalizeRepository
 from app.services.finalize.service import FinalizeService
 from app.services.shuffler.schemas import FinalizeShuffleResponse
 
@@ -53,9 +54,12 @@ async def finalize_shuffle_endpoint(
     session_id: str = Depends(validate_session_uuid),
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
+    writer_db: Client = Depends(get_service_db),
 ) -> FinalizeShuffleResponse:
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
-    return await FinalizeService(db).shuffle_session(session_id, current_user.id)
+    return await FinalizeService(db, writer_repo=FinalizeRepository(writer_db)).shuffle_session(
+        session_id, current_user.id
+    )
 
 
 @router.post(

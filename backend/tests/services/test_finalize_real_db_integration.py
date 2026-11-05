@@ -266,6 +266,15 @@ async def setup_real_postgres_database(isolated_pg_dsn):  # noqa: F811
         # 5. Apply Migration 007
         with open(mig007_path, "r", encoding="utf-8-sig") as f:
             await conn.execute(f.read().lstrip("\ufeff"))
+        for migration in (
+            "008_finalize_persist_shuffle_rpc.sql",
+            "009_finalize_security_boundary.sql",
+        ):
+            path = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "../../migrations", migration)
+            )
+            with open(path, "r", encoding="utf-8-sig") as f:
+                await conn.execute(f.read().lstrip("\ufeff"))
 
         # 6. Seed owner user
         await conn.execute(f"""

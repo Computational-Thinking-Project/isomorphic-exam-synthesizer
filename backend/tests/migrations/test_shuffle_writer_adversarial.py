@@ -25,10 +25,12 @@ async def state(conn):
     # Include the other session too: catches accidental unscoped writes.
     result = {}
     for table in (
+        "users",
         "exam_sessions",
         "generation_configs",
         "exam_versions",
         "source_questions",
+        "question_blueprints",
         "version_questions",
         "answer_keys",
         "review_logs",
@@ -71,11 +73,25 @@ def payload(sid, snap):
 
 
 async def persist(conn, sid, data):
-    return json.loads(
-        await conn.fetchval(
-            "SELECT public.finalize_persist_shuffle($1::uuid,$2::jsonb)", sid, json.dumps(data)
+    # Explicitly model the trusted backend writer, retaining this connection's
+    # transaction/PID for the lock tests. Client-denial tests use raw SQL below.
+    supplied = deepcopy(data)
+    if isinstance(supplied, dict):
+        supplied.setdefault("actor_id", OWNER)
+    previous = await conn.fetchval("SELECT current_setting('role')")
+    assert previous in ("authenticated", "service_role", "anon", "none")
+    await conn.execute("SET ROLE service_role")
+    try:
+        return json.loads(
+            await conn.fetchval(
+                "SELECT public.finalize_persist_shuffle($1::uuid,$2::jsonb)",
+                sid,
+                json.dumps(supplied),
+            )
         )
-    )
+    finally:
+        if not conn.is_closed():
+            await conn.execute("RESET ROLE" if previous == "none" else f"SET ROLE {previous}")
 
 
 @pytest.fixture
@@ -263,7 +279,9 @@ async def test_direct_rpc_rejects_corrupt_payload_without_writes(db, case):
         ] = "Z"
     else:
         version["permutations"][case] = []
-    with pytest.raises(asyncpg.PostgresError, match="ERR_SHUFFLE_(INPUT_INCOMPLETE|STALE_INPUT)"):
+    with pytest.raises(
+        asyncpg.PostgresError, match="ERR_(SHUFFLE_(INPUT_INCOMPLETE|STALE_INPUT)|UNAUTHORIZED)"
+    ):
         await persist(owner, sid, data)
     assert await state(admin) == before
 
@@ -274,7 +292,7 @@ async def test_direct_rpc_rejects_corrupt_payload_without_writes(db, case):
         "missing_sub",
         "other_owner",
         "anon",
-        "service_role",
+        "authenticated",
         "missing_session",
         "generated",
         "approved",
@@ -291,7 +309,8 @@ async def test_sql_authorization_and_state(db, case):
             "SELECT set_config('request.jwt.claim.sub',$1,false)",
             "" if case == "missing_sub" else str(uuid4()),
         )
-    elif case in ("anon", "service_role"):
+        expected = "permission denied"
+    elif case in ("anon", "authenticated"):
         await owner.execute("RESET ROLE")
         await owner.execute(f"SET ROLE {case}")
         expected = "permission denied"
@@ -321,7 +340,14 @@ async def test_sql_authorization_and_state(db, case):
         expected = "ERR_SHUFFLE_NOT_READY" if case == "generated" else "ERR_SESSION_LOCKED"
     before = await state(admin)
     with pytest.raises(asyncpg.PostgresError, match=expected):
-        await persist(owner, sid, data)
+        if case in ("missing_sub", "other_owner", "anon", "authenticated"):
+            await owner.fetchval(
+                "SELECT public.finalize_persist_shuffle($1::uuid,$2::jsonb)",
+                sid,
+                json.dumps({**data, "actor_id": OWNER}),
+            )
+        else:
+            await persist(owner, sid, data)
     assert await state(admin) == before
 
 
@@ -731,7 +757,8 @@ async def test_unknown_commit_outcome_retries_without_writes(db):
 
     admin, _, _, sid, data = db
     dsn = os.environ["TASK305_WRITER_TEST_DSN"]
-    adapter = AsyncpgSupabaseAdapter(dsn, actor=OWNER)
+    adapter = AsyncpgSupabaseAdapter(dsn, role="service_role", actor=OWNER)
+    data["actor_id"] = OWNER
 
     class LostReceipt:
         def rpc(self, name, params):
@@ -784,7 +811,7 @@ async def test_changed_preferences_reject_old_snapshot_then_recompute(db):
 async def test_http_uppercase_uuid_and_committed_response(db):
     from fastapi.testclient import TestClient
 
-    from app.api.dependencies import get_current_user, get_user_db
+    from app.api.dependencies import get_current_user, get_service_db, get_user_db
     from app.main import app
     from app.models.schemas import CurrentUser
     from tests.services.test_finalize_real_db_integration import AsyncpgSupabaseAdapter
@@ -795,6 +822,9 @@ async def test_http_uppercase_uuid_and_committed_response(db):
     )
     app.dependency_overrides[get_user_db] = lambda: AsyncpgSupabaseAdapter(
         os.environ["TASK305_WRITER_TEST_DSN"], actor=OWNER
+    )
+    app.dependency_overrides[get_service_db] = lambda: AsyncpgSupabaseAdapter(
+        os.environ["TASK305_WRITER_TEST_DSN"], role="service_role", actor=OWNER
     )
     try:
         response = TestClient(app).post(f"/api/sessions/{sid.upper()}/finalize/shuffle")

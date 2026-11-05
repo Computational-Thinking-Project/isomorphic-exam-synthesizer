@@ -20,6 +20,32 @@ same container network namespace with `RUN_TASK305_WRITER_DB_TEST=1` and
 `TASK305_WRITER_TEST_DSN` set to the test database on `127.0.0.1`. The test
 performs destructive setup in that database; never point it at a shared service.
 
+### PR33 security remediation (migration009)
+
+The current application additionally requires
+`009_finalize_security_boundary.sql`. For this test fixture, provision bootstrap,
+schema,006,007,008 and the existing shuffle smoke seed first, then apply009 last.
+The smoke seed intentionally exercises the historical008 interface; current tests
+exercise the service-only writer introduced by009. Production uses no test seed.
+
+Run `test_finalize_security_boundary.py` alongside the two writer modules below
+with the same explicit disposable opt-in. It adds real authenticated/service-role
+DML and RLS tests, wrong-display-key approval cases, forged-role/body attempts,
+and fresh/legacy forward-upgrade rollback/replay. Upgrade cases create and drop
+only their own random `task305_test_upgrade_<uuid>` database in the verified local
+cluster. Test fixtures emulate broad Supabase table/column grants **before**009;
+they do not infer deployed privileges or relax production guards.
+
+`run_task305_real_db_suites.py` now applies006–009 in its random databases. The
+writer fixtures explicitly switch only their test connection's principal to model
+the trusted backend; raw client-denial cases do not use that helper. Local SQL
+execution results are separate from opt-in skips in ordinary CI.
+
+See [Finalize RPC contract](../../../docs/api/finalize-rpc-contract.md) for the
+owner-reader/service-writer split and coordinated rollout requirement. Run these
+DB suites sequentially without pytest-xdist because fault triggers are shared
+test fixtures inside the disposable database.
+
 `test_shuffle_writer_adversarial.py` uses the same explicit writer opt-in and
 loopback-only `task305_isolated` DSN. It creates a separate 2 x 3 session per
 case, checks full-row rollback (including history/timestamps), real PostgreSQL

@@ -206,7 +206,8 @@ async def test_shuffle_rpc_receipt_fails_closed(snapshot, case):
 
 
 @pytest.mark.asyncio
-async def test_shuffle_returns_only_after_writer_receipt(snapshot):
+@pytest.mark.parametrize("configured", [True, False])
+async def test_shuffle_returns_only_after_writer_receipt(snapshot, configured):
     session, config, versions, sources, questions = snapshot
     repo = MagicMock()
     repo.get_session_meta = AsyncMock(
@@ -220,7 +221,8 @@ async def test_shuffle_returns_only_after_writer_receipt(snapshot):
             "questions": questions,
         }
     )
-    repo.persist_shuffle_rpc = AsyncMock(
+    writer = MagicMock()
+    writer.persist_shuffle_rpc = AsyncMock(
         return_value={
             "session_id": session,
             "status": "reviewed",
@@ -237,10 +239,21 @@ async def test_shuffle_returns_only_after_writer_receipt(snapshot):
     )
     with patch("app.services.finalize.service.ReviewRepository") as review:
         review.return_value.progress = AsyncMock(return_value={"ready": True})
-        result = await FinalizeService(MagicMock(), repo).shuffle_session(session, "owner")
+        if not configured:
+            with pytest.raises(ReviewDomainException) as exc:
+                await FinalizeService(MagicMock(), repo).shuffle_session(session, "owner")
+            assert exc.value.error_code == "ERR_SHUFFLE_UNAVAILABLE"
+            repo.persist_shuffle_rpc.assert_not_called()
+            writer.persist_shuffle_rpc.assert_not_awaited()
+            return
+        result = await FinalizeService(MagicMock(), repo, writer_repo=writer).shuffle_session(
+            session, "owner"
+        )
     assert result.is_finalized is True
-    repo.persist_shuffle_rpc.assert_awaited_once()
-    assert len(repo.persist_shuffle_rpc.await_args.args[1]["versions"]) == 2
+    writer.persist_shuffle_rpc.assert_awaited_once()
+    repo.persist_shuffle_rpc.assert_not_called()
+    assert len(writer.persist_shuffle_rpc.await_args.args[1]["versions"]) == 2
+    assert writer.persist_shuffle_rpc.await_args.args[1]["actor_id"] == "owner"
 
 
 @pytest.mark.asyncio
@@ -264,7 +277,9 @@ async def test_shuffle_writer_failure_never_returns_success(snapshot):
     with patch("app.services.finalize.service.ReviewRepository") as review:
         review.return_value.progress = AsyncMock(return_value={"ready": True})
         with pytest.raises(ReviewDomainException) as exc_info:
-            await FinalizeService(MagicMock(), repo).shuffle_session(session, "owner")
+            await FinalizeService(MagicMock(), repo, writer_repo=repo).shuffle_session(
+                session, "owner"
+            )
     assert exc_info.value.error_code == "ERR_SHUFFLE_UNAVAILABLE"
 
 

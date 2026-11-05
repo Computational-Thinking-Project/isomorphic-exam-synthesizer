@@ -33,9 +33,16 @@ logger = logging.getLogger(__name__)
 class FinalizeService:
     """Business logic coordinator for the finalize lifecycle."""
 
-    def __init__(self, db: Client, repo: Optional[FinalizeRepository] = None) -> None:
+    def __init__(
+        self,
+        db: Client,
+        repo: Optional[FinalizeRepository] = None,
+        *,
+        writer_repo: Optional[FinalizeRepository] = None,
+    ) -> None:
         self.db = db
         self.repo = repo or FinalizeRepository(db)
+        self.writer_repo = writer_repo
 
     async def shuffle_session(self, session_id: str, user_id: str) -> FinalizeShuffleResponse:
         """Compute from canonical inputs and return only a validated RPC receipt."""
@@ -63,8 +70,18 @@ class FinalizeService:
             snapshot["sources"],
             snapshot["questions"],
         )
-        payload = {"snapshot": snapshot, "versions": [r.model_dump(mode="json") for r in results]}
-        receipt = await self.repo.persist_shuffle_rpc(
+        if self.writer_repo is None:
+            raise ReviewDomainException(
+                503, "ERR_SHUFFLE_UNAVAILABLE", "Trusted shuffle writer is not configured"
+            )
+        # Never accept shuffle output/actor from the HTTP request. The backend
+        # computes it from owner-scoped reads and the verified CurrentUser.
+        payload = {
+            "actor_id": user_id,
+            "snapshot": snapshot,
+            "versions": [r.model_dump(mode="json") for r in results],
+        }
+        receipt = await self.writer_repo.persist_shuffle_rpc(
             session_id, payload, snapshot["versions"], len(snapshot["sources"])
         )
         return FinalizeShuffleResponse.model_validate(receipt)
