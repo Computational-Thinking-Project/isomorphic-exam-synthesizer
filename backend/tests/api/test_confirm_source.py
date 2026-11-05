@@ -126,13 +126,31 @@ def flow(monkeypatch):
             if name == "get_source_artifacts":
                 if state.read_error:
                     raise ConnectionError("lost response")
+                if state.confirmation is None:
+                    raise APIError(
+                        {"code": "P0002", "message": "not found", "details": None, "hint": None}
+                    )
+                # Build production list consistent with SourceArtifactState validation.
+                # source_revision_id must match the one stored in confirmation.sources[0].
+                source_revision_id = state.confirmation["sources"][0]["source_revision_id"]
+                production = [
+                    dict(
+                        source_question_id=source["id"],
+                        source_revision_id=source_revision_id,
+                        status="ready" if state.ready else "pending",
+                        expires_at=None,
+                        error_code=None,
+                    )
+                ]
                 return SimpleNamespace(
                     data=dict(
                         confirmation=state.confirmation,
                         pending_source_question_ids=[] if state.ready else [source["id"]],
                         ready=state.ready,
+                        production=production,
                     )
                 )
+
             if name == "claim_source_production":
                 return SimpleNamespace(
                     data=dict(
