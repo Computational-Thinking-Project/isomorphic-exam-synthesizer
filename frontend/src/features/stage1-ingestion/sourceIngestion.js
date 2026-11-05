@@ -269,7 +269,6 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
         const status = cause?.response?.status;
         if (status === 409) {
           confirmationConflict = true;
-          try { clearIntent(); } catch { /* keep the lock and retry the read first */ }
           publish({ phase: 'reconciling', requiresReload: true, confirmationPending: Boolean(intent) });
           await reconcile(operation, true);
           return;

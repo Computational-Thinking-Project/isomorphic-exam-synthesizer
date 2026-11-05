@@ -4,7 +4,7 @@
 - **Nguồn giao việc:** TASK-204 trong `w2_21_10.md` của Duy, bản workspace `project/W2_ASSIGNMENT_20261026.md`. Link phân công chung TBD.
 - **Nhánh:** `feat/task-204-source-confirm` → `dev`. [Draft PR #42](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/42). Nền `dev` đã đồng bộ: `8289971`.
 - **Workflow:** [v0.1 proposed](../review/WORKFLOW.md) (`506384b`), dùng [M2/M3](../review/TEMPLATES.md). Mốc W2 tối 03/11/2026 theo [xác nhận của Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/29#issuecomment-6499240459) đã qua. ETA TASK-204 và ETA giao đầu vào chưa được xác nhận.
-- **Trạng thái:** scope FE1 đã chốt theo contract BE1 `5b711d2`. P1–P3 triển khai với fixture; P4 tích hợp có điều kiện riêng.
+- **Trạng thái:** P1–P3 đã triển khai local theo contract BE1 `5b711d2`. P4 đã kiểm FE với fixture; nghiệm thu tích hợp cần runtime đã ghép.
 
 ## Mình cần làm gì?
 
@@ -58,5 +58,11 @@ Silent audit đã chốt, không mở lại câu hỏi checkbox của assignment
 ## Bàn giao
 
 - **Output cho FE2:** cùng `sessionId`, đường vào Stage 2 và quy tắc khi đang chuẩn bị/đã sẵn sàng theo Q02. Mốc giao TBD.
-- **Đã làm:** lập M2 từ assignment, code tại base và checkpoint của 201/203b. Kết quả đọc tĩnh dùng để khoanh điểm cần chốt, chưa có kết quả kiểm triển khai 204.
-- **Bước tiếp:** triển khai P1–P3 theo scope Draft và ghi bằng chứng P4 theo đúng commit đã kiểm.
+- **Mốc triển khai:** P1 `d5e8823`, P2 `5e511fd`, P3 `f48ed60`. Bản P4 trong commit chứa mục này giữ intent đến khi đọc lại thành công sau 409 và có [fixture Chrome tái chạy](../../frontend/test-support/stage1-native/README.md#task-204--xác-nhận-nguồn-và-f5).
+- **Bước tiếp:** Duy review contract, Bội Anh kiểm điểm bàn giao cùng phiên trên runtime tích hợp. Giữ Draft trong lúc chờ xác minh phần đó.
+
+## M3 — Kết quả kiểm local cho PR #42
+
+- Baseline sau đồng bộ `dev`: 86 ca Stage 1/ingestion đã có đạt. Sau P1–P4: `npm.cmd test -- --test-concurrency=2` **328 đạt**, `npm.cmd run lint` đạt, `npm.cmd run build` đạt với `GOMAXPROCS=2` và cảnh báo bundle `968.62 kB`. Lượt chạy song song trước đó hết tài nguyên Windows; chạy lại tuần tự đạt. `git diff --check` đạt.
+- **Chrome, Auth/HTTP giả lập:** bàn phím nạp đề B, GET cập nhật preview, confirm mất response. F5 trên phiên nháp giữ số POST ở 1, đọc phiên và artifact trước khi cho retry. Retry chủ động gửi lần 2 cùng key và mở đúng phiên trên Stage 2 fixture. Với ca server giả lập đã commit, F5 đọc `blueprinted`, mở Stage 2 fixture và số POST vẫn là 1. Bằng chứng local tại `tmp/task204-chrome-fixture.json` trong workspace.
+- **Phạm vi bằng chứng:** kiểm FE1, snapshot, khôi phục key và route. Stage 2 trong fixture chỉ kiểm ID bàn giao. Kiểm thật với adapter FE2, migration BE1/BE2, Supabase/PostgREST/JWT/RLS và CORS khác origin vẫn chờ runtime được giao. Chưa gọi API/provider thật cho lượt này.

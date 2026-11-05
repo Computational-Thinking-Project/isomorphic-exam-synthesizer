@@ -181,9 +181,10 @@ test('GET sau 409 lỗi không mở nút ghi; đọc lại rồi cần một xá
   await controller.confirm();
   assert(!controller.canConfirm());
   assert(!controller.canSubmit());
-  assert.equal(memory.intent, null);
+  assert.equal(memory.intent.idempotencyKey, firstKey);
   readable = true;
   await controller.reload();
+  assert.equal(memory.intent, null);
   assert.deepEqual(keys, [firstKey]);
   assert.match(controller.getSnapshot().confirmationError, /xác nhận lại/);
   await controller.confirm();
