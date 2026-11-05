@@ -15,6 +15,9 @@
 - Evidence and limits: [local author handoff](tasks/TASK-207.md#original-clone-follow-up--local-author-handoff-05112026)
   and [RPC contract](api/generation-config-endpoint.md#original-clone-persistence-migration-011).
   Independent review, CI on a pushed head, worker integration and deployed E2E remain gates.
+## 05/11/2026 — TASK-304: tiếp nhận vào dev qua TASK-301
+
+Production adapter/schema/permit tests của PR26 đã có trên dev qua PR28. Đạt đồng bộ nhánh304, cập nhật [bàn giao](ai-w3-targeted-regeneration.md) và [trạng thái](tasks/TASK-304.md), không đổi production code hoặc contract. Consumer đã được kiểm tại31b7f4d; cloud/live Gemini/full product E2E vẫn là gate riêng.
 
 ## DEC-TASK305-001: Final approval display-key and principal guards (proposed)
 
@@ -435,7 +438,13 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
        - `review_accept_question(p_session_id, p_question_id, p_action_id)` và `review_revert_question`: Dùng `p_action_id` (CSDL tự lấy actor từ `auth.uid()`).
      - Chuẩn hóa payload `AttemptPermit` đúng 6 trường: `operation_id, attempt_id, dispatch_permitted, calls_used, remaining_calls, replayed`.
   3. **Ánh xạ ngoại lệ tập trung (`_map_rpc_exception`):**
-     - Bắt các mã domain exception sanitized do CSDL ném ra (`REVIEW_NOT_FOUND` $ightarrow$ 404, `REVIEW_BUSY` $ightarrow$ 409, `REVIEW_STALE` $ightarrow$ 409, `REVIEW_LOCKED` $ightarrow$ 423, `REVIEW_QUOTA_EXHAUSTED` $ightarrow$ 429, `REVIEW_IDEMPOTENCY_CONFLICT` $ightarrow$ 409) và chuyển thành `ReviewDomainException`.
+     - Bắt các mã domain exception sanitized do CSDL ném ra (`REVIEW_NOT_FOUND` $
+ightarrow$ 404, `REVIEW_BUSY` $
+ightarrow$ 409, `REVIEW_STALE` $
+ightarrow$ 409, `REVIEW_LOCKED` $
+ightarrow$ 423, `REVIEW_QUOTA_EXHAUSTED` $
+ightarrow$ 429, `REVIEW_IDEMPOTENCY_CONFLICT` $
+ightarrow$ 409) và chuyển thành `ReviewDomainException`.
 * **Phạm vi ảnh hưởng:** `backend/app/services/review/repository.py`, `backend/tests/services/test_review_lifecycle.py`, `docs/tasks/TASK-301.md`.
 * **Kiểm chứng:** 58/58 Stage 3 review tests pass (52 lifecycle + 6 API), ruff check clean.
 
