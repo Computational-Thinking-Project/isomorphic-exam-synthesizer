@@ -548,3 +548,203 @@ class FinalizeRepository:
             raise inconsistent()
         codes.sort(key=lambda code: (0, int(code), code) if code.isdigit() else (1, code, code))
         return codes, rows
+
+    async def fetch_preview_snapshot(self, session_id: str) -> Dict[str, Any]:
+        """Fetch and assemble post-shuffle pre-approval preview projection (W4-MVP-05).
+
+        Validates:
+        1. Session existence and allowed state ('reviewed', 'approved', 'exported').
+        2. Exactly 1 generation config with 1..4 versions.
+        3. All exam versions are finalized (is_finalized=True) and match n_versions.
+        4. Complete set of approved, current questions for each version with contiguous question_no (1..M).
+        5. Valid, synchronized options (4 distinct items) and correct_key ('A'..'D').
+        6. Consistent answer_keys for all versions matching display question_no and correct_key.
+        7. Cross-version answers matrix sorted by display question_no.
+        """
+
+        def inconsistent(detail: str = "Dữ liệu đề sau hoán vị không nhất quán") -> ReviewDomainException:
+            return ReviewDomainException(409, "ERR_INCONSISTENT_ANSWER_KEYS", detail)
+
+        # Step 1: Session meta
+        session_meta = await self.get_session_meta(session_id)
+        if not session_meta:
+            raise ReviewDomainException(
+                404, "ERR_SESSION_NOT_FOUND", f"Phiên làm việc '{session_id}' không tồn tại"
+            )
+        status = str(session_meta.get("status", "")).lower()
+        if status not in ("reviewed", "approved", "exported"):
+            raise ReviewDomainException(
+                409,
+                "ERR_INVALID_SESSION_STATE",
+                f"Phiên đề ở trạng thái '{status}' chưa sẵn sàng để xem trước",
+            )
+
+        # Step 2: Generation config
+        configs = _get_rows(
+            self.db.table("generation_configs")
+            .select("n_versions")
+            .eq("session_id", session_id)
+            .execute()
+        )
+        if len(configs) != 1:
+            raise inconsistent("Cấu hình sinh đề không hợp lệ")
+        n = configs[0].get("n_versions")
+        if not isinstance(n, int) or isinstance(n, bool) or not (1 <= n <= 4):
+            raise inconsistent("Số lượng phiên bản đề trong cấu hình không hợp lệ")
+
+        # Step 3: Exam versions
+        versions = _get_rows(
+            self.db.table("exam_versions")
+            .select("id, version_code, is_finalized, shuffle_seed, permutations")
+            .eq("session_id", session_id)
+            .execute()
+        )
+        if len(versions) != n:
+            raise inconsistent("Số lượng bản ghi exam_versions không khớp với cấu hình")
+
+        if any(v.get("is_finalized") is not True for v in versions):
+            raise ReviewDomainException(
+                409,
+                "ERR_SHUFFLE_REQUIRED",
+                "Phiên đề chưa hoàn tất hoán vị đề thi. Vui lòng thực hiện hoán vị trước khi xem trước.",
+            )
+
+        ids = [str(v["id"]) for v in versions]
+        codes = [str(v["version_code"]) for v in versions]
+        if len(set(ids)) != n or len(set(codes)) != n:
+            raise inconsistent("Mã hoặc định danh phiên bản đề bị trùng lặp")
+
+        # Step 4: Source questions count
+        sources = _get_rows(
+            self.db.table("source_questions")
+            .select("id, question_no")
+            .eq("session_id", session_id)
+            .execute()
+        )
+        if not sources:
+            raise inconsistent("Không tìm thấy câu hỏi nguồn của phiên đề")
+        m = len(sources)
+
+        # Step 5: Version questions
+        raw_questions = _get_rows(
+            self.db.table("version_questions")
+            .select(
+                "id, version_id, source_question_id, question_no, content, options, "
+                "correct_key, solution_md, canonical_question_no, status, is_current"
+            )
+            .in_("version_id", ids)
+            .eq("is_current", True)
+            .execute()
+        )
+
+        questions_by_version: Dict[str, List[Dict[str, Any]]] = {vid: [] for vid in ids}
+        for q in raw_questions:
+            vid = str(q.get("version_id", ""))
+            if vid in questions_by_version:
+                questions_by_version[vid].append(q)
+
+        # Step 6: Answer keys
+        raw_keys = _get_rows(
+            self.db.table("answer_keys")
+            .select("version_id, question_no, correct_option, display_no, display_correct_key")
+            .in_("version_id", ids)
+            .execute()
+        )
+        keys_by_version: Dict[str, Dict[int, str]] = {vid: {} for vid in ids}
+        for k in raw_keys:
+            vid = str(k.get("version_id", ""))
+            q_no = k.get("question_no")
+            opt = k.get("correct_option")
+            if vid in keys_by_version and isinstance(q_no, int) and opt in ("A", "B", "C", "D"):
+                keys_by_version[vid][q_no] = opt
+
+        # Step 7: Build and validate preview versions
+        preview_versions: List[Dict[str, Any]] = []
+        for v in versions:
+            vid = str(v["id"])
+            v_code = str(v["version_code"])
+            v_seed = v.get("shuffle_seed")
+            v_questions = questions_by_version[vid]
+
+            if len(v_questions) != m:
+                raise inconsistent(f"Phiên bản {v_code} thiếu câu hỏi (có {len(v_questions)}/{m} câu)")
+
+            if any(not isinstance(q.get("question_no"), int) for q in v_questions):
+                raise inconsistent(f"Thứ tự câu hỏi hiển thị của phiên bản {v_code} không hợp lệ")
+            q_numbers = [int(q["question_no"]) for q in v_questions]
+            if sorted(q_numbers) != list(range(1, m + 1)):
+                raise inconsistent(f"Thứ tự câu hỏi hiển thị của phiên bản {v_code} không liên tục từ 1 đến {m}")
+
+            sorted_v_questions = sorted(v_questions, key=lambda x: int(x["question_no"]))
+            formatted_questions: List[Dict[str, Any]] = []
+
+            for q in sorted_v_questions:
+                q_no = int(q["question_no"])
+                options = q.get("options")
+                correct_key = q.get("correct_key")
+                solution_md = q.get("solution_md") or ""
+
+                if not isinstance(options, list) or len(options) != 4 or not all(isinstance(o, str) and o.strip() for o in options):
+                    raise inconsistent(f"Phương án của câu {q_no} trong phiên bản {v_code} không hợp lệ")
+
+                if correct_key not in ("A", "B", "C", "D"):
+                    raise inconsistent(f"Đáp án đúng của câu {q_no} trong phiên bản {v_code} không hợp lệ")
+
+                key_in_table = keys_by_version[vid].get(q_no)
+                if key_in_table != correct_key:
+                    raise inconsistent(f"Đáp án bảng tra không khớp đáp án câu hỏi {q_no} trong phiên bản {v_code}")
+
+                canonical_no = q.get("canonical_question_no")
+                if not isinstance(canonical_no, int) or canonical_no < 1:
+                    canonical_no = q_no
+
+                formatted_questions.append({
+                    "id": str(q["id"]),
+                    "source_question_id": str(q["source_question_id"]),
+                    "question_no": q_no,
+                    "canonical_question_no": canonical_no,
+                    "content": str(q.get("content", "")),
+                    "options": options,
+                    "correct_key": correct_key,
+                    "solution_md": str(solution_md),
+                    "status": str(q.get("status", "approved")),
+                })
+
+            ans_map = {str(q_no): opt for q_no, opt in sorted(keys_by_version[vid].items())}
+
+            preview_versions.append({
+                "id": vid,
+                "version_code": v_code,
+                "is_finalized": True,
+                "shuffle_seed": str(v_seed) if v_seed is not None else None,
+                "total_questions": m,
+                "questions": formatted_questions,
+                "answer_keys": ans_map,
+            })
+
+        preview_versions.sort(
+            key=lambda x: (0, int(x["version_code"]), x["version_code"])
+            if x["version_code"].isdigit()
+            else (1, x["version_code"], x["version_code"])
+        )
+
+        # Step 8: Build matrix
+        matrix: List[Dict[str, Any]] = []
+        for q_no in range(1, m + 1):
+            row_answers: Dict[str, str] = {}
+            for pv in preview_versions:
+                ans = pv["answer_keys"].get(str(q_no))
+                if not ans:
+                    raise inconsistent(f"Thiếu đáp án câu {q_no} cho phiên bản {pv['version_code']}")
+                row_answers[pv["version_code"]] = ans
+            matrix.append({"question_no": q_no, "answers": row_answers})
+
+        return {
+            "session_id": session_id,
+            "status": status,
+            "is_finalized": True,
+            "n_versions": n,
+            "total_questions": m,
+            "versions": preview_versions,
+            "matrix": matrix,
+        }
