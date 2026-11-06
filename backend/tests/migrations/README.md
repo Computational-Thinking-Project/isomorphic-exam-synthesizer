@@ -408,3 +408,64 @@ The four current Python consumer cases in test_source_artifacts.py apply011–01
 its remaining SQL-only cases intentionally pin historical006 behavior.
 For the final backend regression, add tests/ai and tests/generation to the first
 pytest command above in the same invocation; do not repeat already-passing suites.
+
+
+## TASK-207 W2 generation RPCs
+
+The asyncpg driver is the same optional real-DB test dependency used by TASK-305.
+Install it in the test environment (not production requirements), e.g.
+python -m pip install asyncpg==0.32.0.
+
+Provision a disposable PostgreSQL 15 container, never a shared database. Example
+PowerShell from the repository root with backend test dependencies available:
+
+~~~powershell
+$token = [guid]::NewGuid().ToString('N')
+$pg = "task207-test-$token"
+$db = "task207_cluster_$token"
+docker run --detach --name $pg --publish 127.0.0.1::5432 -e POSTGRES_HOST_AUTH_METHOD=trust -e "POSTGRES_DB=$db" postgres:15-alpine
+try {
+  for ($attempt = 0; $attempt -lt 40; $attempt++) {
+    docker exec $pg pg_isready -U postgres -d $db
+    if ($LASTEXITCODE -eq 0) { break }
+    Start-Sleep -Milliseconds 250
+  }
+  if ($LASTEXITCODE -ne 0) { throw "PostgreSQL unavailable" }
+  docker exec $pg psql -U postgres -d $db -v ON_ERROR_STOP=1 -c 'CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;'
+  if ($LASTEXITCODE -ne 0) { throw "Role setup failed" }
+  $port = (docker port $pg 5432/tcp).Trim().Split(':')[-1]
+  $env:RUN_TASK207_REAL_DB_TESTS = '1'
+  $env:TASK207_TEST_DSN = "postgresql://postgres@127.0.0.1:$port/$db"
+  python -m pytest backend/tests/migrations/test_generation_w2.py -q
+  python -m pytest backend/tests/migrations/test_generation_clone.py -q
+} finally {
+  Remove-Item Env:RUN_TASK207_REAL_DB_TESTS -ErrorAction SilentlyContinue
+  Remove-Item Env:TASK207_TEST_DSN -ErrorAction SilentlyContinue
+  docker rm --force $pg
+}
+~~~
+
+The fixture requires explicit opt-in, verifies the localhost task207_cluster_*
+database, and creates a separate random task207_case_* database per test.
+No test drops public or accepts the postgres default database.
+Missing driver/provisioning is not SQL verification. The local author run used a
+network-none cluster and backend runner sharing only its network namespace, without
+host ports, cloud credentials or a Docker socket.
+
+To regenerate the compact actual-RPC handoff fixture, additionally set
+TASK207_CONTRACT_OUTPUT to backend/tests/fixtures/w2_rpc_receipt.json in the test
+runner's filesystem and run only -k rpc_receipt_for_worker_handoff.
+This explicit artifact option is off by default; omitted_fields identifies removed
+large document repetitions. Normal CI never rewrites the fixture.
+
+The same disposable fixture now applies 010 then 011. `test_generation_clone.py`
+covers Original Clone without a Python worker/provider implementation: exact 2×2
+slots, no-solution sources, zero additional quota, role/token/input guards,
+concurrent replay, new-connection resume/retry, atomic rollback, intact projection
+completion and populated-010 AI upgrade/replay. Skips do not count as DB evidence.
+To export the separate actual clone RPC sample, set `TASK207_CLONE_CONTRACT_OUTPUT`
+to a writable test-runner path and run
+`-k test_clone_matrix_resume_and_finish_without_quota_or_ai`; only the case with
+a supplied solution writes the sample. Copy the emitted JSON to
+`backend/tests/fixtures/w2_clone_rpc_receipt.json` after reviewing it. The sample
+lists omitted context and uses synthetic source data, with no AI cache claim.

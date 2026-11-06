@@ -1,0 +1,386 @@
+{
+  "fixture_version": 1,
+  "reference_fixture": "ai_pipeline.json",
+  "provenance": "Offline GenerationService with injected provider/check outcomes; no CAS or Gemini proof.",
+  "model": "offline-contract-v1",
+  "base_seed": 100,
+  "variation_modes": [
+    "context"
+  ],
+  "source_hashes": {
+    "ordered_sources": [
+      {
+        "id": "123e4567-e89b-12d3-a456-426614174000",
+        "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Dũng có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Dũng lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
+        "options": [
+          "1856",
+          "1334",
+          "928",
+          "2552"
+        ],
+        "correct_answer": "A",
+        "solution": "",
+        "topic": null,
+        "has_security_warning": false
+      },
+      {
+        "id": "123e4567-e89b-12d3-a456-426614174001",
+        "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Dũng có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Dũng lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
+        "options": [
+          "1856",
+          "1334",
+          "928",
+          "2552"
+        ],
+        "correct_answer": "A",
+        "solution": "",
+        "topic": null,
+        "has_security_warning": false
+      }
+    ],
+    "ordered_batch_hash": "889cfd1ffa287318caa3b3b013f77fe49c62fe82f81e1e4083d1837166de01ca",
+    "reversed_batch_hash": "9140f2379241b98d2c4217cd0f8c45d63d3677e01f156a258733f320554154de",
+    "per_question_hashes": {
+      "123e4567-e89b-12d3-a456-426614174000": "34ef314fbca05393b2e39f6bbaee1144dbb1169dfd6a154d88fbb9de420bb49f",
+      "123e4567-e89b-12d3-a456-426614174001": "8b8d9dfd9b24055edad5935879907d92dd8ad72655892c1720025c2ff50a02ce"
+    }
+  },
+  "blueprint_fingerprint": "989a2bba680994e28dc11d18e0e5c8c3fddda017dc106c8acaca12a39c02253e",
+  "cases": {
+    "success": {
+      "result": {
+        "version_index": 1,
+        "source_question_id": "123e4567-e89b-12d3-a456-426614174000",
+        "request_fingerprint": "2c08bece1eb165b440b086249080f0bc44e67cb77e23c41ef984ef5a0b042906",
+        "candidate": {
+          "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Lan có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Lan lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
+          "options": [
+            "1856",
+            "1334",
+            "928",
+            "2552"
+          ],
+          "correct_key": "A",
+          "solution": {
+            "correct_key": "A",
+            "final_answer": "1856",
+            "steps": [
+              {
+                "explanation": "Ba hình vuông tạo thành từ các đỉnh chia mười hai đỉnh thành ba nhóm rời nhau, mỗi nhóm bốn đỉnh. Bốn vị trí đỏ phải phân bố theo dạng 2,1,1.",
+                "latex": null
+              },
+              {
+                "explanation": "Chọn nhóm có hai vị trí đỏ, hai vị trí trong nhóm đó và một vị trí trong mỗi nhóm còn lại. Có 288 cách thuận lợi trên 495 cách chọn bốn vị trí đỏ.",
+                "latex": "P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}"
+              },
+              {
+                "explanation": "Nhân xác suất với hệ số của đề.",
+                "latex": "3190P=1856"
+              }
+            ]
+          },
+          "variant_id": "var_contract_success",
+          "source_question_id": "123e4567-e89b-12d3-a456-426614174000",
+          "blueprint_fingerprint": "989a2bba680994e28dc11d18e0e5c8c3fddda017dc106c8acaca12a39c02253e",
+          "seed": 1100,
+          "solution_md": "1. Ba hình vuông tạo thành từ các đỉnh chia mười hai đỉnh thành ba nhóm rời nhau, mỗi nhóm bốn đỉnh. Bốn vị trí đỏ phải phân bố theo dạng 2,1,1.\n\n2. Chọn nhóm có hai vị trí đỏ, hai vị trí trong nhóm đó và một vị trí trong mỗi nhóm còn lại. Có 288 cách thuận lợi trên 495 cách chọn bốn vị trí đỏ.\n\n   $$P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}$$\n\n3. Nhân xác suất với hệ số của đề.\n\n   $$3190P=1856$$\n\nĐáp án A: 1856",
+          "has_warning": true,
+          "requires_teacher_review": true
+        },
+        "validation": {
+          "checks": [
+            {
+              "check_name": "solution_consistency",
+              "passed": true,
+              "detail": "Solution key and final_answer must match the designated option content.",
+              "errors": [],
+              "status": "verified",
+              "confidence": null
+            },
+            {
+              "check_name": "solution_latex",
+              "passed": true,
+              "detail": null,
+              "errors": [],
+              "status": null,
+              "confidence": null
+            },
+            {
+              "check_name": "solution_reasoning",
+              "passed": false,
+              "detail": "Free-form reasoning steps require teacher review.",
+              "errors": [],
+              "status": "unknown",
+              "confidence": null
+            }
+          ],
+          "requires_teacher_review": true
+        },
+        "error_code": null,
+        "attempts": 1
+      },
+      "batch_status": "generated",
+      "offline_gateway_calls": 1
+    },
+    "warning_timeout": {
+      "result": {
+        "version_index": 1,
+        "source_question_id": "123e4567-e89b-12d3-a456-426614174000",
+        "request_fingerprint": "2c08bece1eb165b440b086249080f0bc44e67cb77e23c41ef984ef5a0b042906",
+        "candidate": {
+          "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Lan có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Lan lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
+          "options": [
+            "1856",
+            "1334",
+            "928",
+            "2552"
+          ],
+          "correct_key": "A",
+          "solution": {
+            "correct_key": "A",
+            "final_answer": "1856",
+            "steps": [
+              {
+                "explanation": "Ba hình vuông tạo thành từ các đỉnh chia mười hai đỉnh thành ba nhóm rời nhau, mỗi nhóm bốn đỉnh. Bốn vị trí đỏ phải phân bố theo dạng 2,1,1.",
+                "latex": null
+              },
+              {
+                "explanation": "Chọn nhóm có hai vị trí đỏ, hai vị trí trong nhóm đó và một vị trí trong mỗi nhóm còn lại. Có 288 cách thuận lợi trên 495 cách chọn bốn vị trí đỏ.",
+                "latex": "P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}"
+              },
+              {
+                "explanation": "Nhân xác suất với hệ số của đề.",
+                "latex": "3190P=1856"
+              }
+            ]
+          },
+          "variant_id": "var_contract_warning_timeout",
+          "source_question_id": "123e4567-e89b-12d3-a456-426614174000",
+          "blueprint_fingerprint": "989a2bba680994e28dc11d18e0e5c8c3fddda017dc106c8acaca12a39c02253e",
+          "seed": 1100,
+          "solution_md": "1. Ba hình vuông tạo thành từ các đỉnh chia mười hai đỉnh thành ba nhóm rời nhau, mỗi nhóm bốn đỉnh. Bốn vị trí đỏ phải phân bố theo dạng 2,1,1.\n\n2. Chọn nhóm có hai vị trí đỏ, hai vị trí trong nhóm đó và một vị trí trong mỗi nhóm còn lại. Có 288 cách thuận lợi trên 495 cách chọn bốn vị trí đỏ.\n\n   $$P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}$$\n\n3. Nhân xác suất với hệ số của đề.\n\n   $$3190P=1856$$\n\nĐáp án A: 1856",
+          "has_warning": true,
+          "requires_teacher_review": true
+        },
+        "validation": {
+          "checks": [
+            {
+              "check_name": "solution_consistency",
+              "passed": true,
+              "detail": "Solution key and final_answer must match the designated option content.",
+              "errors": [],
+              "status": "verified",
+              "confidence": null
+            },
+            {
+              "check_name": "solution_latex",
+              "passed": true,
+              "detail": null,
+              "errors": [],
+              "status": null,
+              "confidence": null
+            },
+            {
+              "check_name": "solution_reasoning",
+              "passed": false,
+              "detail": "Free-form reasoning steps require teacher review.",
+              "errors": [],
+              "status": "unknown",
+              "confidence": null
+            },
+            {
+              "check_name": "answer_verified",
+              "passed": false,
+              "detail": "Injected timeout fixture; no mathematical proof.",
+              "errors": [],
+              "status": "timeout",
+              "confidence": null
+            }
+          ],
+          "requires_teacher_review": true
+        },
+        "error_code": null,
+        "attempts": 1
+      },
+      "batch_status": "generated",
+      "offline_gateway_calls": 1
+    },
+    "hard_failure": {
+      "result": {
+        "version_index": 1,
+        "source_question_id": "123e4567-e89b-12d3-a456-426614174000",
+        "request_fingerprint": "2c08bece1eb165b440b086249080f0bc44e67cb77e23c41ef984ef5a0b042906",
+        "candidate": null,
+        "validation": {
+          "checks": [
+            {
+              "check_name": "solution_consistency",
+              "passed": true,
+              "detail": "Solution key and final_answer must match the designated option content.",
+              "errors": [],
+              "status": "verified",
+              "confidence": null
+            },
+            {
+              "check_name": "solution_latex",
+              "passed": true,
+              "detail": null,
+              "errors": [],
+              "status": null,
+              "confidence": null
+            },
+            {
+              "check_name": "solution_reasoning",
+              "passed": false,
+              "detail": "Free-form reasoning steps require teacher review.",
+              "errors": [],
+              "status": "unknown",
+              "confidence": null
+            },
+            {
+              "check_name": "fixture_required_rule",
+              "passed": false,
+              "detail": "Injected hard failure; must not persist a draft.",
+              "errors": [],
+              "status": "failed",
+              "confidence": null
+            }
+          ],
+          "requires_teacher_review": true
+        },
+        "error_code": "VALIDATION_FAILED",
+        "attempts": 4
+      },
+      "batch_status": "failed",
+      "offline_gateway_calls": 4
+    },
+    "provider_failure": {
+      "result": {
+        "version_index": 1,
+        "source_question_id": "123e4567-e89b-12d3-a456-426614174000",
+        "request_fingerprint": "2c08bece1eb165b440b086249080f0bc44e67cb77e23c41ef984ef5a0b042906",
+        "candidate": null,
+        "validation": null,
+        "error_code": "PROVIDER_AUTH",
+        "attempts": 1
+      },
+      "batch_status": "failed",
+      "offline_gateway_calls": 1
+    }
+  },
+  "public_mode_proposal": {
+    "status": "policy_confirmed_implementation_pending",
+    "case_sensitive_aliases": {
+      "NUMERICAL": [
+        "values"
+      ],
+      "parameter_variation": [
+        "values"
+      ],
+      "context_swap": [
+        "context"
+      ]
+    },
+    "unresolved_ids": [
+      "STRUCTURAL",
+      "variable_inversion"
+    ],
+    "require_support_on_all_sources": true,
+    "none_policy": {
+      "inputs": [
+        [],
+        [
+          "NONE"
+        ]
+      ],
+      "proposed_execution": "deterministic_clone_outside_generator",
+      "provider_calls": 0,
+      "implemented": false,
+      "worker_owner": "nhatquynh1107_PR30"
+    },
+    "confirmed_by": {
+      "BE_API": "https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6646768276",
+      "FE2": "https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6647147329",
+      "worker": "https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6635728977"
+    },
+    "rejected_public_ids": [
+      "STRUCTURAL",
+      "variable_inversion"
+    ],
+    "fixture_profile": "ai_w2_confirmed_2026_11_05",
+    "acceptance_cases": [
+      {
+        "input": [
+          "NUMERICAL",
+          "parameter_variation"
+        ],
+        "normalized_public": [
+          "NUMERICAL",
+          "parameter_variation"
+        ],
+        "resolved_dimensions": [
+          "values"
+        ],
+        "execution": "generate"
+      },
+      {
+        "input": [
+          "context_swap"
+        ],
+        "normalized_public": [
+          "context_swap"
+        ],
+        "resolved_dimensions": [
+          "context"
+        ],
+        "execution": "generate"
+      },
+      {
+        "input": [
+          "NONE"
+        ],
+        "normalized_public": [],
+        "resolved_dimensions": [],
+        "execution": "clone",
+        "provider_calls": 0
+      },
+      {
+        "input": [],
+        "normalized_public": [],
+        "resolved_dimensions": [],
+        "execution": "clone",
+        "provider_calls": 0
+      }
+    ],
+    "reject_cases": [
+      [
+        "NONE",
+        "NUMERICAL"
+      ],
+      [
+        "numerical"
+      ],
+      [
+        "STRUCTURAL"
+      ],
+      [
+        "variable_inversion"
+      ],
+      [
+        "unknown"
+      ]
+    ],
+    "readiness_cases": [
+      {
+        "is_ready": false,
+        "supported_modes": null,
+        "submit_allowed": false
+      },
+      {
+        "is_ready": true,
+        "supported_modes": [],
+        "clone_allowed": true
+      }
+    ]
+  }
+}

@@ -62,6 +62,13 @@ def flow(monkeypatch):
 
     def table(name):
         state.table_calls.append(name)
+        if name == "generation_configs":
+            query = MagicMock()
+            query.select.return_value = query
+            query.eq.return_value = query
+            query.limit.return_value = query
+            query.execute.return_value = SimpleNamespace(data=[])
+            return query
         query = MagicMock()
         query.select.return_value = query.eq.return_value = query.order.return_value = query
 
@@ -85,6 +92,13 @@ def flow(monkeypatch):
         state.calls.append((name, deepcopy(params)))
 
         def execute():
+            if name == "get_generation_source_snapshot":
+                return SimpleNamespace(
+                    data={
+                        "ready": False,
+                        "reason": "CANONICAL_BLUEPRINTS_INCOMPLETE",
+                    }
+                )
             if name == "get_session_source_preview":
                 if state.preview_failure:
                     raise ConnectionError("preview unavailable")
@@ -260,7 +274,10 @@ def test_preview_is_one_rpc_snapshot_even_if_another_tab_changes_source(flow):
     assert response.status_code == 200, response.text
     assert response.json()["source_revision"] == revision
     assert response.json()["source_questions"][0]["raw_content"] == content
-    assert [name for name, _ in state.calls] == ["get_session_source_preview"]
+    assert [
+        name for name, _ in state.calls
+        if name == "get_session_source_preview"
+    ] == ["get_session_source_preview"]
     assert "source_questions" not in state.table_calls
     stale = client.post(url(state), json={"source_revision": revision})
     assert stale.status_code == 409

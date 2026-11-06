@@ -31,6 +31,29 @@ reset workflow, FE2/BE2 changes or deployment is introduced. See the
   access is revoked. Supabase/PostgREST/JWT/RLS, FE integration and GitHub approval
   are not established by local SQL evidence.
 
+## DEC-BE1-016: Original Clone SQL persistence (local implementation, pending review)
+
+- Date / owner: 05/11/2026, TASK-207 / Duy, PR #32. Source:
+  [PR #30 integration requirement](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6635728977).
+- Context: frozen W2 snapshots existed, but AI-only persistence could not store
+  an honest Original Clone record for modes=[] or resume it after a restart.
+- Decision: forward migration 011 adds persist_generation_clone, a result-kind
+  discriminator and separate clone fingerprint in the existing result table.
+  Frozen source and original display commit atomically; claim/resume/finish check
+  exact current projections. Keep 010, AI result serialization/writer, owner/worker
+  permissions, current-token fencing and session quota behavior.
+- F12 remediation (06/11/2026, author implementation pending review): 011 wraps
+  the unchanged 010 AI writer to reject clone-job AI success/failure before writes.
+  Completed slots must match the frozen job's result kind. Claim/resume/finish
+  report `55006 / ERR_CONFIG_CONFLICT` for historical wrong-kind rows, including
+  failures; clone persistence preserves them for explicit reconciliation.
+  New clone-job AI writes use the existing `22023 / ERR_CONFIG_CONFLICT` convention.
+- Boundary: persist before shuffle. PR #30 owns Python record/adapter/worker,
+  shuffle sequencing and answer/solution remapping. No AI validation/provider
+  metadata is invented. No cloud writes, push, merge or review approval is implied.
+- Evidence and limits: [local author handoff](tasks/TASK-207.md#original-clone-follow-up--local-author-handoff-05112026)
+  and [RPC contract](api/generation-config-endpoint.md#original-clone-persistence-migration-011).
+  Independent review, CI on a pushed head, worker integration and deployed E2E remain gates.
 ## 05/11/2026 — TASK-304: tiếp nhận vào dev qua TASK-301
 
 Production adapter/schema/permit tests của PR26 đã có trên dev qua PR28. Đạt đồng bộ nhánh304, cập nhật [bàn giao](ai-w3-targeted-regeneration.md) và [trạng thái](tasks/TASK-304.md), không đổi production code hoặc contract. Consumer đã được kiểm tại31b7f4d; cloud/live Gemini/full product E2E vẫn là gate riêng.
@@ -454,7 +477,13 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
        - `review_accept_question(p_session_id, p_question_id, p_action_id)` và `review_revert_question`: Dùng `p_action_id` (CSDL tự lấy actor từ `auth.uid()`).
      - Chuẩn hóa payload `AttemptPermit` đúng 6 trường: `operation_id, attempt_id, dispatch_permitted, calls_used, remaining_calls, replayed`.
   3. **Ánh xạ ngoại lệ tập trung (`_map_rpc_exception`):**
-     - Bắt các mã domain exception sanitized do CSDL ném ra (`REVIEW_NOT_FOUND` $ightarrow$ 404, `REVIEW_BUSY` $ightarrow$ 409, `REVIEW_STALE` $ightarrow$ 409, `REVIEW_LOCKED` $ightarrow$ 423, `REVIEW_QUOTA_EXHAUSTED` $ightarrow$ 429, `REVIEW_IDEMPOTENCY_CONFLICT` $ightarrow$ 409) và chuyển thành `ReviewDomainException`.
+     - Bắt các mã domain exception sanitized do CSDL ném ra (`REVIEW_NOT_FOUND` $
+ightarrow$ 404, `REVIEW_BUSY` $
+ightarrow$ 409, `REVIEW_STALE` $
+ightarrow$ 409, `REVIEW_LOCKED` $
+ightarrow$ 423, `REVIEW_QUOTA_EXHAUSTED` $
+ightarrow$ 429, `REVIEW_IDEMPOTENCY_CONFLICT` $
+ightarrow$ 409) và chuyển thành `ReviewDomainException`.
 * **Phạm vi ảnh hưởng:** `backend/app/services/review/repository.py`, `backend/tests/services/test_review_lifecycle.py`, `docs/tasks/TASK-301.md`.
 * **Kiểm chứng:** 58/58 Stage 3 review tests pass (52 lifecycle + 6 API), ruff check clean.
 
@@ -629,3 +658,59 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
   giữ nguyên code nhưng cần biết principal boundary mới. Contract chuẩn tại
   [Finalize RPC](api/finalize-rpc-contract.md); evidence/M5 tại
   [remediation](tasks/TASK-305_REVIEW_REMEDIATION_2026-11-05.md).
+
+
+## DEC-207-001 — Canonical generation snapshot and durable W2 results
+
+- **Ngày / người phụ trách:** 05/11/2026, Duy / TASK-207a/b, PR #32.
+- **Trạng thái:** implementation và author self-check; chờ independent review,
+  GitHub Approve và CI trên head được push. Không phải rollout Supabase/E2E worker.
+- **Context:** canonical producer không tạo legacy Blueprint rows; config/preflight
+  cũ có thể báo readiness lệch nhau, và display-only persistence không đủ resume.
+- **Decision:** migration 010 sau 004–009; canonical source manifest được so sánh
+  dưới parent lock ở save/initial claim. Snapshot cố định giữ seed/config/source/
+  Blueprint/public modes/resolved dimensions/mapping version; retry chỉ đổi token.
+  SQL hash projection có parity tests với helper AI hiện có.
+- **Policy:** public profile 1.0 chỉ NUMERICAL/parameter_variation→values,
+  context_swap→context; exact ["NONE"]→[]; unknown/mixed/sai case bị từ chối.
+  GET không fallback legacy khi canonical lỗi/not-ready.
+- **Persistence/security:** full QuestionResult và display projection nguyên tử;
+  successful target immutable; finish kiểm đúng successful slots. Private wrappers
+  giữ đường legacy. Quyền service dựa connection principal, không JWT role GUC.
+  Authenticated không ghi config trực tiếp để bypass manifest validation.
+- **Compatibility:** canonical caller PR #30 phải truyền p_expected_snapshot và
+  tiêu thụ context/result envelopes; bốn tham số legacy vẫn resolve qua default.
+  Clone worker/record không bị viết lại hoặc giả lập AI validation trong PR này.
+  Giữ 006–009; không automatic backfill/down migration/new-generation workflow.
+- **Tests/CI:** đồng bộ asyncio_mode=auto ở root với backend để lệnh CI thu cả
+  backend và scripts/blueprint xử lý async fixtures đúng. SQL opt-in chạy riêng,
+  bao gồm review/shuffle/final approval; không coi skipped DB tests là pass.
+- **Impact:** SQL/session detail/test contract PR #32; Python preflight/worker PR #30;
+  canonical producer ownership giữ nguyên. [Contract](api/generation-config-endpoint.md),
+  [implementation/evidence](tasks/TASK-207.md).
+
+
+## DEC-207-002 — F11 numeric fingerprint parity and AI fixture evidence
+
+- **Ngày / phụ trách:** 05/11/2026, Duy / PR #32; author remediation, pending
+  independent F11 verification and GitHub Approve.
+- **Context:** Quỳnh reproduced a valid Blueprint tolerance 1e-7 whose SQL hash
+  differed from Python, rejecting a valid result at persist. The old result_for
+  copied SQL's fingerprint, concealing cross-language mismatch.
+- **Decision:** change only migration010's number serialization: preserve integer
+  precision; match Python decimal/binary64 roundtrip, notation, exponent padding,
+  signed underflow and midpoint shortening under a pinned output GUC. Keep
+  fingerprint validation; do not coerce numbers to strings.
+- **Regression:** independent Python expected hashes, full 1e-7 RPC lifecycle,
+  wrong-hash no-write, exact immutable replay/retry/resume, nested JSON/Unicode,
+  precision boundaries and a deterministic 256-pattern binary64 sample.
+- **AI fixture follow-up:** restore w2_ai_contract.json byte-identically from
+  owner handoff 6b0558b (blob 3b0ac5b2117001285b2eb72b37c2c790b6091991).
+  Re-export SQL receipt; verify QuestionResult/rendered solution/key/seed evidence.
+  Explicitly label the SQL sample's synthetic slot/version hash; it is not native
+  GenerationService completed-cache evidence.
+- **Compatibility:** same SHA256, RPC signatures, manifest, mapping version and
+  seed. No generator/worker changes, new migration, immutable-context rewrite,
+  historical backfill or deployed Supabase claim. Existing F02/F07/F09/F10 remain
+  reviewer verified; F11 stays in its original
+  [thread](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/32#discussion_r4479665885).

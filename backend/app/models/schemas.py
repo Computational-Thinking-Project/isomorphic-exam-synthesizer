@@ -180,6 +180,12 @@ class SessionDetailResponse(BaseModel):
     )
     source_questions: List[dict] = Field(default_factory=list, description="Danh sách câu hỏi gốc")
     exam_versions: List[dict] = Field(default_factory=list, description="Danh sách các mã đề")
+    generation_config: Optional[dict] = Field(
+        default=None, description="Cấu hình sinh đề Stage 2 nếu có"
+    )
+    blueprint_summary: Optional[dict] = Field(
+        default=None, description="Tóm tắt trạng thái Blueprint"
+    )
 
 
 class IngestTextRequest(BaseModel):
