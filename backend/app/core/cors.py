@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 
 ALLOWED_CORS_METHODS = ("GET", "POST", "PATCH", "DELETE")
-ALLOWED_CORS_HEADERS = ("Authorization", "Content-Type")
+ALLOWED_CORS_HEADERS = ("Authorization", "Content-Type", "Idempotency-Key")
 
 
 def parse_cors_origins(raw_origins: str) -> list[str]:

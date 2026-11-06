@@ -11,6 +11,7 @@ import Stage2ConfigCard from './Stage2ConfigCard.jsx';
 import GenerationProgressView from './GenerationProgressView.jsx';
 import { useSSE } from '../../hooks/useSSE.js';
 import {
+  fetchGenerationSnapshot,
   fetchSessionDetail,
   retryGeneration,
   saveSessionConfig,
@@ -43,6 +44,7 @@ function extractErrorString(err, fallback = 'Không thể thực hiện thao tá
 
 export default function Stage2ConfigPage({
   loadSession = fetchSessionDetail,
+  fetchGenSnapshot = fetchGenerationSnapshot,
   saveConfig = saveSessionConfig,
   startGen = startGeneration,
   retryGen = retryGeneration,
@@ -63,16 +65,21 @@ export default function Stage2ConfigPage({
   const [activeConfig, setActiveConfig] = useState(null);
   const [isRetryingGeneration, setIsRetryingGeneration] = useState(false);
   const [retryError, setRetryError] = useState(null);
+  const [isNewRunActive, setIsNewRunActive] = useState(false);
 
   const submitOperationRef = useRef(0);
   const retryOperationRef = useRef(0);
+  const sessionOpRef = useRef(0);
+  const resyncOpRef = useRef(0);
   const isMountedRef = useRef(true);
   const activeSessionIdRef = useRef(sessionId);
 
-  // Tải dữ liệu phiên làm việc với khả năng cô lập tuyệt đối theo sessionId
+  // Tải dữ liệu phiên làm việc với khả năng cô lập tuyệt đối theo sessionId và số lượt tải (sessionOpRef)
   useEffect(() => {
     isMountedRef.current = true;
     activeSessionIdRef.current = sessionId;
+    const thisOp = ++sessionOpRef.current;
+    resyncOpRef.current += 1;
     let active = true;
 
     // Vô hiệu hóa mọi lượt submit và retry đang chờ của phiên trước
@@ -85,6 +92,7 @@ export default function Stage2ConfigPage({
     // Reset sạch sẽ trạng thái của container theo sessionId hiện tại
     setSession(null);
     setIsGenerating(false);
+    setIsNewRunActive(false);
     setActiveConfig(null);
     setConfigError(null);
     setSessionError(null);
@@ -101,21 +109,78 @@ export default function Stage2ConfigPage({
 
       try {
         const data = await loadSession(sessionId);
-        if (!active) return;
+        if (!active || !isMountedRef.current || sessionOpRef.current !== thisOp || activeSessionIdRef.current !== sessionId) {
+          return;
+        }
+
+        // F02 / F08: Khi mở lại phiên partial_generated hoặc generating mà chưa có snapshot progress, nạp snapshot
+        if (
+          data &&
+          (data.status === 'generating' || data.status === 'partial_generated') &&
+          !data.progress
+        ) {
+          try {
+            const snap = await fetchGenSnapshot(sessionId);
+            if (
+              active &&
+              isMountedRef.current &&
+              sessionOpRef.current === thisOp &&
+              activeSessionIdRef.current === sessionId &&
+              snap
+            ) {
+              if (snap.progress) {
+                data.progress = snap.progress;
+              }
+              if (snap.question_statuses && Object.keys(snap.question_statuses).length > 0) {
+                data.question_statuses = {
+                  ...(data.question_statuses || {}),
+                  ...snap.question_statuses,
+                };
+              }
+              const snapStatus =
+                snap.status ||
+                snap.session_status ||
+                snap.progress?.session_status ||
+                snap.progress?.status;
+              if (snapStatus) {
+                data.status = snapStatus;
+              }
+              if (snap.stream_epoch) {
+                data.stream_epoch = snap.stream_epoch;
+              }
+              if (snap.resume_after_event_id !== undefined && snap.resume_after_event_id !== null) {
+                data.resume_after_event_id = snap.resume_after_event_id;
+              }
+            }
+          } catch {
+            // Không có generation-snapshot hoặc chưa triển khai -> giữ nguyên data
+          }
+        }
+
+        if (!active || !isMountedRef.current || sessionOpRef.current !== thisOp || activeSessionIdRef.current !== sessionId) {
+          return;
+        }
+
         setSession(data);
 
-        // Nếu session đã ở trạng thái generating hoặc đã được cấu hình trước đó
-        if (data.status === 'generating') {
+        // F07: Nếu session đã ở trạng thái generating, generated hoặc hoàn thành một phần (partial_generated)
+        if (
+          data.status === 'generating' ||
+          data.status === 'partial_generated' ||
+          data.status === 'generated'
+        ) {
           setIsGenerating(true);
         }
         if (data.config) {
           setActiveConfig(data.config);
         }
       } catch (err) {
-        if (!active) return;
+        if (!active || !isMountedRef.current || sessionOpRef.current !== thisOp || activeSessionIdRef.current !== sessionId) {
+          return;
+        }
         setSessionError(err?.message || 'Không thể tải thông tin phiên làm việc.');
       } finally {
-        if (active) {
+        if (active && isMountedRef.current && sessionOpRef.current === thisOp && activeSessionIdRef.current === sessionId) {
           setIsLoadingSession(false);
         }
       }
@@ -131,11 +196,72 @@ export default function Stage2ConfigPage({
       setIsSubmittingConfig(false);
       setIsRetryingGeneration(false);
     };
-  }, [sessionId, loadSession]);
+  }, [sessionId, loadSession, fetchGenSnapshot]);
+
+  // F04 / F06: Callback tải lại snapshot phiên khi mất lịch sử SSE / nhận tín hiệu resync
+  const handleResyncSnapshot = useCallback(
+    async (sid) => {
+      const thisSessionOp = sessionOpRef.current;
+      const thisResyncOp = ++resyncOpRef.current;
+      let data;
+      try {
+        data = await fetchGenSnapshot(sid);
+      } catch {
+        data = await loadSession(sid);
+      }
+
+      // F06: Kiểm tra lượt nạp phiên (sessionOpRef) và lượt resync (resyncOpRef) cùng sessionId
+      if (
+        isMountedRef.current &&
+        sessionOpRef.current === thisSessionOp &&
+        resyncOpRef.current === thisResyncOp &&
+        activeSessionIdRef.current === sid
+      ) {
+        const snapStatus =
+          data?.status ||
+          data?.session_status ||
+          data?.progress?.session_status ||
+          data?.progress?.status;
+
+        if (data?.progress) {
+          setSession((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: snapStatus || prev.status,
+                  progress: data.progress,
+                  question_statuses: {
+                    ...(prev.question_statuses || {}),
+                    ...(data.question_statuses || {}),
+                  },
+                  stream_epoch: data.stream_epoch ?? prev.stream_epoch,
+                  resume_after_event_id:
+                    data.resume_after_event_id !== undefined
+                      ? data.resume_after_event_id
+                      : prev.resume_after_event_id,
+                }
+              : prev,
+          );
+        } else if (data) {
+          setSession(data);
+        }
+        return data;
+      }
+      return null;
+    },
+    [fetchGenSnapshot, loadSession],
+  );
 
   // Hook SSE kết nối khi ở trạng thái isGenerating
   const sseState = useSSEHook(sessionId, {
     enabled: isGenerating,
+    initialProgress: session?.progress,
+    initialQuestionStatuses: session?.question_statuses,
+    initialResumeAfterEventId:
+      session?.resume_after_event_id ?? session?.progress?.resume_after_event_id ?? null,
+    initialStreamEpoch:
+      session?.stream_epoch ?? session?.progress?.stream_epoch ?? null,
+    onResync: handleResyncSnapshot,
   });
 
   // Xử lý nộp form cấu hình
@@ -229,6 +355,7 @@ export default function Stage2ConfigPage({
       ) {
         return;
       }
+      setIsNewRunActive(true);
       setIsGenerating(true);
       sseState.reconnect();
     } catch (err) {
@@ -251,13 +378,86 @@ export default function Stage2ConfigPage({
     }
   }, [isRetryingGeneration, retryGen, sessionId, sseState]);
 
+
+  // Trích xuất số lượng mã đề thật, không võ đoán mặc định 2 khi F5/reload
+  const restoredStatuses = session?.question_statuses || {};
+  const mergedStatuses = {
+    ...restoredStatuses,
+    ...(sseState.questionStatuses || {}),
+  };
+
+  const statusVersions = Object.keys(mergedStatuses).map((k) =>
+    parseInt(k.split('-')[0], 10),
+  );
+  const maxVersionFromStatuses =
+    statusVersions.length > 0
+      ? Math.max(...statusVersions.filter((n) => !isNaN(n) && n > 0))
+      : null;
+
+  const derivedNumVersions =
+    activeConfig?.n_versions ||
+    activeConfig?.num_versions ||
+    (session?.exam_versions?.length > 0 ? session.exam_versions.length : null) ||
+    sseState.progress?.n_versions ||
+    sseState.progress?.num_versions ||
+    (session?.progress?.totalCount && session?.source_questions?.length
+      ? Math.round(session.progress.totalCount / session.source_questions.length)
+      : null) ||
+    (maxVersionFromStatuses && maxVersionFromStatuses > 0 ? maxVersionFromStatuses : null);
+
+  const mergedProgress =
+    (sseState.progress?.percent > 0 || sseState.progress?.completedCount > 0 || sseState.isDone)
+      ? sseState.progress
+      : session?.progress || (sseState.progress?.hasData ? sseState.progress : null);
+
+  // F03 / F07 / F09: Tách trạng thái kết thúc lượt sinh khỏi trạng thái kết nối SSE.
+  // F09: Chỉ hoàn tất chuyển Stage 3 khi backend xác nhận 'generated' qua snapshot/detail HOẶC sự kiện kết thúc 'done' từ stream SSE.
+  // Khi tiến độ 100% nhưng backend vẫn báo 'generating' (hoặc chưa có done), TUYỆT ĐỐI TIẾP TỤC THEO DÕI, không chuyển Stage 3!
+  const currentSnapshotStatus =
+    session?.status ||
+    session?.progress?.session_status ||
+    session?.progress?.status ||
+    mergedProgress?.session_status ||
+    mergedProgress?.status;
+
+  const normalizedSnapshotStatus = String(currentSnapshotStatus || '').trim().toLowerCase();
+  const isGeneratingStatus =
+    normalizedSnapshotStatus === 'generating' ||
+    String(session?.status || '').trim().toLowerCase() === 'generating';
+
+  const isBackendGenerated =
+    !isGeneratingStatus &&
+    (normalizedSnapshotStatus === 'generated' ||
+      String(session?.status || '').trim().toLowerCase() === 'generated');
+
+  const isStreamDone = Boolean(
+    sseState.isDone &&
+    !sseState.isPartial &&
+    String(sseState.progress?.session_status || '').trim().toLowerCase() !== 'partial_generated'
+  );
+
+  const isCompletedGenerated = Boolean(isBackendGenerated || isStreamDone);
+
+  const isSnapshotFinished = Boolean(
+    !isGeneratingStatus &&
+    (isBackendGenerated ||
+      normalizedSnapshotStatus === 'partial_generated' ||
+      String(session?.status || '').trim().toLowerCase() === 'partial_generated' ||
+      (Boolean(session?.progress?.isDone) && !isGeneratingStatus) ||
+      (Boolean(mergedProgress?.isDone) && !isGeneratingStatus))
+  );
+
+  const effectiveIsDone = isNewRunActive
+    ? sseState.isDone
+    : (isSnapshotFinished || sseState.isDone);
+
   // Tự động chuyển hướng khi hoàn tất ở cấp độ container độc lập — CHỈ KHI hoàn tất 100% (không partial_generated)
   useEffect(() => {
-    if (isGenerating && sseState.isDone) {
+    if (isGenerating && isCompletedGenerated) {
       const isPartial =
-        sseState.progress?.session_status === 'partial_generated' ||
-        Boolean(sseState.progress?.is_partial) ||
-        (sseState.progress?.percent !== undefined && sseState.progress.percent < 100);
+        mergedProgress?.session_status === 'partial_generated' ||
+        Boolean(mergedProgress?.is_partial) ||
+        (mergedProgress?.percent !== undefined && mergedProgress.percent < 100);
 
       if (!isPartial) {
         const timer = setTimeout(() => {
@@ -266,7 +466,7 @@ export default function Stage2ConfigPage({
         return () => clearTimeout(timer);
       }
     }
-  }, [isGenerating, sseState.isDone, sseState.progress, handleCompleteRedirect]);
+  }, [isGenerating, isCompletedGenerated, mergedProgress, handleCompleteRedirect]);
 
   // Giao diện khi đang tải phiên
   if (isLoadingSession) {
@@ -349,22 +549,6 @@ export default function Stage2ConfigPage({
     );
   }
 
-  // Trích xuất số lượng mã đề thật, không võ đoán mặc định 2 khi F5/reload
-  const statusVersions = Object.keys(sseState.questionStatuses || {}).map((k) =>
-    parseInt(k.split('-')[0], 10),
-  );
-  const maxVersionFromStatuses =
-    statusVersions.length > 0
-      ? Math.max(...statusVersions.filter((n) => !isNaN(n) && n > 0))
-      : null;
-
-  const derivedNumVersions =
-    activeConfig?.n_versions ||
-    activeConfig?.num_versions ||
-    (session?.exam_versions?.length > 0 ? session.exam_versions.length : null) ||
-    sseState.progress?.n_versions ||
-    sseState.progress?.num_versions ||
-    (maxVersionFromStatuses && maxVersionFromStatuses > 0 ? maxVersionFromStatuses : null);
 
   return (
     <div className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
@@ -388,11 +572,16 @@ export default function Stage2ConfigPage({
           totalSourceQuestions={
             session?.source_questions?.length || session?.blueprint_summary?.total_questions || 10
           }
-          progress={sseState.progress}
-          questionStatuses={sseState.questionStatuses}
+          progress={
+            mergedProgress ||
+            (session?.status === 'partial_generated'
+              ? { session_status: 'partial_generated', is_partial: true }
+              : null)
+          }
+          questionStatuses={mergedStatuses}
           warnings={sseState.warnings}
           connectionState={sseState.connectionState}
-          isDone={sseState.isDone}
+          isDone={effectiveIsDone}
           error={retryError || sseState.error}
           reconnectCount={sseState.reconnectCount}
           onReconnect={sseState.reconnect}

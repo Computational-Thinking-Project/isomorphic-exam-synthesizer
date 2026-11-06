@@ -18,6 +18,7 @@ from pydantic import (
     Field,
     StrictBool,
     StrictInt,
+    StrictStr,
     model_validator,
 )
 from supabase import Client
@@ -84,13 +85,23 @@ class SourceProductionState(BaseModel):
     error_code: Annotated[str, Field(pattern=r"^[A-Z][A-Z0-9_]{0,79}$")] | None
 
 
+class SupportedSourceMode(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: Literal["NUMERICAL", "parameter_variation", "context_swap"]
+    label: Annotated[StrictStr, Field(min_length=1)]
+    description: Annotated[StrictStr, Field(min_length=1)]
+    question_count: Annotated[StrictInt, Field(ge=1, le=20)]
+    is_available: StrictBool
+
+
 class SourceArtifactState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     confirmation: SourceConfirmation
     pending_source_question_ids: list[UUID]
     ready: StrictBool
-    production: list[SourceProductionState] = Field(default_factory=list)
+    production: list[SourceProductionState]
+    supported_modes: list[SupportedSourceMode] | None
 
 
 class SourceProductionClaim(BaseModel):
@@ -109,7 +120,11 @@ def artifact_error(exc: Exception, *, confirmation: bool = False) -> ReviewDomai
         ("ARTIFACT_OWNER_MISMATCH", 403, "ERR_FORBIDDEN"),
         ("ARTIFACT_IDEMPOTENCY_CONFLICT", 409, "ERR_IDEMPOTENCY_CONFLICT"),
         ("ARTIFACT_SOURCE_MISMATCH", 409, "ERR_SOURCE_CHANGED"),
-        ("ARTIFACT_STALE", 409, "ERR_SOURCE_CHANGED"),
+        (
+            "ARTIFACT_STALE",
+            409,
+            "ERR_SOURCE_REVISION_CONFLICT" if confirmation else "ERR_SOURCE_CHANGED",
+        ),
         ("ARTIFACT_LOCKED", 423, "ERR_SESSION_LOCKED"),
         ("ARTIFACT_INVALID_PAYLOAD", 422, "ERR_SOURCE_ARTIFACT_INVALID"),
         ("P0002", 404, "ERR_SESSION_NOT_FOUND"),
@@ -148,14 +163,14 @@ class SourceArtifactRepository:
 
     async def confirm(
         self, session_id: str, actor_id: str, confirmation_id: UUID,
-        expected_updated_at: str, prepared: list[dict[str, Any]],
+        expected_source_revision: str, prepared: list[dict[str, Any]],
     ) -> SourceConfirmation:
         expected = {p["source_question_id"]: p for p in prepared}
         data = await self._call("confirm_source_artifacts", {
             "p_session_id": session_id,
             "p_actor_id": actor_id,
             "p_confirmation_id": str(confirmation_id),
-            "p_expected_updated_at": expected_updated_at,
+            "p_expected_source_revision": expected_source_revision,
             "p_sources": prepared,
         })
         try:
@@ -214,17 +229,27 @@ class SourceArtifactRepository:
                 raise ValueError("Artifact state identity mismatch")
             if not pending <= {s.source_question_id for s in state.confirmation.sources} or state.ready != (not pending):
                 raise ValueError("Artifact readiness mismatch")
-            if state.production:
-                revisions = {s.source_question_id: s.source_revision_id for s in state.confirmation.sources}
-                if len(state.production) != len(revisions) or {s.source_question_id for s in state.production} != set(revisions):
-                    raise ValueError("Producer state source set mismatch")
-                for item in state.production:
-                    if item.source_revision_id != revisions[item.source_question_id] or (item.status == "ready") != (item.source_question_id not in pending):
-                        raise ValueError("Producer state revision/readiness mismatch")
-                    if item.status == "running" and item.expires_at is None:
-                        raise ValueError("Running producer lacks lease")
-                    if item.status == "failed" and item.error_code is None:
-                        raise ValueError("Failed producer lacks error code")
+            if state.ready != (state.supported_modes is not None):
+                raise ValueError("Artifact mode readiness mismatch")
+            if state.supported_modes is not None:
+                ids = [mode.id for mode in state.supported_modes]
+                if ids != sorted(set(ids)):
+                    raise ValueError("Duplicate or unordered supported modes")
+                for mode in state.supported_modes:
+                    if mode.question_count > state.confirmation.total_questions or mode.is_available != (
+                        mode.question_count == state.confirmation.total_questions
+                    ):
+                        raise ValueError("Supported mode availability mismatch")
+            revisions = {s.source_question_id: s.source_revision_id for s in state.confirmation.sources}
+            if len(state.production) != len(revisions) or {s.source_question_id for s in state.production} != set(revisions):
+                raise ValueError("Producer state source set mismatch")
+            for item in state.production:
+                if item.source_revision_id != revisions[item.source_question_id] or (item.status == "ready") != (item.source_question_id not in pending):
+                    raise ValueError("Producer state revision/readiness mismatch")
+                if item.status == "running" and item.expires_at is None:
+                    raise ValueError("Running producer lacks lease")
+                if item.status == "failed" and item.error_code is None:
+                    raise ValueError("Failed producer lacks error code")
             return state
         except (ValueError, TypeError) as exc:
             raise ReviewDomainException(
@@ -267,11 +292,11 @@ class ConfirmedArtifactProducer:
 
     async def confirm(
         self, session_id: str, actor_id: str, confirmation_id: UUID,
-        expected_updated_at: str, source_rows: list[dict[str, Any]],
+        expected_source_revision: str, source_rows: list[dict[str, Any]],
     ) -> SourceConfirmation:
         prepared = prepare_source_artifacts(session_id, source_rows)
         return await self.repository.confirm(
-            session_id, actor_id, confirmation_id, expected_updated_at, prepared
+            session_id, actor_id, confirmation_id, expected_source_revision, prepared
         )
 
     async def produce(
