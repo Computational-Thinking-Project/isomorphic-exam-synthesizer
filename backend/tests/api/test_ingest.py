@@ -24,6 +24,26 @@ def mock_auth_user(mock_user_response):
     return mock_supabase
 
 
+def test_postreview_confirm_ingest_race_is_409(client, mock_auth_user, auth_headers):
+    """The precheck saw draft, but confirmation won before the source write."""
+    mock_db = MagicMock()
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        MagicMock(data=[{"user_id": mock_auth_user.auth.get_user.return_value.user.id}]),
+        MagicMock(data=[{"status": "draft"}]),
+    ]
+    mock_db.rpc.return_value.execute.side_effect = APIError({
+        "code": "55000", "message": "ARTIFACT_SOURCE_LOCKED", "details": None, "hint": None,
+    })
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        response = client.post(f"/api/sessions/{MOCK_SESSION_ID}/ingest-text",
+            json={"raw_text": "Câu 1: Cho $x = 1$. Giá trị của $x$ là:\nA. 1  B. 2  C. 3  D. 4\nBẢNG ĐÁP ÁN: 1.A"}, headers=auth_headers)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "ARTIFACT_SOURCE_LOCKED"
+
+
 def create_sample_docx_bytes() -> bytes:
     """Helper to generate a valid .docx exam file."""
     doc = docx.Document()

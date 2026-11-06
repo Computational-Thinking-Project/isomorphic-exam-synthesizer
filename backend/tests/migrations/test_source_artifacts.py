@@ -70,6 +70,12 @@ class SourceArtifactTests(PostgresCase):
         result = self.sql(script, check=check)
         return json.loads(result.stdout.strip().splitlines()[-1]) if check else result
 
+    def adopt_current_source_contract(self):
+        """Current Python consumers need Q01/Q02; legacy SQL cases stay on 006."""
+        for name in ('011_source_confirmation_revision.sql', '012_source_artifact_supported_modes.sql', '013_source_freeze_guard.sql'):
+            self.sql((ROOT / 'backend/migrations' / name).read_text(encoding='utf-8'))
+        return self.value(f"SELECT source_content_revision FROM exam_sessions WHERE id='{SID}';")
+
     def confirm(self, sources=None, key=None, actor=OWNER, check=True):
         return self.call(
             "confirm_source_artifacts",
@@ -368,6 +374,7 @@ class SourceArtifactTests(PostgresCase):
         self.assertEqual(self.confirm()["sources"], first["sources"])
 
     def test_actual_python_producer_confirms_and_resumes_against_real_rpc_storage(self):
+        revision = self.adopt_current_source_contract()
         from app.services.ai.gateway import RequestContext
         from app.services.blueprint.producer import (
             ConfirmedArtifactProducer,
@@ -409,7 +416,7 @@ class SourceArtifactTests(PostgresCase):
         repository = SourceArtifactRepository(Worker())
         extractor = Extractor()
         producer = ConfirmedArtifactProducer(repository, extractor)
-        confirmation = immediate(producer.confirm(SID, OWNER, uuid4(), self.timestamp, [self.row]))
+        confirmation = immediate(producer.confirm(SID, OWNER, uuid4(), revision, [self.row]))
         self.assertEqual(
             confirmation.sources[0].confirmed_input, self.sources[0]["confirmed_input"]
         )
@@ -461,6 +468,7 @@ class SourceArtifactTests(PostgresCase):
         )
 
         self.confirm()
+        self.adopt_current_source_contract()
         case = self
 
         async def no_provider():
@@ -552,6 +560,7 @@ class SourceArtifactTests(PostgresCase):
         self.assertIn("permission denied", result.stderr)
 
     def test_public_confirmation_to_real_adapter_and_postgres_completion(self):
+        revision = self.adopt_current_source_contract()
         from unittest.mock import patch
 
         from fastapi.testclient import TestClient
@@ -607,7 +616,7 @@ class SourceArtifactTests(PostgresCase):
             ):
                 if hasattr(app.state, "limiter"):
                     app.state.limiter._storage.reset()
-                confirmed = client.post(f"/api/sessions/{SID}/confirm-source", json={})
+                confirmed = client.post(f"/api/sessions/{SID}/confirm-source", json={'source_revision': revision}, headers={'Idempotency-Key': str(uuid4())})
                 self.assertEqual(confirmed.status_code, 200, confirmed.text)
                 self.assertEqual(confirmed.json()["canonical_status"], "pending")
                 status = client.get(f"/api/sessions/{SID}/source-artifacts")
@@ -662,6 +671,7 @@ class SourceArtifactTests(PostgresCase):
         )
         self.sources = prepare_source_artifacts(SID, [self.row, row2])
         self.confirm()
+        self.adopt_current_source_contract()
         case = self
         original_id = source_to_item(
             SourceQuestion.model_validate(self.sources[0]["confirmed_input"])
