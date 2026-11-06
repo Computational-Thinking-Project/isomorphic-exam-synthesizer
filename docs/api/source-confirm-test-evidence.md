@@ -1,3 +1,33 @@
+# PR #43 findings F01–F03 — 06/11/2026
+
+Review baseline `5b711d2` on `fix/be1-source-confirm-contract`, based on
+`8289971`. The author ran these checks locally with synthetic fixtures.
+
+- API and CORS (`test_confirm_source.py`, `test_cors.py`): 85 passed.
+  This covers stale versus incomplete source, receipt replay and separate conflict
+  codes, an injected revision race, and preflight from allowed and denied origins.
+- PostgreSQL 15 ACL subset documented in the migration README: 3 passed, with
+  12 passing legacy call subtests across fresh and upgraded fixtures. The Windows
+  runner encountered `WinError 6` when opening Docker subprocesses. The passing
+  run used the repository's Linux runner and disposable network-isolated databases.
+- Real PostgreSQL source suites (`unittest discover -p 'test_source_*.py'`):
+  52 passed, zero skipped. The HTTP/SQL case was rerun on the final API code and
+  passed. It verifies mutation between the API snapshot and the SQL write,
+  post-commit read loss, same-key replay and new-key refusal with one receipt,
+  and zero outbound AI calls.
+- CI regression selection (`pytest backend/tests scripts/blueprint/tests -q`):
+  1,089 passed, zero failed, 264 skipped with the default CI opt-ins. The
+  PostgreSQL source runs above were separate and explicitly opted in.
+- Ruff (`backend/app scripts/blueprint`), mypy (90 application files) and
+  Git whitespace checks passed.
+
+Supabase integration still requires reconciling migration 010 with BE2 deployment
+history, then verifying JWT/RLS and PostgREST preview, UUID confirmation,
+legacy denial and receipt replay. Independent review and FE1/FE2 integration
+acceptance remain separate gates.
+
+---
+
 # TASK-204 postreview P1/P2/P3 — 05/11/2026
 
 Baseline ab9f09a, P1/P2 commit48d1d63; final P3 commit contains the exact code tested.

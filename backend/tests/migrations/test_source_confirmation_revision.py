@@ -10,9 +10,10 @@ from uuid import uuid4
 import test_review_rpcs as rpc_fixtures
 import test_source_artifacts as artifact_fixtures
 from test_review_rpcs import OWNER, SID, SOURCE, literal
-from test_stage3_schema import BOOTSTRAP, ROOT
+from test_stage3_schema import BOOTSTRAP, ROOT, SEED
 
 Q01 = ROOT / "backend/migrations/011_source_confirmation_revision.sql"
+DISABLE_LEGACY = ROOT / "backend/migrations/014_disable_legacy_source_confirmation.sql"
 
 
 class SourceRevisionTests(artifact_fixtures.SourceArtifactTests):
@@ -37,7 +38,7 @@ class SourceRevisionTests(artifact_fixtures.SourceArtifactTests):
     def token(self):
         return self.value(f"SELECT source_content_revision FROM exam_sessions WHERE id='{SID}';")
 
-    def confirm(self, sources=None, key=None, actor=OWNER, check=True, revision=None):
+    def confirm(self, sources=None, key=None, actor=OWNER, check=True, revision=None, db=None):
         # Named args resolve the new overload exactly as PostgREST dispatch does.
         args = dict(
             p_session_id=SID,
@@ -52,11 +53,60 @@ class SourceRevisionTests(artifact_fixtures.SourceArtifactTests):
             + ",".join(f"{k}=>{literal(v)}" for k, v in args.items())
             + ");"
         )
-        result = self.sql("SET statement_timeout='6s';" + sql, check=check)
+        result = self.sql("SET statement_timeout='6s';" + sql, check=check, db=db)
         return json.loads(result.stdout) if check else result
 
     def preview(self):
         return self.call("get_session_source_preview", SID, worker=False)
+
+    def assert_legacy_disabled_and_canonical_replays(self, db):
+        def scalar(statement):
+            return self.sql(statement, db=db).stdout.strip()
+
+        legacy = "'public.confirm_exam_source(uuid,integer,boolean,timestamp with time zone)'"
+        for role in ("authenticated", "service_role"):
+            self.assertEqual(scalar(f"SELECT has_function_privilege('{role}', {legacy}, 'EXECUTE');"), "t")
+        self.assertEqual(scalar("SELECT count(*) FROM question_blueprints;"), "1")
+        migration = DISABLE_LEGACY.read_text(encoding="utf-8")
+        self.sql(migration, db=db)
+        for role in ("anon", "authenticated", "service_role"):
+            self.assertEqual(scalar(f"SELECT has_function_privilege('{role}', {legacy}, 'EXECUTE');"), "f")
+            for args in (f"'{SID}', 1", f"'{SID}', 1, false, NULL"):
+                with self.subTest(role=role, args=args):
+                    result = self.sql(
+                        rpc_fixtures.ReviewRpcTests.auth(role, OWNER)
+                        + f"SELECT public.confirm_exam_source({args});",
+                        check=False, db=db,
+                    )
+                    self.assertIn("permission denied for function confirm_exam_source", result.stderr)
+        self.assertEqual(scalar("SELECT status FROM exam_sessions;"), "draft")
+        self.assertEqual(scalar("SELECT count(*) FROM source_artifact_confirmations;"), "0")
+        revision = scalar("SELECT source_content_revision FROM exam_sessions;")
+        receipt = self.confirm(revision=revision, db=db)
+        replay = self.confirm(revision=str(uuid4()), db=db)
+        self.assertEqual(receipt["status"], "blueprinted")
+        self.assertEqual(replay, {**receipt, "replayed": True})
+        self.assertEqual(scalar("SELECT count(*) FROM source_artifact_confirmations;"), "1")
+
+    def test_legacy_confirmation_disabled_on_populated_upgrade(self):
+        self.assert_legacy_disabled_and_canonical_replays(self.db)
+
+    def test_pre_003_overload_acl_is_also_revoked_on_upgrade(self):
+        # Simulate an older overload left installed alongside the 003 version.
+        self.sql("""
+            CREATE FUNCTION public.confirm_exam_source(UUID, INT)
+            RETURNS JSONB LANGUAGE sql AS $$ SELECT '{}'::jsonb $$;
+            GRANT EXECUTE ON FUNCTION public.confirm_exam_source(UUID, INT)
+              TO anon, authenticated, service_role;
+        """)
+        self.sql(DISABLE_LEGACY.read_text(encoding="utf-8"))
+        self.assertEqual(self.value("""
+            SELECT count(*) FROM pg_proc
+            WHERE pronamespace = 'public'::regnamespace AND proname = 'confirm_exam_source'
+              AND (has_function_privilege('anon', oid, 'EXECUTE')
+                OR has_function_privilege('authenticated', oid, 'EXECUTE')
+                OR has_function_privilege('service_role', oid, 'EXECUTE'));
+        """), "0")
 
     def test_all_mutations_fast_replaces_and_rollback(self):
         last = self.token()
@@ -274,6 +324,14 @@ class SourceRevisionTests(artifact_fixtures.SourceArtifactTests):
             ).stdout.strip(),
             "1",
         )
+        self.sql(SEED, db=db)
+        self.sql(
+            f"""UPDATE source_questions SET raw_content={literal(self.row["raw_content"])},
+                options={literal(json.dumps(self.row["options"]))},correct_key='A',solution_md=NULL;
+                INSERT INTO question_blueprints(source_question_id) VALUES ('{SOURCE}');""",
+            db=db,
+        )
+        self.assert_legacy_disabled_and_canonical_replays(db)
 
     def test_owner_cannot_restore_old_token_even_with_table_update_grant(self):
         self.sql("UPDATE source_questions SET has_security_warning=true;")

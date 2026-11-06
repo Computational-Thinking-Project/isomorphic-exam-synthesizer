@@ -19,8 +19,10 @@ from app.services.blueprint.producer import (
     SourceArtifactState,
     SourceProductionState,
     SupportedSourceMode,
+    artifact_error,
 )
 from app.services.blueprint.service import BlueprintService
+from app.services.review.receipts import rpc_object
 from app.services.review.service import action_key, resource_ids
 
 logger = logging.getLogger(__name__)
@@ -103,6 +105,29 @@ def query_rows(value: Any) -> list[dict[str, Any]]:
     return cast(list[dict[str, Any]], value)
 
 
+def source_preview(
+    db: Client, session_id: str, actor_id: str
+) -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+    try:
+        response = db.rpc("get_session_source_preview", {"p_session_id": session_id}).execute()
+    except Exception as exc:
+        raise artifact_error(exc) from exc
+    preview = rpc_object(response.data)
+    try:
+        session = preview["session"]
+        if session["id"] != session_id or session["user_id"] != actor_id:
+            raise ValueError("Preview identity mismatch")
+        if not isinstance(session["status"], str):
+            raise ValueError("Invalid session status")
+        revision = str(UUID(str(preview["source_revision"])))
+        rows = preview["source_questions"]
+        if not isinstance(rows, list):
+            raise ValueError("Invalid source rows")
+        return session, revision, query_rows(rows)
+    except (KeyError, ValueError, TypeError) as exc:
+        raise ReviewDomainException(503, "ERR_SOURCE_UNAVAILABLE", "Invalid source preview") from exc
+
+
 async def confirm_source_flow(
     session_id: str,
     actor_id: str,
@@ -116,25 +141,16 @@ async def confirm_source_flow(
     resource_ids(session_id)
     confirmation_id = action_key(key)
     assert_ownership("exam_sessions", session_id, actor_id, db=db)
-    sessions = query_rows(
-        db.table("exam_sessions").select("status").eq("id", session_id).execute().data
-    )
-    if len(sessions) != 1:
-        raise HTTPException(404, "Session not found")
-    session = sessions[0]
+    session, revision, rows = source_preview(db, str(UUID(session_id)), actor_id)
+    if session["status"] == "draft" and revision != client_revision:
+        raise ReviewDomainException(
+            409, "ERR_SOURCE_REVISION_CONFLICT", "Source revision has changed"
+        )
     if session["status"] != "draft" and key is None:
         raise HTTPException(
             409, "Source already confirmed; read artifact status or retry production"
         )
 
-    rows = query_rows(
-        db.table("source_questions")
-        .select("*")
-        .eq("session_id", session_id)
-        .order("question_no")
-        .execute()
-        .data
-    )
     if not rows or any(row.get("has_missing_answer") is True for row in rows):
         raise HTTPException(422, "Source requires questions with complete answers")
     repository = SourceArtifactRepository(worker)

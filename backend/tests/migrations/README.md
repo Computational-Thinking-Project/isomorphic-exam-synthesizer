@@ -335,6 +335,21 @@ on the host, the identical `python -m unittest discover ...` commands work witho
 the outer container; keep the transport guards in the no-AI integration test.
 Missing `RUN_POSTGRES_MIGRATION_TESTS=1` means **SKIP**, never real-DB PASS.
 
+For PR #43, run the ACL subset with `RUN_POSTGRES_MIGRATION_TESTS=1`,
+backend test dependencies and the disposable Docker setup above:
+
+```sh
+python -m pytest backend/tests/migrations/test_source_confirmation_revision.py \
+  -q -k 'legacy_confirmation_disabled or pre_003_overload or fresh_current_schema_chain'
+```
+
+These cases apply 014 to a populated upgrade and a fresh schema, deny legacy
+calls with both explicit and default arguments, check a surviving pre-003
+overload, and verify the service-role UUID confirmation and single-receipt
+replay. Before Supabase integration, reconcile 010 with BE2's deployment
+history without renumbering it. Local ACLs do not establish deployed PostgREST
+dispatch or permissions.
+
 API/regression command executed in the offline backend container, working directory
 `/workspace/backend`:
 

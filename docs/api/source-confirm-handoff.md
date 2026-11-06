@@ -27,9 +27,15 @@ RPC for `session`, `source_revision` (UUID string), and ordered source rows.
 Exam versions are fetched separately, outside this snapshot.
 POST `/api/sessions/{id}/confirm-source` echoes `{"source_revision":"<UUID>"}`
 with a stable UUID `Idempotency-Key`. Success is 200 `blueprinted` even while
-canonical production is pending. Missing/malformed revision is 422; stale
-revision is 409 `ERR_SOURCE_REVISION_CONFLICT`; content race is 409
-`ERR_SOURCE_CHANGED`. Same key with changed source content conflicts.
+canonical production is pending. Confirmation reads the same preview RPC.
+For a draft, a stale revision returns 409 `ERR_SOURCE_REVISION_CONFLICT` even
+when the current source is empty or missing answers. A matching revision with
+empty or incomplete source returns 422, as does a missing or malformed revision.
+The canonical transaction still checks revision and content under its lock.
+A content mismatch returns 409 `ERR_SOURCE_CHANGED`. A same-key retry with
+unchanged content can replay after confirmation even with an older preview
+revision. A same-key request with changed content returns 409
+`ERR_IDEMPOTENCY_CONFLICT`.
 
 After timeout/read failure the outcome is uncertain: read session and artifact
 status, then reconcile using the same key. Persist the key across F5 by authenticated
@@ -60,3 +66,12 @@ Ingest freeze races return409 `ARTIFACT_SOURCE_LOCKED`. Confirm now requires the
 stable UUID header: missing422, malformed400. This is a breaking FE1 change;
 header persistence/adoption remains unverified and blocks integrated readiness.
 No FE2/BE2 code or shared review action-key behavior is changed.
+
+PR #43 adds migration 014 to revoke legacy `confirm_exam_source` execution for
+`PUBLIC`, `anon`, `authenticated` and `service_role`. The UUID
+`confirm_source_artifacts` RPC remains service-role-only. Apply 014 on fresh
+and upgraded databases after the earlier migrations. Before Supabase
+integration, reconcile migration 010 with BE2's actual deployment history
+without renumbering deployed migrations. Verify the owner preview and UUID
+confirmation through deployed PostgREST, including replay and denial of the
+legacy RPC. Configured CORS origins may send `Idempotency-Key` in preflight.

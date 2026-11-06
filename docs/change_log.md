@@ -1,3 +1,10 @@
+## TASK-204 PR #43 review findings F01–F03 — 06/11/2026 (proposed)
+
+Migration 014 revokes application access to the legacy confirmation RPC.
+The confirmation API checks the draft revision from one snapshot before source
+completeness, and credentialed preflight accepts `Idempotency-Key` from configured
+origins. See the [confirmation contract](api/confirm-source-endpoint.md).
+
 ## TASK-204 postreview P1/P2/P3 — 05/11/2026 (proposed)
 
 Migration013 freezes source rows and warning flags once confirmed, preserving draft

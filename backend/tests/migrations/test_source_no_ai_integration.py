@@ -23,12 +23,17 @@ class NoAIIntegrationTests(revision_fixtures.SourceRevisionTests):
         from app.models.schemas import CurrentUser
         from app.services.ai.gateway import GeminiGateway
 
+        self.sql(revision_fixtures.DISABLE_LEGACY.read_text(encoding="utf-8"))
         case, extracts, outbound = self, [], []
         owner, worker = SqlClient(self), SqlClient(self, True)
         rpc = worker.rpc
         lost_read = [True]
+        mutate_before_confirm = [True]
 
         def worker_rpc(name, params):
+            if name == "confirm_source_artifacts" and mutate_before_confirm[0]:
+                mutate_before_confirm[0] = False
+                self.sql("UPDATE source_questions SET has_security_warning=true;")
             if name == "get_source_artifacts" and lost_read[0]:
                 lost_read[0] = False
 
@@ -90,8 +95,8 @@ class NoAIIntegrationTests(revision_fixtures.SourceRevisionTests):
                 preview = client.get(base)
                 self.assertEqual(preview.status_code, 200, preview.text)
                 body = {"source_revision": preview.json()["source_revision"]}
+                original_body = body
                 key = {"Idempotency-Key": str(uuid4())}
-                self.sql("UPDATE source_questions SET has_security_warning=true;")
                 stale = client.post(base + "/confirm-source", json=body, headers=key)
                 self.assertEqual(stale.status_code, 409, stale.text)
                 self.assertEqual(stale.json()["error_code"], "ERR_SOURCE_REVISION_CONFLICT")
@@ -132,10 +137,18 @@ class NoAIIntegrationTests(revision_fixtures.SourceRevisionTests):
                     ["NUMERICAL", "context_swap", "parameter_variation"],
                 )
                 self.assertEqual(len(extracts), 1)
-                replay = client.post(base + "/confirm-source", json=body, headers=key)
+                replay = client.post(base + "/confirm-source", json=original_body, headers=key)
                 self.assertEqual(replay.status_code, 200, replay.text)
                 self.assertEqual(
                     replay.json()["confirmation_id"], response.json()["confirmation_id"]
+                )
+                new_key = client.post(
+                    base + "/confirm-source", json=body,
+                    headers={"Idempotency-Key": str(uuid4())},
+                )
+                self.assertEqual(new_key.status_code, 409, new_key.text)
+                self.assertEqual(
+                    self.value("SELECT count(*) FROM source_artifact_confirmations;"), "1"
                 )
                 self.assertEqual(len(extracts), 1)
                 self.assertEqual(outbound, [])

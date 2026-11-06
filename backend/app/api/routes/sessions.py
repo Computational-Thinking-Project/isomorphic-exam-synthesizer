@@ -29,7 +29,7 @@ from postgrest.types import CountMethod
 from supabase import Client
 
 from app.api.dependencies import assert_ownership, get_current_user, get_service_db, get_user_db
-from app.api.routes.source_artifacts import confirm_source_flow
+from app.api.routes.source_artifacts import confirm_source_flow, source_preview
 from app.core.rate_limit import crud_rate_limit
 from app.models.schemas import (
     ConfirmSourceRequest,
@@ -154,26 +154,9 @@ async def get_session_detail(
     Exam versions are fetched separately and are outside the source snapshot.
     """
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
-    from app.services.blueprint.producer import artifact_error
-    from app.services.review.receipts import rpc_object
-
-    try:
-        preview = rpc_object(db.rpc("get_session_source_preview", {
-            "p_session_id": session_id,
-        }).execute().data)
-        session_record = preview["session"]
-        source_revision = str(preview["source_revision"])
-        source_questions = preview["source_questions"]
-        from uuid import UUID
-        UUID(source_revision)
-        if session_record["id"] != session_id or session_record["user_id"] != current_user.id:
-            raise ValueError("Preview identity mismatch")
-        if not isinstance(source_questions, list):
-            raise ValueError("Invalid source rows")
-    except (KeyError, ValueError, TypeError) as exc:
-        raise ReviewDomainException(503, "ERR_SOURCE_UNAVAILABLE", "Invalid source preview") from exc
-    except Exception as exc:
-        raise artifact_error(exc) from exc
+    session_record, source_revision, source_questions = source_preview(
+        db, session_id, current_user.id
+    )
     v_res = (
         db.table("exam_versions").select("*").eq("session_id", session_id)
         .order("created_at", desc=False).execute()

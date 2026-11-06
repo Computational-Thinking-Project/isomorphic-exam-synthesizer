@@ -92,7 +92,8 @@ def flow(monkeypatch):
                     session=dict(id=sid, user_id=state.owner, status=state.status,
                                  title="Fixture", subject="Math", grade=12,
                                  created_at="2026-11-04T00:00:00Z", updated_at="2026-11-04T00:00:00Z"),
-                    source_revision=state.revision, source_questions=[deepcopy(state.row)],
+                    source_revision=state.revision,
+                    source_questions=[] if state.row is None else [deepcopy(state.row)],
                 )
                 if state.mutate_after_preview:
                     state.revision = str(uuid4())
@@ -281,26 +282,32 @@ def test_confirm_pending_without_adapter_or_legacy_blueprint(flow):
     assert result.json()["canonical_status"] == "pending"
     assert result.json()["total_blueprints"] == 0
     assert state.extracts == 0
-    assert [n for n, _ in state.calls] == ["confirm_source_artifacts", "get_source_artifacts"]
-    assert state.calls[0][1]["p_actor_id"] == state.actor
+    assert [n for n, _ in state.calls] == [
+        "get_session_source_preview", "confirm_source_artifacts", "get_source_artifacts"
+    ]
+    assert state.calls[1][1]["p_actor_id"] == state.actor
+    assert "source_questions" not in state.table_calls
 
 
 # ---------------------------------------------------------------------------
 # Q01 — source_revision contract tests
 # ---------------------------------------------------------------------------
 
-def test_confirm_with_matching_source_revision_succeeds(flow):
+@pytest.mark.parametrize("uppercase", [False, True])
+def test_confirm_with_matching_source_revision_succeeds(flow, uppercase):
     state, client = flow
     key = str(uuid4())
+    session_id = state.sid.upper() if uppercase else state.sid
 
     response = client.post(
-        url(state),
+        f"/api/sessions/{session_id}/confirm-source",
         json={"source_revision": state.revision},
         headers={"Idempotency-Key": key},
     )
 
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "blueprinted"
+    assert state.calls[0] == ("get_session_source_preview", {"p_session_id": state.sid})
 
     rpc_calls = [
         params for name, params in state.calls
@@ -310,9 +317,14 @@ def test_confirm_with_matching_source_revision_succeeds(flow):
     assert rpc_calls[0]["p_expected_source_revision"] == state.revision
 
 
-def test_confirm_with_mismatched_source_revision_returns_409_conflict(flow):
+@pytest.mark.parametrize("source", ["valid", "empty", "missing_answer"])
+def test_confirm_with_mismatched_source_revision_returns_409_conflict(flow, source):
     state, client = flow
     stale_revision = str(uuid4())
+    if source == "empty":
+        state.row = None
+    elif source == "missing_answer":
+        state.row["has_missing_answer"] = True
 
     response = client.post(
         url(state),
@@ -325,12 +337,7 @@ def test_confirm_with_mismatched_source_revision_returns_409_conflict(flow):
     assert state.confirmation is None
     assert state.status == "draft"
 
-    rpc_calls = [
-        params for name, params in state.calls
-        if name == "confirm_source_artifacts"
-    ]
-    assert len(rpc_calls) == 1
-    assert rpc_calls[0]["p_expected_source_revision"] == stale_revision
+    assert [name for name, _ in state.calls] == ["get_session_source_preview"]
 
 
 def test_confirm_without_source_revision_returns_422(flow):
@@ -366,7 +373,9 @@ def test_new_key_cannot_reconfirm_blueprinted_session(flow):
     state, client = flow
     payload = {"source_revision": state.revision}
     assert client.post(url(state), json=payload, headers={"Idempotency-Key": str(uuid4())}).status_code == 200
+    receipt = deepcopy(state.confirmation)
     assert client.post(url(state), json=payload, headers={"Idempotency-Key": str(uuid4())}).status_code == 409
+    assert state.confirmation == receipt
 
 
 def test_source_content_race_maps_to_source_changed(flow):
@@ -378,7 +387,7 @@ def test_source_content_race_maps_to_source_changed(flow):
     assert state.confirmation is None
 
 
-def test_idempotent_retry_with_same_key_and_revision(flow):
+def test_idempotent_retry_with_same_key_and_stale_revision(flow):
     state, client = flow
     key = str(uuid4())
     payload = {"source_revision": state.revision}
@@ -393,7 +402,7 @@ def test_idempotent_retry_with_same_key_and_revision(flow):
 
     replay = client.post(
         url(state),
-        json=payload,
+        json={"source_revision": str(uuid4())},
         headers=headers,
     )
     assert replay.status_code == 200, replay.text
@@ -461,7 +470,7 @@ def test_missing_source_or_answer_is_rejected_before_worker(flow, missing):
     else:
         state.row = None
     assert client.post(url(state), json={"source_revision": state.revision}).status_code == 422
-    assert not state.calls
+    assert [name for name, _ in state.calls] == ["get_session_source_preview"]
 
 
 @pytest.mark.parametrize(
@@ -594,12 +603,11 @@ def test_source_artifacts_ready_with_empty_modes_is_valid(flow, monkeypatch):
     assert data["ready"] is True
     assert data["supported_modes"] == []
 
-def test_changed_source_after_preview_returns_409(flow):
+def test_changed_source_between_confirmation_snapshot_and_commit_returns_409(flow):
     state, client = flow
     preview_revision = state.revision
 
-    # Một tab khác đã thay thế đề nguồn.
-    state.revision = str(uuid4())
+    state.mutate_after_preview = True
 
     response = client.post(
         url(state),
@@ -610,6 +618,10 @@ def test_changed_source_after_preview_returns_409(flow):
     assert response.status_code == 409
     assert "ERR_SOURCE_REVISION_CONFLICT" in response.text
     assert state.confirmation is None
+    assert [name for name, _ in state.calls] == [
+        "get_session_source_preview", "confirm_source_artifacts"
+    ]
+    assert state.calls[1][1]["p_expected_source_revision"] == preview_revision
 
 
 def mode(**updates):
