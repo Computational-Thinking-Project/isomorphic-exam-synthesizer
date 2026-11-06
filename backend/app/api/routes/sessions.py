@@ -597,7 +597,7 @@ async def confirm_source(
     response: Response,
     background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(get_current_user),
-    db: Client = Depends(get_user_db), 
+    db: Client = Depends(get_user_db),
     service_db: Client = Depends(get_service_db),
     idempotency_key: str = Header(..., alias="Idempotency-Key"),
 ) -> ConfirmSourceResponse:
