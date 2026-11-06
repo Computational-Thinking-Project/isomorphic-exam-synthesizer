@@ -1,5 +1,6 @@
 import pytest
-from app.models.schemas import SourceQuestion, GeneratedVariant
+
+from app.models.schemas import GeneratedVariant, SourceQuestion
 from app.services.ai.mock_client import MockGeminiClient
 
 
