@@ -2,9 +2,9 @@
 
 - **Phụ trách:** Trung Anh / `philip-kkk` / TV1 / FE1. Duy (`johannguyen015`) review chính và phụ trách API xác nhận. Bội Anh (`htbaax`) kiểm điểm bàn giao Stage 2. Dự phòng và ETA review riêng TBD.
 - **Nguồn giao việc:** TASK-204 trong `w2_21_10.md` của Duy, bản workspace `project/W2_ASSIGNMENT_20261026.md`. Link phân công chung TBD.
-- **Nhánh:** `feat/task-204-source-confirm` → `dev`. [Draft PR #42](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/42). Nền `dev` đã đồng bộ: `8289971`.
+- **Nhánh:** `feat/task-204-source-confirm` → `dev`. [Draft PR #42](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/42). Nền `dev` đã đồng bộ: `295342f`.
 - **Workflow:** [v0.1 proposed](../review/WORKFLOW.md) (`506384b`), dùng [M2/M3](../review/TEMPLATES.md). Mốc W2 tối 03/11/2026 theo [xác nhận của Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/29#issuecomment-6499240459) đã qua. ETA TASK-204 và ETA giao đầu vào chưa được xác nhận.
-- **Trạng thái:** P1–P3 đã triển khai local theo contract BE1 `5b711d2`. P4 đã kiểm FE với fixture; nghiệm thu tích hợp cần runtime đã ghép.
+- **Trạng thái:** P1–P3 đã triển khai và push. P4 đã kiểm FE1 và API xác nhận sau khi đồng bộ BE1/FE2. Nghiệm thu Stage 2 còn chờ adapter canonical, BE2 và runtime tích hợp.
 
 ## Mình cần làm gì?
 
@@ -66,3 +66,13 @@ Silent audit đã chốt, không mở lại câu hỏi checkbox của assignment
 - Baseline sau đồng bộ `dev`: 86 ca Stage 1/ingestion đã có đạt. Sau P1–P4: `npm.cmd test -- --test-concurrency=2` **328 đạt**, `npm.cmd run lint` đạt, `npm.cmd run build` đạt với `GOMAXPROCS=2` và cảnh báo bundle `968.62 kB`. Lượt chạy song song trước đó hết tài nguyên Windows; chạy lại tuần tự đạt. `git diff --check` đạt.
 - **Chrome, Auth/HTTP giả lập:** bàn phím nạp đề B, GET cập nhật preview, confirm mất response. F5 trên phiên nháp giữ số POST ở 1, đọc phiên và artifact trước khi cho retry. Retry chủ động gửi lần 2 cùng key và mở đúng phiên trên Stage 2 fixture. Với ca server giả lập đã commit, F5 đọc `blueprinted`, mở Stage 2 fixture và số POST vẫn là 1. Bằng chứng local tại `tmp/task204-chrome-fixture.json` trong workspace.
 - **Phạm vi bằng chứng:** kiểm FE1, snapshot, khôi phục key và route. Stage 2 trong fixture chỉ kiểm ID bàn giao. Kiểm thật với adapter FE2, migration BE1/BE2, Supabase/PostgREST/JWT/RLS và CORS khác origin vẫn chờ runtime được giao. Chưa gọi API/provider thật cho lượt này.
+
+## M3 — P4 sau đồng bộ dev ngày 06/11/2026
+
+- **Bản kiểm:** merge local `e42e6d3` của PR #42 `4cef37e` với `dev` `295342f`. Nền đã có FE2 [PR #40](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/40) và BE1 [PR #43](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/43).
+- **Frontend:** `npm.cmd test -- --test-concurrency=2 --test-reporter=dot`, `npm.cmd run lint`, `npm.cmd run build` và `git diff --check` đạt. Build cảnh báo bundle `982.67 kB`.
+- **Chrome 156 qua DevTools Protocol:** hai ca fixture Auth/HTTP đạt. Đã dùng bàn phím nạp đề và xác nhận. F5 khi phiên còn nháp đọc lại artifact rồi cho retry cùng key. F5 khi server giả lập đã commit mở đúng phiên ở Stage 2 fixture và giữ đúng một POST. Bằng chứng local tại `tmp/task204-p4-e42e6d3/chrome-result.json` trong workspace.
+- **Backend:** FastAPI TestClient chạy với PostgreSQL 15 cô lập, migration BE1 đến `014`, Auth/transport DB test và provider giả lập. Đã kiểm xung đột revision, mất response sau commit, replay cùng key với một receipt, và artifact chuyển pending/running/failed/ready. Ca PostgreSQL riêng cũng xác nhận `ready=true, supported_modes=[]`. Lượt này chưa có Supabase/PostgREST hoặc xác minh JWT/RLS trên runtime tích hợp.
+- **Điểm chặn FE2:** Probe gọi `fetchSessionDetail` theo dữ liệu của contract. Với cả artifact `ready=true, supported_modes=[]` và `ready=true` có một mode, service chỉ gọi GET phiên. `blueprint_summary` vẫn là `null` và form Stage 2 khóa submit. PR #40 đã merge, adapter canonical cho [`source-artifacts`](../api/source-artifacts-contract.md) vẫn cần FE2 nối.
+- **Điểm chặn BE2:** Migration `010` trên `dev` là file rỗng của BE1. Migration generation-config và API tương ứng còn ở [PR #32](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/32). Cần thứ tự migration được BE2 xác nhận và runtime có đầy đủ các thành phần trước khi chạy P4 tích hợp.
+- **Kết luận:** Có bằng chứng riêng cho FE1 và BE1 trên nền mới. Giữ PR #42 Draft và chạy lại luồng browser với Stage 2 thật sau khi có adapter FE2 và runtime BE2 đã ghép.
