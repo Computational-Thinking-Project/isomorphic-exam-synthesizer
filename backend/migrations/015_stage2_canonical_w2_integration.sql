@@ -1,4 +1,4 @@
--- TASK-207a/b: forward W2 integration after the adopted 004-009 chain.
+-- TASK-207a/b: W2 integration after migrations 004-014.
 BEGIN;
 ALTER TABLE public.generation_configs ADD COLUMN IF NOT EXISTS source_manifest jsonb;
 ALTER TABLE public.generation_configs ADD COLUMN IF NOT EXISTS canonical_dimensions jsonb;

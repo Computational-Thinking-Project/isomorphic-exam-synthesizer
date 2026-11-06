@@ -155,13 +155,13 @@ async def db(request):
                 "INSERT INTO generation_configs(session_id,n_versions) VALUES($1::uuid,2)", sid
             )
         await admin.execute(
-            (ROOT / "backend/migrations/010_stage2_canonical_w2_integration.sql").read_text(
+            (ROOT / "backend/migrations/015_stage2_canonical_w2_integration.sql").read_text(
                 encoding="utf-8-sig"
             )
         )
         if getattr(request, "param", None) != "pre_clone":
             await admin.execute(
-                (ROOT / "backend/migrations/011_stage2_original_clone.sql").read_text(
+                (ROOT / "backend/migrations/016_stage2_original_clone.sql").read_text(
                     encoding="utf-8-sig"
                 )
             )
@@ -460,12 +460,12 @@ async def test_migration_replay_preserves_result(db):
     await persist(db, job, result_for(db, job))
     before = await db.admin.fetchval("SELECT row_to_json(r)::text FROM generation_target_results r")
     await db.admin.execute(
-        (ROOT / "backend/migrations/010_stage2_canonical_w2_integration.sql").read_text(
+        (ROOT / "backend/migrations/015_stage2_canonical_w2_integration.sql").read_text(
             encoding="utf-8"
         )
     )
     await db.admin.execute(
-        (ROOT / "backend/migrations/011_stage2_original_clone.sql").read_text(encoding="utf-8")
+        (ROOT / "backend/migrations/016_stage2_original_clone.sql").read_text(encoding="utf-8")
     )
     assert (
         await db.admin.fetchval("SELECT row_to_json(r)::text FROM generation_target_results r")
@@ -857,7 +857,7 @@ async def test_f11_small_tolerance_persists_python_fingerprint_and_resumes(db):
     assert (await persist(db, job, result))["replayed"]
     saved = await db.admin.fetchval("SELECT row_to_json(r)::text FROM generation_target_results r")
     await db.admin.execute(
-        (ROOT / "backend/migrations/010_stage2_canonical_w2_integration.sql").read_text(
+        (ROOT / "backend/migrations/015_stage2_canonical_w2_integration.sql").read_text(
             encoding="utf-8"
         )
     )

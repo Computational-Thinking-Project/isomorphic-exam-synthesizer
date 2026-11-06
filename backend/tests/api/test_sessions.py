@@ -5,6 +5,34 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+SOURCE_REVISION = "11111111-2222-4333-8444-555555555555"
+
+
+def configure_session_detail_rpcs(
+    mock_db, session, questions, *, generation_snapshot=None, generation_error=None
+):
+    """Model the two distinct RPC contracts used by merged Stage 1/Stage 2."""
+    def rpc_router(name, params):
+        assert params == {"p_session_id": session["id"]}
+        rpc = MagicMock()
+        if name == "get_session_source_preview":
+            rpc.execute.return_value.data = {
+                "session": session,
+                "source_revision": SOURCE_REVISION,
+                "source_questions": questions,
+            }
+        elif name == "get_generation_source_snapshot":
+            if generation_error is not None:
+                rpc.execute.side_effect = generation_error
+            else:
+                rpc.execute.return_value.data = generation_snapshot
+        else:
+            raise AssertionError(f"Unexpected RPC: {name}")
+        return rpc
+
+    mock_db.rpc.side_effect = rpc_router
+
+
 @pytest.fixture
 def auth_headers() -> dict[str, str]:
     return {"Authorization": "Bearer mock-valid-jwt-token"}
@@ -221,15 +249,13 @@ def test_get_session_detail_success(client, mock_auth_user, test_user_id, auth_h
             mock_t.select.return_value.in_.return_value.execute.return_value = exec_bp
         return mock_t
 
+    mock_db.table.side_effect = table_router
     preview_session = table_router("exam_sessions").select().eq().execute().data[0]
     preview_questions = table_router("source_questions").select().eq().order().execute().data
-    revision = "11111111-2222-4333-8444-555555555555"
-    mock_db.rpc.return_value.execute.return_value.data = {
-        "session": preview_session, "source_revision": revision,
-        "source_questions": preview_questions,
-    }
-
-    mock_db.table.side_effect = table_router
+    configure_session_detail_rpcs(
+        mock_db, preview_session, preview_questions,
+        generation_snapshot={"ready": False, "reason": "NO_CONFIRMATION"},
+    )
 
     with (
         patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
@@ -254,8 +280,9 @@ def test_get_session_detail_success(client, mock_auth_user, test_user_id, auth_h
     assert "context_swap" in mode_ids
     assert all(m["is_available"] is True for m in data["blueprint_summary"]["supported_modes"])
     # Q01: source_revision must be present and equal to updated_at
-    assert data["source_revision"] == revision
-    mock_db.rpc.assert_called_once_with("get_session_source_preview", {"p_session_id": "session-1"})
+    assert data["source_revision"] == SOURCE_REVISION
+    mock_db.rpc.assert_any_call("get_session_source_preview", {"p_session_id": "session-1"})
+    mock_db.rpc.assert_any_call("get_generation_source_snapshot", {"p_session_id": "session-1"})
     assert "source_questions" not in [call.args[0] for call in mock_db.table.call_args_list]
 
 
@@ -733,6 +760,12 @@ def test_get_session_detail_invalid_blueprint_modes_structure(
         return mock_t
 
     mock_db.table.side_effect = table_router
+    preview_session = table_router("exam_sessions").select().eq().execute().data[0]
+    preview_questions = table_router("source_questions").select().eq().order().execute().data
+    configure_session_detail_rpcs(
+        mock_db, preview_session, preview_questions,
+        generation_snapshot={"ready": False, "reason": "NO_CONFIRMATION"},
+    )
 
     with (
         patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
@@ -879,6 +912,12 @@ def test_get_session_detail_tc_ready_02_original_clone(
         return mock_t
 
     mock_db.table.side_effect = table_router
+    preview_session = table_router("exam_sessions").select().eq().execute().data[0]
+    preview_questions = table_router("source_questions").select().eq().order().execute().data
+    configure_session_detail_rpcs(
+        mock_db, preview_session, preview_questions,
+        generation_snapshot={"ready": False, "reason": "NO_CONFIRMATION"},
+    )
 
     with (
         patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
@@ -956,6 +995,12 @@ def test_get_session_detail_tc_ready_03_available_and_unavailable_modes(
         return mock_t
 
     mock_db.table.side_effect = table_router
+    preview_session = table_router("exam_sessions").select().eq().execute().data[0]
+    preview_questions = table_router("source_questions").select().eq().order().execute().data
+    configure_session_detail_rpcs(
+        mock_db, preview_session, preview_questions,
+        generation_snapshot={"ready": False, "reason": "NO_CONFIRMATION"},
+    )
 
     with (
         patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
@@ -1056,7 +1101,12 @@ def test_get_session_detail_canonical_readiness(
             }
         ]
     }
-    mock_db.rpc.return_value.execute.return_value = mock_rpc
+    preview_session = table_router("exam_sessions").select().eq().execute().data[0]
+    preview_questions = table_router("source_questions").select().eq().order().execute().data
+    configure_session_detail_rpcs(
+        mock_db, preview_session, preview_questions,
+        generation_snapshot=mock_rpc.data,
+    )
 
     with (
         patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
@@ -1107,10 +1157,12 @@ async def test_canonical_unavailable_never_falls_back_to_legacy(snapshot):
         return query
 
     mock_db.table.side_effect = table
-    if isinstance(snapshot, Exception):
-        mock_db.rpc.return_value.execute.side_effect = snapshot
-    else:
-        mock_db.rpc.return_value.execute.return_value.data = snapshot
+    configure_session_detail_rpcs(
+        mock_db, session,
+        [{"id": "q", "session_id": "s", "question_no": 1}],
+        generation_snapshot=None if isinstance(snapshot, Exception) else snapshot,
+        generation_error=snapshot if isinstance(snapshot, Exception) else None,
+    )
     with patch("app.api.routes.sessions.assert_ownership"):
         response = await get_session_detail("s", CurrentUser(id="u", email="owner@example.invalid", access_token="fixture-token"), mock_db)
     assert response.blueprint_summary["is_ready"] is False
@@ -1149,6 +1201,12 @@ async def test_legacy_whitespace_id_does_not_publish_a_selectable_alias():
         return query
 
     mock_db.table.side_effect = table
+    configure_session_detail_rpcs(
+        mock_db, session,
+        [{"id": "q1", "session_id": "s", "question_no": 1},
+         {"id": "q2", "session_id": "s", "question_no": 2}],
+        generation_snapshot={"ready": False, "reason": "NO_CONFIRMATION"},
+    )
     with patch("app.api.routes.sessions.assert_ownership"):
         response = await get_session_detail("s", CurrentUser(id="u", email="owner@example.invalid", access_token="fixture-token"), mock_db)
     assert response.blueprint_summary["is_ready"]

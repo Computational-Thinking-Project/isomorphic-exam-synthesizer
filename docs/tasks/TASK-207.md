@@ -143,7 +143,7 @@ is a W2 RPC in migration 010, not public table access.
 
 ### M3 draft for PR description — prepared locally, not posted
 
-- Scope/output: [011](../../backend/migrations/011_stage2_original_clone.sql),
+- Scope/output: [011](../../backend/migrations/016_stage2_original_clone.sql),
   [contract](../api/generation-config-endpoint.md#original-clone-persistence-migration-011),
   [actual RPC sample](../../backend/tests/fixtures/w2_clone_rpc_receipt.json),
   [clone tests](../../backend/tests/migrations/test_generation_clone.py), W2 fixture

@@ -1,4 +1,4 @@
--- TASK-207 / PR #32: Original Clone persistence. Apply after 010.
+-- TASK-207 / PR #32: Original Clone persistence. Apply after 015.
 BEGIN;
 ALTER TABLE public.generation_target_results
  ADD COLUMN IF NOT EXISTS result_kind text NOT NULL DEFAULT 'AI_RESULT',

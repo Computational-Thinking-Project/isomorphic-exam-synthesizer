@@ -2,7 +2,7 @@
 
 Mapping profile **1.0**, pinned consumer evidence:
 [BE2 contract at 7e9377f](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/7e9377fd75fbb19b732d4dc154254e8a8669d22d/docs/api/generation-config-endpoint.md),
-backed by `010_stage2_canonical_w2_integration.sql` on that same commit.
+backed by `015_stage2_canonical_w2_integration.sql` on that same commit.
 This branch does not merge/deploy those generation RPCs. FE2 acceptance and
 cross-PR integration remain pending; these are not locally merged consumers.
 

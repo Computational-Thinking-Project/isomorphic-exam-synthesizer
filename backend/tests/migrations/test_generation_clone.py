@@ -24,7 +24,7 @@ from tests.migrations.test_generation_w2 import (
 )
 
 pytestmark = pytest.mark.asyncio
-MIGRATION = ROOT / "backend/migrations/011_stage2_original_clone.sql"
+MIGRATION = ROOT / "backend/migrations/016_stage2_original_clone.sql"
 
 
 def clone_record(job, index=0, version=1):
@@ -458,7 +458,7 @@ async def test_clone_replay_migrations_preserves_results_and_resume(db):
     )
     for _ in range(2):
         await db.admin.execute(
-            (ROOT / "backend/migrations/010_stage2_canonical_w2_integration.sql").read_text(
+            (ROOT / "backend/migrations/015_stage2_canonical_w2_integration.sql").read_text(
                 encoding="utf-8"
             )
         )
