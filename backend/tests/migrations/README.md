@@ -260,3 +260,212 @@ transport establishes deployed JWT verification/table-read RLS/PostgREST pooling
 Auth/table transport and gateway are injected; actual PostgreSQL executes RPCs with
 their real roles/ACL. Stage-2 generation-job integration is outside this producer/
 review check; the existing current candidate is seeded by the fixture.
+
+
+---
+
+## TASK-204 Source Confirmation (Q01–Q03)
+
+Use PostgreSQL 15 only in disposable containers. No deployed Supabase evidence
+is implied. These modules require the backend's locked Python dependencies.
+
+### Actual migration inventory and setup
+
+- **Fresh current schema:** role/auth/storage stubs from `test_stage3_schema.py`,
+  `backend/scripts/schema.sql`, then 006, 007, 008, 009, **011**, **012**, **013**.
+  `schema.sql` already defines replace_source_questions and legacy confirm_exam_source;
+  do not apply 003 again as an invented prerequisite. 010 is retained empty.
+- **Upgrade fixture:** `fixtures/legacy_schema.sql` plus synthetic source seed,
+  then 006 and 003 (the existing artifact fixture's deliberate legacy compatibility
+  setup), followed by 007–009, 002 (to test the actual replacement RPC), 011, 012, 013.
+  A real deployment already at 006–009 needs 011, 012 and 013.
+- There is no `004_confirm_source_artifacts_rpc.sql` in this branch. Do not
+  fabricate or execute it. Migration numbering must be reconciled with BE2's
+  unmerged migration 010 before cross-branch deployment.
+- 011 revokes direct worker access to the timestamp overload. Deploy it together
+  with the UUID API caller, after stopping/draining old callers. Existing receipts,
+  fingerprint comparison, audit and 006–009 functions remain authoritative.
+- Q01 tests prove fresh bootstrap, populated upgrade and transactional rollback.
+  Q02 uses only current canonical heads. Never read legacy Blueprint modes.
+
+### Commands executed in this session
+
+Host Python was absent, so the existing backend image supplied Python/dependencies.
+All 82 installed pinned packages matched `backend/requirements.lock`. Prepare that
+image using the existing [Docker setup](../../../docs/setup-docker.md) on a fresh
+clone; this session reused the already built image and did not rebuild it.
+Docker Desktop/WSL supplied the existing Linux CLI, copied into ignored scratch.
+The **runner** has a Docker socket to create/remove fixtures; PostgreSQL containers
+have `--network none`, no ports, no host mounts and no external credentials.
+The runner also has `--network none`. Never mount the socket into product services.
+
+PowerShell from the repository root (adjust only the local CLI source if needed):
+
+```powershell
+$repo = (Get-Location).Path
+New-Item -ItemType Directory -Force -Path (Join-Path $repo 'scratch') | Out-Null
+$drive = $repo.Substring(0,1).ToLowerInvariant()
+$wslRepo = '/mnt/host/' + $drive + $repo.Substring(2).Replace('\','/')
+wsl --exec cp /mnt/host/wsl/docker-desktop/cli-tools/usr/bin/docker "$wslRepo/scratch/docker-linux"
+
+# Run modules sequentially, each creates and tears down its own disposable container.
+$modules = @(
+  'test_source_confirmation_revision.py',
+  'test_source_supported_modes.py',
+  'test_source_no_ai_integration.py',
+  'test_source_artifacts.py'
+)
+foreach ($module in $modules) {
+  docker run --rm --network none `
+    --mount "type=bind,source=$repo,target=/workspace" `
+    --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock `
+    -e DOCKER_BIN=/workspace/scratch/docker-linux -e RUN_POSTGRES_MIGRATION_TESTS=1 `
+    -e PYTHONPATH=/workspace/backend -e ENVIRONMENT=test `
+    -e GEMINI_API_KEY= -e GEMINI_API_KEYS= -w /workspace `
+    --entrypoint python isomorphic-exam-synthesizer-backend:latest `
+    -m unittest discover -s backend/tests/migrations -p $module -v
+  if ($LASTEXITCODE -ne 0) { throw "Failed: $module" }
+}
+```
+
+The command above combines the same per-module invocations used during development;
+targeted reruns used `-m unittest module.Class.test_method` with working directory
+`/workspace/backend/tests/migrations`. With a Python/dependency/Docker installation
+on the host, the identical `python -m unittest discover ...` commands work without
+the outer container; keep the transport guards in the no-AI integration test.
+Missing `RUN_POSTGRES_MIGRATION_TESTS=1` means **SKIP**, never real-DB PASS.
+
+For PR #43, run the ACL subset with `RUN_POSTGRES_MIGRATION_TESTS=1`,
+backend test dependencies and the disposable Docker setup above:
+
+```sh
+python -m pytest backend/tests/migrations/test_source_confirmation_revision.py \
+  -q -k 'legacy_confirmation_disabled or pre_003_overload or fresh_current_schema_chain'
+```
+
+These cases apply 014 to a populated upgrade and a fresh schema, deny legacy
+calls with both explicit and default arguments, check a surviving pre-003
+overload, and verify the service-role UUID confirmation and single-receipt
+replay. Before Supabase integration, reconcile 010 with BE2's deployment
+history without renumbering it. Local ACLs do not establish deployed PostgREST
+dispatch or permissions.
+
+API/regression command executed in the offline backend container, working directory
+`/workspace/backend`:
+
+```sh
+python -m pytest tests/api tests/services/test_confirmed_artifacts.py \
+  tests/services/test_review_ai_dependency.py tests/services/test_review_contract_parsers.py \
+  tests/services/test_review_flow.py tests/services/test_review_lifecycle.py \
+  tests/services/test_review_receipts.py tests/services/test_review_validation.py -q --tb=short
+python -m pytest tests/ai tests/generation -q --tb=short
+```
+
+### Fake provider and proof boundary
+
+`test_source_no_ai_integration.py` uses the actual HTTP routes/repository/producer,
+SQL role/ACL execution via `SqlClient`, canonical fixture `ai_pipeline.json` validated
+by the real artifact mapper, and a fake `Extractor`. It first leaves production
+pending, claims a real running lease, records failure, retries with the fake,
+then observes ready modes and replays the confirmation. Stale confirm has zero
+receipts; injected postcommit read loss retains one receipt and same-key replay
+reconciles. Silent audit remains exactly once.
+
+Three defenses: empty API key variables, injected fake extractor, and network-none
+runner plus synchronous/asynchronous HTTP, Gemini gateway and socket transport
+guards. Spy asserts **zero outbound attempts**, fake extracts exactly once,
+and one canonical document in PostgreSQL. Disabling the provider alone would leave
+production pending and would not prove the ready path.
+
+SQL fixture identifiers are synthetic OWNER `00000000-0000-0000-0000-000000000001`,
+SID `10000000-0000-0000-0000-000000000001`, SOURCE `20000000-0000-0000-0000-000000000001`;
+per-test database/container names are random. Canonical schema version is 0.4.0,
+public mode mapping 1.0. Runtime observed: PostgreSQL **15.19** (`postgres:15-alpine`).
+
+JWT verification and PostgREST are injected. Table reads in SqlClient use the fixture
+superuser; RPCs use authenticated/service_role principals. This proves RPC ACL and
+ownership, **not** deployed JWT/table-read RLS or PostgREST overload dispatch. FE2
+integration/acceptance and BE2 generation-config integration are separate gates.
+See [contract](../../../docs/api/source-artifacts-contract.md) and
+[handoff/evidence](../../../docs/api/source-confirm-handoff.md).
+### Postreview P1/P2/P3 (baseline ab9f09a)
+
+Migration013 adds an early BEFORE guard: all source writes require draft with no
+approved_at, including warning flag and no-op updates. Owner/service attempts after
+confirm leave source UUID, content, receipt, heads, readiness and audit unchanged.
+Draft flag changes still rotate the UUID and audit once on first confirmation.
+The new tests load the actual owner RLS policies from schema.sql; clone, foreign
+owner denial and parent cascade are verified locally. Two real connections test
+writer-first stale/no receipt and confirm-first source-locked outcomes with bounded
+SQL timeouts. Historical-head coverage uses a private test-admin head fixture,
+not edits to a confirmed source or a public reset workflow.
+
+Confirm requires a client UUID Idempotency-Key: missing422, malformed400.
+Ingest race ARTIFACT_SOURCE_LOCKED is HTTP409; network/unknown-outcome mappings
+stay unchanged. FE1 persistence/adoption is a breaking-contract acceptance gate.
+The same four PostgreSQL modules above now contain 50 cases (47 prior + 3 new).
+The four current Python consumer cases in test_source_artifacts.py apply011–013;
+its remaining SQL-only cases intentionally pin historical006 behavior.
+For the final backend regression, add tests/ai and tests/generation to the first
+pytest command above in the same invocation; do not repeat already-passing suites.
+
+
+## TASK-207 W2 generation RPCs
+
+The asyncpg driver is the same optional real-DB test dependency used by TASK-305.
+Install it in the test environment (not production requirements), e.g.
+python -m pip install asyncpg==0.32.0.
+
+Provision a disposable PostgreSQL 15 container, never a shared database. Example
+PowerShell from the repository root with backend test dependencies available:
+
+~~~powershell
+$token = [guid]::NewGuid().ToString('N')
+$pg = "task207-test-$token"
+$db = "task207_cluster_$token"
+docker run --detach --name $pg --publish 127.0.0.1::5432 -e POSTGRES_HOST_AUTH_METHOD=trust -e "POSTGRES_DB=$db" postgres:15-alpine
+try {
+  for ($attempt = 0; $attempt -lt 40; $attempt++) {
+    docker exec $pg pg_isready -U postgres -d $db
+    if ($LASTEXITCODE -eq 0) { break }
+    Start-Sleep -Milliseconds 250
+  }
+  if ($LASTEXITCODE -ne 0) { throw "PostgreSQL unavailable" }
+  docker exec $pg psql -U postgres -d $db -v ON_ERROR_STOP=1 -c 'CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS;'
+  if ($LASTEXITCODE -ne 0) { throw "Role setup failed" }
+  $port = (docker port $pg 5432/tcp).Trim().Split(':')[-1]
+  $env:RUN_TASK207_REAL_DB_TESTS = '1'
+  $env:TASK207_TEST_DSN = "postgresql://postgres@127.0.0.1:$port/$db"
+  python -m pytest backend/tests/migrations/test_generation_w2.py -q
+  python -m pytest backend/tests/migrations/test_generation_clone.py -q
+} finally {
+  Remove-Item Env:RUN_TASK207_REAL_DB_TESTS -ErrorAction SilentlyContinue
+  Remove-Item Env:TASK207_TEST_DSN -ErrorAction SilentlyContinue
+  docker rm --force $pg
+}
+~~~
+
+The fixture requires explicit opt-in, verifies the localhost task207_cluster_*
+database, and creates a separate random task207_case_* database per test.
+No test drops public or accepts the postgres default database.
+Missing driver/provisioning is not SQL verification. The local author run used a
+network-none cluster and backend runner sharing only its network namespace, without
+host ports, cloud credentials or a Docker socket.
+
+To regenerate the compact actual-RPC handoff fixture, additionally set
+TASK207_CONTRACT_OUTPUT to backend/tests/fixtures/w2_rpc_receipt.json in the test
+runner's filesystem and run only -k rpc_receipt_for_worker_handoff.
+This explicit artifact option is off by default; omitted_fields identifies removed
+large document repetitions. Normal CI never rewrites the fixture.
+
+The same disposable fixture now applies 010 then 011. `test_generation_clone.py`
+covers Original Clone without a Python worker/provider implementation: exact 2×2
+slots, no-solution sources, zero additional quota, role/token/input guards,
+concurrent replay, new-connection resume/retry, atomic rollback, intact projection
+completion and populated-010 AI upgrade/replay. Skips do not count as DB evidence.
+To export the separate actual clone RPC sample, set `TASK207_CLONE_CONTRACT_OUTPUT`
+to a writable test-runner path and run
+`-k test_clone_matrix_resume_and_finish_without_quota_or_ai`; only the case with
+a supplied solution writes the sample. Copy the emitted JSON to
+`backend/tests/fixtures/w2_clone_rpc_receipt.json` after reviewing it. The sample
+lists omitted context and uses synthetic source data, with no AI cache claim.

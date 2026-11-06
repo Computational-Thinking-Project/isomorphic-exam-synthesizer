@@ -29,7 +29,7 @@ from postgrest.types import CountMethod
 from supabase import Client
 
 from app.api.dependencies import assert_ownership, get_current_user, get_service_db, get_user_db
-from app.api.routes.source_artifacts import confirm_source_flow
+from app.api.routes.source_artifacts import confirm_source_flow, source_preview
 from app.core.rate_limit import crud_rate_limit
 from app.models.schemas import (
     ConfirmSourceRequest,
@@ -75,15 +75,13 @@ async def create_session(
     db: Client = Depends(get_user_db),
 ) -> SessionItem:
     """Create a new exam session for the authenticated user with 'draft' status."""
+    # SEC-04 / F07: Only insert client-editable columns.
+    # status, gemini_call_count, retry_count, gemini_review_calls are DB-managed with defaults.
     new_session_data: dict[str, Any] = {
         "user_id": current_user.id,
         "title": payload.title.strip(),
         "subject": payload.subject.strip(),
         "grade": payload.grade,
-        "status": "draft",
-        "gemini_call_count": 0,
-        "retry_count": 0,
-        "gemini_review_calls": 0,
     }
 
     response = db.table("exam_sessions").insert(cast(Any, new_session_data)).execute()
@@ -149,42 +147,108 @@ async def get_session_detail(
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
 ) -> SessionDetailResponse:
-    """Retrieve session details by ID, validating ownership and fetching nested questions and versions."""
+    """Read source rows and their UUID revision under one RPC-held parent lock.
+
+    Exam versions are fetched separately and are outside the source snapshot.
+    """
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
-
-    s_res = db.table("exam_sessions").select("*").eq("id", session_id).execute()
-    s_rows = cast(List[dict[str, Any]], s_res.data or [])
-    if not s_rows:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found",
-        )
-    session_record = s_rows[0]
-
-    # Fetch source_questions ordered by question_no ASC
-    q_res = (
-        db.table("source_questions")
-        .select("*")
-        .eq("session_id", session_id)
-        .order("question_no", desc=False)
-        .execute()
+    session_record, source_revision, source_questions = source_preview(
+        db, session_id, current_user.id
     )
-    source_questions = cast(List[dict[str, Any]], q_res.data or [])
-
-    # Fetch exam_versions ordered by created_at ASC
     v_res = (
-        db.table("exam_versions")
-        .select("*")
-        .eq("session_id", session_id)
-        .order("created_at", desc=False)
-        .execute()
+        db.table("exam_versions").select("*").eq("session_id", session_id)
+        .order("created_at", desc=False).execute()
     )
     exam_versions = cast(List[dict[str, Any]], v_res.data or [])
 
+    # Fetch generation_config if saved (Stage 2 / TASK-207a)
+    cfg_res = (
+        db.table("generation_configs").select("*").eq("session_id", session_id).limit(1).execute()
+    )
+    cfg_rows = cast(List[dict[str, Any]], cfg_res.data or [])
+    generation_config = cfg_rows[0] if cfg_rows else None
+
+    # Compute blueprint summary for Stage 2 readiness projection (F02 / TASK-208 contract)
+    blueprint_summary = None
+    if source_questions:
+        source_ids = [str(q.get("id")) for q in source_questions if q.get("id")]
+        total_sources = len(source_questions)
+
+        from app.services.generation.mode_mapper import (
+            compute_supported_modes_summary,
+            supported_modes_from_counts,
+        )
+
+        # Only a successful NO_CONFIRMATION receipt authorizes legacy lookup.
+        # Transport errors, malformed responses and canonical not-ready fail closed.
+        snapshot: object = None
+        try:
+            snapshot = db.rpc("get_generation_source_snapshot", {"p_session_id": session_id}).execute().data
+        except Exception:
+            logger.warning("Generation snapshot unavailable for session %s", session_id)
+        supported_modes: Optional[List[dict[str, Any]]] = None
+        is_ready = False
+        blueprint_count = confirmed_count = 0
+        if isinstance(snapshot, dict) and snapshot.get("ready") is True:
+            confirmed_sources = snapshot.get("confirmed_sources")
+            if (
+                isinstance(confirmed_sources, list)
+                and len(confirmed_sources) == total_sources
+                and all(isinstance(source, dict) for source in confirmed_sources)
+                and {source.get("source_question_id") for source in confirmed_sources} == set(source_ids)
+            ):
+                canonical_bps = [
+                    source["canonical_blueprint"]
+                    for source in confirmed_sources
+                    if isinstance(source, dict) and isinstance(source.get("canonical_blueprint"), dict)
+                ]
+                blueprint_count = confirmed_count = len(canonical_bps)
+                try:
+                    supported_modes = compute_supported_modes_summary(canonical_bps, total_sources)
+                    is_ready = True
+                except ValueError:
+                    pass
+        elif isinstance(snapshot, dict) and snapshot.get("reason") == "NO_CONFIRMATION":
+            bp_res = (
+                db.table("question_blueprints")
+                .select("id,source_question_id,confirmed_at,is_fallback,variation_modes")
+                .in_("source_question_id", source_ids)
+                .execute()
+            )
+            bp_rows = cast(List[dict[str, Any]], bp_res.data or [])
+            blueprint_count = len(bp_rows)
+            confirmed_count = sum(bp.get("confirmed_at") is not None for bp in bp_rows)
+            valid_modes = all(
+                isinstance(bp.get("variation_modes"), list)
+                and all(isinstance(mode, str) and bool(mode.strip()) for mode in bp["variation_modes"])
+                for bp in bp_rows
+            )
+            is_ready = (
+                valid_modes and confirmed_count == total_sources
+                and blueprint_count == total_sources
+                and {bp.get("source_question_id") for bp in bp_rows} == set(source_ids)
+            )
+            if is_ready:
+                counts: dict[str, int] = {}
+                for bp in bp_rows:
+                    for mode in set(bp["variation_modes"]):
+                        counts[mode] = counts.get(mode, 0) + 1
+                supported_modes = supported_modes_from_counts(counts, total_sources)
+        blueprint_summary = {
+            "is_ready": is_ready,
+            "total_questions": total_sources,
+            "questions_with_blueprint": blueprint_count,
+            "confirmed_blueprints": confirmed_count,
+            "supported_modes": supported_modes,
+        }
+
     return SessionDetailResponse(
         **session_record,
+        source_revision=source_revision,
         source_questions=source_questions,
         exam_versions=exam_versions,
+        generation_config=generation_config,
+        blueprint_summary=blueprint_summary,
     )
 
 
@@ -277,15 +341,12 @@ async def clone_session(
     new_title = custom_title if custom_title else f"{orig.get('title', '')} (Bản sao)"
 
     # 3. Insert cloned session record
+    # SEC-04 / F07: Only insert client-editable columns. DB assigns defaults for status and counters.
     new_session_data: dict[str, Any] = {
         "user_id": current_user.id,
         "title": new_title,
-        "subject": orig.get("subject", "Toán"),
+        "subject": orig.get("subject") or "Toán",
         "grade": orig.get("grade", 12),
-        "status": "draft",
-        "gemini_call_count": 0,
-        "retry_count": 0,
-        "gemini_review_calls": 0,
     }
     create_res = db.table("exam_sessions").insert(cast(Any, new_session_data)).execute()
     create_rows = cast(List[dict[str, Any]], create_res.data or [])
@@ -524,18 +585,24 @@ async def ingest_text(
 
 
 @router.post(
-    "/{session_id}/confirm-source", response_model=ConfirmSourceResponse,
+    "/{session_id}/confirm-source",
+    response_model=ConfirmSourceResponse,
     summary="Confirm source and prepare canonical Blueprints in background",
 )
 @crud_rate_limit
 async def confirm_source(
-    session_id: str, payload: ConfirmSourceRequest, request: Request, response: Response,
+    session_id: str,
+    payload: ConfirmSourceRequest,
+    request: Request,
+    response: Response,
     background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(get_current_user),
-    db: Client = Depends(get_user_db), service_db: Client = Depends(get_service_db),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    db: Client = Depends(get_user_db),
+    service_db: Client = Depends(get_service_db),
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
 ) -> ConfirmSourceResponse:
     # ADR004: deprecated acknowledgment is ignored; SQL records silent audit.
     return await confirm_source_flow(
-        session_id, current_user.id, idempotency_key, db, service_db, request, background_tasks
+        session_id, current_user.id, idempotency_key, str(payload.source_revision),
+        db, service_db, request, background_tasks
     )

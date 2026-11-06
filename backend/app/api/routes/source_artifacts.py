@@ -18,8 +18,11 @@ from app.services.blueprint.producer import (
     SourceArtifactRepository,
     SourceArtifactState,
     SourceProductionState,
+    SupportedSourceMode,
+    artifact_error,
 )
 from app.services.blueprint.service import BlueprintService
+from app.services.review.receipts import rpc_object
 from app.services.review.service import action_key, resource_ids
 
 logger = logging.getLogger(__name__)
@@ -34,6 +37,10 @@ class SourceArtifactStatus(BaseModel):
     completed_count: int
     pending_source_question_ids: list[UUID]
     production: list[SourceProductionState]
+    # Q02: canonical supported generation modes derived from ready canonical Blueprint heads.
+    # Empty list is valid when ready=True and no mode is supported (e.g. NONE-only blueprint).
+    # None when canonical production has not completed yet (pending/running/failed).
+    supported_modes: list[SupportedSourceMode] | None
 
 
 def blueprint_service(request: Request) -> BlueprintService | None:
@@ -59,6 +66,7 @@ def status_payload(state: SourceArtifactState) -> SourceArtifactStatus:
         if "failed" in statuses
         else "pending"
     )
+    # Readiness and modes come from the same canonical RPC snapshot.
     return SourceArtifactStatus(
         session_id=state.confirmation.session_id,
         ready=state.ready,
@@ -67,8 +75,8 @@ def status_payload(state: SourceArtifactState) -> SourceArtifactStatus:
         completed_count=state.confirmation.total_questions - len(state.pending_source_question_ids),
         pending_source_question_ids=state.pending_source_question_ids,
         production=state.production,
+        supported_modes=state.supported_modes,
     )
-
 
 async def run_producer(
     worker: Client, blueprints: BlueprintService, session_id: str, count: int
@@ -97,10 +105,34 @@ def query_rows(value: Any) -> list[dict[str, Any]]:
     return cast(list[dict[str, Any]], value)
 
 
+def source_preview(
+    db: Client, session_id: str, actor_id: str
+) -> tuple[dict[str, Any], str, list[dict[str, Any]]]:
+    try:
+        response = db.rpc("get_session_source_preview", {"p_session_id": session_id}).execute()
+    except Exception as exc:
+        raise artifact_error(exc) from exc
+    preview = rpc_object(response.data)
+    try:
+        session = preview["session"]
+        if session["id"] != session_id or session["user_id"] != actor_id:
+            raise ValueError("Preview identity mismatch")
+        if not isinstance(session["status"], str):
+            raise ValueError("Invalid session status")
+        revision = str(UUID(str(preview["source_revision"])))
+        rows = preview["source_questions"]
+        if not isinstance(rows, list):
+            raise ValueError("Invalid source rows")
+        return session, revision, query_rows(rows)
+    except (KeyError, ValueError, TypeError) as exc:
+        raise ReviewDomainException(503, "ERR_SOURCE_UNAVAILABLE", "Invalid source preview") from exc
+
+
 async def confirm_source_flow(
     session_id: str,
     actor_id: str,
     key: str | None,
+    client_revision: str,
     db: Client,
     worker: Client,
     request: Request,
@@ -109,37 +141,31 @@ async def confirm_source_flow(
     resource_ids(session_id)
     confirmation_id = action_key(key)
     assert_ownership("exam_sessions", session_id, actor_id, db=db)
-    sessions = query_rows(
-        db.table("exam_sessions").select("status,updated_at").eq("id", session_id).execute().data
-    )
-    if len(sessions) != 1:
-        raise HTTPException(404, "Session not found")
-    session = sessions[0]
-    if not isinstance(session.get("updated_at"), str):
+    session, revision, rows = source_preview(db, str(UUID(session_id)), actor_id)
+    if session["status"] == "draft" and revision != client_revision:
         raise ReviewDomainException(
-            503, "ERR_SOURCE_UNAVAILABLE", "Missing source concurrency token"
+            409, "ERR_SOURCE_REVISION_CONFLICT", "Source revision has changed"
         )
     if session["status"] != "draft" and key is None:
         raise HTTPException(
             409, "Source already confirmed; read artifact status or retry production"
         )
-    rows = query_rows(
-        db.table("source_questions")
-        .select("*")
-        .eq("session_id", session_id)
-        .order("question_no")
-        .execute()
-        .data
-    )
+
     if not rows or any(row.get("has_missing_answer") is True for row in rows):
         raise HTTPException(422, "Source requires questions with complete answers")
     repository = SourceArtifactRepository(worker)
     try:
         confirmation = await ConfirmedArtifactProducer(repository, None).confirm(
-            session_id, actor_id, confirmation_id, session["updated_at"], rows
+            session_id,
+            actor_id,
+            confirmation_id,
+            client_revision,
+            rows,
         )
     except ToolError as exc:
-        raise HTTPException(422, "Source input is invalid") from exc
+        if exc.code == "SOURCE_ARTIFACT_INVALID":
+            raise HTTPException(422, "Source input is invalid") from exc
+        raise ReviewDomainException(503, "ERR_SOURCE_UNAVAILABLE", "Source preparation unavailable") from exc
     # A read failure here is a post-commit uncertainty, not a rollback. The client
     # can reconcile with the same key or read the session's artifact status.
     state = await repository.load(session_id)
@@ -169,7 +195,9 @@ async def get_source_artifact_status(
 ) -> SourceArtifactStatus:
     resource_ids(session_id)
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
-    return status_payload(await SourceArtifactRepository(db).load(session_id))
+    state = await SourceArtifactRepository(db).load(session_id)
+    result = status_payload(state)
+    return result
 
 
 @router.post(

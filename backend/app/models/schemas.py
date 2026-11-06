@@ -173,8 +173,19 @@ class SessionDetailResponse(BaseModel):
     approved_at: Optional[str] = None
     created_at: str
     updated_at: str
+    source_revision: str = Field(
+        ...,
+        min_length=1,
+        description="Revision of the source preview being confirmed.",
+    )
     source_questions: List[dict] = Field(default_factory=list, description="Danh sách câu hỏi gốc")
     exam_versions: List[dict] = Field(default_factory=list, description="Danh sách các mã đề")
+    generation_config: Optional[dict] = Field(
+        default=None, description="Cấu hình sinh đề Stage 2 nếu có"
+    )
+    blueprint_summary: Optional[dict] = Field(
+        default=None, description="Tóm tắt trạng thái Blueprint"
+    )
 
 
 class IngestTextRequest(BaseModel):
@@ -258,6 +269,11 @@ class ConfirmSourceRequest(BaseModel):
     deprecated and IGNORED. Security warnings are logged silently on the backend for
     admin audit. The UI no longer exposes a security acknowledgment checkbox. Clients
     may omit this field or send any value without affecting the outcome.
+
+    `source_revision` is required (Q01): the client must echo back the opaque revision
+    token received from `GET /sessions/{id}` together with the preview snapshot.  The
+    backend compares this token atomically under the session lock and returns HTTP 409
+    ERR_SOURCE_REVISION_CONFLICT when the source has been replaced since the preview.
     """
 
     acknowledged_security_warnings: bool = Field(
@@ -267,6 +283,10 @@ class ConfirmSourceRequest(BaseModel):
             "Now ignored — security events are logged silently for admin audit. "
             "Field kept for backward compatibility; any value sent has no effect."
         ),
+    )
+    source_revision: UUID = Field(
+        ...,
+        description="UUID revision token received with the source preview.",
     )
 
 

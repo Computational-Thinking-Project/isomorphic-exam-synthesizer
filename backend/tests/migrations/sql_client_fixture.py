@@ -49,7 +49,7 @@ class SqlClient:
                     self.filters.append(f"q.{column}={literal(value)}")
                 return self
 
-            def order(self, *args):
+            def order(self, *args, **kwargs):
                 return self
 
             def limit(self, *args):

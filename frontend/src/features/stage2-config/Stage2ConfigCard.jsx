@@ -34,7 +34,9 @@ export default function Stage2ConfigCard({
   // Danh sách các chế độ từ Blueprint
   const supportedModes = session?.blueprint_summary?.supported_modes || [];
   const isBlueprintReady = Boolean(
-    session?.blueprint_summary && session.blueprint_summary.is_ready !== false,
+    session?.blueprint_summary &&
+    session.blueprint_summary.is_ready !== false &&
+    session.blueprint_summary.supported_modes !== null,
   );
 
   // Giá trị khởi tạo từ cấu hình đã lưu hoặc mặc định
@@ -96,9 +98,14 @@ export default function Stage2ConfigCard({
       return;
     }
 
+    // F01: Chuẩn hóa chế độ không biến thể: loại bỏ 'NONE' để luôn gửi [] theo contract
+    const activeModes = selectedModes.filter(
+      (m) => String(m).trim().toUpperCase() !== 'NONE',
+    );
+
     const payload = {
       n_versions: Number(numVersions),
-      active_variation_modes: selectedModes,
+      active_variation_modes: activeModes,
       ordering_preferences: {
         shuffle_questions: Boolean(shuffleQuestions),
         shuffle_options: Boolean(shuffleOptions),
