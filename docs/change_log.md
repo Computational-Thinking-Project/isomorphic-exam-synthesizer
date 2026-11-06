@@ -1,3 +1,36 @@
+## TASK-204 PR #43 review findings F01–F03 — 06/11/2026 (proposed)
+
+Migration 014 revokes application access to the legacy confirmation RPC.
+The confirmation API checks the draft revision from one snapshot before source
+completeness, and credentialed preflight accepts `Idempotency-Key` from configured
+origins. See the [confirmation contract](api/confirm-source-endpoint.md).
+
+## TASK-204 postreview P1/P2/P3 — 05/11/2026 (proposed)
+
+Migration013 freezes source rows and warning flags once confirmed, preserving draft
+clone/edit and parent cascade. Ingestion lock races map to409. Confirmation now
+requires a stable UUID Idempotency-Key (missing422, malformed400); shared review
+endpoints are unchanged. This is a breaking FE1 contract pending owner adoption
+and F5/timeout persistence acceptance. Existing migrations are unchanged; no public
+reset workflow, FE2/BE2 changes or deployment is introduced. See the
+[confirmation contract](api/confirm-source-endpoint.md).
+
+## DEC-TASK204-001: Atomic source preview revision and canonical mode profile (proposed)
+
+- Date: 05/11/2026. Author implementation on `fix/be1-source-confirm-contract`;
+  independent review and FE/BE2 integration acceptance pending.
+- Context: updated_at can repeat and independently queried preview rows can mix
+  revisions; canonical readiness and FE mode metadata used incompatible shapes.
+- Decision: additive migration011 introduces a per-session source UUID, transactional
+  mutation trigger, locked preview RPC and worker-only UUID confirmation wrapper.
+  Migration012 extends the existing canonical readiness RPC with public profile1.0
+  mode objects, pinned to BE2 `7e9377f`, without reading legacy Blueprint modes.
+- Impact: sessions/confirm/artifact APIs, repository validation, offline PostgreSQL
+  tests and [handoff](api/source-confirm-handoff.md). Historical migrations006–010
+  are unchanged. Deploy011/012 and the updated API together; old timestamp caller
+  access is revoked. Supabase/PostgREST/JWT/RLS, FE integration and GitHub approval
+  are not established by local SQL evidence.
+
 ## DEC-BE1-016: Original Clone SQL persistence (local implementation, pending review)
 
 - Date / owner: 05/11/2026, TASK-207 / Duy, PR #32. Source:

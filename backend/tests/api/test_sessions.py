@@ -221,6 +221,14 @@ def test_get_session_detail_success(client, mock_auth_user, test_user_id, auth_h
             mock_t.select.return_value.in_.return_value.execute.return_value = exec_bp
         return mock_t
 
+    preview_session = table_router("exam_sessions").select().eq().execute().data[0]
+    preview_questions = table_router("source_questions").select().eq().order().execute().data
+    revision = "11111111-2222-4333-8444-555555555555"
+    mock_db.rpc.return_value.execute.return_value.data = {
+        "session": preview_session, "source_revision": revision,
+        "source_questions": preview_questions,
+    }
+
     mock_db.table.side_effect = table_router
 
     with (
@@ -245,6 +253,10 @@ def test_get_session_detail_success(client, mock_auth_user, test_user_id, auth_h
     assert "parameter_variation" in mode_ids
     assert "context_swap" in mode_ids
     assert all(m["is_available"] is True for m in data["blueprint_summary"]["supported_modes"])
+    # Q01: source_revision must be present and equal to updated_at
+    assert data["source_revision"] == revision
+    mock_db.rpc.assert_called_once_with("get_session_source_preview", {"p_session_id": "session-1"})
+    assert "source_questions" not in [call.args[0] for call in mock_db.table.call_args_list]
 
 
 def test_get_session_detail_forbidden(client, mock_auth_user, auth_headers):

@@ -62,6 +62,25 @@ def test_unknown_origin_fails_preflight(client: TestClient) -> None:
     assert "access-control-allow-origin" not in response.headers
 
 
+@pytest.mark.parametrize("origin,status", [(LOCALHOST_ORIGIN, 200), ("https://untrusted.example", 400)])
+def test_confirmation_headers_preflight(client: TestClient, origin: str, status: int) -> None:
+    response = client.options(
+        "/resource",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type,idempotency-key",
+        },
+    )
+    assert response.status_code == status
+    if status == 200:
+        assert response.headers["access-control-allow-origin"] == origin
+        assert response.headers["access-control-allow-credentials"] == "true"
+        assert "idempotency-key" in response.headers["access-control-allow-headers"].lower()
+    else:
+        assert "access-control-allow-origin" not in response.headers
+
+
 def test_unknown_custom_header_fails_preflight(client: TestClient) -> None:
     response = client.options(
         "/resource",

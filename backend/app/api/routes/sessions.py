@@ -29,7 +29,7 @@ from postgrest.types import CountMethod
 from supabase import Client
 
 from app.api.dependencies import assert_ownership, get_current_user, get_service_db, get_user_db
-from app.api.routes.source_artifacts import confirm_source_flow
+from app.api.routes.source_artifacts import confirm_source_flow, source_preview
 from app.core.rate_limit import crud_rate_limit
 from app.models.schemas import (
     ConfirmSourceRequest,
@@ -147,35 +147,17 @@ async def get_session_detail(
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
 ) -> SessionDetailResponse:
-    """Retrieve session details by ID, validating ownership and fetching nested questions and versions."""
+    """Read source rows and their UUID revision under one RPC-held parent lock.
+
+    Exam versions are fetched separately and are outside the source snapshot.
+    """
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
-
-    s_res = db.table("exam_sessions").select("*").eq("id", session_id).execute()
-    s_rows = cast(List[dict[str, Any]], s_res.data or [])
-    if not s_rows:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found",
-        )
-    session_record = s_rows[0]
-
-    # Fetch source_questions ordered by question_no ASC
-    q_res = (
-        db.table("source_questions")
-        .select("*")
-        .eq("session_id", session_id)
-        .order("question_no", desc=False)
-        .execute()
+    session_record, source_revision, source_questions = source_preview(
+        db, session_id, current_user.id
     )
-    source_questions = cast(List[dict[str, Any]], q_res.data or [])
-
-    # Fetch exam_versions ordered by created_at ASC
     v_res = (
-        db.table("exam_versions")
-        .select("*")
-        .eq("session_id", session_id)
-        .order("created_at", desc=False)
-        .execute()
+        db.table("exam_versions").select("*").eq("session_id", session_id)
+        .order("created_at", desc=False).execute()
     )
     exam_versions = cast(List[dict[str, Any]], v_res.data or [])
 
@@ -262,6 +244,7 @@ async def get_session_detail(
 
     return SessionDetailResponse(
         **session_record,
+        source_revision=source_revision,
         source_questions=source_questions,
         exam_versions=exam_versions,
         generation_config=generation_config,
@@ -614,11 +597,11 @@ async def confirm_source(
     response: Response,
     background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(get_current_user),
-    db: Client = Depends(get_user_db),
-    service_db: Client = Depends(get_service_db),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    db: Client = Depends(get_user_db), service_db: Client = Depends(get_service_db),
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
 ) -> ConfirmSourceResponse:
     # ADR004: deprecated acknowledgment is ignored; SQL records silent audit.
     return await confirm_source_flow(
-        session_id, current_user.id, idempotency_key, db, service_db, request, background_tasks
+        session_id, current_user.id, idempotency_key, str(payload.source_revision),
+        db, service_db, request, background_tasks
     )
