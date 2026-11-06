@@ -1,6 +1,16 @@
 # TASK-207a — Plan và bàn giao W2: API cấu hình sinh đề
 
-## Triển khai local 06/11/2026 — chưa push PR #30
+## Trạng thái khi chuẩn bị push WIP tiếp theo — 06/11/2026
+
+- TASK-207a đã commit/push ở `936d48c`; PR #30 hiện ở `dc8e0d4` và vẫn Draft.
+  Code preflight canonical, save RPC và route sản phẩm đã nằm trên remote.
+- `origin/dev@73583d7` đã merge AI contract PR #41 sau base PR #30
+  `e82b8ed`; nhánh Quỳnh chưa đồng bộ commit mới này. Nghiệm thu
+  PostgREST/RLS và FE config/reload với môi trường thật vẫn chờ Duy/OPS/FE2.
+- Các ghi chú bên dưới là lịch sử của lượt trước commit `936d48c`; không dùng
+  câu “chưa push” hoặc “PR #41 còn open” trong đó làm trạng thái hiện tại.
+
+## Triển khai local 207a trước commit `936d48c` ngày 06/11/2026
 
 - **Đã làm trên working tree sau `0424059`:** request giữ mode ID chính xác;
   response nhận đủ receipt SQL. Preflight dùng

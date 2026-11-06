@@ -17,7 +17,7 @@ import pytest_asyncio
 from pydantic import SecretStr
 
 from app.core.config import Settings
-from app.models.generation import CandidatePayload, StepByStepSolution
+from app.models.generation import CandidatePayload, QuestionResult, StepByStepSolution
 from app.models.generation_events import GenerationEventData
 from app.models.schemas import SourceQuestion
 from app.services.ai.gateway import GeminiGateway
@@ -59,7 +59,9 @@ class FixtureStore:
 
 @pytest_asyncio.fixture
 async def ai_case(monkeypatch):
-    data = json.loads((Path(__file__).parents[1] / "fixtures/ai_pipeline.json").read_text())
+    data = json.loads(
+        (Path(__file__).parents[1] / "fixtures/ai_pipeline.json").read_text(encoding="utf-8")
+    )
     source = SourceQuestion.model_validate(data["source"])
     responses = deepcopy(data["candidates"])
     calls = []
@@ -250,8 +252,11 @@ async def test_save_failure_preserves_acknowledged_rows_and_resume_skips_them(
     assert set(case.store.rows) == {saved_target}
     assert failed.target not in case.store.rows
     previous = case.store.rows[saved_target].model_dump(mode="json")
+    saved_json = case.store.rows[saved_target].model_dump_json()
+    restored = QuestionResult.model_validate_json(saved_json)
+    assert restored.model_dump(mode="json") == previous
     plan = replace(case.plan, saved=frozenset(case.store.rows), gemini_call_count=case.store.count)
-    inputs = case.inputs.model_copy(update={"completed": tuple(case.store.rows.values())})
+    inputs = case.inputs.model_copy(update={"completed": (restored,)})
 
     # Replace any remaining fixture replies with exactly the unsaved candidate;
     # resume must not depend on the fixture queue's size or candidate ordering.
@@ -275,6 +280,7 @@ async def test_save_failure_preserves_acknowledged_rows_and_resume_skips_them(
     assert resumed_targets == [failed.target]
     assert len(batch.results) == 2 and set(case.store.rows) == set(plan.targets)
     assert all(result.candidate is not None for result in batch.results)
+    assert restored in batch.results
     assert case.responses == []
     assert case.store.rows[saved_target].model_dump(mode="json") == previous
 

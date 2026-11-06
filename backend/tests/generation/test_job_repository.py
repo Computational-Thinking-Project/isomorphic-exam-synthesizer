@@ -1,6 +1,7 @@
 """Offline RPC contract checks; live PostgREST/RLS remains a separate gate."""
 
 import json
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -278,3 +279,119 @@ async def test_ai_result_rpc_receives_full_raw_result_and_projection(monkeypatch
     assert args["p_raw_result"] == raw.model_dump(mode="json")
     assert args["p_options"] == candidate.options
     assert args["p_request_fingerprint"] == "d" * 64
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("n_versions", [1, 2, 3, 4])
+@pytest.mark.parametrize("is_success", [True, False])
+async def test_ai_result_seed_uses_frozen_source_ordinal_after_resume(
+    monkeypatch, n_versions, is_success
+):
+    session, job, snapshot, first_source, claim, loaded = claim_fixture(clone=False)
+    first = claim["context"]["confirmed_sources"][0]
+    second_source = uuid4()
+    second = deepcopy(first)
+    second["source_question_id"] = str(second_source)
+    second["question_no"] = 2
+    second["source_revision_id"] = str(uuid4())
+    second["blueprint_revision_id"] = str(uuid4())
+    second["confirmed_input"]["id"] = str(second_source)
+    claim["context"]["confirmed_sources"].append(second)
+    claim["config"]["n_versions"] = n_versions
+
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/ai_pipeline.json").read_text(encoding="utf-8")
+    )
+    payload = CandidatePayload.model_validate(fixture["candidates"][0])
+
+    def make_candidate(source_id, seed):
+        return GeneratedQuestion(
+            **payload.model_dump(),
+            variant_id="variant-1",
+            source_question_id=str(source_id),
+            blueprint_fingerprint="b" * 64,
+            seed=seed,
+            solution_md=render_solution(payload.solution),
+            has_warning=False,
+        )
+
+    committed = QuestionResult(
+        version_index=1,
+        source_question_id=str(first_source),
+        request_fingerprint="d" * 64,
+        candidate=make_candidate(first_source, 1100),
+        validation=ValidationReport(checks=[]),
+        attempts=1,
+    )
+    loaded["completed"] = [
+        {
+            "snapshot_id": str(snapshot),
+            "version_index": 1,
+            "source_question_id": str(first_source),
+            "question_no": 1,
+            "result_kind": "AI_RESULT",
+            "request_fingerprint": committed.request_fingerprint,
+            "raw_result": committed.model_dump(mode="json"),
+        }
+    ]
+    claim["committed_targets"] = [
+        {
+            "version_index": 1,
+            "source_question_id": str(first_source),
+            "question_no": 1,
+            "result_kind": "AI_RESULT",
+        }
+    ]
+    owner = FakeRPCClient({"claim_generation_job": claim})
+    worker = FakeRPCClient({"load_generation_completed_results": loaded})
+    monkeypatch.setattr(
+        "app.services.generation.job_repository.get_service_role_client", lambda: worker
+    )
+    repo = GenerationJobRepository(owner)
+    plan = await repo.claim(session, retry=True)
+    assert plan.saved == {plan.targets[0]}
+    assert plan.inputs.completed == (committed,)
+
+    for version in range(1, n_versions + 1):
+        expected_seed = 100 + version * 1000 + 1
+        target = next(
+            target
+            for target in plan.targets
+            if target.source_question_id == second_source and target.version_index == version
+        )
+        candidate = make_candidate(second_source, expected_seed) if is_success else None
+        raw = QuestionResult(
+            version_index=version,
+            source_question_id=str(second_source),
+            request_fingerprint="e" * 64,
+            candidate=candidate,
+            validation=ValidationReport(checks=[]) if is_success else None,
+            attempts=1,
+            error_code=None if is_success else "API_TIMEOUT",
+        )
+        draft = (
+            GeneratedDraft(
+                content=candidate.question_text,
+                options=dict(zip("ABCD", candidate.options, strict=True)),
+                correct_key=candidate.correct_key,
+                solution_md=candidate.solution_md,
+                retry_count=0,
+            )
+            if candidate is not None
+            else None
+        )
+        worker.responses["persist_generation_result"] = {
+            "success": True,
+            "session_id": str(session),
+            "snapshot_id": str(snapshot),
+            "version_index": version,
+            "source_question_id": str(second_source),
+        }
+        await repo.save_result(plan, PreparedAIResult(target, draft, raw))
+        name, params = worker.calls[-1]
+        assert name == "persist_generation_result"
+        assert params["p_seed"] == expected_seed
+        assert params["p_version_index"] == version
+        assert params["p_source_question_id"] == str(second_source)
+        assert params["p_is_success"] is is_success
+        assert params["p_raw_result"] == raw.model_dump(mode="json")

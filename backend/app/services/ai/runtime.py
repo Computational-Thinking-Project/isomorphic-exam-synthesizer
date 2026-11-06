@@ -4,12 +4,15 @@ from app.core.config import Settings
 from app.services.blueprint.service import BlueprintService
 from app.services.generation.service import GenerationService
 
-from .gateway import GeminiGateway
+from .gateway import GeminiAttemptObserver, GeminiGateway
 
 
 class AIRuntime:
-    def __init__(self, settings: Settings):
+    def __init__(
+        self, settings: Settings, *, attempt_observer: GeminiAttemptObserver | None = None
+    ):
         self.settings = settings
+        self._attempt_observer = attempt_observer
         self._gateway: GeminiGateway | None = None
         self._blueprints: BlueprintService | None = None
         self._generation: GenerationService | None = None
@@ -17,7 +20,7 @@ class AIRuntime:
     @property
     def gateway(self) -> GeminiGateway:
         if self._gateway is None:
-            self._gateway = GeminiGateway(self.settings)
+            self._gateway = GeminiGateway(self.settings, attempt_observer=self._attempt_observer)
         return self._gateway
 
     @property

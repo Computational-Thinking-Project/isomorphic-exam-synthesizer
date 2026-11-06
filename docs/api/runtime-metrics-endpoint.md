@@ -3,11 +3,11 @@
 ## Status and scope
 
 This branch implements response models, the runtime registry, Linux current RSS
-reader and a fresh-snapshot collector, with isolated tests. The new TASK-207b
-Python broker/runner also accept this same registry for their lifecycle hooks.
-They are not registered in the product app. The current product handler still
-returns only `status` and `gemini_model`, without auth. Access guard, real AI
-instrumentation and protected endpoint integration remain pending.
+reader, a fresh-snapshot collector and a Gemini dispatch observer for explicit
+injection. The TASK-207b Python broker/runner also accept the same registry for
+their lifecycle hooks. The current product handler returns only `status` and
+`gemini_model`, without auth. App lifecycle wiring for these producers, access
+guard and protected endpoint integration remain pending.
 
 `RuntimeMetricsCollector.collect()` combines registry activity, configured model
 and a new RSS sample, validates all eight response fields and raises a safe
@@ -38,14 +38,16 @@ headers, query parameters and the caller's claimed environment grant nothing.
 receive development privileges. Existing Auth service/configuration failures
 retain their established error handling; never convert them to successful data.
 
-**Pending admin input:** `CurrentUser` currently exposes no admin role. Duy must
-confirm the trusted role source, field/helper contract, missing-role behavior
-and role-lookup failure handling before product admin authorization is wired.
-Do not add or infer a new admin field just to complete this task. Do not use
-editable `user_metadata`, an unverified JWT payload or a caller-supplied admin
-header. The Supabase database role `authenticated` alone does not mean business
-administrator. Missing integration must fail closed and remains a completion
-gate, not a reason to publish metrics without auth.
+**Pending admin acceptance input:** Duy has supplied
+`get_current_admin_user` in `app.api.dependencies`. It checks a user returned
+by Supabase Auth against the server-configured `ADMIN_EMAILS` allowlist outside
+`development`; an absent or unmatched email receives 403. Duy still needs to
+confirm this policy and provide test identities for `test`/staging/production
+acceptance before the product route is protected. Do not add or infer a new
+admin field, trust editable `user_metadata`, an unverified JWT payload or a
+caller-supplied admin header. The Supabase database role `authenticated` alone
+does not mean business administrator. Missing acceptance input remains a gate,
+not a reason to publish metrics without auth.
 
 See [Supabase's metadata guidance](https://supabase.com/docs/guides/auth/users).
 
@@ -144,18 +146,32 @@ not erase the earlier failure. Cleanup must not record completion twice.
 **AI input verified in PR18/21:** the W2 gateway explicitly sets SDK retry
 attempts to 1, applies a shared semaphore of at most 3 and invokes
 RequestContext.reserve_request immediately before each transport dispatch.
-W2 Blueprint extraction now runs through backend AIRuntime; the standalone CLI
-is not the W2 request path. These services and their AIRuntime lifespan are now
-present on this branch after dev synchronization. The TASK-207 job runner and
-runtime metrics collector are not yet connected to that shared AI path. Do not
+W2 Blueprint extraction and the mounted TASK-207b job runner use backend
+AIRuntime; the standalone CLI is not the W2 request path. The runtime metrics
+collector and observer are not yet injected into that shared AI runtime. Do not
 invent a subprocess metrics bridge for W2 or reuse the legacy sync generator.
 
-**Still pending:** connect one raw-request outcome boundary to the collector
-with the AI owner, including success/failure/cancellation. The reserve hook is
-not an outcome hook. Do not count an entire batch as a request, double-reserve
-the existing DB hook, or mark provider success/failure from local validation.
-If any separate process is later included, its reporting/crash contract needs
-an explicit bridge rather than assuming shared Python memory.
+**C2 observer contract:** `AIRuntime` passes an optional synchronous
+`attempt_observer` to its shared gateway. The gateway opens one observation
+after semaphore acquisition, key selection, quota reservation and the last
+deadline check, immediately before calling the SDK. Expiry after reservation
+can spend quota without dispatching or recording an attempt. See
+[AI W2 integration](../ai-w2-integration.md#quota-và-lỗi).
+
+The observer returns a completion callback. After the timeout scopes settle,
+the gateway supplies one immutable event containing an attempt UUID, model,
+optional stage (unset for current callers), monotonic duration, outcome
+(`success`, `error`, `timeout`, `cancelled`) and an optional sanitized error
+code. No prompt, response, credential or raw exception is included. Both SDK
+and job deadlines after dispatch count as failed attempts. External
+cancellation propagates, keeps the dispatch count and abandons the outcome,
+leaving it outside the error-rate denominator alongside in-flight attempts.
+Callbacks perform bounded synchronous in-process work with no I/O. Callback
+exceptions produce a fixed warning and leave gateway behavior unchanged.
+
+The registry bridge is available for explicit injection. App startup,
+endpoint mounting, and the production job runner remain separate wiring
+steps. A separate process would require an explicit reporting contract.
 
 These counters do not increment or replace `exam_sessions.gemini_call_count`,
 `gemini_review_calls` or the 250-call per-batch guard. Their scopes/lifetimes are

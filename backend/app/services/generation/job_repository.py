@@ -244,22 +244,20 @@ class GenerationJobRepository:
         draft = result.draft
         if result.target in plan.saved or result.target not in plan.targets:
             raise ValueError("AI attempted to write a saved or foreign target.")
+        inputs = plan.inputs
+        if not isinstance(inputs, AIBatchInputs):
+            raise TypeError("AI result requires a frozen AI batch snapshot.")
         source_index = next(
             (
                 index
-                for index, target in enumerate(plan.targets)
-                if target.version_index == 1
-                and target.source_question_id == result.target.source_question_id
+                for index, source in enumerate(inputs.sources)
+                if source.id == str(result.target.source_question_id)
             ),
             None,
         )
         if source_index is None:
             raise ValueError("AI target is outside job snapshot.")
-        seed = (
-            cast(AIBatchInputs, plan.inputs).base_seed
-            + result.target.version_index * 1000
-            + source_index
-        )
+        seed = inputs.base_seed + result.target.version_index * 1000 + source_index
         params: dict[str, object] = {
             "p_session_id": str(plan.session_id),
             "p_job_token": str(plan.job_id),

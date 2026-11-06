@@ -1,6 +1,26 @@
 # TASK-207b — Plan và bàn giao W2: Background generation, lưu tiến độ và SSE
 
-## Triển khai local 06/11/2026 — chưa commit/push PR #30
+## F01 review Đạt — sửa local ngày 06/11/2026, chưa commit
+
+- Head PR #30 được review: `dc8e0d4`; base `e82b8ed`. F01 chỉ ra
+  `GenerationJobRepository.save_result` lấy ordinal từ Cartesian
+  `plan.targets`, làm seed của nguồn sau lệch khi `n_versions > 1`.
+- Đã sửa local: lấy ordinal từ `AIBatchInputs.sources` theo thứ tự frozen
+  `confirmed_sources`, cùng nguồn AI và migration 015; không sửa SQL/RPC.
+  Thêm regression claim/resume có hai nguồn, N=1–4, nguồn đầu đã commit,
+  kiểm RPC params của success/failure ở mọi version.
+- Kiểm trên WIP nền `dc8e0d4`: `test_job_repository.py` **12 pass**;
+  generation/observability và bốn API suites config/jobs/snapshot/stream
+  **597 pass, 1 skip**. Ruff lint app/Blueprint/test đạt; Mypy app **113
+  source files** đạt; Ruff format hai file sửa và `git diff --check` đạt.
+  Môi trường Windows Python 3.12.10, venv tạm từ requirements chưa khóa;
+  chưa chạy PostgREST/RLS thật hoặc Docker Python 3.11/lockfile.
+- Trạng thái M5: sửa và kiểm local, **chưa có commit sửa** nên chưa phản hồi
+  `claimed_fixed` trên review thread. Quỳnh tự commit/push rồi gửi head và
+  evidence cho Đạt xác minh. PR #30 giữ Draft; body sẽ cập nhật theo head
+  sau khi cả 207a/b/c hoàn tất.
+
+## Bàn giao local 207b trước commit `dc8e0d4` ngày 06/11/2026
 
 - **B1/B2:** `GenerationJobRepository` ghép RPC thực của migrations **015/016**:
   claim bằng owner JWT, worker RPC bằng service role, quota session 250 có fencing,
