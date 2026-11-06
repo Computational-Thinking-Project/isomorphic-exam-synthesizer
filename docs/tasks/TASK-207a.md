@@ -1,5 +1,84 @@
 # TASK-207a — Plan và bàn giao W2: API cấu hình sinh đề
 
+## Triển khai local 06/11/2026 — chưa push PR #30
+
+- **Đã làm trên working tree sau `0424059`:** request giữ mode ID chính xác;
+  response nhận đủ receipt SQL. Preflight dùng
+  `get_generation_source_snapshot` làm nguồn canonical, chỉ đọc
+  `question_blueprints` khi RPC trả đúng `NO_CONFIRMATION`; kiểm approved/status,
+  giao mode theo profile 1.0, chuẩn hóa đúng `["NONE"]` thành `[]`. Repository
+  gọi một lần `save_generation_config` với manifest gốc ở
+  `p_expected_snapshot`, xác thực receipt và không tự retry kết quả ghi không
+  chắc chắn. Router config đã mount vào app thật bằng authenticated user client.
+- **HTTP do BE2 chốt với Quỳnh:** mode xung đột `400 ERR_CONFIG_CONFLICT`,
+  source chưa ready `422 ERR_SOURCE_NOT_READY`; snapshot/state đổi khi save
+  `409 ERR_CONFIG_CONFLICT`. Bảng HTTP trong contract PR #32 đang ghi 422/409
+  cho hai trường hợp đầu, cần Duy chỉnh theo scope PR #30. Tên migration trong
+  contract 010/011 cũng cần đối chiếu lại với file dev 015/016.
+- **Đã kiểm local:** 301 tests passed (bốn file test 207a, `test_sessions.py`,
+  `test_gateway.py`) trong container Python 3.11 tạm từ image backend cũ, có
+  cài `jsonschema==4.26.0` riêng cho lượt test; Ruff đạt cho file sửa, Mypy
+  đạt trên 111 source files. `python -m compileall` và `git diff --check HEAD`
+  đạt. Đây là fixture/mock-RPC và code thật, chưa chứng minh PostgREST/RLS thật.
+- **Chưa kiểm/chưa chấp nhận:** DB cô lập áp migrations và owner/non-owner qua
+  Supabase/PostgREST, FE GET detail → POST config → reload, CI trên head PR #30
+  mới. Remote PR vẫn ở head cũ; không coi CI cũ là bằng chứng cho local diff.
+  User sẽ tự đăng comment/push theo quyền; không có GitHub Approve hay merge.
+
+## Thứ tự tích hợp cập nhật 06/11/2026 — PR #30
+
+- **Đã đồng bộ Git, chưa nối code sản phẩm.** Nhánh local
+  `feat/task-207c-runtime-metrics@0424059` đã merge `origin/dev@e82b8ed`,
+  còn trước remote PR #30 `5cd570b` 20 commit. Thay đổi đang làm đã được
+  phục hồi: 10 file tracked chưa stage và 3 file untracked; hai stash vẫn
+  được giữ. Conflict của `docs/api/generation-config-endpoint.md` đã giải
+  theo contract dev, và conflict import trong `test_gateway.py` đã gộp cả
+  hai phía. PR #30 vẫn Draft, head remote cũ; CI của PR không kiểm bản
+  local chưa push. `git diff --check HEAD` và py_compile file test đạt;
+  chưa chạy pytest vì Python hiện tại thiếu pytest và Docker daemon chưa chạy.
+  `origin/dev` đã nhận PR #40 (FE2), #43 (canonical readiness) và #32
+  (SQL/RPC, gồm Original Clone).
+- **Input.** Contract SQL/RPC đã merge vào dev ở migrations 015/016;
+  [PR #32](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/32)
+  là nguồn bàn giao. PR #41 AI contract/seed guard còn open và conflict;
+  PR #36 TASK-302 còn open, cần owner đối chiếu dev trước khi merge.
+  Không gọi fixture/CI độc lập là nghiệm thu worker, SSE hoặc Supabase.
+
+| Thứ tự | Phần Quỳnh thực hiện | Điều kiện và cách kiểm |
+| --- | --- | --- |
+| 0 — đã làm local | Bảo toàn thay đổi local và ghép `origin/dev` vào nhánh PR #30; lấy contract dev cho `docs/api/generation-config-endpoint.md`, giữ bản HTTP cũ trong Git history để cập nhật theo policy mới. | Backup `.artifacts/branch-sync-20261106-154602`, hai stash và worktree đã phục hồi; chưa push. Đối chiếu migrations 015/016 trên dev thay vì số cũ trong tài liệu. |
+| 1 — 207a | Đổi preflight canonical sang `get_generation_source_snapshot`, truyền nguyên manifest bằng `p_expected_snapshot` khi save, dùng public mode profile và mã lỗi nghiệp vụ. Mount route sau khi inject store thật. | Canonical ready không có legacy Blueprint vẫn cấu hình được; revision đổi, mode sai và owner sai bị chặn. |
+| 2 — 207b | Nối claim/quota/full-result persist/load/finish/fail-stale. Tách `AI_RESULT` và `ORIGINAL_CLONE` trước resume; clone record riêng, zero Gemini, lưu trước shuffle. | PostgreSQL cô lập: slot đã commit không sinh lại, retry phần thiếu, quota/fencing/finish đúng; dùng AI fingerprint thật, không dùng synthetic hash của SQL receipt. |
+| 3 — 207b FE | Bổ sung durable generation snapshot, cursor/epoch và ticket/history-loss contract cho FE2 đã merge; mount job/stream routes. | Reload partial, buffer overflow, restart, đổi phiên và SSE reconnect qua app thật. |
+| 4 — 207c | Hoàn tất admin guard, gateway observer, registry/lifespan, metrics route và smoke Auth/proxy. | Đạt review shared gateway; job/SSE gauges chỉ nghiệm thu khi producer được mount. |
+| 5 — bàn giao | Chạy tests theo phần sửa, DB integration, sau đó FE/SSE E2E; cập nhật M2/M3 theo head và checks thực tế trước khi đưa PR #30 đi review. | PR #41 cần owner xử lý conflict/review; môi trường Supabase/proxy cần Duy/OPS cung cấp cho nghiệm thu triển khai. |
+
+Mục 04/11 bên dưới là lịch sử M2 tại head cũ; các trạng thái “chờ PR #32”
+không còn mô tả input hiện tại sau khi PR #32 đã merge.
+
+## Cập nhật M2 ngày 04/11/2026 — PR #30
+
+- **A0 đã đồng bộ.** Baseline nhánh `feat/task-207c-runtime-metrics` là
+  `1a2e05a`, chứa cả `dev@ac18e72` và đầu nhánh Draft PR `5cd570b`.
+  Cả hai phép kiểm `git rev-list --count HEAD..<ref>` đều trả `0`.
+  [Draft PR #30](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30)
+- **A1–A3 chờ DB và contract.** Duy đã bàn giao chữ ký RPC để đối chiếu với
+  adapter. Tại lần đọc gần nhất, PR #32 ở `31ed3bc` còn F01–F06 cần tác giả
+  xử lý và reviewer xác minh. Khi đủ input, kiểm lưu nguyên tử và chọn cấu
+  hình hiện hành trước khi inject store thật hoặc mount router. Quyết định
+  readiness, mode IDs và `[]`/`NONE` vẫn cần Duy, Đạt/Hùng và Bội Anh chốt
+  cùng canonical Blueprint và confirmed source hash.
+  [Bàn giao Duy cho TASK-207a/b/c](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6503019229)
+  · [PR #32](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/32)
+  · [Bàn giao AI](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6601308632)
+  · [TASK-206/208](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6597584297)
+- **Tiếp theo.** Sau khi xác minh DB, ghép A1 → A2 nếu contract cần →
+  A3 → kiểm A4 trước khi ghép job thật. Kết quả kiểm offline của bản tổ hợp
+  ghi trong [TASK-207b](TASK-207b.md#cập-nhật-m2-ngày-04112026--pr-30).
+  Mốc cần input, ETA người giao và ETA hoàn thành W2 vẫn TBD.
+
+## Snapshot M2 trước đồng bộ
+
 - Trạng thái: **Draft — plan/input**, cập nhật 29/10/2026 (Asia/Saigon); lượt này chỉ lập tài liệu.
 - Nguồn giao việc: `w2_21_10.md` do Quỳnh cung cấp, mục TASK-207a; file đang untracked, chưa có link assignment chung được xác minh. Nhờ Duy cung cấp link/version W2; không xuất bản assignment thay leader.
 - Owner: Quỳnh / `nhatquynh1107` (BE2). Reviewer đề xuất: Duy (DB/Auth), Bội Anh (consumer FE); chưa xác nhận nhận review.

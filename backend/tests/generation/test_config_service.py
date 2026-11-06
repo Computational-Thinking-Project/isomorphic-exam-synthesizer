@@ -8,6 +8,7 @@ import pytest
 from app.models.generation_config import GenerationConfigRequest
 from app.services.generation.config_service import (
     BlueprintConfigContext,
+    CanonicalBlueprintConfigContext,
     GenerationConfigContext,
     GenerationConfigError,
     SourceQuestionConfigContext,
@@ -72,7 +73,8 @@ def test_accept_initial_save_and_overwrite_without_mutating_input(status: str) -
     original_context = deepcopy(context)
     original_config = config.model_dump()
     validated = validate_generation_config(config, context)
-    assert validated == config
+    assert validated.active_variation_modes == []
+    assert validated.n_versions == config.n_versions
     assert context == original_context
     assert config.model_dump() == original_config
 
@@ -99,6 +101,13 @@ def test_reject_non_configurable_states_even_for_empty_modes(status: str) -> Non
         "ERR_SESSION_NOT_CONFIGURABLE",
     )
     assert "conflicts" not in error.to_detail()
+
+
+def test_reject_approved_session_even_when_status_is_configured() -> None:
+    assert_domain_error(
+        make_config([]), replace(make_context(), status="configured", approved=True),
+        409, "ERR_SESSION_NOT_CONFIGURABLE"
+    )
 
 
 @pytest.mark.parametrize("count", [1, 20])
@@ -195,15 +204,13 @@ def test_conflicts_keep_question_and_requested_mode_order() -> None:
     ]
 
 
-def test_supports_new_mode_ids_without_an_enum() -> None:
+def test_rejects_unpublished_mode_even_when_legacy_blueprints_contain_it() -> None:
     context = make_context()
     context = replace(
         context,
         blueprints=tuple(replace(bp, variation_modes=["CUSTOM_MODE"]) for bp in context.blueprints),
     )
-    assert validate_generation_config(
-        make_config(["CUSTOM_MODE"]), context
-    ).active_variation_modes == ["CUSTOM_MODE"]
+    assert_domain_error(make_config(["CUSTOM_MODE"]), context, 400, "ERR_CONFIG_CONFLICT")
 
 
 def test_all_blueprints_can_support_numerical() -> None:
@@ -227,9 +234,9 @@ def test_empty_stored_modes_allow_only_an_empty_request() -> None:
     first, second = context.blueprints
     context = replace(context, blueprints=(first, replace(second, variation_modes=[])))
     assert validate_generation_config(make_config([]), context).active_variation_modes == []
-    error = assert_domain_error(make_config(), context, 400, "ERR_CONFIG_CONFLICT")
+    error = assert_domain_error(make_config(["NUMERICAL"]), context, 400, "ERR_CONFIG_CONFLICT")
     assert error.to_detail()["conflicts"] == [
-        {"source_question_id": str(QUESTION_2), "unsupported_modes": ["NONE"]}
+        {"source_question_id": str(QUESTION_2), "unsupported_modes": ["NUMERICAL"]}
     ]
 
 
@@ -259,3 +266,57 @@ def test_duplicate_stored_modes_do_not_change_support_or_mutate_context() -> Non
     original = deepcopy(context)
     validate_generation_config(make_config(), context)
     assert context == original
+
+
+def canonical_context(dimensions: tuple[tuple[str, ...], tuple[str, ...]]) -> GenerationConfigContext:
+    context = make_context()
+    return replace(
+        context,
+        blueprints=(),
+        snapshot_ready=True,
+        snapshot_reason=None,
+        expected_snapshot={"confirmation_id": "receipt", "sources": []},
+        canonical_blueprints=tuple(
+            CanonicalBlueprintConfigContext(
+                source_question_id=source.id,
+                canonical_blueprint={
+                    "requirement": {"variation_policy": {"allowed_transformations": [
+                        {"dimension": dimension} for dimension in allowed
+                    ]}}
+                },
+            )
+            for source, allowed in zip(context.source_questions, dimensions)
+        ),
+    )
+
+
+def test_canonical_mode_mapping_uses_intersection_and_preserves_public_ids() -> None:
+    context = canonical_context((("values", "context"), ("values",)))
+    selected = validate_generation_config(make_config(["NUMERICAL", "parameter_variation"]), context)
+    assert selected.active_variation_modes == ["NUMERICAL", "parameter_variation"]
+    error = assert_domain_error(make_config(["context_swap"]), context, 400, "ERR_CONFIG_CONFLICT")
+    assert error.to_detail()["conflicts"] == [
+        {"source_question_id": str(QUESTION_2), "unsupported_modes": ["context_swap"]}
+    ]
+
+
+def test_canonical_ready_without_published_modes_accepts_clone() -> None:
+    context = canonical_context(((), ()))
+    assert validate_generation_config(make_config(["NONE"]), context).active_variation_modes == []
+    assert validate_generation_config(make_config([]), context).active_variation_modes == []
+
+
+@pytest.mark.parametrize("mode", ["context", "NUMERICAL ", "numerical", "STRUCTURAL"])
+def test_reject_unpublished_or_non_exact_canonical_modes(mode: str) -> None:
+    assert_domain_error(make_config([mode]), canonical_context((("values",), ("values",))), 400, "ERR_CONFIG_CONFLICT")
+
+
+def test_canonical_not_ready_never_uses_legacy_blueprints() -> None:
+    context = replace(make_context(), snapshot_reason="ARTIFACT_STALE")
+    assert_domain_error(make_config([]), context, 422, "ERR_SOURCE_NOT_READY")
+
+
+def test_canonical_missing_blueprint_fails_even_for_clone() -> None:
+    context = canonical_context(((), ()))
+    context = replace(context, canonical_blueprints=context.canonical_blueprints[:1])
+    assert_domain_error(make_config([]), context, 422, "ERR_SOURCE_NOT_READY")

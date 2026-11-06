@@ -26,18 +26,25 @@ class GenerationConfigRequest(BaseModel):
         normalized: list[str] = []
         seen: set[str] = set()
         for item in modes:
-            mode = item.strip()
-            if not mode:
+            if not item.strip():
                 raise ValueError("Variation mode IDs must not be blank.")
-            if mode not in seen:
-                seen.add(mode)
-                normalized.append(mode)
+            if item not in seen:
+                seen.add(item)
+                normalized.append(item)
         return normalized
+
+
+class SavedGenerationConfig(GenerationConfigRequest):
+    source_manifest: dict[str, object] | None
+    canonical_dimensions: list[Literal["values", "context"]]
+    mapping_version: Literal["1.0"]
 
 
 class GenerationConfigResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    success: Literal[True]
     session_id: UUID
+    config_id: UUID
     status: Literal["configured"]
-    config: GenerationConfigRequest
+    config: SavedGenerationConfig

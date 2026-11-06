@@ -35,13 +35,13 @@ def test_required_request_fields(field: str) -> None:
         GenerationConfigRequest.model_validate(payload)
 
 
-def test_modes_are_trimmed_deduplicated_and_case_sensitive_without_mutation() -> None:
+def test_modes_are_exact_deduplicated_and_case_sensitive_without_mutation() -> None:
     payload = request_payload(
         active_variation_modes=[" NUMERICAL ", "NONE", "NUMERICAL", "numerical", " CUSTOM "]
     )
     original = deepcopy(payload)
     config = GenerationConfigRequest.model_validate(payload)
-    assert config.active_variation_modes == ["NUMERICAL", "NONE", "numerical", "CUSTOM"]
+    assert config.active_variation_modes == [" NUMERICAL ", "NONE", "NUMERICAL", "numerical", " CUSTOM "]
     assert payload == original
 
 
@@ -116,19 +116,32 @@ def test_unknown_nested_fields_are_rejected() -> None:
 def test_response_serializes_uuid_and_normalized_config() -> None:
     response = GenerationConfigResponse.model_validate(
         {
+            "success": True,
             "session_id": "11111111-1111-4111-8111-111111111111",
+            "config_id": "22222222-2222-4222-8222-222222222222",
             "status": "configured",
-            "config": request_payload(active_variation_modes=[" NONE ", "NONE"]),
+            "config": {
+                **request_payload(active_variation_modes=[]),
+                "ordering_preferences": {"shuffle_questions": True, "shuffle_options": False},
+                "source_manifest": None,
+                "canonical_dimensions": [],
+                "mapping_version": "1.0",
+            },
         }
     )
     assert isinstance(response.session_id, UUID)
     assert response.model_dump(mode="json") == {
+        "success": True,
         "session_id": "11111111-1111-4111-8111-111111111111",
+        "config_id": "22222222-2222-4222-8222-222222222222",
         "status": "configured",
         "config": {
             "n_versions": 2,
-            "active_variation_modes": ["NONE"],
-            "ordering_preferences": {"shuffle_questions": True, "shuffle_options": True},
+            "active_variation_modes": [],
+            "ordering_preferences": {"shuffle_questions": True, "shuffle_options": False},
+            "source_manifest": None,
+            "canonical_dimensions": [],
+            "mapping_version": "1.0",
         },
     }
 
@@ -136,7 +149,9 @@ def test_response_serializes_uuid_and_normalized_config() -> None:
 @pytest.mark.parametrize(
     "overrides",
     [
+        {"success": False},
         {"session_id": "invalid"},
+        {"config_id": "invalid"},
         {"status": "blueprinted"},
         {"config": None},
         {"extra": True},
@@ -146,9 +161,16 @@ def test_response_rejects_invalid_shape(overrides: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
         GenerationConfigResponse.model_validate(
             {
+                "success": True,
                 "session_id": "11111111-1111-4111-8111-111111111111",
+                "config_id": "22222222-2222-4222-8222-222222222222",
                 "status": "configured",
-                "config": request_payload(),
+                "config": {
+                    **request_payload(),
+                    "source_manifest": None,
+                    "canonical_dimensions": ["values"],
+                    "mapping_version": "1.0",
+                },
                 **overrides,
             }
         )

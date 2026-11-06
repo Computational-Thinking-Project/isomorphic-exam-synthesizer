@@ -1,9 +1,4 @@
-"""Configuration router factory awaiting a real atomic save adapter.
-
-Importing this module registers no endpoint. Product integration must explicitly
-supply a store factory and register this router after the save RPC is ready.
-Fixture-only stores belong in tests, never in this module or the product app.
-"""
+"""Owned-session generation configuration endpoint."""
 
 from collections.abc import Callable
 from functools import partial
@@ -57,6 +52,8 @@ def create_generation_config_router(
         try:
             repository = repository_factory(db)
             context = repository.load_context(session_id)
+        except GenerationConfigError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
         except Exception as exc:
             raise _storage_failure() from exc
         if context is None:
@@ -65,11 +62,10 @@ def create_generation_config_router(
             if context.session_id != session_id:
                 raise ValueError("Repository context does not match the requested session.")
             config = validate_generation_config(payload, context)
-            saved = repository.save_config(session_id, config)
-            if isinstance(saved, GenerationConfigResponse):
-                # Revalidate model instances too: models can be mutated internally.
-                saved = saved.model_dump()
-            result = GenerationConfigResponse.model_validate(saved)
+            saved = repository.save_config(session_id, config, context.expected_snapshot)
+            # Revalidate model instances too: models can be mutated internally.
+            saved_data: object = saved.model_dump() if isinstance(saved, GenerationConfigResponse) else saved
+            result = GenerationConfigResponse.model_validate(saved_data)
             if result.session_id != session_id:
                 raise ValueError("Saved configuration does not match the requested session.")
             return result

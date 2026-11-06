@@ -21,6 +21,7 @@ from app.models.schemas import CurrentUser
 from app.services.generation.config_repository import GenerationConfigStore
 from app.services.generation.config_service import (
     BlueprintConfigContext,
+    CanonicalBlueprintConfigContext,
     GenerationConfigContext,
     GenerationConfigError,
     SourceQuestionConfigContext,
@@ -67,6 +68,31 @@ def payload(**overrides: object) -> dict[str, object]:
     return {"n_versions": 2, "active_variation_modes": ["NONE"], **overrides}
 
 
+def receipt(
+    session_id: UUID = SESSION_ID,
+    config: dict[str, object] | None = None,
+    manifest: dict[str, object] | None = None,
+) -> dict[str, object]:
+    selected = config or {"n_versions": 2, "active_variation_modes": []}
+    modes = selected["active_variation_modes"]
+    return {
+        "success": True,
+        "session_id": str(session_id),
+        "config_id": str(UUID(int=session_id.int + 10000)),
+        "status": "configured",
+        "config": {
+            "n_versions": selected["n_versions"],
+            "active_variation_modes": modes,
+            "ordering_preferences": selected.get(
+                "ordering_preferences", {"shuffle_questions": True, "shuffle_options": True}
+            ),
+            "source_manifest": manifest,
+            "canonical_dimensions": ["values"] if "NUMERICAL" in modes else [],
+            "mapping_version": "1.0",
+        },
+    }
+
+
 class FakeConfigStore:
     """Fixture-only persistence. This dictionary does not prove DB atomicity or RLS."""
 
@@ -77,7 +103,7 @@ class FakeConfigStore:
         }
         self.saved: dict[UUID, dict[str, object]] = {}
         self.load_calls: list[UUID] = []
-        self.save_calls: list[tuple[UUID, GenerationConfigRequest]] = []
+        self.save_calls: list[tuple[UUID, GenerationConfigRequest, dict[str, object] | None]] = []
         self.load_error: Exception | None = None
         self.save_error: Exception | None = None
         self.saved_result: object = _UNSET
@@ -88,8 +114,11 @@ class FakeConfigStore:
             raise self.load_error
         return self.contexts.get(session_id)
 
-    def save_config(self, session_id: UUID, config: GenerationConfigRequest) -> object:
-        self.save_calls.append((session_id, config.model_copy(deep=True)))
+    def save_config(
+        self, session_id: UUID, config: GenerationConfigRequest,
+        expected_snapshot: dict[str, object] | None,
+    ) -> object:
+        self.save_calls.append((session_id, config.model_copy(deep=True), deepcopy(expected_snapshot)))
         if self.save_error is not None:
             raise self.save_error
         if self.saved_result is not _UNSET:
@@ -97,11 +126,7 @@ class FakeConfigStore:
         context = self.contexts[session_id]
         assert context is not None
         self.contexts[session_id] = replace(context, status="configured")
-        result: dict[str, object] = {
-            "session_id": str(session_id),
-            "status": "configured",
-            "config": config.model_dump(),
-        }
+        result = receipt(session_id, config.model_dump(), expected_snapshot)
         self.saved[session_id] = deepcopy(result)
         return result
 
@@ -195,23 +220,16 @@ def api(monkeypatch: pytest.MonkeyPatch) -> Iterator[ApiHarness]:
 
 
 def test_success_normalizes_request_and_reuses_auth_and_ownership(api: ApiHarness) -> None:
-    response = api.post(payload(active_variation_modes=[" NONE ", "NONE"]))
+    response = api.post(payload(active_variation_modes=["NONE", "NONE"]))
     assert response.status_code == 200
-    assert response.json() == {
-        "session_id": str(SESSION_ID),
-        "status": "configured",
-        "config": {
-            "n_versions": 2,
-            "active_variation_modes": ["NONE"],
-            "ordering_preferences": {"shuffle_questions": True, "shuffle_options": True},
-        },
-    }
+    assert response.json() == receipt()
     api.auth.auth.get_user.assert_called_once_with(TOKEN_A)
     api.authenticated_client.assert_called_once_with(TOKEN_A)
     api.ownership.assert_called_once_with("exam_sessions", str(SESSION_ID), USER_A, db=api.db)
     api.factory.assert_called_once_with(api.db)
     assert api.store.load_calls == [SESSION_ID]
-    assert api.store.save_calls[0][1].active_variation_modes == ["NONE"]
+    assert api.store.save_calls[0][1].active_variation_modes == []
+    assert api.store.save_calls[0][2] is None
     assert response.headers["X-RateLimit-Limit"] == "60"
 
 
@@ -242,11 +260,7 @@ def test_save_again_uses_configured_context_and_returns_latest_fake_record(api: 
 
 
 def test_returns_validated_saved_data_instead_of_echoing_request(api: ApiHarness) -> None:
-    api.store.saved_result = {
-        "session_id": str(SESSION_ID),
-        "status": "configured",
-        "config": payload(n_versions=4),
-    }
+    api.store.saved_result = receipt(config={"n_versions": 4, "active_variation_modes": []})
     response = api.post(payload(n_versions=2))
     assert response.status_code == 200
     assert response.json()["config"]["n_versions"] == 4
@@ -365,6 +379,36 @@ def test_mode_conflicts_return_question_details_without_save(api: ApiHarness) ->
     assert api.store.save_calls == []
 
 
+@pytest.mark.parametrize("modes", [["NONE", "NUMERICAL"], ["numerical"], [" NUMERICAL "], ["STRUCTURAL"]])
+def test_unpublished_or_mixed_modes_return_public_400(api: ApiHarness, modes: list[str]) -> None:
+    response = api.post(payload(active_variation_modes=modes))
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "ERR_CONFIG_CONFLICT"
+    assert api.store.save_calls == []
+
+
+def test_canonical_preflight_passes_exact_manifest_to_save(api: ApiHarness) -> None:
+    old = make_context()
+    manifest = {"confirmation_id": "fixture", "sources": [{"source_question_id": str(source.id)} for source in old.source_questions]}
+    api.store.contexts[SESSION_ID] = replace(
+        old,
+        blueprints=(),
+        snapshot_ready=True,
+        snapshot_reason=None,
+        expected_snapshot=manifest,
+        canonical_blueprints=tuple(
+            CanonicalBlueprintConfigContext(
+                source_question_id=source.id,
+                canonical_blueprint={"requirement": {"variation_policy": {"allowed_transformations": [{"dimension": "values"}]}}},
+            )
+            for source in old.source_questions
+        ),
+    )
+    response = api.post(payload(active_variation_modes=["NUMERICAL"]))
+    assert response.status_code == 200
+    assert api.store.save_calls[0][2] == manifest
+
+
 def test_malformed_stored_modes_return_safe_500(api: ApiHarness) -> None:
     context = make_context()
     first, second = context.blueprints
@@ -436,6 +480,14 @@ def test_save_recheck_errors_are_propagated_without_success(
     assert api.store.saved == {}
 
 
+def test_snapshot_load_domain_error_is_preserved(api: ApiHarness) -> None:
+    api.store.load_error = GenerationConfigError(422, "ERR_SOURCE_NOT_READY", "Source changed.")
+    response = api.post(payload())
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "ERR_SOURCE_NOT_READY"
+    assert api.store.save_calls == []
+
+
 def test_save_recheck_mode_conflicts_keep_details(api: ApiHarness) -> None:
     question_id = make_context().source_questions[0].id
     api.store.save_error = GenerationConfigError(
@@ -475,9 +527,7 @@ def test_malformed_or_wrong_session_saved_results_never_return_success(
 
 
 def test_saved_response_model_is_revalidated_at_http_boundary(api: ApiHarness) -> None:
-    saved = GenerationConfigResponse.model_validate(
-        {"session_id": str(SESSION_ID), "status": "configured", "config": payload()}
-    )
+    saved = GenerationConfigResponse.model_validate(receipt())
     saved.config.n_versions = 99
     api.store.saved_result = saved
     response = api.post(payload())
@@ -524,3 +574,10 @@ def test_verified_users_on_same_test_client_have_separate_quotas(api: ApiHarness
     assert response.headers["X-RateLimit-Remaining"] == "59"
     assert api.store.load_calls[-1] == OTHER_SESSION_ID
     assert api.authenticated_client.call_args == call(TOKEN_B)
+
+
+def test_product_app_mounts_one_config_post_route() -> None:
+    from app.main import app
+
+    path = app.openapi()["paths"]["/api/sessions/{session_id}/config"]
+    assert list(path) == ["post"]
