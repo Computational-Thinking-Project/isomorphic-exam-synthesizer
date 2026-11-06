@@ -544,6 +544,14 @@ producer/persistence, progress IDs, integration/conflict and review gates remain
 - Phạm vi: SQL/schema, PostgreSQL tests và docs TASK-302; không sửa nhánh tác giả khác hoặc description PR/issue đã có. Không đánh dấu finding #28 verified thay reviewer; PR giữ Draft đến khi đủ bàn giao/tích hợp.
 - Cập nhật local 03/11: bổ sung worker-only `review_recover_session(UUID)` để discovery + recovery theo session dưới cùng khóa DB, không mở SELECT ledger. Có chín RPC; recovery theo operation ID vẫn giữ nguyên. Kiểm thêm restart, cạnh tranh recovery/completion, rollback, quota và chuỗi 004/005 (`31ed3bc`) → 006 → 007 (`d7a3d3f`) trên fresh/upgrade. Duy đã xác nhận 008 chưa chạy Cloud và đã bỏ. Theo chỉ đạo mới, chỉ hoàn thiện/kiểm local; giao tiếp và commit/push để sau. Không mở rộng source storage hoặc nhận canonical blueprint/hash đã đầy đủ.
 
+## DEC-TV7-007: Nguồn DB duy nhất cho review RPC và confirmed artifacts (TASK-302)
+
+- Ngày/người: 06/11/2026, Hùng (`benalexx007`); chế độ author, workflow v0.1 proposed.
+- Bối cảnh: migration 006 đã vào `dev` qua #28 (`f6b3c73`), lấy từ head `d94f138` của #36 (SQL giống hệt, cùng blob). Sổ này mới ghi DEC-TV7-005/006 và phần persistence của TASK-301, chưa ghi các quy tắc bên dưới.
+- Quyết định: 006 là nguồn DB duy nhất cho ledger/RPC review, lưu source/Blueprint canonical, receipt lookup và producer lease; không giữ 006/008 cạnh tranh. Reserve đóng băng `confirmed_artifacts_v1` (revision nguồn/Blueprint, candidate hiện tại và peer); acquire/complete kiểm lại revision và candidate hiện tại, không kiểm peer, nên Accept/Revert ở slot khác không làm hỏng operation đang chạy. Readiness tính trên toàn bộ source đã xác nhận, không cần dòng Blueprint legacy; review chỉ-legacy vẫn dùng đường cũ nhưng không dispatch regeneration. Không viết lại receipt, lịch sử hay khoản đã tính quota.
+- Bằng chứng: Duy Approve `d94f138` ngày 04/11. Ngày 06/11 chạy lại trên PostgreSQL 15 (Python 3.11 Windows): schema, RPC review, review artifacts và chuỗi 004/005 → 006 → 007 ghim, 83 test OK, không skip. Chưa chạy lại: test producer/consumer TASK-301, toàn bộ backend, và 006 trên chuỗi migration 008–016 hiện tại của `dev`. Không kiểm Supabase/JWT thật hay Gemini thật.
+- Phạm vi ảnh hưởng: chỉ tài liệu trong PR này; contract chuẩn nằm ở [review-rpc-contract.md](api/review-rpc-contract.md), plan ở [TASK-302](tasks/TASK-302.md).
+
 ## DEC-BE1-015: TASK-301 producer persistence và dependency AI đúng Settings
 
 - 04/11/2026 — Duy/TASK-301, theo scope producer đã giao. Tích hợp baseline #36
