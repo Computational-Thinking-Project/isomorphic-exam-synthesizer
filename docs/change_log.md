@@ -1,3 +1,14 @@
+## 05/11/2026 — W2 AI policy: owner confirmations
+
+Duy/BE và Bội Anh/FE đã xác nhận mode aliases/NONE theo các link trong [contract AI](ai-w2-integration.md). Đạt cập nhật policy status và acceptance fixtures; không đổi generator/worker/SQL. Quỳnh giữ clone branch, SQL/RPC snapshot và clone persistence đã merge qua PR32; worker integration vẫn do Quỳnh thực hiện; xác nhận policy không phải nghiệm thu triển khai/E2E.
+
+## DEC-DAT-W2-HANDOFF: Contract hash/resume và public-mode proposal
+
+- Ngày/người: 04/11/2026 — Trương Thành Đạt, theo yêu cầu phối hợp I-B-AI/I-B-POLICY trên PR30.
+- Contract AI hiện có được làm rõ tại [ai-w2-integration.md](ai-w2-integration.md): ordered batch hash khác per-question revision hash, full QuestionResult/provenance và immutable job snapshot cần giữ khi resume. Fixture/test offline bàn giao cho owner worker/SQL.
+- Guard cục bộ: completed candidate.seed phải khớp expected slot seed, không chỉ request fingerprint. Không đổi prompt, provider, retry hoặc quota.
+- Checkpoint04/11 ban đầu proposed; policy aliases/NONE đã được owners xác nhận05/11. SQL/RPC snapshot/result và Original Clone đã merge qua PR32 (migrations015/016); worker/FE E2E vẫn pending. Không sửa SQL/worker/FE/gateway/Docker hay nhận W2 E2E đã đạt. [Scope/phối hợp](tasks/TASK-AI-W2-CONTRACT.md).
+
 ## TASK-204 PR #43 review findings F01–F03 — 06/11/2026 (proposed)
 
 Migration 014 revokes application access to the legacy confirmation RPC.
