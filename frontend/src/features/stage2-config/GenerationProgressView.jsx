@@ -65,7 +65,7 @@ export default function GenerationProgressView({
   sessionTitle = '',
   numVersions = null,
   totalSourceQuestions = 10,
-  progress = {},
+  progress = null,
   questionStatuses = {},
   warnings = [],
   connectionState = 'connected',
@@ -90,8 +90,17 @@ export default function GenerationProgressView({
 
   const [activeVersionTab, setActiveVersionTab] = useState(1);
   const totalVariants = effectiveNumVersions ? effectiveNumVersions * totalSourceQuestions : null;
-  const percent = Math.min(100, Math.max(0, progress.percent ?? 0));
-  const completedCount = progress.completedCount ?? 0;
+
+  // F02: Phân biệt rõ ràng giữa "Chưa có dữ liệu snapshot" và "Đã xác nhận chưa lưu câu nào (0/4)"
+  const hasSnapshotData = Boolean(
+    progress &&
+    (progress.hasData === true ||
+     (progress.completedCount !== undefined && progress.completedCount !== null) ||
+     (progress.percent !== undefined && progress.percent !== null))
+  );
+
+  const percent = hasSnapshotData ? Math.min(100, Math.max(0, progress.percent ?? 0)) : 0;
+  const completedCount = hasSnapshotData ? (progress.completedCount ?? 0) : null;
 
   const isPartial =
     progress?.session_status === 'partial_generated' ||
@@ -167,13 +176,15 @@ export default function GenerationProgressView({
         <div className="mt-6">
           <div className="flex items-baseline justify-between">
             <span className="text-3xl font-extrabold text-white">
-              {percent}%
+              {hasSnapshotData ? `${percent}%` : '--%'}
             </span>
             <div className="text-right text-xs text-slate-400">
               <span className="font-semibold text-slate-200">
-                {totalVariants ? `${completedCount} / ${totalVariants}` : `${completedCount} câu`}
+                {hasSnapshotData
+                  ? (totalVariants ? `${completedCount} / ${totalVariants}` : `${completedCount} câu`)
+                  : 'Chưa có dữ liệu tiến độ'}
               </span>{' '}
-              {totalVariants ? 'câu hỏi đã hoàn tất' : 'đã xử lý'}
+              {hasSnapshotData && (totalVariants ? 'câu hỏi đã hoàn tất' : 'đã xử lý')}
             </div>
           </div>
 
@@ -185,17 +196,19 @@ export default function GenerationProgressView({
                   ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
                   : 'bg-gradient-to-r from-sky-500 via-indigo-500 to-sky-400'
               }`}
-              style={{ width: `${percent}%` }}
+              style={{ width: `${hasSnapshotData ? percent : 0}%` }}
             />
           </div>
 
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
             <p className="flex items-center gap-1.5">
               <Sparkles className="h-3.5 w-3.5 text-sky-400" />
-              {progress.message || (isDone ? 'Hoàn thành sinh tất cả các mã đề.' : 'Đang xử lý song song các mã đề...')}
+              {hasSnapshotData
+                ? (progress?.message || (isDone ? 'Hoàn thành sinh tất cả các mã đề.' : 'Đang xử lý song song các mã đề...'))
+                : 'Chưa có dữ liệu tiến độ cho phiên làm việc này.'}
             </p>
 
-            {progress.estimatedSeconds !== null && !isDone && (
+            {hasSnapshotData && progress?.estimatedSeconds !== null && progress?.estimatedSeconds !== undefined && !isDone && (
               <p className="flex items-center gap-1 text-slate-300">
                 <Clock className="h-3.5 w-3.5 text-slate-400" />
                 Thời gian ước tính: ~{progress.estimatedSeconds}s
@@ -302,11 +315,17 @@ export default function GenerationProgressView({
                     Tiến trình hoàn thành một phần (<code>partial_generated</code>)
                   </h4>
                   <p className="mt-1 text-xs text-amber-200/90">
-                    Đã tạo được <strong className="text-white">{completedCount}</strong>
-                    {totalVariants ? ` / ${totalVariants}` : ''} câu hỏi ({percent}%).
-                    {totalVariants && completedCount < totalVariants
-                      ? ` Còn thiếu ${totalVariants - completedCount} câu do gặp lỗi hoặc hạn mức sinh đề.`
-                      : ' Một số câu hỏi chưa thể hoàn tất đầy đủ.'}
+                    {hasSnapshotData ? (
+                      <>
+                        Đã tạo được <strong className="text-white">{completedCount}</strong>
+                        {totalVariants ? ` / ${totalVariants}` : ''} câu hỏi ({percent}%).
+                        {totalVariants && completedCount < totalVariants
+                          ? ` Còn thiếu ${totalVariants - completedCount} câu do gặp lỗi hoặc hạn mức sinh đề.`
+                          : ' Một số câu hỏi chưa thể hoàn tất đầy đủ.'}
+                      </>
+                    ) : (
+                      'Chưa có dữ liệu tiến độ cho các câu hỏi của phiên làm việc này.'
+                    )}
                   </p>
                 </div>
               </div>
