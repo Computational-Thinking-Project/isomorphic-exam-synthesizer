@@ -9,9 +9,15 @@ import { requestEventTicket } from '../services/stage2Service.js';
  * - P1.6: Tự động xin lại ticket mới và tái kết nối kèm last_event_id khi rớt mạng.
  * - Phân biệt rành mạch giữa Lỗi nghiệp vụ máy chủ (Job Error - dừng ngay) và Lỗi kết nối mạng (Network Error - reconnect).
  * - Cô lập phiên làm việc hoàn toàn: huỷ các ticket trả muộn, chặn rò rỉ state/stream giữa phiên A và B.
+ * - F04: Phục hồi mất lịch sử (single recovery flight, HTTP 409 diagnostic, resume_after_event_id & stream_epoch).
+ * - F06: Loại bỏ kết quả trả muộn từ phiên A khi đã chuyển sang phiên B hoặc unmount.
  */
 export function useSSE(sessionId, {
   enabled = true,
+  initialProgress = null,
+  initialQuestionStatuses = null,
+  initialResumeAfterEventId = null,
+  initialStreamEpoch = null,
   requestTicket = requestEventTicket,
   eventSourceFactory = (url) => new EventSource(url),
   maxReconnectAttempts = 5,
@@ -19,19 +25,39 @@ export function useSSE(sessionId, {
   onQuestionStatus,
   onDone,
   onError,
+  onResync,
 } = {}) {
   const [connectionState, setConnectionState] = useState('idle');
   // 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'completed' | 'disconnected' | 'failed'
 
-  const [progress, setProgress] = useState({
-    percent: 0,
-    completedCount: 0,
-    totalCount: 0,
-    message: '',
-    estimatedSeconds: null,
-  });
+  const createDefaultProgress = (initial) => {
+    if (initial) {
+      return {
+        hasData: initial.hasData ?? true,
+        percent: initial.percent ?? (initial.percent_complete ?? 0),
+        completedCount: initial.completedCount ?? (initial.completed_count ?? 0),
+        totalCount: initial.totalCount ?? (initial.total_count ?? 0),
+        message: initial.message || '',
+        estimatedSeconds: initial.estimatedSeconds ?? (initial.estimated_seconds ?? null),
+        session_status: initial.session_status || initial.status || null,
+        is_partial: Boolean(initial.is_partial),
+      };
+    }
+    return {
+      hasData: false,
+      percent: 0,
+      completedCount: 0,
+      totalCount: 0,
+      message: '',
+      estimatedSeconds: null,
+      session_status: null,
+      is_partial: false,
+    };
+  };
 
-  const [questionStatuses, setQuestionStatuses] = useState({});
+  // F02: Khởi tạo progress có cờ hasData để phân biệt snapshot thật với trạng thái rỗng chưa có dữ liệu
+  const [progress, setProgress] = useState(() => createDefaultProgress(initialProgress));
+  const [questionStatuses, setQuestionStatuses] = useState(() => initialQuestionStatuses || {});
   const [warnings, setWarnings] = useState([]);
   const [error, setError] = useState(null);
   const [isDone, setIsDone] = useState(false);
@@ -39,14 +65,26 @@ export function useSSE(sessionId, {
 
   const eventSourceRef = useRef(null);
   const reconnectTimerRef = useRef(null);
-  const lastEventIdRef = useRef(null);
+  const lastEventIdRef = useRef(
+    initialResumeAfterEventId ?? initialProgress?.resume_after_event_id ?? null,
+  );
+  const epochRef = useRef(
+    initialStreamEpoch ?? initialProgress?.stream_epoch ?? null,
+  );
   const isMountedRef = useRef(true);
   const reconnectAttemptRef = useRef(0);
   const isDoneRef = useRef(false);
+  const isRecoveringRef = useRef(false);
+  const hasOpenedRef = useRef(false);
+  const connectRef = useRef(null);
+  const recoveryFlightTokenRef = useRef(0);
 
   // Bộ định danh phiên và lượt kết nối để cô lập tuyệt đối tác vụ
   const activeSessionIdRef = useRef(sessionId);
   const connectionTokenRef = useRef(0);
+  const prevSessionIdRef = useRef(sessionId);
+  const lastInitialProgressRef = useRef(initialProgress);
+  const lastInitialStatusesRef = useRef(initialQuestionStatuses);
 
   // Safe callback refs to avoid re-triggering effects
   const callbacksRef = useRef({
@@ -54,6 +92,7 @@ export function useSSE(sessionId, {
     onQuestionStatus,
     onDone,
     onError,
+    onResync,
     requestTicket,
     eventSourceFactory,
   });
@@ -64,6 +103,7 @@ export function useSSE(sessionId, {
       onQuestionStatus,
       onDone,
       onError,
+      onResync,
       requestTicket,
       eventSourceFactory,
     };
@@ -84,6 +124,141 @@ export function useSSE(sessionId, {
     }
   }, []);
 
+  // F04 / F06: Quy trình phục hồi mất lịch sử duy nhất (Single-Flight Recovery Lock)
+  const triggerRecovery = useCallback(async () => {
+    if (isRecoveringRef.current || isDoneRef.current || !isMountedRef.current) {
+      return;
+    }
+    isRecoveringRef.current = true;
+    cleanupConnection();
+
+    const currentToken = connectionTokenRef.current;
+    const targetSessionId = activeSessionIdRef.current;
+    const thisFlight = ++recoveryFlightTokenRef.current;
+
+    try {
+      if (callbacksRef.current.onResync) {
+        const freshSnapshot = await callbacksRef.current.onResync(targetSessionId);
+
+        // F06: Kiểm tra phiên, token kết nối và flight sau khi onResync hoàn tất (await network)
+        // Nếu đã unmount, đổi phiên hoặc có lượt phục hồi mới -> HỦY BỎ kết quả snapshot cũ!
+        if (
+          !isMountedRef.current ||
+          recoveryFlightTokenRef.current !== thisFlight ||
+          connectionTokenRef.current !== currentToken ||
+          activeSessionIdRef.current !== targetSessionId
+        ) {
+          isRecoveringRef.current = false;
+          return;
+        }
+
+        if (freshSnapshot) {
+          // Áp dụng mốc đồng bộ từ snapshot mới (resume_after_event_id, stream_epoch)
+          if (
+            freshSnapshot.resume_after_event_id !== undefined &&
+            freshSnapshot.resume_after_event_id !== null
+          ) {
+            lastEventIdRef.current = freshSnapshot.resume_after_event_id;
+          } else {
+            lastEventIdRef.current = null;
+          }
+
+          if (
+            freshSnapshot.stream_epoch !== undefined &&
+            freshSnapshot.stream_epoch !== null
+          ) {
+            epochRef.current = freshSnapshot.stream_epoch;
+          } else {
+            epochRef.current = null;
+          }
+
+          if (freshSnapshot.progress) {
+            setProgress((prev) => ({
+              ...(prev || {}),
+              hasData: true,
+              ...freshSnapshot.progress,
+            }));
+          }
+
+          if (freshSnapshot.question_statuses) {
+            setQuestionStatuses((prev) => ({
+              ...prev,
+              ...freshSnapshot.question_statuses,
+            }));
+          }
+
+          // F07 / F09: Chỉ hoàn tất ngay khi backend XÁC NHẬN generated (status hoặc session_status === 'generated').
+          // Nếu backend vẫn là 'generating' (kể cả khi tiến độ đã 100%), KHÔNG đánh dấu done,
+          // mà tiếp tục nối lại stream để lắng nghe sự kiện done hoặc lỗi máy chủ.
+          const freshStatus =
+            freshSnapshot.status ||
+            freshSnapshot.session_status ||
+            freshSnapshot.progress?.session_status ||
+            freshSnapshot.progress?.status;
+
+          const isSnapshotDone =
+            String(freshStatus || '').trim().toLowerCase() === 'generated';
+
+          if (isSnapshotDone) {
+            isDoneRef.current = true;
+            setIsDone(true);
+            setConnectionState('completed');
+            isRecoveringRef.current = false;
+            callbacksRef.current.onDone?.(freshSnapshot);
+            return;
+          }
+        }
+      }
+
+      // F06: Tái kiểm tra trước khi lên lịch kết nối lại
+      if (
+        !isMountedRef.current ||
+        recoveryFlightTokenRef.current !== thisFlight ||
+        connectionTokenRef.current !== currentToken ||
+        activeSessionIdRef.current !== targetSessionId
+      ) {
+        isRecoveringRef.current = false;
+        return;
+      }
+
+      if (reconnectAttemptRef.current < maxReconnectAttempts) {
+        reconnectAttemptRef.current += 1;
+        setReconnectCount(reconnectAttemptRef.current);
+        setConnectionState('reconnecting');
+        reconnectTimerRef.current = setTimeout(() => {
+          isRecoveringRef.current = false;
+          connectRef.current?.();
+        }, 600);
+      } else {
+        isRecoveringRef.current = false;
+        setConnectionState('failed');
+        setError('Mất lịch sử sự kiện và vượt quá số lần thử kết nối lại.');
+      }
+    } catch {
+      isRecoveringRef.current = false;
+      if (
+        !isMountedRef.current ||
+        recoveryFlightTokenRef.current !== thisFlight ||
+        connectionTokenRef.current !== currentToken ||
+        activeSessionIdRef.current !== targetSessionId
+      ) {
+        return;
+      }
+
+      if (reconnectAttemptRef.current < maxReconnectAttempts) {
+        reconnectAttemptRef.current += 1;
+        setReconnectCount(reconnectAttemptRef.current);
+        setConnectionState('reconnecting');
+        reconnectTimerRef.current = setTimeout(() => {
+          connectRef.current?.();
+        }, 1000);
+      } else {
+        setConnectionState('failed');
+        setError('Không thể phục hồi tiến trình sau khi mất lịch sử sự kiện.');
+      }
+    }
+  }, [cleanupConnection, maxReconnectAttempts]);
+
   const connect = useCallback(async () => {
     const currentToken = ++connectionTokenRef.current;
     const currentSessionId = sessionId;
@@ -103,7 +278,11 @@ export function useSSE(sessionId, {
 
     let ticket;
     try {
-      const ticketRes = await callbacksRef.current.requestTicket(sessionId);
+      const ticketRes = await callbacksRef.current.requestTicket(
+        sessionId,
+        lastEventIdRef.current,
+        epochRef.current,
+      );
       // Kiểm tra xem lượt gọi này còn hợp lệ không trước khi tiếp tục
       if (
         !isMountedRef.current ||
@@ -115,6 +294,10 @@ export function useSSE(sessionId, {
       }
 
       ticket = ticketRes?.ticket;
+      if (ticketRes?.reset_cursor) {
+        lastEventIdRef.current = null;
+        epochRef.current = null;
+      }
       if (!ticket) {
         throw new Error('Không nhận được ticket xác thực từ máy chủ.');
       }
@@ -125,6 +308,21 @@ export function useSSE(sessionId, {
         activeSessionIdRef.current !== currentSessionId ||
         !enabled
       ) {
+        return;
+      }
+
+      const status = ticketError?.response?.status ?? ticketError?.status;
+      const isHistoryLostOrConflict =
+        status === 409 ||
+        ticketError?.code === 'ERR_CURSOR_OUTDATED' ||
+        ticketError?.error_code === 'ERR_CURSOR_OUTDATED' ||
+        ticketError?.code === 'ERR_EVENT_HISTORY_LOST' ||
+        ticketError?.error_code === 'ERR_EVENT_HISTORY_LOST' ||
+        ticketError?.reset_cursor === true;
+
+      // F04: Nếu mất lịch sử hoặc xung đột con trỏ trước khi mở stream
+      if (isHistoryLostOrConflict) {
+        void triggerRecovery();
         return;
       }
 
@@ -153,10 +351,14 @@ export function useSSE(sessionId, {
     }
 
     let url = `/api/sessions/${encodeURIComponent(sessionId)}/events?ticket=${encodeURIComponent(ticket)}`;
-    if (lastEventIdRef.current) {
+    if (lastEventIdRef.current !== null && lastEventIdRef.current !== undefined) {
       url += `&last_event_id=${encodeURIComponent(lastEventIdRef.current)}`;
     }
+    if (epochRef.current !== null && epochRef.current !== undefined) {
+      url += `&stream_epoch=${encodeURIComponent(epochRef.current)}`;
+    }
 
+    hasOpenedRef.current = false;
     let es;
     try {
       es = callbacksRef.current.eventSourceFactory(url);
@@ -171,6 +373,8 @@ export function useSSE(sessionId, {
 
     es.onopen = () => {
       if (!isMountedRef.current || connectionTokenRef.current !== currentToken) return;
+      hasOpenedRef.current = true;
+      isRecoveringRef.current = false;
       setConnectionState('connected');
       reconnectAttemptRef.current = 0;
       setReconnectCount(0);
@@ -200,6 +404,24 @@ export function useSSE(sessionId, {
     const handleJobError = (payloadOrEvent) => {
       if (!isMountedRef.current || connectionTokenRef.current !== currentToken) return;
       const data = payloadOrEvent?.data !== undefined ? parsePayload(payloadOrEvent) : payloadOrEvent;
+
+      // F04: Xử lý cơ chế phục hồi khi cursor sự kiện bị trôi (> 50 events buffer overflow), mất lịch sử hoặc server restart
+      const isHistoryLost =
+        data?.error_code === 'ERR_CURSOR_OUTDATED' ||
+        data?.code === 'ERR_CURSOR_OUTDATED' ||
+        data?.error_code === 'ERR_EVENT_HISTORY_LOST' ||
+        data?.code === 'ERR_EVENT_HISTORY_LOST' ||
+        data?.error_code === 'ERR_HISTORY_LOST' ||
+        data?.code === 'ERR_HISTORY_LOST' ||
+        data?.requires_resync === true ||
+        data?.reset_cursor === true ||
+        data?.status === 409;
+
+      if (isHistoryLost) {
+        void triggerRecovery();
+        return;
+      }
+
       const errorMsg =
         data?.error_message ||
         data?.message ||
@@ -222,11 +444,13 @@ export function useSSE(sessionId, {
       if (data) {
         const percentVal = data.percent_complete ?? data.percent;
         setProgress((prev) => ({
-          percent: percentVal !== undefined ? percentVal : prev.percent,
-          completedCount: data.completed_count ?? data.completedCount ?? prev.completedCount,
-          totalCount: data.total_count ?? data.totalCount ?? prev.totalCount,
-          message: data.message ?? prev.message,
-          estimatedSeconds: data.estimated_seconds ?? data.estimatedSeconds ?? prev.estimatedSeconds,
+          ...(prev || {}),
+          hasData: true,
+          percent: percentVal !== undefined ? percentVal : (prev?.percent ?? 0),
+          completedCount: data.completed_count ?? data.completedCount ?? (prev?.completedCount ?? 0),
+          totalCount: data.total_count ?? data.totalCount ?? (prev?.totalCount ?? null),
+          message: data.message ?? prev?.message ?? '',
+          estimatedSeconds: data.estimated_seconds ?? data.estimatedSeconds ?? prev?.estimatedSeconds ?? null,
         }));
 
         // Hỗ trợ cập nhật trạng thái câu hỏi trực tiếp trong payload progress
@@ -334,16 +558,17 @@ export function useSSE(sessionId, {
 
       setProgress((prev) => {
         const currentCompleted =
-          data?.completed_count ?? data?.completedCount ?? prev.completedCount ?? 0;
+          data?.completed_count ?? data?.completedCount ?? prev?.completedCount ?? 0;
         const currentTotal =
-          data?.total_count ?? data?.totalCount ?? prev.totalCount ?? null;
+          data?.total_count ?? data?.totalCount ?? prev?.totalCount ?? null;
         const currentPercent =
           data?.percent_complete ??
           data?.percent ??
-          (isPartial ? (prev.percent ?? 50) : 100);
+          (isPartial ? (prev?.percent ?? 50) : 100);
 
         return {
-          ...prev,
+          ...(prev || {}),
+          hasData: true,
           percent: currentPercent,
           completedCount: currentCompleted,
           totalCount: currentTotal,
@@ -363,7 +588,7 @@ export function useSSE(sessionId, {
       callbacksRef.current.onDone?.(data);
     });
 
-    // 7. Xử lý rớt mạng thực sự (onerror không có payload data)
+    // 7. Xử lý lỗi kết nối EventSource (onerror)
     es.onerror = (err) => {
       if (!isMountedRef.current || connectionTokenRef.current !== currentToken || isDoneRef.current) return;
 
@@ -373,6 +598,25 @@ export function useSSE(sessionId, {
       }
 
       cleanupConnection();
+
+      // F04: Chỉ kích hoạt phục hồi ngay nếu server phát tín hiệu rõ ràng về mã 409 hoặc mất lịch sử
+      const errStatus = err?.status ?? err?.target?.status;
+      const isExplicit409 =
+        errStatus === 409 ||
+        err?.message?.includes('409') ||
+        err?.code === 'ERR_EVENT_HISTORY_LOST' ||
+        err?.error_code === 'ERR_EVENT_HISTORY_LOST' ||
+        err?.code === 'ERR_CURSOR_OUTDATED' ||
+        err?.error_code === 'ERR_CURSOR_OUTDATED';
+
+      if (isExplicit409) {
+        void triggerRecovery();
+        return;
+      }
+
+      // F04 Ca còn lỗi 2: Với lỗi kết nối mạng thông thường (kể cả trước onopen), FE thử kết nối lại từ mốc cũ.
+      // Quá trình connect() sẽ gửi ticket request kèm lastEventIdRef.current và epochRef.current.
+      // Nếu backend báo mất lịch sử (HTTP 409), connect() sẽ bắt lỗi và kích hoạt triggerRecovery().
 
       if (reconnectAttemptRef.current < maxReconnectAttempts) {
         reconnectAttemptRef.current += 1;
@@ -386,36 +630,105 @@ export function useSSE(sessionId, {
         callbacksRef.current.onError?.(err);
       }
     };
-  }, [sessionId, enabled, maxReconnectAttempts, cleanupConnection]);
+  }, [sessionId, enabled, maxReconnectAttempts, cleanupConnection, triggerRecovery]);
 
-  // Kích hoạt kết nối và RESET state sạch sẽ khi sessionId hoặc enabled thay đổi
+  // Lưu connect ref để triggerRecovery gọi lại mà không bị vòng lặp phụ thuộc
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
+
+  // F04 / F06: Quản lý khởi tạo marks và cô lập trạng thái khi đổi phiên (A -> B -> A)
+  useEffect(() => {
+    const isNewSession = prevSessionIdRef.current !== sessionId;
+    prevSessionIdRef.current = sessionId;
+
+    if (isNewSession) {
+      activeSessionIdRef.current = sessionId;
+      connectionTokenRef.current += 1;
+      recoveryFlightTokenRef.current += 1;
+      isDoneRef.current = false;
+      isRecoveringRef.current = false;
+      hasOpenedRef.current = false;
+      reconnectAttemptRef.current = 0;
+
+      // Reset sạch sẽ trạng thái của phiên cũ để tránh rò rỉ sang phiên mới
+      setProgress(createDefaultProgress(initialProgress));
+      setQuestionStatuses(initialQuestionStatuses || {});
+      setWarnings([]);
+      setError(null);
+      setIsDone(false);
+      setReconnectCount(0);
+
+      lastEventIdRef.current =
+        initialResumeAfterEventId ?? initialProgress?.resume_after_event_id ?? null;
+      epochRef.current =
+        initialStreamEpoch ?? initialProgress?.stream_epoch ?? null;
+    } else {
+      // Cùng phiên: Khi trang nạp snapshot ban đầu bất đồng bộ (hoặc áp dụng snapshot)
+      // KHÔNG reset null cursor/epoch, mà bảo tồn hoặc áp dụng marks từ snapshot
+      if (
+        lastEventIdRef.current === null &&
+        initialResumeAfterEventId !== null &&
+        initialResumeAfterEventId !== undefined
+      ) {
+        lastEventIdRef.current = initialResumeAfterEventId;
+      }
+      if (
+        epochRef.current === null &&
+        initialStreamEpoch !== null &&
+        initialStreamEpoch !== undefined
+      ) {
+        epochRef.current = initialStreamEpoch;
+      }
+
+      const isProgressEqual = (a, b) => {
+        if (a === b) return true;
+        if (!a || !b) return false;
+        const pa = a.percent ?? a.percent_complete ?? 0;
+        const pb = b.percent ?? b.percent_complete ?? 0;
+        const ca = a.completedCount ?? a.completed_count ?? 0;
+        const cb = b.completedCount ?? b.completed_count ?? 0;
+        const ta = a.totalCount ?? a.total_count ?? null;
+        const tb = b.totalCount ?? b.total_count ?? null;
+        return pa === pb && ca === cb && ta === tb && Boolean(a.hasData) === Boolean(b.hasData);
+      };
+
+      if (
+        (initialProgress?.hasData ||
+          (initialProgress?.percent !== undefined && initialProgress?.percent !== null)) &&
+        !isProgressEqual(lastInitialProgressRef.current, initialProgress)
+      ) {
+        lastInitialProgressRef.current = initialProgress;
+        if (!hasOpenedRef.current) {
+          setProgress(createDefaultProgress(initialProgress));
+        }
+      }
+
+      if (
+        initialQuestionStatuses &&
+        Object.keys(initialQuestionStatuses).length > 0 &&
+        JSON.stringify(lastInitialStatusesRef.current) !== JSON.stringify(initialQuestionStatuses)
+      ) {
+        lastInitialStatusesRef.current = initialQuestionStatuses;
+        if (!hasOpenedRef.current) {
+          setQuestionStatuses(initialQuestionStatuses);
+        }
+      }
+    }
+  }, [sessionId, initialProgress, initialQuestionStatuses, initialResumeAfterEventId, initialStreamEpoch]);
+
+  // Quản lý kết nối SSE: CHỈ chạy khi sessionId hoặc enabled thay đổi, KHÔNG phụ thuộc snapshot props
   useEffect(() => {
     isMountedRef.current = true;
     activeSessionIdRef.current = sessionId;
-    connectionTokenRef.current += 1;
-    isDoneRef.current = false;
-    reconnectAttemptRef.current = 0;
-
-    // Reset sạch sẽ trạng thái của phiên cũ để tránh rò rỉ sang phiên mới
-    setProgress({
-      percent: 0,
-      completedCount: 0,
-      totalCount: 0,
-      message: '',
-      estimatedSeconds: null,
-    });
-    setQuestionStatuses({});
-    setWarnings([]);
-    setError(null);
-    setIsDone(false);
-    setReconnectCount(0);
-    lastEventIdRef.current = null;
 
     if (enabled && sessionId) {
       connect();
     } else {
       cleanupConnection();
-      setConnectionState('idle');
+      if (!enabled) {
+        setConnectionState((prev) => (prev === 'completed' ? prev : 'idle'));
+      }
     }
 
     return () => {
@@ -427,25 +740,23 @@ export function useSSE(sessionId, {
   // Hàm thủ công cho phép người dùng bấm "Kết nối lại" hoặc kích hoạt vòng theo dõi mới khi sinh bù trong cùng một phiên
   const manualReconnect = useCallback(() => {
     isDoneRef.current = false;
+    isRecoveringRef.current = false;
+    hasOpenedRef.current = false;
     setIsDone(false);
+    setProgress((prev) => ({
+      ...(prev || {}),
+      session_status: 'generating',
+    }));
     reconnectAttemptRef.current = 0;
     setReconnectCount(0);
     setError(null);
-    // Giữ nguyên lastEventIdRef.current của phiên hiện tại để tiếp tục mốc sự kiện đã nhận,
-    // tránh bị từ chối do backend broker chỉ lưu buffer giới hạn (ví dụ: 50 sự kiện gần nhất).
-    setProgress((prev) => ({
-      ...prev,
-      session_status: 'generating',
-      is_partial: false,
-      message: 'Đang kết nối lại tiến trình sinh đề...',
-    }));
     connect();
   }, [connect]);
 
   const isPartial = Boolean(
-    progress.is_partial ||
-      progress.session_status === 'partial_generated' ||
-      (isDone && (progress.percent ?? 100) < 100),
+    progress?.is_partial ||
+    progress?.session_status === 'partial_generated' ||
+    (isDone && (progress?.percent ?? 100) < 100),
   );
 
   return {

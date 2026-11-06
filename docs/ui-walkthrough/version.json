@@ -1,25 +1,26 @@
 {
-  "packageId": "UI-WALKTHROUGH-20261101-S06-REGENERATE-ONLY",
-  "packagedDate": "2026-11-01",
+  "packageId": "UI-WALKTHROUGH-20261102-TRANSPARENT-BRAND-HANDOFF-V2",
+  "packagedDate": "2026-11-02",
   "timezone": "Asia/Bangkok",
   "kind": "Portable UI with sample data; not integrated product or AI output",
-  "branch": "feat/ui-ux-demo",
-  "repositoryBaseAtPackaging": "6fef4e1f3f6aa830a8d965369d5ec8b00476dcb9",
+  "branch": "fix/ui-ux-demo",
+  "repositoryBaseAtPackaging": "289ada0c39b609d35f81eee34c19f6916441581f",
   "artifact": {
     "file": "PREVIEW.html",
-    "bytes": 2752027,
-    "sha256": "13543c80074d7eaf17072892e392ffa3bed952275da6feef76ee2efb2b4a9dc1",
+    "bytes": 2858883,
+    "sha256": "8f9d6ebca4ad42b3ebddc15cf2fb4119b9599b8eb175c1b2c4d749b5f779dfaa",
     "sourceWorkspaceRelativePath": "project/ui-draft/redesign/PREVIEW.html",
-    "sourceDateFromReview": "2026-11-01",
+    "sourceDateFromReview": "2026-11-02",
     "sourceCommit": null,
     "sourceCommitNote": "ui-draft lives outside the product Git repository; repositoryBaseAtPackaging is not the artifact source commit",
     "built": [
-      "index-WFK8JX_V.css",
-      "index-BGqR_Xk3.js"
+      "index-BGhsC9Oi.js",
+      "index-CfK_83Th.css"
     ],
     "selfContained": true,
     "thirdPartyNoticesEmbedded": true,
-    "rebuiltDuringPackaging": true
+    "rebuiltDuringPackaging": false,
+    "buildNote": "Verified transparent-brand/v2 ui-draft build copied byte-for-byte; no rebuild during commit preparation."
   },
   "checkpoints": [
     {
@@ -59,39 +60,100 @@
     "S05ToS06": "Shared scheduler continues without restarting its outstanding timer. New run selects question1/code101 with zero approvals. Question3/code101 intentionally has duplicate B=C content as a demo issue; no preapproved Presenter preset.",
     "S06Loading": "Per selected code, active spinner/pending clock/failed icon in clickable cells and tabs. Selected active or pending pair displays right-panel skeleton; source stays visible. Unreceived variant content/key/steps are hidden.",
     "recovery": "Continue healthy queued pairs after a failure; retry only failed pairs with run/pair/revision guards. Shared pause/resume. New run resets selection/pause; stale callbacks and unmount leases are guarded.",
-    "review": "S06 is read-only with no edit/save/attestation/dirty guard. Current approvals and regenerated content survive other receipts. Approval selects next unapproved source, keeps code, never auto S07.",
+    "review": "View captures generation run, pair/source/variant revision. Own acknowledged regeneration refreshes inspection in place; external changes invalidate it. Old approval callbacks cannot approve new revision/run. Explicit approval still closes popup, selects next unapproved source, keeps code, never auto S07.",
     "finalization": "All received valid pairs plus readiness, all current approvals and current copy marks are still required.",
     "S06Notifications": "Body-portal toasts under header, max2 visible/5000ms each, dismiss/dedupe/scope cleanup. Modal errors and persistent recovery controls remain; no editor warnings.",
-    "S00ToS01": "CTA ends with S00; no CTA ghost on S01; logo/slogan450ms, card300ms with delay130ms",
-    "regenerate": "One confirmed Tạo lại content action: received/missing/excluded pair uses bounded sample replacement, failed pair enqueues scoped retry. Active/pending/permanent sample failure/snapshot/offline/conflict blocked. Lock/run/pair/source+variant revision guards, unmount cleanup, acknowledgement/rejection handling. Regenerated pair stays unapproved, copy marks invalidated. Finite offsets1..8, no duplicate current/same-source other-code content.",
+    "S00ToS01": "Ready pointer flow: legacy logo travels450ms with uniform scale to matching ink bounds inside the fixed signature frame. Completed travel immediately starts140ms signature-over-legacy crossfade; final React render removes legacy node. Normal configured total590ms. Slogan450ms/card300ms+delay130ms/focus immediate retained. Arrival contains logo+slogan. Both assets/fonts prepare in background; click never waits2s. Not-ready/direct/sign-out/keyboard/programmatic/reduced/hidden/invalid or interruption/failure -> final signature immediately. Leases/observer/image-error cleanup prevent stale replay. Native timing/geometry pending.",
+    "regenerate": "Inside inspection only: valid/missing/excluded replacement or scoped failed-pair retry. Keep bounded1..8 pool, locks/run/pair/source+variant revision guards, no stale dispatch. Failed/missing recovery popup never invents question/key/steps. Retry shows skeleton in same popup until receipt. Rejection/throw/pool full stays inline with old data/error. Permanent sample failure/snapshot/offline/conflict remain blocked.",
     "persistence": "Tab memory only",
     "realPDFExport": false,
-    "defaultContentIssue": "G03/101 intentionally has B=C, source/key/steps intact, check=issue, no preapproval. Content error after receipt, not failed job. Regenerate, reopen answers/steps and explicitly approve; no manual editing or reseeding on revisit."
+    "defaultContentIssue": "G03/101 B=C stays intentional with0approvals/Cau1 selected first. Inspect B=C, Tạo lại/confirm inside same popup, read new question/key/steps there, explicitly approve. No manual edit or reseeding on revisit.",
+    "S06Popup": "Main S06 has Kiểm tra đáp án entry; Tạo lại only inside the single inspection Modal, next to approval in a right-aligned group. No Quay lại. Header X/Esc/backdrop close and cancel unsubmitted intent; closing disabled only while regeneration is busy. Inline confirmation uses Hủy tạo lại/Tạo lại đúng cặp. Successful model acknowledgement refreshes the same popup to the exact new revision; user must read/approve explicitly. No nested dialog or autoapproval.",
+    "answerKeyHighlight": "Plan A in S03 reading view and both S06 panels: light blue-gray fill, navy left border and passive Đáp án label on the assigned option ID. Follows shuffled order. Missing/empty/duplicate IDs or invalid order do not invent a marker. Duplicate B=C content still marks only assigned C and keeps warning/approval block. Green approval is separate. Student/original papers have no answer markers; popup summary unchanged.",
+    "S00": "Small original logo plus visible EXAM MIRROR h1, original slogan/description/CTA. Audience, login hint and both artwork captions removed; decorative artwork retained. Four600ms entrance groups at0/80/160/240ms, total840ms.",
+    "sharedBrand": "S00 retains original intro mark. S01 after handoff and workspace S02-S08/menu use user transparent signature; old mark is temporary only during eligible S00-to-S01 travel/replacement. Mobile logo256px/two-row112px header; compact desktop52/56px header retained. Light is transparent, dark-only light backing for black lettering, named image fallback."
   },
   "checks": {
-    "staticPackageVerification": "See local verification report; source/dist/package bytes and hash checked; native Chrome not run",
+    "staticPackageVerification": "Source/dist/package bytes/hash, exactly one payload for each logo, fonts/notices, relative links, attributes, scope and diff checked before commit; no native Chrome.",
     "nativeChrome": "not run",
     "keyboardFocusScroll": "not run",
     "rehearsal": "not run",
     "sourceChecks": {
-      "date": "2026-11-01",
-      "regenerateOnlyFocused": 26,
-      "progressiveReview": 27,
-      "s06Regression": 29,
+      "date": "2026-11-02",
+      "total": 20,
+      "result": "passed in ui-draft",
+      "scope": "Actual components/hooks/runner with fake DOM/WAAPI/decoder/ResizeObserver and simulated effect replay. Geometry arithmetic, preload/bypass, phase completion/removal, interrupt/unmount/stale callbacks, runner compatibility and modal/page smoke. Not native rendering/focus/timing/StrictMode pass.",
+      "unchangedOtherSourceFiles": 58,
+      "unchangedPublicAssets": 62,
+      "makePortableUnchanged": true,
+      "typeScript": "passed",
+      "build": "passed,1625 modules",
+      "otherChecks": "Older350ms/slogan-only assertions replaced; previous whole workflow/branding suites not claimed rerun."
+    },
+    "previousPopupChecks": {
+      "date": "2026-11-02",
+      "popupFocused": 30,
+      "s06Regression": 28,
+      "progressiveReview": 26,
+      "regenerationHookRegression": 17,
       "algebraRegression": 36,
       "toastRegression": 14,
-      "total": 132,
+      "total": 151,
+      "otherScreenMarkupComparisons": 40,
       "result": "passed in ui-draft",
-      "scope": "Fake timers, reducers/selectors, in-memory hooks, React element/static markup; not native Chrome or real AI. Scheduler regressions use a controlled clean-content fixture; focused cases cover actual B=C→regenerate→approve. Obsolete edit/save/stale assertions removed, not claimed passing.",
+      "scope": "Fake timers/hooks/React element/modal handlers, not native browser. Includes every-render single-modal continuity and missing/failed recovery.40 non-S06 workflow markup comparisons unchanged; old page button/confirmation assumptions replaced, not claimed unchanged.",
       "typeScript": "passed",
-      "build": "passed,1620 modules"
+      "build": "passed,1621 modules",
+      "alignmentFollowup": {
+        "focused": 30,
+        "typeScript": "passed",
+        "build": "passed,1621 modules",
+        "otherChecks": "121 prior logic cases and40 markup comparisons not rerun for this CSS-only change",
+        "appScriptsUnchanged": true
+      }
+    },
+    "previousAnswerKeyChecks": {
+      "date": "2026-11-02",
+      "answerKeyFocused": 18,
+      "popupFocused": 30,
+      "algebraRegression": 36,
+      "total": 84,
+      "otherScreenMarkupComparisons": 32,
+      "result": "passed in ui-draft",
+      "scope": "Assigned-key/ID/order/audience/MathML checks, popup and algebra regression. SSR/fake hooks are not native Chrome QA. Other-screen markup comparisons cover S04/S05/S07/S08. Remaining earlier popup checks were not rerun.",
+      "typeScript": "passed",
+      "build": "passed,1621 modules",
+      "tokenContrast": {
+        "light": {
+          "text": 13.14,
+          "label": 7.74
+        },
+        "dark": {
+          "text": 13.51,
+          "label": 8.33
+        }
+      },
+      "accessibilityLimit": "Contrast is calculated from tokens; actual browser layout/colors and screen reader not checked. No full WCAG compliance claim."
+    },
+    "previousBrandChecks": {
+      "date": "2026-11-02",
+      "brandFocused": 7,
+      "s00Regression": 11,
+      "total": 18,
+      "result": "passed in ui-draft",
+      "scope": "Actual Brand/Login/WorkspaceShell/MenuDrawer/S00 components and hooks with fake DOM/timers; not native layout/focus/timing. S00 assertions adapted to slogan-only Arrival and350ms logo reveal.",
+      "unchangedOtherSourceFiles": 58,
+      "unchangedExistingPublicAssets": 60,
+      "typeScript": "passed",
+      "build": "passed,1622 modules",
+      "otherChecks": "Previous workflow/answer-key suites not rerun for branding; related source hashes preserved."
     }
   },
   "publicationAtPreparation": {
     "committed": false,
     "pushed": false,
     "packageCommit": null,
-    "note": "Regenerate-only refresh is local working changes based on6fef4e1; no commit/push for this refresh."
+    "note": "Pre-commit snapshot for transparent logo plus v2 transition on fix/ui-ux-demo based on289ada0; Git history records actual commit. No push requested/performed."
   },
   "limits": [
     "No real auth/upload/parser/AI/server persistence/PDF",
@@ -99,5 +161,58 @@
     "No equivalent difficulty/coverage/accuracy/time-saving claims",
     "Native file access restriction remains; no server/CDP/alternate-surface workaround",
     "Legacy presenter-issue remains only an explicit QA diagnostic, outside launcher and normal flow"
-  ]
+  ],
+  "brandAsset": {
+    "source": "User attachment Computational_Thinking_-_Midterm-removebg-preview.png",
+    "bytes": 73021,
+    "sha256": "eebdc875bb4e827401ab12f26023eb0771c7bf14c46fc5a6e43c77631c8b9307",
+    "dimensions": {
+      "width": 666,
+      "height": 375
+    },
+    "runtimeMatchesMaster": true,
+    "pixelsEdited": false,
+    "alphaExtrema": [
+      0,
+      255
+    ],
+    "cssViewport": {
+      "x": 40,
+      "y": 128,
+      "width": 594,
+      "height": 128
+    },
+    "embedded": true,
+    "presentation": "Transparent background in light; dark-only CSS light backing for the original black lettering",
+    "license": "User-provided artwork; no separate license supplied or newly asserted"
+  },
+  "brandHandoff": {
+    "travel": 450,
+    "replacement": 140,
+    "totalConfigured": 590,
+    "legacyNodeRemovedAtFinal": true,
+    "geometry": {
+      "oldViewport": {
+        "width": 467,
+        "height": 249
+      },
+      "oldInk": {
+        "x": 0,
+        "y": 8,
+        "width": 467,
+        "height": 233
+      },
+      "newViewport": {
+        "width": 594,
+        "height": 128
+      },
+      "newLeftMark": {
+        "x": 13,
+        "y": 16,
+        "width": 181,
+        "height": 91
+      }
+    },
+    "timingMeasuredOnChrome": false
+  }
 }

@@ -1,6 +1,6 @@
 # TASK-206 — Plan và Bàn Giao: Giao Diện Cấu Hình Sinh Đề & Luồng Tiến Trình Thời Gian Thực SSE
 
-- **Nguồn giao việc:** [w2.md](../../w2.md), [w2_21_10.md](../../w2_21_10.md), [docs/planning.md](../planning.md)
+- **Nguồn giao việc:** [docs/planning.md](../planning.md), [TASK-208_ANSWERS.md](TASK-208_ANSWERS.md)
 - **Phụ trách:** FE2 (`htbaax` — Lead tác vụ Stage 2/Stage 3 Review UI)
 - **Reviewer:** Philip (`philip-kkk` — Lead reviewer), Nhật Quỳnh (`nhatquynh1107`)
 - **Repo/nhánh:** `feat/task-206-stage2-config`; PR: [#22](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/22)

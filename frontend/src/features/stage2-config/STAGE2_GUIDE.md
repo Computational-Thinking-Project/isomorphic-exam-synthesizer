@@ -58,8 +58,11 @@ Tài liệu này mô tả chi tiết kiến trúc, luồng dữ liệu, hợp đ
   2. `question_status`: `{ version_index: 1, question_no: 3, status: "analyzing" | "generating" | "validating" | "retrying" | "done", message: "..." }`
   3. `question_done`: `{ version_index: 1, question_no: 3, variant_id: "..." }`
   4. `warning`: `{ version_index: 1, question_no: 3, message: "..." }` (tiến trình vẫn tiếp tục, cảnh báo hiển thị trên câu hỏi tương ứng)
-  5. `error`: `{ error: "...", error_message: "..." }` (lỗi job AI dừng kết nối ngay, không reconnect lặp vô hạn)
+  5. `error`: `{ error: "...", error_message: "..." }` (lỗi job AI dừng kết nối ngay, không reconnect lặp vô hạn; trường hợp cursor quá cũ `ERR_CURSOR_OUTDATED` hoặc `requires_resync`, hook tự xóa cursor và xin lại ticket kết nối sạch)
   6. `done`: `{ total_generated: 20, duration_seconds: 35 }` (hoàn tất chuyển sang màn bàn giao Stage 3 `/session/:id/stage3`)
+
+### 2.5. Chi tiết phiên & Snapshot phục hồi (GET /api/sessions/{session_id})
+- **Tài liệu bàn giao chi tiết:** Tham khảo [TASK-208_ANSWERS.md](../../../../docs/tasks/TASK-208_ANSWERS.md) để xem chi tiết 3 trạng thái payload `blueprint_summary` (`ready`, `not_ready`, `none_only`), cơ chế phục hồi snapshot trên F5 (`partial_generated`), và sơ đồ chuỗi phục hồi cursor SSE khi tràn buffer (> 50 events) hoặc server restart.
 
 ---
 

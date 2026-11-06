@@ -81,9 +81,9 @@ def latex_math_to_typst(math_str: str) -> str:
         inner, end_idx = _extract_balanced_braces(s, m.end() - 1)
         s = s[: m.start()] + f'"{inner}"' + s[end_idx:]
 
-    # 2. Convert \\frac{A}{B} or \\dfrac{A}{B} -> ((A)/(B))
-    while re.search(r"\\(?:d)?frac\s*\{", s):
-        m = re.search(r"\\(?:d)?frac\s*\{", s)
+    # 2. Convert the two-argument fraction and binomial commands.
+    while re.search(r"\\((?:d)?frac|binom)\s*\{", s):
+        m = re.search(r"\\((?:d)?frac|binom)\s*\{", s)
         if not m:
             break
         num, idx2 = _extract_balanced_braces(s, m.end() - 1)
@@ -93,7 +93,11 @@ def latex_math_to_typst(math_str: str) -> str:
             den, end_idx = _extract_balanced_braces(s, idx2)
             conv_num = latex_math_to_typst(num)
             conv_den = latex_math_to_typst(den)
-            s = s[: m.start()] + f"(({conv_num})/({conv_den}))" + s[end_idx:]
+            converted = (
+                f"binom({conv_num}, {conv_den})" if m.group(1) == "binom"
+                else f"(({conv_num})/({conv_den}))"
+            )
+            s = s[: m.start()] + converted + s[end_idx:]
         else:
             break
 
@@ -255,8 +259,17 @@ def convert_markdown_to_typst(content: str) -> str:
         else:
             # Plain text segment:
             text = escape_typst_text(part)
-            # Convert Markdown **bold** -> Typst *bold*
-            text = re.sub(r"\*\*(.*?)\*\*", r"*\1*", text)
+            # Preserve paired Markdown emphasis, but escape a lone multiplication
+            # star so prose such as "3190 * (32 / 55)" cannot open Typst emphasis.
+            text = re.sub(
+                r"\*\*([^*\n]+)\*\*|\*([^*\n]+)\*|\*",
+                lambda match: (
+                    f"*{match.group(1)}*" if match.group(1) is not None
+                    else f"_{match.group(2)}_" if match.group(2) is not None
+                    else r"\*"
+                ),
+                text,
+            )
             result.append(text)
 
     return "".join(result)

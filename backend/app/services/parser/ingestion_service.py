@@ -186,6 +186,12 @@ async def replace_source_questions_atomically(
         logger.error("RPC replace_source_questions failed for session %s: %s", session_id, exc)
         code = str(getattr(exc, "code", "") or "").strip().upper()
 
+        if "ARTIFACT_SOURCE_LOCKED" in err_msg:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="ARTIFACT_SOURCE_LOCKED",
+            ) from exc
+
         if (
             code == "42501"
             or "42501" in err_msg

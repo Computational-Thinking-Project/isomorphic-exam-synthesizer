@@ -1,5 +1,25 @@
 # Frontend — thiết lập local và checkpoint TASK-101/103
 
+## TASK-203b — trạng thái sau re-review04/11/2026
+
+**Checkpoint công bố tại re-review 04/11/2026,14:16:47UTC (21:16:47 giờ Việt Nam):** code head đã công bố **b9bbd5ac2d2b9b65b34a6c9bd8cb3a74f2cf1e5c**, PR31 Open/Ready, target dev **ac18e724**; chưa Approve/merge. [Re-review của Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/31#pullrequestreview-5769824230) là review submission **CHANGES_REQUESTED**, không phải chỉ đề nghị trong Conversation. Reviewer đã đọc code và log CI: CI Pipeline/Docker success, merge ref **6cba8c2** của b9bbd5a vào ac18e724 có **311/311 frontend tests,0fail/skip, lint/build đạt**. Đây là kết quả được reviewer xác minh từ log, không phải native browser coverage. Checkpoint này gắn với head đã được re-review; lần bổ sung regression tiếp theo phải có kết quả/head riêng trước yêu cầu kiểm lại.
+
+Bản sửa F01 ở **5233322**, F03 ở **38c3553**, tài liệu/nghiệm thu ở **86d8cb4/b9bbd5a** đã nằm trong head công bố. Local311tests/lint/build đạt, bundle961.94kBwarning. Native Chrome fixture ngoài repo và user Docker đã báo đạt focus/picker/Hủy/giữnháp/chuyểntext/Tab/Escape/zoom200/F5 giữURL/2câuC,A. Giữ đúng phạm vi author/user reported; reviewer chưa tái chạy native evidence đó. Node dialog stub chỉ kiểm lifecycle, không mô phỏng inert. **F01 còn mở vì thiếu regression native tái chạy được trong gói review; chưa có bằng chứng code showModal hiện tại vẫn lỗi. F02 đã đồng bộ tài liệu theo re-review, chờ reviewer xác minh bản cập nhật; F03 reviewer xác nhận từ code/test; F04 non-blocking, browser matrix chưa chốt.**
+
+Classifier incomplete422 tạo lỗi/hướng sửa; native dialog đóng trước callback mở picker/chuyểntext. Panel giữ nguồn/input và guard201, không tự POST khi đóng/đổi mode/chọn file. [M2, plan native regression và browser matrix](../docs/tasks/TASK-203b.md).
+
+Browser evidence hiện có: Chrome trên Windows (author fixture/user Docker); Safari/iOS và browser khác chưa kiểm, matrix hỗ trợ sản phẩm chưa chốt. Đã thêm harness native tái chạy trong frontend/test-support/stage1-native: Chrome156/Windows10 candidate8/8assertions PASS, baseline phát hiện focus-out FAIL; reviewer chưa xác minh bản bổ sung. Xem M2 để biết kết quả bàn phím/picker và phần manual chưa chạy lại. Giữ giới hạn screen reader/Storage/directmutation/parser/AI/confirm/Stage2/export. Các checkpoint TASK201/TASK103 bên dưới là lịch sử, không mô tả trạng thái PR31 hiện hành.
+
+## TASK-201 — kiểm cuối local04/11/2026
+
+- Nhập text hoặc một DOCX/TeX/MD vào draft có ID bằng client hiện có. Chọn/sửa/đổi cách nhập không tự gửi; file được kiểm trước POST và upload100% còn chờ xử lý. Preview nguồn/options/key chỉ đọc, Blueprint ẩn. [Plan/acceptance/giới hạn](../docs/tasks/TASK-201.md), [Stage1 README](src/features/stage1-ingestion/README.md).
+- User đã chạy migration002 còn thiếu ở runtime, xác minh RPC/grants rồi kiểm text/ba định dạng file/F5,422giữ nguồn, chặn empty/oversize/nhiều file/đuôi sai/PDF thật, chọn lại file, pending/cancel và đổi tài khoản. Agent bổ sung GET đối chiếu/mode switch/layout. Ghi riêng bằng chứng user, agent, mock và API thật; không suy Storage audit hoặc direct non-owner mutation đã đạt.
+- Source bị ép ở native200% đã sửa bằng chiều cao tối thiểu40rem cho existingID workspace; cuộn dọc tiếp cận được nguồn/CTA/file input. User trả100% kiểm bình thường; agent kiểm lại đúng375×812CSS trên bản cuối, không tràn ngang. Không đổi new/create/Auth/backend/Stage2 hoặc dependency.
+- `npm.cmd test`:285/285pass, `npm.cmd run lint` và `npm.cmd run build` đạt trên candidate sau sửa zoom04/11; bundle956.34kB warning giữ. Kiểm cuối đối chiếu hash với bản đó, không nhận rerun khi chỉ sửa docs. Native mốc100% chưa quan sát riêng; controller/component tests đã kiểm100% vẫn pending.
+- Phép thử parser in-memory với bộ mẫu cộng đệm khoảng trắng1MiB chạm timeout20s; chưa profiling/BEfix hoặc nhận mọi file≤10MiB xử lý trong timeout15s. Reviewer cần thấy giới hạn này. TASK203b dialog và TASK204 confirm/Stage2 chưa ghép từPR29.
+- P1/P2 đã push24cfe3c; P3 đã commit local241a1ae, zoom08f0cb2, tài liệu nghiệm thu ở mốc riêng. Chưa push các mốc mới hoặc có CI tương ứng; chưa Ready/merge. Các checkpoint W1 bên dưới là lịch sử.
+
+
 ## Kiểm cuối W1 — 27/10/2026
 
 - User có quyền chốt đã chọn scope W1: Dashboard/API thật, tạo/mở draft và clone; trạng thái chưa có màn thông báo rõ, ghép ở tuần sau. User xác nhận ca lỗi mở tại Dashboard→bỏ chặn→Thử mở lại khôngF5→đúngID/nội dung đạt, cùng các ca entry/reload/account đã đạt trước đó. Clone sao chép nguồn và Blueprint của phiên sang draft độc lập.
@@ -140,6 +160,7 @@ Các module dùng chung:
 - [authStore.js](src/features/auth/authStore.js): trạng thái phiên/profile và version của lượt đăng nhập.
 - [api.js](src/services/api.js): Axios client cho API sản phẩm, lấy token hiện tại, 401 refresh/retry tối đa một lần, 403 giữ nguyên lỗi. Lỗi tạm không tự yêu cầu đăng nhập lại; lỗi không còn phiên được xử lý khi scope/token vẫn hiện hành. Không gọi signOut từ interceptor.
 - [profile.js](src/services/profile.js): lấy profile qua API client dùng chung và kiểm ID/email cơ bản.
+- [ingestion.js](src/services/ingestion.js): service nhập text/file và validator; sai response thành công được báo kết quả chưa rõ. P2 đã ghép text, file UI còn P3.
 - [useAuthProfile.js](src/features/auth/useAuthProfile.js): tải/thử lại profile, đối chiếu tài khoản/version, hủy và bỏ kết quả cũ khi cleanup.
 - [UserAvatar.jsx](src/features/auth/UserAvatar.jsx): ảnh từ metadata của phiên Google có ID khớp profile; thiếu/lỗi ảnh hiển thị chữ viết tắt. Dashboard giữ tên từ backend, reset component theo tài khoản/version/URL ảnh.
 - [authErrors.js](src/services/authErrors.js) và [authRefresh.js](src/services/authRefresh.js): phân loại lỗi Auth và chia sẻ refresh promise đồng thời.

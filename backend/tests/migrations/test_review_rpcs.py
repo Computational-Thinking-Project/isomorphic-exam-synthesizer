@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from uuid import uuid4
 
-from artifact_fixtures import seed_artifacts
+from artifact_fixture import publish_fixture
 from test_stage3_schema import PostgresCase
 
 SID = "10000000-0000-0000-0000-000000000001"
@@ -39,6 +39,82 @@ def candidate(calls=0):
 
 
 class ReviewRpcTests(PostgresCase):
+    def test_rpc_frozen_json_passes_strict_validator_and_uses_canonical_options(self):
+        from app.services.review.receipts import reservation_receipt
+        from app.services.review.validation import frozen_inputs
+
+        op = uuid4()
+        raw = self.reserve(op)
+        inputs = frozen_inputs(reservation_receipt(raw, SID, QID, op))
+        self.assertEqual(inputs["current_variant"]["options"], ["1", "2", "3", "4"])
+        self.assertEqual(inputs["current_variant"]["correct_key"], "A")
+        self.assertIsNone(inputs["current_variant"]["solution_md"])
+        self.assertEqual(
+            self.value(f"SELECT options->>0 FROM version_questions WHERE id='{QID}';"), "2"
+        )
+
+    def test_absent_pending_or_corrupt_artifacts_never_reserve_or_charge(self):
+        self.sql("UPDATE source_artifact_heads SET blueprint_revision_id=NULL;")
+        self.expect_error(
+            "REVIEW_SOURCE_MISMATCH", "review_reserve_regeneration", SID, QID, uuid4()
+        )
+        self.assertEqual(self.value("SELECT count(*) FROM review_operations;"), "0")
+        self.assertEqual(self.value("SELECT gemini_review_calls FROM exam_sessions;"), "0")
+        self.sql("DELETE FROM source_artifact_heads;")
+        self.expect_error(
+            "REVIEW_SOURCE_MISMATCH", "review_reserve_regeneration", SID, QID, uuid4()
+        )
+
+    def test_reconfirmation_after_edit_revert_does_not_rebind_existing_operation(self):
+        op = uuid4()
+        original = self.reserve(op)
+        self.sql(
+            "UPDATE source_questions SET solution_md='edit'; UPDATE source_questions SET solution_md=NULL;"
+        )
+        publish_fixture(self, SID, SOURCE, OWNER)
+        self.expect_error(
+            "REVIEW_SOURCE_MISMATCH", "review_acquire_attempt", op, uuid4(), worker=True
+        )
+        self.expect_error(
+            "REVIEW_SOURCE_MISMATCH",
+            "review_complete_regeneration",
+            op,
+            json.dumps(candidate()),
+            worker=True,
+        )
+        self.assertEqual(self.reserve(op)["snapshot"], original["snapshot"])
+        self.assertEqual(self.fail(op)["api_calls_used"], 0)
+
+    def test_lookup_missing_operation_is_read_only(self):
+        before = self.value("SELECT row_to_json(s) FROM exam_sessions s;")
+        result = self.call("review_lookup_regeneration", SID, QID, uuid4())
+        self.assertEqual(result, {"found": False})
+        self.assertEqual(self.value("SELECT count(*) FROM review_operations;"), "0")
+        self.assertEqual(self.value("SELECT count(*) FROM review_logs;"), "0")
+        self.assertEqual(self.value("SELECT row_to_json(s) FROM exam_sessions s;"), before)
+
+    def test_lookup_completed_receipt_after_approval_does_not_change_state(self):
+        op = uuid4()
+        self.reserve(op)
+        completed = self.complete(op)
+        self.sql("UPDATE exam_sessions SET status='approved',approved_at=now();")
+        before = self.value("SELECT row_to_json(s) FROM exam_sessions s;")
+        result = self.call("review_lookup_regeneration", SID, QID, op)
+        self.assertTrue(result["found"])
+        self.assertEqual(result["reservation"]["operation_status"], "completed")
+        self.assertEqual(result["reservation"]["settlement"], completed)
+        self.assertEqual(self.value("SELECT row_to_json(s) FROM exam_sessions s;"), before)
+
+    def test_lookup_requires_owner_and_never_grants_worker_receipt_access(self):
+        op = uuid4()
+        self.reserve(op)
+        self.expect_error(
+            "REVIEW_NOT_FOUND", "review_lookup_regeneration", SID, QID, op, actor=str(uuid4())
+        )
+        self.expect_error(
+            "permission denied", "review_lookup_regeneration", SID, QID, op, worker=True
+        )
+
     def setUp(self):
         super().setUp()
         self.migrate()
@@ -47,8 +123,7 @@ class ReviewRpcTests(PostgresCase):
         INSERT INTO generation_configs(session_id,n_versions) VALUES ('{SID}',1);
         INSERT INTO question_blueprints(source_question_id,confirmed_at) VALUES ('{SOURCE}',now());
         """)
-
-        self.artifact, self.publication = seed_artifacts(self, SID, SOURCE, OWNER)
+        publish_fixture(self, SID, SOURCE, OWNER)
 
     @staticmethod
     def auth(role="authenticated", actor=OWNER):
@@ -112,7 +187,7 @@ class ReviewRpcTests(PostgresCase):
         self.assertEqual(first["snapshot"]["format"], "confirmed_artifacts_v1")
         self.assertEqual(
             first["snapshot"]["source_snapshot"]["content_hash"],
-            self.artifact["source_fingerprint"],
+            first["snapshot"]["blueprint_source_fingerprint"],
         )
         self.assertEqual(self.value("SELECT gemini_review_calls FROM exam_sessions;"), "0")
         self.assertEqual(self.value("SELECT count(*) FROM review_operations;"), "1")
@@ -730,7 +805,7 @@ class ReviewRpcTests(PostgresCase):
           canonical_question_no,canonical_options,canonical_correct_key)
           VALUES ('{qid2}','{version2}','{source2}',1,'Candidate','["1","2","3","4"]','A',9,'["1","2","3","4"]','A');
         """)
-        seed_artifacts(self, sid2, source2, OWNER)
+        publish_fixture(self, sid2, source2, OWNER)
         shared_op = uuid4()
         sessions = [(SID, QID), (sid2, qid2)]
         results = self.concurrent(
@@ -773,33 +848,3 @@ class ReviewRpcTests(PostgresCase):
             "REVIEW_IDEMPOTENCY_CONFLICT", next(r.stderr for r in results if r.returncode)
         )
         self.assertEqual(self.value("SELECT count(*) FROM review_action_receipts;"), "1")
-
-    def test_lookup_missing_operation_is_read_only(self):
-        before = self.value("SELECT row_to_json(s) FROM exam_sessions s;")
-        result = self.call("review_lookup_regeneration", SID, QID, uuid4())
-        self.assertEqual(result, {"found": False})
-        self.assertEqual(self.value("SELECT count(*) FROM review_operations;"), "0")
-        self.assertEqual(self.value("SELECT count(*) FROM review_logs;"), "0")
-        self.assertEqual(self.value("SELECT row_to_json(s) FROM exam_sessions s;"), before)
-
-    def test_lookup_completed_receipt_after_approval_does_not_change_state(self):
-        op = uuid4()
-        self.reserve(op)
-        completed = self.complete(op)
-        self.sql("UPDATE exam_sessions SET status='approved',approved_at=now();")
-        before = self.value("SELECT row_to_json(s) FROM exam_sessions s;")
-        result = self.call("review_lookup_regeneration", SID, QID, op)
-        self.assertTrue(result["found"])
-        self.assertEqual(result["reservation"]["operation_status"], "completed")
-        self.assertEqual(result["reservation"]["settlement"], completed)
-        self.assertEqual(self.value("SELECT row_to_json(s) FROM exam_sessions s;"), before)
-
-    def test_lookup_requires_owner_and_never_grants_worker_receipt_access(self):
-        op = uuid4()
-        self.reserve(op)
-        self.expect_error(
-            "REVIEW_NOT_FOUND", "review_lookup_regeneration", SID, QID, op, actor=str(uuid4())
-        )
-        self.expect_error(
-            "permission denied", "review_lookup_regeneration", SID, QID, op, worker=True
-        )

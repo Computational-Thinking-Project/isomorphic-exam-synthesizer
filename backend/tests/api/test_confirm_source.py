@@ -1,1464 +1,710 @@
-"""Unit tests for Confirm Source Exam & Blueprint Activation (TASK-205).
+"""Public confirmation through actual producer/repository, explicit storage/provider fixtures.
 
-Validates all test cases including ADR-004 (Silent Security Audit) behavioral changes:
- 1. Unauthenticated (401)
- 2. Forbidden / Wrong Owner (403)
- 3. Session Not Found (404)
- 4. Conflict when status == 'blueprinted' (409)
- 5. Conflict when status == 'generating' (409)
- 6. 422 when Session has no questions
- 7. 422 when questions have missing answers
- 8. [ADR-004] 200 when questions have security warnings & acknowledged=False (silent audit, not block)
- 9. [ADR-004] 200 when questions have security warnings & body is empty {} (silent audit, not block)
-10. Success when 0 security warnings and blueprints exist (200)
-11. [ADR-004] RPC always receives p_acknowledged_security_warnings=True (silent audit canonical test)
-12. Auto-creation of missing blueprints during confirmation (200)
+Legacy003/fallback creation expectations are replaced by canonical pending/resume.
+Audit atomicity and claims are independently exercised by PostgreSQL tests.
 """
 
-from unittest.mock import MagicMock, patch
+import json
+from copy import deepcopy
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+from uuid import uuid4
 
-import httpcore
 import httpx
 import pytest
-from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from postgrest.exceptions import APIError
 
-MOCK_SESSION_ID = "11111111-1111-1111-1111-111111111111"
+from app.api.dependencies import get_current_user, get_service_db, get_user_db
+from app.api.routes import source_artifacts
+from app.main import app
+from app.models.schemas import CurrentUser
 
 
 @pytest.fixture
-def auth_headers() -> dict[str, str]:
-    return {"Authorization": "Bearer mock-valid-jwt-token"}
+def flow(monkeypatch):
+    sid, actor = str(uuid4()), str(uuid4())
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/ai_pipeline.json").read_text(encoding="utf-8")
+    )
+    source = fixture["source"]
+    row = dict(
+        id=source["id"],
+        session_id=sid,
+        question_no=1,
+        raw_content=source["question_text"],
+        options=source["options"],
+        correct_key="A",
+        solution_md=None,
+        has_missing_answer=False,
+    )
+    state = SimpleNamespace(
+        sid=sid,
+        actor=actor,
+        row=row,
+        status="draft",
+        owner=actor,
+        calls=[],
+        confirmation=None,
+        error=None,
+        read_error=False,
+        ready=False,
+        revision=str(uuid4()),
+        supported_modes=None,
+        extracts=0,
+        table_calls=[],
+        mutate_after_preview=False,
+        preview_failure=False,
+        production_status=None,
+    )
+    db = MagicMock()
+
+    def table(name):
+        state.table_calls.append(name)
+        if name == "generation_configs":
+            query = MagicMock()
+            query.select.return_value = query
+            query.eq.return_value = query
+            query.limit.return_value = query
+            query.execute.return_value = SimpleNamespace(data=[])
+            return query
+        query = MagicMock()
+        query.select.return_value = query.eq.return_value = query.order.return_value = query
+
+        def execute():
+            return SimpleNamespace(
+                data=[
+                    dict(
+                        user_id=state.owner, status=state.status, updated_at=state.revision
+                    )
+                ]
+                if name == "exam_sessions"
+                else ([] if state.row is None else [state.row])
+            )
+
+        query.execute.side_effect = execute
+        return query
+
+    db.table.side_effect = table
+
+    def rpc(name, params):
+        state.calls.append((name, deepcopy(params)))
+
+        def execute():
+            if name == "get_generation_source_snapshot":
+                return SimpleNamespace(
+                    data={
+                        "ready": False,
+                        "reason": "CANONICAL_BLUEPRINTS_INCOMPLETE",
+                    }
+                )
+            if name == "get_session_source_preview":
+                if state.preview_failure:
+                    raise ConnectionError("preview unavailable")
+                preview = dict(
+                    session=dict(id=sid, user_id=state.owner, status=state.status,
+                                 title="Fixture", subject="Math", grade=12,
+                                 created_at="2026-11-04T00:00:00Z", updated_at="2026-11-04T00:00:00Z"),
+                    source_revision=state.revision,
+                    source_questions=[] if state.row is None else [deepcopy(state.row)],
+                )
+                if state.mutate_after_preview:
+                    state.revision = str(uuid4())
+                    state.row["raw_content"] = "Other tab"
+                return SimpleNamespace(data=preview)
+            if name == "confirm_source_artifacts":
+                if state.error:
+                    raise state.error
+
+                if state.confirmation is not None:
+                    saved = state.confirmation
+
+                    if params["p_confirmation_id"] != saved["confirmation_id"]:
+                        raise RuntimeError("ARTIFACT_STALE")
+                    # SQL replay binds source content, not freshly prepared artifact UUIDs.
+                    if (
+                        params["p_confirmation_id"] != saved["confirmation_id"]
+                        or params["p_actor_id"] != saved["actor_id"]
+                        or [{k: v for k, v in item.items() if k != "source_revision_id"} for item in params["p_sources"]]
+                        != [{k: v for k, v in item.items() if k != "source_revision_id"} for item in saved["sources"]]
+                    ):
+                        raise RuntimeError("ARTIFACT_IDEMPOTENCY_CONFLICT")
+
+                    data = deepcopy(saved)
+                    data["replayed"] = True
+
+                else:
+                    # Mô phỏng revision guard trong PostgreSQL RPC.
+                    if params["p_expected_source_revision"] != state.revision:
+                        raise RuntimeError("ARTIFACT_STALE")
+
+                    if state.status != "draft":
+                        raise RuntimeError("ARTIFACT_STALE")
+
+                    data = dict(
+                        confirmation_id=params["p_confirmation_id"],
+                        session_id=sid,
+                        actor_id=params["p_actor_id"],
+                        confirmed_at="2026-11-04T00:00:00Z",
+                        status="blueprinted",
+                        total_questions=1,
+                        total_blueprints=0,
+                        canonical_status="pending",
+                        replayed=False,
+                        sources=params["p_sources"],
+                    )
+
+                    state.confirmation = deepcopy(data)
+                    state.status = "blueprinted"
+
+                return SimpleNamespace(data=data)
+
+            if name == "get_source_artifacts":
+                if state.read_error:
+                    raise ConnectionError("lost response")
+                if state.confirmation is None:
+                    raise APIError(
+                        {"code": "P0002", "message": "not found", "details": None, "hint": None}
+                    )
+                # Build production list consistent with SourceArtifactState validation.
+                # source_revision_id must match the one stored in confirmation.sources[0].
+                source_revision_id = state.confirmation["sources"][0]["source_revision_id"]
+                production = [
+                    dict(
+                        source_question_id=source["id"],
+                        source_revision_id=source_revision_id,
+                        status="ready" if state.ready else (state.production_status or "pending"),
+                        expires_at="2099-01-01T00:00:00Z" if state.production_status == "running" else None,
+                        error_code="FIXTURE_FAILURE" if state.production_status == "failed" else None,
+                    )
+                ]
+                return SimpleNamespace(
+                    data=dict(
+                        confirmation=state.confirmation,
+                        pending_source_question_ids=[] if state.ready else [source["id"]],
+                        ready=state.ready,
+                        production=production,
+                        supported_modes=state.supported_modes,
+                    )
+                )
+
+            if name == "claim_source_production":
+                return SimpleNamespace(
+                    data=dict(
+                        session_id=sid,
+                        source_question_id=source["id"],
+                        source_revision_id=params["p_source_revision_id"],
+                        producer_job_id=params["p_job_id"],
+                        status="claimed",
+                        expires_at="2099-01-01T00:00:00Z",
+                    )
+                )
+            if name == "publish_canonical_blueprint":
+                state.ready = True
+                if state.supported_modes is None:
+                    state.supported_modes = []
+                publication = params["p_publication"]
+                return SimpleNamespace(
+                    data=dict(
+                        session_id=sid,
+                        source_question_id=publication["source_question_id"],
+                        source_revision_id=publication["source_revision_id"],
+                        blueprint_revision_id=publication["blueprint_revision_id"],
+                        replayed=False,
+                    )
+                )
+            if name == "fail_source_production":
+                return SimpleNamespace(data=dict(settled=True))
+            raise AssertionError(name)
+
+        return SimpleNamespace(execute=execute)
+
+    worker = SimpleNamespace(rpc=rpc)
+    db.rpc.side_effect = rpc
+
+    class Extractor:
+        async def extract_confirmed(self, items, **kwargs):
+            state.extracts += 1
+            assert state.confirmation is not None
+            return [{"blueprint": deepcopy(fixture["blueprint"])}], []
+
+    state.extractor = Extractor()
+    monkeypatch.setattr(source_artifacts, "blueprint_service", lambda request: None)
+    previous = app.dependency_overrides.copy()
+    app.dependency_overrides.update(
+        {
+            get_current_user: lambda: CurrentUser(
+                id=actor, email="fixture@example.com", name="Fixture", access_token="fixture"
+            ),
+            get_user_db: lambda: db,
+            get_service_db: lambda: worker,
+        }
+    )
+    if hasattr(app.state, "limiter"):
+        app.state.limiter._storage.reset()
+    client = TestClient(app)
+    # One stable operation key by default; negative cases explicitly remove it.
+    client.headers["Idempotency-Key"] = str(uuid4())
+    try:
+        yield state, client
+    finally:
+        client.close()
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous)
 
 
-@pytest.fixture
-def mock_auth_user(mock_user_response):
-    mock_supabase = MagicMock()
-    mock_supabase.auth.get_user.return_value = mock_user_response
-    return mock_supabase
+def url(state, suffix="confirm-source"):
+    return f"/api/sessions/{state.sid}/{suffix}"
 
 
-def _create_mock_questions(count: int = 5, has_missing: bool = False, has_warning: bool = False):
-    """Helper to create dummy source question records."""
-    questions = []
-    for i in range(1, count + 1):
-        questions.append(
-            {
-                "id": f"00000000-0000-0000-0000-00000000000{i}",
-                "session_id": MOCK_SESSION_ID,
-                "question_no": i,
-                "raw_content": f"Câu {i}: Cho tam giác vuông có cạnh {i} và {i + 1}.",
-                "options": {"A": "1", "B": "2", "C": "3", "D": "4"},
-                "correct_key": "A",
-                "solution_md": "Lời giải",
-                "has_missing_answer": (i == 2 and has_missing),
-                "has_security_warning": (i == 1 and has_warning),
-            }
-        )
-    return questions
+def test_postreview_missing_key_is_rejected_before_worker(flow):
+    state, client = flow
+    client.headers.pop("Idempotency-Key")
+    result = client.post(url(state), json={"source_revision": state.revision})
+    assert result.status_code == 422, result.text
+    assert not state.calls
+
+
+def test_preview_is_one_rpc_snapshot_even_if_another_tab_changes_source(flow):
+    state, client = flow
+    revision, content = state.revision, state.row["raw_content"]
+    state.mutate_after_preview = True
+    response = client.get(f"/api/sessions/{state.sid}")
+    assert response.status_code == 200, response.text
+    assert response.json()["source_revision"] == revision
+    assert response.json()["source_questions"][0]["raw_content"] == content
+    assert [
+        name for name, _ in state.calls
+        if name == "get_session_source_preview"
+    ] == ["get_session_source_preview"]
+    assert "source_questions" not in state.table_calls
+    stale = client.post(url(state), json={"source_revision": revision})
+    assert stale.status_code == 409
+    assert state.confirmation is None
+
+
+def test_failed_snapshot_does_not_fall_back_to_independent_queries(flow):
+    state, client = flow
+    state.preview_failure = True
+    response = client.get(f"/api/sessions/{state.sid}")
+    assert response.status_code == 503
+    assert "source_questions" not in state.table_calls
+
+
+def test_confirm_pending_without_adapter_or_legacy_blueprint(flow):
+    state, client = flow
+    result = client.post(url(state), json={"source_revision": state.revision})
+    assert result.status_code == 200, result.text
+    assert result.json()["canonical_status"] == "pending"
+    assert result.json()["total_blueprints"] == 0
+    assert state.extracts == 0
+    assert [n for n, _ in state.calls] == [
+        "get_session_source_preview", "confirm_source_artifacts", "get_source_artifacts"
+    ]
+    assert state.calls[1][1]["p_actor_id"] == state.actor
+    assert "source_questions" not in state.table_calls
 
 
 # ---------------------------------------------------------------------------
-# 1. Unauthenticated & Authorization Tests
+# Q01 — source_revision contract tests
 # ---------------------------------------------------------------------------
 
+@pytest.mark.parametrize("uppercase", [False, True])
+def test_confirm_with_matching_source_revision_succeeds(flow, uppercase):
+    state, client = flow
+    key = str(uuid4())
+    session_id = state.sid.upper() if uppercase else state.sid
 
-def test_confirm_unauthenticated(client):
-    """POST /confirm-source without Bearer token returns 401."""
     response = client.post(
-        f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-        json={"acknowledged_security_warnings": False},
-    )
-    assert response.status_code == 401
-
-
-def test_confirm_forbidden_wrong_owner(client, mock_auth_user, auth_headers):
-    """POST /confirm-source raises 403 Forbidden when assert_ownership rejects."""
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=MagicMock()),
-        patch(
-            "app.api.routes.sessions.assert_ownership",
-            side_effect=HTTPException(status_code=403, detail="Forbidden: Not session owner"),
-        ),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-    assert response.status_code == 403
-    assert "Forbidden" in response.json()["detail"]
-
-
-def test_confirm_session_not_found(client, mock_auth_user, auth_headers):
-    """POST /confirm-source raises 404 Not Found when session does not exist."""
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=MagicMock()),
-        patch(
-            "app.api.routes.sessions.assert_ownership",
-            side_effect=HTTPException(status_code=404, detail="Session not found"),
-        ),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-    assert response.status_code == 404
-    assert "Session not found" in response.json()["detail"]
-
-
-# ---------------------------------------------------------------------------
-# 2. State Precondition Tests (HTTP 409)
-# ---------------------------------------------------------------------------
-
-
-def test_confirm_conflict_blueprinted(client, mock_auth_user, auth_headers):
-    """Reject with 409 Conflict if session is already 'blueprinted'."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "blueprinted"}]
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
+        f"/api/sessions/{session_id}/confirm-source",
+        json={"source_revision": state.revision},
+        headers={"Idempotency-Key": key},
     )
 
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-    assert response.status_code == 409
-    assert "blueprinted" in response.json()["detail"]
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "blueprinted"
+    assert state.calls[0] == ("get_session_source_preview", {"p_session_id": state.sid})
+
+    rpc_calls = [
+        params for name, params in state.calls
+        if name == "confirm_source_artifacts"
+    ]
+    assert len(rpc_calls) == 1
+    assert rpc_calls[0]["p_expected_source_revision"] == state.revision
 
 
-def test_confirm_conflict_generating(client, mock_auth_user, auth_headers):
-    """Reject with 409 Conflict if session is in 'generating' status."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "generating"}]
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
+@pytest.mark.parametrize("source", ["valid", "empty", "missing_answer"])
+def test_confirm_with_mismatched_source_revision_returns_409_conflict(flow, source):
+    state, client = flow
+    stale_revision = str(uuid4())
+    if source == "empty":
+        state.row = None
+    elif source == "missing_answer":
+        state.row["has_missing_answer"] = True
+
+    response = client.post(
+        url(state),
+        json={"source_revision": stale_revision},
+        headers={"Idempotency-Key": str(uuid4())},
     )
 
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-    assert response.status_code == 409
-    assert "generating" in response.json()["detail"]
+    assert response.status_code == 409, response.text
+    assert "ERR_SOURCE_REVISION_CONFLICT" in response.text
+    assert state.confirmation is None
+    assert state.status == "draft"
+
+    assert [name for name, _ in state.calls] == ["get_session_source_preview"]
 
 
-# ---------------------------------------------------------------------------
-# 3. Data Integrity & Validation Tests (HTTP 422)
-# ---------------------------------------------------------------------------
+def test_confirm_without_source_revision_returns_422(flow):
+    state, client = flow
 
+    response = client.post(url(state), json={})
 
-def test_confirm_422_no_questions(client, mock_auth_user, auth_headers):
-    """Reject with 422 Unprocessable Entity if session has no source questions."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft"}]
-    mock_questions = MagicMock()
-    mock_questions.data = []
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
     assert response.status_code == 422
-    assert "no source questions" in response.json()["detail"]
+    assert state.confirmation is None
+    assert not state.calls
 
 
-def test_confirm_422_has_missing_answer(client, mock_auth_user, auth_headers):
-    """Reject with 422 Unprocessable Entity if any question is missing an answer key."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=3, has_missing=True)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
+@pytest.mark.parametrize("revision", ["bad", "2026-11-05T00:00:00Z", None, 17])
+def test_malformed_revision_is_rejected_before_worker(flow, revision):
+    state, client = flow
+    response = client.post(url(state), json={"source_revision": revision})
     assert response.status_code == 422
-    assert "missing answers" in response.json()["detail"]
+    assert not state.calls
+
+
+def test_same_key_changed_source_is_idempotency_conflict(flow):
+    state, client = flow
+    headers = {"Idempotency-Key": str(uuid4())}
+    payload = {"source_revision": state.revision}
+    assert client.post(url(state), json=payload, headers=headers).status_code == 200
+    state.row["raw_content"] += " changed"
+    result = client.post(url(state), json=payload, headers=headers)
+    assert result.status_code == 409
+    assert result.json()["error_code"] == "ERR_IDEMPOTENCY_CONFLICT"
+
+
+def test_new_key_cannot_reconfirm_blueprinted_session(flow):
+    state, client = flow
+    payload = {"source_revision": state.revision}
+    assert client.post(url(state), json=payload, headers={"Idempotency-Key": str(uuid4())}).status_code == 200
+    receipt = deepcopy(state.confirmation)
+    assert client.post(url(state), json=payload, headers={"Idempotency-Key": str(uuid4())}).status_code == 409
+    assert state.confirmation == receipt
+
+
+def test_source_content_race_maps_to_source_changed(flow):
+    state, client = flow
+    state.error = RuntimeError("ARTIFACT_SOURCE_MISMATCH")
+    result = client.post(url(state), json={"source_revision": state.revision})
+    assert result.status_code == 409
+    assert result.json()["error_code"] == "ERR_SOURCE_CHANGED"
+    assert state.confirmation is None
+
+
+def test_idempotent_retry_with_same_key_and_stale_revision(flow):
+    state, client = flow
+    key = str(uuid4())
+    payload = {"source_revision": state.revision}
+    headers = {"Idempotency-Key": key}
+
+    first = client.post(
+        url(state),
+        json=payload,
+        headers=headers,
+    )
+    assert first.status_code == 200, first.text
+
+    replay = client.post(
+        url(state),
+        json={"source_revision": str(uuid4())},
+        headers=headers,
+    )
+    assert replay.status_code == 200, replay.text
+
+    assert first.json()["confirmation_id"] == key
+    assert replay.json()["confirmation_id"] == key
+
+    confirm_calls = [
+        params for name, params in state.calls
+        if name == "confirm_source_artifacts"
+    ]
+    assert len(confirm_calls) == 2
+    assert confirm_calls[0]["p_confirmation_id"] == key
+    assert confirm_calls[1]["p_confirmation_id"] == key
+    assert confirm_calls[0]["p_sources"][0]["confirmed_input"] == confirm_calls[1]["p_sources"][0]["confirmed_input"]
+
+def test_background_publication_and_retry_are_actual_producer(flow, monkeypatch):
+    state, client = flow
+    client.post(url(state), json={"source_revision": state.revision})
+    monkeypatch.setattr(source_artifacts, "blueprint_service", lambda request: state.extractor)
+    result = client.post(url(state, "source-artifacts/retry"))
+    assert result.status_code == 202, result.text
+    status = client.get(url(state, "source-artifacts"))
+    assert status.status_code == 200 and status.json()["ready"] is True
+    assert state.extracts == 1
+    assert client.post(url(state, "source-artifacts/retry")).status_code == 200
+    assert state.extracts == 1
+
+
+def test_postcommit_read_failure_retains_confirmation_and_same_key_reconciles(flow):
+    state, client = flow
+    state.read_error = True
+
+    key = str(uuid4())
+    payload = {"source_revision": state.revision}
+    headers = {"Idempotency-Key": key}
+
+    first = client.post(url(state), json=payload, headers=headers)
+
+    assert first.status_code == 503
+    assert state.confirmation is not None
+
+    state.read_error = False
+
+    replay = client.post(url(state), json=payload, headers=headers)
+
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["confirmation_id"] == key
+    assert state.confirmation["confirmation_id"] == key
+
+@pytest.mark.parametrize("status", ["blueprinted", "generating", "approved"])
+def test_without_key_reconfirmation_refused(flow, status):
+    state, client = flow
+    state.status = status
+    client.headers.pop("Idempotency-Key")
+    assert client.post(url(state), json={"source_revision": state.revision}).status_code == 422
+    assert not state.calls
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_missing_source_or_answer_is_rejected_before_worker(flow, missing):
+    state, client = flow
+    if missing:
+        state.row["has_missing_answer"] = True
+    else:
+        state.row = None
+    assert client.post(url(state), json={"source_revision": state.revision}).status_code == 422
+    assert [name for name, _ in state.calls] == ["get_session_source_preview"]
+
+
+@pytest.mark.parametrize(
+    "suffix,method",
+    [("confirm-source", "post"), ("source-artifacts", "get"), ("source-artifacts/retry", "post")],
+)
+def test_owner_guard_before_worker(flow, suffix, method):
+    state, client = flow
+    state.owner = str(uuid4())
+    options = (
+    {"json": {"source_revision": state.revision}}
+    if suffix == "confirm-source"
+    else {}
+)
+    assert getattr(client, method)(url(state, suffix), **options).status_code == 403
+    assert not state.calls
+
+
+@pytest.mark.parametrize(
+    "suffix,method",
+    [("confirm-source", "post"), ("source-artifacts", "get"), ("source-artifacts/retry", "post")],
+)
+def test_source_endpoints_require_authentication(flow, suffix, method):
+    state, client = flow
+    app.dependency_overrides.pop(get_current_user)
+    options = (
+    {"json": {"source_revision": state.revision}}
+    if suffix == "confirm-source"
+    else {}
+)
+    assert getattr(client, method)(url(state, suffix), **options).status_code == 401
+    assert not state.calls
+
+
+def test_status_is_read_only_and_retry_without_adapter_is_503(flow):
+    state, client = flow
+    client.post(url(state), json={"source_revision": state.revision})
+    state.calls.clear()
+    assert client.get(url(state, "source-artifacts")).json()["ready"] is False
+    assert client.post(url(state, "source-artifacts/retry")).status_code == 503
+    assert all(n == "get_source_artifacts" for n, _ in state.calls)
+
+
+@pytest.mark.parametrize("status,code", [("approved", 423), ("exported", 423), ("generating", 409)])
+def test_pending_retry_checks_session_guard_before_scheduling(flow, monkeypatch, status, code):
+    state, client = flow
+    assert client.post(url(state), json={"source_revision": state.revision}).status_code == 200
+    state.status = status
+    monkeypatch.setattr(source_artifacts, "blueprint_service", lambda request: state.extractor)
+    state.calls.clear()
+    assert client.post(url(state, "source-artifacts/retry")).status_code == code
+    assert state.extracts == 0
+    assert all(name == "get_source_artifacts" for name, _ in state.calls)
+
+
+@pytest.mark.parametrize(
+    "error,status,rolled_back",
+    [
+        (httpx.ReadTimeout(""), 504, False),
+        (httpx.ReadError(""), 504, False),
+        (httpx.RemoteProtocolError(""), 504, False),
+        (APIError(dict(code="23505", message="conflict", details=None, hint=None)), 500, True),
+        (APIError(dict(code="08007", message="uncertain", details=None, hint=None)), 500, False),
+        (APIError(dict(code="502", message="gateway", details="<html>", hint=None)), 500, False),
+        (RuntimeError("unknown"), 500, False),
+    ],
+)
+def test_confirmation_error_never_claims_unproven_rollback(flow, error, status, rolled_back):
+    state, client = flow
+    state.error = error
+    result = client.post(url(state), json={"source_revision": state.revision})
+    assert result.status_code == status, result.text
+    assert ("rolled back" in result.text) == rolled_back
+    assert state.extracts == 0
+
+
+def test_invalid_key_has_no_rpc_effect(flow):
+    state, client = flow
+    assert client.post(url(state), json={"source_revision": state.revision}, headers={"Idempotency-Key": "bad"}).status_code == 400
+    assert not state.calls
 
 
 # ---------------------------------------------------------------------------
-# 4. Security (SEC-02 / ADR-004) Tests — Silent Audit (Always HTTP 200)
+# Q02 — supported_modes in source-artifacts status
 # ---------------------------------------------------------------------------
 
 
-def test_confirm_security_warnings_acknowledged_false_still_passes(client, mock_auth_user, auth_headers):
-    """ADR-004: Security warnings with acknowledged=False now succeed (200).
+def test_source_artifacts_status_pending_has_no_supported_modes(flow):
+    """GET /source-artifacts returns supported_modes=None while not ready."""
+    state, client = flow
+    client.post(url(state), json={"source_revision": state.revision})
+    state.calls.clear()
+    status_resp = client.get(url(state, "source-artifacts"))
+    assert status_resp.status_code == 200, status_resp.text
+    data = status_resp.json()
+    assert data["ready"] is False
+    # Not ready → supported_modes must be None (not computed yet)
+    assert data.get("supported_modes") is None
 
-    Per ADR-004, the Guard 4 security-acknowledgment block is eliminated.
-    Security events are silently logged server-side. Clients no longer need
-    to send acknowledged_security_warnings=True to proceed.
-    """
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-28T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=3, has_warning=True)
 
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
+def test_source_artifacts_status_ready_has_supported_modes_list(flow, monkeypatch):
+    """GET /source-artifacts returns supported_modes list when ready."""
+    from app.api.routes import source_artifacts
+
+    state, client = flow
+    client.post(url(state), json={"source_revision": state.revision})
+    # Publish so it becomes ready
+    monkeypatch.setattr(source_artifacts, "blueprint_service", lambda request: state.extractor)
+    client.post(url(state, "source-artifacts/retry"))
+    state.supported_modes = []
+    status_resp = client.get(url(state, "source-artifacts"))
+    assert status_resp.status_code == 200, status_resp.text
+    data = status_resp.json()
+    assert data["ready"] is True
+    assert data["supported_modes"] == []
+
+
+def test_source_artifacts_ready_with_empty_modes_is_valid(flow, monkeypatch):
+    """ready=True with supported_modes=[] is a valid state (NONE-only blueprint)."""
+    from app.api.routes import source_artifacts
+
+    state, client = flow
+    client.post(url(state), json={"source_revision": state.revision})
+    monkeypatch.setattr(source_artifacts, "blueprint_service", lambda request: state.extractor)
+    client.post(url(state, "source-artifacts/retry"))
+    state.supported_modes = []
+    status_resp = client.get(url(state, "source-artifacts"))
+    assert status_resp.status_code == 200, status_resp.text
+    data = status_resp.json()
+    assert data["ready"] is True
+    assert data["supported_modes"] == []
+
+def test_changed_source_between_confirmation_snapshot_and_commit_returns_409(flow):
+    state, client = flow
+    preview_revision = state.revision
+
+    state.mutate_after_preview = True
+
+    response = client.post(
+        url(state),
+        json={"source_revision": preview_revision},
+        headers={"Idempotency-Key": str(uuid4())},
     )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    mock_rpc_res = MagicMock()
-    mock_rpc_res.data = {
-        "success": True,
-        "session_id": MOCK_SESSION_ID,
-        "status": "blueprinted",
-        "confirmed_at": "2026-10-28T00:00:00+00:00",
-        "total_questions": 3,
-        "total_blueprints": 3,
-    }
-    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-    # ADR-004: Must succeed with 200, not 422
-    assert response.status_code == 200
-    assert response.json()["status"] == "blueprinted"
-
-
-def test_confirm_security_warnings_empty_body_still_passes(client, mock_auth_user, auth_headers):
-    """ADR-004: Empty body {} with security warnings now succeeds (200).
-
-    Per ADR-004, no acknowledgment field is required. An empty body defaults
-    acknowledged_security_warnings to False but the Guard no longer blocks.
-    Security events are logged silently for admin audit.
-    """
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-28T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=3, has_warning=True)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    mock_rpc_res = MagicMock()
-    mock_rpc_res.data = {
-        "success": True,
-        "session_id": MOCK_SESSION_ID,
-        "status": "blueprinted",
-        "confirmed_at": "2026-10-28T00:00:00+00:00",
-        "total_questions": 3,
-        "total_blueprints": 3,
-    }
-    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={},
-            headers=auth_headers,
-        )
-    # ADR-004: Must succeed with 200, not 422
-    assert response.status_code == 200
-    assert response.json()["status"] == "blueprinted"
-
-
-# ---------------------------------------------------------------------------
-# 5. Success Flow & Blueprint Auto-Creation (HTTP 200)
-# ---------------------------------------------------------------------------
-
-
-def test_confirm_success_no_warnings(client, mock_auth_user, auth_headers):
-    """Successful source confirmation when 0 security warnings exist."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=5)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-
-    # Blueprints query returns all existing
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    # RPC returns success
-    mock_rpc_res = MagicMock()
-    mock_rpc_res.data = {
-        "success": True,
-        "session_id": MOCK_SESSION_ID,
-        "status": "blueprinted",
-        "confirmed_at": "2026-10-26T01:00:00+00:00",
-        "total_questions": 5,
-        "total_blueprints": 5,
-    }
-    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["session_id"] == MOCK_SESSION_ID
-    assert data["status"] == "blueprinted"
-    assert data["total_questions"] == 5
-    assert data["total_blueprints"] == 5
-    assert "confirmed_at" in data
-    assert data["confirmed_at"] is not None
-
-
-def test_confirm_security_warnings_are_silently_logged(client, mock_auth_user, auth_headers):
-    """ADR-004: Confirm with security warnings succeeds (200) and logs silently.
-
-    The new canonical success test for sessions with security warnings.
-    Verifies that: (1) HTTP 200 is returned, (2) status is blueprinted,
-    (3) the RPC is called with p_acknowledged_security_warnings=True always.
-    """
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-28T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=3, has_warning=True)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    # RPC returns success
-    mock_rpc_res = MagicMock()
-    mock_rpc_res.data = {
-        "success": True,
-        "session_id": MOCK_SESSION_ID,
-        "status": "blueprinted",
-        "confirmed_at": "2026-10-26T01:00:00+00:00",
-        "total_questions": 3,
-        "total_blueprints": 3,
-    }
-    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": True},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "blueprinted"
-    assert data["total_questions"] == 3
-    # Verify the RPC was called with p_acknowledged_security_warnings=True (ADR-004 bypass)
-    call_args = mock_db.rpc.call_args
-    assert call_args is not None
-    rpc_payload = call_args[0][1]  # Second positional arg is the params dict
-    assert rpc_payload.get("p_acknowledged_security_warnings") is True
-
-
-def test_confirm_security_warnings_records_persistent_audit_event(
-    client, mock_auth_user, auth_headers
-):
-    """ADR-004 & F02: Confirming with security warnings records a persistent entry into security_events."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-28T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=3, has_warning=True)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    mock_rpc_res = MagicMock()
-    mock_rpc_res.data = {
-        "success": True,
-        "session_id": MOCK_SESSION_ID,
-        "status": "blueprinted",
-        "confirmed_at": "2026-10-28T00:00:00+00:00",
-        "total_questions": 3,
-        "total_blueprints": 3,
-    }
-    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 200
-    assert any(c[0][0] == "security_events" for c in mock_db.table.call_args_list)
-    assert mock_db.table.return_value.insert.called
-    audit_payload = mock_db.table.return_value.insert.call_args[0][0]
-    assert audit_payload["session_id"] == MOCK_SESSION_ID
-    assert audit_payload["event_type"] == "PROMPT_INJECTION_DETECTED"
-    assert audit_payload["severity"] == "WARN"
-    assert audit_payload["sanitized_detail"]["action"] == "confirm_source"
-    assert audit_payload["sanitized_detail"]["warning_questions_count"] == 1
-    assert audit_payload["sanitized_detail"]["silent_audit"] is True
-
-
-def test_confirm_no_security_warnings_does_not_call_security_events(
-    client, mock_auth_user, auth_headers
-):
-    """ADR-004 & F02: When no questions have security warnings, security_events is not touched."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-28T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=3, has_warning=False)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    mock_rpc_res = MagicMock()
-    mock_rpc_res.data = {
-        "success": True,
-        "session_id": MOCK_SESSION_ID,
-        "status": "blueprinted",
-        "confirmed_at": "2026-10-28T00:00:00+00:00",
-        "total_questions": 3,
-        "total_blueprints": 3,
-    }
-    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 200
-    for call in mock_db.table.call_args_list:
-        assert call[0][0] != "security_events"
-
-
-def test_confirm_security_audit_failure_is_handled_gracefully(
-    client, mock_auth_user, auth_headers
-):
-    """ADR-004 & F02: Audit insert failure logs an error and does not block confirmation."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-28T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=3, has_warning=True)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    mock_rpc_res = MagicMock()
-    mock_rpc_res.data = {
-        "success": True,
-        "session_id": MOCK_SESSION_ID,
-        "status": "blueprinted",
-        "confirmed_at": "2026-10-28T00:00:00+00:00",
-        "total_questions": 3,
-        "total_blueprints": 3,
-    }
-    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
-
-    # Simulate exception specifically during insert execution
-    mock_db.table.return_value.insert.side_effect = Exception("Simulated DB connection timeout")
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    # Must still succeed with 200 because DB RPC handles transaction atomically
-    assert response.status_code == 200
-    assert response.json()["status"] == "blueprinted"
-
-
-
-def test_confirm_auto_creates_missing_blueprints(client, mock_auth_user, auth_headers):
-    """Confirm-source auto-creates missing blueprints if background task was partial."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=5)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-
-    # Only 3 blueprints exist initially (questions 1, 2, 3)
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data[:3]]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    # RPC returns success
-    mock_rpc_res = MagicMock()
-    mock_rpc_res.data = {
-        "success": True,
-        "session_id": MOCK_SESSION_ID,
-        "status": "blueprinted",
-        "confirmed_at": "2026-10-26T01:00:00+00:00",
-        "total_questions": 5,
-        "total_blueprints": 5,
-    }
-    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["total_questions"] == 5
-    assert data["total_blueprints"] == 5
-    # Verify upsert was called for missing blueprints to prevent duplicate records
-    mock_db.table("question_blueprints").upsert.assert_called_once()
-
-
-# ---------------------------------------------------------------------------
-# 5. Review Remediation Tests (PR #16 Review / Philip-kkk)
-# ---------------------------------------------------------------------------
-
-
-def test_confirm_source_rpc_primary_success(client, mock_auth_user, auth_headers):
-    """Confirm-source successfully executes via atomic PostgreSQL RPC confirm_exam_source."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=4)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    # Mock RPC success response
-    mock_rpc_res = MagicMock()
-    mock_rpc_res.data = {
-        "success": True,
-        "session_id": MOCK_SESSION_ID,
-        "status": "blueprinted",
-        "confirmed_at": "2026-10-25T12:00:00+00:00",
-        "total_questions": 4,
-        "total_blueprints": 4,
-    }
-    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "blueprinted"
-    assert data["total_questions"] == 4
-    assert data["total_blueprints"] == 4
-    mock_db.rpc.assert_called_with(
-        "confirm_exam_source",
-        {
-            "p_session_id": MOCK_SESSION_ID,
-            "p_expected_question_count": 4,
-            "p_acknowledged_security_warnings": True,
-            "p_expected_updated_at": "2026-10-26T00:00:00+00:00",
-        },
-    )
-
-
-def test_confirm_source_rpc_mismatch_or_non_draft_returns_409(client, mock_auth_user, auth_headers):
-    """RPC confirm_exam_source raises 409 Conflict if questions were modified concurrently or state != draft."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=3)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    # Simulate Postgres raising 22023 (question count mismatch or draft violation)
-    mock_db.rpc.return_value.execute.side_effect = Exception("22023: Question count mismatch: expected 3, found 5")
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
 
     assert response.status_code == 409
-    assert "Question count mismatch" in response.json()["detail"]
-
-
-def test_confirm_source_rpc_missing_blueprints_returns_409(client, mock_auth_user, auth_headers):
-    """RPC confirm_exam_source raises 409 Conflict if questions lack active blueprints."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=3)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    # Simulate Postgres raising 22023 for missing blueprints
-    mock_db.rpc.return_value.execute.side_effect = Exception(
-        "22023: Cannot confirm source: missing blueprints for session questions (expected 3, confirmed 0)"
-    )
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 409
-    assert "missing blueprints" in response.json()["detail"]
-
-
-def test_confirm_source_rpc_concurrent_modification_returns_409(client, mock_auth_user, auth_headers):
-    """RPC confirm_exam_source raises 409 Conflict if session updated_at changed concurrently."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=3)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    # Simulate Postgres raising 22023 for concurrent modification
-    mock_db.rpc.return_value.execute.side_effect = Exception(
-        "22023: Cannot confirm source: Session or source questions were modified concurrently"
-    )
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 409
-    assert "modified concurrently" in response.json()["detail"]
-
-
-def test_confirm_source_rpc_read_timeout_empty_message_returns_504(client, mock_auth_user, auth_headers):
-    """Real httpx.ReadTimeout with empty message raises HTTP 504 Gateway Timeout without claiming DB was rolled back."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=2)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    # Real httpx.ReadTimeout with empty string message
-    mock_db.rpc.return_value.execute.side_effect = httpx.ReadTimeout("")
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 504
-    detail = response.json()["detail"]
-    assert "uncertain due to network timeout" in detail
-    assert "was rolled back" not in detail
-    assert "Please verify session state" in detail
-
-
-def test_confirm_source_rpc_read_error_empty_message_returns_504(client, mock_auth_user, auth_headers):
-    """Real httpx.ReadError with empty message raises HTTP 504 warning uncertain status without claiming rollback."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=2)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    # Real httpx.ReadError with empty message
-    mock_db.rpc.return_value.execute.side_effect = httpx.ReadError("")
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 504
-    detail = response.json()["detail"]
-    assert "uncertain due to network communication error" in detail
-    assert "was rolled back" not in detail
-    assert "Please verify session state" in detail
-
-
-def test_confirm_source_rpc_remote_protocol_error_lost_response_returns_504(client, mock_auth_user, auth_headers):
-    """httpx.RemoteProtocolError for dropped connection returns HTTP 504 without claiming rollback."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=2)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    mock_db.rpc.return_value.execute.side_effect = httpx.RemoteProtocolError(
-        "Server disconnected without sending a response."
-    )
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 504
-    detail = response.json()["detail"]
-    assert "uncertain due to network communication error" in detail
-    assert "was rolled back" not in detail
-    assert "Please verify session state" in detail
-
-
-def test_confirm_source_rpc_httpcore_remote_protocol_error_returns_504(client, mock_auth_user, auth_headers):
-    """httpcore.RemoteProtocolError directly raised is recognized as network transport error (504)."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=2)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    mock_db.rpc.return_value.execute.side_effect = httpcore.RemoteProtocolError(
-        "Server disconnected without sending a response."
-    )
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 504
-    detail = response.json()["detail"]
-    assert "uncertain due to network communication error" in detail
-    assert "was rolled back" not in detail
-    assert "Please verify session state" in detail
-
-
-def test_confirm_source_rpc_db_error_with_apierror_returns_500_rollback(client, mock_auth_user, auth_headers):
-    """Database execution error with APIError raises HTTP 500 confirming transaction was rolled back."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=2)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    # Real postgrest APIError representing confirmed Postgres failure
-    mock_db.rpc.return_value.execute.side_effect = APIError(
-        {"message": "Deadlock detected in postgres", "code": "40P01"}
-    )
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 500
-    assert "Database atomic confirmation failed and was rolled back" in response.json()["detail"]
-
-
-def test_confirm_source_rpc_unexpected_runtime_error_returns_500_without_claiming_rollback(
-    client, mock_auth_user, auth_headers
-):
-    """Unexpected runtime error without DB evidence returns HTTP 500 without falsely claiming rollback."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=2)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    # Unexpected internal runtime error without DB rollback evidence
-    mock_db.rpc.return_value.execute.side_effect = RuntimeError("Internal memory allocation failure")
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 500
-    detail = response.json()["detail"]
-    assert "was rolled back" not in detail
-    assert "Database atomic confirmation failed. Please verify session state before retrying." in detail
-
-
-def test_confirm_source_rpc_gateway_502_html_returns_500_neutral_message(
-    client, mock_auth_user, auth_headers
-):
-    """Gateway 502 Bad Gateway HTML wrapped in APIError must return 500 neutral message without claiming rollback."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=2)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    # Exact format generated by postgrest-py generate_default_error_message(r) on gateway 502 HTML
-    mock_db.rpc.return_value.execute.side_effect = APIError(
-        {
-            "code": 502,
-            "message": "JSON could not be generated",
-            "hint": "Refer to full message for details",
-            "details": "<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center></body></html>",
-        }
-    )
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 500
-    detail = response.json()["detail"]
-    assert "was rolled back" not in detail
-    assert "Database atomic confirmation failed. Please verify session state before retrying." in detail
-
-
-def test_confirm_source_rpc_gateway_504_html_returns_uncertain_neutral_message(
-    client, mock_auth_user, auth_headers
-):
-    """Gateway 504 Gateway Timeout HTML wrapped in APIError must return uncertain status without claiming rollback."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=2)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    # Exact format generated by postgrest-py on gateway 504 HTML
-    mock_db.rpc.return_value.execute.side_effect = APIError(
-        {
-            "code": 504,
-            "message": "JSON could not be generated",
-            "hint": "Refer to full message for details",
-            "details": "<html><head><title>504 Gateway Timeout</title></head><body><center><h1>504 Gateway Timeout</h1></center></body></html>",
-        }
-    )
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    # May return 504 (recognized timeout) or 500 neutral; neither must affirm rollback
-    assert response.status_code in (500, 504)
-    detail = response.json()["detail"]
-    assert "was rolled back" not in detail
-    assert "Please verify session state" in detail
-
-
-def test_confirm_source_rpc_non_json_unknown_code_returns_500_neutral_message(
-    client, mock_auth_user, auth_headers
-):
-    """APIError with unknown/non-PostgreSQL code and non-JSON body returns 500 neutral message without claiming rollback."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=2)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    mock_db.rpc.return_value.execute.side_effect = APIError(
-        {
-            "code": "PROXY_CONN_ERR",
-            "message": "JSON could not be generated",
-            "hint": "Refer to full message for details",
-            "details": "Connection to upstream server terminated unexpectedly",
-        }
-    )
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 500
-    detail = response.json()["detail"]
-    assert "was rolled back" not in detail
-    assert "Database atomic confirmation failed. Please verify session state before retrying." in detail
-
-
-def test_confirm_source_rpc_apierror_none_code_returns_500_neutral_message(
-    client, mock_auth_user, auth_headers
-):
-    """APIError with None code returns 500 neutral message without claiming rollback."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=2)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    mock_db.rpc.return_value.execute.side_effect = APIError(
-        {
-            "code": None,
-            "message": "Unspecified database proxy error",
-            "hint": None,
-            "details": None,
-        }
-    )
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 500
-    detail = response.json()["detail"]
-    assert "was rolled back" not in detail
-    assert "Database atomic confirmation failed. Please verify session state before retrying." in detail
-
-
-def test_confirm_source_rpc_sqlstate_08007_transaction_resolution_unknown_returns_500_neutral_message(
-    client, mock_auth_user, auth_headers
-):
-    """PostgreSQL SQLSTATE 08007 (transaction resolution unknown) must return 500 neutral message without claiming rollback."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=2)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    # SQLSTATE 08007: Transaction resolution unknown (PostgreSQL Class 08 Connection Exception)
-    mock_db.rpc.return_value.execute.side_effect = APIError(
-        {
-            "code": "08007",
-            "message": "transaction resolution unknown",
-            "hint": None,
-            "details": "Connection dropped after query submission; commit status uncertain",
-        }
-    )
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 500
-    detail = response.json()["detail"]
-    assert "was rolled back" not in detail
-    assert "Database atomic confirmation failed. Please verify session state before retrying." in detail
-
-
-def test_confirm_source_rpc_sqlstate_08006_connection_failure_returns_500_neutral_message(
-    client, mock_auth_user, auth_headers
-):
-    """PostgreSQL SQLSTATE 08006 (connection failure) must return 500 neutral message without claiming rollback."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=2)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    # SQLSTATE 08006: Connection failure (PostgreSQL Class 08 Connection Exception)
-    mock_db.rpc.return_value.execute.side_effect = APIError(
-        {
-            "code": "08006",
-            "message": "connection failure",
-            "hint": None,
-            "details": "Connection to PostgreSQL server lost",
-        }
-    )
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
-    assert response.status_code == 500
-    detail = response.json()["detail"]
-    assert "was rolled back" not in detail
-    assert "Database atomic confirmation failed. Please verify session state before retrying." in detail
-
-
-def test_confirm_source_returns_real_db_counts(client, mock_auth_user, auth_headers):
-    """API returns total_blueprints directly from the RPC response rather than python client estimates."""
-    mock_db = MagicMock()
-    mock_status = MagicMock()
-    mock_status.data = [{"status": "draft", "updated_at": "2026-10-26T00:00:00+00:00"}]
-    mock_questions = MagicMock()
-    mock_questions.data = _create_mock_questions(count=5)
-
-    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value = (
-        mock_status
-    )
-    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-        mock_questions
-    )
-    mock_bps = MagicMock()
-    mock_bps.data = [{"source_question_id": q["id"]} for q in mock_questions.data]
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value = mock_bps
-
-    # RPC returns verified actual count from DB
-    mock_rpc_res = MagicMock()
-    mock_rpc_res.data = {
-        "success": True,
-        "session_id": MOCK_SESSION_ID,
-        "status": "blueprinted",
-        "confirmed_at": "2026-10-26T01:00:00+00:00",
-        "total_questions": 5,
-        "total_blueprints": 5,
-    }
-    mock_db.rpc.return_value.execute.return_value = mock_rpc_res
-
-    with (
-        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
-        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
-        patch("app.api.routes.sessions.assert_ownership", return_value=None),
-    ):
-        response = client.post(
-            f"/api/sessions/{MOCK_SESSION_ID}/confirm-source",
-            json={"acknowledged_security_warnings": False},
-            headers=auth_headers,
-        )
-
+    assert "ERR_SOURCE_REVISION_CONFLICT" in response.text
+    assert state.confirmation is None
+    assert [name for name, _ in state.calls] == [
+        "get_session_source_preview", "confirm_source_artifacts"
+    ]
+    assert state.calls[1][1]["p_expected_source_revision"] == preview_revision
+
+
+def mode(**updates):
+    return dict(id="context_swap", label="Context", description="Fixture mode",
+                question_count=1, is_available=True, **updates)
+
+
+@pytest.mark.parametrize("production_status", ["pending", "running", "failed"])
+def test_status_states_keep_modes_null_from_single_rpc(flow, production_status):
+    state, client = flow
+    assert client.post(url(state), json={"source_revision": state.revision}).status_code == 200
+    state.production_status = production_status
+    state.calls.clear()
+    response = client.get(url(state, "source-artifacts"))
+    assert response.status_code == 200, response.text
+    assert response.json()["canonical_status"] == production_status
+    assert response.json()["supported_modes"] is None
+    assert [name for name, _ in state.calls] == ["get_source_artifacts"]
+
+
+def test_canonical_mode_object_shape_is_preserved(flow):
+    state, client = flow
+    assert client.post(url(state), json={"source_revision": state.revision}).status_code == 200
+    state.ready, state.supported_modes = True, [mode()]
+    state.calls.clear()
+    response = client.get(url(state, "source-artifacts"))
     assert response.status_code == 200
-    res_data = response.json()
-    assert res_data["total_blueprints"] == 5
-    assert res_data["total_questions"] == 5
-    assert res_data["confirmed_at"] == "2026-10-26T01:00:00+00:00"
+    assert response.json()["supported_modes"] == [mode()]
+    assert len(state.calls) == 1
 
 
-
-@pytest.mark.asyncio
-async def test_ensure_blueprints_safe_upsert_deduplication():
-    """ensure_blueprints_for_session uses upsert with ignore_duplicates to prevent duplicate blueprints."""
-    from app.services.parser.blueprint_service import ensure_blueprints_for_session
-
-    mock_db = MagicMock()
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value.data = []
-
-    questions = [
-        {"id": "sq-1", "question_no": 1, "raw_content": "Cho x = 5"},
-        {"id": "sq-2", "question_no": 2, "raw_content": "Cho y = 10"},
-    ]
-
-    total = await ensure_blueprints_for_session(mock_db, MOCK_SESSION_ID, questions)
-
-    assert total == 2
-    mock_db.table("question_blueprints").upsert.assert_called_once()
-    _, kwargs = mock_db.table("question_blueprints").upsert.call_args
-    assert kwargs.get("on_conflict") == "source_question_id"
-    assert kwargs.get("ignore_duplicates") is True
+@pytest.mark.parametrize("modes", [
+    None, ["context_swap"], [{}],
+    [dict(mode(), id="SHUFFLE")],
+    [dict(mode(), question_count=True)],
+    [dict(mode(), question_count=2)],
+    [dict(mode(), is_available=False)],
+    [dict(mode(), is_available="true")],
+    [dict(mode(), label=1)], [mode(), mode()],
+])
+def test_ready_mode_contract_invalid_fails_closed(flow, modes):
+    state, client = flow
+    assert client.post(url(state), json={"source_revision": state.revision}).status_code == 200
+    state.ready, state.supported_modes = True, modes
+    assert client.get(url(state, "source-artifacts")).status_code == 503
 
 
-@pytest.mark.asyncio
-async def test_ensure_blueprints_preserves_confirmed():
-    """ensure_blueprints_for_session does not re-insert or modify questions that already have blueprints."""
-    from app.services.parser.blueprint_service import ensure_blueprints_for_session
-
-    mock_db = MagicMock()
-    # Question 1 already has a blueprint in DB
-    mock_db.table.return_value.select.return_value.in_.return_value.execute.return_value.data = [
-        {"source_question_id": "sq-1"}
-    ]
-
-    questions = [
-        {"id": "sq-1", "question_no": 1, "raw_content": "Cho x = 5"},
-        {"id": "sq-2", "question_no": 2, "raw_content": "Cho y = 10"},
-    ]
-
-    total = await ensure_blueprints_for_session(mock_db, MOCK_SESSION_ID, questions)
-
-    assert total == 2
-    # Only question 2 should be in the upsert payload
-    mock_db.table("question_blueprints").upsert.assert_called_once()
-    args, _ = mock_db.table("question_blueprints").upsert.call_args
-    inserted_blueprints = args[0]
-    assert len(inserted_blueprints) == 1
-    assert inserted_blueprints[0]["source_question_id"] == "sq-2"
-    assert inserted_blueprints[0]["is_fallback"] is True
-    assert inserted_blueprints[0]["extraction_source"] == "FALLBACK_DETERMINISTIC"
+def test_pending_cannot_advertise_even_empty_mode_array(flow):
+    state, client = flow
+    assert client.post(url(state), json={"source_revision": state.revision}).status_code == 200
+    state.supported_modes = []
+    assert client.get(url(state, "source-artifacts")).status_code == 503
 
 
-def test_extract_default_blueprint_unsupported_non_numerical_question():
-    """Questions without numerical parameters are marked as invariant with variation_modes=['NONE']."""
-    from app.services.parser.blueprint_service import extract_default_blueprint
+def test_ready_requires_per_question_production_evidence(flow, monkeypatch):
+    from app.services.blueprint.producer import SourceArtifactRepository
+    state, client = flow
+    assert client.post(url(state), json={"source_revision": state.revision}).status_code == 200
+    state.ready, state.supported_modes = True, []
+    original = SourceArtifactRepository._call
 
-    q_verbal = {
-        "id": "sq-verbal-1",
-        "question_no": 7,
-        "raw_content": "Đặc điểm nào sau đây là của quá trình giảm phân?",
-    }
-    bp = extract_default_blueprint(q_verbal)
-    assert bp["source_question_id"] == "sq-verbal-1"
-    assert bp["variables"] == {}
-    assert bp["domains"] == {}
-    assert bp["variation_modes"] == ["NONE"]
-    assert "PRESERVE_CONTENT_VERBATIM" in bp["invariants"]
-    assert bp["is_fallback"] is True
-    assert bp["extraction_source"] == "FALLBACK_DETERMINISTIC"
-    assert "no numerical parameters" in bp["rule_summary"]
+    async def corrupt(self, name, params):
+        data = await original(self, name, params)
+        if name == "get_source_artifacts":
+            data["production"] = []
+        return data
 
-
+    monkeypatch.setattr(SourceArtifactRepository, "_call", corrupt)
+    assert client.get(url(state, "source-artifacts")).status_code == 503

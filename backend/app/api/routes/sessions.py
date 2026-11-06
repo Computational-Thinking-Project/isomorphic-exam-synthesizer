@@ -10,7 +10,6 @@ Provides endpoints for:
 """
 
 import logging
-from datetime import datetime, timezone
 from typing import Any, List, Optional, cast
 
 from fastapi import (
@@ -18,6 +17,7 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
+    Header,
     HTTPException,
     Query,
     Request,
@@ -28,7 +28,8 @@ from fastapi import (
 from postgrest.types import CountMethod
 from supabase import Client
 
-from app.api.dependencies import assert_ownership, get_current_user, get_user_db
+from app.api.dependencies import assert_ownership, get_current_user, get_service_db, get_user_db
+from app.api.routes.source_artifacts import confirm_source_flow, source_preview
 from app.core.rate_limit import crud_rate_limit
 from app.models.schemas import (
     ConfirmSourceRequest,
@@ -36,6 +37,7 @@ from app.models.schemas import (
     CurrentUser,
     IngestSuccessResponse,
     IngestTextRequest,
+    ReviewDomainException,
     SessionCloneRequest,
     SessionCreate,
     SessionDetailResponse,
@@ -45,7 +47,6 @@ from app.models.schemas import (
 )
 from app.services.parser import (
     assert_zero_mutation_or_raise,
-    ensure_blueprints_for_session,
     parse_docx,
     parse_latex,
     parse_markdown,
@@ -53,9 +54,6 @@ from app.services.parser import (
     validate_file_security,
 )
 from app.services.parser.ingestion_service import (
-    is_database_rollback_evidence,
-    is_network_timeout,
-    is_network_transport,
     replace_source_questions_atomically,
     trigger_blueprint_pipeline,
 )
@@ -77,15 +75,13 @@ async def create_session(
     db: Client = Depends(get_user_db),
 ) -> SessionItem:
     """Create a new exam session for the authenticated user with 'draft' status."""
+    # SEC-04 / F07: Only insert client-editable columns.
+    # status, gemini_call_count, retry_count, gemini_review_calls are DB-managed with defaults.
     new_session_data: dict[str, Any] = {
         "user_id": current_user.id,
         "title": payload.title.strip(),
         "subject": payload.subject.strip(),
         "grade": payload.grade,
-        "status": "draft",
-        "gemini_call_count": 0,
-        "retry_count": 0,
-        "gemini_review_calls": 0,
     }
 
     response = db.table("exam_sessions").insert(cast(Any, new_session_data)).execute()
@@ -151,42 +147,108 @@ async def get_session_detail(
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
 ) -> SessionDetailResponse:
-    """Retrieve session details by ID, validating ownership and fetching nested questions and versions."""
+    """Read source rows and their UUID revision under one RPC-held parent lock.
+
+    Exam versions are fetched separately and are outside the source snapshot.
+    """
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
-
-    s_res = db.table("exam_sessions").select("*").eq("id", session_id).execute()
-    s_rows = cast(List[dict[str, Any]], s_res.data or [])
-    if not s_rows:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Session not found",
-        )
-    session_record = s_rows[0]
-
-    # Fetch source_questions ordered by question_no ASC
-    q_res = (
-        db.table("source_questions")
-        .select("*")
-        .eq("session_id", session_id)
-        .order("question_no", desc=False)
-        .execute()
+    session_record, source_revision, source_questions = source_preview(
+        db, session_id, current_user.id
     )
-    source_questions = cast(List[dict[str, Any]], q_res.data or [])
-
-    # Fetch exam_versions ordered by created_at ASC
     v_res = (
-        db.table("exam_versions")
-        .select("*")
-        .eq("session_id", session_id)
-        .order("created_at", desc=False)
-        .execute()
+        db.table("exam_versions").select("*").eq("session_id", session_id)
+        .order("created_at", desc=False).execute()
     )
     exam_versions = cast(List[dict[str, Any]], v_res.data or [])
 
+    # Fetch generation_config if saved (Stage 2 / TASK-207a)
+    cfg_res = (
+        db.table("generation_configs").select("*").eq("session_id", session_id).limit(1).execute()
+    )
+    cfg_rows = cast(List[dict[str, Any]], cfg_res.data or [])
+    generation_config = cfg_rows[0] if cfg_rows else None
+
+    # Compute blueprint summary for Stage 2 readiness projection (F02 / TASK-208 contract)
+    blueprint_summary = None
+    if source_questions:
+        source_ids = [str(q.get("id")) for q in source_questions if q.get("id")]
+        total_sources = len(source_questions)
+
+        from app.services.generation.mode_mapper import (
+            compute_supported_modes_summary,
+            supported_modes_from_counts,
+        )
+
+        # Only a successful NO_CONFIRMATION receipt authorizes legacy lookup.
+        # Transport errors, malformed responses and canonical not-ready fail closed.
+        snapshot: object = None
+        try:
+            snapshot = db.rpc("get_generation_source_snapshot", {"p_session_id": session_id}).execute().data
+        except Exception:
+            logger.warning("Generation snapshot unavailable for session %s", session_id)
+        supported_modes: Optional[List[dict[str, Any]]] = None
+        is_ready = False
+        blueprint_count = confirmed_count = 0
+        if isinstance(snapshot, dict) and snapshot.get("ready") is True:
+            confirmed_sources = snapshot.get("confirmed_sources")
+            if (
+                isinstance(confirmed_sources, list)
+                and len(confirmed_sources) == total_sources
+                and all(isinstance(source, dict) for source in confirmed_sources)
+                and {source.get("source_question_id") for source in confirmed_sources} == set(source_ids)
+            ):
+                canonical_bps = [
+                    source["canonical_blueprint"]
+                    for source in confirmed_sources
+                    if isinstance(source, dict) and isinstance(source.get("canonical_blueprint"), dict)
+                ]
+                blueprint_count = confirmed_count = len(canonical_bps)
+                try:
+                    supported_modes = compute_supported_modes_summary(canonical_bps, total_sources)
+                    is_ready = True
+                except ValueError:
+                    pass
+        elif isinstance(snapshot, dict) and snapshot.get("reason") == "NO_CONFIRMATION":
+            bp_res = (
+                db.table("question_blueprints")
+                .select("id,source_question_id,confirmed_at,is_fallback,variation_modes")
+                .in_("source_question_id", source_ids)
+                .execute()
+            )
+            bp_rows = cast(List[dict[str, Any]], bp_res.data or [])
+            blueprint_count = len(bp_rows)
+            confirmed_count = sum(bp.get("confirmed_at") is not None for bp in bp_rows)
+            valid_modes = all(
+                isinstance(bp.get("variation_modes"), list)
+                and all(isinstance(mode, str) and bool(mode.strip()) for mode in bp["variation_modes"])
+                for bp in bp_rows
+            )
+            is_ready = (
+                valid_modes and confirmed_count == total_sources
+                and blueprint_count == total_sources
+                and {bp.get("source_question_id") for bp in bp_rows} == set(source_ids)
+            )
+            if is_ready:
+                counts: dict[str, int] = {}
+                for bp in bp_rows:
+                    for mode in set(bp["variation_modes"]):
+                        counts[mode] = counts.get(mode, 0) + 1
+                supported_modes = supported_modes_from_counts(counts, total_sources)
+        blueprint_summary = {
+            "is_ready": is_ready,
+            "total_questions": total_sources,
+            "questions_with_blueprint": blueprint_count,
+            "confirmed_blueprints": confirmed_count,
+            "supported_modes": supported_modes,
+        }
+
     return SessionDetailResponse(
         **session_record,
+        source_revision=source_revision,
         source_questions=source_questions,
         exam_versions=exam_versions,
+        generation_config=generation_config,
+        blueprint_summary=blueprint_summary,
     )
 
 
@@ -214,9 +276,14 @@ async def update_session(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
         return SessionItem(**rows[0])
 
-    response = (
-        db.table("exam_sessions").update(cast(Any, update_data)).eq("id", session_id).execute()
-    )
+    try:
+        response = (
+            db.table("exam_sessions").update(cast(Any, update_data)).eq("id", session_id).execute()
+        )
+    except Exception as exc:
+        if "ERR_SESSION_LOCKED" in str(exc):
+            raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session content is locked") from exc
+        raise
     rows = cast(List[dict[str, Any]], response.data or [])
     if not rows:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
@@ -236,7 +303,12 @@ async def delete_session(
 ) -> None:
     """Delete an exam session and cascade all associated questions, blueprints, and versions."""
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
-    db.table("exam_sessions").delete().eq("id", session_id).execute()
+    try:
+        db.table("exam_sessions").delete().eq("id", session_id).execute()
+    except Exception as exc:
+        if "ERR_SESSION_LOCKED" in str(exc):
+            raise ReviewDomainException(423, "ERR_SESSION_LOCKED", "Session content is locked") from exc
+        raise
     return None
 
 
@@ -269,15 +341,12 @@ async def clone_session(
     new_title = custom_title if custom_title else f"{orig.get('title', '')} (Bản sao)"
 
     # 3. Insert cloned session record
+    # SEC-04 / F07: Only insert client-editable columns. DB assigns defaults for status and counters.
     new_session_data: dict[str, Any] = {
         "user_id": current_user.id,
         "title": new_title,
-        "subject": orig.get("subject", "Toán"),
+        "subject": orig.get("subject") or "Toán",
         "grade": orig.get("grade", 12),
-        "status": "draft",
-        "gemini_call_count": 0,
-        "retry_count": 0,
-        "gemini_review_calls": 0,
     }
     create_res = db.table("exam_sessions").insert(cast(Any, new_session_data)).execute()
     create_rows = cast(List[dict[str, Any]], create_res.data or [])
@@ -518,8 +587,7 @@ async def ingest_text(
 @router.post(
     "/{session_id}/confirm-source",
     response_model=ConfirmSourceResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Confirm source exam and activate blueprints (TASK-205)",
+    summary="Confirm source and prepare canonical Blueprints in background",
 )
 @crud_rate_limit
 async def confirm_source(
@@ -527,205 +595,14 @@ async def confirm_source(
     payload: ConfirmSourceRequest,
     request: Request,
     response: Response,
+    background_tasks: BackgroundTasks,
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
+    service_db: Client = Depends(get_service_db),
+    idempotency_key: str = Header(..., alias="Idempotency-Key"),
 ) -> ConfirmSourceResponse:
-    """Confirm source exam questions, lock blueprints, and transition session to Stage 2.
-
-    Guards:
-    1. Ownership: Current user owns the exam session (Sync call).
-    2. State Precondition: Session must be in 'draft' status (HTTP 409 if not).
-    3. Data Integrity: Session must have source questions and none with missing answers (HTTP 422).
-    4. Security (SEC-02 / ADR-004): Security warnings are logged silently for admin audit.
-       Users are NOT required to acknowledge — no checkbox exposed on UI.
-    5. Blueprint Engine: Ensures all questions have active blueprints.
-    6. Atomic State Transition: Updates blueprints confirmed_at and session status to 'blueprinted'.
-    """
-    # Guard 1: Ownership verification (Sync function)
-    assert_ownership("exam_sessions", session_id, current_user.id, db=db)
-
-    # Guard 2: State Precondition (must be 'draft')
-    s_res = db.table("exam_sessions").select("status, updated_at").eq("id", session_id).execute()
-    s_rows = cast(List[dict[str, Any]], s_res.data or [])
-    if not s_rows:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    session_status = str(s_rows[0].get("status", ""))
-    session_updated_at = s_rows[0].get("updated_at")
-    if session_status != "draft":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Session is in '{session_status}' state; cannot confirm source unless in 'draft'",
-        )
-
-    # Guard 3: Fetch & validate source questions
-    q_res = (
-        db.table("source_questions")
-        .select("*")
-        .eq("session_id", session_id)
-        .order("question_no", desc=False)
-        .execute()
+    # ADR004: deprecated acknowledgment is ignored; SQL records silent audit.
+    return await confirm_source_flow(
+        session_id, current_user.id, idempotency_key, str(payload.source_revision),
+        db, service_db, request, background_tasks
     )
-    questions = cast(List[dict[str, Any]], q_res.data or [])
-    if not questions:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Cannot confirm source: Session has no source questions",
-        )
-
-    missing_answer_questions = [
-        q.get("question_no", "?") for q in questions if q.get("has_missing_answer") is True
-    ]
-    if missing_answer_questions:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Cannot confirm source: Questions {missing_answer_questions} have missing answers",
-        )
-
-    # Guard 4: Silent Security Audit Logging (SEC-02 / ADR-004)
-    # Per ADR-004: Security warnings are never surfaced to end users.
-    # Backend logs them silently for internal admin audit (table: security_events).
-    # Users are NOT required to acknowledge — the UI has no checkbox for this.
-    security_warning_questions = [
-        q for q in questions if q.get("has_security_warning") is True
-    ]
-    if security_warning_questions:
-        flagged_nos = [q.get("question_no", "?") for q in security_warning_questions]
-        logger.warning(
-            "SEC-02 Silent Audit: Session %s confirmed with %d question(s) flagged for security review: %s",
-            session_id,
-            len(security_warning_questions),
-            flagged_nos,
-        )
-        try:
-            db.table("security_events").insert(
-                {
-                    "session_id": session_id,
-                    "user_id": current_user.id,
-                    "event_type": "PROMPT_INJECTION_DETECTED",
-                    "severity": "WARN",
-                    "sanitized_detail": {
-                        "action": "confirm_source",
-                        "warning_questions_count": len(security_warning_questions),
-                        "flagged_questions": [
-                            {"id": q.get("id"), "question_no": q.get("question_no")}
-                            for q in security_warning_questions
-                        ],
-                        "silent_audit": True,
-                        "adr_version": "ADR-004",
-                    },
-                }
-            ).execute()
-        except Exception as audit_err:
-            logger.error(
-                "Failed to insert persistent audit record into security_events for session %s: %s",
-                session_id,
-                audit_err,
-            )
-
-    # Guard 5: Ensure blueprints exist for all source questions
-    total_blueprints = await ensure_blueprints_for_session(db, session_id, questions)
-
-    # Guard 6: Atomic state transition (RPC only, strictly transactional)
-    # ADR-004: Always pass acknowledged_security_warnings=True to the RPC since
-    # user-facing acknowledgment is eliminated. The RPC-level check is bypassed
-    # intentionally — security is handled via silent audit log above.
-    now_iso = datetime.now(timezone.utc).isoformat()
-    try:
-        rpc_res = db.rpc(
-            "confirm_exam_source",
-            {
-                "p_session_id": session_id,
-                "p_expected_question_count": len(questions),
-                "p_acknowledged_security_warnings": True,  # ADR-004: always bypassed at RPC level
-                "p_expected_updated_at": session_updated_at,
-            },
-        ).execute()
-
-        if rpc_res.data and isinstance(rpc_res.data, dict) and rpc_res.data.get("success"):
-            confirmed_at_str = rpc_res.data.get("confirmed_at") or now_iso
-            actual_total_questions = rpc_res.data.get("total_questions", len(questions))
-            actual_total_blueprints = rpc_res.data.get("total_blueprints", total_blueprints)
-            return ConfirmSourceResponse(
-                session_id=session_id,
-                status="blueprinted",
-                confirmed_at=str(confirmed_at_str),
-                total_questions=actual_total_questions,
-                total_blueprints=actual_total_blueprints,
-                message="Source confirmed and blueprints locked successfully",
-            )
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to confirm source: database returned unsuccessful response",
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        err_msg = str(exc)
-        err_lower = err_msg.lower()
-        logger.error(
-            "RPC confirm_exam_source failed for session %s: %s",
-            session_id,
-            exc,
-        )
-        code = getattr(exc, "code", "") or ""
-
-        if code == "42501" or "42501" in err_msg or "access denied" in err_lower or "unauthorized" in err_lower:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied or session ownership mismatch",
-            ) from exc
-        if (
-            code == "22023"
-            or "22023" in err_msg
-            or "draft" in err_lower
-            or "mismatch" in err_lower
-            or "state" in err_lower
-            or "warning" in err_lower
-            or "missing" in err_lower
-            or "concurrent" in err_lower
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Cannot confirm source: {err_msg}",
-            ) from exc
-        if code == "P0002" or "p0002" in err_lower or "not found" in err_lower:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Session not found",
-            ) from exc
-
-        # 4. Network Timeout (504): Commit status is uncertain
-        if is_network_timeout(exc):
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail=(
-                    "Database atomic confirmation status is uncertain due to network timeout. "
-                    "The transaction may have completed. Please verify session state before retrying."
-                ),
-            ) from exc
-
-        # 5. Network Disconnection / Lost Response / Transport Error (504): Commit status is uncertain
-        if is_network_transport(exc):
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail=(
-                    "Database atomic confirmation status is uncertain due to network communication error. "
-                    "The transaction may have completed. Please verify session state before retrying."
-                ),
-            ) from exc
-
-        # 6. Confirmed Database Execution Failure with Rollback Evidence (500)
-        if is_database_rollback_evidence(exc):
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Database atomic confirmation failed and was rolled back.",
-            ) from exc
-
-        # 7. Unverified / Unexpected Failure without DB Evidence (500):
-        # Do not falsely affirm that the transaction was rolled back.
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Database atomic confirmation failed. Please verify session state before retrying.",
-        ) from exc
-

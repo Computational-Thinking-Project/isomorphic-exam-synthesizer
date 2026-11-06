@@ -1,0 +1,29 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage{fontspec}
+\setmainfont{TeX Gyre Termes}
+\usepackage{amsmath,amssymb,geometry,enumitem}
+\geometry{margin=2cm}
+\setlength{\emergencystretch}{3em}
+\begin{document}
+\begin{center}
+{\Large\bfseries ((( title )))}\par
+Mã đề: ((( code )))
+\end{center}
+((* for q in questions *))
+\noindent\textbf{Câu ((( q.number ))).} ((( q.content )))
+\begin{enumerate}[label=\Alph*.,leftmargin=2em]
+((* for option in q.options *))
+\item ((( option )))
+((* endfor *))
+\end{enumerate}
+((* endfor *))
+\clearpage
+\section*{Đáp án và lời giải}
+((* for q in questions *))
+\noindent\textbf{Câu ((( q.number ))) — Đáp án ((( q.correct_key ))).}
+
+((( q.solution )))
+
+\medskip
+((* endfor *))
+\end{document}
