@@ -714,3 +714,11 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
   historical backfill or deployed Supabase claim. Existing F02/F07/F09/F10 remain
   reviewer verified; F11 stays in its original
   [thread](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/32#discussion_r4479665885).
+
+## DEC-207-003 — Stage 2 durable generation HTTP wiring (local WIP)
+
+- **Ngày / người phụ trách:** 06/11/2026, Quỳnh / TASK-207b, PR #30; agent hỗ trợ Dev.
+- **Trạng thái:** triển khai local, chưa commit/push, chưa được review hoặc nghiệm thu DB/FE/proxy.
+- **Context:** FE2 đã merge cần snapshot bền vững, cursor và epoch để phục hồi sau reload, mất history hoặc restart; Python job/stream factories chưa mount vào app.
+- **Decision:** dùng migrations thực tế 005/015/016 để claim/quota/save full AI result hoặc ORIGINAL_CLONE/finish/load; owner claim bằng JWT, worker writes bằng service role và job token. `GET /api/sessions/{id}/generation-snapshot` đọc completed/failures từ RPC. Ticket kiểm epoch/cursor trước khi EventSource mở; cursor được chụp trước DB read để replay không bỏ event. Sau restart, ticket khôi phục terminal event từ trạng thái và counts bền vững nếu broker chưa có.
+- **Impact:** backend job repository, runner, main, generation snapshot/stream routes, FE2 Stage 2 API contract. Không thay SQL/AI generator/FE. [Contract và giới hạn](api/generation-job-endpoints.md), [bàn giao](tasks/TASK-207b.md).

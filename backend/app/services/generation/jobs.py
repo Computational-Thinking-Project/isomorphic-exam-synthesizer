@@ -11,6 +11,8 @@ from uuid import UUID
 from anyio import CancelScope
 
 from app.models.generation_events import EventName, GenerationEventData, SessionOutcome
+from app.services.generation.ai_batch_adapter import AIBatchAdapter, AIBatchInputs
+from app.services.generation.ai_mapping import PreparedAIResult
 from app.services.generation.events import EventBufferLease, GenerationEventBroker
 from app.services.generation.job_contracts import (
     GeneratedDraft,
@@ -20,6 +22,7 @@ from app.services.generation.job_contracts import (
     GenerationQuotaExceeded,
     QuestionTarget,
 )
+from app.services.generation.job_repository import CloneJobInputs
 from app.services.observability.runtime_registry import RuntimeRegistry
 
 T = TypeVar("T")
@@ -103,11 +106,12 @@ class GenerationJobRunner:
 
     def __init__(
         self,
-        pipeline: GenerationPipeline,
+        pipeline: GenerationPipeline | None,
         events: GenerationEventBroker,
         registry: RuntimeRegistry,
         *,
         timeout_seconds: float = 600,
+        batch: AIBatchAdapter | Callable[[], AIBatchAdapter] | None = None,
     ) -> None:
         if (
             isinstance(timeout_seconds, bool)
@@ -116,6 +120,7 @@ class GenerationJobRunner:
         ):
             raise ValueError("Job timeout must be positive and at most 600 seconds.")
         self._pipeline = pipeline
+        self._batch = batch
         self._events = events
         self._registry = registry
         self._timeout = timeout_seconds
@@ -176,40 +181,91 @@ class GenerationJobRunner:
         try:
             handle = self._registry.begin_job(plan.session_id)
             deadline = asyncio.get_running_loop().time() + self._timeout
-            calls = ProviderCalls(store, plan, self._registry, self._provider_slots, deadline)
             async with asyncio.timeout_at(deadline):
                 await self._emit(plan, "progress", len(completed))
-                for target in plan.targets:
-                    if target in completed:
-                        continue
-                    await self._emit(plan, "progress", len(completed), target=target)
-                    draft = await self._pipeline.generate(plan, target, calls)
-                    if draft is None:
+                if isinstance(plan.inputs, CloneJobInputs):
+                    for target in plan.targets:
+                        if target not in completed:
+                            await store.save_clone(plan, target)
+                            completed.add(target)
+                            await self._emit(plan, "question_done", len(completed), target=target)
+                            await self._emit(plan, "progress", len(completed))
+                elif isinstance(plan.inputs, AIBatchInputs):
+                    if self._batch is None:
+                        raise RuntimeError("AI batch service is unavailable.")
+
+                    async def on_result(result: PreparedAIResult) -> None:
+                        # The full result, including failures and provenance, is
+                        # committed before any browser progress is published.
+                        await store.save_result(plan, result)
+                        if result.draft is None:
+                            await self._emit(
+                                plan,
+                                "warning",
+                                len(completed),
+                                target=result.target,
+                                code="ERR_NO_SAVEABLE_CANDIDATE",
+                            )
+                            return
+                        completed.add(result.target)
+                        if result.draft.has_warning:
+                            await self._emit(
+                                plan,
+                                "warning",
+                                len(completed),
+                                target=result.target,
+                                draft=result.draft,
+                                code="ERR_VALIDATION_WARNING",
+                            )
                         await self._emit(
                             plan,
-                            "warning",
+                            "question_done",
                             len(completed),
-                            target=target,
-                            code="ERR_NO_SAVEABLE_CANDIDATE",
+                            target=result.target,
+                            draft=result.draft,
                         )
-                        continue
-                    draft = GeneratedDraft.model_validate(draft.model_dump())
-                    # Emit done ONLY after the per-question durable commit succeeds.
-                    await store.save_draft(plan, target, draft)
-                    completed.add(target)
-                    if draft.has_warning:
-                        await self._emit(
-                            plan,
-                            "warning",
-                            len(completed),
-                            target=target,
-                            draft=draft,
-                            code="ERR_VALIDATION_WARNING",
-                        )
-                    await self._emit(
-                        plan, "question_done", len(completed), target=target, draft=draft
+                        await self._emit(plan, "progress", len(completed))
+
+                    batch = self._batch() if callable(self._batch) else self._batch
+                    await batch.run(
+                        plan, plan.inputs, store, deadline=deadline, on_result=on_result
                     )
-                    await self._emit(plan, "progress", len(completed))
+                else:
+                    if self._pipeline is None:
+                        raise RuntimeError("Generation pipeline is unavailable.")
+                    calls = ProviderCalls(
+                        store, plan, self._registry, self._provider_slots, deadline
+                    )
+                    for target in plan.targets:
+                        if target in completed:
+                            continue
+                        await self._emit(plan, "progress", len(completed), target=target)
+                        draft = await self._pipeline.generate(plan, target, calls)
+                        if draft is None:
+                            await self._emit(
+                                plan,
+                                "warning",
+                                len(completed),
+                                target=target,
+                                code="ERR_NO_SAVEABLE_CANDIDATE",
+                            )
+                            continue
+                        draft = GeneratedDraft.model_validate(draft.model_dump())
+                        await store.save_draft(plan, target, draft)
+                        completed.add(target)
+                        if draft.has_warning:
+                            await self._emit(
+                                plan,
+                                "warning",
+                                len(completed),
+                                target=target,
+                                draft=draft,
+                                code="ERR_VALIDATION_WARNING",
+                            )
+                        await self._emit(
+                            plan, "question_done", len(completed), target=target, draft=draft
+                        )
+                        await self._emit(plan, "progress", len(completed))
         except GenerationQuotaExceeded:
             code = "ERR_GEMINI_QUOTA_EXHAUSTED"
         except TimeoutError:

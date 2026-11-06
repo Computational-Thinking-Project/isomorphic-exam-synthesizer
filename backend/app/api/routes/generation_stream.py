@@ -1,7 +1,7 @@
 """SSE router factory; explicit current-owner lookup is required for product wiring."""
 
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import partial
 from typing import Annotated
 from uuid import UUID
@@ -18,6 +18,7 @@ from supabase import Client
 from app.api.dependencies import assert_ownership, get_current_user, get_user_db
 from app.core.rate_limit import crud_rate_limit
 from app.core.rate_limit import limiter as default_limiter
+from app.models.generation_events import GenerationEventData, SessionOutcome
 from app.models.schemas import CurrentUser
 from app.services.generation.events import (
     EventBufferCapacityError,
@@ -76,6 +77,8 @@ def create_generation_stream_router(
     events: GenerationEventBroker,
     registry: RuntimeRegistry,
     is_current_owner: Callable[[UUID, UUID], Awaitable[bool]],
+    terminal_state: Callable[[UUID], Awaitable[tuple[SessionOutcome, int, int] | None]]
+    | None = None,
     limiter_instance: Limiter = default_limiter,
 ) -> APIRouter:
     """is_current_owner must use trusted server-side data, not request claims.
@@ -94,12 +97,58 @@ def create_generation_stream_router(
         response: Response,
         user: CurrentUser = Depends(get_current_user),
         db: Client = Depends(get_user_db),
+        last_event_id: Annotated[int | None, Query(ge=0)] = None,
+        stream_epoch: str | None = None,
     ) -> StreamTicketResponse:
         await run_in_threadpool(assert_ownership, "exam_sessions", str(session_id), user.id, db=db)
+        if stream_epoch is not None and stream_epoch != events.epoch:
+            raise HTTPException(
+                409,
+                {
+                    "code": "ERR_EVENT_HISTORY_LOST",
+                    "message": "Reload saved progress before reconnecting.",
+                },
+            )
         try:
+            if terminal_state is not None and not await events.has_terminal(session_id):
+                terminal = await terminal_state(session_id)
+                if terminal is not None:
+                    status, completed, total = terminal
+                    if total < 1 or completed < 0 or completed > total:
+                        raise ValueError("Invalid durable terminal progress.")
+                    await events.ensure_terminal(
+                        session_id,
+                        "error" if status == "failed" else "done",
+                        GenerationEventData(
+                            timestamp=datetime.now(timezone.utc),
+                            status="warning" if status == "failed" else "done",
+                            percent_complete=completed * 100 / total,
+                            completed_count=completed,
+                            total_count=total,
+                            session_status=status,
+                            error_code="ERR_GENERATION_FAILED" if status == "failed" else None,
+                            error_message="Generation could not complete this operation."
+                            if status == "failed"
+                            else None,
+                            message="Generation restored from saved progress.",
+                        ),
+                    )
+            await events.check_cursor(session_id, last_event_id or 0)
             ticket = await tickets.issue(session_id, UUID(user.id))
+        except EventHistoryLost:
+            raise HTTPException(
+                409,
+                {
+                    "code": "ERR_EVENT_HISTORY_LOST",
+                    "message": "Reload saved progress before reconnecting.",
+                },
+            ) from None
+        except EventBufferCapacityError:
+            raise HTTPException(503, "Stream service is temporarily unavailable.") from None
         except TicketCapacityError:
             raise HTTPException(503, "Stream ticket service is temporarily unavailable.") from None
+        except Exception:
+            raise HTTPException(503, "Stream service is temporarily unavailable.") from None
         response.headers["Cache-Control"] = "no-store"
         return StreamTicketResponse(ticket=ticket.ticket_id, expires_at=ticket.expires_at)
 
@@ -109,6 +158,7 @@ def create_generation_stream_router(
         ticket: UUID,
         last_event_id: Annotated[int | None, Query(ge=0)] = None,
         last_event_header: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+        stream_epoch: str | None = None,
     ) -> StreamingResponse:
         if last_event_id is None:
             if last_event_header is not None and not last_event_header.isascii():
@@ -129,6 +179,14 @@ def create_generation_stream_router(
             raise HTTPException(503, "Stream authorization is temporarily unavailable.") from None
         if authorized is not True:
             raise HTTPException(403, "You do not have permission to access this stream.")
+        if stream_epoch is not None and stream_epoch != events.epoch:
+            raise HTTPException(
+                409,
+                {
+                    "code": "ERR_EVENT_HISTORY_LOST",
+                    "message": "Reload saved progress before reconnecting.",
+                },
+            )
         try:
             registry.snapshot()
             lease = await events.reserve_session(session_id, last_event_id=last_event_id)

@@ -35,6 +35,7 @@ class AIBatchInputs(BaseModel):
     base_seed: StrictInt
     variation_modes: tuple[StrictStr, ...]
     completed: tuple[QuestionResult, ...]
+    snapshot_id: UUID | None = None
 
     @field_validator("confirmed_source_hash")
     @classmethod

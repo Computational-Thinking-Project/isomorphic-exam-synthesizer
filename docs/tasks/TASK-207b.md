@@ -1,5 +1,98 @@
 # TASK-207b — Plan và bàn giao W2: Background generation, lưu tiến độ và SSE
 
+## Triển khai local 06/11/2026 — chưa commit/push PR #30
+
+- **B1/B2:** `GenerationJobRepository` ghép RPC thực của migrations **015/016**:
+  claim bằng owner JWT, worker RPC bằng service role, quota session 250 có fencing,
+  load full result, persist full `QuestionResult` cùng display projection và finish.
+  Runner chuyển sang một batch AI qua `AIBatchAdapter`; callback commit từng slot
+  trước khi phát progress. Retry dùng frozen source/Blueprint/config/seed và cache
+  từ `load_generation_completed_results`; không dùng synthetic fingerprint từ SQL
+  receipt. `fail_stale_generation_job` được gọi trước claim theo cutoff 12 phút.
+- **ORIGINAL_CLONE:** Khi cả public modes và canonical dimensions đều `[]`, runner
+  lưu bản ghi clone từ confirmed input trong frozen snapshot qua
+  `persist_generation_clone`. Slot đã commit được bỏ qua, không reserve Gemini,
+  không gọi AI và lưu canonical row trước bước shuffle. Mixed/khác result kind
+  bị từ chối; SQL 016 là nơi kiểm canonical projection và fingerprint.
+- **B4/B5:** App mount generate/retry, generation-snapshot, ticket và stream routes
+  với store thật. Snapshot đọc completed/failures từ RPC, trả counts, per-slot
+  status, `stream_epoch` và `resume_after_event_id`. Ticket kiểm epoch/cursor
+  trước khi EventSource mở; 409 `ERR_EVENT_HISTORY_LOST` yêu cầu FE2 reload.
+  Cursor được chụp trước DB read để event giữa snapshot và subscribe được replay.
+  Ticket cũng đọc trạng thái terminal từ DB và phát một `done/error` event khi
+  broker sau restart chưa có terminal, để FE2 không treo ở `partial_generated`.
+- **Đã kiểm local:** Docker Python 3.11 container tạm, thêm
+  `jsonschema==4.26.0` và `jinja2==3.1.6` đúng lockfile trong container cũ:
+  `pytest backend/tests scripts/blueprint/tests`: **1.713 pass, 266 skip** trước
+  bổ sung terminal recovery; nhóm route/job liên quan sau bổ sung **48 pass**.
+  Ruff app/Blueprint và test mới đạt; Mypy **113 source files** đạt; Ruff format
+  chín file 207b đã sửa đạt. DB integration bị skip, chưa có PostgREST/RLS,
+  Gemini thật, browser hoặc proxy smoke. `git diff --check` đạt sau cập nhật docs.
+- **Input còn thiếu/giới hạn:** PR #41 AI contract vẫn open, chưa mergeable tại lần
+  kiểm 06/11. SQL 005 `fail_stale_generation_job` chỉ ghi `failed`/clear token,
+  không có cột error code để persist `ERR_GENERATION_INTERRUPTED`. Không sửa RPC
+  của Duy trong nhánh này. Chưa có PostgREST/RLS owner/worker, DB race/crash,
+  FE reload/partial/terminal và proxy smoke; Quỳnh cần quyết định nghiệm thu
+  sau khi môi trường/owner bàn giao. PR #30 vẫn Draft, remote head `936d48c`;
+  CI xanh trên head đó không bao phủ WIP này.
+
+## Cập nhật M2 ngày 04/11/2026 — PR #30
+
+- **B0 đã đồng bộ** ở `1a2e05a` với `dev@ac18e72` và PR #30
+  `5cd570b`. [Baseline và thứ tự 207a](TASK-207a.md#cập-nhật-m2-ngày-04112026--pr-30)
+- **B2.1 — resume qua JSON.** Kiểm raw `QuestionResult` đã lưu qua
+  `model_dump_json` → `model_validate_json` trong cả hai thứ tự callback.
+  Lượt resume nạp object khôi phục, chỉ gửi thêm một request cho mã còn thiếu,
+  giữ nguyên row đã commit và kết thúc `generated`. SDK và persistence dùng
+  fixture. [Bàn giao batch, seed và resume của Đạt](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6601308632)
+- **B1 và B2 chạy thật còn chờ.** Cần xác minh F01–F06 của PR #32, quyền
+  owner/worker, hợp đồng snapshot canonical Blueprint/hash/seed/raw result và
+  chốt `[]`/`NONE` cùng hard failure/warning trước khi ghép store và runner.
+  [Bàn giao RPC của Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6503019229)
+  · [PR #32](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/32)
+- **B4–B7 còn chờ.** Bội Anh bàn giao các điểm ghép detail/reload/SSE. PR #40
+  tại `b55b0fd` còn F01–F04 ở lần đọc gần nhất. Cần JSON snapshot thật và
+  thứ tự snapshot → cursor → ticket → stream, quyền lookup và môi trường
+  kiểm DB/proxy. PR #29 đã có ingress, E2E còn cần luồng confirm/readiness
+  của TASK-204.
+  [Bàn giao TASK-206/208](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6597584297)
+  · [PR #40](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/40)
+  · [Trung Anh / Stage1](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6568182846)
+  · [PR #29](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/29)
+
+### B3.0 — Ma trận nghiệm thu validator trước khi nối vào AI
+
+Tâm đã bàn giao aggregator đồng bộ `validate_question` / `validate_variant`.
+`validate_question` nhận câu hỏi, options, đáp án, Blueprint/parameters tùy
+chọn và timeout CAS. Các fixture bên dưới nằm ở
+[`test_aggregator.py`](../../backend/tests/validation/test_aggregator.py).
+[Bàn giao Tâm (PR #19/#20)](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6597714181)
+
+| Ca | Nguồn đối chiếu | Kết quả cần giữ khi ghép |
+| --- | --- | --- |
+| Pass có chứng minh | `test_algebraic_equation_verified_by_sympy` | Giữ pass và `sympy_verified` khi CAS thực sự xác minh. |
+| Fail logic/đáp án | `test_sympy_incorrect_answer_fails`, `test_duplicate_options_syntactic_fails` | Mapping thành lỗi chặn accept, vào đúng nhánh retry của AI. |
+| Sai miền | `test_zero_denominator_fails_overall_report`, `test_parameter_bounds_violation_fails_overall_report` | Giữ lỗi miền, kể cả khi các kiểm khác đạt. |
+| Timeout CAS | `test_sympy_timeout_triggers_fallback_and_warning` | Nếu fallback đạt, giữ warning và `rule_only`, không nâng thành `sympy_verified`. |
+| Thiếu parameters | `test_with_real_blueprint_partition_probability` là ca có giá trị tham số; `CandidatePayload` hiện thiếu trường đó | Đánh dấu coverage tham số chưa đủ. Cần ca tích hợp thiếu tham số sau khi chốt contract. |
+
+Tâm và Đạt/Hùng cần chốt mapping report, nguồn parameter values, điểm inject
+trước accept/retry và cách giữ deadline khi chạy validator đồng bộ. Giữ kiểm
+nhất quán lời giải hiện có khi ghép. Mốc cần input và ETA vẫn TBD.
+
+### Kết quả kiểm local trên bản tổ hợp
+
+- Docker ngoại tuyến, Python 3.11, `pip install --require-hashes` theo
+  `backend/requirements.lock` và `pip check` đạt.
+- Nhóm gateway, AI pipeline, batch integration, observability và aggregator:
+  **272 pass**. Có hai ca JSON resume với thứ tự mã đề khác nhau.
+- `python -m pytest backend/tests scripts/blueprint/tests -q -p no:cacheprovider`:
+  **1.262 pass, 2 skip**, có đủ Blueprint fixtures trong snapshot.
+  SymPy 1.14.0 smoke đạt.
+- Ruff lint, Mypy và format trong phạm vi sửa ghi ở [TASK-207c](TASK-207c.md#cập-nhật-m2-ngày-04112026--pr-30).
+  Kết quả local dùng SDK và persistence giả lập, không xác minh DB/Gemini thật
+  hay CI GitHub trên bản sửa này.
+
 ## Cập nhật CI của PR30 — 29/10/2026
 
 - PR: [#30](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30), nhánh `feat/task-207c-runtime-metrics`, trạng thái Draft — coding. Đã merge dev bằng `92c99d7` và đưa ba plan lên PR tại `adcb9b7`; snapshot lập plan bên dưới được giữ làm lịch sử.

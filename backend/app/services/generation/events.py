@@ -6,7 +6,7 @@ from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.models.generation_events import EventName, GenerationEvent, GenerationEventData
 from app.services.observability.runtime_registry import RuntimeRegistry
@@ -52,6 +52,34 @@ class GenerationEventBroker:
         self._capacity = max_sessions
         self._sessions: dict[UUID, _SessionEvents] = {}
         self._condition = asyncio.Condition()
+        self.epoch = str(uuid4())
+
+    async def cursor(self, session_id: UUID) -> int:
+        """Capture a replay mark before reading the durable DB snapshot."""
+        async with self._condition:
+            session = self._sessions.get(session_id)
+            return session.next_id - 1 if session is not None else 0
+
+    async def has_terminal(self, session_id: UUID) -> bool:
+        async with self._condition:
+            session = self._sessions.get(session_id)
+            return bool(session and session.terminal)
+
+    async def ensure_terminal(
+        self, session_id: UUID, event: EventName, data: GenerationEventData
+    ) -> None:
+        """Publish one durable-state terminal notification after worker restart."""
+        if event not in {"done", "error"}:
+            raise ValueError("Expected a terminal event.")
+        checked = GenerationEventData.model_validate(data.model_dump())
+        async with self._condition:
+            session = self._session(session_id)
+            if session.terminal:
+                return
+            session.events.append(GenerationEvent(id=session.next_id, event=event, data=checked))
+            session.next_id += 1
+            session.terminal = True
+            self._condition.notify_all()
 
     def _session(self, session_id: UUID) -> _SessionEvents:
         if session_id not in self._sessions:

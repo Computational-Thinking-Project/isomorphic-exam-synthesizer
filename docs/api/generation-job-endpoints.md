@@ -2,17 +2,19 @@
 
 ## Implementation status
 
-Python implements the event models, bounded ticket store, event broker, job
-runner, two router factories and explicit AI batch mapping/reservation adapters.
-AI PR18/21 is now inherited through Quỳnh's dev synchronization at `91843e0`.
-Product `main.py` does not register the TASK-207 factories: durable storage,
-current-owner lookup and the runner's transition to the batch callback path
-remain pending. No in-memory database or fake AI is installed in the product app.
+Local WIP at `936d48c` plus uncommitted changes mounts the job, snapshot and
+stream routes in `main.py`. `GenerationJobRepository` calls the merged 005/015/016
+RPCs. Claim uses the authenticated owner client; fenced worker writes use the
+service role client. The owner-only ticket lookup reads the current session owner
+from trusted server-side storage. This has fixture coverage; live PostgREST/RLS,
+restart and proxy acceptance remain pending.
 
-`AIBatchAdapter` calls the existing GenerationService; it does not implement
-another generator or gateway. The current isolated GenerationJobRunner still
-uses its per-target Protocol, so the new adapter is not a drop-in replacement
-until the durable snapshot/result persistence contract is integrated.
+`AIBatchAdapter` calls the existing GenerationService. Product jobs dispatch one
+batch using the frozen snapshot and committed full `QuestionResult` cache. The
+older per-target Protocol remains for isolated runner tests only. Frozen
+`active_variation_modes=[]` and `canonical_dimensions=[]` use
+`persist_generation_clone` without Gemini; `AI_RESULT` uses
+`persist_generation_result` with the full raw result and display projection.
 
 ## AI batch adapter contract
 
@@ -21,7 +23,9 @@ until the durable snapshot/result persistence contract is integrated.
 - Build internal `AIBatchInputs` from trusted stored sources/confirmation hash,
   canonical Blueprint JSON by source ID, base_seed, exact variation_modes and
   completed QuestionResult records. The adapter does not confirm a source or
-  invent a hash from client input. Modes are passed unchanged, including [].
+  invent a hash from client input. AI receives frozen canonical dimensions;
+  public mode IDs remain in the SQL snapshot. Empty public/canonical modes use
+  the clone path and never call this adapter.
 - Inject `AIRuntime.generation` into `AIBatchAdapter`; call
   `run(plan,inputs,store,deadline=...,on_result=...)`. Source/version/cache
   identities and ordering must agree with the job plan.
@@ -53,7 +57,8 @@ atomic DB semantics and live API/browser/proxy acceptance remain integration gat
 - `POST /{session_id}/retry-generation`: same guards, with `retry=True`. The store
   returns already committed targets; the runner skips them without modification.
 - Acceptance: HTTP 202, `{"session_id":"<UUID>","status":"generating"}`.
-- Active job: HTTP 409 with `detail.code=ERR_ALREADY_GENERATING`.
+- Active job in this worker: HTTP 409 `ERR_ALREADY_GENERATING`. SQL state/fencing
+  conflicts from another worker map to HTTP 409 `ERR_CONFIG_CONFLICT`.
 - Unknown claim/storage failures: safe HTTP 503; verify durable state before
   retrying. No automatic mutation retry or rollback claim.
 
@@ -61,6 +66,9 @@ atomic DB semantics and live API/browser/proxy acceptance remain integration gat
 is_current_owner=...)`, same prefix:
 
 - `POST /{session_id}/events/ticket`: Bearer auth and user-scoped ownership.
+  Optional `last_event_id` and `stream_epoch` query parameters are checked
+  against the current broker before issuing a ticket; stale marks return 409
+  `ERR_EVENT_HISTORY_LOST`.
   Returns `{"ticket":"<UUID>","expires_at":"<ISO8601>"}`, no-store.
 - Ticket lifetime is exactly 60 seconds, using monotonic expiration; each ticket
   binds session and verified user. No JWT is retained in the ticket store.
@@ -112,7 +120,15 @@ An expired history or future cursor returns HTTP 409
 by the ring receives a connection-level error and closes. That error has no
 event ID and must not advance a replay cursor. Reload durable session progress
 before reconnecting; do not silently assume the missing events were delivered.
-The frontend/DB integration must provide the current cursor for this resync.
+`GET /{session_id}/generation-snapshot` returns durable completed/failure counts,
+question statuses, `stream_epoch` and `resume_after_event_id`. It captures the
+broker cursor before the DB read, then FE2 passes both marks to the ticket and
+stream routes. A worker restart changes the epoch. Ticket issuance checks both
+marks and returns 409 before EventSource opens when the cursor is unavailable.
+If the broker has no terminal event after a restart but the durable session is
+terminal, ticket issuance reads committed counts and adds one terminal event;
+`partial_generated` then reaches FE2 as `done` with its actual percentage.
+The snapshot uses the owner JWT and returns `Cache-Control: no-store`.
 
 Current default capacities: 4096 live tickets, 1024 session histories. Expired
 tickets are pruned on access. Capacity fails explicitly. Pending jobs and HTTP
@@ -135,7 +151,8 @@ cancellation while sending and header failure before generator entry.
   recovery. No endpoint accepts a caller-selected job ID or owner ID.
 - A plan contains every source in every version (1–20 sources, 1–4 versions),
   committed targets and the existing durable Gemini count. Retry does not reset it.
-- Run missing targets in deterministic order. Save each candidate immediately;
+- AI runs missing targets in its bounded batch; clone traverses frozen slots in
+  deterministic order. Save each result immediately;
   emit `question_done` only after the save completes. Existing rows are preserved.
 - AI supplies the four validation stages and retry behavior. Saveable candidates
   with warnings still count toward a complete `generated` job. No saveable
@@ -158,30 +175,31 @@ cancellation while sending and header failure before generator entry.
   FE must retain the actual percentage and missing targets for partial results,
   rather than forcing every `done` event to a complete successful job.
 - Before a claim, ask the store to atomically fail a `generating` row untouched
-  for 12 minutes with `ERR_GENERATION_INTERRUPTED`. This is recovery on access;
+  for 12 minutes. SQL 005 clears the stale token and marks `failed` but does not
+  persist an `ERR_GENERATION_INTERRUPTED` error code. This is recovery on access;
   an application-wide periodic sweep still needs a durable enumeration adapter
   and lifecycle integration. Cleanup releases job/SSE runtime handles in finally.
 
 ## Required adapters and remaining integration
 
-`GenerationJobStore` defines Python methods, not assumed RPC wire names:
-`claim`, `reserve_gemini_call`, `save_draft`, `finish` and `fail_stale`.
-Duy must confirm atomic DB operations, stable errors, worker access,
-job fencing representation and an isolated test database. Quỳnh can implement
-the current-owner Python lookup using the existing trusted server DB client once
-access/lifetime is agreed. Python never emulates
-transactions with unrelated writes. `finish` must verify actual DB completeness;
-an uncertain save is not proof that no row was committed.
+`GenerationJobRepository` now maps the merged migrations 005/015/016 to the
+Python store: owner claim, worker quota reservation, full AI result or clone
+persist, completed-result load, finish and fail-stale. The worker uses the
+service-role client; the current-owner lookup uses trusted server-side storage.
+Python never emulates transactions with unrelated writes. The SQL finish RPC
+verifies actual DB completeness; an uncertain save is not proof that no row was
+committed. An isolated PostgREST/RLS test database remains necessary.
 
-Quỳnh's mapping/batch modules now adapt confirmed inputs and QuestionResult to
-the existing service. Real snapshot loading and persistence remain pending;
-offline tests prove neither live Gemini behavior nor all four integrated validators.
+Quỳnh's mapping/batch modules adapt frozen confirmed inputs and full
+QuestionResult to the existing service. Offline tests prove neither live Gemini
+behavior nor all four integrated validators.
 Legacy flat fallback Blueprint records are not automatically canonical AI inputs.
 
-Extend the existing AIRuntime lifespan to create/start one shared runtime registry,
-broker, ticket store and runner, then mount both factories with real adapters. Keep
-generation config persistence behind its separate TASK-207a RPC gate. OPS must
-verify single worker, SSE proxy buffering/timeouts and ticket-safe access logs.
+The app now starts a shared runtime registry and mounts job, snapshot and stream
+factories. Broker/ticket/runner are process scoped; OPS still needs to verify
+single-worker deployment, restart recovery, SSE proxy buffering/timeouts and
+ticket-safe access logs. Terminal history retention and periodic stale scan are
+not yet wired to a durable enumeration/lifecycle policy.
 
 PR18/21 provide real async batch generation with completed/on_result callbacks
 and cross-version uniqueness. An adapter must preserve that batch behavior,

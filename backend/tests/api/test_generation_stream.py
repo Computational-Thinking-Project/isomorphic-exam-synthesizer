@@ -134,6 +134,7 @@ def stream_api(monkeypatch):
     tickets = StreamTicketStore()
     events = GenerationEventBroker()
     owner = AsyncMock(return_value=True)
+    terminal = AsyncMock(return_value=None)
     limiter = create_limiter()
     app = FastAPI()
     register_rate_limiter(app, limiter_instance=limiter)
@@ -143,6 +144,7 @@ def stream_api(monkeypatch):
             events=events,
             registry=registry,
             is_current_owner=owner,
+            terminal_state=terminal,
             limiter_instance=limiter,
         ),
         prefix="/api/sessions",
@@ -152,6 +154,7 @@ def stream_api(monkeypatch):
         id=str(uid), email="review@example.test", access_token="fixture"
     )
     app.dependency_overrides[get_user_db] = lambda: object()
+    app.state.terminal = terminal
     monkeypatch.setattr(
         "app.api.routes.generation_stream.assert_ownership", lambda *args, **kwargs: None
     )
@@ -232,3 +235,32 @@ def test_future_cursor_returns_resync_conflict_before_stream(stream_api) -> None
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "ERR_EVENT_HISTORY_LOST"
     assert registry.snapshot().active_sse_connections == 0
+
+
+def test_ticket_rejects_restart_epoch_and_lost_cursor_before_eventsource(stream_api) -> None:
+    client, sid, uid, registry, tickets, events, owner, app = stream_api
+    old_epoch = client.post(f"/api/sessions/{sid}/events/ticket?stream_epoch=previous-worker")
+    assert old_epoch.status_code == 409
+    assert old_epoch.json()["detail"]["code"] == "ERR_EVENT_HISTORY_LOST"
+    future = client.post(
+        f"/api/sessions/{sid}/events/ticket?stream_epoch={events.epoch}&last_event_id=100"
+    )
+    assert future.status_code == 409
+    assert future.json()["detail"]["code"] == "ERR_EVENT_HISTORY_LOST"
+    assert not tickets._tickets
+
+
+def test_restart_ticket_restores_partial_terminal_event_from_durable_state(stream_api) -> None:
+    client, sid, uid, registry, tickets, events, owner, app = stream_api
+    app.state.terminal.return_value = ("partial_generated", 1, 2)
+    response = client.post(
+        f"/api/sessions/{sid}/events/ticket?stream_epoch={events.epoch}&last_event_id=0"
+    )
+    assert response.status_code == 200
+    path = f"/api/sessions/{sid}/events?ticket={response.json()['ticket']}&last_event_id=0&stream_epoch={events.epoch}"
+    stream = client.get(path)
+    assert stream.status_code == 200 and "event: done" in stream.text
+    assert '"session_status":"partial_generated"' in stream.text
+    assert '"completed_count":1' in stream.text
+    assert '"total_count":2' in stream.text
+    assert app.state.terminal.await_count == 1
