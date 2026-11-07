@@ -188,3 +188,51 @@ is a W2 RPC in migration 010, not public table access.
 > test tích hợp vẫn thuộc PR #30. Contract và mẫu RPC thật có link ở trên.
 > Tự kiểm PostgreSQL15: clone40 + W2 71 passed, 0 skipped; chưa push, chưa có
 > reviewer xác minh hoặc deployed/SSE/FE E2E. ETA tích hợp chưa được owner xác nhận.
+
+## Generation lifecycle recovery and durable error follow-up — 07/11/2026
+
+- Source of truth: Quỳnh's input requirement for PR #30 stale scanner and durable error recovery
+  ([comment 6690592440](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6690592440)).
+- Author: Duy (PR #32 SQL boundary); Consumer: Quỳnh (PR #30 worker lifecycle/SSE).
+- Workflow v0.1 proposed; base `dev @ 73583d7`, PR #30 @ 8fb6387.
+- Scope: Forward migration `017_generation_lifecycle_recovery.sql`, integration test
+  `test_generation_lifecycle_recovery.py`, and authoritative contract `docs/api/generation-lifecycle-recovery.md`.
+- No modification to existing 005/015/016 migrations; no Python worker/SSE rewrite.
+
+### Key Technical Outputs
+
+1. **Independent Activity Tracking**:
+   - `exam_sessions.generation_last_activity_at TIMESTAMPTZ NULL`: Updated strictly on generation claims, quota reservations, result/clone persists, and heartbeats.
+   - Metadata title/subject/grade updates do not refresh generation timestamp, preserving 720s cutoff timeout.
+2. **Scanner Enumeration**:
+   - `list_stale_generation_jobs(p_cutoff_seconds, p_limit, p_after_activity_at, p_after_session_id)` with keyset pagination over `(generation_last_activity_at, id)` backed by partial index `idx_exam_sessions_generation_stale`.
+3. **Atomic Fenced Recovery**:
+   - `fail_stale_generation_job_if_current(p_session_id, p_expected_job_token, p_cutoff_seconds)` under `SELECT ... FOR UPDATE`. Transitions session to `failed` and records `ERR_GENERATION_INTERRUPTED` atomically; safely returns `recovered: false` on finished or retried tokens.
+4. **Durable Error Persistence & Recovery**:
+   - `exam_sessions.generation_error_code TEXT NULL` constrained to `^[A-Z0-9_]{3,64}$`.
+   - `finish_generation_job_with_error(p_session_id, p_outcome, p_job_token, p_error_code)` records terminal error code.
+   - `load_generation_completed_results(p_session_id)` returns `generation_error_code` for terminal SSE stream reconstruction after process reboot.
+   - Retry via `claim_generation_job` resets error code to NULL while preserving consumed quota, snapshot context, and committed results.
+
+### M3 draft for PR description — prepared locally
+
+- Scope/output: [017](../../backend/migrations/017_generation_lifecycle_recovery.sql),
+  [contract](../api/generation-lifecycle-recovery.md),
+  [integration test suite](../../backend/tests/migrations/test_generation_lifecycle_recovery.py).
+- Environment: PostgreSQL 15 & 17 isolated disposable cluster; asyncpg 0.32.0.
+- Acceptance Checklist (DB boundary):
+  - [x] RPC `list_stale_generation_jobs` with keyset pagination, 1..100 limit, and service_role security.
+  - [x] Independent `generation_last_activity_at` timestamp & partial index `idx_exam_sessions_generation_stale`.
+  - [x] Fenced `fail_stale_generation_job_if_current` re-verifying job token, status, and cutoff under lock.
+  - [x] Stale recovery atomically stores `ERR_GENERATION_INTERRUPTED`.
+  - [x] `finish_generation_job_with_error` records error code; `load_generation_completed_results` reads back after reboot.
+  - [x] Retry clears error code while preserving quota, snapshot context, and committed results.
+  - [x] Fresh/upgrade migration replay, ACL/least privilege, and race conditions covered in integration tests.
+  - [x] Contract documentation delivered for PR #30 integration.
+
+### Copyable response to Quỳnh — prepared locally
+
+> PR #32 đã bổ sung forward migration 017 hoàn thiện hai phụ thuộc SQL/RPC mà PR #30 đang chờ:
+> 1. Stale Scanner: RPC `list_stale_generation_jobs` (keyset pagination, index hỗ trợ, cutoff 720s DB clock) và RPC fencing `fail_stale_generation_job_if_current(p_session_id, p_expected_job_token, p_cutoff_seconds)`.
+> 2. Durable Error Recovery: Cột `generation_error_code` lưu bền vững `ERR_GENERATION_INTERRUPTED` khi stale recovery; RPC `finish_generation_job_with_error` để worker ghi nhận mã lỗi thất bại; `load_generation_completed_results` trả kèm mã lỗi sau restart để khôi phục SSE terminal event; retry tự động xóa lỗi cũ nhưng bảo toàn quota và committed results.
+> Tài liệu contract chi tiết đã có tại `docs/api/generation-lifecycle-recovery.md` và test suite tại `backend/tests/migrations/test_generation_lifecycle_recovery.py`. Phía Python chỉ cần cắm adapter vào `job_repository.py`.
