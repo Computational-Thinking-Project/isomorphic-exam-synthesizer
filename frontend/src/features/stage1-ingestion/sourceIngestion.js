@@ -1,4 +1,11 @@
+import { isSourceUuid } from '../../services/sourceConfirmation.js';
+
 const UNCERTAIN_MESSAGE = 'Chưa xác nhận được kết quả nạp nguồn. Đọc lại nguồn đã lưu để kiểm tra; không gửi lại khi thao tác trước chưa rõ kết quả.';
+const CONFIRM_UNCERTAIN = 'Chưa rõ kết quả xác nhận. Đọc lại trạng thái phiên trước khi thử lại.';
+const CONFIRM_CHANGED = 'Đề nguồn đã thay đổi. Hãy xem và xác nhận lại bản đang hiển thị.';
+const CONFIRM_STORAGE = 'Chưa thể lưu thông tin xác nhận trong tab này. Hãy kiểm tra lại rồi thử lại.';
+const confirmedStatuses = ['blueprinted', 'configured', 'generating'];
+const isUnavailable = (status) => [401, 403, 404].includes(status);
 
 function errorMessage(cause) {
   if (cause?.code === 'ERR_INGEST_INPUT') return cause.message;
@@ -15,12 +22,21 @@ function errorMessage(cause) {
 }
 
 // One instance per account/route. Inputs and last saved source remain separate.
-export function createSourceIngestionController({ initialDetail, ingestText, ingestFile, load, validateText, validateFile, isCurrent = () => true }) {
+export function createSourceIngestionController({ initialDetail, ingestText, ingestFile, load,
+  validateText, validateFile, isCurrent = () => true, confirmSource, readArtifacts,
+  confirmationStore, newConfirmationKey = () => globalThis.crypto.randomUUID(), onConfirmed = () => {} }) {
   const id = initialDetail.id;
+  let intent = null;
+  let storageBlocked = false;
+  let confirmationConflict = false;
+  try { intent = confirmationStore?.read() ?? null; }
+  catch { storageBlocked = true; }
   let state = {
     detail: initialDetail, text: '', mode: 'text', file: null, upload: null,
     phase: 'idle', error: '', message: '', cause: null,
     uncertain: false, requiresReload: false, unavailable: false,
+    confirmationError: storageBlocked ? CONFIRM_STORAGE : intent ? CONFIRM_UNCERTAIN : '',
+    confirmationPending: Boolean(intent), retryConfirmation: false,
   };
   const listeners = new Set();
   let revision = 0;
@@ -30,8 +46,14 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     listeners.forEach((listener) => listener());
   };
   const busy = () => state.phase !== 'idle';
-  const canSubmit = () => !busy() && !state.uncertain && !state.requiresReload
+  const canWrite = () => !busy() && !state.uncertain && !state.requiresReload
     && !state.unavailable && state.detail.status === 'draft' && isCurrent();
+  const canSubmit = () => canWrite() && !intent && !storageBlocked;
+  const sameRevision = (detail) => isSourceUuid(detail.source_revision)
+    && detail.source_revision.toLowerCase() === intent?.sourceRevision.toLowerCase();
+  const canConfirm = () => Boolean(confirmSource && confirmationStore && !storageBlocked && canWrite()
+    && isSourceUuid(state.detail.source_revision) && state.detail.source_questions.length
+    && (!intent || (state.retryConfirmation && sameRevision(state.detail))));
   const invalidate = () => { revision++; request?.abort(); };
   const begin = () => {
     invalidate();
@@ -45,11 +67,98 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       throw new Error('Unexpected session response');
     }
   };
+  async function readDetail(signal) {
+    const detail = await load(id, { signal });
+    assertSameSession(detail.id);
+    if (!Array.isArray(detail.source_questions)) throw new Error('Unexpected detail response');
+    return detail;
+  }
+
+  function clearIntent() {
+    if (intent) confirmationStore.clear();
+    intent = null;
+  }
+
+  function finishConfirmation(detail) {
+    // The server has confirmed the source. Storage failure cannot change that outcome.
+    try { clearIntent(); } catch { /* a later verified GET may clear the entry */ }
+    confirmationConflict = false;
+    publish({ detail, phase: 'idle', confirmationPending: false, retryConfirmation: false,
+      requiresReload: false, unavailable: false, confirmationError: '', message: 'Đã xác nhận đề nguồn.' });
+    onConfirmed(detail);
+  }
+
+  async function reconcile(operation, conflict = false) {
+    try {
+      let detail = await readDetail(operation.signal);
+      if (!operation.current()) return;
+      let absent = false;
+      if (detail.status === 'draft' && sameRevision(detail) && !conflict) {
+        try {
+          await readArtifacts(id, { signal: operation.signal });
+        } catch (cause) {
+          if (cause?.response?.status !== 404) throw cause;
+          absent = true;
+        }
+        if (!operation.current()) return;
+        if (!absent) detail = await readDetail(operation.signal);
+        if (!operation.current()) return;
+      }
+      if (confirmedStatuses.includes(detail.status)) {
+        finishConfirmation(detail);
+        return;
+      }
+      const newPreview = detail.status === 'draft' && isSourceUuid(detail.source_revision)
+        && (conflict || !sameRevision(detail));
+      if (newPreview || detail.status !== 'draft') clearIntent();
+      if (newPreview || detail.status !== 'draft') confirmationConflict = false;
+      const retryConfirmation = Boolean(intent && absent && sameRevision(detail));
+      publish({ detail, phase: 'idle', requiresReload: confirmationConflict, unavailable: false,
+        confirmationPending: Boolean(intent), retryConfirmation,
+        confirmationError: newPreview ? CONFIRM_CHANGED
+          : confirmationConflict || (intent && !retryConfirmation) ? CONFIRM_UNCERTAIN : '' });
+    } catch (cause) {
+      if (operation.current()) publish({ phase: 'idle', retryConfirmation: false,
+        unavailable: state.unavailable || isUnavailable(cause?.response?.status),
+        confirmationError: CONFIRM_UNCERTAIN });
+    }
+  }
+
+  async function reload() {
+    if (busy() || !isCurrent()) return;
+    const operation = begin();
+    if (intent || confirmationConflict) {
+      publish({ phase: 'reconciling', message: '', retryConfirmation: false });
+      await reconcile(operation, confirmationConflict);
+      return;
+    }
+    publish({ phase: 'reloading', message: '', error: '' });
+    try {
+      const detail = await readDetail(operation.signal);
+      if (!operation.current()) return;
+      publish({ detail, phase: 'idle', requiresReload: false, unavailable: false, cause: null,
+        message: 'Đã đọc lại nguồn đã lưu.', error: state.uncertain ? UNCERTAIN_MESSAGE : '' });
+      // A GET is a snapshot; it cannot establish that an earlier ingest POST has stopped.
+    } catch (cause) {
+      if (!operation.current()) return;
+      publish({ phase: 'idle', cause, requiresReload: true,
+        unavailable: state.unavailable || isUnavailable(cause?.response?.status),
+        error: 'Chưa đọc lại được phiên. Nguồn đang hiển thị là bản đã biết trước đó.' });
+    }
+  }
+
   return {
     getSnapshot: () => state,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     canSubmit,
-    dispose: invalidate,
+    canConfirm,
+    dispose() {
+      invalidate();
+      // React's development effect replay must be able to restart a read-only recovery.
+      if (state.phase === 'reconciling') state = { ...state, phase: 'idle' };
+    },
+    restoreConfirmation: () => intent ? reload() : undefined,
+    reload,
     setMode(mode) {
       if (busy() || !isCurrent() || !['text', 'file'].includes(mode)) return;
       publish({ mode, ...(state.cause?.code === 'ERR_INGEST_INPUT' ? { error: '', cause: null } : {}) });
@@ -80,7 +189,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       publish({ text, ...(state.cause?.code === 'ERR_INGEST_INPUT' ? { error: '', cause: null } : {}) });
     },
     cancelRequest() {
-      if (!busy() || !isCurrent()) return;
+      if (!['submitting', 'reloading'].includes(state.phase) || !isCurrent()) return;
       const wasWriting = state.phase === 'submitting';
       invalidate();
       publish({ phase: 'idle', upload: null, message: '',
@@ -96,6 +205,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       const operation = begin();
       publish({ phase: 'submitting', upload: fileMode ? { complete: false, loaded: 0, total: null } : null,
         error: '', message: '', cause: null });
+      let count;
       try {
         const config = { signal: operation.signal };
         if (fileMode) config.onUploadProgress = (event) => {
@@ -108,8 +218,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
         if (!operation.current()) return;
         assertSameSession(result.session_id);
         if (!Array.isArray(result.questions)) throw new Error('Unexpected source response');
-        publish({ detail: { ...state.detail, source_questions: result.questions }, phase: 'idle', upload: null,
-          message: `Đã nạp ${result.questions.length} câu nguồn.`, uncertain: false });
+        count = result.questions.length;
       } catch (cause) {
         if (!operation.current()) return;
         const status = cause?.response?.status;
@@ -118,26 +227,60 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
         publish({ phase: 'idle', upload: null, cause, uncertain,
           error: uncertain ? UNCERTAIN_MESSAGE : errorMessage(cause),
           requiresReload: status === 409,
-          unavailable: [401, 403, 404].includes(status) });
+          unavailable: isUnavailable(status) });
+        return;
       }
-    },
-    async reload() {
-      if (busy() || !isCurrent()) return;
-      const operation = begin();
-      publish({ phase: 'reloading', message: '', error: '' });
+      // Ingest's response has no revision. Keep the old preview until a complete snapshot arrives.
+      publish({ phase: 'reloading', upload: null, requiresReload: true, confirmationError: '' });
       try {
-        const detail = await load(id, { signal: operation.signal });
+        const detail = await readDetail(operation.signal);
         if (!operation.current()) return;
-        assertSameSession(detail.id);
-        if (!Array.isArray(detail.source_questions)) throw new Error('Unexpected detail response');
-        publish({ detail, phase: 'idle', requiresReload: false, unavailable: false, cause: null,
-          message: 'Đã đọc lại nguồn đã lưu.', error: state.uncertain ? UNCERTAIN_MESSAGE : '' });
-        // A GET is a snapshot; it cannot establish that an earlier POST has stopped.
+        publish({ detail, phase: 'idle', requiresReload: false, unavailable: false,
+          message: `Đã nạp ${count} câu nguồn.` });
       } catch (cause) {
         if (!operation.current()) return;
-        publish({ phase: 'idle', cause, requiresReload: true,
-          unavailable: state.unavailable || [401, 403, 404].includes(cause?.response?.status),
-          error: 'Chưa đọc lại được phiên. Nguồn đang hiển thị là bản đã biết trước đó.' });
+        publish({ phase: 'idle', unavailable: isUnavailable(cause?.response?.status),
+          error: 'Đã nạp đề nhưng chưa đọc được bản mới. Hãy đọc lại nguồn đã lưu.' });
+      }
+    },
+    async confirm() {
+      if (!canConfirm()) return;
+      const retry = Boolean(intent);
+      if (!intent) {
+        try {
+          const next = { sourceRevision: state.detail.source_revision, idempotencyKey: newConfirmationKey() };
+          if (!isSourceUuid(next.idempotencyKey)) throw new Error('Invalid confirmation key');
+          confirmationStore.save(next);
+          intent = next;
+        } catch {
+          publish({ confirmationError: CONFIRM_STORAGE });
+          return;
+        }
+      }
+      const operation = begin();
+      publish({ phase: 'confirming', confirmationPending: true, retryConfirmation: false,
+        confirmationError: '', error: '', cause: null, message: '' });
+      try {
+        await confirmSource(id, { ...intent, signal: operation.signal });
+        if (!operation.current()) return;
+        finishConfirmation({ ...state.detail, status: 'blueprinted' });
+      } catch (cause) {
+        if (!operation.current()) return;
+        const status = cause?.response?.status;
+        if (status === 409) {
+          confirmationConflict = true;
+          publish({ phase: 'reconciling', requiresReload: true, confirmationPending: Boolean(intent) });
+          await reconcile(operation, true);
+          return;
+        }
+        if (!retry && (status === 400 || status === 422 || cause?.code === 'ERR_CONFIRM_INPUT')) {
+          try { clearIntent(); } catch { /* keep the operation blocked until reconciliation */ }
+          publish({ phase: 'idle', confirmationPending: Boolean(intent),
+            confirmationError: intent ? CONFIRM_STORAGE : 'Không thể xác nhận bản đề này. Hãy kiểm tra đề và thử lại.' });
+          return;
+        }
+        publish({ phase: 'idle', unavailable: isUnavailable(status),
+          confirmationError: isUnavailable(status) ? errorMessage(cause) : CONFIRM_UNCERTAIN });
       }
     },
   };

@@ -1,6 +1,9 @@
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ingestFile, ingestText, validateIngestFile, validateIngestText } from '../../services/ingestion.js';
 import { getSessionDetail } from '../../services/sessions.js';
+import { confirmSource, getSourceArtifactStatus, isSourceUuid } from '../../services/sourceConfirmation.js';
+import { useAuthStore } from '../auth/authStore.js';
+import { createConfirmationIntentStore } from './confirmationIntent.js';
 import { createSourceIngestionController } from './sourceIngestion.js';
 import SourceQuestionPreview from './SourceQuestionPreview.jsx';
 import { readIncompleteError } from './stage1Errors.js';
@@ -8,11 +11,13 @@ import IncompleteContentDialog from './IncompleteContentDialog.jsx';
 
 const buttonClass = 'rounded-lg border border-slate-600 px-3 py-2 hover:bg-slate-800 disabled:opacity-50';
 
-export default function Stage1SourcePanel({ detail, isCurrent }) {
+export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
   const inputId = useId();
   const [controller] = useState(() => createSourceIngestionController({
     initialDetail: detail, ingestText, ingestFile, load: getSessionDetail,
     validateText: validateIngestText, validateFile: validateIngestFile, isCurrent,
+    confirmSource, readArtifacts: getSourceArtifactStatus, onConfirmed,
+    confirmationStore: createConfirmationIntentStore(useAuthStore.getState().session?.user.id, detail.id),
   }));
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
   const [dismissedCause, setDismissedCause] = useState(null);
@@ -21,7 +26,10 @@ export default function Stage1SourcePanel({ detail, isCurrent }) {
   const pendingFocus = useRef(null);
   const incomplete = useMemo(() => readIncompleteError(state.cause), [state.cause]);
   const dialogOpen = incomplete !== null && dismissedCause !== state.cause && controller.canSubmit();
-  useEffect(() => () => controller.dispose(), [controller]);
+  useEffect(() => {
+    void controller.restoreConfirmation();
+    return () => controller.dispose();
+  }, [controller]);
   useEffect(() => {
     if (!pendingFocus.current) return;
     const target = pendingFocus.current === 'file' ? fileInput.current : textInput.current;
@@ -45,12 +53,15 @@ export default function Stage1SourcePanel({ detail, isCurrent }) {
   return (
     <section aria-label="Nhập nguồn đề" className="mt-4 flex min-h-0 flex-1 flex-col gap-3">
       {state.error && <p role="alert" aria-hidden={dialogOpen || undefined} id={`${inputId}-error`} className="shrink-0 text-rose-300">{state.error}</p>}
+      {state.confirmationError && <p role="alert" className="shrink-0 text-rose-300">{state.confirmationError}</p>}
       <p role="status" aria-live="polite" className="shrink-0 text-slate-300">
         {state.phase === 'submitting' ? state.upload
           ? state.upload.complete ? 'Đã tải tệp lên. Đang xử lý nguồn…'
             : `Đang tải tệp lên${uploadPercent === undefined ? '…' : `: ${uploadPercent}%…`}`
           : 'Đang gửi và xử lý nguồn…'
-          : state.phase === 'reloading' ? 'Đang đọc lại nguồn đã lưu…' : state.message}
+          : state.phase === 'reloading' ? 'Đang đọc lại nguồn đã lưu…'
+            : state.phase === 'confirming' ? 'Đang xác nhận đề nguồn…'
+              : state.phase === 'reconciling' ? 'Đang kiểm tra kết quả xác nhận…' : state.message}
       </p>
       {state.upload && <progress aria-label="Tiến độ tải tệp lên" className="w-full shrink-0"
         max="100" value={uploadPercent} />}
@@ -104,10 +115,22 @@ export default function Stage1SourcePanel({ detail, isCurrent }) {
           <SourceQuestionPreview questions={state.detail.source_questions} versionCount={state.detail.exam_versions?.length ?? 0} />
         )}
       </div>
+      <p id={`${inputId}-confirm-help`} className="shrink-0 text-sm text-slate-300">
+        {state.retryConfirmation ? 'Chưa thấy kết quả xác nhận. Bạn có thể thử lại lần xác nhận trước.'
+          : !readOnly && state.detail.source_questions.length > 0 && !isSourceUuid(state.detail.source_revision)
+            ? 'Bản đề này chưa thể xác nhận. Hãy đọc lại nguồn đã lưu.'
+            : 'Xác nhận bản đề đang hiển thị. Nếu đã sửa nội dung nhập, hãy nạp lại trước khi xác nhận.'}
+      </p>
       <div className="flex shrink-0 flex-wrap gap-2">
         <button type="submit" form={`${inputId}-form`} className={buttonClass} disabled={!controller.canSubmit()}>Nạp nguồn</button>
-        <button type="button" className={buttonClass} disabled={busy} onClick={() => void controller.reload()}>Đọc lại nguồn đã lưu</button>
-        {busy && <button type="button" className={buttonClass} onClick={() => controller.cancelRequest()}>Dừng chờ</button>}
+        <button type="button" className={buttonClass} disabled={busy} onClick={() => void controller.reload()}>
+          {state.confirmationPending ? 'Đọc lại trạng thái phiên' : 'Đọc lại nguồn đã lưu'}
+        </button>
+        <button type="button" className={buttonClass} disabled={dialogOpen || !controller.canConfirm()}
+          aria-describedby={`${inputId}-confirm-help`} onClick={() => { if (!dialogOpen) void controller.confirm(); }}>
+          {state.retryConfirmation ? 'Thử xác nhận lại' : 'Xác nhận đề gốc và tiếp tục'}
+        </button>
+        {['submitting', 'reloading'].includes(state.phase) && <button type="button" className={buttonClass} onClick={() => controller.cancelRequest()}>Dừng chờ</button>}
       </div>
       <IncompleteContentDialog open={dialogOpen} errors={incomplete?.errors ?? []}
         onClose={() => setDismissedCause(state.cause)}
