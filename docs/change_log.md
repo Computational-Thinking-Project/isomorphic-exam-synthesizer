@@ -1,3 +1,12 @@
+## W4-MVP-05: Post-shuffle pre-approval preview projection API — 07/11/2026 (proposed)
+
+Introduces dedicated read-only endpoint `GET /api/sessions/{session_id}/finalize/preview`
+providing post-shuffle examination preview projection before final approval. Enforces
+full parity with exporter `DisplayQuestion` invariants (non-empty content/solution, 4
+normalized distinct options, status='approved'), complete answer-key integrity checks,
+and finalized shuffle provenance verification. Resolves Decision Q06. See the
+[preview projection contract](api/preview-projection-contract.md).
+
 ## 05/11/2026 — W2 AI policy: owner confirmations
 
 Duy/BE và Bội Anh/FE đã xác nhận mode aliases/NONE theo các link trong [contract AI](ai-w2-integration.md). Đạt cập nhật policy status và acceptance fixtures; không đổi generator/worker/SQL. Quỳnh giữ clone branch, SQL/RPC snapshot và clone persistence đã merge qua PR32; worker integration vẫn do Quỳnh thực hiện; xác nhận policy không phải nghiệm thu triển khai/E2E.

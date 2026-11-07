@@ -19,6 +19,7 @@ from app.models.schemas import (
     AnswersMatrixResponse,
     FinalizeApproveResponse,
     MatrixItem,
+    PreviewSnapshotResponse,
     ReviewDomainException,
 )
 from app.services.finalize.repository import FinalizeRepository, _valid_timestamp
@@ -323,3 +324,48 @@ class FinalizeService:
             version_codes=version_codes,
             matrix=matrix_items,
         )
+
+    async def get_preview_snapshot(
+        self, session_id: str, user_id: str
+    ) -> PreviewSnapshotResponse:
+        """Fetch post-shuffle pre-approval preview projection (W4-MVP-05).
+
+        Enforces:
+        1. Session ID UUID format (400 ERR_INVALID_SESSION_ID)
+        2. Session existence and ownership (404 ERR_SESSION_NOT_FOUND, 403 ERR_UNAUTHORIZED)
+        3. Session state: must be 'reviewed', 'approved', or 'exported' (409 ERR_INVALID_SESSION_STATE)
+        4. Version shuffle finalization: all versions must be finalized (409 ERR_SHUFFLE_REQUIRED)
+        5. Internal data consistency: options, answer keys, solutions (409 ERR_INCONSISTENT_ANSWER_KEYS)
+        """
+        try:
+            val = UUID(session_id)
+            if str(val) != session_id.lower():
+                raise ValueError("UUID representation mismatch")
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ReviewDomainException(
+                400,
+                "ERR_INVALID_SESSION_ID",
+                f"Mã phiên làm việc '{session_id}' không đúng định dạng UUID",
+            ) from exc
+
+        session_meta = await self.repo.get_session_meta(session_id)
+        if not session_meta:
+            raise ReviewDomainException(
+                404, "ERR_SESSION_NOT_FOUND", f"Phiên làm việc '{session_id}' không tồn tại"
+            )
+
+        if str(session_meta.get("user_id")) != user_id:
+            raise ReviewDomainException(
+                403, "ERR_UNAUTHORIZED", "Người dùng không có quyền xem phiên đề này"
+            )
+
+        current_status = str(session_meta.get("status", "")).lower()
+        if current_status not in ("reviewed", "approved", "exported"):
+            raise ReviewDomainException(
+                409,
+                "ERR_INVALID_SESSION_STATE",
+                f"Phiên đề ở trạng thái '{current_status}' chưa sẵn sàng để xem trước. Cần ở trạng thái 'reviewed', 'approved' hoặc 'exported'.",
+            )
+
+        raw_snapshot = await self.repo.fetch_preview_snapshot(session_id)
+        return PreviewSnapshotResponse.model_validate(raw_snapshot)

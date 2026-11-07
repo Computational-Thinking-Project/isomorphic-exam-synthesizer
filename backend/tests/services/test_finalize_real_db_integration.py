@@ -522,3 +522,21 @@ async def test_generated_session_cannot_be_approved_on_real_pg(
 
     assert exc_info.value.status_code == 409
     assert exc_info.value.error_code == "ERR_INVALID_SESSION_STATE"
+
+
+@pytest.mark.asyncio
+async def test_preview_snapshot_on_real_pg(
+    owner_client: AsyncpgSupabaseAdapter, reviewed_exam_session
+):
+    """Real PostgreSQL verification of fetch_preview_snapshot and get_preview_snapshot (W4-MVP-05)."""
+    s_info = reviewed_exam_session
+    s_id = s_info["session_id"]
+    finalize_svc = FinalizeService(owner_client)
+
+    preview = await finalize_svc.get_preview_snapshot(s_id, OWNER_ID)
+    assert preview.session_id == s_id
+    assert preview.status in ("reviewed", "approved")
+    assert preview.is_finalized is True
+    assert preview.n_versions == 2
+    assert len(preview.versions) == 2
+    assert len(preview.matrix) == preview.total_questions
