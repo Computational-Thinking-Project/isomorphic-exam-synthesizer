@@ -17,6 +17,8 @@ from app.services.blueprint.common import ToolError, canonical
 from app.services.blueprint.schema_adapter import generation_payload
 from app.services.blueprint.service import BlueprintService, source_fingerprint
 from app.services.generation.service import GenerationService
+from app.services.observability.ai_instrumentation import make_gemini_attempt_observer
+from app.services.observability.runtime_registry import RuntimeRegistry
 from app.services.validator.base import CheckResult
 from app.services.validator.pipeline import CandidateValidator, validate_solution
 
@@ -338,48 +340,90 @@ async def test_runtime_is_lazy_and_services_share_one_gateway(monkeypatch):
     from app.services.ai import runtime
 
     gateway = SimpleNamespace(model="offline", aclose=AsyncMock())
-    factory = AsyncMock()  # Startup must not touch SDK/network.
+    factory = Mock(return_value=gateway)
     monkeypatch.setattr(runtime, "GeminiGateway", factory)
-    services = runtime.AIRuntime(Settings(_env_file=None))
+    observer = Mock()
+    settings = Settings(_env_file=None)
+    services = runtime.AIRuntime(settings, attempt_observer=observer)
     await services.aclose()
     factory.assert_not_called()
-    monkeypatch.setattr(runtime, "GeminiGateway", lambda settings: gateway)
     assert services.blueprints.gateway is services.generation.gateway is gateway
     assert services.generation is services.generation
+    factory.assert_called_once_with(settings, attempt_observer=observer)
     await services.aclose()
     gateway.aclose.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_real_gateway_shares_reservations_across_extraction_and_generation(pipeline, monkeypatch):
+@pytest.mark.parametrize("accept_candidate", [True, False])
+async def test_real_gateway_shares_reservations_across_extraction_and_generation(
+    pipeline, monkeypatch, accept_candidate
+):
     from app.core.config import Settings
     from app.services.ai import gateway as transport
 
     p = pipeline
 
     def response(payload):
-        return SimpleNamespace(text=canonical(payload), candidates=[SimpleNamespace(finish_reason="STOP")],
-                               model_version="offline", usage_metadata=None)
+        return SimpleNamespace(
+            text=canonical(payload),
+            candidates=[SimpleNamespace(finish_reason="STOP")],
+            model_version="offline",
+            usage_metadata=None,
+        )
 
-    sdk = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=AsyncMock(
-        side_effect=[response(generation_payload(p.blueprint)), response(p.candidates[0])])),
-        aclose=AsyncMock()), close=Mock())
+    sdk = SimpleNamespace(
+        aio=SimpleNamespace(
+            models=SimpleNamespace(
+                generate_content=AsyncMock(
+                    side_effect=[
+                        response(generation_payload(p.blueprint)),
+                        response(p.candidates[0]),
+                    ]
+                )
+            ),
+            aclose=AsyncMock(),
+        ),
+        close=Mock(),
+    )
     monkeypatch.setattr(transport.genai, "Client", lambda **kwargs: sdk)
-    config = Settings(_env_file=None, GEMINI_API_KEY="offline-key", GEMINI_API_KEY_1="",
-                      GEMINI_API_KEY_2="", GEMINI_API_KEY_3="")
+    config = Settings(
+        _env_file=None,
+        GEMINI_API_KEY="offline-key",
+        GEMINI_API_KEY_1="",
+        GEMINI_API_KEY_2="",
+        GEMINI_API_KEY_3="",
+    )
+    if not accept_candidate:
+        p.validator.validate.side_effect = None
+        p.validator.validate.return_value = ValidationReport(
+            checks=[CheckResult(check_name="domain", passed=False, status="failed")]
+        )
+    registry = RuntimeRegistry()
+    registry.start()
     budget = RequestBudget(2)
     context = RequestContext(time.monotonic() + 30, budget.reserve)
-    async with transport.GeminiGateway(config) as gateway:
-        blueprints, _ = await BlueprintService(gateway).extract_sources([p.source],
-            confirmed_source_hash=p.confirmed, context=context)
+    async with transport.GeminiGateway(
+        config, attempt_observer=make_gemini_attempt_observer(registry)
+    ) as gateway:
+        blueprints, _ = await BlueprintService(gateway).extract_sources(
+            [p.source], confirmed_source_hash=p.confirmed, context=context
+        )
         service = GenerationService(gateway, p.validator)
-        result = await service.generate_question(p.source, blueprints[0]["blueprint"],
-            confirmed_source_hash=p.confirmed, context=context)
-        assert result.candidate and budget.used == 2
-        blocked = await service.generate_question(p.source, blueprints[0]["blueprint"],
-            confirmed_source_hash=p.confirmed, context=context)
+        result = await service.generate_question(
+            p.source, blueprints[0]["blueprint"], confirmed_source_hash=p.confirmed, context=context
+        )
+        assert (result.candidate is not None) is accept_candidate
+        if not accept_candidate:
+            assert result.validation.failures[0].check_name == "domain"
+        blocked = await service.generate_question(
+            p.source, blueprints[0]["blueprint"], confirmed_source_hash=p.confirmed, context=context
+        )
         assert blocked.error_code == "REQUEST_BUDGET_EXHAUSTED"
-    assert sdk.aio.models.generate_content.await_count == 2
+    snapshot = registry.snapshot()
+    assert snapshot.gemini_call_count == 2
+    assert sdk.aio.models.generate_content.await_count == budget.used == 2
+    assert snapshot.gemini_error_rate == 0
     sdk.aio.aclose.assert_awaited_once()
     sdk.close.assert_called_once()
 
@@ -429,3 +473,28 @@ async def test_real_validator_keeps_arbitrary_problem_unknown_and_detects_false_
         "solution": StepByStepSolution(correct_key="A", final_answer="9", steps=[{"explanation": "Sai có chủ ý để kiểm thử."}])})
     report = await validator.validate(equation, deadline=time.monotonic() + 15)
     assert any(c.check_name == "answer_verified" for c in report.failures)
+
+
+@pytest.mark.asyncio
+async def test_candidate_validator_passes_frozen_blueprint_to_four_tiers(pipeline, monkeypatch):
+    from app.services.validator.base import ValidationReport as AggregateReport
+
+    candidate = CandidatePayload.model_validate(pipeline.candidates[0])
+    blueprint = {"requirement": {"parameter_domains": {"x": [1, 5]}}}
+    received = []
+
+    def fake_validate(question_text, options, correct_answer, **kwargs):
+        received.append((question_text, options, correct_answer, kwargs))
+        return AggregateReport(
+            passed=False, status="failed", confidence="rule_only",
+            checks=[CheckResult(check_name="parameter_bounds", passed=False, status="failed")],
+        )
+
+    monkeypatch.setattr("app.services.validator.pipeline.validate_question", fake_validate)
+    report = await CandidateValidator().validate(
+        candidate, deadline=time.monotonic() + 5, blueprint=blueprint
+    )
+    assert received[0][3]["blueprint"] == blueprint
+    assert received[0][3]["parameters"] is None
+    assert any(check.check_name == "parameter_bounds" for check in report.failures)
+    assert any(check.check_name == "parameter_coverage" for check in report.checks)
