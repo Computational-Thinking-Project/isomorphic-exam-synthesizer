@@ -5,6 +5,7 @@
 - Workflow v0.1 proposed, docs baseline `506384b`; author mode, M2/M3. Nhánh `docs/w4-ops-runbook`, rẽ từ dev `73583d7`. Reviewer đề xuất Duy (BE/OPS), Hùng (Storage), Quỳnh nhận môi trường; chưa có approval.
 - Deadline dưới đây theo W4, UTC+7; là mốc cần giao, chưa phải ETA đã xác nhận. Không thay bằng lịch tuần thông thường.
 - Runbook: [W4 staging](../w4-staging-runbook.md).
+- Bổ sung trước khi có server: [lifecycle proposal và freeze/migration gates](../w4-ops-handoff.md), [static migration inventory](../w4-migration-inventory.md). Đã review PR50 theo yêu cầu GitHub; các contract F01–F03 chờ Duy sửa, không tự sửa nhánh author.
 
 ## Phạm vi và hiện trạng
 
