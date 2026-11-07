@@ -2,9 +2,9 @@
 
 - **Phụ trách:** Trung Anh / `philip-kkk` / TV1 / FE1. Duy (`johannguyen015`) review chính và phụ trách API xác nhận. Bội Anh (`htbaax`) kiểm điểm bàn giao Stage 2. Dự phòng và ETA review riêng TBD.
 - **Nguồn giao việc:** TASK-204 trong `w2_21_10.md` của Duy, bản workspace `project/W2_ASSIGNMENT_20261026.md`. Link phân công chung TBD.
-- **Nhánh:** `feat/task-204-source-confirm` → `dev`. [Draft PR #42](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/42). Nền `dev` đã đồng bộ: `295342f`.
+- **Nhánh:** `feat/task-204-source-confirm` → `dev`. [Draft PR #42](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/42). Nền `dev` đã đồng bộ: `73583d7`.
 - **Workflow:** [v0.1 proposed](../review/WORKFLOW.md) (`506384b`), dùng [M2/M3](../review/TEMPLATES.md). Mốc W2 tối 03/11/2026 theo [xác nhận của Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/29#issuecomment-6499240459) đã qua. ETA TASK-204 và ETA giao đầu vào chưa được xác nhận.
-- **Trạng thái:** P1–P3 đã triển khai và push. P4 đã kiểm FE1 và API xác nhận sau khi đồng bộ BE1/FE2. Nghiệm thu Stage 2 còn chờ adapter canonical, BE2 và runtime tích hợp.
+- **Trạng thái:** P1–P3 đã triển khai. Bản ghép dev đã kiểm canonical summary và Stage 2 với dữ liệu từ SQL. Còn chốt cập nhật readiness/failed ở FE2 và runtime Auth/PostgREST cho Q03. Checkpoint chờ #32 và adapter modes riêng bên dưới là lịch sử.
 
 ## Mình cần làm gì?
 
@@ -69,6 +69,8 @@ Silent audit đã chốt, không mở lại câu hỏi checkbox của assignment
 
 ## M3 — P4 sau đồng bộ dev ngày 06/11/2026
 
+Checkpoint lịch sử tại nền `295342f`; xem kết quả ngày 07/11/2026 bên dưới.
+
 - **Bản kiểm:** merge local `e42e6d3` của PR #42 `4cef37e` với `dev` `295342f`. Nền đã có FE2 [PR #40](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/40) và BE1 [PR #43](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/43).
 - **Frontend:** `npm.cmd test -- --test-concurrency=2 --test-reporter=dot`, `npm.cmd run lint`, `npm.cmd run build` và `git diff --check` đạt. Build cảnh báo bundle `982.67 kB`.
 - **Chrome 156 qua DevTools Protocol:** hai ca fixture Auth/HTTP đạt. Đã dùng bàn phím nạp đề và xác nhận. F5 khi phiên còn nháp đọc lại artifact rồi cho retry cùng key. F5 khi server giả lập đã commit mở đúng phiên ở Stage 2 fixture và giữ đúng một POST. Bằng chứng local tại `tmp/task204-p4-e42e6d3/chrome-result.json` trong workspace.
@@ -76,3 +78,12 @@ Silent audit đã chốt, không mở lại câu hỏi checkbox của assignment
 - **Điểm chặn FE2:** Probe gọi `fetchSessionDetail` theo dữ liệu của contract. Với cả artifact `ready=true, supported_modes=[]` và `ready=true` có một mode, service chỉ gọi GET phiên. `blueprint_summary` vẫn là `null` và form Stage 2 khóa submit. PR #40 đã merge, adapter canonical cho [`source-artifacts`](../api/source-artifacts-contract.md) vẫn cần FE2 nối.
 - **Điểm chặn BE2:** Migration `010` trên `dev` là file rỗng của BE1. Migration generation-config và API tương ứng còn ở [PR #32](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/32). Cần thứ tự migration được BE2 xác nhận và runtime có đầy đủ các thành phần trước khi chạy P4 tích hợp.
 - **Kết luận:** Có bằng chứng riêng cho FE1 và BE1 trên nền mới. Giữ PR #42 Draft và chạy lại luồng browser với Stage 2 thật sau khi có adapter FE2 và runtime BE2 đã ghép.
+
+## M3 — Kiểm lại bản ghép ngày 07/11/2026
+
+- **Bản kiểm:** merge local `3e3dff1` với `dev` `73583d7`, gồm #32/#36/#41. Merge không conflict. API GET phiên đã đọc `get_generation_source_snapshot` và cung cấp canonical `blueprint_summary`.
+- **Regression:** 355 frontend tests, lint/build và diff-check đạt. Bundle cảnh báo `982.67 kB`. Backend API confirm/detail/ingestion/CORS và mode mapper đạt 170 ca, dùng transport/provider giả lập.
+- **SQL/API bản ghép:** hai ca PostgreSQL 15 dùng một lần đạt với migrations BE1 đến 014 cùng 004/005/015/016 của BE2. Kiểm confirm, revision conflict, mất response sau commit/replay cùng key và pending/running/failed/ready. GET phiên trả `is_ready=true` cùng modes đầy đủ hoặc `[]` hợp lệ. Provider là fake, Auth được inject và transport PostgREST được thay bằng SQL fixture. Harness bổ sung IN-filter của GET detail mới trước lượt đạt.
+- **Component Stage 2 thật:** Node DOM/MemoryRouter dùng JSON GET lấy từ ca SQL trên. Form khóa với pending/failed, mở với ready có modes hoặc ready với `[]`. Điểm chặn cũ “thiếu adapter modes” đã hết trên nền này. Khi server fixture đổi pending sang ready sau mount, màn không đọc lại và vẫn khóa; failed hiện cùng cảnh báo chưa sẵn sàng, không hiện mã lỗi production. Cần Bội Anh chốt hành vi refresh/readiness và retry canonical theo Q02, không yêu cầu xây luồng generation/SSE trong TASK-204.
+- **Q03:** Duy là đầu mối xác nhận runtime kiểm có migration đúng bản, Auth/JWT/RLS/PostgREST và provider tắt/fake hoặc artifact sẵn. Chưa kiểm các thành phần này trên Supabase/PostgREST. Không đưa toàn bộ PR30 hoặc OPS W4 thành gate mới.
+- **Bằng chứng local:** `tmp/task204-merged-3e3dff1/` trong workspace có harness SQL, JSON pending/failed/none/ready và `stage2-result.json`. Đây là SQL/API và DOM integration, chưa phải browser qua Auth/PostgREST thật. Chrome/F5 fixture tại checkpoint trước giữ phạm vi bằng chứng riêng.
