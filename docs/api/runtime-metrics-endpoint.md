@@ -2,26 +2,22 @@
 
 ## Status and scope
 
-Author checkpoint 07/11/2026: The uncommitted PR #30 working tree now protects
+Author checkpoint 07/11/2026: PR #30 at `bb86423` protects
 the product endpoint with `get_current_admin_user`, injects the shared gateway
 observer and collector in lifespan, and starts job/SSE producers on the same
 registry. Offline Auth/collector tests are separate from live JWT/proxy/Gemini
-acceptance. OPS ownership of `scripts/dev.ps1`/Docker CI smoke and one-worker
-deployment is still pending; the old anonymous-200 smoke must change before CI
-can pass on this patch. The paragraph below describes the earlier baseline.
+acceptance. The follow-up patch aligns dev and Docker smoke with the protected
+endpoint; CI on that patch and one-worker deployment acceptance remain pending.
 
 This branch implements response models, the runtime registry, Linux current RSS
-reader, a fresh-snapshot collector and a Gemini dispatch observer for explicit
-injection. The TASK-207b Python broker/runner also accept the same registry for
-their lifecycle hooks. The current product handler returns only `status` and
-`gemini_model`, without auth. App lifecycle wiring for these producers, access
-guard and protected endpoint integration remain pending.
+reader, a fresh-snapshot collector and a Gemini dispatch observer. The TASK-207b
+broker/runner and the protected product endpoint use the same registry.
 
 `RuntimeMetricsCollector.collect()` combines registry activity, configured model
 and a new RSS sample, validates all eight response fields and raises a safe
 `RuntimeMetricsUnavailableError` on any failure. It never returns partial data
-or substitutes zero for a missing observation. The later HTTP adapter must map
-this error to the specified 503 body.
+or substitutes zero for a missing observation. The HTTP adapter maps this error
+to the specified 503 body.
 
 The endpoint reports the current backend worker's runtime activity. It is
 separate from pedagogical statistics (TASK-401), persistent per-session Gemini
@@ -154,9 +150,8 @@ not erase the earlier failure. Cleanup must not record completion twice.
 attempts to 1, applies a shared semaphore of at most 3 and invokes
 RequestContext.reserve_request immediately before each transport dispatch.
 W2 Blueprint extraction and the mounted TASK-207b job runner use backend
-AIRuntime; the standalone CLI is not the W2 request path. The runtime metrics
-collector and observer are not yet injected into that shared AI runtime. Do not
-invent a subprocess metrics bridge for W2 or reuse the legacy sync generator.
+AIRuntime; the standalone CLI is not the W2 request path. The product lifespan
+injects the observer into that shared AI runtime.
 
 **C2 observer contract:** `AIRuntime` passes an optional synchronous
 `attempt_observer` to its shared gateway. The gateway opens one observation
@@ -176,9 +171,9 @@ leaving it outside the error-rate denominator alongside in-flight attempts.
 Callbacks perform bounded synchronous in-process work with no I/O. Callback
 exceptions produce a fixed warning and leave gateway behavior unchanged.
 
-The registry bridge is available for explicit injection. App startup,
-endpoint mounting, and the production job runner remain separate wiring
-steps. A separate process would require an explicit reporting contract.
+The registry bridge is injected at app startup alongside the production job
+runner and endpoint. A separate process would require an explicit reporting
+contract.
 
 These counters do not increment or replace `exam_sessions.gemini_call_count`,
 `gemini_review_calls` or the 250-call per-batch guard. Their scopes/lifetimes are
@@ -226,15 +221,14 @@ healthchecks. Metrics remain outside the shared CRUD/generation quota policy;
 quota exemption does not waive authentication or admin/development access.
 Do not alter CORS, existing quotas or the global exception handler for this task.
 
-Before replacing the old public metrics handler, coordinate these consumers
-with OPS and update them in the same integration change:
+The protected handler requires these smoke consumers to check the Auth boundary:
 
-- `scripts/dev.ps1`: the current proxy smoke expects unauthenticated metrics 200.
-- `.github/workflows/docker-ci.yml`: the static Nginx smoke uses curl --fail on
-  the same unauthenticated endpoint.
+- `scripts/dev.ps1`: the dev proxy smoke checks unauthenticated metrics 401 and
+  the Bearer challenge.
+- `.github/workflows/docker-ci.yml`: the static Nginx smoke checks the same
+  response and keeps public backend `/health` at 200.
 
-The planned token-free proxy smoke should assert 401 with the Auth challenge,
-while backend `/health` remains 200. Authorized success belongs in API tests and
+Authorized success belongs in API tests and
 an agreed test-account smoke; never insert a production auth bypass or commit a
 real JWT to make CI pass. Retain PowerShell 5.1/7 compatibility in script edits.
 Ensure only one metrics route remains registered after product integration.

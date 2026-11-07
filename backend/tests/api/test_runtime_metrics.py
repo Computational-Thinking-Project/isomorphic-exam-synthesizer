@@ -3,7 +3,7 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.dependencies import get_current_user
+from app.api.dependencies import get_current_admin_user, get_current_user
 from app.api.routes.health import router
 from app.core.config import settings
 from app.models.schemas import CurrentUser
@@ -63,7 +63,7 @@ def test_metrics_restricts_nonadmin_outside_development(monkeypatch):
 
 def test_metrics_unavailable_fails_safely():
     app = metrics_app()
-    app.dependency_overrides[get_current_user] = lambda: user("admin@example.test")
+    app.dependency_overrides[get_current_admin_user] = lambda: user("admin@example.test")
     app.state.runtime_metrics = None
     with TestClient(app) as client:
         response = client.get("/api/health/metrics")

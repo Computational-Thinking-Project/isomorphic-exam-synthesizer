@@ -1,20 +1,27 @@
 # TASK-207c — Plan và bàn giao W2: Runtime metrics có Auth
 
-## Cập nhật author 07/11/2026 — wiring trên PR #30
+## Cập nhật author 07/11/2026 — wiring và CI trên PR #30
 
-- `get_current_admin_user` của PR #32 và gateway observer đã có đủ để bảo vệ
-  metrics route và inject collector/observer trong lifespan. Working tree đã nối
-  route, shared registry và producer job/SSE/Gemini; đây là implementation chưa
-  commit, chưa phải nghiệm thu staging.
+- Commit `bb86423` đã nối `get_current_admin_user` của PR #32, gateway observer,
+  collector, route và producer job/SSE/Gemini trong lifespan. Đây là
+  implementation đã push trên Draft PR, chưa phải nghiệm thu staging.
 - `/health` giữ public; `/api/health/metrics` yêu cầu Bearer, admin ngoài
-  development, trả sáu metrics hoặc 503 an toàn. Smoke `scripts/dev.ps1`/Docker
-  CI còn mong anonymous 200 và **chưa sửa** vì Duy/OPS chưa chốt owner và
-  cấu hình deploy thuộc I-OPS-LIFE. PR #30 tiếp tục Draft.
+  development, trả sáu metrics hoặc 503 an toàn. Trên `bb86423`, Backend CI
+  thất bại ở fixture 503 vì môi trường `test` trả 403 trước khi gọi collector;
+  Docker CI thất bại vì smoke còn mong anonymous metrics 200. Follow-up này
+  sửa fixture và cả smoke dev/Nginx để kiểm 401 + Bearer challenge; CI trên
+  commit follow-up còn chờ Quỳnh push. Cấu hình deploy một worker vẫn thuộc
+  I-OPS-LIFE. PR #30 tiếp tục Draft.
 - I-OPS-DB còn thiếu để kiểm JWT thật, Gemini thật, proxy và FE2. Các dòng
   “admin/collector/observer chưa nối” bên dưới là trạng thái lịch sử.
-- Backend/Blueprint regression hiện hành: **1752 passed, 274 skipped** trên
-  Windows Python 3.12.10 sau sửa test security để metrics anonymous trả 401.
-  Ruff/Mypy đạt; giới hạn live và smoke OPS vẫn giữ như trên.
+- Backend/Blueprint regression trước `bb86423`: **1752 passed, 274 skipped**
+  trên Windows Python 3.12.10; Ruff/Mypy đạt. Backend CI trên `bb86423`:
+  **1 failed, 1753 passed, 273 skipped** trên Linux Python 3.11. Follow-up chạy
+  toàn bộ `backend/tests scripts/blueprint/tests` với `ENVIRONMENT=test` và
+  Supabase mock keys trên Windows Python 3.12.10: **1753 passed, 274 skipped,
+  18 warnings**; Ruff và Mypy đạt. PowerShell 5.1/7 parse script và kiểm nhánh
+  401 + Bearer đạt. Docker Engine local chưa chạy; các kết quả này chưa thay cho
+  full CI và smoke Docker trên commit mới.
 
 ## Kiểm lại input ngày 06/11/2026 — nhánh Quỳnh, Draft PR #30
 
