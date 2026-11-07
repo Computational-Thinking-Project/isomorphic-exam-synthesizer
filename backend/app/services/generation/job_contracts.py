@@ -122,7 +122,7 @@ class GenerationJobStore(Protocol):
     save_draft preserves existing current rows and atomically commits one new
     version_question plus updated_at. finish verifies durable completeness and
     commits the requested state only for this job. Errors must have stable codes.
-    fail_stale must compare generating + updated_at < cutoff atomically and fence
+    fail_stale delegates to the database generation activity clock and fences
     the former worker; set failed/ERR_GENERATION_INTERRUPTED. No SQL is defined here.
     """
 

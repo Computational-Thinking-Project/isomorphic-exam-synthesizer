@@ -1,5 +1,29 @@
 # TASK-207b — Plan và bàn giao W2: Background generation, lưu tiến độ và SSE
 
+## Cập nhật author 07/11/2026 — tích hợp theo PR #52
+
+- PR #52 tại `5b3f433` đã bàn giao migration 017 và contract RPC cho generation
+  activity, stale enumeration/fencing, durable error finish/read-back. PR còn mở;
+  code Python working tree dùng contract này với fixture, chưa có ledger áp DB.
+- Đã thêm `finish_generation_job_with_error`, scanner service-role phân trang 100
+  theo cursor và token, shutdown runner, durable terminal error trong snapshot/SSE,
+  terminal buffer retention 15 phút và ticket lease qua lúc mở stream. Scanner
+  startup/mỗi 30 giây; cleanup mỗi 60 giây. Đường claim/quota/full-result/clone
+  từ 015/016 được giữ. Validator adapter nối aggregator 4 tầng với frozen
+  Blueprint và giữ solution checks; thiếu parameter values được đánh dấu warning.
+- Chưa ghi PASS cho PostgREST/RLS, concurrent DB race, restart thật và FE2 qua
+  proxy. Duy/OPS còn cần bàn giao I-OPS-DB; owner deploy/smoke thuộc I-OPS-LIFE
+  chưa chốt. Các mục “chưa có SQL/scan/route” bên dưới là lịch sử trước PR #52.
+- Kiểm offline trên working tree sau `8fb6387`, Windows Python 3.12.10, venv
+  cục bộ: `python -X utf8 -B -m pytest backend/tests scripts/blueprint/tests -q
+  --tb=short -p no:cacheprovider` → **1752 passed, 274 skipped, 18 warnings**.
+  Ruff `check backend/app scripts/blueprint` và Mypy
+  `backend/app --ignore-missing-imports` đạt; `git diff --check` đạt.
+  Sau khi thêm guard retry revision cho terminal SSE, ba suite job/broker/stream
+  liên quan chạy lại **72 passed**; Ruff/Mypy/diff đạt trên bản cuối. Full suite
+  chưa chạy lại sau patch guard cuối. DB opt-in trong phần skipped chưa chạy;
+  đây chưa phải CI trên commit mới.
+
 ## F01 review Đạt — sửa local ngày 06/11/2026, chưa commit
 
 - Head PR #30 được review: `dc8e0d4`; base `e82b8ed`. F01 chỉ ra

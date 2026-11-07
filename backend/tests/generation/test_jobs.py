@@ -114,6 +114,26 @@ def harness(plan: GenerationPlan, *, timeout: float = 600):
     return FakeStore(plan), pipeline, events, registry, runner
 
 
+def test_shutdown_cancels_active_job_and_rejects_new_claim() -> None:
+    async def scenario() -> None:
+        plan = make_plan()
+        store, pipeline, events, registry, runner = harness(plan)
+        pipeline.block = asyncio.Event()
+        await runner.claim(store, plan.session_id)
+        task = asyncio.create_task(runner.run(plan, store))
+        await asyncio.sleep(0.01)
+        assert await runner.shutdown(timeout_seconds=1) is True
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert store.finished[-1][1] == "ERR_GENERATION_INTERRUPTED"
+        assert registry.snapshot().background_jobs_running == 0
+        with pytest.raises(GenerationJobError) as error:
+            await runner.claim(store, plan.session_id)
+        assert error.value.status_code == 503
+
+    asyncio.run(scenario())
+
+
 def test_success_commits_each_question_and_releases_runtime_handles() -> None:
     async def scenario() -> None:
         plan = make_plan()

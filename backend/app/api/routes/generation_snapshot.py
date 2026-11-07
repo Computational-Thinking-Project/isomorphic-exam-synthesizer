@@ -1,5 +1,6 @@
 """Durable Stage 2 progress projection for FE2 reload and SSE resync."""
 
+import re
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -73,6 +74,12 @@ def create_generation_snapshot_router(events: GenerationEventBroker) -> APIRoute
             status = rows[0]["status"]
             if status not in {"generating", "generated", "partial_generated", "failed"}:
                 raise ValueError("Session is outside generation progress states.")
+            error_code = loaded.get("generation_error_code")
+            if error_code is not None and (
+                not isinstance(error_code, str)
+                or re.fullmatch(r"[A-Z0-9_]{3,64}", error_code) is None
+            ):
+                raise ValueError("Malformed durable generation error code.")
             question_statuses: dict[str, dict[str, object]] = {}
             for row in completed:
                 if not isinstance(row, dict) or row.get("is_success") is not True:
@@ -97,6 +104,7 @@ def create_generation_snapshot_router(events: GenerationEventBroker) -> APIRoute
                 "session_status": status,
                 "status": status,
                 "snapshot_id": loaded["snapshot_id"],
+                "generation_error_code": error_code,
                 "progress": {
                     "completed_count": len(completed),
                     "total_count": total,

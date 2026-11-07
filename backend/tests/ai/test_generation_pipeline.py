@@ -473,3 +473,28 @@ async def test_real_validator_keeps_arbitrary_problem_unknown_and_detects_false_
         "solution": StepByStepSolution(correct_key="A", final_answer="9", steps=[{"explanation": "Sai có chủ ý để kiểm thử."}])})
     report = await validator.validate(equation, deadline=time.monotonic() + 15)
     assert any(c.check_name == "answer_verified" for c in report.failures)
+
+
+@pytest.mark.asyncio
+async def test_candidate_validator_passes_frozen_blueprint_to_four_tiers(pipeline, monkeypatch):
+    from app.services.validator.base import ValidationReport as AggregateReport
+
+    candidate = CandidatePayload.model_validate(pipeline.candidates[0])
+    blueprint = {"requirement": {"parameter_domains": {"x": [1, 5]}}}
+    received = []
+
+    def fake_validate(question_text, options, correct_answer, **kwargs):
+        received.append((question_text, options, correct_answer, kwargs))
+        return AggregateReport(
+            passed=False, status="failed", confidence="rule_only",
+            checks=[CheckResult(check_name="parameter_bounds", passed=False, status="failed")],
+        )
+
+    monkeypatch.setattr("app.services.validator.pipeline.validate_question", fake_validate)
+    report = await CandidateValidator().validate(
+        candidate, deadline=time.monotonic() + 5, blueprint=blueprint
+    )
+    assert received[0][3]["blueprint"] == blueprint
+    assert received[0][3]["parameters"] is None
+    assert any(check.check_name == "parameter_bounds" for check in report.failures)
+    assert any(check.check_name == "parameter_coverage" for check in report.checks)

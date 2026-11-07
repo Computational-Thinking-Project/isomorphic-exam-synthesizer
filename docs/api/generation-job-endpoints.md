@@ -2,6 +2,13 @@
 
 ## Implementation status
 
+Author checkpoint 07/11/2026: The uncommitted Python integration now calls
+PR #52's migration 017 finish-with-error and fenced stale scanner RPCs,
+exposes the durable error on snapshot/restarted terminal SSE, and schedules
+startup/30-second scan plus 60-second terminal cleanup. PR #52 is not yet
+merged/applied; all new RPC tests are fixtures. The historical status below
+describes the earlier 005/015/016 integration.
+
 Local WIP at `936d48c` plus uncommitted changes mounts the job, snapshot and
 stream routes in `main.py`. `GenerationJobRepository` calls the merged 005/015/016
 RPCs. Claim uses the authenticated owner client; fenced worker writes use the
@@ -121,22 +128,29 @@ by the ring receives a connection-level error and closes. That error has no
 event ID and must not advance a replay cursor. Reload durable session progress
 before reconnecting; do not silently assume the missing events were delivered.
 `GET /{session_id}/generation-snapshot` returns durable completed/failure counts,
-question statuses, `stream_epoch` and `resume_after_event_id`. It captures the
+question statuses, optional `generation_error_code`, `stream_epoch` and
+`resume_after_event_id`. It captures the
 broker cursor before the DB read, then FE2 passes both marks to the ticket and
 stream routes. A worker restart changes the epoch. Ticket issuance checks both
 marks and returns 409 before EventSource opens when the cursor is unavailable.
 If the broker has no terminal event after a restart but the durable session is
 terminal, ticket issuance reads committed counts and adds one terminal event;
 `partial_generated` then reaches FE2 as `done` with its actual percentage.
+The recovered event carries `generation_error_code` from migration 017 when
+present; a null legacy code uses a safe generic failure code.
+The broker's retry revision prevents a terminal read that started before
+`reopen` from publishing an old terminal event into the new job stream.
 The snapshot uses the owner JWT and returns `Cache-Control: no-store`.
 
 Current default capacities: 4096 live tickets, 1024 session histories. Expired
-tickets are pruned on access. Capacity fails explicitly. Pending jobs and HTTP
-responses hold idempotent buffer leases. Failed/cancelled claims and empty
+tickets are pruned on access and every 60 seconds. Capacity fails explicitly.
+Issued tickets, pending jobs and HTTP responses hold idempotent buffer leases.
+Failed/cancelled claims and empty
 disconnected streams release their slots; invalid cursors allocate nothing.
-History or buffers still held by another job/subscriber are preserved. The owner of app
-lifecycle must call broker `forget` for terminal, unsubscribed histories after
-its agreed replay retention period. No unbounded history is retained.
+History or buffers still held by another job/subscriber/ticket are preserved.
+Terminal histories are retained for at least 15 minutes before cleanup;
+each session still holds only the newest 50 events, so this is not a 15-minute
+guarantee of complete replay. No unbounded history is retained.
 
 `GenerationStreamingResponse` explicitly closes its generator and lease in
 cancellation-shielded cleanup. An ASGI send error can occur while the generator
@@ -154,7 +168,8 @@ cancellation while sending and header failure before generator entry.
 - AI runs missing targets in its bounded batch; clone traverses frozen slots in
   deterministic order. Save each result immediately;
   emit `question_done` only after the save completes. Existing rows are preserved.
-- AI supplies the four validation stages and retry behavior. Saveable candidates
+- The adapter invokes Tâm's four validation stages with the frozen Blueprint
+  before AI accept/retry and retains solution consistency checks. Saveable candidates
   with warnings still count toward a complete `generated` job. No saveable
   candidate emits a warning and creates no fake row.
 - The current isolated runner uses `ProviderCalls.send` for raw attempts. The
@@ -163,8 +178,7 @@ cancellation while sending and header failure before generator entry.
   session cap of 250 including Blueprint usage. Never combine both wrappers.
 - The shared AI gateway bounds outbound concurrency to three and disables SDK
   retries. Local validation and heuristic/mock operations do not reserve calls.
-- ProviderCalls already models known/unknown outcomes in the isolated runner.
-  The new shared AI path still needs a raw outcome hook for runtime metrics;
+- The shared gateway observer reports actual SDK attempts to the runtime registry;
   reservation counts or QuestionResult.attempts are not a substitute for it.
 - Execution timeout is at most 600 seconds. Quota/timeout with committed progress
   finishes `partial_generated`; without any committed progress it finishes `failed`.
@@ -174,11 +188,11 @@ cancellation while sending and header failure before generator entry.
 - `done.data.session_status` distinguishes `generated` from `partial_generated`.
   FE must retain the actual percentage and missing targets for partial results,
   rather than forcing every `done` event to a complete successful job.
-- Before a claim, ask the store to atomically fail a `generating` row untouched
-  for 12 minutes. SQL 005 clears the stale token and marks `failed` but does not
-  persist an `ERR_GENERATION_INTERRUPTED` error code. This is recovery on access;
-  an application-wide periodic sweep still needs a durable enumeration adapter
-  and lifecycle integration. Cleanup releases job/SSE runtime handles in finally.
+- Before a claim, the on-access stale RPC still fences the old job. Migration 017
+  additionally tracks generation activity on the DB clock and provides a
+  service-role, cursor-paged scanner. Its locked fail RPC stores
+  `ERR_GENERATION_INTERRUPTED`. The scanner runs at startup/every 30 seconds;
+  each pass handles up to 100 rows and continues its cursor next pass.
 
 ## Required adapters and remaining integration
 
@@ -195,11 +209,10 @@ QuestionResult to the existing service. Offline tests prove neither live Gemini
 behavior nor all four integrated validators.
 Legacy flat fallback Blueprint records are not automatically canonical AI inputs.
 
-The app now starts a shared runtime registry and mounts job, snapshot and stream
-factories. Broker/ticket/runner are process scoped; OPS still needs to verify
-single-worker deployment, restart recovery, SSE proxy buffering/timeouts and
-ticket-safe access logs. Terminal history retention and periodic stale scan are
-not yet wired to a durable enumeration/lifecycle policy.
+The app starts a shared runtime registry and mounts job, snapshot and stream
+factories, scanner and cleanup loop. Broker/ticket/runner are process scoped;
+OPS still needs to verify single-worker deployment, restart recovery, SSE proxy
+buffering/timeouts and ticket-safe access logs.
 
 PR18/21 provide real async batch generation with completed/on_result callbacks
 and cross-version uniqueness. An adapter must preserve that batch behavior,

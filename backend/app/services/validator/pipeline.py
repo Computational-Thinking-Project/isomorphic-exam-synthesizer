@@ -2,15 +2,14 @@
 
 import asyncio
 import time
+from typing import Any
 
 from app.models.generation import CandidatePayload, ValidationReport, render_solution
 from app.services.blueprint.adapters import normalized_text
 
+from .aggregator import validate_question
 from .base import CheckResult
-from .logic_checker import check_logic
-from .process_runner import run_with_timeout
-from .sympy_evaluator import verify_question_math
-from .syntax_checker import check_latex_delimiters, check_syntax
+from .syntax_checker import check_latex_delimiters
 
 
 def validate_solution(candidate: CandidatePayload) -> list[CheckResult]:
@@ -38,54 +37,77 @@ def validate_solution(candidate: CandidatePayload) -> list[CheckResult]:
     ]
 
 
-def _bounded_logic(candidate: CandidatePayload, timeout: float) -> CheckResult:
-    result = run_with_timeout(
-        check_logic, args=(candidate.options, candidate.correct_key), timeout=timeout
-    )
-    if result.success and isinstance(result.data, CheckResult):
-        return result.data
-    return CheckResult(
-        check_name="logic_valid",
-        passed=False,
-        status="timeout" if result.timed_out else "unknown",
-        detail="Option checker could not finish; no proof of validity is available.",
-    )
-
-
 class CandidateValidator:
     def __init__(self, timeout: float = 5):
         self.timeout = timeout
         self._semaphore = asyncio.Semaphore(3)
 
-    async def validate(self, candidate: CandidatePayload, *, deadline: float) -> ValidationReport:
+    async def validate(
+        self,
+        candidate: CandidatePayload,
+        *,
+        deadline: float,
+        blueprint: dict[str, Any] | None = None,
+    ) -> ValidationReport:
         async with asyncio.timeout_at(deadline):
             async with self._semaphore:
                 remaining = min(self.timeout, deadline - time.monotonic())
                 if remaining <= 0:
                     raise TimeoutError
-                syntax = check_syntax(candidate.question_text, candidate.options)
                 solution_checks = validate_solution(candidate)
-                # Do not spend CAS work on structurally malformed content.
-                if not syntax.passed:
-                    return ValidationReport(checks=[syntax, *solution_checks])
-                option_answer = candidate.options["ABCD".index(candidate.correct_key)]
-                logic, math = await asyncio.gather(
-                    asyncio.to_thread(_bounded_logic, candidate, remaining),
-                    asyncio.to_thread(
-                        verify_question_math, candidate.question_text, option_answer, remaining
-                    ),
+                aggregate = await asyncio.to_thread(
+                    validate_question,
+                    candidate.question_text,
+                    candidate.options,
+                    candidate.correct_key,
+                    blueprint=blueprint,
+                    parameters=None,
+                    timeout=remaining,
+                    treat_fallback_as_warning=True,
                 )
-                return ValidationReport(
-                    checks=[
-                        syntax,
-                        logic,
-                        math.to_check_result(),
-                        *solution_checks,
+                checks = [
+                    check.model_copy(update={"check_name": "answer_verified"})
+                    if check.check_name == "sympy_evaluator"
+                    else check
+                    for check in aggregate.checks
+                ]
+                if not aggregate.passed and not any(
+                    not check.passed
+                    and check.status not in {"unknown", "unsupported", "inconclusive", "timeout"}
+                    for check in checks
+                ):
+                    checks.append(
                         CheckResult(
-                            check_name="blueprint_equivalence",
+                            check_name="validation_aggregate",
+                            passed=False,
+                            status="failed",
+                            detail="The four-tier validator rejected this candidate.",
+                        )
+                    )
+                if aggregate.confidence == "rule_only" and not aggregate.errors:
+                    checks.append(
+                        CheckResult(
+                            check_name="validation_confidence",
                             passed=False,
                             status="unknown",
-                            detail="General Blueprint constraints and pedagogical equivalence need teacher review.",
-                        ),
-                    ]
+                            detail="Rule-only validation requires teacher review.",
+                        )
+                    )
+                if blueprint is not None:
+                    checks.append(
+                        CheckResult(
+                            check_name="parameter_coverage",
+                            passed=False,
+                            status="unknown",
+                            detail="Candidate payload has no explicit parameter values for domain coverage.",
+                        )
+                    )
+                checks.append(
+                    CheckResult(
+                        check_name="blueprint_equivalence",
+                        passed=False,
+                        status="unknown",
+                        detail="Pedagogical equivalence requires teacher review.",
+                    )
                 )
+                return ValidationReport(checks=[*checks, *solution_checks])

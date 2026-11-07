@@ -2,6 +2,14 @@
 
 ## Status and scope
 
+Author checkpoint 07/11/2026: The uncommitted PR #30 working tree now protects
+the product endpoint with `get_current_admin_user`, injects the shared gateway
+observer and collector in lifespan, and starts job/SSE producers on the same
+registry. Offline Auth/collector tests are separate from live JWT/proxy/Gemini
+acceptance. OPS ownership of `scripts/dev.ps1`/Docker CI smoke and one-worker
+deployment is still pending; the old anonymous-200 smoke must change before CI
+can pass on this patch. The paragraph below describes the earlier baseline.
+
 This branch implements response models, the runtime registry, Linux current RSS
 reader, a fresh-snapshot collector and a Gemini dispatch observer for explicit
 injection. The TASK-207b Python broker/runner also accept the same registry for
@@ -38,12 +46,11 @@ headers, query parameters and the caller's claimed environment grant nothing.
 receive development privileges. Existing Auth service/configuration failures
 retain their established error handling; never convert them to successful data.
 
-**Pending admin acceptance input:** Duy has supplied
+**Admin implementation input supplied:** Duy has supplied
 `get_current_admin_user` in `app.api.dependencies`. It checks a user returned
 by Supabase Auth against the server-configured `ADMIN_EMAILS` allowlist outside
-`development`; an absent or unmatched email receives 403. Duy still needs to
-confirm this policy and provide test identities for `test`/staging/production
-acceptance before the product route is protected. Do not add or infer a new
+`development`; an absent or unmatched email receives 403. Live test identities
+and actual `ADMIN_EMAILS` remain part of I-OPS-DB acceptance. Do not add or infer a new
 admin field, trust editable `user_metadata`, an unverified JWT payload or a
 caller-supplied admin header. The Supabase database role `authenticated` alone
 does not mean business administrator. Missing acceptance input remains a gate,

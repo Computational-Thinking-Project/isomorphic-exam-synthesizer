@@ -45,7 +45,9 @@ def test_real_health_endpoints_remain_available(client: TestClient, path: str) -
     origin = _allowed_origin()
     for _ in range(65):
         response = client.get(path, headers={"Origin": origin})
-        assert response.status_code == 200
+        assert response.status_code == (401 if path == "/api/health/metrics" else 200)
+        if path == "/api/health/metrics":
+            assert response.headers["WWW-Authenticate"] == "Bearer"
         assert "Retry-After" not in response.headers
         assert response.headers["access-control-allow-origin"] == origin
 

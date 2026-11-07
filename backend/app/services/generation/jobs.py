@@ -128,12 +128,24 @@ class GenerationJobRunner:
         self._claims: dict[UUID, UUID | None] = {}
         self._buffer_leases: dict[UUID, EventBufferLease] = {}
         self._executing: set[UUID] = set()
+        self._active_tasks: set[asyncio.Task[object]] = set()
+        self._stopping = False
         self._claim_lock = asyncio.Lock()
+
+    async def start(self) -> None:
+        async with self._claim_lock:
+            if self._active_tasks or self._claims:
+                raise RuntimeError("Generation runner still has active jobs.")
+            self._stopping = False
 
     async def claim(
         self, store: GenerationJobStore, session_id: UUID, *, retry: bool = False
     ) -> GenerationPlan:
         async with self._claim_lock:
+            if self._stopping:
+                raise GenerationJobError(
+                    503, "ERR_GENERATION_UNAVAILABLE", "Generation worker is stopping."
+                )
             if session_id in self._claims:
                 raise GenerationJobError(
                     409, "ERR_ALREADY_GENERATING", "The session is already generating."
@@ -163,6 +175,7 @@ class GenerationJobRunner:
             raise
 
     async def run(self, plan: GenerationPlan, store: GenerationJobStore) -> JobOutcome:
+        task = asyncio.current_task()
         async with self._claim_lock:
             if (
                 self._claims.get(plan.session_id) != plan.job_id
@@ -172,6 +185,10 @@ class GenerationJobRunner:
                     409, "ERR_ALREADY_GENERATING", "No pending claim is available for this job."
                 )
             self._executing.add(plan.session_id)
+            if task is not None:
+                self._active_tasks.add(task)
+            if self._stopping and task is not None:
+                task.cancel()
         completed = set(plan.saved)
         total = len(plan.targets)
         code: str | None = None
@@ -288,6 +305,8 @@ class GenerationJobRunner:
                 if completed
                 else "failed"
             )
+            if outcome == "generated":
+                code = None
             persisted = True
             try:
                 # Bounded cleanup outside the expired job timeout. Fenced store
@@ -320,8 +339,32 @@ class GenerationJobRunner:
                     buffer_lease = self._buffer_leases.pop(plan.session_id, None)
                     self._claims.pop(plan.session_id, None)
                     self._executing.discard(plan.session_id)
+                    if task is not None:
+                        self._active_tasks.discard(task)
                 if buffer_lease is not None:
                     await buffer_lease.close()
+
+    async def shutdown(self, timeout_seconds: float = 10) -> bool:
+        """Stop new claims and give active jobs a bounded cancellation window."""
+        async with self._claim_lock:
+            self._stopping = True
+            tasks = tuple(self._active_tasks)
+            pending = [
+                self._buffer_leases.pop(session_id)
+                for session_id in tuple(self._buffer_leases)
+                if session_id not in self._executing
+            ]
+            for session_id in tuple(self._claims):
+                if session_id not in self._executing:
+                    self._claims.pop(session_id, None)
+        for lease in pending:
+            await lease.close()
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            _, unfinished = await asyncio.wait(tasks, timeout=timeout_seconds)
+            return not unfinished
+        return True
 
     async def _emit(
         self,

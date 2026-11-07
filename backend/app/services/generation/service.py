@@ -164,7 +164,9 @@ class GenerationService:
                             break
                         continue
 
-                    result.validation = await self.validator.validate(candidate, deadline=context.deadline)
+                    result.validation = await self.validator.validate(
+                        candidate, deadline=context.deadline, blueprint=blueprint
+                    )
                     failures = result.validation.failures
                     duplicate = candidate_identity(candidate) in excluded
                     if not failures and not duplicate and accept is not None:

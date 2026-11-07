@@ -28,6 +28,7 @@ class SnapshotDB:
             "context": {"n_versions": 2, "confirmed_sources": [{"question_no": 1}]},
             "completed": [{"version_index": 1, "question_no": 1, "is_success": True}],
             "failures": [{"version_index": 2, "question_no": 1, "is_success": False}],
+            "generation_error_code": "ERR_GENERATION_INCOMPLETE",
         }
         return SimpleNamespace(execute=lambda: SimpleNamespace(data=result))
 
@@ -75,6 +76,7 @@ def test_snapshot_projects_durable_partial_progress_and_replay_mark(monkeypatch)
     assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
     data = response.json()
     assert data["session_status"] == "partial_generated"
+    assert data["generation_error_code"] == "ERR_GENERATION_INCOMPLETE"
     assert data["progress"]["completed_count"] == 1
     assert data["progress"]["total_count"] == 2
     assert data["progress"]["percent_complete"] == 50

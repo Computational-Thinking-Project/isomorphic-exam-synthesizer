@@ -741,3 +741,10 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
 - **Context:** FE2 đã merge cần snapshot bền vững, cursor và epoch để phục hồi sau reload, mất history hoặc restart; Python job/stream factories chưa mount vào app.
 - **Decision:** dùng migrations thực tế 005/015/016 để claim/quota/save full AI result hoặc ORIGINAL_CLONE/finish/load; owner claim bằng JWT, worker writes bằng service role và job token. `GET /api/sessions/{id}/generation-snapshot` đọc completed/failures từ RPC. Ticket kiểm epoch/cursor trước khi EventSource mở; cursor được chụp trước DB read để replay không bỏ event. Sau restart, ticket khôi phục terminal event từ trạng thái và counts bền vững nếu broker chưa có.
 - **Impact:** backend job repository, runner, main, generation snapshot/stream routes, FE2 Stage 2 API contract. Không thay SQL/AI generator/FE. [Contract và giới hạn](api/generation-job-endpoints.md), [bàn giao](tasks/TASK-207b.md).
+
+## DEC-BE2-207-LIFE — W2 recovery and runtime wiring (author implementation)
+
+- Date/owner: 07/11/2026 — Quỳnh, PR #30 working tree after `8fb6387`; uncommitted and not accepted.
+- Context: on-access stale recovery and an in-memory SSE broker could not independently recover an abandoned job or retain its error after restart. The public metrics stub did not report the shared worker's live activity.
+- Decision: consume Duy's PR #52 migration 017 RPC contract for cursor-paged stale scanning, token-fenced failure and durable error read-back. Start one scanner on startup/every 30 seconds, retain terminal buffers for at least 15 minutes, clean every 60 seconds and hold a broker lease for issued SSE tickets. Use PR #32 admin dependency and the existing Gemini observer/collector for protected metrics.
+- Impact: generation repository/runner/recovery, snapshot/SSE/ticket/broker, validator adapter, app lifespan and metrics route. PR #52 remains open; DB application, OPS smoke/deploy ownership and live FE/DB/proxy acceptance remain pending. No migration, AI generator, validator aggregator or FE owner code is changed here.

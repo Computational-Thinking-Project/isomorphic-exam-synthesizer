@@ -63,6 +63,58 @@ def test_ticket_concurrent_consume_has_one_winner() -> None:
     asyncio.run(scenario())
 
 
+def test_terminal_retention_respects_ticket_and_stream_leases() -> None:
+    async def scenario() -> None:
+        now = [0.0]
+        broker = GenerationEventBroker(clock=lambda: now[0], terminal_retention_seconds=900)
+        tickets = StreamTicketStore(clock=lambda: now[0])
+        sid = uuid4()
+        await broker.publish(sid, "done", data(100))
+        now[0] = 890
+        pending = await broker.reserve_session(sid)
+        ticket = await tickets.issue(sid, uuid4(), lease=pending)
+        now[0] = 901
+        assert await broker.cleanup_expired() == 0
+        consumed = await tickets.consume(ticket.ticket_id, sid)
+        stream_lease = await broker.reserve_session(sid)
+        await consumed.lease.close()
+        assert await broker.cleanup_expired() == 0
+        await stream_lease.close()
+        assert await broker.cleanup_expired() == 1
+
+    asyncio.run(scenario())
+
+
+def test_expired_ticket_releases_terminal_buffer() -> None:
+    async def scenario() -> None:
+        now = [0.0]
+        broker = GenerationEventBroker(clock=lambda: now[0], terminal_retention_seconds=900)
+        tickets = StreamTicketStore(clock=lambda: now[0])
+        sid = uuid4()
+        await broker.publish(sid, "done", data(100))
+        await tickets.issue(sid, uuid4(), lease=await broker.reserve_session(sid))
+        now[0] = 901
+        assert await broker.cleanup_expired() == 0
+        await tickets.prune_expired()
+        assert await broker.cleanup_expired() == 1
+
+    asyncio.run(scenario())
+
+
+def test_durable_terminal_reconstruction_cannot_cross_retry_reopen() -> None:
+    async def scenario() -> None:
+        broker = GenerationEventBroker()
+        sid = uuid4()
+        lease = await broker.reserve_session(sid)
+        revision = await broker.revision(sid)
+        await broker.reopen(sid)
+        await broker.ensure_terminal(sid, "error", data(50), expected_revision=revision)
+        assert not await broker.has_terminal(sid)
+        await lease.close()
+
+    asyncio.run(scenario())
+
+
 def test_sse_json_cannot_inject_frames_and_native_fields_match() -> None:
     event = GenerationEvent(
         id=3,

@@ -252,7 +252,7 @@ def test_ticket_rejects_restart_epoch_and_lost_cursor_before_eventsource(stream_
 
 def test_restart_ticket_restores_partial_terminal_event_from_durable_state(stream_api) -> None:
     client, sid, uid, registry, tickets, events, owner, app = stream_api
-    app.state.terminal.return_value = ("partial_generated", 1, 2)
+    app.state.terminal.return_value = ("partial_generated", 1, 2, "ERR_GENERATION_INCOMPLETE")
     response = client.post(
         f"/api/sessions/{sid}/events/ticket?stream_epoch={events.epoch}&last_event_id=0"
     )
@@ -263,4 +263,16 @@ def test_restart_ticket_restores_partial_terminal_event_from_durable_state(strea
     assert '"session_status":"partial_generated"' in stream.text
     assert '"completed_count":1' in stream.text
     assert '"total_count":2' in stream.text
+    assert '"error_code":"ERR_GENERATION_INCOMPLETE"' in stream.text
     assert app.state.terminal.await_count == 1
+
+
+def test_restart_ticket_restores_stale_error_code(stream_api) -> None:
+    client, sid, uid, registry, tickets, events, owner, app = stream_api
+    app.state.terminal.return_value = ("failed", 0, 2, "ERR_GENERATION_INTERRUPTED")
+    response = client.post(f"/api/sessions/{sid}/events/ticket?stream_epoch={events.epoch}")
+    assert response.status_code == 200
+    stream = client.get(f"/api/sessions/{sid}/events?ticket={response.json()['ticket']}")
+    assert stream.status_code == 200
+    assert "event: error" in stream.text
+    assert '"error_code":"ERR_GENERATION_INTERRUPTED"' in stream.text

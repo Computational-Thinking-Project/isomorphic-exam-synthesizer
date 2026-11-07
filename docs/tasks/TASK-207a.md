@@ -1,5 +1,16 @@
 # TASK-207a — Plan và bàn giao W2: API cấu hình sinh đề
 
+## Cập nhật author 07/11/2026 — PR #30, working tree sau `8fb6387`
+
+- A1 đã đối chiếu lại trên nhánh `feat/task-207-w2-backend`: canonical preflight,
+  `p_expected_snapshot`, owner client và route cấu hình vẫn có trong code; lượt này
+  không sửa code 207a. Test config nằm trong regression offline hiện hành.
+- Migrations thực tế của PR #32 là 015/016. Contract config của DB owner còn vài
+  dòng lịch sử gọi 010/011 và HTTP mapping khác BE2; cần Duy chỉnh tài liệu
+  chuẩn. Không dùng các dòng trạng thái lịch sử bên dưới làm input còn thiếu.
+- PostgREST/RLS và FE2 save/reload qua proxy vẫn chờ I-OPS-DB. Test fixture
+  không chứng minh nghiệm thu đó. PR #30 vẫn Draft, thay đổi lượt này chưa commit.
+
 ## Trạng thái khi chuẩn bị push WIP tiếp theo — 06/11/2026
 
 - TASK-207a đã commit/push ở `936d48c`; PR #30 hiện ở `dc8e0d4` và vẫn Draft.

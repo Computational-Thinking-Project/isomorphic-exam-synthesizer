@@ -1,7 +1,8 @@
-"""TASK-207b adapter for the committed 005/015/016 generation RPCs."""
+"""TASK-207b adapter for committed 005/015/016 and PR #52's 017 RPCs."""
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -345,20 +346,25 @@ class GenerationJobRepository:
             )
 
     async def finish(self, plan: GenerationPlan, outcome: str, *, error_code: str | None) -> None:
-        receipt = _object(
-            await self._rpc(
-                "finish_generation_job",
-                {
-                    "p_session_id": str(plan.session_id),
-                    "p_outcome": outcome,
-                    "p_job_token": str(plan.job_id),
-                },
-            )
-        )
+        with_error = outcome in {"failed", "partial_generated"}
+        if with_error and (
+            error_code is None or re.fullmatch(r"[A-Z0-9_]{3,64}", error_code) is None
+        ):
+            raise ValueError("A failed or partial job requires a valid durable error code.")
+        rpc_name = "finish_generation_job_with_error" if with_error else "finish_generation_job"
+        params: dict[str, object] = {
+            "p_session_id": str(plan.session_id),
+            "p_outcome": outcome,
+            "p_job_token": str(plan.job_id),
+        }
+        if with_error:
+            params["p_error_code"] = error_code
+        receipt = _object(await self._rpc(rpc_name, params))
         if (
             _uuid(receipt.get("session_id")) != plan.session_id
             or receipt.get("status") != outcome
             or _uuid(receipt.get("snapshot_id")) != _snapshot_id(plan)
+            or (with_error and receipt.get("generation_error_code") != error_code)
         ):
             raise GenerationJobError(
                 503, "ERR_GENERATION_STORAGE_FAILURE", "Invalid finish receipt."

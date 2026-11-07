@@ -1,5 +1,15 @@
 # TASK-207 integration inputs — updated 2026-10-28
 
+## Current author checkpoint — 07/11/2026
+
+The audit below is a historical 28/10 snapshot. PRs #32, #40 and #41 have
+since merged; PR #30 `8fb6387` already mounts config, job, snapshot and SSE
+routes. PR #52 `5b3f433` supplies migration 017's stale enumeration, fenced
+recovery and durable error RPC contract but remains open. The Python adapter
+is in the current uncommitted PR #30 working tree. The remaining external
+inputs are deployment/smoke ownership and the runnable isolated DB/FE/proxy
+environment. Fixture results do not establish live acceptance.
+
 This is a source/contract audit, not approval of the referenced PRs or proof
 that their migrations are installed in a database. Quỳnh synchronized dev at
 merge commit `91843e0`, including AI PR18/21 and ingestion PR15 (`784025a`).

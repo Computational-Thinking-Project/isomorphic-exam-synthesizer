@@ -1,5 +1,21 @@
 # TASK-207c — Plan và bàn giao W2: Runtime metrics có Auth
 
+## Cập nhật author 07/11/2026 — wiring trên PR #30
+
+- `get_current_admin_user` của PR #32 và gateway observer đã có đủ để bảo vệ
+  metrics route và inject collector/observer trong lifespan. Working tree đã nối
+  route, shared registry và producer job/SSE/Gemini; đây là implementation chưa
+  commit, chưa phải nghiệm thu staging.
+- `/health` giữ public; `/api/health/metrics` yêu cầu Bearer, admin ngoài
+  development, trả sáu metrics hoặc 503 an toàn. Smoke `scripts/dev.ps1`/Docker
+  CI còn mong anonymous 200 và **chưa sửa** vì Duy/OPS chưa chốt owner và
+  cấu hình deploy thuộc I-OPS-LIFE. PR #30 tiếp tục Draft.
+- I-OPS-DB còn thiếu để kiểm JWT thật, Gemini thật, proxy và FE2. Các dòng
+  “admin/collector/observer chưa nối” bên dưới là trạng thái lịch sử.
+- Backend/Blueprint regression hiện hành: **1752 passed, 274 skipped** trên
+  Windows Python 3.12.10 sau sửa test security để metrics anonymous trả 401.
+  Ruff/Mypy đạt; giới hạn live và smoke OPS vẫn giữ như trên.
+
 ## Kiểm lại input ngày 06/11/2026 — nhánh Quỳnh, Draft PR #30
 
 - Local `feat/task-207-w2-backend@dc8e0d4` theo dõi remote

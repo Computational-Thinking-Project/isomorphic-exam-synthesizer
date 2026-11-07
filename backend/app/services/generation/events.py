@@ -2,6 +2,7 @@
 
 import asyncio
 import math
+import time
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -25,6 +26,8 @@ class _SessionEvents:
     events: deque[GenerationEvent] = field(default_factory=lambda: deque(maxlen=50))
     next_id: int = 1
     terminal: bool = False
+    terminal_at: float | None = None
+    reopen_count: int = 0
     subscribers: int = 0
     reservations: set[object] = field(default_factory=set)
 
@@ -46,10 +49,20 @@ class GenerationEventBroker:
     Capacity fails explicitly, rather than silently evicting a running session.
     """
 
-    def __init__(self, *, max_sessions: int = 1024) -> None:
+    def __init__(
+        self,
+        *,
+        max_sessions: int = 1024,
+        clock: Callable[[], float] = time.monotonic,
+        terminal_retention_seconds: float = 900,
+    ) -> None:
         if type(max_sessions) is not int or max_sessions < 1:
             raise ValueError("Event session capacity must be positive.")
         self._capacity = max_sessions
+        if terminal_retention_seconds < 0 or not math.isfinite(terminal_retention_seconds):
+            raise ValueError("Terminal retention must be nonnegative and finite.")
+        self._clock = clock
+        self._retention = terminal_retention_seconds
         self._sessions: dict[UUID, _SessionEvents] = {}
         self._condition = asyncio.Condition()
         self.epoch = str(uuid4())
@@ -65,8 +78,19 @@ class GenerationEventBroker:
             session = self._sessions.get(session_id)
             return bool(session and session.terminal)
 
+    async def revision(self, session_id: UUID) -> int:
+        """Capture the local retry generation before an unlocked DB terminal read."""
+        async with self._condition:
+            session = self._sessions.get(session_id)
+            return session.reopen_count if session is not None else 0
+
     async def ensure_terminal(
-        self, session_id: UUID, event: EventName, data: GenerationEventData
+        self,
+        session_id: UUID,
+        event: EventName,
+        data: GenerationEventData,
+        *,
+        expected_revision: int | None = None,
     ) -> None:
         """Publish one durable-state terminal notification after worker restart."""
         if event not in {"done", "error"}:
@@ -74,11 +98,14 @@ class GenerationEventBroker:
         checked = GenerationEventData.model_validate(data.model_dump())
         async with self._condition:
             session = self._session(session_id)
+            if expected_revision is not None and session.reopen_count != expected_revision:
+                return
             if session.terminal:
                 return
             session.events.append(GenerationEvent(id=session.next_id, event=event, data=checked))
             session.next_id += 1
             session.terminal = True
+            session.terminal_at = self._clock()
             self._condition.notify_all()
 
     def _session(self, session_id: UUID) -> _SessionEvents:
@@ -116,13 +143,18 @@ class GenerationEventBroker:
             session.events.append(result)
             session.next_id += 1
             session.terminal = event in {"done", "error"}
+            if session.terminal:
+                session.terminal_at = self._clock()
             self._condition.notify_all()
             return result
 
     async def reopen(self, session_id: UUID) -> None:
         """After a durable retry claim, retain history and monotonic event IDs."""
         async with self._condition:
-            self._session(session_id).terminal = False
+            session = self._session(session_id)
+            session.terminal = False
+            session.terminal_at = None
+            session.reopen_count += 1
 
     def _drop_empty(self, session_id: UUID, session: _SessionEvents) -> None:
         # Called under the condition. A failed claim/disconnected empty watcher
@@ -181,6 +213,23 @@ class GenerationEventBroker:
                 return False
             del self._sessions[session_id]
             return True
+
+    async def cleanup_expired(self) -> int:
+        """Retain terminal history while a job, stream or ticket owns its buffer."""
+        now = self._clock()
+        async with self._condition:
+            expired = [
+                session_id
+                for session_id, session in self._sessions.items()
+                if session.terminal
+                and session.terminal_at is not None
+                and now - session.terminal_at >= self._retention
+                and not session.subscribers
+                and not session.reservations
+            ]
+            for session_id in expired:
+                del self._sessions[session_id]
+            return len(expired)
 
     async def stream(
         self,

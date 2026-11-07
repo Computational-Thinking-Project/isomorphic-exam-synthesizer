@@ -205,6 +205,66 @@ async def test_quota_and_stale_use_fenced_rpc(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "outcome,code",
+    [("failed", "ERR_GENERATION_INTERRUPTED"), ("partial_generated", "ERR_GENERATION_INCOMPLETE")],
+)
+async def test_finish_persists_error_code_with_frozen_token(monkeypatch, outcome, code):
+    session, job, snapshot, _, claim, loaded = claim_fixture()
+    owner = FakeRPCClient({"claim_generation_job": claim})
+    worker = FakeRPCClient(
+        {
+            "load_generation_completed_results": loaded,
+            "finish_generation_job_with_error": {
+                "session_id": str(session),
+                "snapshot_id": str(snapshot),
+                "status": outcome,
+                "generation_error_code": code,
+            },
+        }
+    )
+    monkeypatch.setattr(
+        "app.services.generation.job_repository.get_service_role_client", lambda: worker
+    )
+    repo = GenerationJobRepository(owner)
+    plan = await repo.claim(session, retry=False)
+    await repo.finish(plan, outcome, error_code=code)
+    assert worker.calls[-1] == (
+        "finish_generation_job_with_error",
+        {
+            "p_session_id": str(session),
+            "p_outcome": outcome,
+            "p_job_token": str(job),
+            "p_error_code": code,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_finish_rejects_wrong_durable_error_receipt(monkeypatch):
+    session, _, snapshot, _, claim, loaded = claim_fixture()
+    owner = FakeRPCClient({"claim_generation_job": claim})
+    worker = FakeRPCClient(
+        {
+            "load_generation_completed_results": loaded,
+            "finish_generation_job_with_error": {
+                "session_id": str(session),
+                "snapshot_id": str(snapshot),
+                "status": "failed",
+                "generation_error_code": "ERR_OTHER",
+            },
+        }
+    )
+    monkeypatch.setattr(
+        "app.services.generation.job_repository.get_service_role_client", lambda: worker
+    )
+    repo = GenerationJobRepository(owner)
+    plan = await repo.claim(session, retry=False)
+    with pytest.raises(Exception, match="Invalid finish receipt"):
+        await repo.finish(plan, "failed", error_code="ERR_GENERATION_INTERRUPTED")
+
+
+@pytest.mark.asyncio
 async def test_claim_rejects_disagreement_between_claim_and_durable_results(monkeypatch):
     session, _, _, _, claim, loaded = claim_fixture()
     claim["committed_targets"] = [
