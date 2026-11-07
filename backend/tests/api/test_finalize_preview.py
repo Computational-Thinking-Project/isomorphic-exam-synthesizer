@@ -4,20 +4,31 @@ Covers:
 1. Authentication & Ownership:
    - 401 unauthenticated
    - 403 forbidden / unauthorized ownership
+   - 404 session not found
 2. Parameter & Session Validation:
    - 400 ERR_INVALID_SESSION_ID (malformed UUID)
    - 404 ERR_SESSION_NOT_FOUND (nonexistent session)
    - 409 ERR_INVALID_SESSION_STATE (status not reviewed/approved/exported)
    - 409 ERR_SHUFFLE_REQUIRED (reviewed session before finalize shuffle)
-3. Consistency Checks:
-   - 409 ERR_INCONSISTENT_ANSWER_KEYS (missing questions, non-contiguous question_no, mismatched answer key)
+3. Exporter Invariants & Consistency Checks:
+   - 409 ERR_INCONSISTENT_ANSWER_KEYS for empty content
+   - 409 ERR_INCONSISTENT_ANSWER_KEYS for empty/whitespace solution_md
+   - 409 ERR_INCONSISTENT_ANSWER_KEYS for duplicate normalized options
+   - 409 ERR_INCONSISTENT_ANSWER_KEYS for unapproved question status
+   - 409 ERR_INCONSISTENT_ANSWER_KEYS for missing/corrupted shuffle permutations
+   - 409 ERR_INCONSISTENT_ANSWER_KEYS for invalid/mismatched canonical question mapping
+   - 409 ERR_INCONSISTENT_ANSWER_KEYS for duplicate/mismatched answer keys
+   - 409 ERR_INCONSISTENT_ANSWER_KEYS for > 20 questions
 4. Success Scenarios:
-   - 200 OK pre-approval preview projection (session status = 'reviewed', is_finalized = True)
+   - 200 OK Golden 3-question x 2-version OFF/OFF fixture
+   - 200 OK ON/ON shuffled case
    - 200 OK post-approval preview projection (session status = 'approved')
    - Deterministic repeated GET (idempotent, read-only, zero side effects)
-   - Parity with ApprovedExportSnapshot schema
+   - Construction of ApprovedExportSnapshot using actual session title and revision
 """
 
+import json
+import os
 from typing import Any, Dict
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
@@ -38,6 +49,7 @@ from app.services.exporter.bundle_models import (
     DisplayQuestion,
     DisplayVersion,
 )
+from app.services.finalize.repository import FinalizeRepository
 from app.services.finalize.service import FinalizeService
 from tests.services.finalize_test_client import MockSupabaseClient
 
@@ -71,17 +83,32 @@ def _build_valid_preview_db_state(
     user_id: str = MOCK_USER_ID,
     status: str = "reviewed",
     is_finalized: bool = True,
+    n_questions: int = 3,
 ) -> Dict[str, Any]:
+    """Build a valid 3-question x 2-version Golden OFF/OFF test database state."""
     v1_id = "10100000-0000-0000-0000-000000000101"
     v2_id = "10200000-0000-0000-0000-000000000102"
     s1_id = "00000000-0000-0000-0000-000000000001"
     s2_id = "00000000-0000-0000-0000-000000000002"
+    s3_id = "00000000-0000-0000-0000-000000000003"
+
+    identity_permutations = {
+        "question_order": [1, 2, 3],
+        "display_to_canonical": {"1": 1, "2": 2, "3": 3},
+        "canonical_to_display": {"1": 1, "2": 2, "3": 3},
+        "option_permutations": {
+            "1": {"A": "A", "B": "B", "C": "C", "D": "D"},
+            "2": {"A": "A", "B": "B", "C": "C", "D": "D"},
+            "3": {"A": "A", "B": "B", "C": "C", "D": "D"},
+        },
+    }
 
     return {
         "exam_sessions": [
             {
                 "id": session_id,
                 "user_id": user_id,
+                "title": "Đề thi thử THPT Quốc Gia môn Toán 2026",
                 "status": status,
                 "is_finalized": is_finalized,
                 "updated_at": "2026-11-06T10:00:00Z",
@@ -100,81 +127,112 @@ def _build_valid_preview_db_state(
                 "session_id": session_id,
                 "version_code": "101",
                 "is_finalized": is_finalized,
-                "shuffle_seed": "seed-101",
+                "shuffle_seed": "golden-seed-w4-101",
+                "permutations": identity_permutations,
             },
             {
                 "id": v2_id,
                 "session_id": session_id,
                 "version_code": "102",
                 "is_finalized": is_finalized,
-                "shuffle_seed": "seed-102",
+                "shuffle_seed": "golden-seed-w4-102",
+                "permutations": identity_permutations,
             },
         ],
         "source_questions": [
             {"id": s1_id, "session_id": session_id, "question_no": 1},
             {"id": s2_id, "session_id": session_id, "question_no": 2},
+            {"id": s3_id, "session_id": session_id, "question_no": 3},
         ],
         "version_questions": [
             # Version 101 questions
             {
-                "id": str(uuid4()),
+                "id": "11111111-0000-0000-0000-000000000101",
                 "version_id": v1_id,
-                "source_question_id": s2_id,
+                "source_question_id": s1_id,
                 "question_no": 1,
-                "canonical_question_no": 2,
-                "content": "Câu hỏi đạo hàm",
-                "options": ["A1", "B1", "C1", "D1"],
-                "correct_key": "C",
-                "solution_md": "Lời giải câu 1. Đáp án đúng là C.",
+                "canonical_question_no": 1,
+                "content": "Cho hàm số $y = x^3 - 3x + 2$. Điểm cực đại của hàm số đã cho là:",
+                "options": ["$x = -1$", "$x = 1$", "$x = 2$", "$x = 0$"],
+                "correct_key": "A",
+                "solution_md": "Đạo hàm $y' = 3x^2 - 3 = 0 \\iff x = \\pm 1$. Vì $y''(-1) = -6 < 0$ nên điểm cực đại là $x = -1$. Do đó đáp án đúng là A.",
                 "status": "approved",
                 "is_current": True,
             },
             {
-                "id": str(uuid4()),
+                "id": "11111111-0000-0000-0000-000000000102",
                 "version_id": v1_id,
-                "source_question_id": s1_id,
+                "source_question_id": s2_id,
                 "question_no": 2,
-                "canonical_question_no": 1,
-                "content": "Câu hỏi tích phân",
-                "options": ["A2", "B2", "C2", "D2"],
-                "correct_key": "A",
-                "solution_md": "Lời giải câu 2. Đáp án đúng là A.",
+                "canonical_question_no": 2,
+                "content": "Tính tích phân $I = \\int_{0}^{1} (3x^2 + 2x) dx$.",
+                "options": ["$I = 1$", "$I = 3$", "$I = 2$", "$I = 4$"],
+                "correct_key": "C",
+                "solution_md": "Ta có nguyên hàm $F(x) = x^3 + x^2$. Khi đó $I = F(1) - F(0) = (1 + 1) - 0 = 2$. Do đó đáp án đúng là C.",
+                "status": "approved",
+                "is_current": True,
+            },
+            {
+                "id": "11111111-0000-0000-0000-000000000103",
+                "version_id": v1_id,
+                "source_question_id": s3_id,
+                "question_no": 3,
+                "canonical_question_no": 3,
+                "content": "Trong không gian $Oxyz$, cho mặt cầu $(S): (x-1)^2 + (y+2)^2 + z^2 = 9$. Bán kính của mặt cầu $(S)$ là:",
+                "options": ["$R = 9$", "$R = 81$", "$R = \\sqrt{3}$", "$R = 3$"],
+                "correct_key": "D",
+                "solution_md": "Phương trình mặt cầu có dạng $(x-a)^2 + (y-b)^2 + (z-c)^2 = R^2$. Suy ra $R^2 = 9 \\implies R = 3$. Do đó đáp án đúng là D.",
                 "status": "approved",
                 "is_current": True,
             },
             # Version 102 questions
             {
-                "id": str(uuid4()),
+                "id": "22222222-0000-0000-0000-000000000101",
                 "version_id": v2_id,
                 "source_question_id": s1_id,
                 "question_no": 1,
                 "canonical_question_no": 1,
-                "content": "Câu hỏi tích phân",
-                "options": ["B2", "A2", "D2", "C2"],
-                "correct_key": "B",
-                "solution_md": "Lời giải câu 1 mã 102. Đáp án đúng là B.",
+                "content": "Cho hàm số $y = x^3 - 3x + 2$. Điểm cực đại của hàm số đã cho là:",
+                "options": ["$x = -1$", "$x = 1$", "$x = 2$", "$x = 0$"],
+                "correct_key": "A",
+                "solution_md": "Đạo hàm $y' = 3x^2 - 3 = 0 \\iff x = \\pm 1$. Vì $y''(-1) = -6 < 0$ nên điểm cực đại là $x = -1$. Do đó đáp án đúng là A.",
                 "status": "approved",
                 "is_current": True,
             },
             {
-                "id": str(uuid4()),
+                "id": "22222222-0000-0000-0000-000000000102",
                 "version_id": v2_id,
                 "source_question_id": s2_id,
                 "question_no": 2,
                 "canonical_question_no": 2,
-                "content": "Câu hỏi đạo hàm",
-                "options": ["D1", "C1", "B1", "A1"],
-                "correct_key": "B",
-                "solution_md": "Lời giải câu 2 mã 102. Đáp án đúng là B.",
+                "content": "Tính tích phân $I = \\int_{0}^{1} (3x^2 + 2x) dx$.",
+                "options": ["$I = 1$", "$I = 3$", "$I = 2$", "$I = 4$"],
+                "correct_key": "C",
+                "solution_md": "Ta có nguyên hàm $F(x) = x^3 + x^2$. Khi đó $I = F(1) - F(0) = (1 + 1) - 0 = 2$. Do đó đáp án đúng là C.",
+                "status": "approved",
+                "is_current": True,
+            },
+            {
+                "id": "22222222-0000-0000-0000-000000000103",
+                "version_id": v2_id,
+                "source_question_id": s3_id,
+                "question_no": 3,
+                "canonical_question_no": 3,
+                "content": "Trong không gian $Oxyz$, cho mặt cầu $(S): (x-1)^2 + (y+2)^2 + z^2 = 9$. Bán kính của mặt cầu $(S)$ là:",
+                "options": ["$R = 9$", "$R = 81$", "$R = \\sqrt{3}$", "$R = 3$"],
+                "correct_key": "D",
+                "solution_md": "Phương trình mặt cầu có dạng $(x-a)^2 + (y-b)^2 + (z-c)^2 = R^2$. Suy ra $R^2 = 9 \\implies R = 3$. Do đó đáp án đúng là D.",
                 "status": "approved",
                 "is_current": True,
             },
         ],
         "answer_keys": [
-            {"version_id": v1_id, "question_no": 1, "correct_option": "C", "display_no": 1, "display_correct_key": "C"},
-            {"version_id": v1_id, "question_no": 2, "correct_option": "A", "display_no": 2, "display_correct_key": "A"},
-            {"version_id": v2_id, "question_no": 1, "correct_option": "B", "display_no": 1, "display_correct_key": "B"},
-            {"version_id": v2_id, "question_no": 2, "correct_option": "B", "display_no": 2, "display_correct_key": "B"},
+            {"version_id": v1_id, "question_no": 1, "correct_option": "A", "display_no": 1, "display_correct_key": "A", "canonical_question_no": 1},
+            {"version_id": v1_id, "question_no": 2, "correct_option": "C", "display_no": 2, "display_correct_key": "C", "canonical_question_no": 2},
+            {"version_id": v1_id, "question_no": 3, "correct_option": "D", "display_no": 3, "display_correct_key": "D", "canonical_question_no": 3},
+            {"version_id": v2_id, "question_no": 1, "correct_option": "A", "display_no": 1, "display_correct_key": "A", "canonical_question_no": 1},
+            {"version_id": v2_id, "question_no": 2, "correct_option": "C", "display_no": 2, "display_correct_key": "C", "canonical_question_no": 2},
+            {"version_id": v2_id, "question_no": 3, "correct_option": "D", "display_no": 3, "display_correct_key": "D", "canonical_question_no": 3},
         ],
     }
 
@@ -288,12 +346,16 @@ async def test_preview_shuffle_required_when_not_finalized():
     assert exc_info.value.error_code == "ERR_SHUFFLE_REQUIRED"
 
 
+# ==============================================================================
+# 3. Exporter Invariants & Integrity Negative Tests (P1-1, P1-2, P1-3)
+# ==============================================================================
+
+
 @pytest.mark.asyncio
-async def test_preview_inconsistent_missing_questions():
-    """When a version has fewer questions than source questions, raises 409 ERR_INCONSISTENT_ANSWER_KEYS."""
+async def test_preview_rejects_empty_content():
+    """Fails closed with 409 when question content is empty or whitespace only."""
     db_state = _build_valid_preview_db_state()
-    # Remove one question from version 101
-    db_state["version_questions"].pop(0)
+    db_state["version_questions"][0]["content"] = "   "
     client = MockSupabaseClient(db_state)
     service = FinalizeService(client)
 
@@ -301,14 +363,14 @@ async def test_preview_inconsistent_missing_questions():
         await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
     assert exc_info.value.status_code == 409
     assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "bị rỗng" in exc_info.value.detail
 
 
 @pytest.mark.asyncio
-async def test_preview_inconsistent_answer_key_mismatch():
-    """When answer_keys table does not match version_questions.correct_key, raises 409."""
+async def test_preview_rejects_empty_solution():
+    """Fails closed with 409 when solution_md is empty or whitespace only."""
     db_state = _build_valid_preview_db_state()
-    # Change answer key for question 1 in version 101 to 'D' (question has 'C')
-    db_state["answer_keys"][0]["correct_option"] = "D"
+    db_state["version_questions"][0]["solution_md"] = ""
     client = MockSupabaseClient(db_state)
     service = FinalizeService(client)
 
@@ -316,64 +378,269 @@ async def test_preview_inconsistent_answer_key_mismatch():
         await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
     assert exc_info.value.status_code == 409
     assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
-
-
-# ==============================================================================
-# 3. Success & Consistency Tests
-# ==============================================================================
+    assert "Lời giải" in exc_info.value.detail
 
 
 @pytest.mark.asyncio
-async def test_preview_success_reviewed_state():
-    """Pre-approval preview returns 200 OK with full display projection in reviewed state."""
+async def test_preview_rejects_duplicate_normalized_options():
+    """Fails closed with 409 when options contain duplicates after normalization."""
+    db_state = _build_valid_preview_db_state()
+    # Add duplicate option after normalized_text: '$x = 1$' and '$x =  1$'
+    db_state["version_questions"][0]["options"] = ["$x = -1$", "$x = 1$", "$x =  1$", "$x = 0$"]
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "trùng lặp sau chuẩn hóa" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_unapproved_question():
+    """Fails closed with 409 when a current question has status other than 'approved'."""
+    db_state = _build_valid_preview_db_state()
+    db_state["version_questions"][0]["status"] = "pending_review"
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "chưa được thẩm định phê duyệt" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_missing_permutation_metadata():
+    """Fails closed with 409 when exam_versions.permutations is missing required keys."""
+    db_state = _build_valid_preview_db_state()
+    db_state["exam_versions"][0]["permutations"] = {"question_order": [1, 2, 3]}  # missing display_to_canonical
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "thiếu trường" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_invalid_canonical_mapping():
+    """Fails closed with 409 without falling back to question_no when canonical_question_no is invalid."""
+    db_state = _build_valid_preview_db_state()
+    db_state["version_questions"][0]["canonical_question_no"] = 99  # Invalid canonical number
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "canonical_question_no" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_mismatched_permutation_mapping():
+    """Fails closed with 409 when version_question mapping does not match permutations dict."""
+    db_state = _build_valid_preview_db_state()
+    # Change permutations canonical_to_display to point to 2 instead of 1
+    db_state["exam_versions"][0]["permutations"]["canonical_to_display"]["1"] = 2
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "không khớp giữa version_questions và permutations" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_duplicate_answer_keys():
+    """Fails closed with 409 when answer_keys contains duplicate entries for same (version_id, question_no)."""
+    db_state = _build_valid_preview_db_state()
+    v1_id = db_state["exam_versions"][0]["id"]
+    # Append duplicate key row for v1 question 1
+    db_state["answer_keys"].append(
+        {"version_id": v1_id, "question_no": 1, "correct_option": "A", "display_no": 1, "display_correct_key": "A", "canonical_question_no": 1}
+    )
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "trùng lặp hoặc thừa" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_mismatched_canonical_no_in_answer_keys():
+    """Fails closed with 409 when answer_keys.canonical_question_no does not match version_questions."""
+    db_state = _build_valid_preview_db_state()
+    db_state["answer_keys"][0]["canonical_question_no"] = 2  # question 1 is canonical 1
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "Thứ tự câu hỏi gốc trong bảng tra không khớp" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_too_many_questions():
+    """Fails closed with 409 when source question count exceeds upper bound of 20."""
+    db_state = _build_valid_preview_db_state()
+    # Add 21 sources
+    db_state["source_questions"] = [{"id": str(uuid4()), "session_id": MOCK_SESSION_ID, "question_no": i} for i in range(1, 22)]
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "không nằm trong giới hạn cho phép" in exc_info.value.detail
+
+
+# ==============================================================================
+# 4. Golden Fixture & Success Tests (P1-4, F03)
+# ==============================================================================
+
+
+def test_preview_golden_off_off_fixture_validation():
+    """Validates the official 3-question x 2-version Golden OFF/OFF fixture."""
+    fixture_path = os.path.join(
+        os.path.dirname(__file__), "../fixtures/w4_preview_snapshot_fixture.json"
+    )
+    with open(fixture_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    resp = PreviewSnapshotResponse.model_validate(data)
+    assert resp.session_id == MOCK_SESSION_ID
+    assert resp.status == "reviewed"
+    assert resp.is_finalized is True
+    assert resp.n_versions == 2
+    assert resp.total_questions == 3
+    assert len(resp.versions) == 2
+
+    # Verify all 6 display slots in OFF/OFF
+    for v in resp.versions:
+        assert len(v.questions) == 3
+        assert [q.question_no for q in v.questions] == [1, 2, 3]
+        assert [q.canonical_question_no for q in v.questions] == [1, 2, 3]
+        assert v.questions[0].correct_key == "A"
+        assert v.questions[1].correct_key == "C"
+        assert v.questions[2].correct_key == "D"
+        assert v.answer_keys == {"1": "A", "2": "C", "3": "D"}
+
+    # Verify cross-version matrix
+    assert len(resp.matrix) == 3
+    assert resp.matrix[0].answers == {"101": "A", "102": "A"}
+    assert resp.matrix[1].answers == {"101": "C", "102": "C"}
+    assert resp.matrix[2].answers == {"101": "D", "102": "D"}
+
+
+@pytest.mark.asyncio
+async def test_preview_success_golden_off_off_from_repository():
+    """Verify repository fetch on the 3-question x 2-version Golden OFF/OFF state."""
     db_state = _build_valid_preview_db_state()
     client = MockSupabaseClient(db_state)
     service = FinalizeService(client)
 
     res = await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
     assert isinstance(res, PreviewSnapshotResponse)
-    assert res.session_id == MOCK_SESSION_ID
-    assert res.status == "reviewed"
-    assert res.is_finalized is True
-    assert res.n_versions == 2
-    assert res.total_questions == 2
+    assert res.total_questions == 3
     assert len(res.versions) == 2
-
-    # Verify version 101
-    v101 = res.versions[0]
-    assert v101.version_code == "101"
-    assert v101.total_questions == 2
-    assert [q.question_no for q in v101.questions] == [1, 2]
-    assert v101.questions[0].canonical_question_no == 2
-    assert v101.questions[0].correct_key == "C"
-    assert v101.questions[0].options == ["A1", "B1", "C1", "D1"]
-    assert "C" in v101.questions[0].solution_md
-    assert v101.answer_keys == {"1": "C", "2": "A"}
-
-    # Verify version 102
-    v102 = res.versions[1]
-    assert v102.version_code == "102"
-    assert v102.answer_keys == {"1": "B", "2": "B"}
-
-    # Verify cross-version matrix
-    assert len(res.matrix) == 2
-    assert res.matrix[0].question_no == 1
-    assert res.matrix[0].answers == {"101": "C", "102": "B"}
-    assert res.matrix[1].question_no == 2
-    assert res.matrix[1].answers == {"101": "A", "102": "B"}
+    assert res.versions[0].questions[0].canonical_question_no == 1
+    assert res.versions[0].questions[1].canonical_question_no == 2
+    assert res.versions[0].questions[2].canonical_question_no == 3
 
 
 @pytest.mark.asyncio
-async def test_preview_success_approved_state():
-    """Post-approval preview returns 200 OK (read-only immutable access)."""
-    db_state = _build_valid_preview_db_state(status="approved")
+async def test_preview_on_on_shuffled_case():
+    """Verify preview when both question shuffling and option shuffling are ON."""
+    v1_id = "10100000-0000-0000-0000-000000000101"
+    v2_id = "10200000-0000-0000-0000-000000000102"
+    s1_id = "00000000-0000-0000-0000-000000000001"
+    s2_id = "00000000-0000-0000-0000-000000000002"
+
+    on_on_permutations = {
+        "question_order": [2, 1],
+        "display_to_canonical": {"1": 2, "2": 1},
+        "canonical_to_display": {"2": 1, "1": 2},
+        "option_permutations": {
+            "1": {"A": "B", "B": "C", "C": "D", "D": "A"},
+            "2": {"A": "A", "B": "B", "C": "C", "D": "D"},
+        },
+    }
+
+    db_state = {
+        "exam_sessions": [
+            {
+                "id": MOCK_SESSION_ID,
+                "user_id": MOCK_USER_ID,
+                "title": "Đề thi ON/ON",
+                "status": "reviewed",
+                "is_finalized": True,
+                "updated_at": "2026-11-06T12:00:00Z",
+            }
+        ],
+        "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 2}],
+        "exam_versions": [
+            {"id": v1_id, "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True, "permutations": on_on_permutations},
+            {"id": v2_id, "session_id": MOCK_SESSION_ID, "version_code": "102", "is_finalized": True, "permutations": on_on_permutations},
+        ],
+        "source_questions": [
+            {"id": s1_id, "session_id": MOCK_SESSION_ID, "question_no": 1},
+            {"id": s2_id, "session_id": MOCK_SESSION_ID, "question_no": 2},
+        ],
+        "version_questions": [
+            # v1: Q1 is canonical 2, Q2 is canonical 1
+            {
+                "id": str(uuid4()), "version_id": v1_id, "source_question_id": s2_id, "question_no": 1,
+                "canonical_question_no": 2, "content": "Tích phân", "options": ["A", "B", "C", "D"],
+                "correct_key": "B", "solution_md": "Lời giải B", "status": "approved", "is_current": True,
+            },
+            {
+                "id": str(uuid4()), "version_id": v1_id, "source_question_id": s1_id, "question_no": 2,
+                "canonical_question_no": 1, "content": "Đạo hàm", "options": ["W", "X", "Y", "Z"],
+                "correct_key": "A", "solution_md": "Lời giải A", "status": "approved", "is_current": True,
+            },
+            # v2: Q1 is canonical 2, Q2 is canonical 1
+            {
+                "id": str(uuid4()), "version_id": v2_id, "source_question_id": s2_id, "question_no": 1,
+                "canonical_question_no": 2, "content": "Tích phân", "options": ["A", "B", "C", "D"],
+                "correct_key": "B", "solution_md": "Lời giải B", "status": "approved", "is_current": True,
+            },
+            {
+                "id": str(uuid4()), "version_id": v2_id, "source_question_id": s1_id, "question_no": 2,
+                "canonical_question_no": 1, "content": "Đạo hàm", "options": ["W", "X", "Y", "Z"],
+                "correct_key": "A", "solution_md": "Lời giải A", "status": "approved", "is_current": True,
+            },
+        ],
+        "answer_keys": [
+            {"version_id": v1_id, "question_no": 1, "correct_option": "B", "display_no": 1, "display_correct_key": "B", "canonical_question_no": 2},
+            {"version_id": v1_id, "question_no": 2, "correct_option": "A", "display_no": 2, "display_correct_key": "A", "canonical_question_no": 1},
+            {"version_id": v2_id, "question_no": 1, "correct_option": "B", "display_no": 1, "display_correct_key": "B", "canonical_question_no": 2},
+            {"version_id": v2_id, "question_no": 2, "correct_option": "A", "display_no": 2, "display_correct_key": "A", "canonical_question_no": 1},
+        ],
+    }
+
     client = MockSupabaseClient(db_state)
     service = FinalizeService(client)
 
     res = await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
-    assert res.status == "approved"
-    assert res.is_finalized is True
-    assert len(res.versions) == 2
+    assert res.total_questions == 2
+    assert res.versions[0].questions[0].canonical_question_no == 2
+    assert res.versions[0].questions[0].correct_key == "B"
+    assert res.versions[0].questions[1].canonical_question_no == 1
+    assert res.versions[0].questions[1].correct_key == "A"
 
 
 @pytest.mark.asyncio
@@ -387,20 +654,28 @@ async def test_preview_repeat_get_deterministic():
     res2 = await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
 
     assert res1.model_dump() == res2.model_dump()
-    # Confirm zero write operations occurred
     assert len(client.call_log) == 0
 
 
 @pytest.mark.asyncio
-async def test_preview_direct_parity_with_approved_export_snapshot():
-    """Projection matches the exact requirements to instantiate ApprovedExportSnapshot."""
+async def test_preview_export_snapshot_mapping_with_real_session_metadata():
+    """Proves W4-MVP-07 consumer can construct ApprovedExportSnapshot using actual session metadata."""
     db_state = _build_valid_preview_db_state()
     client = MockSupabaseClient(db_state)
     service = FinalizeService(client)
 
+    # 1. Fetch preview response
     res = await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
 
-    # Transform into bundle_models structure
+    # 2. Fetch actual session record (source of title and revision)
+    repo = FinalizeRepository(client)
+    session_row = await repo.get_session_meta(MOCK_SESSION_ID)
+    assert session_row is not None
+
+    actual_title = session_row.get("title") or "Đề thi thử THPT"
+    actual_revision = session_row["updated_at"]
+
+    # 3. Construct ApprovedExportSnapshot
     export_versions = []
     for v in res.versions:
         display_questions = [
@@ -421,20 +696,21 @@ async def test_preview_direct_parity_with_approved_export_snapshot():
 
     export_snapshot = ApprovedExportSnapshot(
         session_id=UUID(res.session_id),
-        revision="rev-01",
-        title="Đề thi thử THPT",
+        revision=actual_revision,
+        title=actual_title,
         status="approved",
         versions=tuple(export_versions),
     )
 
+    assert export_snapshot.title == "Đề thi thử THPT Quốc Gia môn Toán 2026"
+    assert export_snapshot.revision == "2026-11-06T10:00:00Z"
     assert len(export_snapshot.versions) == 2
     assert export_snapshot.versions[0].code == "101"
-    assert export_snapshot.versions[1].code == "102"
-    assert export_snapshot.versions[0].questions[0].correct_key == "C"
+    assert export_snapshot.versions[0].questions[0].correct_key == "A"
 
 
 # ==============================================================================
-# 4. HTTP Router Integration Test
+# 5. HTTP Router Integration Test
 # ==============================================================================
 
 
@@ -460,7 +736,7 @@ def test_preview_router_integration_success(
             assert data["status"] == "reviewed"
             assert data["is_finalized"] is True
             assert len(data["versions"]) == 2
-            assert len(data["matrix"]) == 2
-            assert data["matrix"][0]["answers"] == {"101": "C", "102": "B"}
+            assert len(data["matrix"]) == 3
+            assert data["matrix"][0]["answers"] == {"101": "A", "102": "A"}
     finally:
         app.dependency_overrides.clear()

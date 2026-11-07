@@ -1,3 +1,12 @@
+## W4-MVP-05: Post-shuffle pre-approval preview projection API — 07/11/2026 (proposed)
+
+Introduces dedicated read-only endpoint `GET /api/sessions/{session_id}/finalize/preview`
+providing post-shuffle examination preview projection before final approval. Enforces
+full parity with exporter `DisplayQuestion` invariants (non-empty content/solution, 4
+normalized distinct options, status='approved'), complete answer-key integrity checks,
+and finalized shuffle provenance verification. Resolves Decision Q06. See the
+[preview projection contract](api/preview-projection-contract.md).
+
 ## TASK-204 PR #43 review findings F01–F03 — 06/11/2026 (proposed)
 
 Migration 014 revokes application access to the legacy confirmation RPC.

@@ -3,8 +3,8 @@
 > **Document Status:** OFFICIAL PROPOSAL & TECHNICAL SPECIFICATION  
 > **Task ID:** `W4-MVP-14` (P1 Priority)  
 > **Decision Reference:** Resolves `Q15` (Product and Technical Alignment on 4 Core KPIs)  
-> **Author / Owner:** Pham Khanh Tam (`@AI-WFox`, Student ID: 25127135)  
-> **Stakeholders:** Duy (`@nbduy2506`, Product/BE), Philip (`@philip-kkk`, Frontend Consumer)  
+> **Author / Owner:** Pham Khanh Tam (`@AI-WFox`)  
+> **Stakeholders:** Duy (`@johannguyen015`, Product/BE), Philip (`@philip-kkk`, Frontend Consumer)  
 
 ---
 
@@ -53,7 +53,7 @@ flowchart LR
 - **Formula:**
   $$\text{FPAR} = \frac{\sum_{i=1}^{M_{\text{accepted}}} \mathbb{I}(\text{attempts}_i = 1)}{M_{\text{accepted}}}$$
 - **Components:**
-  - **Numerator:** Count of accepted version questions in the session that have exactly zero regeneration attempts (`attempt_count == 1` and no associated `REGENERATE` action in `review_logs`).
+  - **Numerator:** Count of accepted version questions in the session that have exactly zero regeneration attempts (no associated `action_type = 'REJECT'` recorded in `review_logs` for that slot).
   - **Denominator:** Total count of accepted version questions in the session ($M_{\text{accepted}} = N \times M$).
 - **Null and Zero Handling:**
   - If $M_{\text{accepted}} = 0$ (e.g., session abandoned before review or all items rejected), return `null` with status flag `"UNMEASURED"`. **Never coerce to 0.0%**.
@@ -69,7 +69,7 @@ flowchart LR
 - **Formula:**
   $$\text{RPAI} = \frac{K_{\text{regen}}}{M_{\text{accepted}}}$$
 - **Components:**
-  - **Numerator:** Total count of successful or completed regeneration cycles dispatched for accepted questions (`COUNT(review_logs)` where `action_type = 'REGENERATE'`).
+  - **Numerator:** Total count of regeneration cycles dispatched for accepted questions. In the database schema, regeneration is initiated via reject action (`COUNT(review_logs)` where `action_type = 'REJECT'`).
   - **Denominator:** Total count of accepted version questions ($M_{\text{accepted}}$).
 - **Null and Zero Handling:**
   - If $M_{\text{accepted}} = 0$, return `null`.
@@ -150,8 +150,8 @@ flowchart LR
 
 | Required Metric Component | Current Database Field / Table | Status | Action Required |
 |---|---|---|---|
-| First-pass vs Regenerated item | `version_questions.id`, `review_logs.action_type` | Available | Join `version_questions` with `review_logs` to count regenerations per question slot. |
+| First-pass vs Regenerated item | `version_questions.id`, `review_logs.action_type` | Available | Join `version_questions` with `review_logs` to count regenerations (`action_type = 'REJECT'`) per question slot. |
 | Accepted Question count | `version_questions.status = 'approved'` | Available | Filter on `is_current = True AND status = 'approved'`. |
 | Session Lifecycle Status | `exam_sessions.status` | Available | States `'reviewed'`, `'approved'`, `'exported'` properly persisted. |
 | Job Processing Duration | `generation_jobs.started_at`, `completed_at` | Available | Calculate interval in seconds. |
-| Per-item Attempt Counter | Missing direct column on `version_questions` | Minor Gap | Compute dynamically from `COUNT(review_logs)` where `action_type = 'REGENERATE'`, or add column `attempt_number INT DEFAULT 1` in future migration. |
+| Per-item Attempt Counter | Missing direct column on `version_questions` | Minor Gap | Compute dynamically from `COUNT(review_logs)` where `action_type = 'REJECT'`, or add column `attempt_number INT DEFAULT 1` in future migration. |

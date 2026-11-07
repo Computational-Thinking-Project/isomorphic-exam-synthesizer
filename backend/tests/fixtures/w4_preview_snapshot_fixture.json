@@ -14,24 +14,8 @@
       "questions": [
         {
           "id": "11111111-0000-0000-0000-000000000101",
-          "source_question_id": "00000000-0000-0000-0000-000000000002",
-          "question_no": 1,
-          "canonical_question_no": 2,
-          "content": "Tính tích phân $I = \\int_{0}^{1} (3x^2 + 2x) dx$.",
-          "options": [
-            "$I = 1$",
-            "$I = 3$",
-            "$I = 2$",
-            "$I = 4$"
-          ],
-          "correct_key": "C",
-          "solution_md": "Ta có nguyên hàm $F(x) = x^3 + x^2$. Khi đó $I = F(1) - F(0) = (1 + 1) - 0 = 2$. Do đó đáp án đúng là C.",
-          "status": "approved"
-        },
-        {
-          "id": "11111111-0000-0000-0000-000000000102",
           "source_question_id": "00000000-0000-0000-0000-000000000001",
-          "question_no": 2,
+          "question_no": 1,
           "canonical_question_no": 1,
           "content": "Cho hàm số $y = x^3 - 3x + 2$. Điểm cực đại của hàm số đã cho là:",
           "options": [
@@ -42,6 +26,22 @@
           ],
           "correct_key": "A",
           "solution_md": "Đạo hàm $y' = 3x^2 - 3 = 0 \\iff x = \\pm 1$. Vì $y''(-1) = -6 < 0$ nên điểm cực đại là $x = -1$. Do đó đáp án đúng là A.",
+          "status": "approved"
+        },
+        {
+          "id": "11111111-0000-0000-0000-000000000102",
+          "source_question_id": "00000000-0000-0000-0000-000000000002",
+          "question_no": 2,
+          "canonical_question_no": 2,
+          "content": "Tính tích phân $I = \\int_{0}^{1} (3x^2 + 2x) dx$.",
+          "options": [
+            "$I = 1$",
+            "$I = 3$",
+            "$I = 2$",
+            "$I = 4$"
+          ],
+          "correct_key": "C",
+          "solution_md": "Ta có nguyên hàm $F(x) = x^3 + x^2$. Khi đó $I = F(1) - F(0) = (1 + 1) - 0 = 2$. Do đó đáp án đúng là C.",
           "status": "approved"
         },
         {
@@ -62,8 +62,8 @@
         }
       ],
       "answer_keys": {
-        "1": "C",
-        "2": "A",
+        "1": "A",
+        "2": "C",
         "3": "D"
       }
     },
@@ -81,52 +81,52 @@
           "canonical_question_no": 1,
           "content": "Cho hàm số $y = x^3 - 3x + 2$. Điểm cực đại của hàm số đã cho là:",
           "options": [
-            "$x = 1$",
             "$x = -1$",
-            "$x = 0$",
-            "$x = 2$"
+            "$x = 1$",
+            "$x = 2$",
+            "$x = 0$"
           ],
-          "correct_key": "B",
-          "solution_md": "Đạo hàm $y' = 3x^2 - 3 = 0 \\iff x = \\pm 1$. Vì $y''(-1) = -6 < 0$ nên điểm cực đại là $x = -1$. Do đó đáp án đúng là B.",
+          "correct_key": "A",
+          "solution_md": "Đạo hàm $y' = 3x^2 - 3 = 0 \\iff x = \\pm 1$. Vì $y''(-1) = -6 < 0$ nên điểm cực đại là $x = -1$. Do đó đáp án đúng là A.",
           "status": "approved"
         },
         {
           "id": "22222222-0000-0000-0000-000000000102",
-          "source_question_id": "00000000-0000-0000-0000-000000000003",
-          "question_no": 2,
-          "canonical_question_no": 3,
-          "content": "Trong không gian $Oxyz$, cho mặt cầu $(S): (x-1)^2 + (y+2)^2 + z^2 = 9$. Bán kính của mặt cầu $(S)$ là:",
-          "options": [
-            "$R = 3$",
-            "$R = 9$",
-            "$R = 81$",
-            "$R = \\sqrt{3}$"
-          ],
-          "correct_key": "A",
-          "solution_md": "Phương trình mặt cầu có dạng $(x-a)^2 + (y-b)^2 + (z-c)^2 = R^2$. Suy ra $R^2 = 9 \\implies R = 3$. Do đó đáp án đúng là A.",
-          "status": "approved"
-        },
-        {
-          "id": "22222222-0000-0000-0000-000000000103",
           "source_question_id": "00000000-0000-0000-0000-000000000002",
-          "question_no": 3,
+          "question_no": 2,
           "canonical_question_no": 2,
           "content": "Tính tích phân $I = \\int_{0}^{1} (3x^2 + 2x) dx$.",
           "options": [
             "$I = 1$",
-            "$I = 4$",
+            "$I = 3$",
             "$I = 2$",
-            "$I = 3$"
+            "$I = 4$"
           ],
           "correct_key": "C",
           "solution_md": "Ta có nguyên hàm $F(x) = x^3 + x^2$. Khi đó $I = F(1) - F(0) = (1 + 1) - 0 = 2$. Do đó đáp án đúng là C.",
           "status": "approved"
+        },
+        {
+          "id": "22222222-0000-0000-0000-000000000103",
+          "source_question_id": "00000000-0000-0000-0000-000000000003",
+          "question_no": 3,
+          "canonical_question_no": 3,
+          "content": "Trong không gian $Oxyz$, cho mặt cầu $(S): (x-1)^2 + (y+2)^2 + z^2 = 9$. Bán kính của mặt cầu $(S)$ là:",
+          "options": [
+            "$R = 9$",
+            "$R = 81$",
+            "$R = \\sqrt{3}$",
+            "$R = 3$"
+          ],
+          "correct_key": "D",
+          "solution_md": "Phương trình mặt cầu có dạng $(x-a)^2 + (y-b)^2 + (z-c)^2 = R^2$. Suy ra $R^2 = 9 \\implies R = 3$. Do đó đáp án đúng là D.",
+          "status": "approved"
         }
       ],
       "answer_keys": {
-        "1": "B",
-        "2": "A",
-        "3": "C"
+        "1": "A",
+        "2": "C",
+        "3": "D"
       }
     }
   ],
@@ -134,22 +134,22 @@
     {
       "question_no": 1,
       "answers": {
-        "101": "C",
-        "102": "B"
+        "101": "A",
+        "102": "A"
       }
     },
     {
       "question_no": 2,
       "answers": {
-        "101": "A",
-        "102": "A"
+        "101": "C",
+        "102": "C"
       }
     },
     {
       "question_no": 3,
       "answers": {
         "101": "D",
-        "102": "C"
+        "102": "D"
       }
     }
   ]

@@ -3,7 +3,7 @@
 > **Document Status:** OFFICIAL PROPOSAL & EVALUATION SPECIFICATION  
 > **Task ID:** `W4-MVP-18` (P1 Priority)  
 > **Decision Reference:** Resolves `Q17` (Pedagogical Evaluation Criteria, Provenance Tracking, Rater Protocols)  
-> **Author / Owner:** Pham Khanh Tam (`@AI-WFox`, Student ID: 25127135)  
+> **Author / Owner:** Pham Khanh Tam (`@AI-WFox`)  
 > **Target Audience:** High School Mathematics Teachers, Subject Matter Experts (SME), Academic Validators  
 
 ---

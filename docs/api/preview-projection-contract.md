@@ -3,11 +3,11 @@
 > **Document Status:** OFFICIAL CONTRACT & SPECIFICATION  
 > **Task ID:** `W4-MVP-05` (P0 Critical Path Blocker)  
 > **Decision Reference:** Resolves `Q06` (Preview API path, JSON projection, immutable snapshot contract)  
-> **Author / Owner:** Pham Khanh Tam (`@AI-WFox`, Student ID: 25127135)  
+> **Author / Owner:** Pham Khanh Tam (`@AI-WFox`)  
 > **Primary Consumers:**  
 > - Frontend Stage 3 Preview UI: Boi Anh (`@htbaax`, `W4-MVP-06`)  
 > - DB Export Adapter: Hung (`@benalexx007`, `W4-MVP-07`)  
-> - Product / Finalize Owner: Duy (`@nbduy2506`)  
+> - Product / Finalize Owner: Duy (`@johannguyen015`)  
 > **Golden Fixture Path:** `backend/tests/fixtures/w4_preview_snapshot_fixture.json`  
 
 ---
@@ -153,13 +153,22 @@ classDiagram
    - If `423 ERR_SESSION_LOCKED`, session is already approved; switch to view-only / export mode.
 
 ### 4.2 DB Export Adapter (`W4-MVP-07`, Hung)
-The preview projection schema is designed with 1:1 structural parity with `app.services.exporter.bundle_models.ApprovedExportSnapshot`.
-To construct the snapshot for the export bundler (TASK-307/308):
+
+The preview projection contains the complete rendered display data necessary to construct the `ApprovedExportSnapshot` required by the export bundler (TASK-307/308). The explicit field mappings are:
+
+- **`session_id`:** Directly mapped as `UUID(preview.session_id)`.
+- **`title`:** Sourced from `exam_sessions.title` (or default fallback).
+- **`revision`:** Sourced from `exam_sessions.updated_at` (ensuring deterministic revision tracking).
+- **`status`:** Sourced as `"approved"` or `"exported"` (note: preview is accessible in `"reviewed"` pre-approval and `"approved"` post-approval; export generation is executed only post-approval).
+- **`versions`:** Each `PreviewVersionItem` maps `version_code` to `DisplayVersion.code`.
+- **`questions`:** Each `PreviewQuestionItem` maps to `DisplayQuestion` (`id`, `question_no`, `content`, `options`, `correct_key`, `solution_md`, `status="approved"`). Provenance fields (`source_question_id`, `canonical_question_no`) present in the preview are excluded because `DisplayQuestion` defines `extra="forbid"`.
+
+To construct the snapshot for the export bundler:
 ```python
 from uuid import UUID
 from app.services.exporter.bundle_models import ApprovedExportSnapshot, DisplayQuestion, DisplayVersion
 
-# Directly convert from preview snapshot response:
+# Construct export versions from preview snapshot response:
 export_versions = tuple(
     DisplayVersion(
         code=v.version_code,
@@ -179,6 +188,7 @@ export_versions = tuple(
     for v in preview_response.versions
 )
 
+# Title and revision are sourced from the exam_sessions record:
 snapshot = ApprovedExportSnapshot(
     session_id=UUID(preview_response.session_id),
     revision=session_meta["updated_at"],
@@ -192,17 +202,18 @@ snapshot = ApprovedExportSnapshot(
 
 ## 5. Security, Invariants & Verification
 
-1. **Authorization & Row Level Security:** The endpoint enforces user ownership via `assert_ownership("exam_sessions", session_id, current_user.id)`. Any attempt by another user to view the preview receives HTTP 403.
+1. **Authorization & Row Level Security:** The endpoint enforces user ownership via `assert_ownership("exam_sessions", session_id, current_user.id)`. Any attempt by another user to view the preview receives HTTP 403 `ERR_UNAUTHORIZED` (or HTTP 404 `ERR_SESSION_NOT_FOUND` if filtered at the RLS database query level). Both paths fail closed securely.
 2. **Determinism:** Repeated `GET` calls return identical data with zero side effects, zero background mutations, and zero state changes.
-3. **Automated Verification:** 14 automated unit and integration tests are verified in `backend/tests/api/test_finalize_preview.py` covering:
+3. **Automated Verification:** 23 automated unit and integration tests are verified in `backend/tests/api/test_finalize_preview.py` covering:
    - 401 unauthenticated
    - 400 invalid UUID representation
    - 403 cross-user access
    - 404 session not found
    - 409 generating state
    - 409 shuffle required
-   - 409 inconsistent answer keys
-   - 200 OK reviewed preview
+   - 409 inconsistent answer keys (missing solutions, empty content, normalized duplicate options, unapproved questions, corrupted permutations, mismatched canonical mappings, duplicate keys, > 20 questions)
+   - 200 OK Golden 3-question x 2-version OFF/OFF fixture
+   - 200 OK ON/ON shuffled case
    - 200 OK approved preview
    - Repeat GET determinism
-   - Direct compatibility with `ApprovedExportSnapshot`.
+   - Direct compatibility with `ApprovedExportSnapshot` using real session title/revision.
