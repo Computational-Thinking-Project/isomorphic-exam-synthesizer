@@ -1,5 +1,3 @@
-> Cập nhật AI W2 24/10/2026: xác nhận đề nguồn trước khi sinh Blueprint; không có Blueprint editor/prompt giáo viên; candidate và solution cùng request. [ADR chính thức](adr/0001-confirm-before-blueprint.md) và [contract hiện tại](ai-w2-integration.md) thay các mô tả flow cũ bên dưới.
-
 # Isomorphic Exam Synthesizer — Kế Hoạch Triển Khai
 
 > **Kế hoạch triển khai dự án cho nhóm 7 thành viên**  
@@ -655,19 +653,19 @@
 ### TASK-205 · API xác nhận đề nguồn & Kích hoạt Blueprint nội bộ (BE-03)
 - **Người làm:** BE1 (Owner)
 - **Phụ thuộc:** TASK-202; Phụ thuộc tích hợp: TASK-203
-- **Trạng thái:** 🔄 (Hoàn thành Backend PR #16 / Chờ review & merge dev)
+- **Trạng thái:** ⬜
 
 **Mô tả:** Động cơ vận hành Blueprint như một hộp đen tự động ở backend và cung cấp API xác nhận đề nguồn chuyển trạng thái phiên sang Stage 2, loại bỏ các API can thiệp/tái trích xuất Blueprint thủ công từ phía người dùng.
 
 **Yêu cầu cụ thể phải làm được:**
-- [x] **Quy trình Blueprint Hộp Đen (Automatic Black-Box Engine):**
+- [ ] **Quy trình Blueprint Hộp Đen (Automatic Black-Box Engine):**
   - Khi `POST /api/sessions/{session_id}/ingest-file` hoặc `ingest-text` thành công ở `TASK-202`, backend tự động gọi `AI-02` (`TASK-203`) trích xuất cấu trúc quy tắc biến thể ngầm và lưu trực tiếp vào bảng `question_blueprints` dưới dạng JSONB.
   - Quá trình này diễn ra hoàn toàn tự động ở backend, không phơi bày ra UI và không cần endpoint công khai riêng cho người dùng tương tác hay sửa đổi.
-- [x] `POST /api/sessions/{session_id}/confirm-source`:
-  - [x] Gọi `assert_ownership` kiểm tra quyền sở hữu phiên.
-  - [x] **Ràng buộc trạng thái (Precondition):** Chỉ cho phép thực hiện khi phiên làm việc đang ở trạng thái `draft`. Nếu phiên đã được xác nhận (`blueprinted` hoặc các trạng thái sau) $\rightarrow$ từ chối và trả về HTTP `409 Conflict`.
-  - [x] **Kiểm tra tính toàn vẹn 100% (Strict Validation):** Kiểm tra toàn bộ câu hỏi nguồn trong phiên hợp lệ (`has_missing_answer == false`, `has_unparsed_omml == false`) và các bản ghi Blueprint nội bộ tương ứng đã được thiết lập. Nếu còn bất kỳ câu nào không hợp lệ $\rightarrow$ trả về HTTP `422 Unprocessable Entity`.
-  - [x] Khi 100% hợp lệ $\rightarrow$ cập nhật trạng thái session sang `blueprinted` (sẵn sàng cho cấu hình Stage 2), đóng băng dữ liệu câu nguồn qua PostgreSQL RPC `confirm_exam_source` nguyên tử.
+- [ ] `POST /api/sessions/{session_id}/confirm-source`:
+  - Gọi `assert_ownership` kiểm tra quyền sở hữu phiên.
+  - **Ràng buộc trạng thái (Precondition):** Chỉ cho phép thực hiện khi phiên làm việc đang ở trạng thái `draft`. Nếu phiên đã được xác nhận (`blueprinted` hoặc các trạng thái sau) $\rightarrow$ từ chối và trả về HTTP `409 Conflict`.
+  - **Kiểm tra tính toàn vẹn 100% (Strict Validation):** Kiểm tra toàn bộ câu hỏi nguồn trong phiên hợp lệ (`has_missing_answer == false`, `has_unparsed_omml == false`) và các bản ghi Blueprint nội bộ tương ứng đã được thiết lập. Nếu còn bất kỳ câu nào không hợp lệ $\rightarrow$ trả về HTTP `422 Unprocessable Entity`.
+  - Khi 100% hợp lệ $\rightarrow$ cập nhật trạng thái session sang `blueprinted` (sẵn sàng cho cấu hình Stage 2), đóng băng dữ liệu câu nguồn.
 
 ---
 
