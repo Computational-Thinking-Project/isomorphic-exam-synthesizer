@@ -1,0 +1,295 @@
+{
+  "provenance": "Real PostgreSQL RPC excerpt; offline AI fixture; synthetic slot/version request hash, not GenerationService cache evidence",
+  "synthetic_request_fingerprint": true,
+  "source_snapshot": {
+    "ready": true,
+    "reason": null,
+    "manifest": {
+      "sources": [
+        {
+          "question_no": 1,
+          "source_question_id": "a1f9ec32-b5a6-436d-a5b0-60b7fec905d8",
+          "source_revision_id": "9ec9d119-c7c9-4577-ab9c-a000162c1ef1",
+          "blueprint_revision_id": "0e0821d2-2ad4-4323-8775-2ed54cd174fd"
+        },
+        {
+          "question_no": 2,
+          "source_question_id": "50b9899a-2cfe-41fc-83a8-cd8ba21c6caf",
+          "source_revision_id": "c05446fb-ec0e-4837-b39a-03f3d5c0bdfb",
+          "blueprint_revision_id": "9c4f0a17-0cc1-4696-ad09-f0a41f985787"
+        }
+      ],
+      "confirmation_id": "71d0119f-5272-4468-ad6f-1c448e92e715"
+    },
+    "session_id": "b53c8d99-465d-4092-a560-353297e01956",
+    "source_order": [
+      "a1f9ec32-b5a6-436d-a5b0-60b7fec905d8",
+      "50b9899a-2cfe-41fc-83a8-cd8ba21c6caf"
+    ],
+    "confirmation_id": "71d0119f-5272-4468-ad6f-1c448e92e715",
+    "confirmed_sources": [
+      {
+        "question_no": 1,
+        "confirmed_input": {
+          "id": "a1f9ec32-b5a6-436d-a5b0-60b7fec905d8",
+          "options": [
+            "1856",
+            "1334",
+            "928",
+            "2552"
+          ],
+          "solution": "",
+          "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Dũng có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Dũng lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
+          "correct_answer": "A"
+        },
+        "source_fingerprint": "ebac5bc2602f07b11248febbb2118d14e94f68f749e525aa248f4bbe4e1c9b99",
+        "source_question_id": "a1f9ec32-b5a6-436d-a5b0-60b7fec905d8",
+        "source_revision_id": "9ec9d119-c7c9-4577-ab9c-a000162c1ef1",
+        "blueprint_fingerprint": "5d8e3490308e82af233fc390590169345523d62e944403de171c21e9c3413f5a",
+        "blueprint_revision_id": "0e0821d2-2ad4-4323-8775-2ed54cd174fd"
+      },
+      {
+        "question_no": 2,
+        "confirmed_input": {
+          "id": "50b9899a-2cfe-41fc-83a8-cd8ba21c6caf",
+          "options": [
+            "1856",
+            "1334",
+            "928",
+            "2552"
+          ],
+          "solution": "",
+          "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Dũng có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Dũng lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
+          "correct_answer": "A"
+        },
+        "source_fingerprint": "81fa8bb156789d473613670a4b9d811e9980112277eefed87d701d5f7d0b2656",
+        "source_question_id": "50b9899a-2cfe-41fc-83a8-cd8ba21c6caf",
+        "source_revision_id": "c05446fb-ec0e-4837-b39a-03f3d5c0bdfb",
+        "blueprint_fingerprint": "45f98f3a1d9afcff55601b196e64a6891aaec23795cb72db5798a8614ed863ee",
+        "blueprint_revision_id": "9c4f0a17-0cc1-4696-ad09-f0a41f985787"
+      }
+    ],
+    "confirmed_source_hash": "3918001de88a5b672e21be1d5ad18dfad0f0710c0b2ca987761d8d55a2f100f3"
+  },
+  "claim": {
+    "config": {
+      "n_versions": 1,
+      "ordering_preferences": {
+        "shuffle_options": false,
+        "shuffle_questions": true
+      },
+      "active_variation_modes": [
+        "context_swap"
+      ]
+    },
+    "job_id": "3f8dc1ea-0f2f-43cd-9ad2-96ed8e0113e3",
+    "status": "generating",
+    "context": {
+      "ready": true,
+      "reason": null,
+      "manifest": {
+        "sources": [
+          {
+            "question_no": 1,
+            "source_question_id": "a1f9ec32-b5a6-436d-a5b0-60b7fec905d8",
+            "source_revision_id": "9ec9d119-c7c9-4577-ab9c-a000162c1ef1",
+            "blueprint_revision_id": "0e0821d2-2ad4-4323-8775-2ed54cd174fd"
+          },
+          {
+            "question_no": 2,
+            "source_question_id": "50b9899a-2cfe-41fc-83a8-cd8ba21c6caf",
+            "source_revision_id": "c05446fb-ec0e-4837-b39a-03f3d5c0bdfb",
+            "blueprint_revision_id": "9c4f0a17-0cc1-4696-ad09-f0a41f985787"
+          }
+        ],
+        "confirmation_id": "71d0119f-5272-4468-ad6f-1c448e92e715"
+      },
+      "base_seed": 100,
+      "n_versions": 1,
+      "session_id": "b53c8d99-465d-4092-a560-353297e01956",
+      "public_modes": [
+        "context_swap"
+      ],
+      "source_order": [
+        "a1f9ec32-b5a6-436d-a5b0-60b7fec905d8",
+        "50b9899a-2cfe-41fc-83a8-cd8ba21c6caf"
+      ],
+      "confirmation_id": "71d0119f-5272-4468-ad6f-1c448e92e715",
+      "mapping_version": "1.0",
+      "canonical_dimensions": [
+        "context"
+      ],
+      "ordering_preferences": {
+        "shuffle_options": false,
+        "shuffle_questions": true
+      },
+      "confirmed_source_hash": "3918001de88a5b672e21be1d5ad18dfad0f0710c0b2ca987761d8d55a2f100f3"
+    },
+    "session_id": "b53c8d99-465d-4092-a560-353297e01956",
+    "snapshot_id": "17670bbf-eb58-483b-9efe-fd8cd7b9c226",
+    "starting_quota": 0,
+    "committed_targets": [],
+    "gemini_call_count": 0
+  },
+  "persist": {
+    "success": true,
+    "replayed": false,
+    "session_id": "b53c8d99-465d-4092-a560-353297e01956",
+    "snapshot_id": "17670bbf-eb58-483b-9efe-fd8cd7b9c226",
+    "version_index": 1,
+    "source_question_id": "a1f9ec32-b5a6-436d-a5b0-60b7fec905d8",
+    "version_question_id": "fc1013cc-bdae-4518-b0fd-144078bf73e1"
+  },
+  "resume": {
+    "context": {
+      "ready": true,
+      "reason": null,
+      "manifest": {
+        "sources": [
+          {
+            "question_no": 1,
+            "source_question_id": "a1f9ec32-b5a6-436d-a5b0-60b7fec905d8",
+            "source_revision_id": "9ec9d119-c7c9-4577-ab9c-a000162c1ef1",
+            "blueprint_revision_id": "0e0821d2-2ad4-4323-8775-2ed54cd174fd"
+          },
+          {
+            "question_no": 2,
+            "source_question_id": "50b9899a-2cfe-41fc-83a8-cd8ba21c6caf",
+            "source_revision_id": "c05446fb-ec0e-4837-b39a-03f3d5c0bdfb",
+            "blueprint_revision_id": "9c4f0a17-0cc1-4696-ad09-f0a41f985787"
+          }
+        ],
+        "confirmation_id": "71d0119f-5272-4468-ad6f-1c448e92e715"
+      },
+      "base_seed": 100,
+      "n_versions": 1,
+      "session_id": "b53c8d99-465d-4092-a560-353297e01956",
+      "public_modes": [
+        "context_swap"
+      ],
+      "source_order": [
+        "a1f9ec32-b5a6-436d-a5b0-60b7fec905d8",
+        "50b9899a-2cfe-41fc-83a8-cd8ba21c6caf"
+      ],
+      "confirmation_id": "71d0119f-5272-4468-ad6f-1c448e92e715",
+      "mapping_version": "1.0",
+      "canonical_dimensions": [
+        "context"
+      ],
+      "ordering_preferences": {
+        "shuffle_options": false,
+        "shuffle_questions": true
+      },
+      "confirmed_source_hash": "3918001de88a5b672e21be1d5ad18dfad0f0710c0b2ca987761d8d55a2f100f3"
+    },
+    "failures": [
+      {
+        "seed": 1101,
+        "is_success": false,
+        "raw_result": {
+          "attempts": 1,
+          "candidate": null,
+          "error_code": "PROVIDER_FAILED",
+          "validation": null,
+          "version_index": 1,
+          "source_question_id": "50b9899a-2cfe-41fc-83a8-cd8ba21c6caf",
+          "request_fingerprint": "2c26b2137e40eb83b28dafaaf3e94ca80fc991befa054305746d256acb994dfc"
+        },
+        "question_no": 2,
+        "snapshot_id": "17670bbf-eb58-483b-9efe-fd8cd7b9c226",
+        "version_index": 1,
+        "source_question_id": "50b9899a-2cfe-41fc-83a8-cd8ba21c6caf",
+        "request_fingerprint": "2c26b2137e40eb83b28dafaaf3e94ca80fc991befa054305746d256acb994dfc"
+      }
+    ],
+    "completed": [
+      {
+        "seed": 1100,
+        "is_success": true,
+        "raw_result": {
+          "attempts": 1,
+          "candidate": {
+            "seed": 1100,
+            "options": [
+              "1856",
+              "1334",
+              "928",
+              "2552"
+            ],
+            "solution": {
+              "steps": [
+                {
+                  "latex": null,
+                  "explanation": "Ba hình vuông tạo thành từ các đỉnh chia mười hai đỉnh thành ba nhóm rời nhau, mỗi nhóm bốn đỉnh. Bốn vị trí đỏ phải phân bố theo dạng 2,1,1."
+                },
+                {
+                  "latex": "P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}",
+                  "explanation": "Chọn nhóm có hai vị trí đỏ, hai vị trí trong nhóm đó và một vị trí trong mỗi nhóm còn lại. Có 288 cách thuận lợi trên 495 cách chọn bốn vị trí đỏ."
+                },
+                {
+                  "latex": "3190P=1856",
+                  "explanation": "Nhân xác suất với hệ số của đề."
+                }
+              ],
+              "correct_key": "A",
+              "final_answer": "1856"
+            },
+            "variant_id": "var_contract_success",
+            "correct_key": "A",
+            "has_warning": true,
+            "solution_md": "1. Ba hình vuông tạo thành từ các đỉnh chia mười hai đỉnh thành ba nhóm rời nhau, mỗi nhóm bốn đỉnh. Bốn vị trí đỏ phải phân bố theo dạng 2,1,1.\n\n2. Chọn nhóm có hai vị trí đỏ, hai vị trí trong nhóm đó và một vị trí trong mỗi nhóm còn lại. Có 288 cách thuận lợi trên 495 cách chọn bốn vị trí đỏ.\n\n   $$P=\\frac{3\\binom{4}{2}4^2}{\\binom{12}{4}}=\\frac{32}{55}$$\n\n3. Nhân xác suất với hệ số của đề.\n\n   $$3190P=1856$$\n\nĐáp án A: 1856",
+            "question_text": "Một khung hình trang trí có dạng một đa giác đều 12 cạnh được gắn cố định trên một trần nhà. Bạn Lan có 12 bóng đèn gồm bốn bóng màu đỏ và tám bóng màu xanh, có công suất đôi một khác nhau. Bạn Lan lắp ngẫu nhiên 12 bóng đèn trên vào 12 đỉnh sao cho mỗi đỉnh có đúng một bóng đèn. Gọi P là xác suất để mỗi hình vuông (có bốn đỉnh là các đỉnh của đa giác đã cho) đều có ít nhất một bóng đèn màu đỏ. Giá trị của 3190P bằng bao nhiêu?",
+            "source_question_id": "a1f9ec32-b5a6-436d-a5b0-60b7fec905d8",
+            "blueprint_fingerprint": "5d8e3490308e82af233fc390590169345523d62e944403de171c21e9c3413f5a",
+            "requires_teacher_review": true
+          },
+          "error_code": null,
+          "validation": {
+            "checks": [
+              {
+                "detail": "Solution key and final_answer must match the designated option content.",
+                "errors": [],
+                "passed": true,
+                "status": "verified",
+                "check_name": "solution_consistency",
+                "confidence": null
+              },
+              {
+                "detail": null,
+                "errors": [],
+                "passed": true,
+                "status": null,
+                "check_name": "solution_latex",
+                "confidence": null
+              },
+              {
+                "detail": "Free-form reasoning steps require teacher review.",
+                "errors": [],
+                "passed": false,
+                "status": "unknown",
+                "check_name": "solution_reasoning",
+                "confidence": null
+              }
+            ],
+            "requires_teacher_review": true
+          },
+          "version_index": 1,
+          "source_question_id": "a1f9ec32-b5a6-436d-a5b0-60b7fec905d8",
+          "request_fingerprint": "1f72291e12cb51522cc1735c97717f703f9e5ca9a823bdf68a67b0da1966a12b"
+        },
+        "question_no": 1,
+        "snapshot_id": "17670bbf-eb58-483b-9efe-fd8cd7b9c226",
+        "version_index": 1,
+        "source_question_id": "a1f9ec32-b5a6-436d-a5b0-60b7fec905d8",
+        "request_fingerprint": "1f72291e12cb51522cc1735c97717f703f9e5ca9a823bdf68a67b0da1966a12b"
+      }
+    ],
+    "session_id": "b53c8d99-465d-4092-a560-353297e01956",
+    "snapshot_id": "17670bbf-eb58-483b-9efe-fd8cd7b9c226"
+  },
+  "omitted_fields": [
+    "source_snapshot.confirmed_sources[].canonical_blueprint",
+    "claim.context.confirmed_sources",
+    "resume.context.confirmed_sources"
+  ]
+}
