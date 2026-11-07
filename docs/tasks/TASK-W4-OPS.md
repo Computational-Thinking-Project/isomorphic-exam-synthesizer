@@ -31,7 +31,7 @@ Máy reviewer không có `docker` trong PATH ở lượt kiểm 07/11; chưa ch�
 |---|---|---|
 | ENV0/Q12 — Duy + Đạt | Máy/host/domain test dùng gì, ai cấp quyền deploy/OAuth/Supabase; backup và lịch phối hợp07–08/14–15 | Chưa nhận; trước deploy; ETA TBD. Mốc06/11 đã qua, không tự nhận gate PASS |
 | DB0/Q08 — Duy + Hùng | Ledger migrations fresh+upgrade, isolated project, pinned compatible backend SHA, rollback/forward-fix và người thực thi | Chưa nhận handoff môi trường; cần09/11 18:00; ETA TBD |
-| I-OPS-LIFE — Duy + Quỳnh | Chốt1worker, source/query quét stale, interval, terminal retention và active subscriber policy | Đề xuất giữ1worker theo Dockerfile hiện có; giá trị scheduler/retention chưa chốt. Cần trước lifecycle wiring; TBD |
+| I-OPS-LIFE — Duy + Quỳnh | Chốt1worker, source/query quét stale, interval, terminal retention và active subscriber policy | Đề xuất giữ1worker theo Dockerfile hiện có; Quỳnh đã nhận baseline để triển khai/test cô lập tại comment6703279898: startup+30s, batch100 có pagination, cutoff720s DB lock, terminal15phút/cleanup60s, shutdown10s. Duy chưa giao SQL/RPC và môi trường; chưa nghiệm thu staging. Cần trước lifecycle wiring; TBD |
 | I-B-STALE — Duy | Có persist ERR_GENERATION_INTERRUPTED hay chỉ status failed; owner SQL/contract | Quyết định BE, Đạt không tự sửa; TBD |
 | I-OPS-DB — Duy + OPS | Accounts A/B/admin/non-admin, quyền seed/cleanup, JWT qua kênh an toàn, phạm vi/quota live, ADMIN_EMAILS owner/revoke | Chưa nhận; trước integration smoke; TBD |
 | Q09/Q10 — Hùng + Duy | Bucket private, tên biến chính thức, upload/status/reissue contract và exported transition | Không tự đặt env Storage khi chưa có contract; cần trước live export; TBD |
@@ -47,3 +47,11 @@ Máy reviewer không có `docker` trong PATH ở lượt kiểm 07/11; chưa ch�
 - Chưa kiểm: Docker build/run, TLS/OAuth thật, DB/RLS, Gemini, Storage, restart/FE/proxy live. ENV0 và integrated acceptance: BLOCKED chờ handoff, không phải LOCAL_READY cho toàn staging.
 - Output cho Duy/Hùng/Quỳnh/Philip: Draft PR này và runbook; URL/deployed SHA/test identities sẽ bàn giao sau quyền/môi trường được xác nhận. ETA thực tế TBD.
 - Mọi kết quả demo ghi PASS/FAIL/BLOCKED đúng từng gate, cùng SHA/config/migrations/prompt. G1 không thay demo ngày15/11; thay head sau freeze phải rerun phạm vi ảnh hưởng.
+
+## Cập nhật triển khai 07/11 — phạm vi 11/21
+
+- Có `scripts/w4_ops.py`: preflight read-only, smoke HTTP có timeout và JSON evidence; dùng Python standard library, không thêm dependency/Docker.
+- Preflight kiểm Docker CLI, Linux engine, Compose >=2.24.4, sự tồn tại env (không đọc giá trị), static Compose config quiet. Smoke kiểm health, HTML, /login và /docs qua proxy; không đổi metrics route/dev helper/CI đang chờ Quỳnh.
+- Báo cáo tách checkout SHA với deployed SHA do operator cung cấp, không overwrite; checksum ZIP không chứng nhận nội dung/6 slots. G0/G1/G2 vẫn cần manual evidence và acceptance.
+- Quỳnh nhận Python lifecycle/route/tests tại [comment6703279898](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6703279898); bảo vệ ticket chưa mở stream thuộc Quỳnh. Không nhận thêm phần triển khai này cho Đạt.
+- Kiểm Windows/.venv: 5 unittest isolated PASS, Ruff PASS. Docker/live smoke chưa chạy thành công; môi trường/migration/cloud inputs vẫn BLOCKED.

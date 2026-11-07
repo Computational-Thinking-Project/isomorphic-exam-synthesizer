@@ -113,3 +113,18 @@ Acceptance: Duy, actual date/link or NOT ACCEPTED
 ```
 
 Mốc nguồn W4: script12/11, first attempt13/11, candidate14/11 13:00, security15:00, G1 18:00, freeze19:00; G2 live15/11 16:00 và handoff19:00. Availability chưa tự xác nhận. Thay SHA/config/migration/prompt sau freeze cần rerun bị ảnh hưởng. G2 thất bại vẫn ghi FAIL dù G1 từng PASS.
+
+## 6. Công cụ OPS read-only (11/21)
+
+Chạy từ repo root với Python >=3.11 (hoặc `.venv/Scripts/python.exe`). Không tự deploy, chạy migration hay gọi Gemini. File output dùng đường dẫn mới mỗi lần; `.artifacts/` đã ignored.
+
+```powershell
+python scripts/w4_ops.py preflight --output .artifacts/w4/preflight-01.json
+python scripts/w4_ops.py smoke --backend http://localhost:8000 --frontend http://localhost:3000 --output .artifacts/w4/smoke-01.json
+# Có thể thêm --deployed-sha FULL_40_CHAR_SHA và --zip PATH_TO_EXPORTED_ZIP
+python -m unittest discover -s scripts -p test_w4_ops.py
+```
+
+Exit 0 chỉ khi tất cả probes PASS; exit 1 khi FAIL/BLOCKED. Preflight không chứng nhận credential hợp lệ. `/docs` qua frontend kiểm proxy HTML; `/login` chỉ kiểm SPA fallback, không chứng nhận OAuth. Metrics/auth/ownership/SSE/Typst/export thật vẫn theo checklist mục4; không gửi token qua CLI. URL chỉ nhận origin không chứa credentials/query/fragment; HTTP redirects bị từ chối. Report không lưu URL, headers, body, command diagnostics hay ZIP contents. Kiểm checksum chỉ đọc artifact có sẵn và chưa đối chiếu 6 slots.
+
+`checkout_sha` là máy chạy script, `operator_supplied_deployed_sha` phải được operator đối chiếu deployment thực; `integrated_acceptance` luôn NOT_VERIFIED. Lưu DB ledger/config/prompt/model, demo8 bước và oracle6 slots theo mẫu mục5; không thay bằng report HTTP. Mỗi HTTP probe timeout10s, mỗi subprocess timeout30s. Tool không khởi động Docker Desktop, không tạo/đổi `.env` và không overwrite evidence cũ.
