@@ -4,6 +4,16 @@
 > **Thời gian:** 4 tuần (14/10/2026 – 10/11/2026)  
 > **Nguyên tắc cốt lõi:** Single Ownership · Contract-first · Continuous Integration & Quality Gates
 
+> [!IMPORTANT]
+> **Thứ tự Quyết định Kỹ thuật (Planning Precedence):**
+> 1. [ADR 0001 (Xác nhận nguồn trước khi sinh Blueprint)](adr/0001-confirm-before-blueprint.md)
+> 2. [Issue #44](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/44) — Xác nhận nguồn trước Canonical Blueprint, loại bỏ hộp kiểm cam kết an ninh người dùng.
+> 3. [Issue #45](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/45) — Ẩn variation modes khỏi UI; hai checkbox xáo trộn độc lập (mặc định tắt: `false`/`false`), 4 tổ hợp hợp lệ, cho phép cập nhật trước final shuffle.
+> 4. [Issue #46](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/46) — Confirmed-source fallback sau tối đa 4 lần thử (1 initial + 3 retries); revert về confirmed source snapshot/revision đưa về `pending_review` (giáo viên duyệt lại, không tự động approved); thiếu dữ liệu đáp án/lời giải nguồn bắt buộc fail-closed.
+> 5. [Issue #53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53) — Môi trường triển khai: Production-first / Private Beta nội bộ nhóm, ưu tiên chi phí 0đ, không bắt buộc staging server riêng biệt.
+>
+> *Mọi mô tả kế hoạch cũ đề cập việc trích xuất Blueprint trước confirmation, checkbox cam kết an ninh bắt buộc của người dùng, UI chọn variation modes, hoặc tự động approve khi fallback/revert đều là lịch sử/superseded bởi các quyết định trên.*
+
 ---
 
 ## 1. Phân công nhân sự & Vai trò kỹ thuật
@@ -535,8 +545,8 @@
 
 ## Giai đoạn 2 — Tuần 2: Ingestion, Blueprint & Async Generation Pipeline
 
-> **Mục tiêu:** Nạp đề nguồn $\rightarrow$ trích xuất Blueprint $\rightarrow$ cấu hình $\rightarrow$ background job sinh đề với thanh tiến trình SSE thời gian thực.  
-> **Định nghĩa "Done":** Upload file DOCX $\rightarrow$ bóc tách câu hỏi $\rightarrow$ AI trích xuất Blueprint $\rightarrow$ giảng viên xác nhận $\rightarrow$ cấu hình $N$ mã đề $\rightarrow$ bấm Generate $\rightarrow$ SSE stream tiến độ $\rightarrow$ lưu bản nháp vào DB.
+> **Mục tiêu:** Nạp đề nguồn $\rightarrow$ giảng viên kiểm tra & xác nhận đề gốc $\rightarrow$ kích hoạt sinh Canonical Blueprint $\rightarrow$ cấu hình $N$ mã đề $\rightarrow$ background job sinh đề với thanh tiến trình SSE thời gian thực.
+> **Định nghĩa "Done":** Upload file DOCX/LaTeX/MD $\rightarrow$ bóc tách câu hỏi $\rightarrow$ giảng viên xác nhận đề gốc $\rightarrow$ AI sinh Canonical Blueprint nội bộ (ready) $\rightarrow$ cấu hình $N$ mã đề (với hai tùy chọn xáo trộn mặc định tắt) $\rightarrow$ bấm Generate $\rightarrow$ SSE stream tiến độ $\rightarrow$ lưu bản nháp vào DB.
 
 ---
 
@@ -595,7 +605,7 @@
 **Yêu cầu cụ thể phải làm được:**
 - [ ] Định nghĩa Pydantic model `QuestionBlueprint`: danh sách `parameters` (tên biến, giá trị hiện tại, khoảng giá trị `min`–`max`), danh sách `invariants` (điều kiện giữ nguyên phương pháp giải), các `variation_modes` cho phép, và `readable_summary` tiếng Việt.
 - [ ] Xây dựng prompt Few-shot hướng dẫn AI nhận diện đúng các tham số có thể biến thiên mà không làm thay đổi phương pháp giải bài toán.
-- [ ] **Quy trình Trích xuất Blueprint Ban đầu (Initial Pipeline):** Ngay sau khi bóc tách xong đề nguồn từ `TASK-202` (hoặc sau khi giảng viên xác nhận sửa các câu incomplete ở `TASK-203b`), backend tự động gọi pipeline trích xuất hàng loạt (kết hợp `asyncio.Semaphore(3)`) hoặc qua endpoint `POST /api/sessions/{session_id}/blueprints/extract-all` để tạo trước Blueprint cho toàn bộ câu nguồn và lưu vào bảng `question_blueprints`.
+- [ ] **Quy trình Trích xuất Blueprint Ban đầu (Initial Pipeline theo ADR-0001 / Issue #44):** Sau khi đề nguồn được bóc tách và giảng viên bấm xác nhận đề gốc ở `TASK-205`, backend mới tự động kích hoạt pipeline trích xuất Canonical Blueprint hàng loạt (kết hợp `asyncio.Semaphore(3)`) để tạo Canonical Blueprint cho toàn bộ câu nguồn và lưu vào bảng `question_blueprints`. Không kích hoạt trích xuất Blueprint trước khi đề nguồn được xác nhận.
 - [ ] Kiểm thử prompt với 3 chuyên đề toán: Phương trình bậc 2, Khảo sát hàm số, Tích phân.
 
 ---
@@ -658,14 +668,14 @@
 **Mô tả:** Động cơ vận hành Blueprint như một hộp đen tự động ở backend và cung cấp API xác nhận đề nguồn chuyển trạng thái phiên sang Stage 2, loại bỏ các API can thiệp/tái trích xuất Blueprint thủ công từ phía người dùng.
 
 **Yêu cầu cụ thể phải làm được:**
-- [ ] **Quy trình Blueprint Hộp Đen (Automatic Black-Box Engine):**
-  - Khi `POST /api/sessions/{session_id}/ingest-file` hoặc `ingest-text` thành công ở `TASK-202`, backend tự động gọi `AI-02` (`TASK-203`) trích xuất cấu trúc quy tắc biến thể ngầm và lưu trực tiếp vào bảng `question_blueprints` dưới dạng JSONB.
+- [ ] **Quy trình Blueprint Hộp Đen (Automatic Black-Box Engine theo ADR-0001 / Issue #44):**
+  - Chỉ sau khi giảng viên kiểm tra bản xem trước và gọi `POST /api/sessions/{session_id}/confirm-source` thành công, backend mới đóng băng dữ liệu đề nguồn, lưu snapshot confirmed source revision bền vững và kích hoạt `AI-02` (`TASK-203`) trích xuất cấu trúc quy tắc Canonical Blueprint ngầm lưu vào `question_blueprints`.
   - Quá trình này diễn ra hoàn toàn tự động ở backend, không phơi bày ra UI và không cần endpoint công khai riêng cho người dùng tương tác hay sửa đổi.
 - [ ] `POST /api/sessions/{session_id}/confirm-source`:
   - Gọi `assert_ownership` kiểm tra quyền sở hữu phiên.
   - **Ràng buộc trạng thái (Precondition):** Chỉ cho phép thực hiện khi phiên làm việc đang ở trạng thái `draft`. Nếu phiên đã được xác nhận (`blueprinted` hoặc các trạng thái sau) $\rightarrow$ từ chối và trả về HTTP `409 Conflict`.
-  - **Kiểm tra tính toàn vẹn 100% (Strict Validation):** Kiểm tra toàn bộ câu hỏi nguồn trong phiên hợp lệ (`has_missing_answer == false`, `has_unparsed_omml == false`) và các bản ghi Blueprint nội bộ tương ứng đã được thiết lập. Nếu còn bất kỳ câu nào không hợp lệ $\rightarrow$ trả về HTTP `422 Unprocessable Entity`.
-  - Khi 100% hợp lệ $\rightarrow$ cập nhật trạng thái session sang `blueprinted` (sẵn sàng cho cấu hình Stage 2), đóng băng dữ liệu câu nguồn.
+  - **Kiểm tra tính toàn vẹn câu hỏi nguồn (Strict Validation):** Kiểm tra toàn bộ câu hỏi nguồn trong phiên hợp lệ (`has_missing_answer == false`, `has_unparsed_omml == false`). Nếu còn bất kỳ câu nào không hợp lệ $\rightarrow$ trả về HTTP `422 Unprocessable Entity`. Không yêu cầu bản ghi Blueprint phải có sẵn trước khi confirm (Blueprint được trích xuất sau khi confirm).
+  - Khi 100% hợp lệ $\rightarrow$ lưu snapshot confirmed source revision, kích hoạt sinh Canonical Blueprint, và cập nhật trạng thái session sang `blueprinted` / canonical ready khi hoàn tất, đóng băng dữ liệu câu nguồn.
 
 ---
 
@@ -679,10 +689,11 @@
 **Yêu cầu cụ thể phải làm được:**
 - [ ] Tạo trang `/session/:id/stage2`.
 - [ ] **Bộ chọn số lượng mã đề:** Cho phép chọn linh hoạt đầy đủ các số lượng mã đề từ 1 đến 4 ($N \in \{1, 2, 3, 4\}$: gồm 1 mã đề, 2 mã đề, 3 mã đề, 4 mã đề), mặc định là 4 mã đề.
-- [ ] **Cơ chế biến thể Black-box:** Không hiển thị danh sách các hộp kiểm chọn chế độ biến thể (thay số, đổi ngữ cảnh, hoán đổi ẩn); Backend và AI tự động quyết định chiến lược sinh đẳng cấu tối ưu.
-- [ ] **Tùy chọn xáo trộn ban đầu (`ordering_preferences`):**
-  - Checkbox `shuffle_questions`: Xáo trộn thứ tự câu hỏi giữa các mã đề (mặc định: bật).
-  - Checkbox `shuffle_options`: Xáo trộn thứ tự 4 đáp án A/B/C/D trong từng câu (mặc định: bật).
+- [ ] **Cơ chế biến thể Black-box:** Không hiển thị danh sách các hộp kiểm chọn chế độ biến thể (thay số, đổi ngữ cảnh, hoán đổi ẩn); Backend và AI tự động quyết định chiến lược sinh đẳng cấu tối ưu từ canonical Blueprint.
+- [ ] **Tùy chọn xáo trộn ban đầu (`ordering_preferences` theo Issue #45):**
+  - Checkbox `shuffle_questions`: Xáo trộn thứ tự câu hỏi giữa các mã đề (mặc định: TẮT / `false`).
+  - Checkbox `shuffle_options`: Xáo trộn thứ tự 4 đáp án A/B/C/D trong từng câu (mặc định: TẮT / `false`).
+  - Hỗ trợ đầy đủ 4 tổ hợp hợp lệ (OFF/OFF, ON/OFF, OFF/ON, ON/ON). Tùy chọn này có thể được xem lại và cập nhật ở Stage 3 trước khi thực hiện final shuffle.
 - [ ] Thẻ tóm tắt thông số: *"Hệ thống sẽ sinh N mã đề, mỗi mã gồm X câu hỏi tương đương đẳng cấu"*.
 - [ ] Nút "Bắt đầu sinh đề" gửi cấu hình và chuyển hướng sang màn hình theo dõi tiến trình SSE.
 
@@ -698,8 +709,8 @@
 **Yêu cầu cụ thể phải làm được:**
 - [ ] `POST /api/sessions/{session_id}/config` nhận cấu hình từ Frontend. Gọi `assert_ownership`.
 - [ ] Kiểm tra ràng buộc server-side: $N \in \{1, 2, 3, 4\}$.
-- [ ] Lưu cấu hình xáo trộn (`ordering_preferences`) và cập nhật `session.status = "configured"`.
-- [ ] Không yêu cầu chọn `variation_modes` từ client (Backend và AI tự động áp dụng chiến lược đẳng cấu).
+- [ ] Lưu cấu hình xáo trộn (`ordering_preferences`) với 2 cờ độc lập (mặc định tắt, hỗ trợ 4 tổ hợp) và cập nhật `session.status = "configured"`.
+- [ ] Không nhận `variation_modes` từ client (Backend và AI tự động suy ra từ canonical Blueprint đã xác nhận).
 - [ ] Lưu vào bảng `generation_configs`.
 
 ---
@@ -747,7 +758,7 @@
   ```
 - [ ] **Hành vi an toàn khi chạm trần Quota Batch (250 calls) & Phân cấp lỗi SSE:**
   - **Chạm trần Quota 250 calls (Stage 2 Batch Ceiling):** Nếu bộ đếm gọi API chạm trần 250 calls (`exam_sessions.gemini_call_count >= 250`) $\rightarrow$ Background job dừng sinh các câu còn lại, lưu bền vững toàn bộ các câu đã hoàn thành vào DB, đánh dấu các câu chưa xong là `has_warning = true`, chuyển session sang trạng thái `partial_generated`, phát SSE `warning` (thông báo "Đạt giới hạn trần quota sinh hàng loạt 250 calls") và kết thúc job an toàn. Giảng viên được phép xem/thẩm định các câu đã hoàn tất ở Stage 3, nhưng hệ thống chặn xuất bản file (`/export`) và chặn phê duyệt cuối (`/finalize/approve`) cho đến khi đủ câu hợp lệ.
-  - **Sự kiện `warning` (Lỗi cục bộ từng câu):** Nếu một câu hỏi sinh thất bại sau 3 lần retry validation $\rightarrow$ lưu bản nháp kèm `has_warning = true` để giảng viên thẩm định ở Stage 3; Background job vẫn tiếp tục sinh các câu còn lại mà không làm dừng cả job.
+  - **Sự kiện `warning` (Lỗi cục bộ từng câu theo Issue #46):** Nếu một câu hỏi sinh thất bại sau 4 lần thử (1 initial + 3 retries) $\rightarrow$ KHÔNG lưu bản nháp AI lỗi; hệ thống lấy đúng bản sao câu nguồn đã xác nhận (persisted confirmed source snapshot/revision) làm fallback, lưu với trạng thái `pending_review`, `has_warning = true`, mã `GENERATION_RETRIES_EXHAUSTED` để giảng viên thẩm định ở Stage 3; Background job vẫn tiếp tục sinh các câu còn lại mà không làm dừng cả job. Giảng viên bắt buộc phải duyệt (Accept hoặc Regenerate), không tự động approved. Nếu câu nguồn thiếu đáp án hoặc lời giải bắt buộc: fail-closed, chặn export.
   - **Sự kiện `error` (Lỗi nghiêm trọng không thể hồi phục):** Khi gặp sự cố hạ tầng nghiêm trọng (Database disconnect không thể tái lập, hoặc chạm trần Timeout 10 phút toàn phiên mà không lưu được tiến độ) $\rightarrow$ cập nhật session `status = "failed"`, phát sự kiện `error` kèm `error_message` và đóng stream an toàn.
 - [ ] **Bảo vệ kết nối:** Gửi heartbeat comment `: heartbeat\n\n` mỗi 15 giây một lần để ngăn proxy hoặc browser ngắt kết nối.
 - [ ] **Kiểm soát đồng thời:** Dùng `asyncio.Semaphore(3)` giới hạn tối đa 3 request gọi Gemini đồng thời, tránh cạn kiệt hạn ngạch API.
@@ -865,7 +876,7 @@
     - Thực thi nguyên tử trong 1 Transaction duy nhất:
       1. Kiểm tra bản ghi câu biến thể hiện tại có `is_current = true`.
       2. Đánh dấu bản ghi biến thể hiện tại: `is_current = false`.
-      3. Chèn bản ghi mới sao chép nguyên văn nội dung từ câu gốc (`source_questions`): gán `is_current = true`, `is_reverted = true`, `status = "approved"`, `regenerated_from_id = old_id`.
+      3. Chèn bản ghi mới sao chép nguyên văn nội dung từ bản ghi đề nguồn đã xác nhận (confirmed source snapshot/revision): gán `is_current = true`, `is_reverted = true`, `status = "pending_review"` (bắt buộc giảng viên thẩm định duyệt lại, không tự động approved), `regenerated_from_id = old_id`.
       4. Ghi `review_logs` (`action_type = "REVERT"`).
     - Cam kết tuân thủ tuyệt đối Invariant: Không bao giờ xảy ra tình trạng tồn tại 2 bản ghi `is_current = true` cho cùng một câu trong mã đề.
 - [ ] **Cơ chế Tự động Vô hiệu hóa khi Sửa đổi (Reviewed & Shuffle Invalidation):**
@@ -1419,7 +1430,7 @@ Trước khi nghiệm thu toàn bộ dự án, OPS và cả nhóm đối chiếu
 | :--- | :--- | :--- | :--- |
 | **P0: Cốt lõi cấm cắt (Non-negotiable)** | • Xác thực Google Auth & RLS bảo mật 10 bảng (kèm bảng `security_events` bất biến, audit log không thể sửa/xóa)<br>• Bóc tách đề nguồn (DOCX / LaTeX / Markdown / Nhập tay)<br>• Blueprint & Sinh biến thể $N \le 4$ mã đề (tối đa 20 câu nguồn / 250 API calls)<br>• Giao diện Thẩm định 1-1 (Accept/Reject/Revert)<br>• Xuất bản PDF in ấn (Typst) & Bảng đáp án | **Tuyệt đối không cắt.** Bắt buộc hoàn thành 100% để đáp ứng yêu cầu môn học CSC10014. | Không ảnh hưởng; là linh hồn của đồ án. |
 | **P1: Hạ cấp kỹ thuật (Graceful Downgrade)** | • **SymPy ProcessPool (`TASK-107b`):** Nếu môi trường cục bộ gặp trục trặc IPC/multiprocessing $\rightarrow$ ngắt gọi SymPy an toàn và chuyển thẳng sang **Rule Fallback Checker (`TASK-107c`)** với cờ cảnh báo `validation_status = 'passed_rule_fallback'`, tuyệt đối không chạy timeout in-process gây nghẽn GIL/CPU.<br>• **Parser OMML phức tạp (`TASK-202`):** Không cố parse 100% biểu thức lạ; gắn cờ `has_unparsed_omml = true` và hướng dẫn người dùng sửa qua `Content Incomplete Dialog`.<br>• **Dual Export XeLaTeX (`TASK-306b`):** Trọng tâm hoàn thiện xuất sắc file PDF in ấn chuẩn đẹp qua Typst (`TASK-306a`) + file `.tex` chuẩn cú pháp UTF-8 sạch sẽ kèm template chuẩn; nếu môi trường máy phát triển thiếu TeXLive/XeLaTeX compiler, cho phép hoãn bước tự động compile XeLaTeX tại local và kiểm tra tính toàn vẹn cú pháp qua script parser. | Chấp nhận được; hệ thống vẫn vận hành an toàn và mượt mà. |
-| **P2: Cắt giảm an toàn nếu quá tải (Safe Cuts)** | • **Tùy chọn Shuffle riêng biệt (`TASK-206`, `TASK-304`):** Mặc định bật cả đảo câu và đảo phương án, tạm ẩn giao diện toggle tùy biến nâng cao.<br>• **Biểu đồ thống kê nâng cao (`TASK-401`):** Giữ lại các thẻ KPI số liệu cơ bản (First-pass rate, Recovery rate), hoãn biểu đồ Chart.js phân bố phức tạp.<br>• **Metrics Observability (`TASK-207c`):** Trả về JSON trạng thái tối giản, hoãn các metric đo lường uptime/call_rate chi tiết. | Hoàn toàn không ảnh hưởng đến kịch bản demo và tiêu chí chấm điểm của giảng viên. |
+| **P2: Cắt giảm an toàn nếu quá tải (Safe Cuts)** | • **Tùy chọn Shuffle riêng biệt (`TASK-206`, `TASK-304`):** Mặc định tắt cả đảo câu và đảo phương án (`false`/`false`), hỗ trợ 4 tổ hợp độc lập theo Issue #45.<br>• **Biểu đồ thống kê nâng cao (`TASK-401`):** Giữ lại các thẻ KPI số liệu cơ bản (First-pass rate, Recovery rate), hoãn biểu đồ Chart.js phân bố phức tạp.<br>• **Metrics Observability (`TASK-207c`):** Trả về JSON trạng thái tối giản, hoãn các metric đo lường uptime/call_rate chi tiết. | Hoàn toàn không ảnh hưởng đến kịch bản demo và tiêu chí chấm điểm của giảng viên. |
 
 ---
 

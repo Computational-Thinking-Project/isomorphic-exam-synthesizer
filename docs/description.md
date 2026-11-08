@@ -35,11 +35,11 @@
 - Scanned-document recognition, PDF input parsing, native DOCX layout preservation, interactive difficulty adjustment, scoring rubrics, and essay questions are extensions.
 
 ### 2.2 Meaning of Isomorphic Generation
-- Isomorphic variants retain the learning objective and intended solving method while changing permitted data. After instructors confirm the extracted source exam in Stage 1, the system automatically creates an internal **blueprint** that formalizes fixed elements, permitted variations (parameter bounds and required conditions), and invariants [[1]](#references). The blueprint is a backend-controlled black box: instructors do not view, confirm, edit, or select its variation modes. In Stage 2, instructors select only the version count $N \in [1, 4]$; shuffling is configured after generation and item review in Stage 3.
+- Isomorphic variants retain the learning objective and intended solving method while changing permitted data. After instructors confirm the extracted source exam in Stage 1, the system automatically creates an internal **blueprint** that formalizes fixed elements, permitted variations (parameter bounds and required conditions), and invariants [[1]](#references). The blueprint is a backend-controlled black box: instructors do not view, confirm, edit, or select its variation modes. In Stage 2, instructors select the version count $N \in [1, 4]$ and set two independent shuffle preferences (question shuffling and option shuffling, both defaulting to OFF/`false`, supporting four valid combinations); shuffling preferences can be re-evaluated and adjusted in Stage 3 prior to final shuffle.
 
 ### 2.3 Difficulty and Answer Consistency
 - A shared solving method does not prove equal difficulty. Values, wording, prerequisites, and distractors also matter. Achieving comparable difficulty is an evaluation objective assessed through instructor review and learner pilots where feasible, distinct from interactive difficulty adjustment which is an extension.
-- Automated checks assess question structure, answer-key and solution consistency, and duplicate options. Independent mathematical verification (e.g., Python/SymPy) is an optional supporting check for question types it can reliably handle; it does not need to solve every generated question and does not universally guarantee that exactly one option is correct. The system reports an **answer-verification level**: **3 stars** when structural and consistency checks pass without independent mathematical proof, **4 stars** for partial independent mathematical verification, and **5 stars** only when the answer is independently verified as correct, complete, and uniquely correct among the options. These stars indicate the extent of verification, not a measured probability of correctness, and do not replace instructor approval. For grading and review assistance, the system provides correct keys and detailed step-by-step solutions; item scoring and grade weighting are outside the MVP scope.
+- Automated checks assess question structure, answer-key and solution consistency, and duplicate options. Independent mathematical verification (e.g., Python/SymPy) is an optional supporting check for question types it can reliably handle; it does not need to solve every generated question and does not universally guarantee that exactly one option is correct. *(Note: The 3–5-star answer-verification concept is **PROPOSED / DEFERRED PENDING RUBRIC APPROVAL** by product and validator owners. In this proposed rubric, 3 stars indicates structural and consistency checks passed without mathematical proof, 4 stars denotes partial mathematical verification, and 5 stars reflects complete independent verification. Star levels indicate the extent of automated checking, not a calibrated probability of correctness, and unsupported questions are never claimed as verified. In the Golden MVP baseline, validation relies on standard categorical status: passed, warning, or failed).* For grading and review assistance, the system provides correct keys and detailed step-by-step solutions; item scoring and grade weighting are outside the MVP scope.
 
 ---
 
@@ -54,7 +54,7 @@
 ### 3.2 Use Case Preconditions and Relationships
 - Exam management requires sign-in; generation requires instructor-confirmed source content, subsequently established internal blueprints, and a valid version count ($N \le 4$); export requires full instructor approval. These are function preconditions.
 - **Include relationships:**
-  - Import includes structural analysis (`UC05` $\to$ `UC11`).
+  - Source confirmation triggers structural analysis (`UC06` $\to$ `UC11`).
   - Generation includes question/solution generation (`UC08` $\to$ `UC12`) and automated validation (`UC08` $\to$ `UC13`).
 - **Instructor Review Loop:** Instructors review drafts question-by-question, accepting valid items or rejecting flawed items to trigger targeted re-generation. Re-generated items undergo automated validation and return to the review screen for mandatory re-evaluation; if repeated re-generation fails, instructors can revert the target item to the verified source question as a safe exit. Only when all items are approved can the instructor proceed to synchronization and final export.
 
@@ -111,7 +111,7 @@ flowchart LR
     UC12 --- ExternalAI
 
     %% Include Dependencies
-    UC05 -. "<<include>>" .-> UC11
+    UC06 -. "<<include>>" .-> UC11
     UC08 -. "<<include>>" .-> UC12
     UC08 -. "<<include>>" .-> UC13
 ```
@@ -131,17 +131,17 @@ flowchart LR
 - **UC04 — Statistics:** Aggregate recorded sessions; show version counts, first-pass acceptance rates (percentage of items approved on initial review without requiring re-generation), and regeneration frequencies. Comparative time savings are reserved for empirical evaluation.
 - **UC05 — Import:** Receive source exam and answer key; extract questions, options, formulas, and answers, flagging missing or malformed elements; produce a structured source representation for subsequent instructor verification (notifying instructors to re-upload if file format errors or missing answers are detected).
 - **UC06 — Source Verification & Auto-Blueprint:** Present extracted source questions and keys for instructor verification and approval. Only after instructors confirm the source content does the backend automatically analyze and establish internal question blueprints (parameter bounds, invariant conditions, and variation modes). Blueprints are black-box backend artifacts: instructors cannot view, confirm, edit, enable, or disable blueprint rules or variation modes.
-- **UC07 — Configuration:** Receive only the version count $N \in [1, 4]$; validate it and save the generation requirement. Variation modes and ordering preferences are not instructor settings in Stage 2.
-- **UC08 — Generation:** Use internal blueprints and the selected version count to synthesize variants, keys, and detailed solutions with automated structural and consistency checks, plus independent mathematical verification where supported. Apply at most three retries after the initial generation attempt when checks identify definite errors; inability to verify a question mathematically is a warning, not by itself a reason to retry. Report 3–5-star answer-verification levels for instructor review; if repeated retries fail, return drafts with validation warning badges for instructor review.
-- **UC09 — Review and Finalization:** Spanning the entirety of Stage 3, this function presents drafts, answer-verification levels, and automated check results for question-by-question comparison against source items (preserving 1-to-1 question mapping). Instructors perform per-item binary approval or rejection for targeted re-generation; re-generated items are re-validated and re-reviewed. If automated re-generation repeatedly fails, instructors can revert the target item to the verified source question as a safe exit. After all items are accepted, instructors choose **no shuffle, question-order shuffle, or answer-option shuffle**; the system applies the selected mode, synchronizes keys, provides package preview, and records final instructor approval.
+- **UC07 — Configuration:** Receive the version count $N \in [1, 4]$ and two independent shuffle preferences (question order and option order, both defaulting to false/unchecked, supporting all 4 valid combinations); validate and save generation requirements. Variation modes are derived automatically by the backend from canonical blueprints and are not configurable by instructors.
+- **UC08 — Generation:** Use internal blueprints and the selected version count to synthesize variants, keys, and detailed solutions with automated structural and consistency checks, plus independent mathematical verification where supported. Apply at most three retries after the initial generation attempt (four attempts total per target item). If all attempts fail, the system does not emit an erroneous AI draft; instead, it safely falls back to the exact confirmed source revision corresponding to that item, persisting it as `pending_review` with `has_warning = true` and `GENERATION_RETRIES_EXHAUSTED` (requiring instructor approval; never auto-approved). If the source item lacks required answer or solution metadata for downstream export, generation fails closed.
+- **UC09 — Review and Finalization:** Spanning the entirety of Stage 3, this function presents drafts, validation reports, and automated check results for question-by-question comparison against source items (preserving 1-to-1 question mapping). Instructors perform per-item binary approval or rejection for targeted re-generation; re-generated items are re-validated and re-reviewed. If automated re-generation repeatedly fails, instructors can revert the target item to the confirmed source revision as a safe exit, returning it to `pending_review` for mandatory instructor re-approval (never auto-approved). After all items are accepted, instructors review and can adjust the two independent shuffle choices (none, question order only, option order only, or both); the system applies the selected permutation, synchronizes keys and solutions, provides package preview, and records final instructor approval.
 - **UC10 — Export:** Package approved exams into PDF and clean LaTeX/Markdown bundles, and save the session; provide exams, synchronized keys, and detailed solutions for assessment use and manual grading (automated student grading is excluded).
-- **UC11–13 — Supporting Behavior:** Extract source structure, synthesize question variants, keys, and step-by-step solutions under internal blueprints, and check structure and answer consistency. Mathematical verification runs where supported and informs the 3–5-star answer-verification level; unsupported questions remain subject to instructor review. Advanced features like preserved DOCX layout or interactive difficulty adjustment are extensions.
+- **UC11–13 — Supporting Behavior:** Extract source structure, synthesize question variants, keys, and step-by-step solutions under internal blueprints, and check structure and answer consistency. Mathematical verification runs where supported; unsupported questions remain subject to instructor review. Advanced features like preserved DOCX layout or interactive difficulty adjustment are extensions.
 
 ---
 
 ## 5. Proposed User Workflow and Pipeline
 
-The end-to-end workflow comprises three core stages: **Source Exam Preparation**, **Isomorphic Generation**, and **Review and Final Export** (Figure 2). Instructors maintain granular control through question-by-question inspection with binary accept/reject decisions, allowing individual flawed variants to be selectively regenerated without discarding the entire draft. A closed review loop ensures that every regenerated item is re-checked and re-reviewed before final export. After all items are approved, instructors choose whether to shuffle question order, shuffle answer options, or retain the original order.
+The end-to-end workflow comprises three core stages: **Source Exam Preparation**, **Isomorphic Generation**, and **Review and Final Export** (Figure 2). Instructors maintain granular control through question-by-question inspection with binary accept/reject decisions, allowing individual flawed variants to be selectively regenerated without discarding the entire draft. A closed review loop ensures that every regenerated item is re-checked and re-reviewed before final export. After all items are approved, instructors confirm or update their shuffle preferences (choosing among four valid combinations: no shuffle, question order only, option order only, or both).
 
 ### Workflow and Pipeline Diagram (Figure 2)
 
@@ -172,10 +172,10 @@ flowchart TB
     %% ============================================================
     subgraph Stage2 ["02. Isomorphic Generation (Configure → Check → Generate)"]
         direction TB
-        S2_1["▶ INSTRUCTOR: Requirements<br/>• Select version count N = 1–4<br/>• No variation-mode or ordering controls"]
+        S2_1["▶ INSTRUCTOR: Requirements<br/>• Select version count N = 1–4<br/>• Two shuffle toggles (default OFF/OFF)<br/>• Variation modes derived by backend"]
         S2_2["◆ SYSTEM: Rule Compatibility<br/>• Use backend-controlled internal blueprints<br/>• Validate version count and internal constraints"]
         S2_Warn{{"↺ If Requirements Cannot Be Met:<br/>Explain issue; instructor adjusts version count if needed"}}
-        S2_3["◆ SYSTEM: Draft Generation<br/>• Synthesize items (N ≤ 4); check and rate answers (3–5 stars)<br/>• Up to 3 retries for definite errors; flag unverified items"]
+        S2_3["◆ SYSTEM: Draft Generation<br/>• Synthesize items (N ≤ 4); validate structure and math<br/>• Up to 3 retries (4 total attempts); confirmed-source fallback if exhausted"]
         S2_Res["✓ Stage 2 Deliverable:<br/>N full draft versions, keys and check results"]
 
         S2_1 --> S2_2
@@ -191,9 +191,9 @@ flowchart TB
     subgraph Stage3 ["03. Review and Final Export (Compare → Approve → Export)"]
         direction TB
         S3_1["▶ INSTRUCTOR: Item Review<br/>• Inspect variants question-by-question<br/>• Accept valid items or reject for re-gen"]
-        S3_Warn{{"↺ If An Item Is Rejected:<br/>Regenerate → auto-check → re-review<br/>(or revert to source item if retry fails)"}}
-        S3_Shuffle["▶ INSTRUCTOR: Shuffle Choice<br/>• No shuffle / shuffle questions / shuffle options<br/>• Choose after item review"]
-        S3_2["◆ SYSTEM: Synchronization<br/>• Apply selected shuffle mode (or none)<br/>• Synchronize keys and detailed solutions"]
+        S3_Warn{{"↺ If An Item Is Rejected:<br/>Regenerate → auto-check → re-review<br/>(or revert to confirmed source revision; requires re-review)"}}
+        S3_Shuffle["▶ INSTRUCTOR: Shuffle Configuration<br/>• Confirm 2 independent shuffle toggles<br/>• 4 valid combinations: none, questions, options, both"]
+        S3_2["◆ SYSTEM: Synchronization<br/>• Apply selected shuffle permutations<br/>• Synchronize keys and detailed solutions"]
         S3_3["▶ INSTRUCTOR: Final Approval<br/>• Preview complete exams and answer keys<br/>• Approve final multi-version package"]
         S3_4["◆ SYSTEM: Export and Save<br/>• Export PDF, clean LaTeX/MD, keys and solutions<br/>• Save session for download and reuse"]
         S3_Res["✓ Stage 3 Deliverable:<br/>Approved PDF / LaTeX exams, keys and solutions"]
@@ -215,7 +215,7 @@ flowchart TB
     S2_3 -. "Re-validated" .-> S3_1
 ```
 
-> **Figure 2: The three-stage user/function pipeline.** Blue cards (`▶`) show instructor actions; purple and teal cards (`◆`) show system functions. Orange dashed paths (`↺`) are conditional exceptions. Stage-header arrows show the left-to-right stage order. In Stage 1, instructors confirm extracted questions and keys **before** the backend creates hidden internal blueprints (file errors prompt a re-upload). In Stage 2, instructors choose only the version count; automated checks report answer-verification levels rather than claiming universal mathematical proof. In Stage 3, rejected items trigger targeted regeneration and automated checking before returning to Item Review (with a safe fallback to revert to source items); after all items are approved, instructors choose the shuffling mode. Stage 3 corresponds directly to UC09.
+> **Figure 2: The three-stage user/function pipeline.** Blue cards (`▶`) show instructor actions; purple and teal cards (`◆`) show system functions. Orange dashed paths (`↺`) are conditional exceptions. Stage-header arrows show the left-to-right stage order. In Stage 1, instructors confirm extracted questions and keys **before** the backend creates hidden internal blueprints (file errors prompt a re-upload). In Stage 2, instructors choose version count $N \in [1, 4]$ and set two independent shuffle preferences (questions/options, defaulting to OFF/OFF); variation modes are derived internally by the backend. In Stage 3, rejected items trigger targeted regeneration and automated checking before returning to Item Review (with a safe fallback to revert to the confirmed source revision for mandatory re-review; never auto-approved); after all items are approved, instructors confirm or adjust their shuffle preferences (four valid combinations) before synchronization, preview, and final approval. Stage 3 corresponds directly to UC09.
 
 ---
 
@@ -227,7 +227,7 @@ flowchart TB
 ### 6.2 Main Screens and User Control
 - Provide sign-in, dashboard, import/preview, configuration, review/comparison, and preview/export screens.
 - The Stage 1 preview screen displays extracted source questions with KaTeX rendering, allowing instructors to verify extraction accuracy and confirm the source. Only after confirmation does the backend build hidden internal blueprints; instructors are not shown or asked to approve blueprint rules.
-- The Stage 3 review screen presents side-by-side comparison with binary Accept/Reject actions per item (disallowing manual text edits to preserve blueprint validity), 3–5-star answer-verification levels and warning badges for checks that cannot establish correctness, targeted regeneration, and a safe fallback option to revert persistent failures to the verified source question. After item approval, instructors select no shuffle, question-order shuffle, or answer-option shuffle before final preview and export.
+- The Stage 3 review screen presents side-by-side comparison with binary Accept/Reject actions per item (disallowing manual text edits to preserve blueprint validity), validation status and warning badges for checks that cannot establish correctness, targeted regeneration, and a safe fallback option to revert persistent failures to the confirmed source revision for mandatory re-review. After item approval, instructors confirm or adjust their two independent shuffle choices (supporting four valid combinations: none, question order only, option order only, or both) before final preview and export.
 
 ### 6.3 Storage and AI Integration
 - Store account references, sessions, sources, rules, configurations, versions, keys, approval decisions, and interaction history. History includes instructor requests, AI outputs, and approval/rejection decisions; the chosen authentication mechanism manages sign-in sessions.
@@ -248,7 +248,7 @@ flowchart TB
 
 ## 8. Expected Outcomes and Evaluation Plan
 
-- **Validity:** Measure correct-key rates, exactly one correct option, and duplicate choices; record sample size and checking methods, supplemented by instructor review. Evaluate 3–5-star answer-verification levels against independently reviewed outcomes without treating stars as calibrated correctness probabilities.
+- **Validity:** Measure correct-key rates, exactly one correct option, and duplicate choices; record sample size and checking methods, supplemented by instructor review. Evaluate proposed 3–5-star answer-verification levels (if approved and implemented; otherwise evaluating standard categorical validation reports) against independently reviewed outcomes without treating stars as calibrated correctness probabilities.
 - **Structure and difficulty:** Instructors assess objectives, solving methods, calculation burden, and distractor plausibility; compare learner performance and completion time across variants if a pilot is feasible.
 - **Efficiency:** Measure time savings by comparing manual and AI-assisted preparation for equivalent tasks, accounting for review time and regeneration overhead; record accepted output counts.
 - **Stability:** Test the complete workflow, incomplete input, extraction/API failures, and rejection handling; measure latency, failure rates, and recovery.
