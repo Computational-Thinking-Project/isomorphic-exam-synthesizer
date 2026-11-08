@@ -1,6 +1,6 @@
 # W4-MVP-11 / 21 — Plan OPS và bàn giao demo của Đạt
 
-- Owner phần chuẩn bị trong repo: Trương Thành Đạt (`Thanhdat3010`), bắt đầu 07/11/2026 theo yêu cầu trực tiếp. Quyền cloud, người thay thế và availability cuối tuần chưa được xác nhận; không suy từ quyền sửa repo.
+- Owner phần OPS theo phân công W4 và yêu cầu tiếp tục của Đạt: Trương Thành Đạt (`Thanhdat3010`), bắt đầu 07/11/2026 theo yêu cầu trực tiếp. Quyền cloud, người thay thế và availability cuối tuần chưa được xác nhận; không suy từ quyền sửa repo.
 - Nguồn: [W4 assignment v2.0](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/51a919861089f0475a7a5f8ec16acfb0c41a3cd2/docs/tasks/W4_ASSIGNMENT%20%281%29.md), [task detail](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/51a919861089f0475a7a5f8ec16acfb0c41a3cd2/docs/tasks/W4_TASK_DETAIL.md). Bản nguồn còn ghi chờ owner xác nhận; lời Duy ưu tiên khép PR cũ trước W4.
 - Workflow v0.1 proposed, docs baseline `506384b`; author mode, M2/M3. Nhánh `docs/w4-ops-runbook`, rẽ từ dev `73583d7`. Reviewer đề xuất Duy (BE/OPS), Hùng (Storage), Quỳnh nhận môi trường; chưa có approval.
 - Deadline dưới đây theo W4, UTC+7; là mốc cần giao, chưa phải ETA đã xác nhận. Không thay bằng lịch tuần thông thường.
@@ -67,3 +67,9 @@ Nguồn chuẩn ENV0: [Issue53](https://github.com/Computational-Thinking-Projec
 - Q09/Q10 Storage, Golden/oracle và live identities vẫn cần owners giao. Destructive tests chỉ local/isolated DB; không chạy trên production DB.
 - PR51 preparation có thể Ready/merge sau review độc lập + final CI; **không cần deployment/G0/G1/G2 PASS**. W4-MVP11/21 Integrated Done vẫn cần proof thật.
 - Trạng thái tách biệt: LOCAL_READY (local Docker/tests) → DEPLOYED_PRIVATE_BETA (HTTPS/access gate/real services/exactSHA/ledger/owner) → G0 integrated → G1 Golden6/6 → G2 demo; PUBLIC_GO/NO_GO là quyết định riêng sau proof P0. Hiện chỉ tooling isolated verified, chưa LOCAL_READY toàn stack.
+
+## Bàn giao tiếp 08/11 — review và ENV0-1
+
+Đạt tiếp tục phần OPS11/21 theo phân công và yêu cầu thực hiện; không cần giao lại task. Quyền truy cập host/cloud, backup và lịch cá nhân vẫn cần dữ liệu thực tế. [So sánh hosting0đ](../w4-hosting-options.md) đã chuẩn bị, chưa chọn provider/chạy cloud. PR51 đã request Duy/Hùng review chính thức.
+
+PR50@a5a31e2: reviewer verified F01–F03 và GitHub Approve; F05 mapping canonical persistence là non-blocking. PR52@9e9d6f3: SQL embedded probe xác nhận lifecycle/ACL, nhưng test F01 chờ sai message guard009; đã Request Changes, real PostgreSQL/races chưa verified. Không dùng kết quả PGlite thay live DB. PR30 F02 tiếp tục chờ owner. [Candidate017](../w4-migration-candidate.md) cập nhật riêng; historical inventory giữ nguyên.
