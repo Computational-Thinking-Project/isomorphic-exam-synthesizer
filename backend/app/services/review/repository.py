@@ -44,8 +44,8 @@ def _get_rows(res: Any) -> List[Dict[str, Any]]:
     return []
 
 
-def _map_rpc_exception(exc: Exception) -> ReviewDomainException:
-    """Map PostgreSQL domain exception messages from Migration 006 RPCs to ReviewDomainException."""
+def _map_rpc_exception(exc: Exception, rpc_name: Optional[str] = None) -> ReviewDomainException:
+    """Map PostgreSQL domain exception messages from RPCs to ReviewDomainException."""
     msg = str(exc)
     if "REVIEW_NOT_FOUND" in msg or "P0002" in msg:
         return ReviewDomainException(
@@ -81,15 +81,19 @@ def _map_rpc_exception(exc: Exception) -> ReviewDomainException:
         return ReviewDomainException(
             409, "ERR_REVIEW_NO_SNAPSHOT", "Không tìm thấy snapshot dữ liệu sinh hợp lệ cho phiên thi"
         )
-    if "REVIEW_SOURCE_MISMATCH" in msg:
-        return ReviewDomainException(
-            503, "ERR_SOURCE_MISMATCH", "Dữ liệu nguồn đã xác nhận không khớp hoặc bị thiếu"
-        )
     if "REVIEW_INVARIANT_VIOLATION" in msg:
         return ReviewDomainException(
             503, "ERR_REVIEW_INVARIANT_VIOLATION", "Phát hiện dữ liệu biến thể vi phạm tính toàn vẹn (invariant violation)"
         )
-    if "REVIEW_INVALID_PAYLOAD" in msg or "REVIEW_SOURCE_MISMATCH" in msg:
+    if "REVIEW_SOURCE_MISMATCH" in msg:
+        if rpc_name == "get_review_current_snapshot":
+            return ReviewDomainException(
+                503, "ERR_SOURCE_MISMATCH", "Dữ liệu nguồn đã xác nhận không khớp hoặc bị thiếu"
+            )
+        return ReviewDomainException(
+            422, "ERR_INVALID_PAYLOAD", "Dữ liệu gửi lên không hợp lệ hoặc không khớp nguồn đề"
+        )
+    if "REVIEW_INVALID_PAYLOAD" in msg:
         return ReviewDomainException(
             422, "ERR_INVALID_PAYLOAD", "Dữ liệu gửi lên không hợp lệ hoặc không khớp nguồn đề"
         )
@@ -197,7 +201,7 @@ class ReviewRepository:
         try:
             response = client.rpc(name, parameters).execute()
         except Exception as exc:
-            error = _map_rpc_exception(exc)
+            error = _map_rpc_exception(exc, rpc_name=name)
             if worker and error.status_code == 403:
                 error = ReviewDomainException(
                     503, "ERR_DATABASE_UNAVAILABLE", "Worker configuration unavailable"

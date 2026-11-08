@@ -89,7 +89,7 @@ interface ReviewSnapshotSlot {
 
 interface ReviewSnapshotCandidate {
   candidate_id: string; // UUID (version_questions.id) - Dùng ID này để gọi /accept, /reject, /revert
-  status: "pending_review" | "approved" | "rejected";
+  status: "pending_review" | "approved" | "rejected" | "regenerating";
   content: string;
   options: string[]; // Exactly 4 strings: [A, B, C, D]
   correct_key: string; // "A" | "B" | "C" | "D"
@@ -140,3 +140,4 @@ interface ReviewSnapshotCandidate {
   - `POST /api/sessions/{session_id}/questions/{candidate_id}/revert`
 - **Tải lại dữ liệu (Refetch):** Sau khi thực hiện bất kỳ thao tác ghi (Write) nào thành công, giao diện gọi lại `GET /api/sessions/{session_id}/review/snapshot` để cập nhật trạng thái mới nhất và làm mới token.
 - **Không dùng `question_no` làm ID:** Thứ tự `question_no` có thể thay đổi sau khi shuffle, do đó không dùng số thứ tự câu làm khóa chính trong state UI.
+

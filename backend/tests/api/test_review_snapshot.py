@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.api.dependencies import get_current_user, get_user_db
@@ -93,14 +92,18 @@ def test_review_snapshot_invalid_uuid(
 def test_review_snapshot_ownership_denied_404(
     client: TestClient, mock_current_user: CurrentUser, auth_headers: dict
 ):
-    """Foreign session returns 404 (RLS concealment policy)."""
+    """Foreign session returns 404 (RLS concealment policy via RPC)."""
     app.dependency_overrides[get_current_user] = lambda: mock_current_user
     app.dependency_overrides[get_user_db] = lambda: MagicMock()
 
     try:
-        with patch(
-            "app.api.routes.review.assert_ownership",
-            side_effect=HTTPException(status_code=404, detail="Resource not found in 'exam_sessions'"),
+        with patch.object(
+            ReviewService,
+            "get_current_snapshot",
+            new_callable=AsyncMock,
+            side_effect=ReviewDomainException(
+                404, "ERR_QUESTION_NOT_FOUND", "Không tìm thấy câu hỏi hoặc phiên thi"
+            ),
         ):
             res = client.get(
                 f"/api/sessions/{MOCK_SESSION_ID}/review/snapshot",
@@ -110,19 +113,24 @@ def test_review_snapshot_ownership_denied_404(
         app.dependency_overrides.clear()
 
     assert res.status_code == 404
+    assert res.json()["error_code"] == "ERR_QUESTION_NOT_FOUND"
 
 
 def test_review_snapshot_ownership_denied_403(
     client: TestClient, mock_current_user: CurrentUser, auth_headers: dict
 ):
-    """Explicit cross-owner denial returns 403 when configured."""
+    """Explicit permission denial returns 403 when configured."""
     app.dependency_overrides[get_current_user] = lambda: mock_current_user
     app.dependency_overrides[get_user_db] = lambda: MagicMock()
 
     try:
-        with patch(
-            "app.api.routes.review.assert_ownership",
-            side_effect=HTTPException(status_code=403, detail="You do not have permission to access this resource"),
+        with patch.object(
+            ReviewService,
+            "get_current_snapshot",
+            new_callable=AsyncMock,
+            side_effect=ReviewDomainException(
+                403, "ERR_FORBIDDEN", "Không có quyền thực hiện thao tác này"
+            ),
         ):
             res = client.get(
                 f"/api/sessions/{MOCK_SESSION_ID}/review/snapshot",
@@ -442,3 +450,59 @@ def test_review_snapshot_candidate_options_validation():
             is_reverted=False,
             updated_at="2026-11-08T08:00:00Z",
         )
+
+
+def test_review_snapshot_200_regenerating_status(
+    client: TestClient, mock_current_user: CurrentUser, auth_headers: dict
+):
+    """GET snapshot returns 200 with candidate in 'regenerating' status and ready=false."""
+    fixture_data = _load_fixture("complete.json")
+    fixture_data["versions"][0]["slots"][0]["candidate"]["status"] = "regenerating"
+    fixture_data["progress"]["ready"] = False
+    expected_resp = ReviewSnapshotResponse.model_validate(fixture_data)
+
+    app.dependency_overrides[get_current_user] = lambda: mock_current_user
+    app.dependency_overrides[get_user_db] = lambda: MagicMock()
+
+    try:
+        with patch.object(
+            ReviewService,
+            "get_current_snapshot",
+            new_callable=AsyncMock,
+            return_value=expected_resp,
+        ):
+            res = client.get(
+                f"/api/sessions/{MOCK_SESSION_ID}/review/snapshot",
+                headers=auth_headers,
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert res.status_code == 200
+    data = res.json()
+    cand = data["versions"][0]["slots"][0]["candidate"]
+    assert cand["status"] == "regenerating"
+    assert data["progress"]["ready"] is False
+
+
+def test_exception_mapping_context_distinction():
+    """Verify REVIEW_SOURCE_MISMATCH maps to 503 for snapshot RPC, but 422 for write RPCs."""
+    from app.services.review.repository import _map_rpc_exception
+
+    exc = Exception("P0001: REVIEW_SOURCE_MISMATCH")
+
+    # Snapshot RPC context -> 503
+    snapshot_err = _map_rpc_exception(exc, rpc_name="get_review_current_snapshot")
+    assert snapshot_err.status_code == 503
+    assert snapshot_err.error_code == "ERR_SOURCE_MISMATCH"
+
+    # Write RPC context (e.g. review_accept_question) -> 422
+    write_err = _map_rpc_exception(exc, rpc_name="review_accept_question")
+    assert write_err.status_code == 422
+    assert write_err.error_code == "ERR_INVALID_PAYLOAD"
+
+    # Default / no rpc_name -> 422 (preserving legacy Write API behavior)
+    default_err = _map_rpc_exception(exc)
+    assert default_err.status_code == 422
+    assert default_err.error_code == "ERR_INVALID_PAYLOAD"
+

@@ -171,7 +171,6 @@ async def get_review_snapshot_endpoint(
 ) -> ReviewSnapshotResponse:
     """Query current review candidate snapshot for the session."""
     resource_ids(session_id)
-    assert_ownership("exam_sessions", session_id, current_user.id, db=db)
 
     # Set cache control header
     response.headers["Cache-Control"] = "no-store"

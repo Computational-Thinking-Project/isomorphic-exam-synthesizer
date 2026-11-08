@@ -16,11 +16,13 @@ DECLARE
   src RECORD;
   q_rec RECORD;
   r_rec RECORD;
+  auth_prog jsonb;
   
   sources_json jsonb := '[]'::jsonb;
   versions_json jsonb := '[]'::jsonb;
   slots_json jsonb;
   candidate_json jsonb;
+  response_without_token jsonb;
   
   v_norm_options jsonb;
   v_val_report jsonb;
@@ -33,8 +35,8 @@ DECLARE
   approved_slots int := 0;
   missing_slots int := 0;
   is_read_only boolean := false;
+  is_ready boolean := false;
   
-  freshness_buf text := '';
   freshness_token text := '';
   
   v_code text;
@@ -52,7 +54,7 @@ BEGIN
     RAISE EXCEPTION 'REVIEW_NOT_READY' USING ERRCODE = '55000';
   END IF;
 
-  IF s.status IN ('approved', 'exported') THEN
+  IF s.status IN ('approved', 'exported') OR s.approved_at IS NOT NULL THEN
     RAISE EXCEPTION 'REVIEW_LOCKED' USING ERRCODE = '55000';
   END IF;
 
@@ -62,7 +64,11 @@ BEGIN
     WHERE session_id = s.id AND is_finalized = true
   ) INTO has_post_shuffle;
 
-  IF s.status = 'reviewed' AND has_post_shuffle THEN
+  IF s.status = 'reviewed' AND (has_post_shuffle OR EXISTS (
+    SELECT 1 FROM public.answer_keys ak 
+    JOIN public.exam_versions ev ON ev.id = ak.version_id 
+    WHERE ev.session_id = s.id
+  )) THEN
     RAISE EXCEPTION 'REVIEW_POST_SHUFFLE_LOCKED' USING ERRCODE = '55000';
   END IF;
 
@@ -78,7 +84,22 @@ BEGIN
   END IF;
 
   -- 4. Invariant checks: Fail-closed on corrupted candidate state
-  -- a) Check for duplicate current candidates on any slot
+  -- a) Source uniqueness: Ensure unique source IDs and question numbers
+  IF EXISTS (
+    SELECT (x->>'source_question_id')::uuid
+    FROM jsonb_array_elements(job.snapshot_payload->'confirmed_sources') x
+    GROUP BY (x->>'source_question_id')::uuid
+    HAVING count(*) > 1
+  ) OR EXISTS (
+    SELECT (x->>'question_no')::int
+    FROM jsonb_array_elements(job.snapshot_payload->'confirmed_sources') x
+    GROUP BY (x->>'question_no')::int
+    HAVING count(*) > 1
+  ) THEN
+    RAISE EXCEPTION 'REVIEW_INVARIANT_VIOLATION: duplicate source ID or question_no in frozen sources' USING ERRCODE = '22023';
+  END IF;
+
+  -- b) Check for duplicate current candidates on any slot
   IF EXISTS (
     SELECT q.version_id, q.source_question_id
     FROM public.version_questions q
@@ -90,7 +111,7 @@ BEGIN
     RAISE EXCEPTION 'REVIEW_INVARIANT_VIOLATION: duplicate current candidate' USING ERRCODE = '22023';
   END IF;
 
-  -- b) Check for orphan/foreign current candidates not matching confirmed sources
+  -- c) Check for orphan/foreign current candidates not matching confirmed sources
   IF EXISTS (
     SELECT 1
     FROM public.version_questions q
@@ -103,6 +124,32 @@ BEGIN
       )
   ) THEN
     RAISE EXCEPTION 'REVIEW_INVARIANT_VIOLATION: foreign or orphan candidate' USING ERRCODE = '22023';
+  END IF;
+
+  -- d) Version scope: Reject current candidates in versions outside frozen N versions
+  IF EXISTS (
+    SELECT 1
+    FROM public.version_questions q
+    JOIN public.exam_versions ev ON ev.id = q.version_id
+    WHERE ev.session_id = s.id AND q.is_current = true
+      AND ev.version_code NOT IN (
+        SELECT (100 + i)::text FROM generate_series(1, job.n_versions) i
+      )
+  ) THEN
+    RAISE EXCEPTION 'REVIEW_INVARIANT_VIOLATION: current candidate in extra version outside frozen scope' USING ERRCODE = '22023';
+  END IF;
+
+  -- e) Canonical mapping: Ensure canonical_question_no matches frozen source question_no
+  IF EXISTS (
+    SELECT 1
+    FROM public.version_questions q
+    JOIN public.exam_versions ev ON ev.id = q.version_id
+    JOIN jsonb_array_elements(job.snapshot_payload->'confirmed_sources') cs
+      ON (cs->>'source_question_id')::uuid = q.source_question_id
+    WHERE ev.session_id = s.id AND q.is_current = true
+      AND q.canonical_question_no IS DISTINCT FROM (cs->>'question_no')::int
+  ) THEN
+    RAISE EXCEPTION 'REVIEW_INVARIANT_VIOLATION: canonical_question_no mismatch with frozen source question_no' USING ERRCODE = '22023';
   END IF;
 
   -- 5. Build canonical sources list from frozen snapshot payload
@@ -144,8 +191,6 @@ BEGIN
 
   expected_slots := job.n_versions * n_sources;
   is_read_only := (s.status IN ('partial_generated', 'failed'));
-
-  freshness_buf := coalesce(job.confirmed_source_hash, '') || ':' || job.id::text || ':' || job.confirmation_id::text;
 
   -- 6. Build Version Matrix & Slots
   FOR v_rec IN 
@@ -226,7 +271,9 @@ BEGIN
             v_origin := 'reverted';
           ELSIF r_rec.id IS NOT NULL AND r_rec.result_kind = 'ORIGINAL_CLONE' THEN
             v_origin := 'original_clone';
-          ELSIF (r_rec.id IS NOT NULL AND (r_rec.result_kind = 'AI_RESULT' OR r_rec.is_success)) THEN
+          ELSIF r_rec.id IS NOT NULL AND r_rec.result_kind = 'AI_RESULT' THEN
+            v_origin := 'ai_generated';
+          ELSIF r_rec.id IS NOT NULL AND r_rec.is_success THEN
             v_origin := 'ai_generated';
           ELSE
             v_origin := 'unknown';
@@ -246,16 +293,7 @@ BEGIN
             'is_reverted', coalesce(q_rec.is_reverted, false),
             'updated_at', to_char(q_rec.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
           );
-
-          freshness_buf := freshness_buf || '|' || v_rec.version_index::text || ':' || src.source_question_id::text
-                           || ':' || q_rec.id::text || ':' || q_rec.status::text || ':' 
-                           || coalesce(q_rec.has_warning::text, 'f') || ':' || coalesce(q_rec.is_reverted::text, 'f')
-                           || ':' || to_char(q_rec.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"');
-        ELSE
-          freshness_buf := freshness_buf || '|' || v_rec.version_index::text || ':' || src.source_question_id::text || ':null';
         END IF;
-      ELSE
-        freshness_buf := freshness_buf || '|' || v_rec.version_index::text || ':' || src.source_question_id::text || ':no_version';
       END IF;
 
       slots_json := slots_json || jsonb_build_array(
@@ -278,27 +316,45 @@ BEGIN
   END LOOP;
 
   missing_slots := expected_slots - current_slots;
-  freshness_token := encode(sha256(convert_to(freshness_buf, 'UTF8')), 'hex');
 
-  -- 7. Assemble final response
-  RETURN jsonb_build_object(
+  -- 7. Query authoritative review progress helper for readiness consensus
+  BEGIN
+    auth_prog := public._review_progress(s.id);
+    IF (auth_prog->>'expected_slots')::int <> expected_slots THEN
+      RAISE EXCEPTION 'REVIEW_INVARIANT_VIOLATION: progress mismatch with authoritative review state' USING ERRCODE = '22023';
+    END IF;
+    is_ready := coalesce((auth_prog->>'ready')::boolean, false);
+  EXCEPTION
+    WHEN SQLSTATE '22023' THEN
+      RAISE;
+    WHEN OTHERS THEN
+      -- If _review_progress fails due to missing legacy configuration, fallback to explicit formula
+      is_ready := (expected_slots > 0 AND current_slots = expected_slots AND approved_slots = expected_slots);
+  END;
+
+  -- 8. Assemble canonical response payload without token
+  response_without_token := jsonb_build_object(
     'session_id', s.id,
     'session_status', s.status,
     'read_only', is_read_only,
     'confirmation_id', job.confirmation_id,
     'job_snapshot_id', job.id,
     'confirmed_source_hash', job.confirmed_source_hash,
-    'freshness_token', freshness_token,
     'progress', jsonb_build_object(
       'expected_slots', expected_slots,
       'current_slots', current_slots,
       'approved_slots', approved_slots,
       'missing_slots', missing_slots,
-      'ready', (expected_slots > 0 AND current_slots = expected_slots AND approved_slots = expected_slots)
+      'ready', is_ready
     ),
     'sources', sources_json,
     'versions', versions_json
   );
+
+  -- 9. Deterministic Freshness Token: SHA-256 of the complete canonical response payload
+  freshness_token := encode(sha256(convert_to(response_without_token::text, 'UTF8')), 'hex');
+
+  RETURN response_without_token || jsonb_build_object('freshness_token', freshness_token);
 END;
 $$;
 

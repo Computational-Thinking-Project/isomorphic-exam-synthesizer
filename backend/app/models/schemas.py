@@ -560,7 +560,7 @@ class ReviewSnapshotCandidate(BaseModel):
     """Biến thể câu hỏi hiện hành hiển thị tại một slot thẩm định (W4-MVP-03)."""
 
     candidate_id: UUID = Field(..., description="Mã biến thể câu hỏi (version_questions.id)")
-    status: Literal["pending_review", "approved", "rejected"] = Field(
+    status: Literal["pending_review", "approved", "rejected", "regenerating"] = Field(
         ..., description="Trạng thái thẩm định của biến thể"
     )
     content: str = Field(..., description="Nội dung câu hỏi biến thể")
