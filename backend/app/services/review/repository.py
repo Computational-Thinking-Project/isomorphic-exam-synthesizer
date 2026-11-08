@@ -73,6 +73,22 @@ def _map_rpc_exception(exc: Exception) -> ReviewDomainException:
         return ReviewDomainException(
             429, "ERR_REVIEW_QUOTA_EXHAUSTED", "Đã hết quota 30 lượt sinh lại của buổi review"
         )
+    if "REVIEW_NOT_READY" in msg or "REVIEW_POST_SHUFFLE_LOCKED" in msg:
+        return ReviewDomainException(
+            409, "ERR_REVIEW_STATE_CONFLICT", "Trạng thái phiên thi không hợp lệ cho thao tác thẩm định"
+        )
+    if "REVIEW_NO_SNAPSHOT" in msg:
+        return ReviewDomainException(
+            409, "ERR_REVIEW_NO_SNAPSHOT", "Không tìm thấy snapshot dữ liệu sinh hợp lệ cho phiên thi"
+        )
+    if "REVIEW_SOURCE_MISMATCH" in msg:
+        return ReviewDomainException(
+            503, "ERR_SOURCE_MISMATCH", "Dữ liệu nguồn đã xác nhận không khớp hoặc bị thiếu"
+        )
+    if "REVIEW_INVARIANT_VIOLATION" in msg:
+        return ReviewDomainException(
+            503, "ERR_REVIEW_INVARIANT_VIOLATION", "Phát hiện dữ liệu biến thể vi phạm tính toàn vẹn (invariant violation)"
+        )
     if "REVIEW_INVALID_PAYLOAD" in msg or "REVIEW_SOURCE_MISMATCH" in msg:
         return ReviewDomainException(
             422, "ERR_INVALID_PAYLOAD", "Dữ liệu gửi lên không hợp lệ hoặc không khớp nguồn đề"
@@ -289,6 +305,15 @@ class ReviewRepository:
                 "Action result could not be confirmed; retry with the same key",
             ) from exc
         return await self.load_question(session_id, receipt.question_id)
+
+    async def read_current_snapshot(self, session_id: str) -> Dict[str, Any]:
+        """Read atomic review candidate snapshot via PostgreSQL RPC (W4-MVP-03)."""
+        data = self._rpc("get_review_current_snapshot", {"p_session_id": session_id})
+        if not isinstance(data, dict):
+            raise ReviewDomainException(
+                503, "ERR_SNAPSHOT_FAILED", "RPC snapshot returned non-object response"
+            )
+        return data
 
     async def progress(self, session_id: str) -> Dict[str, Any]:
         data = self._rpc("review_get_progress", {"p_session_id": session_id})

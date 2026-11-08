@@ -1,0 +1,87 @@
+{
+  "session_id": "10000000-0000-0000-0000-000000000003",
+  "session_status": "generated",
+  "read_only": false,
+  "confirmation_id": "90000000-0000-0000-0000-000000000001",
+  "job_snapshot_id": "a0000000-0000-0000-0000-000000000001",
+  "confirmed_source_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "freshness_token": "c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef012",
+  "progress": {
+    "expected_slots": 2,
+    "current_slots": 2,
+    "approved_slots": 1,
+    "missing_slots": 0,
+    "ready": false
+  },
+  "sources": [
+    {
+      "source_question_id": "20000000-0000-0000-0000-000000000001",
+      "question_no": 1,
+      "source_revision_id": "b0000000-0000-0000-0000-000000000001",
+      "content": "Giải phương trình 2x + 4 = 0.",
+      "options": ["x = -2", "x = 2", "x = -4", "x = 4"],
+      "correct_key": "A",
+      "solution_md": "Ta có 2x = -4 suy ra x = -2."
+    }
+  ],
+  "versions": [
+    {
+      "version_index": 1,
+      "version_code": "101",
+      "version_id": "30000000-0000-0000-0000-000000000001",
+      "slots": [
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000001",
+          "question_no": 1,
+          "candidate": {
+            "candidate_id": "40000000-0000-0000-0000-000000000009",
+            "status": "pending_review",
+            "content": "Giải phương trình 5x + 10 = 0.",
+            "options": ["x = -2", "x = 2", "x = -5", "x = 5"],
+            "correct_key": "A",
+            "solution_md": "Ta có 5x = -10 suy ra x = -2.",
+            "has_warning": false,
+            "validation_report": {
+              "solver": "sympy",
+              "status": "passed",
+              "regenerated": true,
+              "attempt": 1
+            },
+            "validation_source": "version_question",
+            "origin": "regenerated",
+            "is_reverted": false,
+            "updated_at": "2026-11-08T09:00:00Z"
+          }
+        }
+      ]
+    },
+    {
+      "version_index": 2,
+      "version_code": "102",
+      "version_id": "30000000-0000-0000-0000-000000000002",
+      "slots": [
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000001",
+          "question_no": 1,
+          "candidate": {
+            "candidate_id": "40000000-0000-0000-0000-000000000002",
+            "status": "approved",
+            "content": "Giải phương trình 4x + 8 = 0.",
+            "options": ["x = 2", "x = -4", "x = -2", "x = 4"],
+            "correct_key": "C",
+            "solution_md": "Ta có 4x = -8 suy ra x = -2.",
+            "has_warning": false,
+            "validation_report": {
+              "solver": "sympy",
+              "status": "passed"
+            },
+            "validation_source": "generation_result",
+            "origin": "ai_generated",
+            "is_reverted": false,
+            "updated_at": "2026-11-08T08:00:00Z"
+          }
+        }
+      ]
+    }
+  ]
+}

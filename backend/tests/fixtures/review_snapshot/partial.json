@@ -1,0 +1,171 @@
+{
+  "session_id": "10000000-0000-0000-0000-000000000002",
+  "session_status": "partial_generated",
+  "read_only": true,
+  "confirmation_id": "90000000-0000-0000-0000-000000000001",
+  "job_snapshot_id": "a0000000-0000-0000-0000-000000000001",
+  "confirmed_source_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "freshness_token": "b2c3d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef01",
+  "progress": {
+    "expected_slots": 6,
+    "current_slots": 5,
+    "approved_slots": 0,
+    "missing_slots": 1,
+    "ready": false
+  },
+  "sources": [
+    {
+      "source_question_id": "20000000-0000-0000-0000-000000000001",
+      "question_no": 1,
+      "source_revision_id": "b0000000-0000-0000-0000-000000000001",
+      "content": "Giải phương trình 2x + 4 = 0.",
+      "options": ["x = -2", "x = 2", "x = -4", "x = 4"],
+      "correct_key": "A",
+      "solution_md": "Ta có 2x = -4 suy ra x = -2."
+    },
+    {
+      "source_question_id": "20000000-0000-0000-0000-000000000002",
+      "question_no": 2,
+      "source_revision_id": "b0000000-0000-0000-0000-000000000002",
+      "content": "Tính đạo hàm của hàm số y = x^2.",
+      "options": ["y' = 2x", "y' = x", "y' = 2", "y' = x^2"],
+      "correct_key": "A",
+      "solution_md": "Đạo hàm của x^2 là 2x."
+    },
+    {
+      "source_question_id": "20000000-0000-0000-0000-000000000003",
+      "question_no": 3,
+      "source_revision_id": "b0000000-0000-0000-0000-000000000003",
+      "content": "Tìm nguyên hàm của hàm số f(x) = 1/x trên (0, +inf).",
+      "options": ["ln(x) + C", "1/x^2 + C", "-1/x^2 + C", "e^x + C"],
+      "correct_key": "A",
+      "solution_md": "Nguyên hàm của 1/x là ln|x| + C."
+    }
+  ],
+  "versions": [
+    {
+      "version_index": 1,
+      "version_code": "101",
+      "version_id": "30000000-0000-0000-0000-000000000001",
+      "slots": [
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000001",
+          "question_no": 1,
+          "candidate": {
+            "candidate_id": "40000000-0000-0000-0000-000000000001",
+            "status": "pending_review",
+            "content": "Giải phương trình 3x + 6 = 0.",
+            "options": ["x = 2", "x = -2", "x = -3", "x = 3"],
+            "correct_key": "B",
+            "solution_md": "Ta có 3x = -6 suy ra x = -2.",
+            "has_warning": false,
+            "validation_report": {
+              "solver": "sympy",
+              "status": "passed"
+            },
+            "validation_source": "generation_result",
+            "origin": "ai_generated",
+            "is_reverted": false,
+            "updated_at": "2026-11-08T08:00:00Z"
+          }
+        },
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000002",
+          "question_no": 2,
+          "candidate": {
+            "candidate_id": "40000000-0000-0000-0000-000000000002",
+            "status": "pending_review",
+            "content": "Tính đạo hàm của hàm số y = 3x^2.",
+            "options": ["y' = 6x", "y' = 3x", "y' = 6", "y' = x^2"],
+            "correct_key": "A",
+            "solution_md": "Đạo hàm của 3x^2 là 6x.",
+            "has_warning": false,
+            "validation_report": {
+              "solver": "sympy",
+              "status": "passed"
+            },
+            "validation_source": "generation_result",
+            "origin": "ai_generated",
+            "is_reverted": false,
+            "updated_at": "2026-11-08T08:00:00Z"
+          }
+        },
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000003",
+          "question_no": 3,
+          "candidate": {
+            "candidate_id": "40000000-0000-0000-0000-000000000003",
+            "status": "pending_review",
+            "content": "Tìm nguyên hàm của hàm số f(x) = 2/x trên (0, +inf).",
+            "options": ["2ln(x) + C", "ln(x) + C", "-2/x^2 + C", "2e^x + C"],
+            "correct_key": "A",
+            "solution_md": "Nguyên hàm của 2/x là 2ln(x) + C.",
+            "has_warning": false,
+            "validation_report": {
+              "solver": "sympy",
+              "status": "passed"
+            },
+            "validation_source": "generation_result",
+            "origin": "ai_generated",
+            "is_reverted": false,
+            "updated_at": "2026-11-08T08:00:00Z"
+          }
+        }
+      ]
+    },
+    {
+      "version_index": 2,
+      "version_code": "102",
+      "version_id": "30000000-0000-0000-0000-000000000002",
+      "slots": [
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000001",
+          "question_no": 1,
+          "candidate": {
+            "candidate_id": "40000000-0000-0000-0000-000000000004",
+            "status": "pending_review",
+            "content": "Giải phương trình 4x + 8 = 0.",
+            "options": ["x = 2", "x = -4", "x = -2", "x = 4"],
+            "correct_key": "C",
+            "solution_md": "Ta có 4x = -8 suy ra x = -2.",
+            "has_warning": false,
+            "validation_report": {
+              "solver": "sympy",
+              "status": "passed"
+            },
+            "validation_source": "generation_result",
+            "origin": "ai_generated",
+            "is_reverted": false,
+            "updated_at": "2026-11-08T08:00:00Z"
+          }
+        },
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000002",
+          "question_no": 2,
+          "candidate": {
+            "candidate_id": "40000000-0000-0000-0000-000000000005",
+            "status": "pending_review",
+            "content": "Tính đạo hàm của hàm số y = 5x^2.",
+            "options": ["y' = 10x", "y' = 5x", "y' = 10", "y' = x^2"],
+            "correct_key": "A",
+            "solution_md": "Đạo hàm của 5x^2 là 10x.",
+            "has_warning": false,
+            "validation_report": {
+              "solver": "sympy",
+              "status": "passed"
+            },
+            "validation_source": "generation_result",
+            "origin": "ai_generated",
+            "is_reverted": false,
+            "updated_at": "2026-11-08T08:00:00Z"
+          }
+        },
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000003",
+          "question_no": 3,
+          "candidate": null
+        }
+      ]
+    }
+  ]
+}

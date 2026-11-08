@@ -1,0 +1,54 @@
+{
+  "session_id": "10000000-0000-0000-0000-000000000004",
+  "session_status": "generated",
+  "read_only": false,
+  "confirmation_id": "90000000-0000-0000-0000-000000000001",
+  "job_snapshot_id": "a0000000-0000-0000-0000-000000000001",
+  "confirmed_source_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "freshness_token": "d4e5f60718293a4b5c6d7e8f90123456789abcdef0123456789abcdef0123",
+  "progress": {
+    "expected_slots": 1,
+    "current_slots": 1,
+    "approved_slots": 0,
+    "missing_slots": 0,
+    "ready": false
+  },
+  "sources": [
+    {
+      "source_question_id": "20000000-0000-0000-0000-000000000001",
+      "question_no": 1,
+      "source_revision_id": "b0000000-0000-0000-0000-000000000001",
+      "content": "Giải phương trình 2x + 4 = 0.",
+      "options": ["x = -2", "x = 2", "x = -4", "x = 4"],
+      "correct_key": "A",
+      "solution_md": "Ta có 2x = -4 suy ra x = -2."
+    }
+  ],
+  "versions": [
+    {
+      "version_index": 1,
+      "version_code": "101",
+      "version_id": "30000000-0000-0000-0000-000000000001",
+      "slots": [
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000001",
+          "question_no": 1,
+          "candidate": {
+            "candidate_id": "40000000-0000-0000-0000-000000000010",
+            "status": "pending_review",
+            "content": "Giải phương trình 2x + 4 = 0.",
+            "options": ["x = -2", "x = 2", "x = -4", "x = 4"],
+            "correct_key": "A",
+            "solution_md": "Ta có 2x = -4 suy ra x = -2.",
+            "has_warning": false,
+            "validation_report": null,
+            "validation_source": "unavailable",
+            "origin": "original_clone",
+            "is_reverted": false,
+            "updated_at": "2026-11-08T08:00:00Z"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,3 +1,26 @@
+## DEC-W4-MVP-03: Review Read API và Atomic Snapshot RPC (08/11/2026, proposed)
+
+- **Mã & Tiêu đề:** `DEC-W4-MVP-03: Review Read API / Current Candidate Snapshot`.
+- **Ngày & Người đề xuất:** 08/11/2026 — Coding Agent (Author) cho Duy (BE owner).
+- **Ngữ cảnh & Vấn đề (Context):**
+  - Giao diện Stage 3 (Review FE - `htbaax`) cần hiển thị đầy đủ ma trận $N \times M$ slots ($N$ phiên bản đề $\times M$ câu nguồn đã xác nhận).
+  - Trước đây chưa có endpoint đọc snapshot tập trung: frontend phải gọi các API rời rạc hoặc suy đoán câu hỏi hiện hành từ `exam_versions`, dễ gây sai lệch candidate cũ/mới (đặc biệt sau targeted regeneration, revert và F5).
+  - Cần bảo đảm tính nhất quán nguyên tử (single-transaction atomic snapshot), bảo vệ quyền sở hữu (owner authorization không dùng `service_role`), và ẩn hoàn toàn tài nguyên không thuộc sở hữu người dùng (RLS concealment trả về `404 Not Found`).
+- **Quyết định mới (Decision):**
+  1. **Migration 018 (`backend/migrations/018_review_current_snapshot.sql`):** Bổ sung PostgreSQL read-only RPC `public.get_review_current_snapshot(p_session_id uuid) RETURNS jsonb` với `SECURITY DEFINER` và `FOR SHARE` lock trên `exam_sessions`. Chỉ cấp `GRANT EXECUTE` cho `authenticated`, từ chối `anon` và `PUBLIC`.
+  2. **Frozen Canonical Sources:** Nguồn được đọc nguyên tử từ `generation_job_snapshots.snapshot_payload->'confirmed_sources'`, chuẩn hóa options 4 phần tử [A, B, C, D], không đọc live table để tránh lệch revision.
+  3. **Current-Only Candidate & Fail-Closed Guard:** Chỉ đọc candidate có `is_current = true`. Nếu phát hiện duplicate candidate hoặc orphan candidate ngoài danh sách nguồn đóng băng, RPC lập tức fail-closed với mã lỗi `503 Service Unavailable`.
+  4. **Provenance & Validation Resolution:**
+     - Phân định provenance rõ ràng: `regenerated` (có `regenerated_from_id`), `reverted` (`is_reverted = true`), `original_clone` (`result_kind = 'ORIGINAL_CLONE'`), `ai_generated` (`result_kind = 'AI_RESULT'`), hoặc `unknown`.
+     - Ưu tiên `version_questions.validation_report` nếu có dữ liệu; nếu rỗng, join đối soát với `generation_target_results.raw_result.validation`. Nếu cả hai thiếu, trả về `validation_report = null` và `validation_source = 'unavailable'` (không suy đoán passed).
+  5. **Freshness Token & Progress:** Tính toán SHA-256 token xác định từ snapshot ID, hash nguồn và trạng thái sorted các slot. `progress` tính trực tiếp trong cùng một transaction.
+  6. **Endpoint REST:** `GET /api/sessions/{session_id}/review/snapshot` trả về `Cache-Control: no-store`, mã lỗi 400 (invalid UUID), 401 (unauthorized), 404 (not found / foreign user), 409 (state conflict / generating / post-shuffle), 423 (locked / approved), 503 (invariant violation / RPC failure).
+- **Phạm vi ảnh hưởng (Impact):**
+  - Thêm `backend/migrations/018_review_current_snapshot.sql`.
+  - Cập nhật `backend/app/models/schemas.py`, `backend/app/services/review/repository.py`, `backend/app/services/review/service.py`, `backend/app/api/routes/review.py`.
+  - Thêm `docs/api/review-snapshot.md` và fixtures tại `backend/tests/fixtures/review_snapshot/`.
+  - Handoff contract cho Stage 3 Review FE (`htbaax`) và resume routing (Philip).
+
 ## DEC-DOCS-W4-001: Đồng bộ hóa tài liệu W4 theo Review M4 và Quyết định Sản phẩm (08/11/2026, proposed)
 
 - **Ngày / người đề xuất:** 08/11/2026 — Duy (PR #50), theo review M4 của Đạt (@Thanhdat3010).

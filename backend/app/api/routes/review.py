@@ -10,7 +10,7 @@ Exposes:
 import logging
 from typing import Any, Callable, Optional
 
-from fastapi import APIRouter, Depends, Header, Request, status
+from fastapi import APIRouter, Depends, Header, Request, Response, status
 from supabase import Client
 
 from app.api.dependencies import assert_ownership, get_current_user, get_service_db, get_user_db
@@ -19,6 +19,7 @@ from app.models.schemas import (
     RegeneratedQuestionResponse,
     ReviewActionResponse,
     ReviewProgressResponse,
+    ReviewSnapshotResponse,
 )
 from app.services.review.service import ReviewService, action_key, resource_ids
 
@@ -151,3 +152,29 @@ async def get_review_progress_endpoint(
 
     service = ReviewService(db=db)
     return await service.get_progress(session_id, current_user.id)
+
+
+@router.get(
+    "/{session_id}/review/snapshot",
+    response_model=ReviewSnapshotResponse,
+    summary="Get current candidate review snapshot (W4-MVP-03)",
+    description=(
+        "Đọc ma trận ứng viên biến thể hiện hành (current candidate snapshot) trước khi shuffle. "
+        "Bảo đảm tính nguyên tử, xác thực chủ sở hữu, trả về đủ N x M slot và provenance chi tiết."
+    ),
+)
+async def get_review_snapshot_endpoint(
+    session_id: str,
+    response: Response,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_user_db),
+) -> ReviewSnapshotResponse:
+    """Query current review candidate snapshot for the session."""
+    resource_ids(session_id)
+    assert_ownership("exam_sessions", session_id, current_user.id, db=db)
+
+    # Set cache control header
+    response.headers["Cache-Control"] = "no-store"
+
+    service = ReviewService(db=db)
+    return await service.get_current_snapshot(session_id, current_user.id)
