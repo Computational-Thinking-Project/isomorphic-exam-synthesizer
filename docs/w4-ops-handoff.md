@@ -1,31 +1,24 @@
 # W4 OPS handoff — lifecycle đề xuất và baseline triển khai
 
-Đạt chuẩn bị 07/11/2026 cho [plan11/21](tasks/TASK-W4-OPS.md), [runbook](w4-staging-runbook.md), tiếp nhận yêu cầu Quỳnh [I-OPS-LIFE/I-OPS-DB](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6690592440). **PROPOSED, chưa được Duy/Quỳnh chấp nhận**, không phải runtime đã triển khai. Không cấp quyền cloud/availability từ tài liệu này.
+Đạt chuẩn bị 07/11/2026 cho [plan11/21](tasks/TASK-W4-OPS.md), [runbook](w4-production private beta-runbook.md), tiếp nhận yêu cầu Quỳnh [I-OPS-LIFE/I-OPS-DB](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6690592440). **Baseline được Duy chấp nhận08/11 tại PR51 comment6718841843; triển khai PR30@b1f0999 chưa merge/live**, không phải runtime đã triển khai. Không cấp quyền cloud/availability từ tài liệu này.
 
 ## 1. Phương án lifecycle để Duy/Quỳnh quyết định
 
 | Nội dung | Đề xuất cụ thể | Căn cứ / người thực thi |
 |---|---|---|
-| Processes | Một backend Uvicorn worker, một app registry/broker/ticket store, một AIRuntime; không dùng reload trên staging | Dockerfile hiện workers1; Duy main integration, Quỳnh lifecycle |
-| Scanner | Một loop lifespan độc lập request; quét ngay khi startup rồi mỗi30s; không overlap; mỗi lượt tối đa100 sessions theo updated_at,id, có phân trang không bỏ đói job cũ | Duy xác nhận query/RPC quyền service-role + index; Quỳnh Python orchestration, timeout/logging |
-| Stale cutoff | Giữ720s hiện hành; DB dùng server time và kiểm lại status/token/timestamp dưới lock; scan chỉ phát hiện, không quyết định bằng timestamp client | Job deadline600s + cleanup finish10s, cutoff có margin; Duy xác nhận nguồn updated_at đáng tin |
+| Processes | Một backend Uvicorn worker, một app registry/broker/ticket store, một AIRuntime; không dùng reload trên production private beta | Dockerfile hiện workers1; Duy main integration, Quỳnh lifecycle |
+| Scanner | Một loop lifespan độc lập request; quét ngay khi startup rồi mỗi30s; không overlap; mỗi lượt tối đa100 sessions theo generation_last_activity_at,id (017), có phân trang không bỏ đói job cũ | Duy xác nhận query/RPC quyền service-role + index; Quỳnh Python orchestration, timeout/logging |
+| Stale cutoff | Giữ720s hiện hành; DB dùng server time và kiểm lại status/token/timestamp dưới lock; scan chỉ phát hiện, không quyết định bằng timestamp client | Job deadline600s + cleanup finish10s, cutoff có margin; 017 dùng generation_last_activity_at độc lập metadata |
 | Clock/race | DB re-check chặn scanner kết luận từ query cũ; worker hợp lệ dưới600s không bị thu token sớm; không scale nhiều replica trước khi có claim scanner/DB coordination | Duy SQL author/reviewer Hùng; Quỳnh tests |
 | Recovery | fail_stale_generation_job giữ committed results/quota/snapshot; clear old token, failed; retry explicit giữ nguyên targets đã commit | RPC005 hiện có. Không tự chuyển lại generating hay tự sinh lại khi startup |
-| Interrupted code | Đề nghị persist ERR_GENERATION_INTERRUPTED bằng contract/RPC do Duy sở hữu; trong lúc chờ chỉ báo status failed và error code unavailable, không bịa DB đã lưu code | I-B-STALE còn OPEN; Duy quyết status-only có đủ nghiệm thu không |
+| Interrupted code | Persist ERR_GENERATION_INTERRUPTED theo contract017 do Duy sở hữu; Quỳnh đã nối read-back, chưa có DB-applied proof | Chốt persist tại PR52@5b3f433; DB-applied/real proof pending |
 | Terminal retention | Giữ buffer terminal tối thiểu15phút từ terminal event cuối; quét cleanup mỗi60s; chỉ forget khi terminal, subscribers=0, reservations=0, không còn job claim | Quỳnh broker cần timestamp/atomic conditional cleanup; broker hiện50events/session, capacity1024 |
 | Active subscribers | Không evict stream/lease còn hoạt động để đạt retention; hết capacity báo lỗi rõ và resync từ durable DB, không tự xóa session generating | Quỳnh theo semantics broker; không coi15phút là hard limit khi đang xem |
 | Epoch/replay | Restart tạo epoch mới; cursor/history mất trả recovery contract; FE lấy durable snapshot rồi subscribe theo epoch/cursor mới; không giữ counters/cursor RAM như dữ liệu bền | Quỳnh + Philip/FE2; pending live proof |
 | Shutdown | Ngừng nhận claim mới trước teardown; cancel/await scanner và cleanup loops, bound wait10s; giải phóng handles; đóng AIRuntime sau tác vụ dùng gateway; in-flight chưa kết luận không tự ghi success | Duy/Quỳnh chốt shutdown wiring; không reset quota hoặc clear fencing mù |
-| Metrics | Observer ở shared transport, không bọc batch lần nữa; main inject observer đúng registry, protected metrics và smoke đổi trong cùng đợt | Hook đã reviewed8fb6387, product wiring pending; Quỳnh author; Đạt phối hợp dev.ps1/docker-ci |
+| Metrics | Observer ở shared transport, không bọc batch lần nữa; main inject observer đúng registry, protected metrics và smoke đổi trong cùng đợt | Wiring implemented PR30@b1f0999, chưa merged/live; Quỳnh author; Đạt phối hợp dev.ps1/docker-ci |
 
-Các số30s/100/720s/15phút/60s/10s là **đề xuất chưa có capacity evidence**, cần chốt và có bounded tests trước triển khai. Duy phải xác nhận scanner source không lộ dữ liệu user và service-role không đi qua browser. Nếu updated_at bị luồng khác làm thay đổi, cần định nghĩa timestamp job riêng; không tự thay schema trong OPS PR.
-
-### Contract cần Duy trả để Quỳnh code
-
-- Query/RPC liệt kê stale: fields session_id/job_token/job-start-or-activity timestamp; cursor stable, batch limit, role permission và error semantics. Không gọi RPC một cách enumerate toàn DB từ client JWT.
-- Có cần persist interruption code không; vị trí field/response snapshot và migration owner nếu có.
-- Phê duyệt hoặc sửa các giá trị lifecycle trên, cùng reviewer kiểm race/restart/retention.
-- Đạt nhận chuẩn bị patch smoke trong repo khi route401 sẵn; Quỳnh không cần chờ credential live để viết guard/lifecycle isolated tests. Không chuyển ownership Python/SQL sang OPS.
+Baseline đã được Duy chốt08/11, không phải capacity evidence hoặc deployment acceptance. PR30@b1f0999 triển khai scanner/retention/ticket protection/shutdown/metrics; F02 validator resource bounds còn OPEN. PR52@5b3f433 giao listing/fencing/durable errors, chưa merge/real-DB proof. Không yêu cầu owner giao lại contract đã có. ENV0/roster/access chốt ở [Issue53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53).
 
 ## 2. Ma trận kiểm có thể chuẩn bị trước, chưa có kết quả live
 
@@ -53,7 +46,7 @@ Inventory static từ dev `73583d775243245cd2479e29d943c329b0b2debb`, không ph�
 | Typst | backend image TYPST_VERSION v0.11.1 | Operator ghi typst --version trong container build thật |
 | Backend Python | Dockerfile Python3.11 base image pinned; requirements.lock hashed | CI/build image digest và dependency changes từng owner |
 | Frontend | npm ci từ package-lock.json, static Nginx target | Philip giao route/API-compatible SHA, rebuild public auth config |
-| W2 integration | PR30 review head8fb6387; observer/F01 verified, Draft | Duy bàn giao integrated head sau merge, không deploy PR head như dev đã có |
+| W2 integration | PR30@b1f0999; F01 verified, F02 OPEN; Draft/chưa merge/live | Duy bàn giao integrated head sau merge, không deploy PR head như dev đã có |
 | W4 product policy | Issues45/46; docs PR50 còn review | Duy chốt modes/toggles/fallback; không dùng W2 fixture chứng minh W4 |
 
 Freeze record cho mỗi candidate phải có git SHA, dirty=false, image digests, migration ledger/checksums thực, prompt versions+hashes, model ID, nonsecret config revision, oracle/input checksum. Không lưu key/JWT/prompt chứa đề riêng tư vào report public. Không đổi model/prompt để chữa live demo rồi giữ kết quả kiểm của head cũ.

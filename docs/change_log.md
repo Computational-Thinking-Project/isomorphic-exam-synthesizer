@@ -1,3 +1,9 @@
+## DEC-DAT-W4-OPS — Production private beta preparation
+
+- Ngày/người:08/11/2026 — Đạt cập nhật theo [quyết định Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/51#issuecomment-6719017111), [ENV0 Issue53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53).
+- Chọn một production HTTPS/private beta chỉ nhóm, free-first; không yêu cầu staging riêng. Static Compose một worker, private access gate thực, isolated destructive tests. Không chọn provider/mua dịch vụ/cấp quyền hoặc xác nhận lịch trực.
+- Ảnh hưởng: docs OPS11/21 và candidate inventory017; historical inventory giữ nguyên, không sửa runtime/API/SQL/Docker. PR51 preparation merge độc lập deployment acceptance; G0/G1/G2/public proof vẫn pending. PR30 F02 và PR52 ACL/real-DB còn blockers.
+
 ## 05/11/2026 — W2 AI policy: owner confirmations
 
 Duy/BE và Bội Anh/FE đã xác nhận mode aliases/NONE theo các link trong [contract AI](ai-w2-integration.md). Đạt cập nhật policy status và acceptance fixtures; không đổi generator/worker/SQL. Quỳnh giữ clone branch, SQL/RPC snapshot và clone persistence đã merge qua PR32; worker integration vẫn do Quỳnh thực hiện; xác nhận policy không phải nghiệm thu triển khai/E2E.
