@@ -42,7 +42,19 @@ error recovery across worker reboots.
 | `load_generation_completed_results` | `p_session_id UUID` | `JSONB` | `authenticated owner`, `service_role` |
 | `heartbeat_generation_job` | `p_session_id UUID, p_job_token UUID` | `JSONB` | `service_role` only |
 
-Direct write operations to `generation_last_activity_at` and `generation_error_code` are revoked from `authenticated` and `anon`.
+Direct write operations to `generation_last_activity_at` and `generation_error_code` are strictly prohibited for client roles (`authenticated`, `anon`).
+
+### Least Privilege & Defense-in-Depth Model (SEC-01 - SEC-04)
+1. **Layer 1 (Schema ACL Whitelisting)**:
+   - Table-level `INSERT` and `UPDATE` are revoked from `PUBLIC`, `anon`, and `authenticated`.
+   - `authenticated` receives column-level `GRANT UPDATE (title, subject, grade)` and `GRANT INSERT (user_id, title, subject, grade)` only.
+   - Column `UPDATE` on `generation_last_activity_at` and `generation_error_code` is explicitly revoked.
+2. **Layer 2 (Trigger Guard Enforcement)**:
+   - Function `public.guard_exam_sessions_worker_columns()` attaches via `trg_guard_exam_sessions_worker_columns BEFORE INSERT OR UPDATE ON public.exam_sessions`.
+   - Rejects non-trusted client roles attempting to alter `generation_last_activity_at`, `generation_error_code`, `status`, `active_job_id`, `gemini_call_count`, `retry_count`, `gemini_review_calls`, `approved_at`, or `user_id` with SQLSTATE `42501`.
+   - Protects against privilege leakage even if table-level `UPDATE` is inadvertently granted in deployment environments.
+3. **Execution Context**:
+   - Worker RPCs execute with `SECURITY DEFINER` and pinned search paths (`SET search_path = pg_catalog, public, pg_temp`).
 
 ---
 

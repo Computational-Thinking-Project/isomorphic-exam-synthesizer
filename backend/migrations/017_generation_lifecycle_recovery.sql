@@ -100,6 +100,61 @@ CREATE TRIGGER trg_generation_target_results_activity
   FOR EACH ROW EXECUTE FUNCTION public.tg_generation_target_results_activity();
 
 -- ----------------------------------------------------------------------------
+-- 3b. Defense-in-Depth: Guard Worker-Managed Lifecycle Columns (F07 / SEC-01)
+-- Upgrades the guard trigger from migration 005 to include generation_last_activity_at
+-- and generation_error_code so that even if table-level UPDATE is inadvertently
+-- granted, direct modifications to worker-managed columns are rejected with 42501.
+-- ----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.guard_exam_sessions_worker_columns()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  -- Trusted database roles executing via SECURITY DEFINER functions or administrative tasks
+  IF current_user IN ('postgres', 'supabase_admin', 'service_role') THEN
+    RETURN NEW;
+  END IF;
+
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.status IS DISTINCT FROM 'draft'::public.session_status
+       OR NEW.active_job_id IS NOT NULL
+       OR NEW.gemini_call_count IS DISTINCT FROM 0
+       OR NEW.retry_count IS DISTINCT FROM 0
+       OR NEW.gemini_review_calls IS DISTINCT FROM 0
+       OR NEW.approved_at IS NOT NULL
+       OR NEW.generation_last_activity_at IS NOT NULL
+       OR NEW.generation_error_code IS NOT NULL THEN
+      RAISE EXCEPTION 'Direct worker-state initialization forbidden'
+        USING ERRCODE = '42501';
+    END IF;
+  ELSIF TG_OP = 'UPDATE' THEN
+    IF NEW.status IS DISTINCT FROM OLD.status
+       OR NEW.active_job_id IS DISTINCT FROM OLD.active_job_id
+       OR NEW.gemini_call_count IS DISTINCT FROM OLD.gemini_call_count
+       OR NEW.retry_count IS DISTINCT FROM OLD.retry_count
+       OR NEW.gemini_review_calls IS DISTINCT FROM OLD.gemini_review_calls
+       OR NEW.approved_at IS DISTINCT FROM OLD.approved_at
+       OR NEW.user_id IS DISTINCT FROM OLD.user_id
+       OR NEW.generation_last_activity_at IS DISTINCT FROM OLD.generation_last_activity_at
+       OR NEW.generation_error_code IS DISTINCT FROM OLD.generation_error_code THEN
+      RAISE EXCEPTION 'Direct worker-state modification forbidden'
+        USING ERRCODE = '42501';
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_guard_exam_sessions_worker_columns ON public.exam_sessions;
+CREATE TRIGGER trg_guard_exam_sessions_worker_columns
+BEFORE INSERT OR UPDATE ON public.exam_sessions
+FOR EACH ROW EXECUTE FUNCTION public.guard_exam_sessions_worker_columns();
+
+-- ----------------------------------------------------------------------------
 -- 4. Heartbeat RPC Update
 -- ----------------------------------------------------------------------------
 
@@ -110,7 +165,7 @@ CREATE OR REPLACE FUNCTION public.heartbeat_generation_job(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, auth, pg_temp
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
   v_current_status public.session_status;
@@ -351,7 +406,7 @@ CREATE OR REPLACE FUNCTION public.fail_stale_generation_job(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, auth, pg_temp
+SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
   v_current_status public.session_status;
@@ -536,10 +591,20 @@ REVOKE ALL ON FUNCTION public.load_generation_completed_results(uuid) FROM PUBLI
 GRANT EXECUTE ON FUNCTION public.load_generation_completed_results(uuid) TO authenticated, service_role;
 
 -- ----------------------------------------------------------------------------
--- 10. Least Privilege: Deny Direct Writes to New Columns
+-- 10. Least Privilege & Defense-in-Depth on Exam Sessions (SEC-01 - SEC-04)
+-- Enforce strict table-level write revocation across PUBLIC, anon, and authenticated.
+-- Whitelist only allowable client metadata columns (title, subject, grade) for authenticated.
+-- Explicitly revoke column privileges on lifecycle and worker-controlled columns.
 -- ----------------------------------------------------------------------------
 
-REVOKE UPDATE (generation_last_activity_at, generation_error_code) ON TABLE public.exam_sessions FROM PUBLIC, anon, authenticated;
+REVOKE INSERT, UPDATE ON TABLE public.exam_sessions FROM PUBLIC, anon, authenticated;
+GRANT INSERT (user_id, title, subject, grade) ON TABLE public.exam_sessions TO authenticated;
+GRANT UPDATE (title, subject, grade) ON TABLE public.exam_sessions TO authenticated;
+
+REVOKE UPDATE (
+  generation_last_activity_at,
+  generation_error_code
+) ON TABLE public.exam_sessions FROM PUBLIC, anon, authenticated;
 
 COMMIT;
 

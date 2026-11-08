@@ -214,6 +214,13 @@ is a W2 RPC in migration 010, not public table access.
    - `load_generation_completed_results(p_session_id)` returns `generation_error_code` for terminal SSE stream reconstruction after process reboot.
    - Retry via `claim_generation_job` resets error code to NULL while preserving consumed quota, snapshot context, and committed results.
 
+5. **Security Audit & Defense-in-Depth Hardening (PR #52)**:
+   - Verified PostgreSQL ACL privileges: revoking column-level UPDATE alone is insufficient if table-level UPDATE is granted.
+   - Updated `guard_exam_sessions_worker_columns()` to explicitly guard `generation_last_activity_at` and `generation_error_code` against unauthorized modifications (SQLSTATE `42501`).
+   - Reinforced Migration 017 with table-level write revocation (`REVOKE INSERT, UPDATE ON TABLE public.exam_sessions FROM PUBLIC, anon, authenticated`) and explicit metadata column whitelisting (`GRANT UPDATE (title, subject, grade) TO authenticated`).
+   - Pinned search paths on worker RPCs (`heartbeat_generation_job`, `fail_stale_generation_job`) to `pg_catalog, public, pg_temp`.
+   - Added regression test suite covering SEC-01 through SEC-05, Case D table-level grant defense, non-owner authorization, and privilege catalog matrix.
+
 ### M3 draft for PR description — prepared locally
 
 - Scope/output: [017](../../backend/migrations/017_generation_lifecycle_recovery.sql),

@@ -7,16 +7,12 @@ and least-privilege ACL boundaries.
 
 import asyncio
 import json
-import os
-from copy import deepcopy
 from datetime import datetime, timezone
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
 from tests.migrations.test_generation_w2 import (
-    ORDERING,
     OWNER,
     ROOT,
     asyncpg,
@@ -24,12 +20,9 @@ from tests.migrations.test_generation_w2 import (
     persist,
     result_for,
     role,
-    rpc,
-)
-from tests.migrations.test_generation_w2 import (
-    db as db_fixture,
 )
 
+pytest_plugins = ("tests.migrations.test_generation_w2",)
 pytestmark = pytest.mark.asyncio
 
 MIGRATION_017 = ROOT / "backend/migrations/017_generation_lifecycle_recovery.sql"
@@ -61,10 +54,10 @@ async def call_rpc(conn, name, *args):
 
 
 @pytest.fixture
-async def env(db_fixture):
+async def env(db):
     """Fixture providing disposable PostgreSQL instance upgraded to Migration 017."""
-    await db_fixture.admin.execute(MIGRATION_017.read_text(encoding="utf-8-sig"))
-    return db_fixture
+    await db.admin.execute(MIGRATION_017.read_text(encoding="utf-8-sig"))
+    return db
 
 
 # ----------------------------------------------------------------------------
@@ -583,37 +576,182 @@ async def test_retry_clears_error_code_and_preserves_quota_and_snapshots(env):
 
 
 # ----------------------------------------------------------------------------
-# 6. Least Privilege & Role Permissions (SEC-04)
+# 6. Least Privilege & Role Permissions (SEC-01 - SEC-05)
 # ----------------------------------------------------------------------------
 
 
 async def test_least_privilege_access_denied_for_clients(env):
-    """anon and authenticated roles cannot call scanner RPCs or modify error/activity columns."""
+    """SEC-01, SEC-02, SEC-03, SEC-05: anon and authenticated cannot modify lifecycle columns."""
     anon = await asyncpg.connect(env.dsn)
+    non_owner = await asyncpg.connect(env.dsn)
     try:
         await role(anon, "anon")
+        non_owner_id = str(uuid4())
+        await env.admin.execute(
+            "INSERT INTO auth.users(id,email) VALUES($1::uuid,'other@example.invalid')", non_owner_id
+        )
+        await env.admin.execute(
+            "INSERT INTO public.users(id,email) VALUES($1::uuid,'other@example.invalid') ON CONFLICT(id) DO NOTHING",
+            non_owner_id,
+        )
+        await role(non_owner, "authenticated", non_owner_id)
 
-        # Scanner enumeration denied
+        # Scanner enumeration denied for anon
         with pytest.raises(asyncpg.PostgresError, match="restricted to service_role|permission denied"):
             await call_rpc(anon, "list_stale_generation_jobs", 720, 50, None, None)
 
-        # Fencing recovery denied
+        # Fencing recovery denied for anon
         with pytest.raises(asyncpg.PostgresError, match="restricted to service_role|permission denied"):
             await call_rpc(anon, "fail_stale_generation_job_if_current", env.sid, str(uuid4()), 720)
 
-        # Direct table update on generation_error_code denied for authenticated
-        with pytest.raises(asyncpg.PostgresError, match="permission denied for table exam_sessions"):
+        # Heartbeat denied for anon
+        with pytest.raises(asyncpg.PostgresError, match="restricted to service_role|permission denied"):
+            await call_rpc(anon, "heartbeat_generation_job", env.sid, str(uuid4()))
+
+        # SEC-03: anon cannot update generation_error_code
+        with pytest.raises(asyncpg.PostgresError, match="permission denied"):
+            await anon.execute(
+                "UPDATE exam_sessions SET generation_error_code = 'ANON_ERR' WHERE id = $1::uuid",
+                env.sid,
+            )
+
+        # SEC-03: anon cannot update generation_last_activity_at
+        with pytest.raises(asyncpg.PostgresError, match="permission denied"):
+            await anon.execute(
+                "UPDATE exam_sessions SET generation_last_activity_at = now() WHERE id = $1::uuid",
+                env.sid,
+            )
+
+        # SEC-02: Direct table update on generation_error_code denied for authenticated owner
+        with pytest.raises(asyncpg.PostgresError, match="permission denied"):
             await env.owner.execute(
                 "UPDATE exam_sessions SET generation_error_code = 'MALICIOUS_OVERWRITE' WHERE id = $1::uuid",
                 env.sid,
             )
 
-        # Direct table update on generation_last_activity_at denied for authenticated
-        with pytest.raises(asyncpg.PostgresError, match="permission denied for table exam_sessions"):
+        # SEC-01: Direct table update on generation_last_activity_at denied for authenticated owner
+        with pytest.raises(asyncpg.PostgresError, match="permission denied"):
             await env.owner.execute(
                 "UPDATE exam_sessions SET generation_last_activity_at = now() WHERE id = $1::uuid",
                 env.sid,
             )
+
+        # Non-owner cannot update owner session lifecycle columns
+        with pytest.raises(asyncpg.PostgresError, match="permission denied"):
+            await non_owner.execute(
+                "UPDATE exam_sessions SET generation_error_code = 'NON_OWNER_ERR' WHERE id = $1::uuid",
+                env.sid,
+            )
+
+        with pytest.raises(asyncpg.PostgresError, match="permission denied"):
+            await non_owner.execute(
+                "UPDATE exam_sessions SET generation_last_activity_at = now() WHERE id = $1::uuid",
+                env.sid,
+            )
+
+        # SEC-05: Authenticated owner CAN update valid metadata fields according to contract
+        await env.owner.execute(
+            "UPDATE exam_sessions SET title = 'Valid Metadata Update', subject = 'Math', grade = '12' WHERE id = $1::uuid",
+            env.sid,
+        )
+        updated = await env.admin.fetchrow(
+            "SELECT title, subject, grade, generation_last_activity_at, generation_error_code FROM exam_sessions WHERE id = $1::uuid",
+            env.sid,
+        )
+        assert updated["title"] == "Valid Metadata Update"
+        assert updated["subject"] == "Math"
+        assert updated["grade"] == "12"
     finally:
         await anon.close()
+        await non_owner.close()
+
+
+async def test_table_level_grant_defense_in_depth(env):
+    """SEC-04 (Case D): Table-level GRANT does not allow bypassing lifecycle column protection.
+
+    Even if a table-level UPDATE is accidentally granted to authenticated:
+    1. The trigger guard_exam_sessions_worker_columns intercepts and raises 42501.
+    2. Re-applying migration 017 strips table-level UPDATE and re-establishes column whitelisting.
+    """
+    # 1. Simulate accidental/fixture table-level GRANT
+    await env.admin.execute("GRANT UPDATE ON TABLE public.exam_sessions TO authenticated")
+    assert await env.admin.fetchval(
+        "SELECT has_table_privilege('authenticated', 'public.exam_sessions', 'UPDATE')"
+    ) is True
+
+    # 2. Trigger defense-in-depth: Even with table-level privilege, worker columns are guarded
+    with pytest.raises(asyncpg.PostgresError, match="Direct worker-state modification forbidden") as exc_err:
+        await env.owner.execute(
+            "UPDATE exam_sessions SET generation_error_code = 'BYPASS_ATTEMPT' WHERE id = $1::uuid",
+            env.sid,
+        )
+    assert exc_err.value.as_dict().get("sqlstate") == "42501"
+
+    with pytest.raises(asyncpg.PostgresError, match="Direct worker-state modification forbidden") as exc_act:
+        await env.owner.execute(
+            "UPDATE exam_sessions SET generation_last_activity_at = now() WHERE id = $1::uuid",
+            env.sid,
+        )
+    assert exc_act.value.as_dict().get("sqlstate") == "42501"
+
+    # Metadata update still succeeds even under table-level grant
+    await env.owner.execute(
+        "UPDATE exam_sessions SET title = 'Safe Title' WHERE id = $1::uuid",
+        env.sid,
+    )
+
+    # 3. Re-applying migration 017 revokes table-level UPDATE and restores strict least privilege
+    await env.admin.execute(MIGRATION_017.read_text(encoding="utf-8-sig"))
+    assert await env.admin.fetchval(
+        "SELECT has_table_privilege('authenticated', 'public.exam_sessions', 'UPDATE')"
+    ) is False
+    assert await env.admin.fetchval(
+        "SELECT has_column_privilege('authenticated', 'public.exam_sessions', 'generation_error_code', 'UPDATE')"
+    ) is False
+    assert await env.admin.fetchval(
+        "SELECT has_column_privilege('authenticated', 'public.exam_sessions', 'generation_last_activity_at', 'UPDATE')"
+    ) is False
+
+
+async def test_privilege_catalog_matrix(env):
+    """Verify PostgreSQL ACL catalog privilege state after migration 017."""
+    # authenticated role privileges
+    assert await env.admin.fetchval(
+        "SELECT has_table_privilege('authenticated', 'public.exam_sessions', 'UPDATE')"
+    ) is False
+    assert await env.admin.fetchval(
+        "SELECT has_table_privilege('authenticated', 'public.exam_sessions', 'INSERT')"
+    ) is False
+    assert await env.admin.fetchval(
+        "SELECT has_column_privilege('authenticated', 'public.exam_sessions', 'title', 'UPDATE')"
+    ) is True
+    assert await env.admin.fetchval(
+        "SELECT has_column_privilege('authenticated', 'public.exam_sessions', 'subject', 'UPDATE')"
+    ) is True
+    assert await env.admin.fetchval(
+        "SELECT has_column_privilege('authenticated', 'public.exam_sessions', 'grade', 'UPDATE')"
+    ) is True
+    assert await env.admin.fetchval(
+        "SELECT has_column_privilege('authenticated', 'public.exam_sessions', 'generation_last_activity_at', 'UPDATE')"
+    ) is False
+    assert await env.admin.fetchval(
+        "SELECT has_column_privilege('authenticated', 'public.exam_sessions', 'generation_error_code', 'UPDATE')"
+    ) is False
+    assert await env.admin.fetchval(
+        "SELECT has_column_privilege('authenticated', 'public.exam_sessions', 'status', 'UPDATE')"
+    ) is False
+    assert await env.admin.fetchval(
+        "SELECT has_column_privilege('authenticated', 'public.exam_sessions', 'active_job_id', 'UPDATE')"
+    ) is False
+
+    # anon role privileges
+    assert await env.admin.fetchval(
+        "SELECT has_table_privilege('anon', 'public.exam_sessions', 'UPDATE')"
+    ) is False
+    assert await env.admin.fetchval(
+        "SELECT has_column_privilege('anon', 'public.exam_sessions', 'generation_last_activity_at', 'UPDATE')"
+    ) is False
+    assert await env.admin.fetchval(
+        "SELECT has_column_privilege('anon', 'public.exam_sessions', 'generation_error_code', 'UPDATE')"
+    ) is False
 
