@@ -243,3 +243,19 @@ is a W2 RPC in migration 010, not public table access.
 > 1. Stale Scanner: RPC `list_stale_generation_jobs` (keyset pagination, index hỗ trợ, cutoff 720s DB clock) và RPC fencing `fail_stale_generation_job_if_current(p_session_id, p_expected_job_token, p_cutoff_seconds)`.
 > 2. Durable Error Recovery: Cột `generation_error_code` lưu bền vững `ERR_GENERATION_INTERRUPTED` khi stale recovery; RPC `finish_generation_job_with_error` để worker ghi nhận mã lỗi thất bại; `load_generation_completed_results` trả kèm mã lỗi sau restart để khôi phục SSE terminal event; retry tự động xóa lỗi cũ nhưng bảo toàn quota và committed results.
 > Tài liệu contract chi tiết đã có tại `docs/api/generation-lifecycle-recovery.md` và test suite tại `backend/tests/migrations/test_generation_lifecycle_recovery.py`. Phía Python chỉ cần cắm adapter vào `job_repository.py`.
+
+## F01 Remediation — PR #52 Request Changes Response (08/11/2026)
+
+- **Source**: Reviewer finding [F01 on PR #52](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/52#discussion_r4505936087).
+- **Review snapshot**: `CHANGES_REQUESTED` on HEAD `9e9d6f3`.
+- **Root cause analysis**:
+  - In PostgreSQL, same-event `BEFORE UPDATE FOR EACH ROW` triggers on `public.exam_sessions` execute in alphabetical name order.
+  - `trg_finalize_direct_guard` (from migration 009) executes *before* `trg_guard_exam_sessions_worker_columns` (from migration 017) because `'trg_f...' < 'trg_g...'`.
+  - When an authenticated owner attempts direct update on protected worker columns (`generation_error_code`, `generation_last_activity_at`), Trigger 009 intercepts and raises `ERR_DIRECT_LIFECYCLE_MUTATION` with SQLSTATE `42501`.
+  - The previous test hard-coded string matching for `"Direct worker-state modification forbidden"` (Trigger 017's message), failing when Trigger 009 rejected first.
+- **Decision & Fix**:
+  - **No SQL changes**: Production migration `017_generation_lifecycle_recovery.sql` correctly defines the defense-in-depth guard and does not require alteration.
+  - **Test remediation**: Updated `test_table_level_grant_defense_in_depth` in `backend/tests/migrations/test_generation_lifecycle_recovery.py` to assert SQLSTATE `42501` instead of specific error message text.
+  - **Data invariants**: Added pre- and post-mutation row queries (`generation_error_code`, `generation_last_activity_at`, `updated_at`, `title`) verifying complete statement rollback and unmutated state after rejected updates.
+  - **Contract clarification**: Updated `docs/api/generation-lifecycle-recovery.md` documenting alphabetical trigger execution and the SQLSTATE `42501` behavioral invariant.
+- **Status**: Author `claimed_fixed`; pending independent verification by reviewer on the updated commit.

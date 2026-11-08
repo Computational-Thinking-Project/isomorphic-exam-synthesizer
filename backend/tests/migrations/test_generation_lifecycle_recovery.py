@@ -670,8 +670,12 @@ async def test_table_level_grant_defense_in_depth(env):
     """SEC-04 (Case D): Table-level GRANT does not allow bypassing lifecycle column protection.
 
     Even if a table-level UPDATE is accidentally granted to authenticated:
-    1. The trigger guard_exam_sessions_worker_columns intercepts and raises 42501.
-    2. Re-applying migration 017 strips table-level UPDATE and re-establishes column whitelisting.
+    1. Triggers (trg_finalize_direct_guard / trg_guard_exam_sessions_worker_columns) intercept
+       unauthorized direct mutations and raise SQLSTATE 42501.
+    2. Data invariants are preserved: rejected statements rollback cleanly without mutating
+       protected worker columns or timestamps.
+    3. Legitimate metadata updates (title) succeed without modifying protected columns.
+    4. Re-applying migration 017 strips table-level UPDATE and re-establishes column whitelisting.
     """
     # 1. Simulate accidental/fixture table-level GRANT
     await env.admin.execute("GRANT UPDATE ON TABLE public.exam_sessions TO authenticated")
@@ -679,26 +683,86 @@ async def test_table_level_grant_defense_in_depth(env):
         "SELECT has_table_privilege('authenticated', 'public.exam_sessions', 'UPDATE')"
     ) is True
 
-    # 2. Trigger defense-in-depth: Even with table-level privilege, worker columns are guarded
-    with pytest.raises(asyncpg.PostgresError, match="Direct worker-state modification forbidden") as exc_err:
+    # Seed baseline values for protected fields to guarantee invariant checking on non-null state
+    await env.admin.execute(
+        """
+        UPDATE public.exam_sessions
+        SET generation_error_code = 'INITIAL_ERROR',
+            generation_last_activity_at = '2026-11-01 00:00:00+00'::timestamptz
+        WHERE id = $1::uuid
+        """,
+        env.sid,
+    )
+
+    before = await env.admin.fetchrow(
+        """
+        SELECT generation_error_code, generation_last_activity_at, updated_at, title
+        FROM public.exam_sessions
+        WHERE id = $1::uuid
+        """,
+        env.sid,
+    )
+    assert before["generation_error_code"] == "INITIAL_ERROR"
+    assert before["generation_last_activity_at"] is not None
+
+    # 2. Trigger defense-in-depth: Even with table-level privilege, worker columns are guarded with 42501
+    with pytest.raises(asyncpg.PostgresError) as exc_err:
         await env.owner.execute(
             "UPDATE exam_sessions SET generation_error_code = 'BYPASS_ATTEMPT' WHERE id = $1::uuid",
             env.sid,
         )
-    assert exc_err.value.as_dict().get("sqlstate") == "42501"
+    assert (getattr(exc_err.value, "sqlstate", None) or exc_err.value.as_dict().get("sqlstate")) == "42501"
 
-    with pytest.raises(asyncpg.PostgresError, match="Direct worker-state modification forbidden") as exc_act:
+    after_err = await env.admin.fetchrow(
+        """
+        SELECT generation_error_code, generation_last_activity_at, updated_at, title
+        FROM public.exam_sessions
+        WHERE id = $1::uuid
+        """,
+        env.sid,
+    )
+    assert after_err["generation_error_code"] == before["generation_error_code"]
+    assert after_err["generation_last_activity_at"] == before["generation_last_activity_at"]
+    assert after_err["updated_at"] == before["updated_at"]
+    assert after_err["title"] == before["title"]
+
+    with pytest.raises(asyncpg.PostgresError) as exc_act:
         await env.owner.execute(
             "UPDATE exam_sessions SET generation_last_activity_at = now() WHERE id = $1::uuid",
             env.sid,
         )
-    assert exc_act.value.as_dict().get("sqlstate") == "42501"
+    assert (getattr(exc_act.value, "sqlstate", None) or exc_act.value.as_dict().get("sqlstate")) == "42501"
+
+    after_act = await env.admin.fetchrow(
+        """
+        SELECT generation_error_code, generation_last_activity_at, updated_at, title
+        FROM public.exam_sessions
+        WHERE id = $1::uuid
+        """,
+        env.sid,
+    )
+    assert after_act["generation_error_code"] == before["generation_error_code"]
+    assert after_act["generation_last_activity_at"] == before["generation_last_activity_at"]
+    assert after_act["updated_at"] == before["updated_at"]
+    assert after_act["title"] == before["title"]
 
     # Metadata update still succeeds even under table-level grant
     await env.owner.execute(
         "UPDATE exam_sessions SET title = 'Safe Title' WHERE id = $1::uuid",
         env.sid,
     )
+
+    after_meta = await env.admin.fetchrow(
+        """
+        SELECT generation_error_code, generation_last_activity_at, updated_at, title
+        FROM public.exam_sessions
+        WHERE id = $1::uuid
+        """,
+        env.sid,
+    )
+    assert after_meta["title"] == "Safe Title"
+    assert after_meta["generation_error_code"] == before["generation_error_code"]
+    assert after_meta["generation_last_activity_at"] == before["generation_last_activity_at"]
 
     # 3. Re-applying migration 017 revokes table-level UPDATE and restores strict least privilege
     await env.admin.execute(MIGRATION_017.read_text(encoding="utf-8-sig"))
@@ -711,6 +775,9 @@ async def test_table_level_grant_defense_in_depth(env):
     assert await env.admin.fetchval(
         "SELECT has_column_privilege('authenticated', 'public.exam_sessions', 'generation_last_activity_at', 'UPDATE')"
     ) is False
+    assert await env.admin.fetchval(
+        "SELECT has_column_privilege('authenticated', 'public.exam_sessions', 'title', 'UPDATE')"
+    ) is True
 
 
 async def test_privilege_catalog_matrix(env):

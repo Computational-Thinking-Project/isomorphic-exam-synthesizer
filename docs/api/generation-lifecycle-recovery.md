@@ -53,6 +53,7 @@ Direct write operations to `generation_last_activity_at` and `generation_error_c
    - Function `public.guard_exam_sessions_worker_columns()` attaches via `trg_guard_exam_sessions_worker_columns BEFORE INSERT OR UPDATE ON public.exam_sessions`.
    - Rejects non-trusted client roles attempting to alter `generation_last_activity_at`, `generation_error_code`, `status`, `active_job_id`, `gemini_call_count`, `retry_count`, `gemini_review_calls`, `approved_at`, or `user_id` with SQLSTATE `42501`.
    - Protects against privilege leakage even if table-level `UPDATE` is inadvertently granted in deployment environments.
+   - *Trigger ordering & behavioral contract*: In PostgreSQL, same-event triggers execute in alphabetical order. Unauthorized direct mutations on `exam_sessions` are rejected with SQLSTATE `42501` (intercepted by `trg_finalize_direct_guard` from migration 009 or `trg_guard_exam_sessions_worker_columns` from migration 017). The contract guarantees rejection with SQLSTATE `42501` and clean statement rollback, without depending on trigger-specific exception strings.
 3. **Execution Context**:
    - Worker RPCs execute with `SECURITY DEFINER` and pinned search paths (`SET search_path = pg_catalog, public, pg_temp`).
 
