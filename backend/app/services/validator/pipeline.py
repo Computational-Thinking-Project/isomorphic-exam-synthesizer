@@ -1,7 +1,7 @@
 """Async adapters for existing checkers; unsupported math never becomes a pass."""
 
 import asyncio
-import time
+import threading
 from typing import Any
 
 from app.models.generation import CandidatePayload, ValidationReport, render_solution
@@ -9,6 +9,9 @@ from app.services.blueprint.adapters import normalized_text
 
 from .aggregator import validate_question
 from .base import CheckResult
+from .base import ValidationReport as AggregateReport
+from .process_runner import ProcessResult, run_with_timeout
+from .sympy_evaluator import validator_process_context
 from .syntax_checker import check_latex_delimiters
 
 
@@ -37,10 +40,64 @@ def validate_solution(candidate: CandidatePayload) -> list[CheckResult]:
     ]
 
 
+def _validate_four_tiers(
+    question_text: str,
+    options: list[str],
+    correct_key: str,
+    blueprint: dict[str, Any] | None,
+    timeout: float,
+) -> AggregateReport:
+    """Run all four tiers inside one reclaimable process, including CAS."""
+    with validator_process_context():
+        return validate_question(
+            question_text,
+            options,
+            correct_key,
+            blueprint=blueprint,
+            parameters=None,
+            timeout=timeout,
+            treat_fallback_as_warning=True,
+        )
+
+
 class CandidateValidator:
+    # `timeout` was the CAS budget before F02. Allow bounded startup and the
+    # other three tiers to finish without silently extending CAS's own limit.
+    _OVERALL_OVERHEAD_SECONDS = 5.0
+
     def __init__(self, timeout: float = 5):
         self.timeout = timeout
         self._semaphore = asyncio.Semaphore(3)
+        self._workers: set[asyncio.Task[ProcessResult]] = set()
+        self._cancel_signals: dict[asyncio.Task[ProcessResult], threading.Event] = {}
+        self._closing = False
+
+    def _worker_done(self, worker: asyncio.Task[ProcessResult]) -> None:
+        self._workers.discard(worker)
+        self._cancel_signals.pop(worker, None)
+        self._semaphore.release()
+        # A second cancellation can detach the caller; retrieve its exception.
+        if not worker.cancelled():
+            worker.exception()
+
+    async def aclose(self, timeout_seconds: float = 10) -> bool:
+        """Stop outstanding calculations before app shutdown closes its runtime."""
+        self._closing = True
+        for signal in tuple(self._cancel_signals.values()):
+            signal.set()
+        if not self._workers:
+            return True
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(
+                    *(asyncio.shield(worker) for worker in tuple(self._workers)),
+                    return_exceptions=True,
+                ),
+                timeout=timeout_seconds,
+            )
+        except TimeoutError:
+            return False
+        return True
 
     async def validate(
         self,
@@ -49,22 +106,57 @@ class CandidateValidator:
         deadline: float,
         blueprint: dict[str, Any] | None = None,
     ) -> ValidationReport:
+        if self._closing:
+            raise RuntimeError("Validator is shutting down.")
         async with asyncio.timeout_at(deadline):
-            async with self._semaphore:
-                remaining = min(self.timeout, deadline - time.monotonic())
+            await self._semaphore.acquire()
+            worker: asyncio.Task[ProcessResult] | None = None
+            try:
+                if self._closing:
+                    raise RuntimeError("Validator is shutting down.")
+                remaining = deadline - asyncio.get_running_loop().time()
                 if remaining <= 0:
                     raise TimeoutError
+                cas_timeout = min(self.timeout, remaining)
+                process_timeout = min(self.timeout + self._OVERALL_OVERHEAD_SECONDS, remaining)
                 solution_checks = validate_solution(candidate)
-                aggregate = await asyncio.to_thread(
-                    validate_question,
-                    candidate.question_text,
-                    candidate.options,
-                    candidate.correct_key,
-                    blueprint=blueprint,
-                    parameters=None,
-                    timeout=remaining,
-                    treat_fallback_as_warning=True,
+                cancel_signal = threading.Event()
+                worker = asyncio.create_task(
+                    asyncio.to_thread(
+                        run_with_timeout,
+                        _validate_four_tiers,
+                        args=(
+                            candidate.question_text,
+                            candidate.options,
+                            candidate.correct_key,
+                            blueprint,
+                            cas_timeout,
+                        ),
+                        timeout=process_timeout,
+                        start_method="spawn",
+                        cancel_signal=cancel_signal,
+                    )
                 )
+                self._workers.add(worker)
+                self._cancel_signals[worker] = cancel_signal
+                worker.add_done_callback(self._worker_done)
+                try:
+                    result = await asyncio.shield(worker)
+                except BaseException:
+                    cancel_signal.set()
+                    # Keep the real slot occupied until process termination. A
+                    # second cancellation may detach this await, but the done
+                    # callback still owns and releases the slot exactly once.
+                    try:
+                        await asyncio.shield(worker)
+                    except BaseException:
+                        pass
+                    raise
+                if result.timed_out:
+                    raise TimeoutError("Four-tier validation exceeded its deadline.")
+                if not result.success or not isinstance(result.data, AggregateReport):
+                    raise RuntimeError("Four-tier validation worker failed.")
+                aggregate = result.data
                 checks = [
                     check.model_copy(update={"check_name": "answer_verified"})
                     if check.check_name == "sympy_evaluator"
@@ -111,3 +203,6 @@ class CandidateValidator:
                     )
                 )
                 return ValidationReport(checks=[*checks, *solution_checks])
+            finally:
+                if worker is None:
+                    self._semaphore.release()

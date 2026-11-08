@@ -1,6 +1,8 @@
 import asyncio
 import copy
 import json
+import multiprocessing
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,6 +23,7 @@ from app.services.observability.ai_instrumentation import make_gemini_attempt_ob
 from app.services.observability.runtime_registry import RuntimeRegistry
 from app.services.validator.base import CheckResult
 from app.services.validator.pipeline import CandidateValidator, validate_solution
+from app.services.validator.process_runner import ProcessResult, run_with_timeout
 
 
 @pytest.fixture
@@ -491,6 +494,10 @@ async def test_candidate_validator_passes_frozen_blueprint_to_four_tiers(pipelin
         )
 
     monkeypatch.setattr("app.services.validator.pipeline.validate_question", fake_validate)
+    def run_in_test_process(target, *, args=(), **kwargs):
+        return ProcessResult(success=True, data=target(*args))
+
+    monkeypatch.setattr("app.services.validator.pipeline.run_with_timeout", run_in_test_process)
     report = await CandidateValidator().validate(
         candidate, deadline=time.monotonic() + 5, blueprint=blueprint
     )
@@ -498,3 +505,128 @@ async def test_candidate_validator_passes_frozen_blueprint_to_four_tiers(pipelin
     assert received[0][3]["parameters"] is None
     assert any(check.check_name == "parameter_bounds" for check in report.failures)
     assert any(check.check_name == "parameter_coverage" for check in report.checks)
+
+
+@pytest.mark.asyncio
+async def test_f02_deadline_keeps_real_slots_until_worker_cleanup(pipeline, monkeypatch):
+    candidate = CandidatePayload.model_validate(pipeline.candidates[0])
+    lock = threading.Lock()
+    three_started = threading.Event()
+    active = 0
+    maximum = 0
+
+    def blocked_worker(target, *, cancel_signal, **kwargs):
+        nonlocal active, maximum
+        with lock:
+            active += 1
+            maximum = max(maximum, active)
+            if active == 3:
+                three_started.set()
+        try:
+            assert cancel_signal.wait(timeout=2)
+            time.sleep(0.2)  # OS cleanup still owns the slot after caller timeout.
+            return ProcessResult(success=False, error="cancelled")
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr("app.services.validator.pipeline.run_with_timeout", blocked_worker)
+    validator = CandidateValidator(timeout=1)
+    timed_out = [
+        asyncio.create_task(
+            validator.validate(candidate, deadline=time.monotonic() + 0.3)
+        )
+        for _ in range(3)
+    ]
+    assert await asyncio.to_thread(three_started.wait, 2)
+    fourth = asyncio.create_task(
+        validator.validate(candidate, deadline=time.monotonic() + 1)
+    )
+    results = await asyncio.gather(*timed_out, return_exceptions=True)
+    assert all(isinstance(result, TimeoutError) for result in results)
+    assert maximum <= 3
+    fourth.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await fourth
+    assert active == 0
+    assert await validator.aclose(timeout_seconds=1)
+
+
+@pytest.mark.asyncio
+async def test_f02_external_cancel_reclaims_worker_before_slot_reuse(pipeline, monkeypatch):
+    candidate = CandidatePayload.model_validate(pipeline.candidates[0])
+    started = threading.Event()
+    stopped = threading.Event()
+
+    def blocked_worker(target, *, cancel_signal, **kwargs):
+        started.set()
+        assert cancel_signal.wait(timeout=2)
+        time.sleep(0.05)
+        stopped.set()
+        return ProcessResult(success=False, error="cancelled")
+
+    monkeypatch.setattr("app.services.validator.pipeline.run_with_timeout", blocked_worker)
+    validator = CandidateValidator(timeout=5)
+    task = asyncio.create_task(validator.validate(candidate, deadline=time.monotonic() + 5))
+    assert await asyncio.to_thread(started.wait, 2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert stopped.is_set()
+    assert await validator.aclose(timeout_seconds=1)
+
+
+def _f02_block_forever():
+    while True:
+        time.sleep(0.05)
+
+
+@pytest.mark.asyncio
+async def test_f02_real_processes_never_exceed_three(pipeline, monkeypatch):
+    candidate = CandidatePayload.model_validate(pipeline.candidates[0])
+    before = {child.pid for child in multiprocessing.active_children()}
+
+    def run_blocker(target, *, cancel_signal, **kwargs):
+        return run_with_timeout(
+            _f02_block_forever,
+            timeout=15,
+            start_method="spawn",
+            cancel_signal=cancel_signal,
+        )
+
+    monkeypatch.setattr("app.services.validator.pipeline.run_with_timeout", run_blocker)
+    validator = CandidateValidator(timeout=15)
+    deadline = time.monotonic() + 15
+    first = [
+        asyncio.create_task(validator.validate(candidate, deadline=deadline))
+        for _ in range(3)
+    ]
+    fourth = None
+    maximum = 0
+    try:
+        for _ in range(500):
+            active = {child.pid for child in multiprocessing.active_children()} - before
+            maximum = max(maximum, len(active))
+            if len(active) == 3:
+                break
+            await asyncio.sleep(0.01)
+        assert maximum == 3
+        fourth = asyncio.create_task(validator.validate(candidate, deadline=deadline))
+        await asyncio.sleep(0.05)
+        for task in first:
+            task.cancel()
+        for _ in range(100):
+            active = {child.pid for child in multiprocessing.active_children()} - before
+            maximum = max(maximum, len(active))
+            if all(task.done() for task in first):
+                break
+            await asyncio.sleep(0.01)
+        assert maximum <= 3
+    finally:
+        for task in [*first, fourth]:
+            if task is not None:
+                task.cancel()
+        await asyncio.gather(*(task for task in [*first, fourth] if task is not None),
+                             return_exceptions=True)
+        assert await validator.aclose(timeout_seconds=2)
+    assert not {child.pid for child in multiprocessing.active_children()} - before

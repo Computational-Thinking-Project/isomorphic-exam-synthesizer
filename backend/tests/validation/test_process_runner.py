@@ -2,7 +2,10 @@
 Unit tests for Isolated Process Runner with Hard Timeout.
 """
 
+import multiprocessing
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from app.services.validator.process_runner import ProcessResult, run_with_timeout
 
@@ -93,3 +96,26 @@ def test_worker_termination_guaranteed_even_on_success():
     assert res.success is True
     assert res.data == "done_fast"
     assert res.exit_code is not None
+
+
+def test_cancel_signal_reaps_spawned_worker():
+    before = {child.pid for child in multiprocessing.active_children()}
+    signal = threading.Event()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(
+            run_with_timeout,
+            _infinite_loop,
+            timeout=5,
+            start_method="spawn",
+            cancel_signal=signal,
+        )
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if {child.pid for child in multiprocessing.active_children()} - before:
+                break
+            time.sleep(0.01)
+        assert {child.pid for child in multiprocessing.active_children()} - before
+        signal.set()
+        result = future.result(timeout=2)
+    assert not result.success and not result.timed_out
+    assert result.metadata["pid"] not in {child.pid for child in multiprocessing.active_children()}

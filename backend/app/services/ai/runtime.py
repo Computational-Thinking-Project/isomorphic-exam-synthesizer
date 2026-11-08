@@ -1,10 +1,14 @@
 """Lazy app-scoped services. Starting the app does not call or require Gemini."""
 
+import logging
+
 from app.core.config import Settings
 from app.services.blueprint.service import BlueprintService
 from app.services.generation.service import GenerationService
 
 from .gateway import GeminiAttemptObserver, GeminiGateway
+
+logger = logging.getLogger(__name__)
 
 
 class AIRuntime:
@@ -36,5 +40,8 @@ class AIRuntime:
         return self._generation
 
     async def aclose(self) -> None:
+        if self._generation is not None:
+            if not await self._generation.validator.aclose(timeout_seconds=10):
+                logger.error("Validator workers exceeded the shutdown cleanup budget.")
         if self._gateway is not None:
             await self._gateway.aclose()

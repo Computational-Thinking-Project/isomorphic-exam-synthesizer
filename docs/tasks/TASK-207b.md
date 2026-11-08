@@ -1,5 +1,27 @@
 # TASK-207b — Plan và bàn giao W2: Background generation, lưu tiến độ và SSE
 
+## F02 author update 08/11/2026 — validator resource bound
+
+- Review Đạt tại PR #30, head `b1f0999`, chỉ ra `asyncio.to_thread` tiếp tục
+  chạy aggregator sau khi coroutine timeout/cancel, trong khi semaphore đã nhả.
+  F01 vẫn do reviewer giữ trạng thái verified; F02 chờ kiểm lại riêng.
+- Adapter nay chạy cả bốn tầng trong một process `spawn` có hard timeout tổng.
+  CAS standalone giữ process runner cũ; CAS trong worker dùng chính process
+  được giới hạn đó. Tín hiệu cancel thu hồi process, semaphore chỉ nhả sau
+  khi worker dừng; runtime đợi cleanup khi shutdown. Giữ frozen Blueprint,
+  `parameters=None`, solution checks và mapping warning/failure hiện có.
+- Regression gồm deadline, external cancel, bốn lời gọi tranh slot, tối đa ba
+  process OS sống cùng lúc, thu hồi sau cancel và đáp án sai cú pháp không mở
+  CAS process. Windows Python 3.12.10, venv cục bộ:
+  `python -X utf8 -B -m pytest backend/tests scripts/blueprint/tests -q
+  --tb=short -p no:cacheprovider` → **1757 passed, 274 skipped, 18 warnings**.
+  `ruff check backend/app scripts/blueprint` và
+  `mypy backend/app --ignore-missing-imports` đạt. Fixture/OS-process tests
+  chưa phải tải thực tế, Docker/Python 3.11 hay live DB/FE/Gemini acceptance.
+- Quyết định triển khai ghi ở [change log](../change_log.md#dec-be2-207-f02-reclaim-four-tier-validation-workers-author-implementation-pending-review).
+  PR #30 giữ Draft; sau push cần phản hồi F02 theo M5 với commit/checks đúng
+  head rồi nhờ Đạt/Tâm xác minh, chưa tự đánh verified.
+
 ## Cập nhật author 07/11/2026 — tích hợp theo PR #52
 
 - PR #52 tại `5b3f433` đã bàn giao migration 017 và contract RPC cho generation

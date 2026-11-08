@@ -1,3 +1,18 @@
+## DEC-BE2-207-F02: Reclaim four-tier validation workers (author implementation, pending review)
+
+- Date / owner: 08/11/2026, Quỳnh / TASK-207b, Draft PR #30.
+- Context: cancelling `asyncio.to_thread(validate_question)` released the async
+  semaphore while the synchronous aggregator continued consuming resources.
+- Decision: run the complete four-tier aggregator in a spawn process with a hard
+  overall bound. Retain the semaphore permit until the process is reaped; signal
+  cancellation to the process runner and drain outstanding work on runtime close.
+  CAS runs within this outer process, while standalone CAS callers keep their
+  existing isolated runner. The CAS timeout remains separate from the bounded
+  allowance for process startup and the remaining tiers.
+- Impact: Python validator process runner, AI runtime cleanup and F02 regression
+  tests. No REST/SQL/FE contract changes. Independent VAL/AI review and live
+  resource measurements remain pending.
+
 ## 05/11/2026 — W2 AI policy: owner confirmations
 
 Duy/BE và Bội Anh/FE đã xác nhận mode aliases/NONE theo các link trong [contract AI](ai-w2-integration.md). Đạt cập nhật policy status và acceptance fixtures; không đổi generator/worker/SQL. Quỳnh giữ clone branch, SQL/RPC snapshot và clone persistence đã merge qua PR32; worker integration vẫn do Quỳnh thực hiện; xác nhận policy không phải nghiệm thu triển khai/E2E.
