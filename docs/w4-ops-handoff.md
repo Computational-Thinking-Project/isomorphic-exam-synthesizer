@@ -1,13 +1,13 @@
 # W4 OPS handoff — lifecycle đề xuất và baseline triển khai
 
-Đạt chuẩn bị 07/11/2026 cho [plan11/21](tasks/TASK-W4-OPS.md), [runbook](w4-production private beta-runbook.md), tiếp nhận yêu cầu Quỳnh [I-OPS-LIFE/I-OPS-DB](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6690592440). **Baseline được Duy chấp nhận08/11 tại PR51 comment6718841843; triển khai PR30@b1f0999 chưa merge/live**, không phải runtime đã triển khai. Không cấp quyền cloud/availability từ tài liệu này.
+Đạt chuẩn bị 07/11/2026 cho [plan11/21](tasks/TASK-W4-OPS.md), [runbook](w4-staging-runbook.md), tiếp nhận yêu cầu Quỳnh [I-OPS-LIFE/I-OPS-DB](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6690592440). **Baseline được Duy chấp nhận08/11 tại PR51 comment6718841843; triển khai PR30@b1f0999 chưa merge/live**, không phải runtime đã triển khai. Không cấp quyền cloud/availability từ tài liệu này.
 
-## 1. Phương án lifecycle để Duy/Quỳnh quyết định
+## 1. Baseline lifecycle đã chốt; deployment proof pending
 
 | Nội dung | Đề xuất cụ thể | Căn cứ / người thực thi |
 |---|---|---|
 | Processes | Một backend Uvicorn worker, một app registry/broker/ticket store, một AIRuntime; không dùng reload trên production private beta | Dockerfile hiện workers1; Duy main integration, Quỳnh lifecycle |
-| Scanner | Một loop lifespan độc lập request; quét ngay khi startup rồi mỗi30s; không overlap; mỗi lượt tối đa100 sessions theo generation_last_activity_at,id (017), có phân trang không bỏ đói job cũ | Duy xác nhận query/RPC quyền service-role + index; Quỳnh Python orchestration, timeout/logging |
+| Scanner | Một loop lifespan độc lập request; quét ngay khi startup rồi mỗi30s; không overlap; mỗi lượt tối đa100 sessions theo generation_last_activity_at,id (017), có phân trang không bỏ đói job cũ | PR52 cung cấp query/RPC service-role + index; review/DB proof pending; Quỳnh Python orchestration, timeout/logging |
 | Stale cutoff | Giữ720s hiện hành; DB dùng server time và kiểm lại status/token/timestamp dưới lock; scan chỉ phát hiện, không quyết định bằng timestamp client | Job deadline600s + cleanup finish10s, cutoff có margin; 017 dùng generation_last_activity_at độc lập metadata |
 | Clock/race | DB re-check chặn scanner kết luận từ query cũ; worker hợp lệ dưới600s không bị thu token sớm; không scale nhiều replica trước khi có claim scanner/DB coordination | Duy SQL author/reviewer Hùng; Quỳnh tests |
 | Recovery | fail_stale_generation_job giữ committed results/quota/snapshot; clear old token, failed; retry explicit giữ nguyên targets đã commit | RPC005 hiện có. Không tự chuyển lại generating hay tự sinh lại khi startup |
@@ -15,7 +15,7 @@
 | Terminal retention | Giữ buffer terminal tối thiểu15phút từ terminal event cuối; quét cleanup mỗi60s; chỉ forget khi terminal, subscribers=0, reservations=0, không còn job claim | Quỳnh broker cần timestamp/atomic conditional cleanup; broker hiện50events/session, capacity1024 |
 | Active subscribers | Không evict stream/lease còn hoạt động để đạt retention; hết capacity báo lỗi rõ và resync từ durable DB, không tự xóa session generating | Quỳnh theo semantics broker; không coi15phút là hard limit khi đang xem |
 | Epoch/replay | Restart tạo epoch mới; cursor/history mất trả recovery contract; FE lấy durable snapshot rồi subscribe theo epoch/cursor mới; không giữ counters/cursor RAM như dữ liệu bền | Quỳnh + Philip/FE2; pending live proof |
-| Shutdown | Ngừng nhận claim mới trước teardown; cancel/await scanner và cleanup loops, bound wait10s; giải phóng handles; đóng AIRuntime sau tác vụ dùng gateway; in-flight chưa kết luận không tự ghi success | Duy/Quỳnh chốt shutdown wiring; không reset quota hoặc clear fencing mù |
+| Shutdown | Ngừng nhận claim mới trước teardown; cancel/await scanner và cleanup loops, bound wait10s; giải phóng handles; đóng AIRuntime sau tác vụ dùng gateway; in-flight chưa kết luận không tự ghi success | PR30 đã wiring, isolated review và stop-grace deployment pending; không reset quota hoặc clear fencing mù |
 | Metrics | Observer ở shared transport, không bọc batch lần nữa; main inject observer đúng registry, protected metrics và smoke đổi trong cùng đợt | Wiring implemented PR30@b1f0999, chưa merged/live; Quỳnh author; Đạt phối hợp dev.ps1/docker-ci |
 
 Baseline đã được Duy chốt08/11, không phải capacity evidence hoặc deployment acceptance. PR30@b1f0999 triển khai scanner/retention/ticket protection/shutdown/metrics; F02 validator resource bounds còn OPEN. PR52@5b3f433 giao listing/fencing/durable errors, chưa merge/real-DB proof. Không yêu cầu owner giao lại contract đã có. ENV0/roster/access chốt ở [Issue53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53).
