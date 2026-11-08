@@ -307,27 +307,40 @@ async def reviewed_exam_session():
         q1_id = str(uuid4())
         q2_id = str(uuid4())
 
+        v101_perm = json.dumps({
+            "question_order": [1],
+            "display_to_canonical": {"1": 1},
+            "canonical_to_display": {"1": 1},
+            "option_permutations": {"1": {"A": "A", "B": "B", "C": "C", "D": "D"}},
+        })
+        v102_perm = json.dumps({
+            "question_order": [1],
+            "display_to_canonical": {"1": 1},
+            "canonical_to_display": {"1": 1},
+            "option_permutations": {"1": {"A": "B", "B": "C", "C": "D", "D": "A"}},
+        })
+
         await conn.execute(f"""
         INSERT INTO exam_sessions(id, user_id, title, gemini_review_calls, status)
             VALUES ('{s_id}', '{OWNER_ID}', 'Session Ready For Approval', 0, 'reviewed');
-        INSERT INTO generation_configs(session_id, n_versions)
-            VALUES ('{s_id}', 2);
+        INSERT INTO generation_configs(session_id, n_versions, ordering_preferences)
+            VALUES ('{s_id}', 2, '{{"shuffle_questions": true, "shuffle_options": true}}'::jsonb);
         INSERT INTO source_questions(id, session_id, question_no, raw_content, options, correct_key)
-            VALUES ('{src_id}', '{s_id}', 1, 'Source Stem 1', '["A","B","C","D"]', 'A');
+            VALUES ('{src_id}', '{s_id}', 1, 'Source Stem 1', '["A","B","C","D"]'::jsonb, 'A');
         INSERT INTO question_blueprints(source_question_id, confirmed_at)
             VALUES ('{src_id}', now());
-        INSERT INTO exam_versions(id, session_id, version_code, is_finalized, shuffle_seed)
-            VALUES ('{v101_id}', '{s_id}', '101', true, 'seed101'),
-                   ('{v102_id}', '{s_id}', '102', true, 'seed102');
+        INSERT INTO exam_versions(id, session_id, version_code, is_finalized, shuffle_seed, permutations)
+            VALUES ('{v101_id}', '{s_id}', '101', true, 'seed101', '{v101_perm}'::jsonb),
+                   ('{v102_id}', '{s_id}', '102', true, 'seed102', '{v102_perm}'::jsonb);
         INSERT INTO version_questions(id, version_id, source_question_id, question_no, content, options, correct_key,
-            canonical_question_no, canonical_options, canonical_correct_key, solution_md, status, is_current)
-            VALUES ('{q1_id}', '{v101_id}', '{src_id}', 1, 'Candidate 101', '["A","B","C","D"]', 'A',
-                    1, '["A","B","C","D"]', 'A', 'Sol 1', 'approved', true),
-                   ('{q2_id}', '{v102_id}', '{src_id}', 1, 'Candidate 102', '["B","C","D","A"]', 'B',
-                    1, '["A","B","C","D"]', 'A', 'Sol 2', 'approved', true);
-        INSERT INTO answer_keys(version_id, question_no, correct_option, display_no, display_correct_key)
-            VALUES ('{v101_id}', 1, 'A', 1, 'A'),
-                   ('{v102_id}', 1, 'B', 1, 'B');
+            canonical_question_no, canonical_options, canonical_correct_key, solution_md, canonical_solution_md, status, is_current)
+            VALUES ('{q1_id}', '{v101_id}', '{src_id}', 1, 'Candidate 101', '["A","B","C","D"]'::jsonb, 'A',
+                    1, '["A","B","C","D"]'::jsonb, 'A', 'Đáp án đúng là A', 'Đáp án đúng là A', 'approved', true),
+                   ('{q2_id}', '{v102_id}', '{src_id}', 1, 'Candidate 102', '["D","A","B","C"]'::jsonb, 'B',
+                    1, '["A","B","C","D"]'::jsonb, 'A', 'Đáp án đúng là B', 'Đáp án đúng là A', 'approved', true);
+        INSERT INTO answer_keys(version_id, question_no, correct_option, display_no, display_correct_key, canonical_question_no)
+            VALUES ('{v101_id}', 1, 'A', 1, 'A', 1),
+                   ('{v102_id}', 1, 'B', 1, 'B', 1);
         UPDATE exam_sessions SET status='reviewed' WHERE id='{s_id}';
         """)
         return {
@@ -525,18 +538,122 @@ async def test_generated_session_cannot_be_approved_on_real_pg(
 
 
 @pytest.mark.asyncio
-async def test_preview_snapshot_on_real_pg(
-    owner_client: AsyncpgSupabaseAdapter, reviewed_exam_session
-):
-    """Real PostgreSQL verification of fetch_preview_snapshot and get_preview_snapshot (W4-MVP-05)."""
-    s_info = reviewed_exam_session
-    s_id = s_info["session_id"]
-    finalize_svc = FinalizeService(owner_client)
+async def test_preview_snapshot_on_real_pg(owner_client: AsyncpgSupabaseAdapter):
+    """Real PostgreSQL verification of full shuffle -> preview -> approve pipeline (W4-MVP-05).
 
+    1. Provisions a fresh unfinalized session in 'reviewed' status with 2 sources and 2 versions.
+    2. Verifies preview before shuffle fails closed with 409 ERR_SHUFFLE_REQUIRED.
+    3. Runs shuffle_session() which invokes real finalize_persist_shuffle RPC in PostgreSQL.
+    4. Fetches and validates preview snapshot against real PostgreSQL database.
+    5. Asserts displayed slots, choices, answer keys, canonical mappings, and answers matrix.
+    6. Approves session and verifies preview projection remains deterministic on approved session.
+    """
+    conn = await asyncpg.connect(PG_DSN)
+    s_id = str(uuid4())
+    src1_id = str(uuid4())
+    src2_id = str(uuid4())
+    v101_id = str(uuid4())
+    v102_id = str(uuid4())
+    q1_101 = str(uuid4())
+    q2_101 = str(uuid4())
+    q1_102 = str(uuid4())
+    q2_102 = str(uuid4())
+
+    try:
+        await conn.execute(f"""
+        INSERT INTO exam_sessions(id, user_id, title, gemini_review_calls, status)
+            VALUES ('{s_id}', '{OWNER_ID}', 'Toán Thi THPT 2026', 0, 'reviewed');
+        INSERT INTO generation_configs(session_id, n_versions, ordering_preferences)
+            VALUES ('{s_id}', 2, '{{"shuffle_questions": true, "shuffle_options": true}}'::jsonb);
+        INSERT INTO source_questions(id, session_id, question_no, raw_content, options, correct_key)
+            VALUES ('{src1_id}', '{s_id}', 1, 'Source Stem 1', '["A1","B1","C1","D1"]'::jsonb, 'A'),
+                   ('{src2_id}', '{s_id}', 2, 'Source Stem 2', '["A2","B2","C2","D2"]'::jsonb, 'C');
+        INSERT INTO question_blueprints(source_question_id, confirmed_at)
+            VALUES ('{src1_id}', now()),
+                   ('{src2_id}', now());
+        INSERT INTO exam_versions(id, session_id, version_code, is_finalized)
+            VALUES ('{v101_id}', '{s_id}', '101', false),
+                   ('{v102_id}', '{s_id}', '102', false);
+        INSERT INTO version_questions(id, version_id, source_question_id, question_no, content, options, correct_key,
+            canonical_question_no, canonical_options, canonical_correct_key, solution_md, canonical_solution_md, status, is_current)
+            VALUES ('{q1_101}', '{v101_id}', '{src1_id}', 1, 'Question 1 v101', '["A1","B1","C1","D1"]'::jsonb, 'A',
+                    1, '["A1","B1","C1","D1"]'::jsonb, 'A', 'Chọn đáp án A', 'Chọn đáp án A', 'approved', true),
+                   ('{q2_101}', '{v101_id}', '{src2_id}', 2, 'Question 2 v101', '["A2","B2","C2","D2"]'::jsonb, 'C',
+                    2, '["A2","B2","C2","D2"]'::jsonb, 'C', 'Chọn đáp án C', 'Chọn đáp án C', 'approved', true),
+                   ('{q1_102}', '{v102_id}', '{src1_id}', 1, 'Question 1 v102', '["A1","B1","C1","D1"]'::jsonb, 'A',
+                    1, '["A1","B1","C1","D1"]'::jsonb, 'A', 'Chọn đáp án A', 'Chọn đáp án A', 'approved', true),
+                   ('{q2_102}', '{v102_id}', '{src2_id}', 2, 'Question 2 v102', '["A2","B2","C2","D2"]'::jsonb, 'C',
+                    2, '["A2","B2","C2","D2"]'::jsonb, 'C', 'Chọn đáp án C', 'Chọn đáp án C', 'approved', true);
+        """)
+    finally:
+        await conn.close()
+
+    finalize_svc = FinalizeService(
+        db=owner_client,
+        repo=FinalizeRepository(owner_client),
+        writer_repo=FinalizeRepository(owner_client),
+    )
+
+    # 1. Preview before shuffle must fail closed
+    with pytest.raises(ReviewDomainException) as pre_exc:
+        await finalize_svc.get_preview_snapshot(s_id, OWNER_ID)
+    assert pre_exc.value.status_code == 409
+    assert pre_exc.value.error_code == "ERR_SHUFFLE_REQUIRED"
+
+    # 2. Execute full shuffle flow (computes shuffle -> runs real PostgreSQL finalize_persist_shuffle RPC)
+    shuffle_receipt = await finalize_svc.shuffle_session(s_id, OWNER_ID)
+    assert shuffle_receipt.is_finalized is True
+    assert len(shuffle_receipt.versions) == 2
+
+    # 3. Fetch preview snapshot on real PostgreSQL
     preview = await finalize_svc.get_preview_snapshot(s_id, OWNER_ID)
     assert preview.session_id == s_id
-    assert preview.status in ("reviewed", "approved")
+    assert preview.status == "reviewed"
     assert preview.is_finalized is True
     assert preview.n_versions == 2
+    assert preview.total_questions == 2
     assert len(preview.versions) == 2
-    assert len(preview.matrix) == preview.total_questions
+
+    # 4. Assert slots, choices, answer keys, and canonical mappings
+    source_map = {1: src1_id, 2: src2_id}
+    for v in preview.versions:
+        assert v.version_code in ("101", "102")
+        assert v.total_questions == 2
+        assert len(v.questions) == 2
+        assert set(v.answer_keys.keys()) == {"1", "2"}
+
+        seen_display_nos = set()
+        seen_canonical_nos = set()
+        seen_source_ids = set()
+
+        for q in v.questions:
+            seen_display_nos.add(q.question_no)
+            seen_canonical_nos.add(q.canonical_question_no)
+            seen_source_ids.add(q.source_question_id)
+
+            assert q.source_question_id == source_map[q.canonical_question_no]
+            assert q.status == "approved"
+            assert len(q.options) == 4
+            assert q.correct_key in ("A", "B", "C", "D")
+            assert v.answer_keys[str(q.question_no)] == q.correct_key
+
+        assert seen_display_nos == {1, 2}
+        assert seen_canonical_nos == {1, 2}
+        assert seen_source_ids == {src1_id, src2_id}
+
+    # 5. Assert answers matrix
+    assert len(preview.matrix) == 2
+    for row in preview.matrix:
+        assert row.question_no in (1, 2)
+        assert set(row.answers.keys()) == {"101", "102"}
+        for v in preview.versions:
+            assert row.answers[v.version_code] == v.answer_keys[str(row.question_no)]
+
+    # 6. Approve session and verify post-approval preview
+    app_res = await finalize_svc.approve_session(s_id, OWNER_ID)
+    assert app_res.status == "approved"
+
+    post_approval_preview = await finalize_svc.get_preview_snapshot(s_id, OWNER_ID)
+    assert post_approval_preview.status == "approved"
+    assert post_approval_preview.total_questions == 2
+    assert len(post_approval_preview.matrix) == 2

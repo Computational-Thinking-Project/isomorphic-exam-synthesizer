@@ -15,6 +15,7 @@ from supabase import Client
 
 from app.models.schemas import ReviewDomainException
 from app.services.blueprint.adapters import normalized_text
+from app.services.shuffler.service import sync_solution_text
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ class FinalizeRepository:
         """Fetch session metadata including current status and approval timestamp."""
         res = (
             self.db.table("exam_sessions")
-            .select("id, status, approved_at, user_id, updated_at")
+            .select("id, title, status, approved_at, user_id, updated_at")
             .eq("id", session_id)
             .limit(1)
             .execute()
@@ -625,7 +626,7 @@ class FinalizeRepository:
         if len(set(ids)) != n or len(set(codes)) != n:
             raise inconsistent("Mã hoặc định danh phiên bản đề bị trùng lặp")
 
-        # Step 4: Source questions count
+        # Step 4: Source questions count & 1:1 mappings
         sources = _get_rows(
             self.db.table("source_questions")
             .select("id, question_no")
@@ -637,13 +638,28 @@ class FinalizeRepository:
                 f"Số lượng câu hỏi nguồn ({len(sources) if sources else 0}) không nằm trong giới hạn cho phép (1..20)"
             )
         m = len(sources)
+        source_by_no: Dict[int, str] = {}
+        source_by_id: Dict[str, int] = {}
+        for s in sources:
+            s_id = str(s.get("id", ""))
+            s_no = s.get("question_no")
+            if not isinstance(s_no, int) or isinstance(s_no, bool) or s_no not in range(1, m + 1):
+                raise inconsistent("Thứ tự câu hỏi nguồn (question_no) không hợp lệ")
+            if s_no in source_by_no or s_id in source_by_id:
+                raise inconsistent("Phát hiện trùng lặp mã hoặc thứ tự câu hỏi nguồn")
+            source_by_no[s_no] = s_id
+            source_by_id[s_id] = s_no
+
+        if set(source_by_no.keys()) != set(range(1, m + 1)):
+            raise inconsistent("Danh sách câu hỏi nguồn không liên tục từ 1 đến M")
 
         # Step 5: Version questions
         raw_questions = _get_rows(
             self.db.table("version_questions")
             .select(
                 "id, version_id, source_question_id, question_no, content, options, "
-                "correct_key, solution_md, canonical_question_no, status, is_current"
+                "correct_key, solution_md, canonical_question_no, canonical_options, "
+                "canonical_correct_key, canonical_solution_md, status, is_current"
             )
             .in_("version_id", ids)
             .eq("is_current", True)
@@ -708,6 +724,10 @@ class FinalizeRepository:
             v_seed = v.get("shuffle_seed")
             permutations = v.get("permutations")
 
+            # Validate shuffle seed
+            if not isinstance(v_seed, str) or not v_seed.strip():
+                raise inconsistent(f"Mã hạt giống hoán vị (shuffle_seed) của phiên bản {v_code} không hợp lệ")
+
             # Validate shuffle provenance
             if not isinstance(permutations, dict):
                 raise inconsistent(f"Dữ liệu hoán vị (permutations) của phiên bản {v_code} không hợp lệ")
@@ -716,14 +736,53 @@ class FinalizeRepository:
                 if req_key not in permutations:
                     raise inconsistent(f"Dữ liệu hoán vị của phiên bản {v_code} thiếu trường '{req_key}'")
 
+            q_order = permutations.get("question_order")
             c_to_d = permutations.get("canonical_to_display")
             d_to_c = permutations.get("display_to_canonical")
-            if not isinstance(c_to_d, dict) or not isinstance(d_to_c, dict):
+            opt_perms = permutations.get("option_permutations")
+
+            if (
+                not isinstance(q_order, list)
+                or len(q_order) != m
+                or any(not isinstance(x, int) or isinstance(x, bool) for x in q_order)
+                or sorted(q_order) != list(range(1, m + 1))
+            ):
+                raise inconsistent(f"Thứ tự câu hỏi (question_order) của phiên bản {v_code} không hợp lệ")
+
+            if (
+                not isinstance(c_to_d, dict)
+                or not isinstance(d_to_c, dict)
+                or not isinstance(opt_perms, dict)
+            ):
                 raise inconsistent(f"Bảng ánh xạ hoán vị của phiên bản {v_code} không hợp lệ")
+
+            # Validate bijection between display_to_canonical and canonical_to_display
+            for d_str, c_val in d_to_c.items():
+                if not str(d_str).isdigit() or not isinstance(c_val, int) or isinstance(c_val, bool):
+                    raise inconsistent(f"Ánh xạ display_to_canonical của phiên bản {v_code} không hợp lệ")
+                d_int = int(d_str)
+                if d_int not in range(1, m + 1) or c_val not in range(1, m + 1):
+                    raise inconsistent(f"Giá trị ánh xạ display_to_canonical của phiên bản {v_code} vượt giới hạn")
+                if c_to_d.get(str(c_val)) != d_int and c_to_d.get(c_val) != d_int:
+                    raise inconsistent(f"Ánh xạ hai chiều hoán vị không đối xứng cho phiên bản {v_code}")
+
+            for c_str, d_val in c_to_d.items():
+                if not str(c_str).isdigit() or not isinstance(d_val, int) or isinstance(d_val, bool):
+                    raise inconsistent(f"Ánh xạ canonical_to_display của phiên bản {v_code} không hợp lệ")
+                c_int = int(c_str)
+                if c_int not in range(1, m + 1) or d_val not in range(1, m + 1):
+                    raise inconsistent(f"Giá trị ánh xạ canonical_to_display của phiên bản {v_code} vượt giới hạn")
+                if d_to_c.get(str(d_val)) != c_int and d_to_c.get(d_val) != c_int:
+                    raise inconsistent(f"Ánh xạ hai chiều hoán vị không đối xứng cho phiên bản {v_code}")
 
             v_questions = questions_by_version[vid]
             if len(v_questions) != m:
                 raise inconsistent(f"Phiên bản {v_code} thiếu câu hỏi (có {len(v_questions)}/{m} câu)")
+
+            # Verify 1:1 source question coverage
+            v_source_ids = {str(q.get("source_question_id", "")) for q in v_questions}
+            if v_source_ids != set(source_by_id.keys()):
+                raise inconsistent(f"Phiên bản {v_code} không bao phủ đủ 1:1 các câu hỏi nguồn")
 
             if any(not isinstance(q.get("question_no"), int) for q in v_questions):
                 raise inconsistent(f"Thứ tự câu hỏi hiển thị của phiên bản {v_code} không hợp lệ")
@@ -734,6 +793,7 @@ class FinalizeRepository:
             sorted_v_questions = sorted(v_questions, key=lambda x: int(x["question_no"]))
             formatted_questions: List[Dict[str, Any]] = []
 
+            labels = "ABCD"
             for q in sorted_v_questions:
                 q_no = int(q["question_no"])
                 content = q.get("content")
@@ -742,6 +802,10 @@ class FinalizeRepository:
                 correct_key = q.get("correct_key")
                 q_status = q.get("status")
                 canonical_no = q.get("canonical_question_no")
+                canonical_options = q.get("canonical_options")
+                canonical_correct_key = q.get("canonical_correct_key")
+                canonical_solution_md = q.get("canonical_solution_md")
+                src_id = str(q.get("source_question_id", ""))
 
                 # Exporter DisplayQuestion Invariant: Content non-empty
                 if not isinstance(content, str) or not (1 <= len(content.strip()) <= 16000):
@@ -764,12 +828,46 @@ class FinalizeRepository:
                 if q_status != "approved":
                     raise inconsistent(f"Câu hỏi {q_no} trong phiên bản {v_code} chưa được thẩm định phê duyệt (status='{q_status}')")
 
-                # Provenance & canonical mapping: Fail closed on missing/invalid canonical mapping
+                # Canonical question mapping & Source Lineage
                 if not isinstance(canonical_no, int) or canonical_no not in range(1, m + 1):
                     raise inconsistent(f"Thứ tự câu hỏi gốc (canonical_question_no) của câu {q_no} trong phiên bản {v_code} không hợp lệ")
 
-                if c_to_d.get(str(canonical_no)) != q_no or d_to_c.get(str(q_no)) != canonical_no:
+                if src_id not in source_by_id or source_by_id[src_id] != canonical_no:
+                    raise inconsistent(f"Nguồn gốc câu hỏi (source_question_id) của câu {q_no} trong phiên bản {v_code} không khớp câu gốc {canonical_no}")
+
+                c_str = str(canonical_no)
+                q_str = str(q_no)
+                if (c_to_d.get(c_str) != q_no and c_to_d.get(canonical_no) != q_no) or (d_to_c.get(q_str) != canonical_no and d_to_c.get(q_no) != canonical_no):
                     raise inconsistent(f"Ánh xạ hoán vị không khớp giữa version_questions và permutations cho câu {q_no} trong phiên bản {v_code}")
+
+                # Option Permutation & Canonical Consistency
+                if not isinstance(canonical_options, list) or len(canonical_options) != 4 or not all(isinstance(o, str) and o.strip() for o in canonical_options):
+                    raise inconsistent(f"Phương án gốc (canonical_options) của câu {q_no} trong phiên bản {v_code} không hợp lệ")
+                if canonical_correct_key not in ("A", "B", "C", "D"):
+                    raise inconsistent(f"Đáp án gốc (canonical_correct_key) của câu {q_no} trong phiên bản {v_code} không hợp lệ")
+
+                perm_map = opt_perms.get(q_str) or opt_perms.get(q_no)
+                if not isinstance(perm_map, dict) or set(perm_map.keys()) != set("ABCD") or set(perm_map.values()) != set("ABCD"):
+                    raise inconsistent(f"Bảng hoán vị phương án (option_permutations) của câu {q_no} trong phiên bản {v_code} không hợp lệ")
+
+                if correct_key != perm_map.get(canonical_correct_key):
+                    raise inconsistent(f"Đáp án đúng sau hoán vị không khớp bảng hoán vị cho câu {q_no} trong phiên bản {v_code}")
+
+                for i, label in enumerate(labels):
+                    mapped_label = perm_map[label]
+                    j = labels.index(mapped_label)
+                    if options[j] != canonical_options[i]:
+                        raise inconsistent(f"Nội dung phương án hiển thị '{mapped_label}' không khớp phương án gốc '{label}' cho câu {q_no} trong phiên bản {v_code}")
+
+                # Solution synchronization check
+                if canonical_solution_md:
+                    expected_solution = sync_solution_text(
+                        canonical_solution_md,
+                        canonical_key=canonical_correct_key,
+                        display_key=correct_key,
+                    )
+                    if solution_md.strip() != expected_solution.strip():
+                        raise inconsistent(f"Lời giải câu {q_no} trong phiên bản {v_code} không khớp lời giải sau đồng bộ hoán vị")
 
                 # Answer key consistency
                 key_entry = keys_by_version[vid].get(q_no)
@@ -780,7 +878,7 @@ class FinalizeRepository:
 
                 formatted_questions.append({
                     "id": str(q["id"]),
-                    "source_question_id": str(q["source_question_id"]),
+                    "source_question_id": src_id,
                     "question_no": q_no,
                     "canonical_question_no": canonical_no,
                     "content": content.strip(),
@@ -796,7 +894,7 @@ class FinalizeRepository:
                 "id": vid,
                 "version_code": v_code,
                 "is_finalized": True,
-                "shuffle_seed": str(v_seed) if v_seed is not None else None,
+                "shuffle_seed": str(v_seed),
                 "total_questions": m,
                 "questions": formatted_questions,
                 "answer_keys": ans_map,

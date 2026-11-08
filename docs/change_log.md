@@ -1,4 +1,4 @@
-## W4-MVP-05: Post-shuffle pre-approval preview projection API — 07/11/2026 (proposed)
+## W4-MVP-05: Post-shuffle pre-approval preview projection API — 08/11/2026 (proposed)
 
 Introduces dedicated read-only endpoint `GET /api/sessions/{session_id}/finalize/preview`
 providing post-shuffle examination preview projection before final approval. Enforces
@@ -6,6 +6,24 @@ full parity with exporter `DisplayQuestion` invariants (non-empty content/soluti
 normalized distinct options, status='approved'), complete answer-key integrity checks,
 and finalized shuffle provenance verification. Resolves Decision Q06. See the
 [preview projection contract](api/preview-projection-contract.md).
+
+### Review Round 2 Findings (F01–F04) Resolution:
+- **F01 (Real PostgreSQL integration & fixture):** Fixed `reviewed_exam_session` fixture
+  schema compliance by populating `canonical_question_no` on `answer_keys` and valid
+  `permutations` on `exam_versions`. Upgraded `test_preview_snapshot_on_real_pg` to exercise
+  the complete `prepare_shuffle` -> `finalize_persist_shuffle` transactional RPC -> `get_preview_snapshot`
+  pipeline on PostgreSQL, asserting slots, choices, answer keys, and canonical mappings.
+- **F02 (Persisted shuffle provenance validation):** Replicated migration 008 invariants in
+  `fetch_preview_snapshot()`: verified non-empty `shuffle_seed`, complete permutation map
+  bijections, exact match between displayed options and `canonical_options` under `option_permutations`,
+  `correct_key == perm_map[canonical_correct_key]`, and synchronized explanation markdown
+  against `canonical_solution_md`.
+- **F03 (Canonical & source lineage validation):** Enforced 1:1 set coverage of source questions
+  for each version and verified `source_by_id[source_question_id] == canonical_question_no`,
+  failing closed on swapped or omitted source references.
+- **F04 (Export title mapping & mock column projection):** Added `title` to `.select()` in
+  `FinalizeRepository.get_session_meta()` and updated `MockSupabaseClient` in `finalize_test_client.py`
+  to project selected columns, preventing false-positive tests on unqueried fields.
 
 ## 05/11/2026 — W2 AI policy: owner confirmations
 

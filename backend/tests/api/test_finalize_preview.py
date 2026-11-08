@@ -156,6 +156,9 @@ def _build_valid_preview_db_state(
                 "options": ["$x = -1$", "$x = 1$", "$x = 2$", "$x = 0$"],
                 "correct_key": "A",
                 "solution_md": "Đạo hàm $y' = 3x^2 - 3 = 0 \\iff x = \\pm 1$. Vì $y''(-1) = -6 < 0$ nên điểm cực đại là $x = -1$. Do đó đáp án đúng là A.",
+                "canonical_options": ["$x = -1$", "$x = 1$", "$x = 2$", "$x = 0$"],
+                "canonical_correct_key": "A",
+                "canonical_solution_md": "Đạo hàm $y' = 3x^2 - 3 = 0 \\iff x = \\pm 1$. Vì $y''(-1) = -6 < 0$ nên điểm cực đại là $x = -1$. Do đó đáp án đúng là A.",
                 "status": "approved",
                 "is_current": True,
             },
@@ -169,6 +172,9 @@ def _build_valid_preview_db_state(
                 "options": ["$I = 1$", "$I = 3$", "$I = 2$", "$I = 4$"],
                 "correct_key": "C",
                 "solution_md": "Ta có nguyên hàm $F(x) = x^3 + x^2$. Khi đó $I = F(1) - F(0) = (1 + 1) - 0 = 2$. Do đó đáp án đúng là C.",
+                "canonical_options": ["$I = 1$", "$I = 3$", "$I = 2$", "$I = 4$"],
+                "canonical_correct_key": "C",
+                "canonical_solution_md": "Ta có nguyên hàm $F(x) = x^3 + x^2$. Khi đó $I = F(1) - F(0) = (1 + 1) - 0 = 2$. Do đó đáp án đúng là C.",
                 "status": "approved",
                 "is_current": True,
             },
@@ -182,6 +188,9 @@ def _build_valid_preview_db_state(
                 "options": ["$R = 9$", "$R = 81$", "$R = \\sqrt{3}$", "$R = 3$"],
                 "correct_key": "D",
                 "solution_md": "Phương trình mặt cầu có dạng $(x-a)^2 + (y-b)^2 + (z-c)^2 = R^2$. Suy ra $R^2 = 9 \\implies R = 3$. Do đó đáp án đúng là D.",
+                "canonical_options": ["$R = 9$", "$R = 81$", "$R = \\sqrt{3}$", "$R = 3$"],
+                "canonical_correct_key": "D",
+                "canonical_solution_md": "Phương trình mặt cầu có dạng $(x-a)^2 + (y-b)^2 + (z-c)^2 = R^2$. Suy ra $R^2 = 9 \\implies R = 3$. Do đó đáp án đúng là D.",
                 "status": "approved",
                 "is_current": True,
             },
@@ -196,6 +205,9 @@ def _build_valid_preview_db_state(
                 "options": ["$x = -1$", "$x = 1$", "$x = 2$", "$x = 0$"],
                 "correct_key": "A",
                 "solution_md": "Đạo hàm $y' = 3x^2 - 3 = 0 \\iff x = \\pm 1$. Vì $y''(-1) = -6 < 0$ nên điểm cực đại là $x = -1$. Do đó đáp án đúng là A.",
+                "canonical_options": ["$x = -1$", "$x = 1$", "$x = 2$", "$x = 0$"],
+                "canonical_correct_key": "A",
+                "canonical_solution_md": "Đạo hàm $y' = 3x^2 - 3 = 0 \\iff x = \\pm 1$. Vì $y''(-1) = -6 < 0$ nên điểm cực đại là $x = -1$. Do đó đáp án đúng là A.",
                 "status": "approved",
                 "is_current": True,
             },
@@ -209,6 +221,9 @@ def _build_valid_preview_db_state(
                 "options": ["$I = 1$", "$I = 3$", "$I = 2$", "$I = 4$"],
                 "correct_key": "C",
                 "solution_md": "Ta có nguyên hàm $F(x) = x^3 + x^2$. Khi đó $I = F(1) - F(0) = (1 + 1) - 0 = 2$. Do đó đáp án đúng là C.",
+                "canonical_options": ["$I = 1$", "$I = 3$", "$I = 2$", "$I = 4$"],
+                "canonical_correct_key": "C",
+                "canonical_solution_md": "Ta có nguyên hàm $F(x) = x^3 + x^2$. Khi đó $I = F(1) - F(0) = (1 + 1) - 0 = 2$. Do đó đáp án đúng là C.",
                 "status": "approved",
                 "is_current": True,
             },
@@ -222,6 +237,9 @@ def _build_valid_preview_db_state(
                 "options": ["$R = 9$", "$R = 81$", "$R = \\sqrt{3}$", "$R = 3$"],
                 "correct_key": "D",
                 "solution_md": "Phương trình mặt cầu có dạng $(x-a)^2 + (y-b)^2 + (z-c)^2 = R^2$. Suy ra $R^2 = 9 \\implies R = 3$. Do đó đáp án đúng là D.",
+                "canonical_options": ["$R = 9$", "$R = 81$", "$R = \\sqrt{3}$", "$R = 3$"],
+                "canonical_correct_key": "D",
+                "canonical_solution_md": "Phương trình mặt cầu có dạng $(x-a)^2 + (y-b)^2 + (z-c)^2 = R^2$. Suy ra $R^2 = 9 \\implies R = 3$. Do đó đáp án đúng là D.",
                 "status": "approved",
                 "is_current": True,
             },
@@ -443,11 +461,29 @@ async def test_preview_rejects_invalid_canonical_mapping():
 
 
 @pytest.mark.asyncio
+async def test_preview_rejects_asymmetric_permutation_mapping():
+    """Fails closed with 409 when permutations display_to_canonical and canonical_to_display are not inverse bijections."""
+    db_state = _build_valid_preview_db_state()
+    # Change permutations canonical_to_display without updating display_to_canonical
+    db_state["exam_versions"][0]["permutations"]["canonical_to_display"]["1"] = 2
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "Ánh xạ hai chiều hoán vị không đối xứng" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
 async def test_preview_rejects_mismatched_permutation_mapping():
     """Fails closed with 409 when version_question mapping does not match permutations dict."""
     db_state = _build_valid_preview_db_state()
-    # Change permutations canonical_to_display to point to 2 instead of 1
-    db_state["exam_versions"][0]["permutations"]["canonical_to_display"]["1"] = 2
+    # Permutations validly swaps 1 and 2, but version_questions retains canonical_question_no = 1 for Q1
+    db_state["exam_versions"][0]["permutations"]["question_order"] = [2, 1, 3]
+    db_state["exam_versions"][0]["permutations"]["canonical_to_display"] = {"1": 2, "2": 1, "3": 3}
+    db_state["exam_versions"][0]["permutations"]["display_to_canonical"] = {"1": 2, "2": 1, "3": 3}
     client = MockSupabaseClient(db_state)
     service = FinalizeService(client)
 
@@ -506,6 +542,123 @@ async def test_preview_rejects_too_many_questions():
     assert exc_info.value.status_code == 409
     assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
     assert "không nằm trong giới hạn cho phép" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_empty_shuffle_seed():
+    """Fails closed with 409 when exam_versions.shuffle_seed is empty or whitespace."""
+    db_state = _build_valid_preview_db_state()
+    db_state["exam_versions"][0]["shuffle_seed"] = "   "
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "shuffle_seed" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_empty_option_permutations():
+    """Fails closed with 409 when option_permutations is empty dict or missing questions."""
+    db_state = _build_valid_preview_db_state()
+    db_state["exam_versions"][0]["permutations"]["option_permutations"] = {}
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "option_permutations" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_swapped_source_question_id():
+    """Fails closed with 409 when source_question_id does not match canonical_question_no."""
+    db_state = _build_valid_preview_db_state()
+    # Swap source_question_id of question 1 and question 2 in version 101
+    s1_id = db_state["source_questions"][0]["id"]
+    s2_id = db_state["source_questions"][1]["id"]
+    db_state["version_questions"][0]["source_question_id"] = s2_id
+    db_state["version_questions"][1]["source_question_id"] = s1_id
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "source_question_id" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_missing_source_question_coverage():
+    """Fails closed with 409 when a version does not have 1:1 coverage of all source questions."""
+    db_state = _build_valid_preview_db_state()
+    # Replace version 101 question 2 source_question_id with source 1
+    s1_id = db_state["source_questions"][0]["id"]
+    db_state["version_questions"][1]["source_question_id"] = s1_id
+    db_state["version_questions"][1]["canonical_question_no"] = 1
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_displayed_options_mismatching_canonical():
+    """Fails closed with 409 when displayed options diverge from canonical_options under perm_map (Duy counterexample)."""
+    db_state = _build_valid_preview_db_state()
+    # Swap displayed options A and B while leaving identity permutation map and answer_keys untouched
+    orig_options = list(db_state["version_questions"][0]["options"])
+    db_state["version_questions"][0]["options"] = [orig_options[1], orig_options[0], orig_options[2], orig_options[3]]
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "không khớp phương án gốc" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_display_key_mismatching_perm_map():
+    """Fails closed with 409 when correct_key does not equal perm_map[canonical_correct_key]."""
+    db_state = _build_valid_preview_db_state()
+    # Invert perm_map for Q1 to map A -> B, but leave correct_key as A
+    db_state["exam_versions"][0]["permutations"]["option_permutations"]["1"] = {
+        "A": "B", "B": "A", "C": "C", "D": "D"
+    }
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "không khớp bảng hoán vị" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_desynchronized_solution():
+    """Fails closed with 409 when solution_md diverges from synced canonical_solution_md."""
+    db_state = _build_valid_preview_db_state()
+    # Tamper with solution_md so it does not match sync_solution_text
+    db_state["version_questions"][0]["solution_md"] = "Lời giải bị sửa sai khác gốc"
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "không khớp lời giải sau đồng bộ" in exc_info.value.detail
 
 
 # ==============================================================================
@@ -593,8 +746,8 @@ async def test_preview_on_on_shuffled_case():
         ],
         "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 2}],
         "exam_versions": [
-            {"id": v1_id, "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True, "permutations": on_on_permutations},
-            {"id": v2_id, "session_id": MOCK_SESSION_ID, "version_code": "102", "is_finalized": True, "permutations": on_on_permutations},
+            {"id": v1_id, "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True, "shuffle_seed": "on-on-seed-101", "permutations": on_on_permutations},
+            {"id": v2_id, "session_id": MOCK_SESSION_ID, "version_code": "102", "is_finalized": True, "shuffle_seed": "on-on-seed-102", "permutations": on_on_permutations},
         ],
         "source_questions": [
             {"id": s1_id, "session_id": MOCK_SESSION_ID, "question_no": 1},
@@ -604,24 +757,40 @@ async def test_preview_on_on_shuffled_case():
             # v1: Q1 is canonical 2, Q2 is canonical 1
             {
                 "id": str(uuid4()), "version_id": v1_id, "source_question_id": s2_id, "question_no": 1,
-                "canonical_question_no": 2, "content": "Tích phân", "options": ["A", "B", "C", "D"],
-                "correct_key": "B", "solution_md": "Lời giải B", "status": "approved", "is_current": True,
+                "canonical_question_no": 2, "content": "Tích phân",
+                "options": ["Tích phân D", "Tích phân A", "Tích phân B", "Tích phân C"],
+                "correct_key": "B", "solution_md": "Đáp án đúng là B",
+                "canonical_options": ["Tích phân A", "Tích phân B", "Tích phân C", "Tích phân D"],
+                "canonical_correct_key": "A", "canonical_solution_md": "Đáp án đúng là A",
+                "status": "approved", "is_current": True,
             },
             {
                 "id": str(uuid4()), "version_id": v1_id, "source_question_id": s1_id, "question_no": 2,
-                "canonical_question_no": 1, "content": "Đạo hàm", "options": ["W", "X", "Y", "Z"],
-                "correct_key": "A", "solution_md": "Lời giải A", "status": "approved", "is_current": True,
+                "canonical_question_no": 1, "content": "Đạo hàm",
+                "options": ["Đạo hàm W", "Đạo hàm X", "Đạo hàm Y", "Đạo hàm Z"],
+                "correct_key": "A", "solution_md": "Đáp án đúng là A",
+                "canonical_options": ["Đạo hàm W", "Đạo hàm X", "Đạo hàm Y", "Đạo hàm Z"],
+                "canonical_correct_key": "A", "canonical_solution_md": "Đáp án đúng là A",
+                "status": "approved", "is_current": True,
             },
             # v2: Q1 is canonical 2, Q2 is canonical 1
             {
                 "id": str(uuid4()), "version_id": v2_id, "source_question_id": s2_id, "question_no": 1,
-                "canonical_question_no": 2, "content": "Tích phân", "options": ["A", "B", "C", "D"],
-                "correct_key": "B", "solution_md": "Lời giải B", "status": "approved", "is_current": True,
+                "canonical_question_no": 2, "content": "Tích phân",
+                "options": ["Tích phân D", "Tích phân A", "Tích phân B", "Tích phân C"],
+                "correct_key": "B", "solution_md": "Đáp án đúng là B",
+                "canonical_options": ["Tích phân A", "Tích phân B", "Tích phân C", "Tích phân D"],
+                "canonical_correct_key": "A", "canonical_solution_md": "Đáp án đúng là A",
+                "status": "approved", "is_current": True,
             },
             {
                 "id": str(uuid4()), "version_id": v2_id, "source_question_id": s1_id, "question_no": 2,
-                "canonical_question_no": 1, "content": "Đạo hàm", "options": ["W", "X", "Y", "Z"],
-                "correct_key": "A", "solution_md": "Lời giải A", "status": "approved", "is_current": True,
+                "canonical_question_no": 1, "content": "Đạo hàm",
+                "options": ["Đạo hàm W", "Đạo hàm X", "Đạo hàm Y", "Đạo hàm Z"],
+                "correct_key": "A", "solution_md": "Đáp án đúng là A",
+                "canonical_options": ["Đạo hàm W", "Đạo hàm X", "Đạo hàm Y", "Đạo hàm Z"],
+                "canonical_correct_key": "A", "canonical_solution_md": "Đáp án đúng là A",
+                "status": "approved", "is_current": True,
             },
         ],
         "answer_keys": [
