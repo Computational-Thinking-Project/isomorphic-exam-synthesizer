@@ -4,6 +4,15 @@ Nhằm đảm bảo tính nhất quán, an toàn bảo mật và chất lượng
 
 ---
 
+## 0. Docker local bắt buộc cho từng thành viên
+
+- Mỗi thành viên phát triển hoặc kiểm thử ứng dụng **phải tự cài Docker và Docker Compose trên máy cá nhân**, clone repo và chạy môi trường local của chính mình. Trên Windows/macOS dùng Docker Desktop (Windows bật WSL 2 và Linux containers); Linux có thể dùng Docker Engine + Compose. Không phụ thuộc vào máy của Đạt hay một Docker host cá nhân dùng chung.
+- Từ root checkout riêng, chạy `./scripts/dev.ps1 setup`, `doctor`, `up` và `smoke` (trên Windows PowerShell dùng `.\\scripts\\dev.ps1 <action>`; trên macOS/Linux dùng `pwsh ./scripts/dev.ps1 <action>`). Với thay đổi code, chạy thêm `test` hoặc bộ kiểm liên quan trước PR; báo rõ nếu Docker chưa chạy được. CI xanh không chứng minh máy cá nhân đã chạy được.
+- Mỗi người giữ `.env` riêng, không commit/chia sẻ secret; không nhờ Đạt chạy hộ thay cho minh chứng local. Xem [hướng dẫn Docker](docs/setup-docker.md). Bản UI preview tĩnh là ngoại lệ chỉ để xem mẫu, không thay thế chạy/test ứng dụng.
+- **Phân biệt:** Đạt có thể là owner chuẩn bị OPS/deployment cho private beta theo [Issue #53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53), nhưng **không mặc định là người cung cấp máy Docker/host chung**. Một deployment HTTPS tập trung (nếu được duyệt) là hạng mục vận hành tách biệt và không bãi bỏ Docker local của từng thành viên.
+
+---
+
 ## 1. Quy ước Nhánh (Branching Strategy)
 - **`main`**: Nhánh chính, luôn ở trạng thái production-ready và ổn định.
 - **`dev`**: Nhánh tích hợp của toàn đội. Mọi nhánh tính năng đều rẽ nhánh từ `dev` và tạo Pull Request (PR) về `dev`. PR `dev → main` dành cho mốc/giai đoạn đã được kiểm và chấp nhận.
