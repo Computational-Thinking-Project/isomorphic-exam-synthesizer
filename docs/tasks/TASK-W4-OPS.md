@@ -25,18 +25,22 @@ Máy reviewer không có `docker` trong PATH ở lượt kiểm 07/11; chưa ch�
 | 4: scripts/dev.ps1 + docker-ci.yml khi phối hợp xong | Anonymous metrics401/Bearer, health200, proxy regression | Quỳnh protected route/contract + Duy main integration | Cùng patch/head tương thích; không nới auth để giữ smoke xanh |
 | 5: runbook/evidence | Script8 bước, G0/G1/G2 reports cùng SHA | Philip UI; Quỳnh Golden; Tâm oracle; Hùng ZIP/security | Script12/11; G0 12/11 18:00; G1 14/11; demo15/11 |
 
-## Input cần trả lời trên Draft PR
+<a id="input-handoff"></a>
 
-| ID / owner cung cấp | Input cụ thể | Trạng thái / cần trước / ETA |
-|---|---|---|
-| ENV0/Q12 — Duy + Đạt | Máy/host/domain test dùng gì, ai cấp quyền deploy/OAuth/Supabase; backup và lịch phối hợp07–08/14–15 | Chưa nhận; trước deploy; ETA TBD. Mốc06/11 đã qua, không tự nhận gate PASS |
-| DB0/Q08 — Duy + Hùng | Ledger migrations fresh+upgrade, isolated project, pinned compatible backend SHA, rollback/forward-fix và người thực thi | Chưa nhận handoff môi trường; cần09/11 18:00; ETA TBD |
-| I-OPS-LIFE — Duy + Quỳnh | Chốt1worker, source/query quét stale, interval, terminal retention và active subscriber policy | Đề xuất giữ1worker theo Dockerfile hiện có; Quỳnh đã nhận baseline để triển khai/test cô lập tại comment6703279898: startup+30s, batch100 có pagination, cutoff720s DB lock, terminal15phút/cleanup60s, shutdown10s. SQL/RPC017 đã giao tại PR52@5b3f433, Quỳnh đã nối tại PR30@b1f0999; chưa merge/applied/live; chưa nghiệm thu production private beta. Cần trước lifecycle wiring; TBD |
-| I-B-STALE — Duy | Persist ERR_GENERATION_INTERRUPTED theo migration017 | Đã chốt bởi Duy; PR52 open, independent SQL/ACL + real-DB proof và DB-applied ledger còn thiếu |
-| I-OPS-DB — Duy + OPS | Accounts A/B/admin/non-admin, quyền seed/cleanup, JWT qua kênh an toàn, phạm vi/quota live, ADMIN_EMAILS owner/revoke | Chưa nhận; trước integration smoke; TBD |
-| Q09/Q10 — Hùng + Duy | Bucket private, tên biến chính thức, upload/status/reissue contract và exported transition | Không tự đặt env Storage khi chưa có contract; cần trước live export; TBD |
-| Q14 — Quỳnh + Tâm + Duy | Golden Markdown3 câu có quyền dùng, oracle đáp án/lời giải, N=2, prompt/config version | Chưa nhận artifact đã duyệt; trước E2E; TBD |
-| Q20 — Duy + Hùng + Đạt | Nơi lưu ZIP/video/log, quyền xem/retention, người ký | Trước evidence pack12–15/11; TBD |
+## Input cần trả lời trên Draft PR — nơi tổng hợp duy nhất
+
+Áp dụng cách ghi đề xuất INPUT-20261109 tại [PR57@ef941be](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/57): không thay workflow/owner/gate hiện hành. Giữ ID cũ; ENV0 và quyết định quyền/roster vẫn có nguồn chuẩn Issue53, bảng này chỉ dẫn link và ghi phần đủ dùng cho task11/21. Mốc là need-by từ W4, ETA chưa có xác nhận ghi TBD.
+
+| ID / yêu cầu gốc | Cung cấp → Đạt / mục đích đủ dùng | Mức và phần đã nhận | Còn thiếu / bước tiếp / need-by / ETA |
+|---|---|---|---|
+| [ENV0/Q12](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53) | Duy + người giữ quyền → OPS11; môi trường và authority để triển khai | Decided topology08/11; local Windows Docker build/health smoke đã chạy. Đủ dùng chuẩn bị local, chưa Accepted cho deployment online. | Host online/quyền/access gate/backup/roster theo Issue53; đề xuất máy Đạt chưa được duyệt làm host online. Duy điều phối; trước deploy; ETA TBD. |
+| [DB0/Q08](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/51#issuecomment-6718841843) | Duy + Hùng → OPS11; manifest và candidate SHA để áp DB an toàn | Đã nhận quyết định017 sau016 và candidate inventory; chưa đủ để chạy migration trên shared DB. | Approved fresh+upgrade manifest, ledger/checksum, backup/restore/forward-fix, quyền và SHA tương thích; Duy/Hùng; need-by09/11 18:00; ETA TBD. |
+| [I-OPS-LIFE](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6690592440) | Duy + Quỳnh → OPS11; policy để chuẩn bị cấu hình/ma trận smoke | Consumer Accepted cho chuẩn bị runbook: baseline1worker, startup+30s scan, batch100, cutoff720s, terminal15phút, cleanup60s, shutdown bounded đã chốt08/11. Code PR30@b6b6422 Delivered để review, chưa Integrated. | Đạt xác minh lại patch validator/resource bounds, merge/pinned SHA rồi kiểm restart/SSE/proxy thật; Quỳnh module owner; trước integrated smoke; ETA TBD. Không xin lại policy đã giao. |
+| [I-B-STALE](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/52) | Duy → OPS11; durable interruption/SQL contract | Consumer Accepted contract017 cho chuẩn bị test. SQL/tests@598b959 Delivered; reviewer PostgreSQL17:15pass/5fail, F01 verified; không đồng nghĩa DB-applied. | Duy sửa F02–F04 tests; reviewer kiểm lại; migration handoff theo DB0. Trước lifecycle acceptance; ETA TBD. |
+| [I-OPS-DB](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6690592440) | Duy + người giữ quyền → OPS11; identities A/B/admin/non-admin và phạm vi test | Requested; chưa có handoff đủ dùng để Auth/ownership smoke. | Cấp quyền qua kênh an toàn, seed/cleanup/quota và ADMIN_EMAILS owner/revoke; trước integration; ETA TBD. Không đăng JWT/secret. |
+| [Q09/Q10](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/51a919861089f0475a7a5f8ec16acfb0c41a3cd2/docs/tasks/W4_TASK_DETAIL.md) | Hùng + Duy → OPS11/21; private Storage/export config và API | Requested cho handoff OPS; chưa đủ dùng export live. | Contract/env names/upload-status-reissue/exported transition và quyền; Hùng/Duy; trước live export11/11; ETA TBD. |
+| [Q14](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/51a919861089f0475a7a5f8ec16acfb0c41a3cd2/docs/tasks/W4_TASK_DETAIL.md) | Quỳnh + Tâm + Duy → demo21; Golden3 câu N=2 và oracle | Requested; script/phiếu trống chuẩn bị được, chưa có Golden đã duyệt để chạy nghiệm thu. | Artifact/revision, permission, key/solution oracle, config/model/prompt; trước E2E; ETA TBD. |
+| [Q20](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/51a919861089f0475a7a5f8ec16acfb0c41a3cd2/docs/tasks/W4_TASK_DETAIL.md) | Duy + Hùng + Đạt → demo21; nơi lưu proof và quyền recording | Requested; không tự tạo cloud folder/chia sẻ dữ liệu. | Nơi lưu ZIP/video/log, quyền/retention/consent và người ký; trước pack12–15/11; ETA TBD. |
 
 Đạt nhận chuẩn bị plan/runbook ngay. Duy điều phối input còn thiếu; không gán cam kết quyền hoặc ca trực thay người dùng. Phần Docker/CI thay đổi cụ thể sẽ phối hợp Quỳnh khi protected route sẵn; không cần Quỳnh chờ OPS để code unit/guard độc lập.
 
@@ -95,3 +99,7 @@ Giữ nguyên env; không áp migration/cloud, không gọi Gemini, chưa kiểm
 - Đã kiểm local: 6 unittest PASS; Ruff PASS; HTTP smoke mới trên stack local hiện có PASS, integrated acceptance vẫn NOT_VERIFIED. Evidence ignored `.artifacts/w4/smoke-pr51-openapi-20261109.json`; stack build từ092b0a9 trước patch scripts, không nhận clean deployment mới.
 - Phân biệt theo comment Duy09/11 và PR56: mỗi developer tự cài/chạy Docker local. Máy Đạt đã local-ready về build/health; đề xuất dùng tạm máy cá nhân trước đây chưa là host online được nhóm phê duyệt, không thay ENV0/Q12 hay xác nhận uptime/quyền cloud.
 - PR52@598b959 reviewer chạy PostgreSQL17 thật:15pass/5fail; F01 verified, F02–F04 test fixes còn chờ Duy. PR30@b6b6422 có patch mới, Đạt chưa xác minh lại F02. Không dùng smoke này thay G0/G1/G2.
+
+## Preparation W4-MVP-21 — 09/11
+
+Đã soạn [script diễn tập và phiếu evidence](../w4-demo-rehearsal.md): prerequisites clean checkout,8 bước với expected/evidence, tách ca phụ,6-slot key/solution mapping và xử lý FAIL/BLOCKED/restore. Đầu ra đủ dùng đọc thử/tập thao tác khi owner cung cấp input; chưa chạy Golden/Auth/SSE/Storage và chưa ký G0/G1/G2. Reviewer Duy đã được đề nghị ở PR51; không tự nhận acceptance. Bảng input phía trên thay bản cũ, không tạo tracker song song.

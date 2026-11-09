@@ -80,6 +80,8 @@ Hiện frontend http://localhost:3000, backend http://localhost:8000; thay theo 
 
 ## 5. Kịch bản demo8 bước và evidence
 
+[Script thao tác, điều kiện diễn tập và phiếu6 slots](w4-demo-rehearsal.md) dùng khi chuẩn bị W4-MVP-21; các mẫu đều chưa chạy nghiệm thu.
+
 Golden input cần Quỳnh/Tâm/Duy bàn giao: Markdown3 câu đủ key/solution có quyền dùng, N=2, shuffle OFF/OFF; đây chưa phải fixture đã có. Không đổi prompt để tối ưu sát demo. Flow modes/fallback W4 theo Q03/#45/#46 cần owner chốt và code tương thích, không giả W2 đã có W4 behavior.
 
 1. Login, tạo/mở session, import Golden Markdown.
