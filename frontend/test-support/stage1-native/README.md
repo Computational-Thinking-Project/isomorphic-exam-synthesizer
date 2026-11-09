@@ -41,3 +41,17 @@ Matrix trên là bằng chứng kiểm, chưa là quyết định hỗ trợ s�
 Safari/iOS chưa kiểm không chứng minh có bug hoặc Chrome-only. Nếu owner đưa Safari/iOS
 vào acceptance, cần native thiết bị/browser tương ứng; Chromium không chứng minh WebKit/iOS.
 Fixture422 không phải backend/cloud, DB/Storage audit hoặc end-to-end AI/PDF.
+
+## TASK-204 — xác nhận nguồn và F5
+
+Mở `/test-support/stage1-native/confirmation.html?case=retry` trong một tab mới.
+Đây là Stage 1 thật, với Auth/HTTP giả lập và màn đích Stage 2 chỉ để kiểm ID bàn giao.
+
+1. Tab đến ô nhập, điền đề rồi dùng bàn phím bấm **Nạp nguồn**. Kiểm preview đổi từ A sang B sau GET.
+2. Dùng bàn phím kích hoạt **Xác nhận đề gốc và tiếp tục**. Lần đầu mất response, màn vẫn Stage 1.
+3. F5. Kiểm báo cáo vẫn có đúng một POST confirm và có GET phiên/artifact để đối soát.
+4. Kích hoạt **Thử xác nhận lại**. Kiểm `Retry giữ key: true` và đúng ID ở Stage 2 fixture.
+5. Mở tab mới với `?case=committed`. Sau lần confirm đầu mất response, F5 phải chuyển Stage 2
+   ngay từ GET và số POST confirm vẫn là một.
+
+Fixture dùng trạng thái mô phỏng riêng trong tab, không gọi backend, Supabase hay AI.
