@@ -1,30 +1,46 @@
 # Team Docker setup (TV6)
 
-Application and tests run in Linux containers. Install Git and Docker Desktop;
-no host Python, Node or venv is needed. The helper uses Windows PowerShell 5.1+
-or PowerShell 7 (pwsh on macOS/Linux).
+## Mandatory per-member local environment
 
+**Every contributor developing or testing the application must install Docker
+and Docker Compose on their own computer, clone the repository locally, and run
+their own containers.** Use Docker Desktop on Windows/macOS (WSL 2 and Linux
+containers on Windows), or Docker Engine + the Compose plugin on Linux. No host
+Python, Node or venv is needed for the containerized workflow. The helper uses
+Windows PowerShell 5.1+ or PowerShell 7 (`pwsh` on macOS/Linux).
 
-## Choose the correct branch
+A shared configuration means the same Compose files and dependency versions,
+**not** a shared Docker daemon or a server on Dat's computer. `localhost` URLs
+always refer to the contributor's own machine. Each checkout has its own ignored
+`.env`; never share credentials in the repository. CI success or another
+member's running stack is not evidence that your local environment works.
+The standalone static UI walkthrough is exempt because it is not the running app.
 
-Before this Docker PR is merged, use its branch to try the setup:
+The separate online HTTPS/private-beta deployment described in Issue #53/PR #51
+requires its own approved host, operator and security checks. It is not assigned
+to Dat's personal machine by default and does not replace local Docker setup.
+
+## Clone the current development branch
+
+For a fresh local checkout (the repository default branch is `dev`):
 
 ~~~powershell
-git clone --branch chore/dev-docker-setup https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer.git
+git clone https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer.git
 cd isomorphic-exam-synthesizer
+git switch dev
 ~~~
 
-For an existing checkout, save or commit your work before switching branches:
+For an existing checkout, preserve your uncommitted work before updating:
 
 ~~~powershell
 git fetch origin
-git switch chore/dev-docker-setup
+git switch dev
 git pull --ff-only
 ~~~
 
-After the PR is merged, use dev as the base for your own feature branch. Do not
-put feature work on the shared Docker branch. If Git reports local changes or
-diverged history, resolve them before continuing; do not discard work to run Docker.
+Create your own task branch from `dev`. Do not develop on somebody else's
+feature branch. Resolve local changes/diverged history safely before switching;
+never discard work just to run Docker.
 
 ## Windows prerequisites and script permissions
 
@@ -58,7 +74,7 @@ pwsh ./scripts/dev.ps1 up
 Install Docker Desktop from https://docs.docker.com/desktop/setup/install/.
 On Windows choose Linux containers with WSL 2. Reopen the terminal after installing.
 The development configuration requires Compose 2.24.4 or later.
-Choose the branch using the instructions above, then run from the repository root:
+Use your own local checkout from the section above, then run from the repository root:
 
 ~~~powershell
 .\scripts\dev.ps1 setup
@@ -75,6 +91,11 @@ Ctrl+C stops watching; use down to stop the services.
 Default URLs: frontend http://localhost:3000, backend docs http://localhost:8000/docs.
 The helper prints the actual addresses if ports change.
 On macOS/Linux use pwsh ./scripts/dev.ps1 followed by the same action.
+
+After setup, **each team member** runs `doctor` and `up` on their own machine,
+then `smoke` (and tests relevant to their work). Report the exact failing command
+and platform if local startup is blocked; do not silently substitute a colleague's
+host or CI results for local verification.
 
 ## How this avoids environment conflicts
 
