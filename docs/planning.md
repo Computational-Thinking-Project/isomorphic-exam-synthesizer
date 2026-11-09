@@ -45,7 +45,7 @@
 
 ## Giai đoạn 0 — Ngày Đầu Tiên: Dựng Nền Móng Chung (Day 0)
 
-> **Mục tiêu:** Mọi thành viên chạy được dự án ngay lập tức trên máy cá nhân với 1 lệnh, thiết lập CI tự động, an toàn bảo mật cơ bản, Relational RLS chuẩn, và thống nhất hợp đồng API giữa FE và BE.  
+> **Mục tiêu:** Mọi thành viên tự cài Docker/Compose và tự chạy dự án trên máy cá nhân; không dùng máy Đạt hoặc máy một thành viên khác làm host Docker chung cho development/test. Dùng cùng Compose/config/CI, không dùng chung Docker daemon. Môi trường private beta HTTPS theo Issue #53 là một deployment riêng cần phê duyệt, không thay yêu cầu local này. Đồng thời thiết lập CI tự động, an toàn bảo mật cơ bản, Relational RLS chuẩn và thống nhất hợp đồng API giữa FE và BE.  
 > **Người chịu trách nhiệm chính:** OPS  
 > **Thời gian:** 1–2 ngày đầu  
 
