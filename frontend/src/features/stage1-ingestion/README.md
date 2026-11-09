@@ -42,3 +42,16 @@ Reload regression fix,27/10: ProtectedRoute now retains the requested URL while 
 `sessionEntry.js` owns transient request state. It prevents concurrent create submissions, aborts on route/account cleanup and ignores late results. Account/login-version and route-ID changes remount the entry, clearing private form/detail data. Uncertain create failures block another submission in that entry and ask the user to check Dashboard first; this is not server idempotency. Existing shared client 401 handling remains unchanged.
 
 Checks on26/10/2026 before the first entry commit:146 frontend tests passed (13 new controller tests), lint and build passed. Browser fixture checks exercise the real React route, ProtectedRoute, services and API client with a local Auth substitute and intercepted HTTP responses: new/F5 causes no POST, invalid input, one explicit create, replace navigation, detail/F5,404/retry, changed status, signed-out redirect, account reset and375px layout. No real OAuth/cloud or Docker/Nginx route acceptance is claimed for this new entry. Live create/detail and A/B ownership checks from increment B remain separate evidence.
+# Requested-changes recovery contract — TASK-204
+
+Ordinary GET reload hands off confirmed states through the same guarded callback
+as confirmation recovery. Definitive confirm400/422 releases the operation for
+source repair on first attempt and retry; unknown outcomes retain the original key.
+
+Invalid intent JSON/UUID and inaccessible storage are distinct. Recovery first
+reads server state and retries reading storage. A valid intent retains its key.
+If the key cannot be recovered, an explicit action persists a `replace-required`
+marker in the same account/session slot. Confirm stays locked through F5 until
+explicit ingestion succeeds and GET returns a new source revision. This uses the
+existing atomic replace/revision/freeze contract, never a new confirm key on the
+old revision. Inaccessible storage remains safely blocked with a retry action.
