@@ -1,3 +1,12 @@
+## DEC-OPS-LOCAL-DOCKER-20261109: Docker tự chạy trên máy từng thành viên (09/11/2026 — đề xuất trong PR)
+
+- **Yêu cầu:** Mỗi thành viên phát triển/kiểm thử tự cài Docker/Compose, clone repo và chạy stack trên máy cá nhân; chia sẻ source, cấu hình và quy trình kiểm, **không chia sẻ máy chủ Docker của Đạt** hay một thành viên bất kỳ. Mỗi người tự kiểm `doctor/up/smoke` và các tests liên quan; ghi blocker thật nếu không thể chạy.
+- **Lý do:** Cụm từ “shared Docker development setup” trong PR #8 chỉ có nghĩa chung Dockerfiles/Compose/lock/CI, không phải ứng dụng được host tập trung trên máy Đạt. Kế hoạch Day 0 đã nêu mục tiêu chạy trên máy cá nhân nhưng README/quy trình chưa nêu nghĩa vụ rõ ràng.
+- **Ranh giới:** Đạt vẫn phụ trách chuẩn bị OPS theo W4 khi được phân công; phương án máy nhóm + Tailscale trong PR #51 / Issue #53 mới là **ứng viên hosting private beta có điều kiện, chưa chọn host**. Deployment HTTPS tập trung phục vụ nghiệm thu online, nếu được duyệt, **không** là môi trường Docker phát triển chung và không thay nghĩa vụ local. Không sửa topology/bảo mật/gates của Issue #53 từ quyết định này.
+- **Ảnh hưởng:** `README.md`, `CONTRIBUTING.md`, `docs/setup-docker.md`, mục Day 0 của `docs/planning.md` và trao đổi phối hợp ở PR #51 / Issue #53. Không thay runtime, Compose, cloud permissions hay secrets. Trạng thái áp dụng chính thức chờ PR được review/merge.
+
+---
+
 ## DEC-DOCS-W4-001: Đồng bộ hóa tài liệu W4 theo Review M4 và Quyết định Sản phẩm (08/11/2026, proposed)
 
 - **Ngày / người đề xuất:** 08/11/2026 — Duy (PR #50), theo review M4 của Đạt (@Thanhdat3010).
