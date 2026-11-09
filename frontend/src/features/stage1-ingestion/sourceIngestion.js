@@ -4,6 +4,7 @@ const UNCERTAIN_MESSAGE = 'Chưa xác nhận được kết quả nạp nguồn.
 const CONFIRM_UNCERTAIN = 'Chưa rõ kết quả xác nhận. Đọc lại trạng thái phiên trước khi thử lại.';
 const CONFIRM_CHANGED = 'Đề nguồn đã thay đổi. Hãy xem và xác nhận lại bản đang hiển thị.';
 const CONFIRM_STORAGE = 'Chưa thể lưu thông tin xác nhận trong tab này. Hãy kiểm tra lại rồi thử lại.';
+const CONFIRM_RECOVERY = 'Không khôi phục được mã xác nhận cũ. Hãy nạp lại nguồn; chỉ xác nhận sau khi bản mới đã được lưu.';
 const confirmedStatuses = ['blueprinted', 'configured', 'generating'];
 const isUnavailable = (status) => [401, 403, 404].includes(status);
 
@@ -28,14 +29,19 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
   const id = initialDetail.id;
   let intent = null;
   let storageBlocked = false;
+  let recoveryRevision = null;
   let confirmationConflict = false;
   try { intent = confirmationStore?.read() ?? null; }
   catch { storageBlocked = true; }
+  if (intent?.kind === 'replace-required') {
+    recoveryRevision = intent.sourceRevision.toLowerCase();
+    intent = null;
+  }
   let state = {
     detail: initialDetail, text: '', mode: 'text', file: null, upload: null,
     phase: 'idle', error: '', message: '', cause: null,
     uncertain: false, requiresReload: false, unavailable: false,
-    confirmationError: storageBlocked ? CONFIRM_STORAGE : intent ? CONFIRM_UNCERTAIN : '',
+    confirmationError: storageBlocked ? CONFIRM_STORAGE : recoveryRevision ? CONFIRM_RECOVERY : intent ? CONFIRM_UNCERTAIN : '',
     confirmationPending: Boolean(intent), retryConfirmation: false,
   };
   const listeners = new Set();
@@ -51,7 +57,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
   const canSubmit = () => canWrite() && !intent && !storageBlocked;
   const sameRevision = (detail) => isSourceUuid(detail.source_revision)
     && detail.source_revision.toLowerCase() === intent?.sourceRevision.toLowerCase();
-  const canConfirm = () => Boolean(confirmSource && confirmationStore && !storageBlocked && canWrite()
+  const canConfirm = () => Boolean(confirmSource && confirmationStore && !storageBlocked && !recoveryRevision && canWrite()
     && isSourceUuid(state.detail.source_revision) && state.detail.source_questions.length
     && (!intent || (state.retryConfirmation && sameRevision(state.detail))));
   const invalidate = () => { revision++; request?.abort(); };
@@ -75,13 +81,15 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
   }
 
   function clearIntent() {
-    if (intent) confirmationStore.clear();
+    if (intent || recoveryRevision) confirmationStore.clear();
     intent = null;
   }
 
   function finishConfirmation(detail) {
     // The server has confirmed the source. Storage failure cannot change that outcome.
     try { clearIntent(); } catch { /* a later verified GET may clear the entry */ }
+    storageBlocked = false;
+    recoveryRevision = null;
     confirmationConflict = false;
     publish({ detail, phase: 'idle', confirmationPending: false, retryConfirmation: false,
       requiresReload: false, unavailable: false, confirmationError: '', message: 'Đã xác nhận đề nguồn.' });
@@ -136,6 +144,10 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     try {
       const detail = await readDetail(operation.signal);
       if (!operation.current()) return;
+      if (confirmedStatuses.includes(detail.status)) {
+        finishConfirmation(detail);
+        return;
+      }
       publish({ detail, phase: 'idle', requiresReload: false, unavailable: false, cause: null,
         message: 'Đã đọc lại nguồn đã lưu.', error: state.uncertain ? UNCERTAIN_MESSAGE : '' });
       // A GET is a snapshot; it cannot establish that an earlier ingest POST has stopped.
@@ -147,11 +159,46 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     }
   }
 
+  async function recoverConfirmationStorage() {
+    if (!storageBlocked || busy() || !isCurrent()) return;
+    const operation = begin();
+    publish({ phase: 'reconciling', confirmationError: '' });
+    try {
+      const detail = await readDetail(operation.signal);
+      if (!operation.current()) return;
+      if (confirmedStatuses.includes(detail.status)) { finishConfirmation(detail); return; }
+      if (detail.status !== 'draft' || !isSourceUuid(detail.source_revision)) throw new Error('Recovery unavailable');
+      let restored;
+      try { restored = confirmationStore.read(); }
+      catch (cause) {
+        if (cause?.code !== 'ERR_CONFIRM_STORAGE_CORRUPT') throw cause;
+      }
+      if (restored && restored.kind !== 'replace-required') {
+        intent = restored;
+        storageBlocked = false;
+        await reconcile(operation);
+        return;
+      }
+      // A missing/corrupt key cannot authorize a new confirmation of the same
+      // revision. Explicit ingestion must first replace it under the server lock.
+      const baseline = restored?.sourceRevision ?? detail.source_revision;
+      confirmationStore.saveRecovery(baseline);
+      storageBlocked = false;
+      recoveryRevision = baseline.toLowerCase();
+      publish({ detail, phase: 'idle', confirmationPending: false, retryConfirmation: false,
+        confirmationError: CONFIRM_RECOVERY });
+    } catch {
+      if (operation.current()) publish({ phase: 'idle', confirmationError: CONFIRM_STORAGE });
+    }
+  }
+
   return {
     getSnapshot: () => state,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
     canSubmit,
     canConfirm,
+    canRecoverStorage: () => storageBlocked && !busy() && isCurrent(),
+    recoverConfirmationStorage,
     dispose() {
       invalidate();
       // React's development effect replay must be able to restart a read-only recovery.
@@ -235,7 +282,14 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       try {
         const detail = await readDetail(operation.signal);
         if (!operation.current()) return;
+        if (confirmedStatuses.includes(detail.status)) { finishConfirmation(detail); return; }
+        if (recoveryRevision && isSourceUuid(detail.source_revision)
+          && recoveryRevision !== detail.source_revision.toLowerCase()) {
+          try { confirmationStore.clear(); recoveryRevision = null; }
+          catch { storageBlocked = true; }
+        }
         publish({ detail, phase: 'idle', requiresReload: false, unavailable: false,
+          confirmationError: storageBlocked ? CONFIRM_STORAGE : recoveryRevision ? CONFIRM_RECOVERY : '',
           message: `Đã nạp ${count} câu nguồn.` });
       } catch (cause) {
         if (!operation.current()) return;
@@ -245,7 +299,6 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     },
     async confirm() {
       if (!canConfirm()) return;
-      const retry = Boolean(intent);
       if (!intent) {
         try {
           const next = { sourceRevision: state.detail.source_revision, idempotencyKey: newConfirmationKey() };
@@ -273,8 +326,8 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
           await reconcile(operation, true);
           return;
         }
-        if (!retry && (status === 400 || status === 422 || cause?.code === 'ERR_CONFIRM_INPUT')) {
-          try { clearIntent(); } catch { /* keep the operation blocked until reconciliation */ }
+        if (status === 400 || status === 422 || cause?.code === 'ERR_CONFIRM_INPUT') {
+          try { clearIntent(); } catch { storageBlocked = true; }
           publish({ phase: 'idle', confirmationPending: Boolean(intent),
             confirmationError: intent ? CONFIRM_STORAGE : 'Không thể xác nhận bản đề này. Hãy kiểm tra đề và thử lại.' });
           return;

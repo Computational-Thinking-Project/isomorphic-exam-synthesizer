@@ -122,6 +122,8 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
             : 'Xác nhận bản đề đang hiển thị. Nếu đã sửa nội dung nhập, hãy nạp lại trước khi xác nhận.'}
       </p>
       <div className="flex shrink-0 flex-wrap gap-2">
+        {controller.canRecoverStorage() && <button type="button" className={buttonClass}
+          onClick={() => void controller.recoverConfirmationStorage()}>Khôi phục thông tin xác nhận</button>}
         <button type="submit" form={`${inputId}-form`} className={buttonClass} disabled={!controller.canSubmit()}>Nạp nguồn</button>
         <button type="button" className={buttonClass} disabled={busy} onClick={() => void controller.reload()}>
           {state.confirmationPending ? 'Đọc lại trạng thái phiên' : 'Đọc lại nguồn đã lưu'}

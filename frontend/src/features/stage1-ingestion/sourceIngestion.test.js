@@ -10,6 +10,107 @@ const revA = '20000000-0000-4000-8000-000000000002';
 const revB = '20000000-0000-4000-8000-000000000003';
 const firstKey = '30000000-0000-4000-8000-000000000001';
 const secondKey = '30000000-0000-4000-8000-000000000002';
+
+test('F03: corrupt storage recovery requires explicit fresh ingestion before a new confirmation', async () => {
+  let corrupt = true;
+  const store = { read: () => { if (corrupt) throw Object.assign(new Error('Corrupt'), { code: 'ERR_CONFIRM_STORAGE_CORRUPT' }); return null; },
+    clear: () => { corrupt = false; }, save: () => {}, saveRecovery: () => { corrupt = false; } };
+  let server = detail({ source_revision: revA });
+  const f = confirmationFixture({ confirmationStore: store, load: async () => server,
+    ingestText: async () => { server = detail({ source_revision: revB, source_questions: b }); return { session_id: 'session-a', questions: b }; } });
+  assert(!f.controller.canSubmit());
+  await f.controller.recoverConfirmationStorage();
+  assert(f.controller.canSubmit());
+  assert(!f.controller.canConfirm());
+  await f.controller.reload();
+  assert(!f.controller.canConfirm());
+  f.controller.setText('Nguồn mới');
+  await f.controller.submit();
+  assert(f.controller.canConfirm());
+  assert.equal(f.confirms.length, 0);
+});
+
+test('F03: inaccessible storage remains safely blocked, then restores the original key when readable', async () => {
+  let accessible = false;
+  const original = { sourceRevision: revA, idempotencyKey: firstKey };
+  const f = confirmationFixture({ confirmationStore: {
+    read: () => { if (!accessible) throw new Error('Denied'); return original; }, save: () => {}, clear: () => {} } });
+  await f.controller.recoverConfirmationStorage();
+  assert(!f.controller.canSubmit());
+  assert(!f.controller.canConfirm());
+  accessible = true;
+  await f.controller.recoverConfirmationStorage();
+  assert(f.controller.canConfirm());
+  await f.controller.confirm();
+  assert.equal(f.confirms[0][1].idempotencyKey, firstKey);
+});
+
+test('F03: storage read failure still hands off an authoritative confirmed GET without POST', async () => {
+  const f = confirmationFixture({ confirmationStore: { read: () => { throw new Error('Denied'); }, clear: () => { throw new Error('Denied'); } },
+    load: async () => detail({ status: 'blueprinted', source_revision: revA }) });
+  await f.controller.reload();
+  assert.deepEqual(f.navigations, ['session-a']);
+  assert.equal(f.confirms.length, 0);
+});
+
+test('F01: uncertain request then F5 retry 400/422 releases intent for source repair', async () => {
+  for (const status of [400, 422]) {
+    const first = confirmationFixture({ confirmSource: async () => { throw new Error('Not delivered'); } });
+    await first.controller.confirm();
+    const next = confirmationFixture({ confirmSource: async () => { throw httpError(status); } }, first.memory);
+    next.controller.setText('Sửa nguồn');
+    await next.controller.restoreConfirmation();
+    await next.controller.confirm();
+    assert.equal(next.memory.intent, null);
+    assert(next.controller.canSubmit());
+    assert.equal(next.controller.getSnapshot().text, 'Sửa nguồn');
+    await next.controller.submit();
+    assert.equal(next.writes.length, 1);
+  }
+});
+
+test('F02: ordinary reload hands off confirmed states without POST', async () => {
+  for (const status of ['blueprinted', 'configured', 'generating']) {
+    const f = confirmationFixture({ load: async () => detail({ status, source_revision: revA }) });
+    await f.controller.reload();
+    assert.deepEqual(f.navigations, ['session-a']);
+    assert.equal(f.confirms.length, 0);
+  }
+});
+
+test('F03: replacement fence persists across F5 and same-revision GET cannot unlock confirm', async () => {
+  let stored;
+  const store = { read: () => { if (!stored) throw Object.assign(new Error('Corrupt'), { code: 'ERR_CONFIRM_STORAGE_CORRUPT' }); return stored; },
+    saveRecovery: (sourceRevision) => { stored = { kind: 'replace-required', sourceRevision }; },
+    clear: () => { stored = null; }, save: (value) => { stored = value; } };
+  const f = confirmationFixture({ confirmationStore: store });
+  await f.controller.recoverConfirmationStorage();
+  const restarted = confirmationFixture({ confirmationStore: store });
+  assert(restarted.controller.canSubmit());
+  assert(!restarted.controller.canConfirm());
+  await restarted.controller.reload();
+  await restarted.controller.confirm();
+  assert.equal(restarted.confirms.length, 0);
+  await restarted.controller.submit();
+  assert(!restarted.controller.canConfirm(), 'unchanged revision must remain fenced');
+});
+
+test('F02/F03: late recovery GET after account switch cannot hand off or clear storage', async () => {
+  for (const recover of [false, true]) {
+    let current = true;
+    let clears = 0;
+    const pending = deferred();
+    const f = confirmationFixture({ isCurrent: () => current, load: () => pending.promise,
+      ...(recover ? { confirmationStore: { read: () => { throw new Error('Denied'); }, clear: () => { clears++; } } } : {}) });
+    const request = recover ? f.controller.recoverConfirmationStorage() : f.controller.reload();
+    current = false;
+    f.controller.dispose();
+    pending.resolve(detail({ status: 'blueprinted', source_revision: revA }));
+    await request;
+    assert.deepEqual(f.navigations, []);
+    assert.equal(clears, 0);
+  }
+});
 function deferred() {
   let resolve;
   let reject;

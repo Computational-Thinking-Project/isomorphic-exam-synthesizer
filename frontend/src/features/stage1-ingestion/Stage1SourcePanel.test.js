@@ -279,20 +279,24 @@ test('route mount/F5 đọc nguồn qua GET, preview/count/key khớp và không
   assert.deepEqual(calls, ['get', 'get']);
 });
 
-test('đọc lại nguồn cập nhật cùng count/preview; trạng thái mới không draft thì khóa nhập', async () => {
+test('đọc lại cập nhật preview nháp; lần đọc thấy confirmed bàn giao Stage 2', async () => {
   const app = mount();
   await app.render();
   api.defaults.adapter = async (config) => {
     calls.push(config.method);
-    return response(config, detail('session-a', [question('qb'), { ...question('qc'), question_no: 2 }], 'blueprinted'));
+    return response(config, detail('session-a', [question('qb'), { ...question('qc'), question_no: 2 }]));
   };
   await act(async () => button(app.container, 'Đọc lại nguồn đã lưu').click());
   assert(app.container.textContent.includes('2 câu nguồn'), JSON.stringify({ text: app.container.textContent, calls }));
   assert(!app.container.textContent.includes('Nguồn qa'));
   assert(app.container.textContent.includes('Nguồn qb'));
-  assert(app.container.textContent.includes('không còn ở trạng thái nháp'));
-  assert.notEqual(button(app.container, 'Nạp nguồn').getAttribute('disabled'), null);
-  assert.deepEqual(calls, ['get', 'get']);
+  api.defaults.adapter = async (config) => {
+    calls.push(config.method);
+    return response(config, detail('session-a', [question('qb')], 'blueprinted'));
+  };
+  await act(async () => button(app.container, 'Đọc lại nguồn đã lưu').click());
+  assert.equal(app.container.textContent, 'Stage 2 · session-a');
+  assert.deepEqual(calls, ['get', 'get', 'get']);
   await app.unmount();
 });
 
@@ -504,6 +508,44 @@ test('204: GET khi mở lại chỉ chuyển Stage 2 cho các trạng thái Dash
     else assert.equal(app.container.textContent, `Stage 2 · ${confirmSessionId}`);
     assert.equal(reads, 1);
     await app.unmount();
+  }
+});
+
+test('F02: reload after another tab confirmed navigates without POST', async () => {
+  let status = 'draft';
+  api.defaults.adapter = async (config) => {
+    assert.equal(config.method, 'get');
+    return response(config, confirmDetail(status));
+  };
+  const app = mount(confirmSessionId);
+  await app.render();
+  status = 'configured';
+  await act(async () => button(app.container, 'Đọc lại nguồn đã lưu').click());
+  assert.equal(app.container.textContent, `Stage 2 · ${confirmSessionId}`);
+  await app.unmount();
+});
+
+test('F03: invalid JSON/UUID recovery is explicit and persists the replacement fence across F5', async () => {
+  for (const invalid of ['{broken', JSON.stringify({ sourceRevision: 'bad', idempotencyKey: 'bad' })]) {
+    const key = `stage1-confirm:${JSON.stringify(['account-a', confirmSessionId])}`;
+    window.sessionStorage.setItem(key, invalid);
+    api.defaults.adapter = async (config) => {
+      assert.equal(config.method, 'get');
+      return response(config, confirmDetail());
+    };
+    const app = mount(confirmSessionId);
+    await app.render();
+    assert.notEqual(button(app.container, 'Nạp nguồn').getAttribute('disabled'), null);
+    await act(async () => button(app.container, 'Khôi phục thông tin xác nhận').click());
+    assert.equal(button(app.container, 'Nạp nguồn').getAttribute('disabled'), null);
+    assert.notEqual(button(app.container, confirmLabel).getAttribute('disabled'), null);
+    assert.equal(JSON.parse(window.sessionStorage.getItem(key)).kind, 'replace-required');
+    await app.unmount();
+    const refreshed = mount(confirmSessionId);
+    await refreshed.render();
+    assert.notEqual(button(refreshed.container, confirmLabel).getAttribute('disabled'), null);
+    assert.equal(button(refreshed.container, 'Nạp nguồn').getAttribute('disabled'), null);
+    await refreshed.unmount();
   }
 });
 
