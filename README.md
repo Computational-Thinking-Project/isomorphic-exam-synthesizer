@@ -7,14 +7,26 @@
 
 ## Quick start (Docker)
 
+**Bắt buộc cho development/test:** Mỗi thành viên phải tự cài Docker trên **máy cá nhân** (Docker Desktop với Linux containers trên Windows/macOS; Docker Engine + Compose trên Linux), có bản checkout Git và tự chạy các container của mình. Không sử dụng máy của Đạt hoặc máy của bất kỳ thành viên nào làm Docker host chung thay cho thiết lập local. `localhost:3000`/`localhost:8000` chỉ trỏ đến máy đang chạy; mỗi người chịu trách nhiệm `.env`, log và kết quả kiểm thử của checkout riêng.
+
+Quy định này áp dụng cho chạy ứng dụng và kiểm thử phát triển; bản preview UI tĩnh không cần Docker. Một deployment HTTPS/private beta truy cập chung (Issue #53 / PR #51) là công việc OPS **riêng**, chỉ thực hiện khi có phương án host, người vận hành, quyền truy cập và nghiệm thu được phê duyệt; không mặc định dùng máy Đạt và không thay thế nghĩa vụ tự chạy local.
+
 **UI walkthrough cho bài trình bày:** lấy nhánh `feat/ui-ux-demo`, xem [gói PREVIEW portable và runbook](docs/ui-walkthrough/README.md). Mở file bằng Chrome, không cần Docker/Node; đây là preview dữ liệu mẫu, tách khỏi ứng dụng sản phẩm.
 
 Hướng dẫn tham gia: [CONTRIBUTING](CONTRIBUTING.md), [quy trình giao việc/review](docs/review/WORKFLOW.md) và [5 mẫu dùng chung](docs/review/TEMPLATES.md). Agent bắt đầu từ [AGENTS.md](AGENTS.md). Bộ workflow v0.1 đang chờ review/pilot; lịch tuần và trạng thái được ghi trong WORKFLOW.
 
-Install Git and Docker Desktop (Linux containers / WSL 2 on Windows), then reopen
-your terminal. No host Python or Node installation is needed.
+Install Git and Docker (Docker Desktop + WSL 2/Linux containers on Windows;
+Docker Desktop on macOS; Docker Engine with Compose on Linux). Reopen your
+terminal after installation. No host Python or Node installation is needed.
 
-From the repository root, on Windows:
+Clone the repository to **your own computer** (default branch: `dev`):
+
+~~~powershell
+git clone https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer.git
+cd isomorphic-exam-synthesizer
+~~~
+
+Then from the repository root, on Windows:
 
 ~~~powershell
 .\scripts\dev.ps1 setup
