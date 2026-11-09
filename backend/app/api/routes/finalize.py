@@ -9,7 +9,7 @@ Exposes:
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Response, status
 from supabase import Client
 
 from app.api.dependencies import assert_ownership, get_current_user, get_service_db, get_user_db
@@ -97,12 +97,14 @@ async def finalize_approve_endpoint(
     ),
 )
 async def finalize_matrix_endpoint(
+    response: Response,
     session_id: str = Depends(validate_session_uuid),
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
 ) -> AnswersMatrixResponse:
     """Retrieve the answers matrix across all exam versions."""
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
+    response.headers["Cache-Control"] = "no-store"
 
     service = FinalizeService(db)
     return await service.get_answers_matrix(session_id, current_user.id)
@@ -120,12 +122,14 @@ async def finalize_matrix_endpoint(
     ),
 )
 async def finalize_preview_endpoint(
+    response: Response,
     session_id: str = Depends(validate_session_uuid),
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
 ) -> PreviewSnapshotResponse:
     """Retrieve the post-shuffle display preview projection across all versions."""
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
+    response.headers["Cache-Control"] = "no-store"
 
     service = FinalizeService(db)
     return await service.get_preview_snapshot(session_id, current_user.id)

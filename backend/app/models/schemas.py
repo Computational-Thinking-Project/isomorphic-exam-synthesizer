@@ -571,7 +571,7 @@ class PreviewVersionItem(BaseModel):
     shuffle_seed: Optional[str] = Field(
         None, description="Seed ngẫu nhiên xác định dùng cho hoán vị"
     )
-    total_questions: int = Field(..., ge=0, description="Tổng số câu hỏi trong phiên bản đề")
+    total_questions: int = Field(..., ge=1, le=20, description="Tổng số câu hỏi trong phiên bản đề")
     questions: List[PreviewQuestionItem] = Field(
         ...,
         description="Danh sách câu hỏi theo đúng thứ tự in đề (question_no 1..N)",

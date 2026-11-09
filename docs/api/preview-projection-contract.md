@@ -35,6 +35,7 @@ The legacy `GET /api/sessions/{session_id}/finalize/matrix` endpoint enforces `s
 - **Path:** `/api/sessions/{session_id}/finalize/preview`
 - **Authentication:** `Bearer <JWT_ACCESS_TOKEN>` (Header: `Authorization: Bearer ...`)
 - **Query Parameters:** None (Deterministic read of the finalized shuffle snapshot)
+- **Response Headers:** `Cache-Control: no-store` (prohibits intermediate proxy or client caching of pre-approval/post-approval exam content)
 
 ### 2.2 Pre-conditions & State Guard Matrix
 
@@ -111,7 +112,7 @@ classDiagram
 - `version_code` (`str`): Official version code (e.g., `"101"`, `"102"`).
 - `is_finalized` (`bool`): True.
 - `shuffle_seed` (`Optional[str]`): Cryptographic/deterministic seed recorded during shuffle.
-- `total_questions` (`int`): Question count (M).
+- `total_questions` (`int`, 1..20): Question count (M).
 - `questions` (`List[PreviewQuestionItem]`): Full question items sorted contiguously 1..M.
 - `answer_keys` (`Dict[str, str]`): Fast lookup map from string display question number to correct key, e.g. `{"1": "C", "2": "A", "3": "D"}`.
 

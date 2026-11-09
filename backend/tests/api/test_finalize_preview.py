@@ -36,12 +36,14 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.api.dependencies import get_current_user, get_user_db
 from app.main import app
 from app.models.schemas import (
     CurrentUser,
     PreviewSnapshotResponse,
+    PreviewVersionItem,
     ReviewDomainException,
 )
 from app.services.exporter.bundle_models import (
@@ -900,6 +902,7 @@ def test_preview_router_integration_success(
                 headers=auth_headers,
             )
             assert res.status_code == 200, f"Expected 200, got {res.status_code}: {res.text}"
+            assert res.headers.get("Cache-Control") == "no-store"
             data = res.json()
             assert data["session_id"] == MOCK_SESSION_ID
             assert data["status"] == "reviewed"
@@ -909,3 +912,32 @@ def test_preview_router_integration_success(
             assert data["matrix"][0]["answers"] == {"101": "A", "102": "A"}
     finally:
         app.dependency_overrides.clear()
+
+
+def test_preview_version_item_total_questions_bounds():
+    """Validates that PreviewVersionItem enforces 1 <= total_questions <= 20."""
+    valid_payload = {
+        "id": "10100000-0000-0000-0000-000000000101",
+        "version_code": "101",
+        "is_finalized": True,
+        "shuffle_seed": "seed-123",
+        "total_questions": 3,
+        "questions": [],
+        "answer_keys": {"1": "A", "2": "B", "3": "C"},
+    }
+
+    # Valid bounds
+    item_min = PreviewVersionItem.model_validate({**valid_payload, "total_questions": 1})
+    assert item_min.total_questions == 1
+
+    item_max = PreviewVersionItem.model_validate({**valid_payload, "total_questions": 20})
+    assert item_max.total_questions == 20
+
+    # Invalid: 0
+    with pytest.raises(ValidationError):
+        PreviewVersionItem.model_validate({**valid_payload, "total_questions": 0})
+
+    # Invalid: 21
+    with pytest.raises(ValidationError):
+        PreviewVersionItem.model_validate({**valid_payload, "total_questions": 21})
+

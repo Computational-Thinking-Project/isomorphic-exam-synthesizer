@@ -24,6 +24,10 @@ and finalized shuffle provenance verification. Resolves Decision Q06. See the
 - **F04 (Export title mapping & mock column projection):** Added `title` to `.select()` in
   `FinalizeRepository.get_session_meta()` and updated `MockSupabaseClient` in `finalize_test_client.py`
   to project selected columns, preventing false-positive tests on unqueried fields.
+- **F05 (Self-Review hardening & cache invariant alignment):**
+  - Enforced `Cache-Control: no-store` on `GET /{session_id}/finalize/preview` and `GET /{session_id}/finalize/matrix` to prevent intermediate caching of sensitive exam projections, aligning with PR #54 (`w4-mvp-03-review-snapshot`).
+  - Constrained `PreviewVersionItem.total_questions` to `ge=1, le=20` for strict parity with `PreviewSnapshotResponse.total_questions` and domain invariants ($1 \le M \le 20$).
+  - Added test coverage for `Cache-Control: no-store` headers and Pydantic validation of version item bounds.
 
 ## DEC-DOCS-W4-001: Đồng bộ hóa tài liệu W4 theo Review M4 và Quyết định Sản phẩm (08/11/2026, proposed)
 

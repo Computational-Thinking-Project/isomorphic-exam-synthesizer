@@ -304,6 +304,7 @@ def test_get_answers_matrix_success(
                 headers=auth_headers,
             )
             assert res.status_code == 200
+            assert res.headers.get("Cache-Control") == "no-store"
             data = res.json()
             assert data["session_id"] == MOCK_SESSION_ID
             assert data["total_questions"] == 2
