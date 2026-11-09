@@ -1,5 +1,34 @@
 # TASK-204 — Xem trước và xác nhận đề nguồn (M2)
 
+## M3 — P4 Supabase Local tự kiểm đạt, 09/11/2026
+
+- [Bằng chứng và giới hạn](../../scripts/task204/P4_EVIDENCE.md): product HEAD7d72dca + harness/docs chưa commit; không đổi logic FE/BE.
+- CLI2.54.11, PostgreSQL17.6.1.029, Auth/JWT/PostgREST/RLS thật; 16migration trong history và hash nguồn khớp. Kong2.8.1 Ubuntu thay Alpine lỗi binary0byte, ghi rõ digest/runtime deviation.
+- API đạt haiaccount/ownership/read-write/RPC denial, UUIDrevision, thiếukey/revision422, revisioncũ409, confirm/replaycùngreceipt; SQL không có sessionreceipttrùng; legacyEXECUTEfalsechoanon/authenticated/service_role; CORSIdempotency-Key đạt.
+- Worker RPC thật và fakeproducer Đại số đã qua validator đạt pending/running/failed/ready; ready cómodes và[] đều có GETcanonicalsummary đúng. Không gọi AI thật/không nhận coverage hay chất lượngAI đã đạt.
+- Chromeheadless profile riêng dùng app/Auth/PostgREST thật: keyboardconfirm, ngắtresponse sauHTTP200, F5đúngStage2/cùngsession/chỉ1POST; khóa pending, fakeworkerready[] rồiF5mởform. Browserdriver không thay Auth/HTTP/Stage2 bằngfixture.
+- Backend chỉ nối Dockerinternal `exam-tv1-p4-isolated`; probeTCPngoài bịchặn, AIkeyrỗng; Pythonrunnerloopbackguard0externalattempts. Cloud không đổi.
+- Bằng chứng local `tmp/task204-supabase-local/{auth-result.json,browser-real-result.json,migration-history.txt}`; privateJSON/JWT/credentials/Chromeprofile không đăngGitHub.
+- P4 đã có bằng chứng tự kiểm local để bàn giao review. Giữ Draft hiện tại; chưa commit/push/PRwrite/Approve/merge hoặc xác minhCI mới. 355FE/170API cũ không nhận đãrerun. Q02F5đãFE2Accepted, polling/retryW4giữ ngoài scope.
+
+## P4 local preparation — 08/11/2026
+
+09/11 retry: Docker restart authorized by user; daemon recovered, but local image
+pulls repeatedly hit EOF and process exited -1073740791 amid host memory errors.
+Added loopback guard and real local Auth/PostgREST smoke runner; compilation and
+guard/preparer checks passed. No healthy stack or full P4 result. See runbook.
+
+- Q02 accepted by FE2 in comment 6723128827: F5 is accepted for this PR;
+  polling/failed retry belongs to W4-MVP-04, not a PR42 blocker.
+- User authorized local P4 implementation. Added preparation script and runbook at
+  `scripts/task204/`. Supabase CLI 3.0.0 initialized a dedicated unlinked workspace
+  `tmp/task204-supabase-local` outside the repo, ports 554xx.
+- Preparation executed: 16 migration files and source hash manifest generated.
+  No claim that migrations applied. Startup failed during image pulls with Windows
+  paging-file exhaustion; reduced-service retry interrupted after resource errors.
+- Auth/JWT/PostgREST/RLS assertions, fake-provider runner and browser acceptance
+  remain pending. Keep Draft. Existing SQL/DOM evidence retains its original scope.
+
 - **Phụ trách:** Trung Anh / `philip-kkk` / TV1 / FE1. Duy (`johannguyen015`) review chính và phụ trách API xác nhận. Bội Anh (`htbaax`) kiểm điểm bàn giao Stage 2. Dự phòng và ETA review riêng TBD.
 - **Nguồn giao việc:** TASK-204 trong `w2_21_10.md` của Duy, bản workspace `project/W2_ASSIGNMENT_20261026.md`. Link phân công chung TBD.
 - **Nhánh:** `feat/task-204-source-confirm` → `dev`. [Draft PR #42](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/42). Nền `dev` đã đồng bộ: `73583d7`.
