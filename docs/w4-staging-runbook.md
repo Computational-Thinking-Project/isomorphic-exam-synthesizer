@@ -125,7 +125,7 @@ python scripts/w4_ops.py smoke --backend http://localhost:8000 --frontend http:/
 python -m unittest discover -s scripts -p test_w4_ops.py
 ```
 
-Exit 0 chỉ khi tất cả probes PASS; exit 1 khi FAIL/BLOCKED. Preflight không chứng nhận credential hợp lệ. `/docs` qua frontend kiểm proxy HTML; `/login` chỉ kiểm SPA fallback, không chứng nhận OAuth. Metrics/auth/ownership/SSE/Typst/export thật vẫn theo checklist mục4; không gửi token qua CLI. URL chỉ nhận origin không chứa credentials/query/fragment; HTTP redirects bị từ chối. Report không lưu URL, headers, body, command diagnostics hay ZIP contents. Kiểm checksum chỉ đọc artifact có sẵn và chưa đối chiếu 6 slots.
+Exit 0 chỉ khi tất cả probes PASS; exit 1 khi FAIL/BLOCKED. Preflight không chứng nhận credential hợp lệ. `/openapi.json` qua frontend phải là JSON OpenAPI 3.x có GET `/health` và `/api/sessions`, từ chối SPA HTML hoặc schema thiếu routes; `/login` chỉ kiểm SPA fallback, không chứng nhận OAuth. Metrics/auth/ownership/SSE/Typst/export thật vẫn theo checklist mục4; không gửi token qua CLI. URL chỉ nhận origin không chứa credentials/query/fragment; HTTP redirects bị từ chối. Report không lưu URL, headers, body, command diagnostics hay ZIP contents. Kiểm checksum chỉ đọc artifact có sẵn và chưa đối chiếu 6 slots.
 
 `checkout_sha` là máy chạy script, `operator_supplied_deployed_sha` phải được operator đối chiếu deployment thực; `integrated_acceptance` luôn NOT_VERIFIED. Lưu DB ledger/config/prompt/model, demo8 bước và oracle6 slots theo mẫu mục5; không thay bằng report HTTP. Mỗi HTTP probe timeout10s, mỗi subprocess timeout30s. Tool không khởi động Docker Desktop, không tạo/đổi `.env` và không overwrite evidence cũ.
 

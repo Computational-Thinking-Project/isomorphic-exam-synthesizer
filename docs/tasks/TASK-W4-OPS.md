@@ -73,3 +73,25 @@ Nguồn chuẩn ENV0: [Issue53](https://github.com/Computational-Thinking-Projec
 Đạt tiếp tục phần OPS11/21 theo phân công và yêu cầu thực hiện; không cần giao lại task. Quyền truy cập host/cloud, backup và lịch cá nhân vẫn cần dữ liệu thực tế. [So sánh hosting0đ](../w4-hosting-options.md) đã chuẩn bị, chưa chọn provider/chạy cloud. PR51 đã request Duy/Hùng review chính thức.
 
 PR50@a5a31e2: reviewer verified F01–F03 và GitHub Approve; F05 mapping canonical persistence là non-blocking. PR52@9e9d6f3: SQL embedded probe xác nhận lifecycle/ACL, nhưng test F01 chờ sai message guard009; đã Request Changes, real PostgreSQL/races chưa verified. Không dùng kết quả PGlite thay live DB. PR30 F02 tiếp tục chờ owner. [Candidate017](../w4-migration-candidate.md) cập nhật riêng; historical inventory giữ nguyên.
+
+## ENV0 host — Đạt xác nhận 08/11
+
+Đạt chọn tạm máy cá nhân hiện tại làm host beta. Đây là lựa chọn host, chưa là Docker-ready/deployed hoặc cam kết uptime/ca trực. Kiểm local: không thấy docker trong PATH hoặc executable Docker Desktop ở đường dẫn cài chuẩn; có wsl.exe/winget.exe nhưng chưa xác minh WSL2/virtualization/engine. Dung lượng trống quan sát khoảng46GB ổC,193GB ổD. Truy vấn OS/RAM qua CIM bị từ chối quyền nên chưa đánh giá đủ tài nguyên.
+
+Bước tiếp: cài/xác minh Docker Desktop Linux engine + WSL2, khởi động/restart nếu installer yêu cầu; chạy preflight/build/health theo runbook. Chưa mở port/public ingress, chọn tailnet/provider, thay OAuth hoặc chạy migration cloud. Host/access/roster/backup và compatible backend/migration handoff còn các gate riêng.
+
+Cập nhật cài host08/11: đã tải bộ cài chính thức desktop.docker.com, Authenticode Valid/Docker Inc; Docker Desktop per-user WSL2 install log báo Installation succeeded. Đã cài Virtual Machine Platform và WSL, wsl --version trả3.0.3.0. Windows báo cần reboot để thay đổi có hiệu lực; chưa tự restart, chưa chạy engine/build/health. Nhận định Docker chưa cài ở đoạn kiểm ban đầu phía trên là lịch sử trước bước cài này.
+
+## Local host smoke09/11 — sau reboot
+
+Docker Desktop Linux/WSL2 engine đã chạy; doctor và preflight PASS. Đã build/chạy static docker-compose.yml (không dev overlay/reload), checkout092b0a9 với local docs chưa commit và script demo_generator.py có sẵn không sửa. Hai services running/healthy, chỉ bind127.0.0.1: frontend3000, backend8000. Smoke backend health/frontend HTML/login deep-link/proxy docs PASS; evidence localignored `.artifacts/w4/preflight-20261109-host.json`, `.artifacts/w4/smoke-20261109-host.json`. Typst trong container0.11.1. Không ghi đây là clean frozen deployment hoặc G0/G1 acceptance.
+
+Giữ nguyên env; không áp migration/cloud, không gọi Gemini, chưa kiểm OAuth/ownership/SSE/restart/Storage/Golden. Chưa mở mạng riêng/HTTPS/public. Frontend npm ci báo14 dependency advisories (2high); chưa audit/review scope tác động, không tự npm audit fix/đổi lockfile. Containers đang chạy để Đạt truy cập local.
+
+## PR51 review fixes 09/11 — claimed_fixed, chờ reviewer xác minh
+
+- Proxy smoke chuyển từ HTML `/docs` sang JSON `/openapi.json`, kiểm OpenAPI3.x và GET `/health`, `/api/sessions`; regression từ chối SPA HTML, JSON lỗi/không đúng schema/thiếu routes.
+- CI backend thêm OPS unittest và Ruff cho hai scripts, không thay product runtime/Docker/dependency.
+- Đã kiểm local: 6 unittest PASS; Ruff PASS; HTTP smoke mới trên stack local hiện có PASS, integrated acceptance vẫn NOT_VERIFIED. Evidence ignored `.artifacts/w4/smoke-pr51-openapi-20261109.json`; stack build từ092b0a9 trước patch scripts, không nhận clean deployment mới.
+- Phân biệt theo comment Duy09/11 và PR56: mỗi developer tự cài/chạy Docker local. Máy Đạt đã local-ready về build/health; đề xuất dùng tạm máy cá nhân trước đây chưa là host online được nhóm phê duyệt, không thay ENV0/Q12 hay xác nhận uptime/quyền cloud.
+- PR52@598b959 reviewer chạy PostgreSQL17 thật:15pass/5fail; F01 verified, F02–F04 test fixes còn chờ Duy. PR30@b6b6422 có patch mới, Đạt chưa xác minh lại F02. Không dùng smoke này thay G0/G1/G2.

@@ -39,6 +39,31 @@ class OpsTests(unittest.TestCase):
             result = ops.probe("html", "http://localhost")
         self.assertEqual(result, {"name": "html", "result": "FAIL", "http_status": 302})
 
+    def test_proxy_requires_backend_openapi_instead_of_spa_fallback(self):
+        schema = {"openapi": "3.1.0", "paths": {
+            "/health": {"get": {}}, "/api/sessions": {"get": {}}}}
+        cases = [
+            ("text/html", b"<html>frontend SPA</html>", "FAIL"),
+            ("application/json", b"{}", "FAIL"),
+            ("application/json", b"[]", "FAIL"),
+            ("application/json", b"not json", "FAIL"),
+            ("application/json", json.dumps({**schema, "paths": {}}).encode(), "FAIL"),
+            ("application/json", json.dumps(schema).encode(), "PASS"),
+        ]
+        for content_type, body, expected in cases:
+            with self.subTest(body=body):
+                response = MagicMock(status=200)
+                response.headers = {"Content-Type": content_type}
+                response.read.return_value = body
+                opener = MagicMock()
+                opener.open.return_value.__enter__.return_value = response
+                with patch.object(ops, "build_opener", return_value=opener):
+                    result = ops.smoke("http://backend", "http://frontend")[-1]
+                self.assertEqual(result["result"], expected)
+                request = opener.open.call_args.args[0]
+                self.assertEqual(request.full_url, "http://frontend/openapi.json")
+                self.assertNotIn("body", result)
+
     def test_report_never_equates_checkout_or_checksum_with_acceptance(self):
         with tempfile.TemporaryDirectory() as directory:
             artifact = Path(directory) / "sample.zip"

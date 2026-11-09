@@ -62,14 +62,25 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def probe(name, url, health=False):
+def probe(name, url, health=False, openapi=False):
     try:
         # Never follow redirects to OAuth or retain response bodies/headers in reports.
         with build_opener(NoRedirect).open(Request(url), timeout=10) as response:
             body = response.read(1024 * 1024).decode("utf-8", errors="replace")
             content_type = response.headers.get("Content-Type", "").lower()
-            valid = (json.loads(body).get("status") == "healthy" if health
-                     else "text/html" in content_type and "<html" in body.lower())
+            if openapi:
+                schema = json.loads(body)
+                paths = schema.get("paths", {})
+                valid = ("application/json" in content_type
+                         and isinstance(schema.get("openapi"), str)
+                         and schema["openapi"].startswith("3.")
+                         and isinstance(paths, dict)
+                         and all(isinstance(paths.get(path), dict)
+                                 and isinstance(paths[path].get("get"), dict)
+                                 for path in ("/health", "/api/sessions")))
+            else:
+                valid = (json.loads(body).get("status") == "healthy" if health
+                         else "text/html" in content_type and "<html" in body.lower())
             return {"name": name, "result": "PASS" if response.status == 200 and valid else "FAIL",
                     "http_status": response.status}
     except HTTPError as error:
@@ -82,7 +93,7 @@ def smoke(backend, frontend):
     return [probe("backend_health", backend + "/health", health=True),
             probe("frontend_html", frontend + "/"),
             probe("spa_login_deep_link", frontend + "/login"),
-            probe("backend_proxy_openapi", frontend + "/docs")]
+            probe("backend_proxy_openapi", frontend + "/openapi.json", openapi=True)]
 
 
 def report(action, checks, deployed_sha=None, zip_path=None):

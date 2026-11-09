@@ -1,3 +1,8 @@
+## DEC-DAT-W4-OPS-CI — OPS regression coverage (09/11/2026)
+
+- PR51 review fix: CI chạy OPS unittest và Ruff cho `scripts/w4_ops.py`, `scripts/test_w4_ops.py` trên mỗi PR/push thuộc workflow hiện hành.
+- Proxy observation kiểm JSON OpenAPI3.x và routes backend qua `/openapi.json`, tránh SPA fallback báo PASS nhầm. Không đổi API/schema, runtime hay Docker; kết quả vẫn không thay integrated acceptance.
+
 ## DEC-DAT-W4-OPS — Production private beta preparation
 
 - Ngày/người:08/11/2026 — Đạt cập nhật theo [quyết định Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/51#issuecomment-6719017111), [ENV0 Issue53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53).
