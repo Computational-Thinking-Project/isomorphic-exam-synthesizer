@@ -448,6 +448,22 @@ async def test_preview_rejects_missing_permutation_metadata():
 
 
 @pytest.mark.asyncio
+async def test_preview_rejects_mismatched_permutation_dict_length():
+    """Fails closed with 409 when permutations mapping dict length does not equal m."""
+    db_state = _build_valid_preview_db_state()
+    # Remove one item from option_permutations so length is 2 instead of 3
+    db_state["exam_versions"][0]["permutations"]["option_permutations"].pop("3", None)
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "option_permutations" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
 async def test_preview_rejects_invalid_canonical_mapping():
     """Fails closed with 409 without falling back to question_no when canonical_question_no is invalid."""
     db_state = _build_valid_preview_db_state()

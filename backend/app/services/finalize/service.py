@@ -275,6 +275,11 @@ class FinalizeService:
                 404, "ERR_SESSION_NOT_FOUND", f"Phiên làm việc '{session_id}' không tồn tại"
             )
 
+        if "user_id" in session_meta and str(session_meta.get("user_id")) != user_id:
+            raise ReviewDomainException(
+                403, "ERR_UNAUTHORIZED", "Người dùng không có quyền xem ma trận đáp án này"
+            )
+
         if session_meta.get("status") not in ("approved", "exported"):
             raise ReviewDomainException(
                 409, "ERR_INVALID_SESSION_STATE", "Phiên chưa được phê duyệt"

@@ -753,8 +753,13 @@ class FinalizeRepository:
                 not isinstance(c_to_d, dict)
                 or not isinstance(d_to_c, dict)
                 or not isinstance(opt_perms, dict)
+                or len(c_to_d) != m
+                or len(d_to_c) != m
             ):
                 raise inconsistent(f"Bảng ánh xạ hoán vị của phiên bản {v_code} không hợp lệ")
+
+            if len(opt_perms) != m:
+                raise inconsistent(f"Bảng hoán vị phương án (option_permutations) của phiên bản {v_code} không hợp lệ")
 
             # Validate bijection between display_to_canonical and canonical_to_display
             for d_str, c_val in d_to_c.items():
