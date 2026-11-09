@@ -9,6 +9,19 @@
 - Chọn một production HTTPS/private beta chỉ nhóm, free-first; không yêu cầu staging riêng. Static Compose một worker, private access gate thực, isolated destructive tests. Không chọn provider/mua dịch vụ/cấp quyền hoặc xác nhận lịch trực.
 - Ảnh hưởng: docs OPS11/21 và candidate inventory017; historical inventory giữ nguyên, không sửa runtime/API/SQL/Docker. PR51 preparation merge độc lập deployment acceptance; G0/G1/G2/public proof vẫn pending. PR30 F02 và PR52 ACL/real-DB còn blockers.
 
+## DEC-DOCS-W4-001: Đồng bộ hóa tài liệu W4 theo Review M4 và Quyết định Sản phẩm (08/11/2026, proposed)
+
+- **Ngày / người đề xuất:** 08/11/2026 — Duy (PR #50), theo review M4 của Đạt (@Thanhdat3010).
+- **Ngữ cảnh & Vấn đề:** Tài liệu kiến trúc, mô tả và kế hoạch còn chứa mô tả cũ mâu thuẫn với các quyết định kỹ thuật đã chốt: (1) Trích xuất Blueprint chạy trước Source Confirmation và còn checkbox an ninh bắt buộc của người dùng; (2) Stage 2 cho phép chọn variation modes và giao diện shuffle Stage 3 mô tả mutually exclusive; (3) Fallback sau retry và Revert tự động duyệt `approved` hoặc cho phép xuất bản candidate lỗi; (4) Tên file `W4_ASSIGNMENT (1).md` gây lỗi liên kết; (5) Chưa làm rõ trạng thái của đề xuất 3–5 sao; (6) Yêu cầu staging server riêng mâu thuẫn với quyết định mới tại Issue #53.
+- **Quyết định mới:**
+  1. **F01 (ADR-0001 / Issue #44):** Đồng bộ hóa thứ tự chuẩn: Ingest $\to$ Source Preview (read-only) $\to$ Confirmation (khóa nguồn & persist snapshot) $\to$ Kích hoạt Canonical Blueprint $\to$ Canonical Ready $\to$ Stage 2. Loại bỏ hoàn toàn hộp kiểm cam kết an ninh của người dùng (giữ server-side silent audit).
+  2. **F02 (Issue #45):** Stage 2 chỉ chọn $N \in \{1, 2, 3, 4\}$ và hai checkbox xáo trộn độc lập (câu, đáp án) mặc định tắt (`false`/`false`), hỗ trợ 4 tổ hợp hợp lệ. Không hiển thị UI chọn variation modes (backend tự suy ra từ canonical Blueprint). Cấu hình xáo trộn hiển thị lại và cho phép cập nhật ở Stage 3 trước khi bấm final shuffle.
+  3. **F03 (Issue #46):** Thử tối đa 4 lần (1 initial + 3 retries). Hết 4 lần thất bại: dùng confirmed source revision làm fallback với trạng thái `pending_review`, `has_warning = true`, `GENERATION_RETRIES_EXHAUSTED` (bắt buộc giảng viên duyệt lại, không tự động approved). Revert cũng về confirmed source revision và trả về `pending_review`. Nguồn thiếu đáp án hoặc lời giải bắt buộc cho downstream/export thì fail-closed.
+  4. **F04:** Chuẩn hóa tên file thành `docs/tasks/W4_ASSIGNMENT.md`, cập nhật metadata bản v2.1 và snapshot PRs.
+  5. **3–5-star verification:** Đánh dấu rõ trạng thái `PROPOSED / DEFERRED PENDING RUBRIC APPROVAL` theo thẩm quyền của Duy và Tâm; không ép buộc vào Golden MVP baseline.
+  6. **ENV0 (Issue #53):** Định hướng Production-first / Private Beta nội bộ nhóm, ưu tiên chi phí 0đ, không bắt buộc staging server riêng biệt.
+- **Phạm vi ảnh hưởng:** `docs/architecture.md`, `docs/description.md`, `docs/planning.md`, `docs/tasks/W4_ASSIGNMENT.md`, `docs/tasks/W4_TASK_DETAIL.md`. Không thay đổi code runtime.
+
 ## 05/11/2026 — W2 AI policy: owner confirmations
 
 Duy/BE và Bội Anh/FE đã xác nhận mode aliases/NONE theo các link trong [contract AI](ai-w2-integration.md). Đạt cập nhật policy status và acceptance fixtures; không đổi generator/worker/SQL. Quỳnh giữ clone branch, SQL/RPC snapshot và clone persistence đã merge qua PR32; worker integration vẫn do Quỳnh thực hiện; xác nhận policy không phải nghiệm thu triển khai/E2E.
