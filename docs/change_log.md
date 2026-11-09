@@ -1,45 +1,60 @@
-## DEC-DOCS-INPUT-20261109: Đối chiếu yêu cầu và bàn giao input (proposed)
+## DEC-W4-MVP-01-018: Canonical-only configuration and server-derived modes
 
-- **Ngày / người đề xuất:** 09/11/2026 — Trung Anh / philip-kkk, PM hỗ trợ soạn theo yêu cầu.
-- **Trạng thái:** đã sửa tài liệu local để review; chưa xác nhận nhóm chấp nhận hoặc rollout. Sửa đổi INPUT-20261109 trên nền workflow v0.1; không đổi ngầm quy tắc giữa vòng review đang chạy.
-- **Ngữ cảnh:** audit thảo luận GitHub chốt 16:42:46 UTC+7 ngày 09/11 cho thấy trả lời lệch ID và nhầm mức quyết định/đã giao/đủ dùng/đã tích hợp. Chưa có bằng chứng thay đổi này giảm số vòng trao đổi.
-- **Đề xuất:** ID input ổn định, yêu cầu có mục đích/điều kiện đủ dùng, người giao/nhận, need-by/ETA; reply đúng ID kèm artifact/phiên bản và phần còn thiếu; consumer xác nhận phạm vi dùng được. Các mức Requested/Decided/Delivered/Accepted/Integrated chỉ dùng khi phù hợp. Một nơi tổng hợp M2 hoặc comment đang dùng; M1/M3/PR dẫn link, không sao chép trạng thái.
-- **Phạm vi ảnh hưởng:** `docs/review/WORKFLOW.md`, `docs/review/TEMPLATES.md`, `.github/pull_request_template.md` và mục log này. M1 đã có người giao/nhận/dependency/ETA; chỉ thêm hướng dẫn dẫn ID. Chưa có căn cứ dùng Issue task template làm nguồn giao việc chính nên giữ nguyên.
-- **Giới hạn:** không đổi task/owner/deadline/MVP/kiến trúc, code hoặc gate approve/merge; các PR hiện có không tự được cập nhật. Bản local chưa commit/push hoặc đăng GitHub từ lượt sửa này.
-## DEC-DAT-W4-OPS-CI — OPS regression coverage (09/11/2026)
+- Date: 2026-11-09; implemented locally under task-owner authorization.
+- Context: 015 admitted NO_CONFIRMATION, client modes and ON/ON defaults.
+- Decision: forward migration keeps the five-argument RPC, locks parent first, requires
+  ready canonical evidence/matching manifest, computes the mapped intersection,
+  accepts neutral [] only, and defaults strict ordering preferences OFF/OFF.
+  Retain NUMERICAL/parameter_variation aliases with values once in canonical_dimensions.
+- Impact: migration, fresh-schema default, SQL regression/upgrade tests and config contract.
+  Existing rows and worker/finalize functions remain unchanged. PR30/FE2 and
+  Stage3 preferences remain dependent work. Production deployment and Supabase
+  JWT/PostgREST/RLS are unverified; no push, merge or deployment performed.
 
-- PR51 review fix: CI chạy OPS unittest và Ruff cho `scripts/w4_ops.py`, `scripts/test_w4_ops.py` trên mỗi PR/push thuộc workflow hiện hành.
-- Proxy observation kiểm JSON OpenAPI3.x và routes backend qua `/openapi.json`, tránh SPA fallback báo PASS nhầm. Không đổi API/schema, runtime hay Docker; kết quả vẫn không thay integrated acceptance.
+## DEC-DOCS-INPUT-20261109: �?i chi?u y�u c?u v� b�n giao input (proposed)
 
-## DEC-DAT-W4-OPS — Production private beta preparation
+- **Ng�y / ng�?i �? xu?t:** 09/11/2026 � Trung Anh / philip-kkk, PM h? tr? so?n theo y�u c?u.
+- **Tr?ng th�i:** �? s?a t�i li?u local �? review; ch�a x�c nh?n nh�m ch?p nh?n ho?c rollout. S?a �?i INPUT-20261109 tr�n n?n workflow v0.1; kh�ng �?i ng?m quy t?c gi?a v?ng review �ang ch?y.
+- **Ng? c?nh:** audit th?o lu?n GitHub ch?t 16:42:46 UTC+7 ng�y 09/11 cho th?y tr? l?i l?ch ID v� nh?m m?c quy?t �?nh/�? giao/�? d�ng/�? t�ch h?p. Ch�a c� b?ng ch?ng thay �?i n�y gi?m s? v?ng trao �?i.
+- **�? xu?t:** ID input ?n �?nh, y�u c?u c� m?c ��ch/�i?u ki?n �? d�ng, ng�?i giao/nh?n, need-by/ETA; reply ��ng ID k�m artifact/phi�n b?n v� ph?n c?n thi?u; consumer x�c nh?n ph?m vi d�ng ��?c. C�c m?c Requested/Decided/Delivered/Accepted/Integrated ch? d�ng khi ph� h?p. M?t n�i t?ng h?p M2 ho?c comment �ang d�ng; M1/M3/PR d?n link, kh�ng sao ch�p tr?ng th�i.
+- **Ph?m vi ?nh h�?ng:** docs/review/WORKFLOW.md, docs/review/TEMPLATES.md, .github/pull_request_template.md v� m?c log n�y. M1 �? c� ng�?i giao/nh?n/dependency/ETA; ch? th�m h�?ng d?n d?n ID. Ch�a c� c�n c? d�ng Issue task template l�m ngu?n giao vi?c ch�nh n�n gi? nguy�n.
+- **Gi?i h?n:** kh�ng �?i task/owner/deadline/MVP/ki?n tr�c, code ho?c gate approve/merge; c�c PR hi?n c� kh�ng t? ��?c c?p nh?t. B?n local ch�a commit/push ho?c ��ng GitHub t? l�?t s?a n�y.
 
-- Ngày/người:08/11/2026 — Đạt cập nhật theo [quyết định Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/51#issuecomment-6719017111), [ENV0 Issue53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53).
-- Chọn một production HTTPS/private beta chỉ nhóm, free-first; không yêu cầu staging riêng. Static Compose một worker, private access gate thực, isolated destructive tests. Không chọn provider/mua dịch vụ/cấp quyền hoặc xác nhận lịch trực.
-- Ảnh hưởng: docs OPS11/21 và candidate inventory017; historical inventory giữ nguyên, không sửa runtime/API/SQL/Docker. PR51 preparation merge độc lập deployment acceptance; G0/G1/G2/public proof vẫn pending. PR30 F02 và PR52 ACL/real-DB còn blockers.
+## DEC-DAT-W4-OPS-CI � OPS regression coverage (09/11/2026)
 
-## DEC-DOCS-W4-001: Đồng bộ hóa tài liệu W4 theo Review M4 và Quyết định Sản phẩm (08/11/2026, proposed)
+- PR51 review fix: CI ch?y OPS unittest v� Ruff cho scripts/w4_ops.py, scripts/test_w4_ops.py tr�n m?i PR/push thu?c workflow hi?n h�nh.
+- Proxy observation ki?m JSON OpenAPI3.x v� routes backend qua /openapi.json, tr�nh SPA fallback b�o PASS nh?m. Kh�ng �?i API/schema, runtime hay Docker; k?t qu? v?n kh�ng thay integrated acceptance.
 
-- **Ngày / người đề xuất:** 08/11/2026 — Duy (PR #50), theo review M4 của Đạt (@Thanhdat3010).
-- **Ngữ cảnh & Vấn đề:** Tài liệu kiến trúc, mô tả và kế hoạch còn chứa mô tả cũ mâu thuẫn với các quyết định kỹ thuật đã chốt: (1) Trích xuất Blueprint chạy trước Source Confirmation và còn checkbox an ninh bắt buộc của người dùng; (2) Stage 2 cho phép chọn variation modes và giao diện shuffle Stage 3 mô tả mutually exclusive; (3) Fallback sau retry và Revert tự động duyệt `approved` hoặc cho phép xuất bản candidate lỗi; (4) Tên file `W4_ASSIGNMENT (1).md` gây lỗi liên kết; (5) Chưa làm rõ trạng thái của đề xuất 3–5 sao; (6) Yêu cầu staging server riêng mâu thuẫn với quyết định mới tại Issue #53.
-- **Quyết định mới:**
-  1. **F01 (ADR-0001 / Issue #44):** Đồng bộ hóa thứ tự chuẩn: Ingest $\to$ Source Preview (read-only) $\to$ Confirmation (khóa nguồn & persist snapshot) $\to$ Kích hoạt Canonical Blueprint $\to$ Canonical Ready $\to$ Stage 2. Loại bỏ hoàn toàn hộp kiểm cam kết an ninh của người dùng (giữ server-side silent audit).
-  2. **F02 (Issue #45):** Stage 2 chỉ chọn $N \in \{1, 2, 3, 4\}$ và hai checkbox xáo trộn độc lập (câu, đáp án) mặc định tắt (`false`/`false`), hỗ trợ 4 tổ hợp hợp lệ. Không hiển thị UI chọn variation modes (backend tự suy ra từ canonical Blueprint). Cấu hình xáo trộn hiển thị lại và cho phép cập nhật ở Stage 3 trước khi bấm final shuffle.
-  3. **F03 (Issue #46):** Thử tối đa 4 lần (1 initial + 3 retries). Hết 4 lần thất bại: dùng confirmed source revision làm fallback với trạng thái `pending_review`, `has_warning = true`, `GENERATION_RETRIES_EXHAUSTED` (bắt buộc giảng viên duyệt lại, không tự động approved). Revert cũng về confirmed source revision và trả về `pending_review`. Nguồn thiếu đáp án hoặc lời giải bắt buộc cho downstream/export thì fail-closed.
-  4. **F04:** Chuẩn hóa tên file thành `docs/tasks/W4_ASSIGNMENT.md`, cập nhật metadata bản v2.1 và snapshot PRs.
-  5. **3–5-star verification:** Đánh dấu rõ trạng thái `PROPOSED / DEFERRED PENDING RUBRIC APPROVAL` theo thẩm quyền của Duy và Tâm; không ép buộc vào Golden MVP baseline.
-  6. **ENV0 (Issue #53):** Định hướng Production-first / Private Beta nội bộ nhóm, ưu tiên chi phí 0đ, không bắt buộc staging server riêng biệt.
-- **Phạm vi ảnh hưởng:** `docs/architecture.md`, `docs/description.md`, `docs/planning.md`, `docs/tasks/W4_ASSIGNMENT.md`, `docs/tasks/W4_TASK_DETAIL.md`. Không thay đổi code runtime.
+## DEC-DAT-W4-OPS � Production private beta preparation
 
-## 05/11/2026 — W2 AI policy: owner confirmations
+- Ng�y/ng�?i:08/11/2026 � �?t c?p nh?t theo [quy?t �?nh Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/51#issuecomment-6719017111), [ENV0 Issue53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53).
+- Ch?n m?t production HTTPS/private beta ch? nh�m, free-first; kh�ng y�u c?u staging ri�ng. Static Compose m?t worker, private access gate th?c, isolated destructive tests. Kh�ng ch?n provider/mua d?ch v?/c?p quy?n ho?c x�c nh?n l?ch tr?c.
+- ?nh h�?ng: docs OPS11/21 v� candidate inventory017; historical inventory gi? nguy�n, kh�ng s?a runtime/API/SQL/Docker. PR51 preparation merge �?c l?p deployment acceptance; G0/G1/G2/public proof v?n pending. PR30 F02 v� PR52 ACL/real-DB c?n blockers.
 
-Duy/BE và Bội Anh/FE đã xác nhận mode aliases/NONE theo các link trong [contract AI](ai-w2-integration.md). Đạt cập nhật policy status và acceptance fixtures; không đổi generator/worker/SQL. Quỳnh giữ clone branch, SQL/RPC snapshot và clone persistence đã merge qua PR32; worker integration vẫn do Quỳnh thực hiện; xác nhận policy không phải nghiệm thu triển khai/E2E.
+## DEC-DOCS-W4-001: �?ng b? h�a t�i li?u W4 theo Review M4 v� Quy?t �?nh S?n ph?m (08/11/2026, proposed)
 
-## DEC-DAT-W2-HANDOFF: Contract hash/resume và public-mode proposal
+- **Ng�y / ng�?i �? xu?t:** 08/11/2026 � Duy (PR #50), theo review M4 c?a �?t (@Thanhdat3010).
+- **Ng? c?nh & V?n �?:** T�i li?u ki?n tr�c, m� t? v� k? ho?ch c?n ch?a m� t? c? m�u thu?n v?i c�c quy?t �?nh k? thu?t �? ch?t: (1) Tr�ch xu?t Blueprint ch?y tr�?c Source Confirmation v� c?n checkbox an ninh b?t bu?c c?a ng�?i d�ng; (2) Stage 2 cho ph�p ch?n variation modes v� giao di?n shuffle Stage 3 m� t? mutually exclusive; (3) Fallback sau retry v� Revert t? �?ng duy?t pproved ho?c cho ph�p xu?t b?n candidate l?i; (4) T�n file W4_ASSIGNMENT (1).md g�y l?i li�n k?t; (5) Ch�a l�m r? tr?ng th�i c?a �? xu?t 3�5 sao; (6) Y�u c?u staging server ri�ng m�u thu?n v?i quy?t �?nh m?i t?i Issue #53.
+- **Quy?t �?nh m?i:**
+  1. **F01 (ADR-0001 / Issue #44):** �?ng b? h�a th? t? chu?n: Ingest $\to$ Source Preview (read-only) $\to$ Confirmation (kh�a ngu?n & persist snapshot) $\to$ K�ch ho?t Canonical Blueprint $\to$ Canonical Ready $\to$ Stage 2. Lo?i b? ho�n to�n h?p ki?m cam k?t an ninh c?a ng�?i d�ng (gi? server-side silent audit).
+  2. **F02 (Issue #45):** Stage 2 ch? ch?n  \in \{1, 2, 3, 4\}$ v� hai checkbox x�o tr?n �?c l?p (c�u, ��p �n) m?c �?nh t?t (alse/alse), h? tr? 4 t? h?p h?p l?. Kh�ng hi?n th? UI ch?n variation modes (backend t? suy ra t? canonical Blueprint). C?u h?nh x�o tr?n hi?n th? l?i v� cho ph�p c?p nh?t ? Stage 3 tr�?c khi b?m final shuffle.
+  3. **F03 (Issue #46):** Th? t?i �a 4 l?n (1 initial + 3 retries). H?t 4 l?n th?t b?i: d�ng confirmed source revision l�m fallback v?i tr?ng th�i pending_review, has_warning = true, GENERATION_RETRIES_EXHAUSTED (b?t bu?c gi?ng vi�n duy?t l?i, kh�ng t? �?ng approved). Revert c?ng v? confirmed source revision v� tr? v? pending_review. Ngu?n thi?u ��p �n ho?c l?i gi?i b?t bu?c cho downstream/export th? fail-closed.
+  4. **F04:** Chu?n h�a t�n file th�nh docs/tasks/W4_ASSIGNMENT.md, c?p nh?t metadata b?n v2.1 v� snapshot PRs.
+  5. **3�5-star verification:** ��nh d?u r? tr?ng th�i PROPOSED / DEFERRED PENDING RUBRIC APPROVAL theo th?m quy?n c?a Duy v� T�m; kh�ng �p bu?c v�o Golden MVP baseline.
+  6. **ENV0 (Issue #53):** �?nh h�?ng Production-first / Private Beta n?i b? nh�m, �u ti�n chi ph� 0�, kh�ng b?t bu?c staging server ri�ng bi?t.
+- **Ph?m vi ?nh h�?ng:** docs/architecture.md, docs/description.md, docs/planning.md, docs/tasks/W4_ASSIGNMENT.md, docs/tasks/W4_TASK_DETAIL.md. Kh�ng thay �?i code runtime.
 
-- Ngày/người: 04/11/2026 — Trương Thành Đạt, theo yêu cầu phối hợp I-B-AI/I-B-POLICY trên PR30.
-- Contract AI hiện có được làm rõ tại [ai-w2-integration.md](ai-w2-integration.md): ordered batch hash khác per-question revision hash, full QuestionResult/provenance và immutable job snapshot cần giữ khi resume. Fixture/test offline bàn giao cho owner worker/SQL.
-- Guard cục bộ: completed candidate.seed phải khớp expected slot seed, không chỉ request fingerprint. Không đổi prompt, provider, retry hoặc quota.
-- Checkpoint04/11 ban đầu proposed; policy aliases/NONE đã được owners xác nhận05/11. SQL/RPC snapshot/result và Original Clone đã merge qua PR32 (migrations015/016); worker/FE E2E vẫn pending. Không sửa SQL/worker/FE/gateway/Docker hay nhận W2 E2E đã đạt. [Scope/phối hợp](tasks/TASK-AI-W2-CONTRACT.md).
+## 05/11/2026 � W2 AI policy: owner confirmations
+
+Duy/BE v� B?i Anh/FE �? x�c nh?n mode aliases/NONE theo c�c link trong [contract AI](ai-w2-integration.md). �?t c?p nh?t policy status v� acceptance fixtures; kh�ng �?i generator/worker/SQL. Qu?nh gi? clone branch, SQL/RPC snapshot v� clone persistence �? merge qua PR32; worker integration v?n do Qu?nh th?c hi?n; x�c nh?n policy kh�ng ph?i nghi?m thu tri?n khai/E2E.
+
+## DEC-DAT-W2-HANDOFF: Contract hash/resume v� public-mode proposal
+
+- Ng�y/ng�?i: 04/11/2026 � Tr��ng Th�nh �?t, theo y�u c?u ph?i h?p I-B-AI/I-B-POLICY tr�n PR30.
+- Contract AI hi?n c� ��?c l�m r? t?i [ai-w2-integration.md](ai-w2-integration.md): ordered batch hash kh�c per-question revision hash, full QuestionResult/provenance v� immutable job snapshot c?n gi? khi resume. Fixture/test offline b�n giao cho owner worker/SQL.
+- Guard c?c b?: completed candidate.seed ph?i kh?p expected slot seed, kh�ng ch? request fingerprint. Kh�ng �?i prompt, provider, retry ho?c quota.
+- Checkpoint04/11 ban �?u proposed; policy aliases/NONE �? ��?c owners x�c nh?n05/11. SQL/RPC snapshot/result v� Original Clone �? merge qua PR32 (migrations015/016); worker/FE E2E v?n pending. Kh�ng s?a SQL/worker/FE/gateway/Docker hay nh?n W2 E2E �? �?t. [Scope/ph?i h?p](tasks/TASK-AI-W2-CONTRACT.md).
+
 
 ## TASK-204 PR #43 review findings F01–F03 — 06/11/2026 (proposed)
 

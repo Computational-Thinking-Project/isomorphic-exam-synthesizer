@@ -53,10 +53,7 @@ from app.services.parser import (
     upload_exam_file_to_storage,
     validate_file_security,
 )
-from app.services.parser.ingestion_service import (
-    replace_source_questions_atomically,
-    trigger_blueprint_pipeline,
-)
+from app.services.parser.ingestion_service import replace_source_questions_atomically
 
 logger = logging.getLogger(__name__)
 
@@ -504,8 +501,6 @@ async def ingest_file(
         questions=parsed_questions,
     )
 
-    # Trigger background Blueprint extraction pipeline (TASK-203 hook)
-    background_tasks.add_task(trigger_blueprint_pipeline, session_id, saved_questions)
     return IngestSuccessResponse(
         session_id=session_id,
         message="Exam file ingested and validated successfully",
@@ -574,8 +569,6 @@ async def ingest_text(
         questions=parsed_questions,
     )
 
-    # Trigger background Blueprint extraction pipeline (TASK-203 hook)
-    background_tasks.add_task(trigger_blueprint_pipeline, session_id, saved_questions)
     return IngestSuccessResponse(
         session_id=session_id,
         message="Exam text ingested and validated successfully",

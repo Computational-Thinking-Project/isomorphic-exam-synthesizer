@@ -1,5 +1,46 @@
 # Generation configuration and persistence — TASK-207a/b
 
+## W4-MVP-01 / migration018 (local implementation, not deployed)
+
+Task owner authorized018 and retention of both values aliases on2026-11-09.
+Apply after016 and the reviewed PR52 migration017. Actual Production history
+is unverified; this is not a Production execution instruction.
+
+`save_generation_config(uuid,int,jsonb,jsonb,jsonb)` retains its identity and
+response envelope. It locks the session first, requires owner authorization,
+blueprinted/configured status, no frozen job snapshot/finalized version, and
+ready confirmed canonical sources with a matching non-null expected manifest.
+NO_CONFIRMATION is rejected for new saves. Historical configs/jobs are unchanged;
+the existing legacy claim/read behavior is retained for compatibility.
+
+The modes argument is now only a neutral compatibility placeholder: **exactly
+`[]`** is accepted; NULL, NONE and nonempty client selections fail22023. The server
+intersects mapped dimensions across all canonical policies. Policies must be
+nonempty and structurally valid; pending/failed/stale/malformed evidence fails
+closed. Valid policies with no shared mapped dimension yield `[]`/Original Clone.
+
+| Shared dimension | Stored aliases | Frozen canonical dimension |
+|---|---|---|
+| values | NUMERICAL, parameter_variation | values once |
+| context | context_swap | context once |
+
+Stable ordering for both: modes `["NUMERICAL","parameter_variation","context_swap"]`,
+dimensions `["values","context"]`. Alias count is not transformation count.
+The pinned PR30 worker consumes canonical_dimensions from its frozen snapshot.
+
+Ordering defaults are OFF/OFF in the table and RPC. Explicit preferences require
+exactly two strict JSON Booleans; missing/extra keys, nulls and coercible values
+are rejected. All four combinations are legal. N remains SQL integer1–4.
+Invalid input/readiness uses22023; missing/stale manifest or locked config55006;
+foreign owner42501; missing sessionP0002.
+
+PR30 HTTP and FE2 adapters still require coordinated updates: expose only N and
+ordering flags, pass neutral[] internally, and validate authoritative response
+modes without comparing them to client selections.018 does not mount a new
+route or implement Stage3 preference saving (S05/S06).
+
+## Historical015/016 behavior (superseded for new saves by018)
+
 PR #32 owns this SQL/session-detail contract. PR #30 owns Python preflight,
 HTTP error mapping, worker orchestration, AI/clone adapters and SSE.
 Migrations **010 → 011** follow adopted 004–009. Implementation/self-check is not

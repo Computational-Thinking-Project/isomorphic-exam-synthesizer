@@ -1,5 +1,51 @@
 # TASK-302 PostgreSQL schema and RPC tests
 
+### W4-MVP-01 baseline rehearsal (no Production access)
+
+S04 config regression module (applies pinned candidate017 then local018):
+
+```sh
+PYTHONPATH=backend DOCKER_HOST=unix:///var/run/docker.sock DOCKER_CONTEXT=default \
+RUN_POSTGRES_MIGRATION_TESTS=1 .venv/bin/python -m unittest discover \
+  -s backend/tests/migrations -p test_w4_source_readiness_config.py -v
+```
+
+Set W4_PR30_CHECKOUT to an isolated archive of PR30 at b6b6422 to run the actual
+repository/adapter probe (otherwise that single probe is explicitly skipped).
+W4_BASELINE_015=1 uses the pinned pre018 schema (65c5362) and002–016 without017/018 to reproduce RED.
+The module uses real owner/foreign-owner SQL roles, persisted
+confirmation receipts and canonical publications on a full002–016 chain. It
+compares whole-row state on denied writes. Malformed-policy/hash cases use
+test-admin corruption fixtures without disabling guards. They never target an
+external database. There is no xfail/expectedFailure or weakened assertion.
+Default opt-out skips are NOT acceptance evidence; see the S02/S03 report for
+the actual explicitly enabled results; the S04 report records RED→GREEN and
+fresh/populated upgrade evidence.018 is a local forward migration, not deployed.
+
+`test_w4_baseline_chain.py` uses the existing `PostgresCase` container boundary:
+PostgreSQL 15, network `none`, no published ports/mounts or external DSN. Each
+case creates a fresh random test database; cleanup touches only that container.
+It tests `schema.sql` then every numbered file 002–016 (including the empty010),
+and separately the unmerged PR52 candidate017 at immutable commit598b959.
+That Git object must be available locally; the test never merges/copies017 into
+migration history. No018 is created.
+
+```sh
+DOCKER_HOST=unix:///var/run/docker.sock DOCKER_CONTEXT=default \
+RUN_POSTGRES_MIGRATION_TESTS=1 .venv/bin/python -m unittest discover \
+  -s backend/tests/migrations -p test_w4_baseline_chain.py -v
+```
+
+Four cases cover fresh bootstrap and a synthetic populated five-table upgrade,
+each with/without017. The 22 synthetic rows use repository column definitions;
+the test checks preservation of every original field and row count. This models
+reported Production table presence only, **not** unknown Production DDL, RLS or
+Auth/JWT/PostgREST. It is not a deployment/repair script or migration allocation
+approval. Without the opt-in, SKIP is not PASS.
+
+See [W4 local verification](../../../docs/tasks/W4-MVP-01_LOCAL_VERIFICATION.md)
+for commands, exact SHAs, actual results and the remaining drift/ledger gates.
+
 ### TASK-305 async integration fixtures
 
 The two `tests/services/test_*_real_db_integration.py` modules require `asyncpg`
