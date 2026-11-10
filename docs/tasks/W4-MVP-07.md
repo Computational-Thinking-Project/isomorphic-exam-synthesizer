@@ -14,7 +14,7 @@
   - 403/409 và test cho trùng current, lệch mapping;
   - ghi log đã làm sạch định danh snapshot (`session_id`, `revision`, số version/câu; không ghi nội dung câu hỏi, lời giải hay khóa) để so ZIP với preview;
   - fixture có kiểu và code bàn giao cho 08;
-  - đối chiếu 100% 6 vị trí Golden (3 câu × N=2, OFF/OFF) với preview — **chờ fixture đúng của task 05**.
+  - đối chiếu 100% 6 vị trí Golden (3 câu × N=2, OFF/OFF) với preview — fixture của task 05 ở `2c6247b` (PR #49) có vẻ đã là OFF/OFF (identity); **chờ Tâm xác nhận** trước khi viết test.
 - Quy tắc kiểm của hàm thuần (vì `DisplayVersion`/`ApprovedExportSnapshot` chỉ kiểm thứ tự liền mạch, cùng số câu và 1–4 version):
   - số `exam_versions` == `generation_configs.n_versions` (1–4), mã version duy nhất;
   - mỗi (version, source_question) có đúng 1 dòng current `approved`, số slot == số `source_questions`;
@@ -33,7 +33,7 @@ File mới trong package exporter (không sửa file có sẵn của `finalize/`
 | Bộ đọc DB (owner, trạng thái, truy vấn bảng) trả `RawSnapshotRows` | `backend/app/services/exporter/snapshot_reader.py` | Làm ngay; thay bằng RPC chỉ đổi file này |
 | Hợp đồng JSON snapshot + fixture thành công/lỗi | `docs/api/export-snapshot-contract.md`, `backend/tests/fixtures/` | Làm ngay; dẫn xuất từ `bundle_models.py`, không định nghĩa lại projection của preview (Q06) |
 | Nguồn của `revision` | hàm `snapshot_revision(session_meta, versions) -> str`, mặc định SHA-256 nội dung chuẩn hóa | Chờ Duy; đổi hàm này và giá trị `revision` trong fixture/hợp đồng |
-| Đối chiếu preview (6 vị trí Golden) | test riêng, thêm sau | Chờ fixture 05 của Tâm (W4-MVP-05; PR #49) |
+| Đối chiếu preview (6 vị trí Golden) | test riêng, thêm sau | Chờ Tâm xác nhận fixture ở `2c6247b` (W4-MVP-05; PR #49) |
 
 Tính nhất quán khi đọc (kết luận từ đọc code/SQL trên `dev`, chưa kiểm bằng test PG thật, chưa kiểm RPC 005/016): migration 009 chặn ghi trực tiếp vào các bảng nội dung khi session `approved`/`exported` hoặc `approved_at` khác NULL (`ERR_SESSION_LOCKED`; route dịch thành 423), và các RPC Review/shuffle/`persist_generation_result` đã đọc đều kiểm khóa; trên `dev` không có đường mở khóa. Mỗi lệnh PostgREST là một giao dịch riêng nên không có snapshot isolation giữa các lệnh; cách đọc chỉ đúng khi **đọc `exam_sessions` trước**, chỉ tiếp tục nếu `status ∈ {approved, exported}` và `approved_at` khác NULL, rồi đọc nội dung, rồi **đọc lại** trạng thái/`approved_at` để kiểm không đổi. Đây vẫn là câu hỏi mở cho Duy (Q06/Q08).
 
@@ -47,19 +47,19 @@ Quyền và mã lỗi (tái dùng `ReviewDomainException`, theo quy ước `fina
 | 2. `snapshot_rows.py`, `snapshot_builder.py` | Dựng + kiểm snapshot | Test đơn vị từng ca lỗi (kể cả trùng current, vì index DB không cho tạo ca này) |
 | 3. `snapshot_reader.py` | Đọc, kiểm owner, status, đọc lại trạng thái | Test với stub bảng |
 | 4. Test PostgreSQL thật (opt-in) | Đọc đúng từ DB đã khóa, session chưa approved, mapping lệch | `RUN_POSTGRES_MIGRATION_TESTS=1`, tái dùng harness `sql_client_fixture` hiện có; ca "trùng current" chỉ mô phỏng bằng cách bỏ `idx_single_current_version_question` trong container dùng một lần, ghi rõ là mô phỏng |
-| 5. Test đối chiếu preview | 6 vị trí Golden | Sau khi fixture 05 sửa |
+| 5. Test đối chiếu preview | 6 vị trí Golden | Sau khi Tâm xác nhận fixture |
 
 ## Đầu vào và câu hỏi (hỏi trên Draft PR)
 
 | Cần ai | Câu hỏi | Cần trước | Mặc định mình dùng | ETA bên cung cấp | Link trả lời |
 |---|---|---|---|---|---|
-| Duy | `revision` lấy từ đâu (DB/preview không có)? | Trước khi chốt fixture | SHA-256 snapshot chuẩn hóa; hoặc `approved_at` | chưa có | chờ |
+| Duy | `revision` lấy từ đâu? (DB không có; contract preview của Tâm đề xuất `exam_sessions.updated_at`, nhưng giá trị này đổi khi approve) — [câu hỏi](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58#issuecomment-6761402596) | Trước khi chốt fixture | SHA-256 snapshot chuẩn hóa; hoặc `approved_at`/`updated_at` | chưa có | chờ |
 | Duy | Đọc bằng truy vấn bảng hay RPC đọc riêng? Dùng client nào (service hay RLS người dùng) để có 403 thay vì 404? | Trước lượt 3 | Bảng, không thêm migration (Q08, ledger chưa chốt) | chưa có | chờ |
-| Tâm | Preview sẽ bổ sung `title`/`revision` hay adapter tự thêm? Khi nào sửa fixture OFF/OFF của task 05? | Trước lượt 5 | Adapter tự thêm; đối chiếu sau khi fixture sửa | chưa có | chờ |
+| Tâm | Contract preview (4.2) để adapter cấp `title`/`revision` từ `exam_sessions`: đúng ý? Fixture OFF/OFF ở `2c6247b` có phải bản chốt? Adapter đọc DB (không dựng từ response preview) và chỉ dùng preview làm đối chiếu: ổn? — [câu hỏi](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58#issuecomment-6761403010) | Trước lượt 5 | Adapter tự cấp; đối chiếu sau khi Tâm xác nhận | chưa có | chờ |
 | Tâm + Duy | `solution_md` trống: fail-closed (Q01 bản tạm của W4)? | Trước lượt 2 | Fail-closed; Q01 mới là đề xuất, chờ Tâm chốt khi merge vào `dev` | chưa có | chờ |
 
 - Output mình cần giao cho task sau: task 08 (Hùng) nhận typed fixture + code (`RawSnapshotRows`, builder, reader); hợp đồng JSON cho Philip/Đạt/Quỳnh. ETA: cùng hạn 10/11 18:00 cho phần cục bộ; chưa ai xác nhận.
-- Lịch có khả thi không? Phần cục bộ khả thi trong ngày. Task 05 API thật hạn 10/11 12:00 và có thể trễ; 08 hạn 11/11 18:00 chỉ tích hợp thật được sau 07 và bucket của 11s. Nếu fixture 05 không đến kịp, đối chiếu preview chuyển sang sau; báo Duy điều phối.
+- Lịch có khả thi không? Phần cục bộ khả thi trong ngày. Task 05 API thật hạn 10/11 12:00; fixture ở `2c6247b` đã đọc được nhưng chưa được Tâm xác nhận. 08 hạn 11/11 18:00 chỉ tích hợp thật được sau 07 và bucket của 11s. Nếu chưa xác nhận kịp, đối chiếu preview chuyển sang sau; báo Duy điều phối.
 - Quyết định đã thống nhất: chưa có.
 
 ## Kế hoạch tự kiểm
