@@ -70,7 +70,7 @@ Quyền và mã lỗi (tái dùng `ReviewDomainException`, theo quy ước `fina
 ## Bàn giao — điền theo kết quả thực tế
 
 - PR/commit/output: PR #58 (Draft). Code: `snapshot_{rows,revision,common,builder,reader,adapter}.py`, hợp đồng `docs/api/export-snapshot-contract.md`, fixture `backend/tests/fixtures/export_snapshot_golden.json`.
-- Đã làm / đã kiểm (Python 3.11 Windows, stub bảng, không DB thật): test exporter 155 passed / 8 skipped (85 test của adapter); toàn bộ backend trừ `tests/migrations` ở commit trước: 1166 passed / 10 skipped; ruff check, ruff format (file mới) và mypy sạch. **Chưa có test PostgreSQL thật** (lượt 4), nên DoD "unit/DB tests" mới đạt phần unit. Chưa kiểm RPC 005/016, staging, Supabase.
+- Đã làm / đã kiểm (Python 3.11 Windows, stub bảng, không DB thật): test exporter 157 passed / 8 skipped (87 test của adapter) ở commit này; ruff check, ruff format (file mới) và mypy sạch. Toàn bộ backend chưa chạy lại ở commit này: ở commit trước, lần chạy đầy đủ (trừ `tests/migrations`) được 1166 passed / 10 skipped, và trong lần chạy lại độc lập có 1 test timing (sympy hoặc gateway) lúc fail lúc pass, không thuộc file nào của PR này. **Chưa có test PostgreSQL thật** (lượt 4), nên DoD "unit/DB tests" mới đạt phần unit. Chưa kiểm RPC 005/016, staging, Supabase.
 - Chưa làm: đối chiếu 6 vị trí Golden với preview (chờ Tâm xác nhận fixture); nguồn `revision`, cách đọc/client (chờ Duy).
 - Đã chấp nhận: chưa có (chưa có review GitHub).
 - Còn chờ: các câu hỏi ở trên.

@@ -173,6 +173,13 @@ CASES = {
     "key_display_no_bool": (lambda d: key_row(d, "101", 1).update(display_no=True), KEYS),
     "key_display_no_float": (lambda d: key_row(d, "101", 2).update(display_no=2.0), KEYS),
     "key_canonical_float": (lambda d: key_row(d, "101", 1).update(canonical_question_no=1.0), KEYS),
+    "key_canonical_bool": (lambda d: key_row(d, "101", 1).update(canonical_question_no=True), KEYS),
+    "key_row_for_extra_unknown_version": (
+        lambda d: d["answer_keys"].append(
+            {**key_row(d, "101", 1), "version_id": "8" * 8 + "-8888-4888-8888-888888888888"}
+        ),
+        KEYS,
+    ),
     "question_key_not_abcd": (lambda d: question(d, "101", 1).update(correct_key="E"), KEYS),
 }
 
@@ -238,7 +245,7 @@ def test_title_is_stripped():
     assert snapshot.title == "Đề kiểm tra"
 
 
-def test_versions_sort_numerically_and_unicode_digits_never_crash():
+def test_numeric_version_codes_sort_numerically():
     def codes(d):
         d["versions"][0].update(version_code="10")
         d["versions"][1].update(version_code="9")
