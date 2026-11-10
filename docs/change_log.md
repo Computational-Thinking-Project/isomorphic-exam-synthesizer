@@ -1,3 +1,12 @@
+## DEC-DOCS-INPUT-20261109: Đối chiếu yêu cầu và bàn giao input (proposed)
+
+- **Ngày / người đề xuất:** 09/11/2026 — Trung Anh / philip-kkk, PM hỗ trợ soạn theo yêu cầu.
+- **Trạng thái:** tài liệu đã vào `dev@7b7387f` qua PR #57; nội dung INPUT-20261109 và workflow v0.1 vẫn **proposed**, chưa có bằng chứng nhóm chấp nhận hoặc rollout. Không đổi ngầm quy tắc giữa vòng review đang chạy.
+- **Ngữ cảnh:** audit thảo luận GitHub chốt 16:42:46 UTC+7 ngày 09/11 cho thấy trả lời lệch ID và nhầm mức quyết định/đã giao/đủ dùng/đã tích hợp. Chưa có bằng chứng thay đổi này giảm số vòng trao đổi.
+- **Đề xuất:** ID input ổn định, yêu cầu có mục đích/điều kiện đủ dùng, người giao/nhận, need-by/ETA; reply đúng ID kèm artifact/phiên bản và phần còn thiếu; consumer xác nhận phạm vi dùng được. Các mức Requested/Decided/Delivered/Accepted/Integrated chỉ dùng khi phù hợp. Một nơi tổng hợp M2 hoặc comment đang dùng; M1/M3/PR dẫn link, không sao chép trạng thái.
+- **Phạm vi ảnh hưởng:** `docs/review/WORKFLOW.md`, `docs/review/TEMPLATES.md`, `.github/pull_request_template.md` và mục log này. M1 đã có người giao/nhận/dependency/ETA; chỉ thêm hướng dẫn dẫn ID. Chưa có căn cứ dùng Issue task template làm nguồn giao việc chính nên giữ nguyên.
+- **Giới hạn:** không đổi task/owner/deadline/MVP/kiến trúc, code hoặc gate approve/merge; các PR hiện có không tự được cập nhật. Merge tài liệu không chứng minh các owner đã đọc hay pilot đã chạy.
+
 ## DEC-DAT-W4-OPS-CI — OPS regression coverage (09/11/2026)
 
 - PR51 review fix: CI chạy OPS unittest và Ruff cho `scripts/w4_ops.py`, `scripts/test_w4_ops.py` trên mỗi PR/push thuộc workflow hiện hành.
