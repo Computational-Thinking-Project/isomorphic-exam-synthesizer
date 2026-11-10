@@ -161,6 +161,18 @@ CASES = {
         KEYS,
     ),
     "key_question_no_not_int": (lambda d: key_row(d, "101", 1).update(question_no="1"), KEYS),
+    "version_code_unicode_digit": (lambda d: d["versions"][1].update(version_code="²"), INVALID),
+    "version_code_huge_digits": (
+        lambda d: d["versions"][1].update(version_code="9" * 5000),
+        INVALID,
+    ),
+    "version_code_leading_space": (lambda d: d["versions"][1].update(version_code=" 102"), INVALID),
+    "version_code_not_text": (lambda d: d["versions"][1].update(version_code=102), INVALID),
+    "is_finalized_truthy_string": (lambda d: d["versions"][0].update(is_finalized="yes"), INVALID),
+    "options_is_a_string": (lambda d: question(d, "101", 1).update(options="wxyz"), INVALID),
+    "key_display_no_bool": (lambda d: key_row(d, "101", 1).update(display_no=True), KEYS),
+    "key_display_no_float": (lambda d: key_row(d, "101", 2).update(display_no=2.0), KEYS),
+    "key_canonical_float": (lambda d: key_row(d, "101", 1).update(canonical_question_no=1.0), KEYS),
     "question_key_not_abcd": (lambda d: question(d, "101", 1).update(correct_key="E"), KEYS),
 }
 
@@ -217,3 +229,27 @@ def test_golden_json_fixture_matches_builder_and_loads_into_the_export_model():
     built = build_approved_snapshot(to_rows(golden_rows()))
     assert built.model_dump(mode="json") == expected
     assert ApprovedExportSnapshot.model_validate(expected) == built
+
+
+def test_title_is_stripped():
+    snapshot = build_approved_snapshot(
+        mutated(lambda d: d["session"].update(title="  Đề kiểm tra  "))
+    )
+    assert snapshot.title == "Đề kiểm tra"
+
+
+def test_versions_sort_numerically_and_unicode_digits_never_crash():
+    def codes(d):
+        d["versions"][0].update(version_code="10")
+        d["versions"][1].update(version_code="9")
+
+    snapshot = build_approved_snapshot(mutated(codes))
+    assert [v.code for v in snapshot.versions] == ["9", "10"]
+
+
+def test_errors_do_not_chain_the_cause_that_embeds_raw_values():
+    secret = "SECRET-CHAIN-5521"
+    error = _fail(mutated(lambda d: question(d, "101", 1).update(content=" ", solution_md=secret)))
+    assert error.__cause__ is None and error.__suppress_context__
+    error = _fail(mutated(lambda d: d["session"].update(id=secret)))
+    assert error.__cause__ is None and secret not in str(error.detail)

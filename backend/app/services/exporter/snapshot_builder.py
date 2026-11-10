@@ -6,7 +6,6 @@ solutions, keys or raw database values.
 """
 
 import logging
-from datetime import datetime
 from typing import Any, Callable, Mapping, Sequence, cast
 from uuid import UUID
 
@@ -18,12 +17,17 @@ from app.services.exporter.bundle_models import (
     DisplayQuestion,
     DisplayVersion,
 )
+from app.services.exporter.snapshot_common import (
+    LOCKED_STATUSES,
+    VERSION_CODE_PATTERN,
+    code_order,
+    valid_timestamp,
+)
 from app.services.exporter.snapshot_revision import snapshot_revision
 from app.services.exporter.snapshot_rows import RawSnapshotRows
 
 logger = logging.getLogger(__name__)
 
-LOCKED_STATUSES = ("approved", "exported")
 RevisionSource = Callable[[Mapping[str, Any], Sequence[Mapping[str, Any]]], str]
 
 
@@ -46,21 +50,9 @@ def _text(value: Any) -> bool:
 def _uuid(value: Any, what: str) -> str:
     try:
         return str(UUID(str(value)))
-    except (ValueError, TypeError, AttributeError) as exc:
-        raise _invalid(f"{what} không phải UUID hợp lệ") from exc
-
-
-def _valid_timestamp(value: Any) -> bool:
-    if not isinstance(value, str):
-        return False
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).utcoffset() is not None
-    except ValueError:
-        return False
-
-
-def _code_order(code: str) -> tuple[int, int, str]:
-    return (0, int(code), code) if code.isdigit() else (1, 0, code)
+    except (ValueError, TypeError, AttributeError):
+        # ``from None``: never chain the cause, which may carry the raw value.
+        raise _invalid(f"{what} không phải UUID hợp lệ") from None
 
 
 def _fields(exc: ValidationError) -> str:
@@ -75,7 +67,7 @@ def _check_session(session: Mapping[str, Any]) -> tuple[str, str]:
         raise ReviewDomainException(
             409, "ERR_INVALID_SESSION_STATE", "Phiên đề chưa được phê duyệt để xuất"
         )
-    if not _valid_timestamp(session.get("approved_at")):
+    if not valid_timestamp(session.get("approved_at")):
         raise _invalid("Phiên đề đã khóa nhưng thiếu thời điểm phê duyệt hợp lệ")
     title = session.get("title")
     if not _text(title):
@@ -95,9 +87,9 @@ def _check_versions(rows: RawSnapshotRows) -> list[tuple[str, str]]:
     for version in rows.versions:
         version_id = _uuid(version.get("id"), "Mã đề")
         code = version.get("version_code")
-        if not _text(code):
-            raise _invalid("Mã đề thiếu version_code")
-        code = str(code)
+        # Validate before the code is used in sorting or in any message: it is a raw DB value.
+        if not isinstance(code, str) or not VERSION_CODE_PATTERN.fullmatch(code):
+            raise _invalid("Mã đề có version_code không hợp lệ")
         if version_id in seen_ids or code.casefold() in seen_codes:
             raise _invalid("Mã đề bị trùng")
         seen_ids.add(version_id)
@@ -107,7 +99,7 @@ def _check_versions(rows: RawSnapshotRows) -> list[tuple[str, str]]:
         if not _text(version.get("shuffle_seed")) or version.get("permutations") is None:
             raise _invalid(f"Mã đề {code} thiếu seed hoặc hoán vị đã lưu")
         result.append((version_id, code))
-    return sorted(result, key=lambda item: _code_order(item[1]))
+    return sorted(result, key=lambda item: code_order(item[1]))
 
 
 def _check_sources(rows: RawSnapshotRows) -> set[str]:
@@ -152,6 +144,7 @@ def _display_question(
     if (
         key.get("correct_option") != correct
         or key.get("display_correct_key") != correct
+        or not _is_int(key.get("display_no"))
         or key.get("display_no") != number
     ):
         raise _keys_invalid(f"Đáp án bảng tra không khớp câu {number} của mã đề {code}")
@@ -171,7 +164,8 @@ def _display_question(
             }
         )
     except ValidationError as exc:
-        raise _invalid(f"Câu {number} của mã đề {code} không hợp lệ ({_fields(exc)})") from exc
+        # ``from None``: the pydantic cause embeds input values (content, solutions).
+        raise _invalid(f"Câu {number} của mã đề {code} không hợp lệ ({_fields(exc)})") from None
 
 
 def _build_version(
@@ -208,13 +202,15 @@ def _build_version(
     for q in ordered:
         number = int(q["question_no"])
         key = keys[(version_id, number)]
-        if key.get("canonical_question_no") != q.get("canonical_question_no"):
+        if not _is_int(key.get("canonical_question_no")) or key.get(
+            "canonical_question_no"
+        ) != q.get("canonical_question_no"):
             raise _keys_invalid(f"Số thứ tự gốc lệch ở câu {number} của mã đề {code}")
         display.append(_display_question(q, key, code, number))
     try:
         return DisplayVersion(code=code, questions=tuple(display))
     except ValidationError as exc:
-        raise _invalid(f"Mã đề {code} không hợp lệ ({_fields(exc)})") from exc
+        raise _invalid(f"Mã đề {code} không hợp lệ ({_fields(exc)})") from None
 
 
 def snapshot_identity(snapshot: ApprovedExportSnapshot) -> dict[str, Any]:
@@ -254,6 +250,6 @@ def build_approved_snapshot(
             versions=versions,
         )
     except ValidationError as exc:
-        raise _invalid(f"Snapshot không hợp lệ ({_fields(exc)})") from exc
+        raise _invalid(f"Snapshot không hợp lệ ({_fields(exc)})") from None
     logger.info("approved export snapshot built: %s", snapshot_identity(snapshot))
     return snapshot

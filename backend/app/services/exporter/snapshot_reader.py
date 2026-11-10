@@ -1,10 +1,12 @@
 """DB reader for the approved export snapshot (W4-MVP-07).
 
 Read order matters. Each PostgREST call is its own transaction, so there is no
-snapshot isolation across calls. The reads are only consistent because approved and
-exported sessions are locked against writes (migration 009 trigger and RPC lock
-checks): read the session first, continue only if it is locked, read content, then
-re-read the session and require it to be unchanged.
+snapshot isolation across calls. The reads are only consistent IF approved and
+exported sessions are locked against writes. That is concluded from reading the
+migration 009 trigger and the RPC lock checks; migrations 005 and 016 were not
+checked and there is no PostgreSQL test yet. Order: read the session first, continue
+only if it is locked, read content, then re-read the session and require it to be
+unchanged.
 
 OPEN DECISIONS (PR #58): a dedicated read RPC instead of table reads, and which
 client (service vs user RLS) is used. Both are confined to this module: the caller
@@ -17,10 +19,10 @@ from uuid import UUID
 from supabase import Client
 
 from app.models.schemas import ReviewDomainException
+from app.services.exporter.snapshot_common import LOCKED_STATUSES, valid_timestamp
 from app.services.exporter.snapshot_rows import RawSnapshotRows
 
 SESSION_COLUMNS = "id, user_id, title, status, approved_at, updated_at"
-LOCKED_STATUSES = ("approved", "exported")
 
 
 def _rows(response: Any) -> List[Dict[str, Any]]:
@@ -65,7 +67,9 @@ class ExportSnapshotReader:
             raise ReviewDomainException(
                 403, "ERR_UNAUTHORIZED", "Người dùng không có quyền với phiên đề này"
             )
-        if first.get("status") not in LOCKED_STATUSES or not first.get("approved_at"):
+        if first.get("status") not in LOCKED_STATUSES or not valid_timestamp(
+            first.get("approved_at")
+        ):
             raise ReviewDomainException(
                 409, "ERR_INVALID_SESSION_STATE", "Phiên đề chưa được phê duyệt để xuất"
             )

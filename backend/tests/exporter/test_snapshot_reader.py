@@ -1,7 +1,8 @@
 """Reader/adapter tests with an in-memory table stub (W4-MVP-07).
 
-The stub is read-only and is NOT a lock or transaction simulator; DB lock behaviour is
-covered by the opt-in PostgreSQL suite, not here.
+The stub is read-only and is NOT a lock or transaction simulator. DB lock behaviour is
+NOT tested here; an opt-in PostgreSQL suite is planned (step 4 of docs/tasks/W4-MVP-07.md)
+and does not exist yet.
 """
 
 from copy import deepcopy
@@ -14,14 +15,8 @@ from app.models.schemas import ReviewDomainException
 from app.services.exporter.snapshot_adapter import load_approved_export_snapshot
 from app.services.exporter.snapshot_reader import ExportSnapshotReader
 
-TABLES = {
-    "exam_sessions": "session",
-    "generation_configs": "config",
-    "source_questions": "sources",
-    "exam_versions": "versions",
-    "version_questions": "questions",
-    "answer_keys": "answer_keys",
-}
+OTHER_SESSION = "99999999-9999-4999-8999-999999999999"
+OTHER_VERSION = "99999999-9999-4999-8999-999999990101"
 
 
 class Query:
@@ -53,30 +48,41 @@ class Query:
 
 
 class Client:
-    def __init__(self, data, session_overrides=None):
+    def __init__(self, data, session_overrides=None, config_rows=None, foreign=None):
         self.data = data
         self.calls = []
         self.session_reads = 0
+        # one entry per session read; ``None`` makes that read return no row
         self.session_overrides = session_overrides or []
+        self.config_rows = config_rows
+        # rows of OTHER sessions/versions that must never reach the snapshot
+        self.foreign = foreign or {}
 
     def rows(self, name):
         d = self.data
+        extra = deepcopy(self.foreign.get(name, []))
         if name == "exam_sessions":
-            session = dict(d["session"])
-            if self.session_reads < len(self.session_overrides):
-                session.update(self.session_overrides[self.session_reads])
+            index = self.session_reads
             self.session_reads += 1
-            return [session]
+            session = dict(d["session"])
+            if index < len(self.session_overrides):
+                override = self.session_overrides[index]
+                if override is None:
+                    return []
+                session.update(override)
+            return [session] + extra
         if name == "generation_configs":
-            return [{"session_id": SESSION_ID, "n_versions": d["n_versions"]}]
+            if self.config_rows is not None:
+                return self.config_rows
+            return [{"session_id": SESSION_ID, "n_versions": d["n_versions"]}] + extra
         if name == "source_questions":
-            return [{"id": s, "session_id": SESSION_ID} for s in d["source_question_ids"]]
+            return [{"id": s, "session_id": SESSION_ID} for s in d["source_question_ids"]] + extra
         if name == "exam_versions":
-            return [{**v, "session_id": SESSION_ID} for v in d["versions"]]
+            return [{**v, "session_id": SESSION_ID} for v in d["versions"]] + extra
         if name == "version_questions":
-            return d["questions"]
+            return d["questions"] + extra
         if name == "answer_keys":
-            return d["answer_keys"]
+            return d["answer_keys"] + extra
         raise AssertionError(name)
 
     def table(self, name):
@@ -196,3 +202,79 @@ def test_reader_returns_the_boundary_type_without_validating_content():
     question(data, "101", 1).update(solution_md="")  # the builder, not the reader, rejects it
     rows = ExportSnapshotReader(Client(data)).load_rows(SESSION_ID, OWNER_ID)
     assert len(rows.questions) == 6 and len(rows.answer_keys) == 6 and len(rows.versions) == 2
+
+
+def _foreign_rows():
+    """Rows of another session that a missing isolation filter would let through."""
+    stray = deepcopy(question(golden_rows(), "101", 1))
+    stray.update(id="c" * 8 + "-cccc-4ccc-8ccc-cccccccccccc", version_id=OTHER_VERSION)
+    return {
+        "source_questions": [
+            {"id": "d" * 8 + "-dddd-4ddd-8ddd-dddddddddddd", "session_id": OTHER_SESSION}
+        ],
+        "exam_versions": [
+            {
+                "id": OTHER_VERSION,
+                "session_id": OTHER_SESSION,
+                "version_code": "101",
+                "is_finalized": True,
+                "shuffle_seed": "s",
+                "permutations": {},
+            }
+        ],
+        "generation_configs": [{"session_id": OTHER_SESSION, "n_versions": 1}],
+        "version_questions": [stray],
+        "answer_keys": [
+            {
+                "version_id": OTHER_VERSION,
+                "question_no": 1,
+                "display_no": 1,
+                "correct_option": "A",
+                "display_correct_key": "A",
+                "canonical_question_no": 1,
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_rows_of_other_sessions_and_versions_never_reach_the_snapshot():
+    baseline = await _load(Client(golden_rows()))
+    with_foreign = await _load(Client(golden_rows(), foreign=_foreign_rows()))
+    assert with_foreign == baseline
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "config_rows",
+    [
+        [],
+        [{"session_id": SESSION_ID, "n_versions": 2}, {"session_id": SESSION_ID, "n_versions": 2}],
+    ],
+)
+async def test_missing_or_duplicated_config_fails_closed(config_rows):
+    error = await _error(Client(golden_rows(), config_rows=config_rows))
+    assert (error.status_code, error.error_code) == (409, "ERR_EXPORT_SNAPSHOT_INVALID")
+
+
+@pytest.mark.asyncio
+async def test_no_versions_is_409_and_content_tables_are_not_read():
+    data = golden_rows()
+    data["versions"] = []
+    client = Client(data)
+    error = await _error(client)
+    assert (error.status_code, error.error_code) == (409, "ERR_EXPORT_SNAPSHOT_INVALID")
+    assert "version_questions" not in client.calls and "answer_keys" not in client.calls
+
+
+@pytest.mark.asyncio
+async def test_session_disappearing_during_the_read_is_rejected():
+    error = await _error(Client(golden_rows(), session_overrides=[{}, None]))
+    assert (error.status_code, error.error_code) == (409, "ERR_EXPORT_SNAPSHOT_INVALID")
+
+
+@pytest.mark.asyncio
+async def test_owner_changing_during_the_read_is_rejected():
+    other_owner = "33333333-3333-4333-8333-000000000000"
+    error = await _error(Client(golden_rows(), session_overrides=[{}, {"user_id": other_owner}]))
+    assert (error.status_code, error.error_code) == (409, "ERR_EXPORT_SNAPSHOT_INVALID")

@@ -62,6 +62,12 @@ The builder reuses `DisplayQuestion`/`DisplayVersion` and additionally requires:
 - Non-blank content and `solution_md` (**Q01 is only a proposal until Tâm settles it**), four options
   that are distinct after normalization, status `approved`.
 
+Not re-derived here (they are enforced at shuffle/approval under the migration 009 lock): option
+and key permutation against canonical data and `permutations`, the answer label inside
+`solution_md`, and source/canonical numbering against `source_questions.question_no`. The reader
+uses the synchronous supabase client (as `finalize/` does), so the coroutine blocks the event loop
+while reading.
+
 ## Errors (`ReviewDomainException`)
 
 | HTTP | Code | When |
