@@ -1,5 +1,27 @@
 # Generation configuration and persistence — TASK-207a/b
 
+## W4-MVP-01 / migration 019 (proposed)
+
+Apply migration 019 after 016 (and pending 017/018 migrations).
+Existing rows and historical sessions remain unchanged.
+
+`save_generation_config(uuid,int,jsonb,jsonb,jsonb)` retains its 5-argument signature:
+- `p_session_id`: UUID of the session (locks session parent first).
+- `p_n_versions`: integer between 1 and 4. Other values reject with `22023 / ERR_CONFIG_CONFLICT`.
+- `p_active_variation_modes`: JSONB array, defaults to `[]`.
+- `p_ordering_preferences`: JSONB object, defaults to `{"shuffle_questions":false,"shuffle_options":false}`.
+  Both boolean fields must be explicit booleans. All 4 combinations are valid.
+- `p_expected_snapshot`: JSONB manifest matching current canonical snapshot manifest.
+
+Preconditions & Invariants:
+- Session status must be `blueprinted` or `configured`, not approved or finalized.
+- Canonical sources must be `ready` (if canonical confirmation exists). Pending, running, or failed canonical production rejects with `22023 / ERR_SOURCE_NOT_READY`.
+- Historical confirmed sessions with `NO_CONFIRMATION` remain readable and supported for backward compatibility, but unconfirmed drafts cannot authorize configuration or jobs.
+- Direct table write guards on `generation_configs` prevent altering configuration once exam versions are finalized (`is_finalized` = true).
+
+Ingestion de-scheduling (ADR-0001):
+- `/ingest-file` and `/ingest-text` no longer schedule background blueprint pipelines before confirmation. Canonical preparation is triggered exclusively upon explicit source confirmation via `confirm_source_flow`.
+
 PR #32 owns this SQL/session-detail contract. PR #30 owns Python preflight,
 HTTP error mapping, worker orchestration, AI/clone adapters and SSE.
 Migrations **010 → 011** follow adopted 004–009. Implementation/self-check is not

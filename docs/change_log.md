@@ -1,3 +1,17 @@
+## DEC-W4-MVP-01-019: Canonical-only generation configuration defaults and ingest de-scheduling (proposed)
+
+- **Ngày / người đề xuất:** 10/11/2026 — Duy (W4-MVP-01), phối hợp reviewer Hùng.
+- **Ngữ cảnh & Vấn đề:**
+  1. Ingest (`/ingest-file`, `/ingest-text`) tự động kích hoạt `trigger_blueprint_pipeline` trước khi người dùng xác nhận đề nguồn, vi phạm ADR-0001 (xác nhận trước khi sinh canonical Blueprint).
+  2. Bảng `generation_configs` và RPC `save_generation_config` có cấu hình mặc định `ordering_preferences` là `{"shuffle_questions": true, "shuffle_options": true}`, mâu thuẫn với yêu cầu Issue #45 (mặc định tắt cả hai tùy chọn xáo trộn).
+  3. Cần kiểm tra chặt chẽ `n_versions` (1-4), ràng buộc boolean nghiêm ngặt cho `shuffle_questions` và `shuffle_options` (chấp nhận cả 4 tổ hợp), và chặn generation khi canonical Blueprint chưa `ready`.
+- **Quyết định mới:**
+  1. Loại bỏ hoàn toàn việc gọi `trigger_blueprint_pipeline` ngầm trong các endpoint ingest; biến hook cũ thành no-op an toàn trong quá trình rollout.
+  2. Migration 019: cập nhật DEFAULT của cột `ordering_preferences` thành `{"shuffle_questions":false,"shuffle_options":false}`::jsonb.
+  3. Nâng cấp `save_generation_config` RPC (5 tham số): mặc định `ordering_preferences` là `{"shuffle_questions":false,"shuffle_options":false}`::jsonb; kiểm tra nghiêm ngặt `n_versions BETWEEN 1 AND 4`; kiểm tra kiểu boolean cho 2 cờ shuffle; chặn cấu hình khi canonical snapshot chưa `ready`; bảo toàn khả năng tương thích ngược cho session cũ (NO_CONFIRMATION).
+  4. Đồng bộ default OFF/OFF vào `backend/scripts/schema.sql` cho cài đặt mới (fresh bootstrap).
+- **Phạm vi ảnh hưởng:** `backend/app/api/routes/sessions.py`, `backend/app/services/parser/ingestion_service.py`, `backend/migrations/019_w4_config_defaults.sql`, `backend/scripts/schema.sql`, `backend/tests/api/test_ingest.py`, `backend/tests/api/test_confirm_source.py`, `backend/tests/api/test_sessions.py`, `backend/tests/migrations/test_w4_config_guards.py`.
+
 ## DEC-DOCS-W4-001: Đồng bộ hóa tài liệu W4 theo Review M4 và Quyết định Sản phẩm (08/11/2026, proposed)
 
 - **Ngày / người đề xuất:** 08/11/2026 — Duy (PR #50), theo review M4 của Đạt (@Thanhdat3010).

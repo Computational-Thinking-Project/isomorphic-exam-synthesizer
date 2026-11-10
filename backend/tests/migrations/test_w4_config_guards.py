@@ -190,7 +190,17 @@ async def test_stale_config_or_source_cannot_claim_or_fall_back(db, mutation):
     if mutation == "manifest":
         await db.admin.execute("UPDATE generation_configs SET source_manifest='{}'")
     elif mutation == "source_revision":
-        await db.admin.execute("UPDATE source_artifact_heads SET source_revision_id=NULL")
+        cid = await db.admin.fetchval("SELECT confirmation_id FROM source_artifact_confirmations WHERE session_id=$1::uuid", db.sid)
+        rev = str(uuid4())
+        qid = db.rows[0]["id"]
+        await db.admin.execute(
+            "INSERT INTO source_artifact_revisions(source_revision_id,confirmation_id,source_question_id,source_fingerprint,confirmed_input) VALUES($1::uuid,$2::uuid,$3::uuid,repeat('0',64),'{}')",
+            rev, cid, qid,
+        )
+        await db.admin.execute(
+            "UPDATE source_artifact_heads SET blueprint_revision_id=NULL, source_revision_id=$1::uuid WHERE source_question_id=$2::uuid",
+            rev, qid,
+        )
     elif mutation == "blueprint":
         await db.admin.execute("UPDATE source_artifact_heads SET blueprint_revision_id=NULL")
     else:

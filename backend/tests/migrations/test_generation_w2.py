@@ -110,7 +110,9 @@ async def db(request):
             for number in ("010", "011", "012", "013", "014"):
                 files = list((ROOT / "backend/migrations").glob(number + "_*.sql"))
                 assert len(files) == 1
-                await admin.execute(files[0].read_text(encoding="utf-8-sig"))
+                sql = files[0].read_text(encoding="utf-8-sig")
+                if sql.strip():
+                    await admin.execute(sql)
         await admin.execute(
             "INSERT INTO auth.users(id,email) VALUES($1::uuid,'fixture@example.invalid')", OWNER
         )
