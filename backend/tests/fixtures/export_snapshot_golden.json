@@ -1,0 +1,102 @@
+{
+  "revision": "sha256:521019a13bdb123a3d3f636c8ea69e603983da64ea63e55365f3ebe9810b980d",
+  "session_id": "11111111-1111-4111-8111-111111111111",
+  "status": "approved",
+  "title": "Đề kiểm tra Golden",
+  "versions": [
+    {
+      "code": "101",
+      "questions": [
+        {
+          "content": "Câu nguồn 1: tính giá trị biểu thức.",
+          "correct_key": "A",
+          "id": "55555555-5555-4555-8555-555501010001",
+          "options": [
+            "1",
+            "2",
+            "3",
+            "4"
+          ],
+          "question_no": 1,
+          "solution_md": "Lời giải câu nguồn 1. Đáp án A.",
+          "status": "approved"
+        },
+        {
+          "content": "Câu nguồn 2: tính giá trị biểu thức.",
+          "correct_key": "B",
+          "id": "55555555-5555-4555-8555-555501010002",
+          "options": [
+            "5",
+            "6",
+            "7",
+            "8"
+          ],
+          "question_no": 2,
+          "solution_md": "Lời giải câu nguồn 2. Đáp án B.",
+          "status": "approved"
+        },
+        {
+          "content": "Câu nguồn 3: tính giá trị biểu thức.",
+          "correct_key": "C",
+          "id": "55555555-5555-4555-8555-555501010003",
+          "options": [
+            "9",
+            "10",
+            "11",
+            "12"
+          ],
+          "question_no": 3,
+          "solution_md": "Lời giải câu nguồn 3. Đáp án C.",
+          "status": "approved"
+        }
+      ]
+    },
+    {
+      "code": "102",
+      "questions": [
+        {
+          "content": "Câu nguồn 3: tính giá trị biểu thức.",
+          "correct_key": "B",
+          "id": "55555555-5555-4555-8555-555501020001",
+          "options": [
+            "12",
+            "9",
+            "11",
+            "10"
+          ],
+          "question_no": 1,
+          "solution_md": "Lời giải câu nguồn 3. Đáp án B.",
+          "status": "approved"
+        },
+        {
+          "content": "Câu nguồn 1: tính giá trị biểu thức.",
+          "correct_key": "D",
+          "id": "55555555-5555-4555-8555-555501020002",
+          "options": [
+            "4",
+            "3",
+            "2",
+            "1"
+          ],
+          "question_no": 2,
+          "solution_md": "Lời giải câu nguồn 1. Đáp án D.",
+          "status": "approved"
+        },
+        {
+          "content": "Câu nguồn 2: tính giá trị biểu thức.",
+          "correct_key": "A",
+          "id": "55555555-5555-4555-8555-555501020003",
+          "options": [
+            "7",
+            "5",
+            "8",
+            "6"
+          ],
+          "question_no": 3,
+          "solution_md": "Lời giải câu nguồn 2. Đáp án A.",
+          "status": "approved"
+        }
+      ]
+    }
+  ]
+}
