@@ -259,3 +259,30 @@ is a W2 RPC in migration 010, not public table access.
   - **Data invariants**: Added pre- and post-mutation row queries (`generation_error_code`, `generation_last_activity_at`, `updated_at`, `title`) verifying complete statement rollback and unmutated state after rejected updates.
   - **Contract clarification**: Updated `docs/api/generation-lifecycle-recovery.md` documenting alphabetical trigger execution and the SQLSTATE `42501` behavioral invariant.
 - **Status**: Author `claimed_fixed`; pending independent verification by reviewer on the updated commit.
+
+
+## F01–F04 Independent Review Verification (10/11/2026)
+
+- **Reviewer**: Quỳnh (`nhatquynh1107`), review [PR #52](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/52#pullrequestreview-5845408201) and [F01 verification reply](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/52#discussion_r4527445283).
+- **Reviewed HEAD**: `4403f3c201d9883616a07f933160992b43ce082a`.
+- **Environment**: PostgreSQL 17 Docker container (isolated, no host port exposure), Python 3.11, asyncpg 0.32.0, full migration chain `002–017`.
+- **Results**: **23 passed, 0 skipped**; Ruff passed on modified test file; 5 GitHub CI checks succeeded on `4403f3c`.
+- **Finding Statuses**:
+  - **F01**: `verified` by reviewer (ACL/SQLSTATE `42501` and statement rollback under Trigger 009 & Trigger 017).
+  - **F02**: `verified` by reviewer (cursor timestamp normalization, dynamic DB clock for pagination, and heartbeat monotonic timestamp `GREATEST` eliminating lock-contention clock regression).
+  - **F03**: `verified` by reviewer (test fixture persists all confirmed targets before finish; RPC boundary enforcement of non-NULL `error_code` with SQLSTATE `22023` for terminal failure states).
+  - **F04**: `verified` by reviewer (PostgreSQL type compatibility: UUID string normalization and integer grade assertion).
+
+## F05 Remediation — Architecture Decision Record & Documentation (10/11/2026)
+
+- **Source**: Reviewer mandatory finding [F05 on PR #52](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/52#discussion_r4527492234).
+- **Issue**: Missing Architecture Decision Record in `docs/change_log.md` for migration 017 schema changes and RPC contract.
+- **Action Taken**:
+  - Added `DEC-207-003: Generation lifecycle recovery and durable error persistence (Migration 017)` in `docs/change_log.md`.
+  - Documented context, problem, architectural decisions, alternatives considered, scope/impact, and authoritative contract links.
+  - Updated PR #52 description (M3) with complete verification evidence and links.
+- **Status**: Author `claimed_fixed`; pending independent reviewer re-verification on updated commit.
+- **Explicit Pending Scope**:
+  - Migration 017 deployment and migration-ledger verification in the team's shared/staging Supabase environment.
+  - PR #30 worker HTTPS end-to-end integration.
+  - Formal GitHub PR approval.
