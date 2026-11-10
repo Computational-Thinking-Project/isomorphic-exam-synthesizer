@@ -30,6 +30,11 @@ jobs:
         run: |
           ruff check backend/app scripts/blueprint
 
+      - name: OPS Lint and Regression Tests
+        run: |
+          ruff check scripts/w4_ops.py scripts/test_w4_ops.py
+          python -m unittest discover -s scripts -p test_w4_ops.py -v
+
       - name: Backend Type Check (Mypy)
         run: |
           mypy backend/app --ignore-missing-imports

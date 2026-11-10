@@ -6,6 +6,16 @@
 - **Đề xuất:** ID input ổn định, yêu cầu có mục đích/điều kiện đủ dùng, người giao/nhận, need-by/ETA; reply đúng ID kèm artifact/phiên bản và phần còn thiếu; consumer xác nhận phạm vi dùng được. Các mức Requested/Decided/Delivered/Accepted/Integrated chỉ dùng khi phù hợp. Một nơi tổng hợp M2 hoặc comment đang dùng; M1/M3/PR dẫn link, không sao chép trạng thái.
 - **Phạm vi ảnh hưởng:** `docs/review/WORKFLOW.md`, `docs/review/TEMPLATES.md`, `.github/pull_request_template.md` và mục log này. M1 đã có người giao/nhận/dependency/ETA; chỉ thêm hướng dẫn dẫn ID. Chưa có căn cứ dùng Issue task template làm nguồn giao việc chính nên giữ nguyên.
 - **Giới hạn:** không đổi task/owner/deadline/MVP/kiến trúc, code hoặc gate approve/merge; các PR hiện có không tự được cập nhật. Bản local chưa commit/push hoặc đăng GitHub từ lượt sửa này.
+## DEC-DAT-W4-OPS-CI — OPS regression coverage (09/11/2026)
+
+- PR51 review fix: CI chạy OPS unittest và Ruff cho `scripts/w4_ops.py`, `scripts/test_w4_ops.py` trên mỗi PR/push thuộc workflow hiện hành.
+- Proxy observation kiểm JSON OpenAPI3.x và routes backend qua `/openapi.json`, tránh SPA fallback báo PASS nhầm. Không đổi API/schema, runtime hay Docker; kết quả vẫn không thay integrated acceptance.
+
+## DEC-DAT-W4-OPS — Production private beta preparation
+
+- Ngày/người:08/11/2026 — Đạt cập nhật theo [quyết định Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/51#issuecomment-6719017111), [ENV0 Issue53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53).
+- Chọn một production HTTPS/private beta chỉ nhóm, free-first; không yêu cầu staging riêng. Static Compose một worker, private access gate thực, isolated destructive tests. Không chọn provider/mua dịch vụ/cấp quyền hoặc xác nhận lịch trực.
+- Ảnh hưởng: docs OPS11/21 và candidate inventory017; historical inventory giữ nguyên, không sửa runtime/API/SQL/Docker. PR51 preparation merge độc lập deployment acceptance; G0/G1/G2/public proof vẫn pending. PR30 F02 và PR52 ACL/real-DB còn blockers.
 
 ## DEC-DOCS-W4-001: Đồng bộ hóa tài liệu W4 theo Review M4 và Quyết định Sản phẩm (08/11/2026, proposed)
 
