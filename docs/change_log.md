@@ -1,3 +1,14 @@
+## DEC-DAT-W4-OPS-CI — OPS regression coverage (09/11/2026)
+
+- PR51 review fix: CI chạy OPS unittest và Ruff cho `scripts/w4_ops.py`, `scripts/test_w4_ops.py` trên mỗi PR/push thuộc workflow hiện hành.
+- Proxy observation kiểm JSON OpenAPI3.x và routes backend qua `/openapi.json`, tránh SPA fallback báo PASS nhầm. Không đổi API/schema, runtime hay Docker; kết quả vẫn không thay integrated acceptance.
+
+## DEC-DAT-W4-OPS — Production private beta preparation
+
+- Ngày/người:08/11/2026 — Đạt cập nhật theo [quyết định Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/51#issuecomment-6719017111), [ENV0 Issue53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53).
+- Chọn một production HTTPS/private beta chỉ nhóm, free-first; không yêu cầu staging riêng. Static Compose một worker, private access gate thực, isolated destructive tests. Không chọn provider/mua dịch vụ/cấp quyền hoặc xác nhận lịch trực.
+- Ảnh hưởng: docs OPS11/21 và candidate inventory017; historical inventory giữ nguyên, không sửa runtime/API/SQL/Docker. PR51 preparation merge độc lập deployment acceptance; G0/G1/G2/public proof vẫn pending. PR30 F02 và PR52 ACL/real-DB còn blockers.
+
 ## DEC-DOCS-W4-001: Đồng bộ hóa tài liệu W4 theo Review M4 và Quyết định Sản phẩm (08/11/2026, proposed)
 
 - **Ngày / người đề xuất:** 08/11/2026 — Duy (PR #50), theo review M4 của Đạt (@Thanhdat3010).
