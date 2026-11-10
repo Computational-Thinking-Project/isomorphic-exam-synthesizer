@@ -170,7 +170,7 @@ AS $$
 DECLARE
   v_current_status public.session_status;
   v_active_job_id UUID;
-  v_activity_at TIMESTAMPTZ := clock_timestamp();
+  v_activity_at TIMESTAMPTZ;
 BEGIN
   IF p_job_token IS NULL THEN
     RAISE EXCEPTION 'p_job_token cannot be NULL' USING ERRCODE = '22023';
@@ -203,8 +203,13 @@ BEGIN
 
   UPDATE public.exam_sessions
   SET updated_at = now(),
-      generation_last_activity_at = v_activity_at
-  WHERE id = p_session_id;
+      generation_last_activity_at = GREATEST(
+          generation_last_activity_at,
+          clock_timestamp()
+      )
+  WHERE id = p_session_id
+  RETURNING generation_last_activity_at
+  INTO v_activity_at;
 
   RETURN jsonb_build_object(
     'session_id', p_session_id,
@@ -482,6 +487,10 @@ BEGIN
 
   IF p_outcome IS NULL OR p_outcome NOT IN ('generated', 'failed', 'partial_generated') THEN
     RAISE EXCEPTION 'ERR_CONFIG_CONFLICT: invalid generation outcome: %', p_outcome USING ERRCODE = '22023';
+  END IF;
+
+  IF p_outcome IN ('failed', 'partial_generated') AND p_error_code IS NULL THEN
+    RAISE EXCEPTION 'error_code is required for failed or partial_generated outcome' USING ERRCODE = '22023';
   END IF;
 
   IF p_outcome = 'generated' AND p_error_code IS NOT NULL THEN

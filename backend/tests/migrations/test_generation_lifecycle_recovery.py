@@ -867,3 +867,163 @@ async def test_privilege_catalog_matrix(env):
         "SELECT has_column_privilege('anon', 'public.exam_sessions', 'generation_error_code', 'UPDATE')"
     ) is False
 
+
+# ----------------------------------------------------------------------------
+# 7. Regression Tests: F02 & F03 Concurrency & Boundary Hardening
+# ----------------------------------------------------------------------------
+
+
+async def test_heartbeat_never_regresses_activity_after_lock_wait(env):
+    """F02: Heartbeat under lock contention must never overwrite a newer generation_last_activity_at."""
+    await configure(env, modes=["context_swap"], versions=1)
+    claim = await call_rpc(env.owner, "claim_generation_job", env.sid, False)
+
+    conn_a = await asyncpg.connect(env.dsn)
+    conn_b = await asyncpg.connect(env.dsn)
+    try:
+        # conn_a simulates a concurrent transaction holding a row lock (admin role)
+        # conn_b executes the worker heartbeat RPC (service_role)
+        await role(conn_b, "service_role")
+
+        pid_a = await conn_a.fetchval("SELECT pg_backend_pid()")
+        pid_b = await conn_b.fetchval("SELECT pg_backend_pid()")
+
+        # 1. Connection A acquires row lock in an explicit transaction
+        tx_a = conn_a.transaction()
+        await tx_a.start()
+        await conn_a.fetchrow(
+            "SELECT id FROM exam_sessions WHERE id = $1::uuid FOR UPDATE",
+            env.sid,
+        )
+
+        # 2. Connection B starts heartbeat and will block waiting for row lock
+        heartbeat_task = asyncio.create_task(
+            call_rpc(conn_b, "heartbeat_generation_job", env.sid, claim["job_id"])
+        )
+
+        # 3. Deterministically wait until Connection B is blocked by Connection A
+        for _ in range(100):
+            is_blocked = await env.admin.fetchval(
+                "SELECT $2 = ANY(pg_blocking_pids($1))",
+                pid_b,
+                pid_a,
+            )
+            if is_blocked:
+                break
+            await asyncio.sleep(0.02)
+        else:
+            raise TimeoutError("Connection B did not reach lock wait behind Connection A")
+
+        # 4. Advance time slightly so that the timestamp written by A is strictly newer
+        #    than the pre-lock timestamp evaluated by B in the unpatched implementation.
+        await asyncio.sleep(0.05)
+
+        await conn_a.execute(
+            """
+            UPDATE exam_sessions
+            SET generation_last_activity_at = clock_timestamp()
+            WHERE id = $1::uuid
+            """,
+            env.sid,
+        )
+        candidate_stamp = await conn_a.fetchval(
+            "SELECT generation_last_activity_at FROM exam_sessions WHERE id = $1::uuid",
+            env.sid,
+        )
+
+        # 5. Commit transaction A, releasing row lock to Connection B
+        await tx_a.commit()
+
+        # 6. Wait for heartbeat B to complete
+        receipt = await heartbeat_task
+
+        # 7. Check final session state
+        final_row = await env.admin.fetchrow(
+            """
+            SELECT status, active_job_id, generation_last_activity_at, generation_error_code
+            FROM exam_sessions WHERE id = $1::uuid
+            """,
+            env.sid,
+        )
+
+        final_stamp = final_row["generation_last_activity_at"]
+        receipt_stamp = normalize_rpc_argument("timestamptz", receipt["heartbeat_at"])
+
+        # Invariant 1: Final activity timestamp must NOT regress below candidate_stamp
+        assert final_stamp >= candidate_stamp
+
+        # Invariant 2: Receipt heartbeat_at equals persisted timestamp
+        assert receipt_stamp == final_stamp
+
+        # Invariant 3: Session invariants preserved
+        assert final_row["status"] == "generating"
+        assert str(final_row["active_job_id"]) == claim["job_id"]
+        assert final_row["generation_error_code"] is None
+    finally:
+        await conn_a.close()
+        await conn_b.close()
+
+
+@pytest.mark.parametrize("outcome", ["failed", "partial_generated"])
+async def test_finish_with_error_rejects_missing_error_code(env, outcome):
+    """F03: finish_generation_job_with_error rejects NULL error_code for failed and partial_generated."""
+    await configure(env, modes=["context_swap"], versions=1)
+    claim = await call_rpc(env.owner, "claim_generation_job", env.sid, False)
+
+    # If partial_generated, commit 1 target result so partial state is semantically realistic
+    if outcome == "partial_generated":
+        res = result_for(env, claim, index=0, version=1, success=True)
+        await persist(env, claim, res)
+
+    # Snapshot initial state
+    before = await env.admin.fetchrow(
+        "SELECT status, active_job_id, generation_error_code FROM exam_sessions WHERE id = $1::uuid",
+        env.sid,
+    )
+    assert before["status"] == "generating"
+    assert str(before["active_job_id"]) == claim["job_id"]
+    assert before["generation_error_code"] is None
+
+    # Call with NULL error_code - must be rejected with SQLSTATE 22023
+    with pytest.raises(asyncpg.PostgresError) as exc_info:
+        await call_rpc(
+            env.worker,
+            "finish_generation_job_with_error",
+            env.sid,
+            outcome,
+            claim["job_id"],
+            None,
+        )
+    sqlstate = getattr(exc_info.value, "sqlstate", None) or exc_info.value.as_dict().get("sqlstate")
+    assert sqlstate == "22023"
+    assert "error_code is required" in str(exc_info.value)
+
+    # State must be unmutated after rejection
+    after = await env.admin.fetchrow(
+        "SELECT status, active_job_id, generation_error_code FROM exam_sessions WHERE id = $1::uuid",
+        env.sid,
+    )
+    assert after["status"] == "generating"
+    assert str(after["active_job_id"]) == claim["job_id"]
+    assert after["generation_error_code"] is None
+
+    # Subsequently finish with a valid error code succeeds
+    receipt = await call_rpc(
+        env.worker,
+        "finish_generation_job_with_error",
+        env.sid,
+        outcome,
+        claim["job_id"],
+        "ERR_MODEL_TIMEOUT",
+    )
+    assert receipt["status"] == outcome
+    assert receipt["generation_error_code"] == "ERR_MODEL_TIMEOUT"
+
+    final_row = await env.admin.fetchrow(
+        "SELECT status, active_job_id, generation_error_code FROM exam_sessions WHERE id = $1::uuid",
+        env.sid,
+    )
+    assert final_row["status"] == outcome
+    assert final_row["active_job_id"] is None
+    assert final_row["generation_error_code"] == "ERR_MODEL_TIMEOUT"
+

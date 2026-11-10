@@ -133,6 +133,10 @@ Allows worker to finalize an interrupted or failed job with an explicit error co
   - `p_outcome` (text): `'failed'` or `'partial_generated'` (or `'generated'` with NULL error code).
   - `p_job_token` (uuid): Active job token matching session.
   - `p_error_code` (text): Code matching `^[A-Z0-9_]{3,64}$`.
+- **Validation Rules**:
+  - `failed` and `partial_generated` **require** a non-NULL valid `p_error_code` (missing code raises SQLSTATE `22023`).
+  - `generated` **requires** a NULL `p_error_code` (specifying an error code raises SQLSTATE `22023`).
+  - The historical canonical RPC `finish_generation_job(uuid, text, uuid)` retains its existing contract without modification.
 
 - **Response Payload**:
 ```json
@@ -147,7 +151,30 @@ Allows worker to finalize an interrupted or failed job with an explicit error co
 
 ---
 
-### 3.4. Read-Back after Restart — `load_generation_completed_results`
+### 3.4. Periodic Worker Heartbeat — `heartbeat_generation_job`
+
+Periodically extends the generation activity window for active long-running jobs.
+
+- **Parameters**:
+  - `p_session_id` (uuid): Exam session ID.
+  - `p_job_token` (uuid): Active job token matching session.
+- **Concurrency & Monotonicity Contract**:
+  - Acquires row lock via `SELECT ... FOR UPDATE` before updating timestamps.
+  - Sets `generation_last_activity_at = GREATEST(generation_last_activity_at, clock_timestamp())`, guaranteeing that a valid heartbeat **never decreases** or regresses the activity timestamp even under concurrent transaction lock contention.
+  - `heartbeat_at` in the receipt is the authoritative value persisted in PostgreSQL, captured via `RETURNING`.
+
+- **Response Payload**:
+```json
+{
+  "session_id": "c1f7b1b0-9c29-4d6b-b46d-318e8a619001",
+  "heartbeat_at": "2026-11-07T08:05:00.123456+00:00",
+  "status": "generating"
+}
+```
+
+---
+
+### 3.5. Read-Back after Restart — `load_generation_completed_results`
 
 Returns completed targets, failure details, and the persisted error code:
 
