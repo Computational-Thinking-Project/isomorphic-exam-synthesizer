@@ -2,6 +2,8 @@
 
 Đi cùng [WORKFLOW v0.1 — proposed](WORKFLOW.md). Bản mẫu giữ nguyên; sao chép phần cần dùng vào **file tuần, file task hoặc PR** như hướng dẫn dưới đây. `<...>` là chỗ điền, không phải dữ liệu thật. Bỏ hoặc ghi không áp dụng cho trường không phù hợp; không tick/bịa kết quả để đủ mẫu.
 
+Sửa đổi đề xuất **INPUT-20261109** (09/11/2026): vòng giao-nhận input theo WORKFLOW mục 3.1; chưa xác nhận toàn nhóm áp dụng. Mẫu cũ không tự cập nhật các PR đang mở.
+
 | Mẫu | Người điền | Đọc trước | Bản điền nằm ở đâu? |
 |---|---|---|---|
 | [M1](#m1) | Duy — leader | WORKFLOW, kết quả tuần trước, scope và khả năng/ước lượng của người nhận | Một file giao việc tuần do leader quản lý |
@@ -34,6 +36,8 @@ Duy chuẩn bị thứ 4, phát trong thứ 4 hoặc sáng thứ 5. Ví dụ nơ
 | <1, 2 hoặc cùng nhóm> | <ID, hành vi> | <tên hoặc TBD> | <ID/người, input cụ thể> | <output + ID/người nhận> | <ước lượng + người xác nhận, kể cả task độc lập> | <đạt khi...; không làm...> | <tên + trạng thái> |
 
 ## Mốc giao-nhận đầu vào và ước lượng
+
+Khi đã có yêu cầu input chi tiết trong M2/PR, dẫn ID + link ở cột Input; giữ lịch tuần tại đây, không chép thêm bảng trạng thái nhận input.
 
 | Quan hệ | Input/điều kiện đủ dùng | Người giao → người nhận | Bên nhận cần trước | ETA giao input | ETA xong task cung cấp | Thời gian phần sau: code/tích hợp/review/sửa | Người xác nhận / cập nhật |
 |---|---|---|---|---|---|---|---|
@@ -76,9 +80,11 @@ Trong thứ 5, agent đọc đúng task/code rồi nháp; owner kiểm và lưu 
 
 ## Đầu vào và câu hỏi — giải đáp trên Draft PR trong thứ 5
 
-| Cần ai/task nào | Câu hỏi/input cụ thể | Cần trước | ETA bên cung cấp xác nhận | Phần làm ngay/chờ | Link trả lời/contract |
+| ID / yêu cầu gốc | Người yêu cầu; cung cấp → nhận / task | Mục đích, input và điều kiện đủ dùng | Cần trước / ETA giao | Mức / bằng chứng / xác nhận nhận | Phần còn thiếu, người xử lý / bước tiếp |
 |---|---|---|---|---|---|
-| <...> | <xin một JSON thành công và một JSON lỗi...> | <...> | <...> | <...> | <...> |
+| <ID ổn định + link> | <tên; chưa chốt ghi TBD> | <dùng cho bước nào; contract/mẫu/code merged/môi trường thật?> | <need-by theo file tuần; ETA + người/thời điểm xác nhận hoặc TBD> | <mức phù hợp; artifact/revision, reply; consumer nhận đủ cho bước nào, ai/ngày> | <còn thiếu gì; ai đã nhận xử lý hoặc TBD; ETA; phần làm ngay/chờ> |
+
+- Nơi tổng hợp input duy nhất: <bảng này hoặc link comment tổng hợp đã dùng; nếu chọn comment thì bảng chỉ dẫn tới đó>.
 
 - Output mình cần giao cho task sau: <cho ai, dạng gì, ETA đã xác nhận>.
 - Lịch có khả thi không? <input trễ/vòng phụ thuộc/quá tải; đề nghị Duy điều phối>.
@@ -99,6 +105,22 @@ Trong thứ 5, agent đọc đúng task/code rồi nháp; owner kiểm và lưu 
 
 File task giữ plan/quyết định/bàn giao, không thay tracker hoặc chép mọi finding. Không commit SHA của chính file vào file để tạo vòng cập nhật. Không mở lại nhánh đã merge chỉ để ghi Done; bổ sung kết quả cuối trên PR/tracker khi phù hợp.
 
+**Reply input trên PR Conversation** (dùng phần phù hợp; không dán lại toàn bộ bảng):
+
+```markdown
+<ID + link gốc> — Provider: <mức; toàn bộ hay một phần>
+- Yêu cầu đang trả lời / mục đích: <nhắc ngắn đúng nội dung>.
+- Quyết định hoặc đầu ra đã giao: <link contract/artifact + revision/head; môi trường nếu cần>.
+- Còn thiếu / ranh giới phía consumer: <phần nào; người xử lý đã xác nhận hoặc TBD; ETA + người/ngày xác nhận>.
+
+<ID + link gốc> — Consumer: <Accepted cho bước... / nhận một phần / chưa đủ dùng>
+- Đã đối chiếu: <artifact/phiên bản; điều kiện đủ dùng và bằng chứng>.
+- Còn thiếu / bước tiếp: <chỉ phần còn thiếu, người xử lý/ETA hoặc TBD>.
+- Integrated (chỉ khi đã kiểm và cần cho input này): <head, môi trường, đường chạy, kết quả/giới hạn>.
+```
+
+Các mức và bằng chứng theo WORKFLOW mục 3.1. Giữ ID đã có; input mới dùng ID gắn task/PR, tách khỏi finding ID. Không cần bảng riêng cho từng mức. Nếu không có dependency, ghi không áp dụng.
+
 <a id="m3"></a>
 
 ## M3. Gói yêu cầu review
@@ -107,11 +129,11 @@ Trong Draft thứ 5, dùng phần scope/plan/input để hỏi và ghi chưa có
 
 ```markdown
 - Task / file tuần / plan: <link đúng bản>.
-- Workflow: v0.1, docs commit <nếu biết; không nhầm với code head>.
+- Workflow: v0.1; sửa đổi INPUT-20261109 <nếu đang dùng>; docs commit <nếu biết; không nhầm với code head>.
 - Base/head cần review: <SHA>/<SHA sau push>.
 - Scope/tiêu chí đạt; ngoài phạm vi: <...>.
 - Contract/phụ thuộc: <link phiên bản; đã sẵn hay pending>.
-- Input cần/ETA: <link file tuần, câu hỏi và người cần trả lời>.
+- Input cần/ETA: <ID + link nơi tổng hợp M2/comment; mức đủ dùng cho scope review; phần còn thiếu, người trả lời và ETA hoặc TBD; không chép bảng>.
 - Checks thực tế: <lệnh hoặc thao tác; môi trường; head; kết quả>.
 - Phần chưa kiểm: <mock/API thật/browser/cloud...; lý do>.
 - Reviewer/phạm vi kiểm và quyền được giao: <...>.
