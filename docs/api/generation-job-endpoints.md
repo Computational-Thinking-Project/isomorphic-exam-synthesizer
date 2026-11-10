@@ -133,6 +133,12 @@ question statuses, optional `generation_error_code`, `stream_epoch` and
 broker cursor before the DB read, then FE2 passes both marks to the ticket and
 stream routes. A worker restart changes the epoch. Ticket issuance checks both
 marks and returns 409 before EventSource opens when the cursor is unavailable.
+The route brackets the result RPC with reads of the session's `id`, `status` and
+`updated_at`. If finish or retry changes that revision between reads, it returns
+HTTP 409 `ERR_CONFIG_CONFLICT` with a reload-state message instead of combining
+counts from one revision with status from another. FE2 should reload the durable
+snapshot before requesting a new ticket; this read-only rejection does not retry
+or alter the job.
 If the broker has no terminal event after a restart but the durable session is
 terminal, ticket issuance reads committed counts and adds one terminal event;
 `partial_generated` then reaches FE2 as `done` with its actual percentage.

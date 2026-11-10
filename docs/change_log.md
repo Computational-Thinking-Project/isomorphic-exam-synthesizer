@@ -7,9 +7,9 @@
 
 - Ngày/người:08/11/2026 — Đạt cập nhật theo [quyết định Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/51#issuecomment-6719017111), [ENV0 Issue53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53).
 - Chọn một production HTTPS/private beta chỉ nhóm, free-first; không yêu cầu staging riêng. Static Compose một worker, private access gate thực, isolated destructive tests. Không chọn provider/mua dịch vụ/cấp quyền hoặc xác nhận lịch trực.
-- Ảnh hưởng: docs OPS11/21 và candidate inventory017; historical inventory giữ nguyên, không sửa runtime/API/SQL/Docker. PR51 preparation merge độc lập deployment acceptance; G0/G1/G2/public proof vẫn pending. PR30 F02 và PR52 ACL/real-DB còn blockers.
+- Ảnh hưởng: docs OPS11/21 và candidate inventory017; historical inventory giữ nguyên, không sửa runtime/API/SQL/Docker. PR51 preparation merge độc lập deployment acceptance; G0/G1/G2/public proof vẫn pending. PR30 F02 sau đó đã được reviewer xác minh trên `b6b6422`; PR52 ACL/real-DB và tích hợp live PR30 vẫn còn gate riêng.
 
-## DEC-BE2-207-F02: Reclaim four-tier validation workers (author implementation, pending review)
+## DEC-BE2-207-F02: Reclaim four-tier validation workers
 
 - Date / owner: 08/11/2026, Quỳnh / TASK-207b, Draft PR #30.
 - Context: cancelling `asyncio.to_thread(validate_question)` released the async
@@ -21,8 +21,10 @@
   existing isolated runner. The CAS timeout remains separate from the bounded
   allowance for process startup and the remaining tiers.
 - Impact: Python validator process runner, AI runtime cleanup and F02 regression
-  tests. No REST/SQL/FE contract changes. Independent VAL/AI review and live
-  resource measurements remain pending.
+  tests. No REST/SQL/FE contract changes. Đạt đã
+  [verified F02 trên `b6b6422`](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#discussion_r4514331537);
+  xác minh này không thay GitHub Approve, live resource measurements hoặc kiểm
+  delta `114bfc7`.
 
 ## DEC-DOCS-W4-001: Đồng bộ hóa tài liệu W4 theo Review M4 và Quyết định Sản phẩm (08/11/2026, proposed)
 
@@ -780,6 +782,13 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
 - **Context:** FE2 đã merge cần snapshot bền vững, cursor và epoch để phục hồi sau reload, mất history hoặc restart; Python job/stream factories chưa mount vào app.
 - **Decision:** dùng migrations thực tế 005/015/016 để claim/quota/save full AI result hoặc ORIGINAL_CLONE/finish/load; owner claim bằng JWT, worker writes bằng service role và job token. `GET /api/sessions/{id}/generation-snapshot` đọc completed/failures từ RPC. Ticket kiểm epoch/cursor trước khi EventSource mở; cursor được chụp trước DB read để replay không bỏ event. Sau restart, ticket khôi phục terminal event từ trạng thái và counts bền vững nếu broker chưa có.
 - **Impact:** backend job repository, runner, main, generation snapshot/stream routes, FE2 Stage 2 API contract. Không thay SQL/AI generator/FE. [Contract và giới hạn](api/generation-job-endpoints.md), [bàn giao](tasks/TASK-207b.md).
+
+## DEC-207-004 — Chặn snapshot tiến độ trộn hai revision
+
+- **Ngày / người phụ trách:** 10/11/2026, Quỳnh / TASK-207b, PR #30 commit `7666247` (head tích hợp `114bfc7`).
+- **Ngữ cảnh:** `load_generation_completed_results` và phép đọc `exam_sessions.status` là các thao tác DB riêng; finish hoặc retry ở giữa có thể ghép counts cũ với status mới, khiến FE2 hiển thị tiến độ sai.
+- **Quyết định:** chụp broker cursor trước khi đọc DB; đọc `id,status,updated_at` của session trước và sau RPC. Nếu hai lần đọc khác nhau, trả `409 ERR_CONFIG_CONFLICT` với yêu cầu tải lại trạng thái; không xuất snapshot trộn revision. FE2 tiếp tục lấy durable snapshot/cursor mới trước ticket/SSE. Không thay SQL, không tự retry mutation.
+- **Phạm vi và bằng chứng:** `generation_snapshot.py` và regression stable/finish-during-read/same-status-new-revision; [contract snapshot](api/generation-job-endpoints.md#event-stream-and-reconnect). CI 5/5 trên `114bfc7`; full backend/Blueprint offline 1759 passed, 274 skipped theo M3 PR #30. Chưa có FE–BE–DB/SSE thật trên cùng image/head hoặc G0 HTTPS; PR #52 migration 017/ledger vẫn là gate recovery riêng.
 
 ## DEC-BE2-207-LIFE — W2 recovery and runtime wiring (author implementation)
 
