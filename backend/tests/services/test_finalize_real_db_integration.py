@@ -24,6 +24,7 @@ from app.models.schemas import (
 from app.services.finalize.repository import FinalizeRepository
 from app.services.finalize.service import FinalizeService
 from app.services.review.repository import ReviewRepository
+from app.services.shuffler.service import generate_deterministic_seed
 from tests.services.isolated_postgres import assert_disposable_database, isolated_pg_dsn  # noqa: F401
 
 asyncpg = pytest.importorskip("asyncpg")
@@ -105,9 +106,17 @@ class AsyncpgRpcBuilder:
 
 
 class AsyncpgTableBuilder:
-    def __init__(self, dsn: str, table_name: str) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        table_name: str,
+        role: str = "authenticated",
+        actor: str = OWNER_ID,
+    ) -> None:
         self.dsn = dsn
         self.table_name = table_name
+        self.role = role
+        self.actor = actor
         self._select_cols = "*"
         self._filters: List[str] = []
         self._limit: Optional[int] = None
@@ -156,6 +165,12 @@ class AsyncpgTableBuilder:
     async def _execute_async(self) -> AsyncpgRpcResult:
         conn = await asyncpg.connect(self.dsn)
         try:
+            # Set auth context for production-equivalent RLS enforcement
+            await conn.execute(
+                f"SET ROLE {self.role}; "
+                f"SET request.jwt.claim.role = '{self.role}'; "
+                f"SET request.jwt.claim.sub = '{self.actor}';"
+            )
             where_clause = f"WHERE {' AND '.join(self._filters)}" if self._filters else ""
             order_clause = f"ORDER BY {self._order_by}" if self._order_by else ""
             limit_clause = f"LIMIT {self._limit}" if self._limit else ""
@@ -180,7 +195,7 @@ class AsyncpgSupabaseAdapter:
         return AsyncpgRpcBuilder(self.dsn, fn_name, params or {}, self.role, self.actor)
 
     def table(self, table_name: str) -> AsyncpgTableBuilder:
-        return AsyncpgTableBuilder(self.dsn, table_name)
+        return AsyncpgTableBuilder(self.dsn, table_name, role=self.role, actor=self.actor)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -320,6 +335,9 @@ async def reviewed_exam_session():
             "option_permutations": {"1": {"A": "B", "B": "C", "C": "D", "D": "A"}},
         })
 
+        v101_seed, _ = generate_deterministic_seed(s_id, "101")
+        v102_seed, _ = generate_deterministic_seed(s_id, "102")
+
         await conn.execute(f"""
         INSERT INTO exam_sessions(id, user_id, title, gemini_review_calls, status)
             VALUES ('{s_id}', '{OWNER_ID}', 'Session Ready For Approval', 0, 'reviewed');
@@ -330,8 +348,8 @@ async def reviewed_exam_session():
         INSERT INTO question_blueprints(source_question_id, confirmed_at)
             VALUES ('{src_id}', now());
         INSERT INTO exam_versions(id, session_id, version_code, is_finalized, shuffle_seed, permutations)
-            VALUES ('{v101_id}', '{s_id}', '101', true, 'seed101', '{v101_perm}'::jsonb),
-                   ('{v102_id}', '{s_id}', '102', true, 'seed102', '{v102_perm}'::jsonb);
+            VALUES ('{v101_id}', '{s_id}', '101', true, '{v101_seed}', '{v101_perm}'::jsonb),
+                   ('{v102_id}', '{s_id}', '102', true, '{v102_seed}', '{v102_perm}'::jsonb);
         INSERT INTO version_questions(id, version_id, source_question_id, question_no, content, options, correct_key,
             canonical_question_no, canonical_options, canonical_correct_key, solution_md, canonical_solution_md, status, is_current)
             VALUES ('{q1_id}', '{v101_id}', '{src_id}', 1, 'Candidate 101', '["A","B","C","D"]'::jsonb, 'A',
@@ -538,12 +556,15 @@ async def test_generated_session_cannot_be_approved_on_real_pg(
 
 
 @pytest.mark.asyncio
-async def test_preview_snapshot_on_real_pg(owner_client: AsyncpgSupabaseAdapter):
+async def test_preview_snapshot_on_real_pg(
+    owner_client: AsyncpgSupabaseAdapter,
+    worker_client: AsyncpgSupabaseAdapter,
+):
     """Real PostgreSQL verification of full shuffle -> preview -> approve pipeline (W4-MVP-05).
 
     1. Provisions a fresh unfinalized session in 'reviewed' status with 2 sources and 2 versions.
     2. Verifies preview before shuffle fails closed with 409 ERR_SHUFFLE_REQUIRED.
-    3. Runs shuffle_session() which invokes real finalize_persist_shuffle RPC in PostgreSQL.
+    3. Runs shuffle_session() which invokes real finalize_persist_shuffle RPC in PostgreSQL via service-role writer.
     4. Fetches and validates preview snapshot against real PostgreSQL database.
     5. Asserts displayed slots, choices, answer keys, canonical mappings, and answers matrix.
     6. Approves session and verifies preview projection remains deterministic on approved session.
@@ -591,7 +612,7 @@ async def test_preview_snapshot_on_real_pg(owner_client: AsyncpgSupabaseAdapter)
     finalize_svc = FinalizeService(
         db=owner_client,
         repo=FinalizeRepository(owner_client),
-        writer_repo=FinalizeRepository(owner_client),
+        writer_repo=FinalizeRepository(worker_client),
     )
 
     # 1. Preview before shuffle must fail closed
@@ -657,3 +678,26 @@ async def test_preview_snapshot_on_real_pg(owner_client: AsyncpgSupabaseAdapter)
     assert post_approval_preview.status == "approved"
     assert post_approval_preview.total_questions == 2
     assert len(post_approval_preview.matrix) == 2
+
+
+@pytest.mark.asyncio
+async def test_cross_user_isolation_on_real_pg(
+    owner_client: AsyncpgSupabaseAdapter,
+    reviewed_exam_session: Dict[str, Any],
+):
+    """Verifies that an authenticated actor cannot access another user's session preview (W4-MVP-05)."""
+    s_info = reviewed_exam_session
+    s_id = s_info["session_id"]
+    other_actor_id = str(uuid4())
+    other_client = AsyncpgSupabaseAdapter(PG_DSN, role="authenticated", actor=other_actor_id)
+
+    # 1. Direct table read under RLS must yield empty list
+    sessions_read = other_client.table("exam_sessions").select("*").eq("id", s_id).execute()
+    assert sessions_read.data == [] or sessions_read.data is None
+
+    # 2. Preview snapshot through service must raise domain exception (403 or 404)
+    other_service = FinalizeService(other_client)
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await other_service.get_preview_snapshot(s_id, other_actor_id)
+    assert exc_info.value.status_code in (403, 404)
+

@@ -53,6 +53,7 @@ from app.services.exporter.bundle_models import (
 )
 from app.services.finalize.repository import FinalizeRepository
 from app.services.finalize.service import FinalizeService
+from app.services.shuffler.service import generate_deterministic_seed
 from tests.services.finalize_test_client import MockSupabaseClient
 
 MOCK_SESSION_ID = "00000000-0000-0000-0000-000000000001"
@@ -129,7 +130,7 @@ def _build_valid_preview_db_state(
                 "session_id": session_id,
                 "version_code": "101",
                 "is_finalized": is_finalized,
-                "shuffle_seed": "golden-seed-w4-101",
+                "shuffle_seed": generate_deterministic_seed(session_id, "101")[0],
                 "permutations": identity_permutations,
             },
             {
@@ -137,7 +138,7 @@ def _build_valid_preview_db_state(
                 "session_id": session_id,
                 "version_code": "102",
                 "is_finalized": is_finalized,
-                "shuffle_seed": "golden-seed-w4-102",
+                "shuffle_seed": generate_deterministic_seed(session_id, "102")[0],
                 "permutations": identity_permutations,
             },
         ],
@@ -679,6 +680,69 @@ async def test_preview_rejects_desynchronized_solution():
     assert "không khớp lời giải sau đồng bộ" in exc_info.value.detail
 
 
+@pytest.mark.asyncio
+async def test_preview_rejects_question_order_disagreeing_with_display_to_canonical():
+    """Fails closed with 409 when question_order is a valid permutation but disagrees with display_to_canonical."""
+    db_state = _build_valid_preview_db_state()
+    # question_order is [2, 1, 3] while display_to_canonical is {"1": 1, "2": 2, "3": 3}
+    db_state["exam_versions"][0]["permutations"]["question_order"] = [2, 1, 3]
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "không khớp display_to_canonical" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_tampered_non_deterministic_shuffle_seed():
+    """Fails closed with 409 when shuffle_seed violates deterministic contract."""
+    db_state = _build_valid_preview_db_state()
+    db_state["exam_versions"][0]["shuffle_seed"] = "tampered_arbitrary_seed_value"
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "hạt giống hoán vị" in exc_info.value.detail or "hợp đồng tất định" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_invalid_version_code_format():
+    """Fails closed with 409 when version_code violates DisplayVersion regex ^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$."""
+    db_state = _build_valid_preview_db_state()
+    db_state["exam_versions"][0]["version_code"] = "-invalid@code!"
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "version_code" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_oversized_option_exceeding_16000_chars():
+    """Fails closed with 409 when an option exceeds the Exporter 16,000-character limit."""
+    db_state = _build_valid_preview_db_state()
+    db_state["version_questions"][0]["options"][0] = "A" * 16001
+    # Also update canonical_options to match so it fails specifically on length
+    db_state["version_questions"][0]["canonical_options"][0] = "A" * 16001
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "16,000 ký tự" in exc_info.value.detail or "không hợp lệ" in exc_info.value.detail
+
+
 # ==============================================================================
 # 4. Golden Fixture & Success Tests (P1-4, F03)
 # ==============================================================================
@@ -764,8 +828,8 @@ async def test_preview_on_on_shuffled_case():
         ],
         "generation_configs": [{"session_id": MOCK_SESSION_ID, "n_versions": 2}],
         "exam_versions": [
-            {"id": v1_id, "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True, "shuffle_seed": "on-on-seed-101", "permutations": on_on_permutations},
-            {"id": v2_id, "session_id": MOCK_SESSION_ID, "version_code": "102", "is_finalized": True, "shuffle_seed": "on-on-seed-102", "permutations": on_on_permutations},
+            {"id": v1_id, "session_id": MOCK_SESSION_ID, "version_code": "101", "is_finalized": True, "shuffle_seed": generate_deterministic_seed(MOCK_SESSION_ID, "101")[0], "permutations": on_on_permutations},
+            {"id": v2_id, "session_id": MOCK_SESSION_ID, "version_code": "102", "is_finalized": True, "shuffle_seed": generate_deterministic_seed(MOCK_SESSION_ID, "102")[0], "permutations": on_on_permutations},
         ],
         "source_questions": [
             {"id": s1_id, "session_id": MOCK_SESSION_ID, "question_no": 1},

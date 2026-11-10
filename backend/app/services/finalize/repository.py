@@ -8,6 +8,7 @@ Provides data access methods for:
 """
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, cast
 
@@ -15,9 +16,11 @@ from supabase import Client
 
 from app.models.schemas import ReviewDomainException
 from app.services.blueprint.adapters import normalized_text
-from app.services.shuffler.service import sync_solution_text
+from app.services.shuffler.service import generate_deterministic_seed, sync_solution_text
 
 logger = logging.getLogger(__name__)
+
+VERSION_CODE_REGEX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
 
 
 def _now_iso() -> str:
@@ -720,13 +723,18 @@ class FinalizeRepository:
         preview_versions: List[Dict[str, Any]] = []
         for v in versions:
             vid = str(v["id"])
-            v_code = str(v["version_code"])
+            v_code = str(v.get("version_code", "")).strip()
             v_seed = v.get("shuffle_seed")
             permutations = v.get("permutations")
 
-            # Validate shuffle seed
-            if not isinstance(v_seed, str) or not v_seed.strip():
-                raise inconsistent(f"Mã hạt giống hoán vị (shuffle_seed) của phiên bản {v_code} không hợp lệ")
+            # Validate version code format against Exporter DisplayVersion contract
+            if not v_code or not VERSION_CODE_REGEX.match(v_code):
+                raise inconsistent(f"Mã phiên bản (version_code) '{v_code}' không hợp lệ hoặc sai định dạng quy định")
+
+            # Validate shuffle seed against deterministic contract
+            expected_seed, _ = generate_deterministic_seed(str(session_id), v_code)
+            if not isinstance(v_seed, str) or v_seed.strip().lower() != expected_seed.lower():
+                raise inconsistent(f"Mã hạt giống hoán vị (shuffle_seed) của phiên bản {v_code} không hợp lệ hoặc không khớp hợp đồng tất định")
 
             # Validate shuffle provenance
             if not isinstance(permutations, dict):
@@ -780,6 +788,21 @@ class FinalizeRepository:
                 if d_to_c.get(str(d_val)) != c_int and d_to_c.get(d_val) != c_int:
                     raise inconsistent(f"Ánh xạ hai chiều hoán vị không đối xứng cho phiên bản {v_code}")
 
+            # Cross-check question_order against display_to_canonical and canonical_to_display
+            for d_idx, c_num in enumerate(q_order, start=1):
+                d_str = str(d_idx)
+                c_str = str(c_num)
+                expected_c = d_to_c.get(d_str, d_to_c.get(d_idx))
+                if expected_c != c_num:
+                    raise inconsistent(
+                        f"Thứ tự question_order tại vị trí {d_idx} (câu gốc {c_num}) không khớp display_to_canonical ({expected_c}) cho phiên bản {v_code}"
+                    )
+                expected_d = c_to_d.get(c_str, c_to_d.get(c_num))
+                if expected_d != d_idx:
+                    raise inconsistent(
+                        f"Thứ tự question_order tại vị trí {d_idx} (câu gốc {c_num}) không khớp canonical_to_display ({expected_d}) cho phiên bản {v_code}"
+                    )
+
             v_questions = questions_by_version[vid]
             if len(v_questions) != m:
                 raise inconsistent(f"Phiên bản {v_code} thiếu câu hỏi (có {len(v_questions)}/{m} câu)")
@@ -820,9 +843,13 @@ class FinalizeRepository:
                 if not isinstance(solution_md, str) or not (1 <= len(solution_md.strip()) <= 16000):
                     raise inconsistent(f"Lời giải câu {q_no} trong phiên bản {v_code} bị rỗng hoặc thiếu")
 
-                # Exporter DisplayQuestion Invariant: Options 4 distinct after normalization
-                if not isinstance(options, list) or len(options) != 4 or not all(isinstance(o, str) and o.strip() for o in options):
-                    raise inconsistent(f"Phương án của câu {q_no} trong phiên bản {v_code} không hợp lệ")
+                # Exporter DisplayQuestion Invariant: Options 4 distinct after normalization, each 1..16000 chars
+                if (
+                    not isinstance(options, list)
+                    or len(options) != 4
+                    or not all(isinstance(o, str) and (1 <= len(o.strip()) <= 16000) for o in options)
+                ):
+                    raise inconsistent(f"Phương án của câu {q_no} trong phiên bản {v_code} không hợp lệ hoặc vượt quá giới hạn 16,000 ký tự")
                 if len({normalized_text(o) for o in options}) != 4:
                     raise inconsistent(f"Phương án của câu {q_no} trong phiên bản {v_code} chứa các lựa chọn trùng lặp sau chuẩn hóa")
 
