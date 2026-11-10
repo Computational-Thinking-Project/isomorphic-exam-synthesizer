@@ -27,18 +27,28 @@ def create_generation_snapshot_router(events: GenerationEventBroker) -> APIRoute
         # Capture the replay mark first. Events published during the database
         # reads will replay after this mark, even when the snapshot already sees them.
         cursor = await events.cursor(session_id)
+
+        def read_session_revision() -> object:
+            return (
+                db.table("exam_sessions")
+                .select("id,status,updated_at")
+                .eq("id", str(session_id))
+                .limit(1)
+                .execute()
+                .data
+            )
+
         try:
-            loaded, rows = await run_in_threadpool(
+            # The RPC owns its transaction and does not return session status.
+            # Bracket it with the session revision so a finish or retry cannot
+            # pair a new status with counts from the preceding job state.
+            before, loaded, rows = await run_in_threadpool(
                 lambda: (
+                    read_session_revision(),
                     db.rpc("load_generation_completed_results", {"p_session_id": str(session_id)})
                     .execute()
                     .data,
-                    db.table("exam_sessions")
-                    .select("id,status")
-                    .eq("id", str(session_id))
-                    .limit(1)
-                    .execute()
-                    .data,
+                    read_session_revision(),
                 )
             )
             if (
@@ -50,6 +60,10 @@ def create_generation_snapshot_router(events: GenerationEventBroker) -> APIRoute
                 raise ValueError("Malformed generation snapshot.")
             if loaded.get("session_id") != str(session_id) or rows[0].get("id") != str(session_id):
                 raise ValueError("Generation snapshot session changed.")
+            if before != rows:
+                raise HTTPException(
+                    409, {"code": "ERR_CONFIG_CONFLICT", "message": "Reload session state."}
+                )
             context = loaded["context"]
             completed = loaded["completed"]
             failures = loaded["failures"]
@@ -117,6 +131,8 @@ def create_generation_snapshot_router(events: GenerationEventBroker) -> APIRoute
                 "stream_epoch": events.epoch,
                 "resume_after_event_id": cursor,
             }
+        except HTTPException:
+            raise
         except APIError as exc:
             if str(getattr(exc, "code", "")) == "55006":
                 raise HTTPException(

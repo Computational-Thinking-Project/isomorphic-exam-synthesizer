@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -14,10 +15,13 @@ from app.services.generation.events import GenerationEventBroker
 
 
 class SnapshotDB:
-    def __init__(self, session_id, snapshot_id):
+    def __init__(self, session_id, snapshot_id, next_status):
         self.session_id = session_id
         self.snapshot_id = snapshot_id
         self.calls = []
+        self.status = "generating" if next_status == "generated" else "partial_generated"
+        self.updated_at = "2026-11-10T09:00:00+00:00"
+        self.next_status = next_status
 
     def rpc(self, name, params):
         self.calls.append((name, params))
@@ -30,7 +34,14 @@ class SnapshotDB:
             "failures": [{"version_index": 2, "question_no": 1, "is_success": False}],
             "generation_error_code": "ERR_GENERATION_INCOMPLETE",
         }
-        return SimpleNamespace(execute=lambda: SimpleNamespace(data=result))
+
+        def execute():
+            if self.next_status is not None:
+                self.status = self.next_status
+                self.updated_at = "2026-11-10T09:00:01+00:00"
+            return SimpleNamespace(data=result)
+
+        return SimpleNamespace(execute=execute)
 
     def table(self, name):
         assert name == "exam_sessions"
@@ -46,12 +57,25 @@ class SnapshotDB:
         return self
 
     def execute(self):
-        return SimpleNamespace(data=[{"id": str(self.session_id), "status": "partial_generated"}])
+        return SimpleNamespace(
+            data=[
+                {
+                    "id": str(self.session_id),
+                    "status": self.status,
+                    "updated_at": self.updated_at,
+                }
+            ]
+        )
 
 
-def test_snapshot_projects_durable_partial_progress_and_replay_mark(monkeypatch):
+@pytest.mark.parametrize(
+    "next_status",
+    [None, "generated", "partial_generated"],
+    ids=["stable", "finish-during-read", "same-status-new-revision"],
+)
+def test_snapshot_projects_progress_only_for_a_stable_session_revision(monkeypatch, next_status):
     session_id, user_id, snapshot_id = uuid4(), uuid4(), uuid4()
-    db = SnapshotDB(session_id, snapshot_id)
+    db = SnapshotDB(session_id, snapshot_id, next_status)
     broker = GenerationEventBroker()
     asyncio.run(
         broker.publish(
@@ -73,6 +97,11 @@ def test_snapshot_projects_durable_partial_progress_and_replay_mark(monkeypatch)
     monkeypatch.setattr("app.api.routes.generation_snapshot.assert_ownership", lambda *a, **k: None)
     with TestClient(app) as client:
         response = client.get(f"/api/sessions/{session_id}/generation-snapshot")
+    assert db.calls == [("load_generation_completed_results", {"p_session_id": str(session_id)})]
+    if next_status is not None:
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "ERR_CONFIG_CONFLICT"
+        return
     assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
     data = response.json()
     assert data["session_status"] == "partial_generated"
@@ -84,4 +113,3 @@ def test_snapshot_projects_durable_partial_progress_and_replay_mark(monkeypatch)
     assert data["question_statuses"]["2-1"]["status"] == "failed"
     assert data["stream_epoch"] == broker.epoch
     assert data["resume_after_event_id"] == 1
-    assert db.calls == [("load_generation_completed_results", {"p_session_id": str(session_id)})]
