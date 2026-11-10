@@ -268,10 +268,13 @@ is a W2 RPC in migration 010, not public table access.
 - **Environment**: PostgreSQL 17 Docker container (isolated, no host port exposure), Python 3.11, asyncpg 0.32.0, full migration chain `002–017`.
 - **Results**: **23 passed, 0 skipped**; Ruff passed on modified test file; 5 GitHub CI checks succeeded on `4403f3c`.
 - **Finding Statuses**:
-  - **F01**: `verified` by reviewer (ACL/SQLSTATE `42501` and statement rollback under Trigger 009 & Trigger 017).
-  - **F02**: `verified` by reviewer (cursor timestamp normalization, dynamic DB clock for pagination, and heartbeat monotonic timestamp `GREATEST` eliminating lock-contention clock regression).
-  - **F03**: `verified` by reviewer (test fixture persists all confirmed targets before finish; RPC boundary enforcement of non-NULL `error_code` with SQLSTATE `22023` for terminal failure states).
-  - **F04**: `verified` by reviewer (PostgreSQL type compatibility: UUID string normalization and integer grade assertion).
+  - **F01**: `verified` by reviewer (Migration 009/017 trigger assertion uses SQLSTATE `42501` and verifies statement rollback/unchanged state).
+  - **F02**: `verified` by reviewer (asyncpg pagination cursor converted to datetime; stale test data uses relative DB time `clock_timestamp() - interval '2 hours'`).
+  - **F03**: `verified` by reviewer (worker-finished-first fixture persists all required targets before `finish(generated)`).
+  - **F04**: `verified` by reviewer (PostgreSQL UUID string and integer grade type compatibility in assertions).
+- **Additional SQL Hardening Verified (23-test suite at `4403f3c`)**:
+  - `heartbeat_generation_job` uses `GREATEST` to prevent activity timestamp regression after row-lock contention.
+  - `finish_generation_job_with_error` rejects NULL error codes on failed/partial outcomes with SQLSTATE `22023`.
 
 ## F05 Remediation — Architecture Decision Record & Documentation (10/11/2026)
 
@@ -281,8 +284,10 @@ is a W2 RPC in migration 010, not public table access.
   - Added `DEC-207-003: Generation lifecycle recovery and durable error persistence (Migration 017)` in `docs/change_log.md`.
   - Documented context, problem, architectural decisions, alternatives considered, scope/impact, and authoritative contract links.
   - Updated PR #52 description (M3) with complete verification evidence and links.
-- **Status**: Author `claimed_fixed`; pending independent reviewer re-verification on updated commit.
+- **Status & Verification**:
+  - **F05 Verification**: `verified` by reviewer Quỳnh (`nhatquynh1107`) at HEAD `93d46e9` ([discussion_r4528574687](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/52#discussion_r4528574687)).
+  - **Formal Approval**: Quỳnh formally approved PR #52 at HEAD `93d46e9` ([review 5846843461](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/52#pullrequestreview-5846843461)).
+  - **Status distinctions**: Code-level verification on `4403f3c` (23 passed, 0 skipped on isolated PostgreSQL 17 Docker; 5 CI checks success); documentation/F05 verification and formal approval on `93d46e9`.
 - **Explicit Pending Scope**:
   - Migration 017 deployment and migration-ledger verification in the team's shared/staging Supabase environment.
   - PR #30 worker HTTPS end-to-end integration.
-  - Formal GitHub PR approval.
