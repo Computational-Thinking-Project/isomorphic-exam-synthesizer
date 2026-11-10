@@ -38,6 +38,23 @@ EXTRA_TYPES = {
 }
 
 
+def normalize_rpc_argument(sql_type, value):
+    """Normalize Python values to match PostgreSQL RPC parameter types."""
+    if value is None:
+        return None
+
+    if sql_type == "jsonb":
+        return json.dumps(value, ensure_ascii=False)
+
+    if sql_type == "timestamptz" and isinstance(value, str):
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            raise ValueError("TIMESTAMPTZ requires a timezone-aware datetime")
+        return parsed
+
+    return value
+
+
 async def call_rpc(conn, name, *args):
     """Execute RPC with proper PostgreSQL type casting."""
     from tests.migrations.test_generation_w2 import TYPES
@@ -45,7 +62,7 @@ async def call_rpc(conn, name, *args):
     combined_types = {**TYPES, **EXTRA_TYPES}
     types = combined_types[name][: len(args)]
     values = [
-        json.dumps(v, ensure_ascii=False) if t == "jsonb" and v is not None else v
+        normalize_rpc_argument(t, v)
         for t, v in zip(types, args)
     ]
     placeholders = ",".join(f"${i}::{t}" for i, t in enumerate(types, 1))
@@ -268,7 +285,9 @@ async def test_list_stale_jobs_keyset_pagination(env):
     """Keyset pagination handles multiple pages without omission or duplicates."""
     # Seed 12 stale sessions
     job_ids = []
-    base_time = datetime(2026, 11, 7, 0, 0, 0, tzinfo=timezone.utc)
+    base_time = await env.admin.fetchval(
+        "SELECT clock_timestamp() - interval '2 hours'"
+    )
     for i in range(12):
         sid = str(uuid4())
         jid = str(uuid4())
@@ -382,10 +401,25 @@ async def test_fail_stale_fencing_worker_finished_first(env):
     await configure(env, modes=["context_swap"], versions=1)
     claim = await call_rpc(env.owner, "claim_generation_job", env.sid, False)
 
-    # Worker completes the question and finishes
-    res = result_for(env, claim, index=0, version=1, success=True)
-    await persist(env, claim, res)
-    await call_rpc(env.worker, "finish_generation_job", env.sid, "generated", claim["job_id"])
+    # Worker completes all confirmed source questions and finishes
+    sources = claim["context"]["confirmed_sources"]
+    for index, _source in enumerate(sources):
+        res = result_for(env, claim, index=index, version=1, success=True)
+        await persist(env, claim, res)
+
+    finish_receipt = await call_rpc(
+        env.worker, "finish_generation_job", env.sid, "generated", claim["job_id"]
+    )
+    assert finish_receipt["status"] == "generated"
+
+    # Pre-scanner snapshot check
+    session_before = await env.admin.fetchrow(
+        "SELECT status, active_job_id, generation_error_code FROM exam_sessions WHERE id = $1::uuid",
+        env.sid,
+    )
+    assert session_before["status"] == "generated"
+    assert session_before["active_job_id"] is None
+    assert session_before["generation_error_code"] is None
 
     # Scanner attempts recovery with old token
     receipt = await call_rpc(
@@ -395,13 +429,21 @@ async def test_fail_stale_fencing_worker_finished_first(env):
     assert receipt["current_status"] == "generated"
     assert receipt["reason"] == "status_not_generating"
 
-    # Status remains generated
-    assert (
-        await env.admin.fetchval(
-            "SELECT status FROM exam_sessions WHERE id = $1::uuid", env.sid
-        )
-        == "generated"
+    # Post-scanner snapshot: Status remains generated, not failed, error_code not touched
+    session_after = await env.admin.fetchrow(
+        "SELECT status, active_job_id, generation_error_code FROM exam_sessions WHERE id = $1::uuid",
+        env.sid,
     )
+    assert session_after["status"] == "generated"
+    assert session_after["active_job_id"] is None
+    assert session_after["generation_error_code"] is None
+
+    # Committed targets preserved
+    committed_count = await env.admin.fetchval(
+        "SELECT count(*) FROM generation_target_results WHERE session_id = $1::uuid AND is_success = true",
+        env.sid,
+    )
+    assert committed_count == len(sources)
 
 
 async def test_fail_stale_fencing_session_retried(env):
@@ -426,12 +468,15 @@ async def test_fail_stale_fencing_session_retried(env):
     assert receipt["current_job_id"] == claim2["job_id"]
 
     # New job token remains intact
-    assert (
-        await env.admin.fetchval(
-            "SELECT active_job_id FROM exam_sessions WHERE id = $1::uuid", env.sid
-        )
-        == claim2["job_id"]
+    actual_job_id = await env.admin.fetchval(
+        """
+        SELECT active_job_id
+        FROM exam_sessions
+        WHERE id = $1::uuid
+        """,
+        env.sid,
     )
+    assert str(actual_job_id) == claim2["job_id"]
 
 
 async def test_concurrent_fail_stale_race(env):
@@ -651,7 +696,7 @@ async def test_least_privilege_access_denied_for_clients(env):
 
         # SEC-05: Authenticated owner CAN update valid metadata fields according to contract
         await env.owner.execute(
-            "UPDATE exam_sessions SET title = 'Valid Metadata Update', subject = 'Math', grade = '12' WHERE id = $1::uuid",
+            "UPDATE exam_sessions SET title = 'Valid Metadata Update', subject = 'Math', grade = 12 WHERE id = $1::uuid",
             env.sid,
         )
         updated = await env.admin.fetchrow(
@@ -660,7 +705,7 @@ async def test_least_privilege_access_denied_for_clients(env):
         )
         assert updated["title"] == "Valid Metadata Update"
         assert updated["subject"] == "Math"
-        assert updated["grade"] == "12"
+        assert updated["grade"] == 12
     finally:
         await anon.close()
         await non_owner.close()
