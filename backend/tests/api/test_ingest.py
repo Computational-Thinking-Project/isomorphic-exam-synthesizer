@@ -12,6 +12,53 @@ from postgrest.exceptions import APIError
 MOCK_SESSION_ID = "11111111-1111-1111-1111-111111111111"
 
 
+@pytest.mark.parametrize("kind", ["text", "file"])
+def test_ingest_persists_preview_without_scheduling_blueprints(
+    client, mock_auth_user, auth_headers, kind
+):
+    """ADR-0001: even a successful import must wait for explicit confirmation."""
+    mock_db = MagicMock()
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        MagicMock(data=[{"user_id": mock_auth_user.auth.get_user.return_value.user.id}]),
+        MagicMock(data=[{"status": "draft"}]),
+    ]
+    mock_db.rpc.return_value.execute.return_value.data = {"success": True}
+    rows = [{"id": "source-1", "session_id": MOCK_SESSION_ID, "question_no": 1}]
+    mock_db.table.return_value.select.return_value.eq.return_value.order.return_value.execute.return_value.data = rows
+    text = "Câu 1: Cho x = 1. Giá trị của x là:\nA. 1  B. 2  C. 3  D. 4\nBẢNG ĐÁP ÁN: 1.A"
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+        patch("app.api.routes.sessions.upload_exam_file_to_storage") as upload,
+        patch("fastapi.BackgroundTasks.add_task") as schedule,
+    ):
+        if kind == "text":
+            response = client.post(f"/api/sessions/{MOCK_SESSION_ID}/ingest-text",
+                                   json={"raw_text": text}, headers=auth_headers)
+        else:
+            response = client.post(f"/api/sessions/{MOCK_SESSION_ID}/ingest-file",
+                                   files={"file": ("exam.md", text.encode(), "text/markdown")},
+                                   headers=auth_headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["questions"] == rows
+    assert response.json()["total_questions"] == 1
+    assert mock_db.rpc.call_args.args[0] == "replace_source_questions"
+    assert mock_db.rpc.call_args.args[1]["p_questions"][0]["correct_key"] == "A"
+    assert upload.await_count == (1 if kind == "file" else 0)
+    schedule.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retired_ingest_hook_cannot_write_late_blueprints():
+    """An old in-process caller of the hook cannot race confirmation/re-import."""
+    from app.services.parser.ingestion_service import trigger_blueprint_pipeline
+
+    db = MagicMock()
+    await trigger_blueprint_pipeline(MOCK_SESSION_ID, [{"id": "obsolete-source"}], db)
+    db.table.assert_not_called()
+    db.rpc.assert_not_called()
+
+
 @pytest.fixture
 def auth_headers() -> dict[str, str]:
     return {"Authorization": "Bearer mock-valid-jwt-token"}

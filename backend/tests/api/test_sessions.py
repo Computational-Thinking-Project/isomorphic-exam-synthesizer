@@ -274,11 +274,10 @@ def test_get_session_detail_success(client, mock_auth_user, test_user_id, auth_h
     assert data["generation_config"] is not None
     assert data["generation_config"]["n_versions"] == 2
     assert data["blueprint_summary"] is not None
-    assert data["blueprint_summary"]["is_ready"] is True
-    mode_ids = [m["id"] for m in data["blueprint_summary"]["supported_modes"]]
-    assert "parameter_variation" in mode_ids
-    assert "context_swap" in mode_ids
-    assert all(m["is_available"] is True for m in data["blueprint_summary"]["supported_modes"])
+    # W4: this fixture is draft + NO_CONFIRMATION. Copied/old confirmed legacy
+    # rows must not make an unconfirmed import/clone appear generation-ready.
+    assert data["blueprint_summary"]["is_ready"] is False
+    assert data["blueprint_summary"]["supported_modes"] is None
     # Q01: source_revision must be present and equal to updated_at
     assert data["source_revision"] == SOURCE_REVISION
     mock_db.rpc.assert_any_call("get_session_source_preview", {"p_session_id": "session-1"})

@@ -55,7 +55,6 @@ from app.services.parser import (
 )
 from app.services.parser.ingestion_service import (
     replace_source_questions_atomically,
-    trigger_blueprint_pipeline,
 )
 
 logger = logging.getLogger(__name__)
@@ -208,7 +207,13 @@ async def get_session_detail(
                     is_ready = True
                 except ValueError:
                     pass
-        elif isinstance(snapshot, dict) and snapshot.get("reason") == "NO_CONFIRMATION":
+        elif (
+            isinstance(snapshot, dict)
+            and snapshot.get("reason") == "NO_CONFIRMATION"
+            and session_record["status"] != "draft"
+        ):
+            # Historical confirmed sessions remain readable. A new import/clone
+            # is draft even if it contains old confirmed legacy Blueprint rows.
             bp_res = (
                 db.table("question_blueprints")
                 .select("id,source_question_id,confirmed_at,is_fallback,variation_modes")
@@ -504,8 +509,7 @@ async def ingest_file(
         questions=parsed_questions,
     )
 
-    # Trigger background Blueprint extraction pipeline (TASK-203 hook)
-    background_tasks.add_task(trigger_blueprint_pipeline, session_id, saved_questions)
+    # ADR-0001: only confirm_source_flow may schedule canonical preparation.
     return IngestSuccessResponse(
         session_id=session_id,
         message="Exam file ingested and validated successfully",
@@ -574,8 +578,7 @@ async def ingest_text(
         questions=parsed_questions,
     )
 
-    # Trigger background Blueprint extraction pipeline (TASK-203 hook)
-    background_tasks.add_task(trigger_blueprint_pipeline, session_id, saved_questions)
+    # ADR-0001: only confirm_source_flow may schedule canonical preparation.
     return IngestSuccessResponse(
         session_id=session_id,
         message="Exam text ingested and validated successfully",
