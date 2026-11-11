@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 
 class SourceQuestion(BaseModel):
@@ -538,14 +538,14 @@ class AnswersMatrixResponse(BaseModel):
 
 
 class OrderingPreferencesPayload(BaseModel):
-    shuffle_questions: bool
-    shuffle_options: bool
+    shuffle_questions: StrictBool
+    shuffle_options: StrictBool
 
     model_config = ConfigDict(extra="forbid")
 
 
 class OrderingPreferencesResponse(BaseModel):
-    success: bool = True
+    success: bool
     session_id: str
     status: str
     ordering_preferences: Dict[str, bool]

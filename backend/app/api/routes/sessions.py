@@ -361,20 +361,44 @@ async def update_ordering_preferences(
             503, "ERR_PREFERENCES_UPDATE_FAILED", "Failed to update ordering preferences"
         ) from exc
 
-    result_data = rpc_res.data
-    if isinstance(result_data, dict):
-        return OrderingPreferencesResponse(
-            success=result_data.get("success", True),
-            session_id=str(result_data.get("session_id", session_id)),
-            status=str(result_data.get("status", "reviewed")),
-            ordering_preferences=result_data.get("ordering_preferences", prefs_dict),
+    receipt = rpc_res.data
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("success") is not True
+        or type(receipt.get("session_id")) is not str
+        or receipt["session_id"] != session_id
+        or receipt.get("status") != "reviewed"
+    ):
+        logger.error(
+            "Invalid ordering preferences receipt for session %s: %r",
+            session_id,
+            receipt,
+        )
+        raise ReviewDomainException(
+            503, "ERR_PREFERENCES_UPDATE_FAILED", "Failed to update ordering preferences"
+        )
+
+    preferences = receipt.get("ordering_preferences")
+    if (
+        not isinstance(preferences, dict)
+        or set(preferences.keys()) != {"shuffle_questions", "shuffle_options"}
+        or not all(type(v) is bool for v in preferences.values())
+        or preferences != prefs_dict
+    ):
+        logger.error(
+            "Invalid persisted preferences in receipt for session %s: %r",
+            session_id,
+            preferences,
+        )
+        raise ReviewDomainException(
+            503, "ERR_PREFERENCES_UPDATE_FAILED", "Failed to update ordering preferences"
         )
 
     return OrderingPreferencesResponse(
         success=True,
-        session_id=session_id,
-        status="reviewed",
-        ordering_preferences=prefs_dict,
+        session_id=receipt["session_id"],
+        status=receipt["status"],
+        ordering_preferences=preferences,
     )
 
 
