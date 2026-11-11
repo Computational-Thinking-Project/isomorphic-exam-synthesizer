@@ -1,5 +1,11 @@
 # W4 OPS handoff — lifecycle đề xuất và baseline triển khai
 
+## Baseline hiện hành 11/11 — đọc trước các mốc lịch sử
+
+Base dev `294c69a`: PR51 và PR52 đã merge; 017 có reviewer PostgreSQL23/23 proof, chưa có applied ledger DB ứng dụng. PR30 vẫn Open tại `b62e007`; F02 resource bounds đã reviewer verified, không còn chờ sửa F02. Worker/metrics/SSE vẫn chưa thuộc base này. PR54/018 đã Đạt Approve; PR61/019 chờ F01/F02 HTTP sửa; không tự ghép PR heads làm candidate đã nghiệm thu. [Migration checkpoint](w4-migration-candidate.md) và [input-handoff duy nhất](tasks/TASK-W4-OPS.md#input-handoff) ghi nguồn/version và phần còn thiếu.
+
+Ngày11/11 build static base294c69a với cấu hình mẫu rỗng trong project cô lập: preflight/health/SPA/OpenAPI proxy PASS, anonymous sessions401 cả trực tiếp/proxy, Typst0.11.1. Chưa gọi dịch vụ thật; không chứng nhận G0/G1/G2. Lifecycle policy dưới đây giữ nguyên, không thay từ kết quả health.
+
 Đạt chuẩn bị 07/11/2026 cho [plan11/21](tasks/TASK-W4-OPS.md), [runbook](w4-staging-runbook.md), tiếp nhận yêu cầu Quỳnh [I-OPS-LIFE/I-OPS-DB](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6690592440). **Baseline được Duy chấp nhận08/11 tại PR51 comment6718841843; triển khai PR30@b1f0999 chưa merge/live**, không phải runtime đã triển khai. Không cấp quyền cloud/availability từ tài liệu này.
 
 ## 1. Baseline lifecycle đã chốt; deployment proof pending
@@ -18,7 +24,7 @@
 | Shutdown | Ngừng nhận claim mới trước teardown; cancel/await scanner và cleanup loops, bound wait10s; giải phóng handles; đóng AIRuntime sau tác vụ dùng gateway; in-flight chưa kết luận không tự ghi success | PR30 đã wiring, isolated review và stop-grace deployment pending; không reset quota hoặc clear fencing mù |
 | Metrics | Observer ở shared transport, không bọc batch lần nữa; main inject observer đúng registry, protected metrics và smoke đổi trong cùng đợt | Wiring implemented PR30@b1f0999, chưa merged/live; Quỳnh author; Đạt phối hợp dev.ps1/docker-ci |
 
-Baseline đã được Duy chốt08/11, không phải capacity evidence hoặc deployment acceptance. PR30@b1f0999 triển khai scanner/retention/ticket protection/shutdown/metrics; F02 validator resource bounds còn OPEN. PR52@5b3f433 giao listing/fencing/durable errors, chưa merge/real-DB proof. Không yêu cầu owner giao lại contract đã có. ENV0/roster/access chốt ở [Issue53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53).
+Baseline đã được Duy chốt08/11, không phải capacity evidence hoặc deployment acceptance. PR30@b1f0999 triển khai scanner/retention/ticket protection/shutdown/metrics; F02 validator resource bounds đã verified tại b6b6422; integration còn pending. PR52 đã merge vào294c69a, có PostgreSQL17 proof23/23; shared DB-applied chưa verified. Không yêu cầu owner giao lại contract đã có. ENV0/roster/access chốt ở [Issue53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53).
 
 ## 2. Ma trận kiểm có thể chuẩn bị trước, chưa có kết quả live
 
@@ -46,14 +52,14 @@ Inventory static từ dev `73583d775243245cd2479e29d943c329b0b2debb`, không ph�
 | Typst | backend image TYPST_VERSION v0.11.1 | Operator ghi typst --version trong container build thật |
 | Backend Python | Dockerfile Python3.11 base image pinned; requirements.lock hashed | CI/build image digest và dependency changes từng owner |
 | Frontend | npm ci từ package-lock.json, static Nginx target | Philip giao route/API-compatible SHA, rebuild public auth config |
-| W2 integration | PR30@b1f0999; F01 verified, F02 OPEN; Draft/chưa merge/live | Duy bàn giao integrated head sau merge, không deploy PR head như dev đã có |
+| W2 integration | PR30@b62e007; F01/F02 verified, Ready/Open; chưa merge/live | Duy bàn giao integrated head sau merge, không deploy PR head như dev đã có |
 | W4 product policy | Issues45/46; docs PR50 còn review | Duy chốt modes/toggles/fallback; không dùng W2 fixture chứng minh W4 |
 
 Freeze record cho mỗi candidate phải có git SHA, dirty=false, image digests, migration ledger/checksums thực, prompt versions+hashes, model ID, nonsecret config revision, oracle/input checksum. Không lưu key/JWT/prompt chứa đề riêng tư vào report public. Không đổi model/prompt để chữa live demo rồi giữ kết quả kiểm của head cũ.
 
 ## 4. Migration inventory và acceptance gate
 
-[Static inventory](w4-migration-inventory.md) chỉ liệt kê byte hashes từ Git, không là execution manifest. Repo có schema bootstrap `backend/scripts/schema.sql` và migrations002–016; có file010/012 tên cùng supported_modes nên Duy/Hùng phải giải thích lịch sử thay thế trước khi ký fresh/upgrade ledger. Không tự skip/rename hoặc chạy lại migration dựa trên basename.
+[Static inventory](w4-migration-inventory.md) chỉ liệt kê byte hashes từ Git, không là execution manifest. Base294c69a có schema bootstrap `backend/scripts/schema.sql` và migrations002–017; có file010/012 tên cùng supported_modes nên Duy/Hùng phải giải thích lịch sử thay thế trước khi ký fresh/upgrade ledger. Không tự skip/rename hoặc chạy lại migration dựa trên basename.
 
 | Đường kiểm | Input Duy cần giao | Proof operator cần lưu |
 |---|---|---|
@@ -62,4 +68,4 @@ Freeze record cho mỗi candidate phải có git SHA, dirty=false, image digests
 | Failure | Migration atomicity, backup/restore authority, roll-forward plan | Failed step+transaction status; không tiếp tục mù; không dùng app rollback thay DB repair |
 | Final receipt | Backend/API-compatible SHA, admin JWT test method, storage policy | URL/time/SHA/migration hashes, A/B and admin/nonadmin auth checks; chỉ sanitized logs |
 
-Đạt chuẩn bị static inventory và checklist; Duy/Hùng xác nhận authority và DB proof. Chưa có quyền/test project nên chưa chạy SQL hay cloud setup.
+Đạt chuẩn bị static inventory và checklist; Duy/Hùng xác nhận authority và DB proof. SQL reviewer tests đã chạy trên DB Docker cô lập như checkpoint; chưa có quyền/ledger để áp shared DB hoặc cloud setup.

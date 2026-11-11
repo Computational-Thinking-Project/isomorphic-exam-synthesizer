@@ -1,3 +1,12 @@
+## OPS11/21 checkpoint — 11/11/2026
+
+- Đạt tiếp nối PR51 đã merge bằng nhánh OPS mới từ dev294c69a. Cập nhật task/input-handoff, runbook và migration checkpoint017 merged /018-019 unmerged; giữ historical inventory73583d7, không tạo applied ledger giả.
+- Independent review: #54 Approve (23 PostgreSQL +198 API/review tests pass), #56 Approve docs; #61 Request changes F01 strict HTTP booleans/F02 malformed RPC receipt (suite230pass/1optional-skip, ca mới tái hiện bằng TestClient). Không sửa nhánh author.
+- Static Docker build từ Git archive base294c69a, env mẫu rỗng/project riêng: healthy, preflight+HTTP smoke PASS, anonymous sessions401 direct/proxy, Typst0.11.1. Cleanup đúng project. Không dùng cloud hoặc env thật; chưa DB-applied/Auth/Gemini/SSE/Storage/Golden/G0/G1/G2 acceptance.
+- Input còn thiếu giữ ID/source tại TASK-W4-OPS#input-handoff. Không đổi owner, lịch, prompt hoặc ENV0; từng module tự quản Docker của mình.
+
+---
+
 ## DEC-DOCS-INPUT-20261109: Đối chiếu yêu cầu và bàn giao input (proposed)
 
 - **Ngày / người đề xuất:** 09/11/2026 — Trung Anh / philip-kkk, PM hỗ trợ soạn theo yêu cầu.
