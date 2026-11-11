@@ -508,9 +508,12 @@ def test_exception_mapping_context_distinction():
 
 
 @pytest.mark.asyncio
-async def test_review_snapshot_service_malformed_validation_sanitized():
-    """Verify malformed RPC data raises sanitized 503 without leaking Pydantic internals (F05)."""
+async def test_review_snapshot_service_malformed_validation_sanitized(caplog):
+    """Verify malformed RPC data raises sanitized 503 without leaking Pydantic internals or user payload into logs/detail (F05)."""
+    import logging
+
     mock_repo = MagicMock()
+    sentinel = "TOP_SECRET_STUDENT_PROMPT_SENTINEL_XYZ123"
     # Malformed data: invalid candidate status and invalid options count
     malformed_raw = {
         "session_id": MOCK_SESSION_ID,
@@ -540,7 +543,7 @@ async def test_review_snapshot_service_malformed_validation_sanitized():
                         "candidate": {
                             "candidate_id": "40000000-0000-0000-0000-000000000001",
                             "status": "INVALID_STATUS_VALUE",
-                            "content": "Secret internal query value",
+                            "content": sentinel,
                             "options": ["A", "B"],  # Must be 4
                             "correct_key": "A",
                             "origin": "ai_generated",
@@ -557,8 +560,9 @@ async def test_review_snapshot_service_malformed_validation_sanitized():
     service = ReviewService(db=MagicMock())
     service.repo = mock_repo
 
-    with pytest.raises(ReviewDomainException) as exc_info:
-        await service.get_current_snapshot(MOCK_SESSION_ID)
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(ReviewDomainException) as exc_info:
+            await service.get_current_snapshot(MOCK_SESSION_ID)
 
     err = exc_info.value
     assert err.status_code == 503
@@ -566,8 +570,14 @@ async def test_review_snapshot_service_malformed_validation_sanitized():
     assert err.detail == "Snapshot data failed schema validation"
     # Ensure internal exception string / payload data is NOT leaked into the public detail
     assert "INVALID_STATUS_VALUE" not in err.detail
-    assert "Secret internal query value" not in err.detail
+    assert sentinel not in err.detail
     assert "pydantic" not in err.detail.lower()
+
+    # Ensure sensitive sentinel string is NOT leaked into logs
+    log_text = caplog.text
+    assert sentinel not in log_text
+    assert "INVALID_STATUS_VALUE" not in log_text
+    assert "error_count=" in log_text
 
 
 @pytest.mark.asyncio

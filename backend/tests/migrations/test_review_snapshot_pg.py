@@ -657,6 +657,94 @@ class ReviewSnapshotPostgresCase(unittest.TestCase):
             type(self).db = orig_db
             self.run_docker("exec", self.container, "dropdb", "-U", "postgres", upgrade_db)
 
+    # --------------------------------------------------------------------------
+    # 8. Frozen Source Integrity & Canonical Hash (F01)
+    # --------------------------------------------------------------------------
+
+    def test_frozen_source_missing_confirmed_input_fails_closed(self):
+        """Frozen source missing confirmed_input triggers fail-closed error."""
+        self.sql(f"""
+        UPDATE public.generation_job_snapshots
+        SET snapshot_payload = jsonb_set(
+            snapshot_payload,
+            '{{confirmed_sources,0}}',
+            (snapshot_payload->'confirmed_sources'->0) - 'confirmed_input'
+        )
+        WHERE session_id = '{FIXTURE_SESSION}';
+        """)
+        script = f"""
+        BEGIN;
+        SET LOCAL ROLE authenticated;
+        SET LOCAL "request.jwt.claim.sub" = '{FIXTURE_USER}';
+        SELECT public.get_review_current_snapshot('{FIXTURE_SESSION}'::uuid);
+        COMMIT;
+        """
+        res = self.sql(script, check=False)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("missing or invalid confirmed_input in frozen sources", res.stderr)
+
+    def test_frozen_source_invalid_confirmed_input_type_fails_closed(self):
+        """Frozen source with non-object confirmed_input triggers fail-closed error."""
+        self.sql(f"""
+        UPDATE public.generation_job_snapshots
+        SET snapshot_payload = jsonb_set(
+            snapshot_payload,
+            '{{confirmed_sources,0,confirmed_input}}',
+            '"not_an_object"'::jsonb
+        )
+        WHERE session_id = '{FIXTURE_SESSION}';
+        """)
+        script = f"""
+        BEGIN;
+        SET LOCAL ROLE authenticated;
+        SET LOCAL "request.jwt.claim.sub" = '{FIXTURE_USER}';
+        SELECT public.get_review_current_snapshot('{FIXTURE_SESSION}'::uuid);
+        COMMIT;
+        """
+        res = self.sql(script, check=False)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("missing or invalid confirmed_input in frozen sources", res.stderr)
+
+    def test_frozen_source_mismatched_with_revision_fails_closed(self):
+        """Snapshot confirmed_input differing from persisted revision fails closed."""
+        self.sql(f"""
+        UPDATE public.generation_job_snapshots
+        SET snapshot_payload = jsonb_set(
+            snapshot_payload,
+            '{{confirmed_sources,0,confirmed_input,question_text}}',
+            '"Tampered question text"'::jsonb
+        )
+        WHERE session_id = '{FIXTURE_SESSION}';
+        """)
+        script = f"""
+        BEGIN;
+        SET LOCAL ROLE authenticated;
+        SET LOCAL "request.jwt.claim.sub" = '{FIXTURE_USER}';
+        SELECT public.get_review_current_snapshot('{FIXTURE_SESSION}'::uuid);
+        COMMIT;
+        """
+        res = self.sql(script, check=False)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("frozen source revision not bound or confirmed_input mismatched", res.stderr)
+
+    def test_frozen_source_incorrect_hash_fails_closed(self):
+        """Incorrect confirmed_source_hash triggers fail-closed error."""
+        self.sql(f"""
+        UPDATE public.generation_job_snapshots
+        SET confirmed_source_hash = repeat('f', 64)
+        WHERE session_id = '{FIXTURE_SESSION}';
+        """)
+        script = f"""
+        BEGIN;
+        SET LOCAL ROLE authenticated;
+        SET LOCAL "request.jwt.claim.sub" = '{FIXTURE_USER}';
+        SELECT public.get_review_current_snapshot('{FIXTURE_SESSION}'::uuid);
+        COMMIT;
+        """
+        res = self.sql(script, check=False)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertIn("confirmed source hash mismatch", res.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

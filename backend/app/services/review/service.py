@@ -367,12 +367,22 @@ class ReviewService:
         try:
             return ReviewSnapshotResponse.model_validate(raw_data)
         except ValidationError as exc:
-            logger.error("Snapshot schema validation error for session %s: %s", session_id, exc)
+            error_types = [str(err.get("type", "unknown")) for err in exc.errors()]
+            logger.error(
+                "Snapshot schema validation error for session %s: error_count=%d types=%s",
+                session_id,
+                exc.error_count(),
+                error_types,
+            )
             raise ReviewDomainException(
                 503, "ERR_SNAPSHOT_MALFORMED", "Snapshot data failed schema validation"
             ) from exc
         except Exception as exc:
-            logger.error("Unexpected error validating snapshot for session %s: %s", session_id, exc)
+            logger.error(
+                "Unexpected error validating snapshot for session %s: exc_type=%s",
+                session_id,
+                exc.__class__.__name__,
+            )
             raise ReviewDomainException(
                 503, "ERR_SNAPSHOT_MALFORMED", "Snapshot data failed schema validation"
             ) from exc

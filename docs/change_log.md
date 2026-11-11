@@ -19,7 +19,7 @@
   - Cập nhật `backend/migrations/018_review_current_snapshot.sql`.
   - Cập nhật `backend/app/models/schemas.py`, `backend/app/services/review/repository.py`, `backend/app/services/review/service.py`, `backend/app/api/routes/review.py`.
   - Cập nhật `docs/api/review-snapshot.md`, `backend/tests/fixtures/review_snapshot/`.
-  - Cập nhật `backend/tests/api/test_review_snapshot.py` (22 tests) và `backend/tests/migrations/test_review_snapshot_pg.py` (19 real PostgreSQL tests).
+  - Cập nhật `backend/tests/api/test_review_snapshot.py` (22 tests) và `backend/tests/migrations/test_review_snapshot_pg.py` (23 real PostgreSQL tests).
   - Handoff contract cho Stage 3 Review FE (`htbaax`) và resume routing (Philip).
 
 ## DEC-DOCS-INPUT-20261109: Đối chiếu yêu cầu và bàn giao input (proposed)

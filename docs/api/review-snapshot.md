@@ -130,7 +130,11 @@ interface ReviewSnapshotCandidate {
    - Ưu tiên đọc báo cáo từ `version_questions.validation_report` (áp dụng cho câu sinh lại hoặc chỉnh sửa trực tiếp).
    - Nếu báo cáo rỗng (`{}` hoặc `null`), đối chiếu `generation_target_results.raw_result.validation` bằng phép join chính xác `(version_question_id, session_id, snapshot_id)`.
    - Nếu không có chứng cứ hợp lệ, gán `validation_report: null` và `validation_source: "unavailable"`. Không tự ý coi `{}` là đã passed.
-5. **Freshness Token:**
+5. **Toàn vẹn Nguồn Đóng băng & Khóa Băm Canonical (Frozen Source Integrity):**
+   - Mọi câu nguồn trong `confirmed_sources` bắt buộc phải có đối tượng `confirmed_input` hợp lệ chứa đầy đủ các trường chuẩn hóa (`id`, `question_text`, `options`, `correct_answer`).
+   - `confirmed_input` trong snapshot được đối soát khớp tuyệt đối với `source_artifact_revisions.confirmed_input` theo định danh `(confirmation_id, source_question_id, source_revision_id)`.
+   - Băm nguồn `confirmed_source_hash` được tính toán lại trên toàn bộ danh sách nguồn chuẩn hóa bằng helper `_generation_source_item` và `_generation_json`. Bất kỳ trường hợp thiếu, sai định dạng hoặc không khớp băm đều lập tức fail-closed với lỗi bất biến `REVIEW_INVARIANT_VIOLATION` (HTTP 503).
+6. **Freshness Token:**
    - Token là chuỗi băm xác định tính từ định danh snapshot nguồn đóng băng và trạng thái hiện hành của toàn bộ các candidate (ID, status, timestamp, warning).
    - Hai lần GET liên tiếp khi CSDL không đổi sẽ trả về cùng một `freshness_token`. Khi có bất kỳ thay đổi nào (accept, reject, regenerate), token lập tức thay đổi.
 

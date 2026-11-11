@@ -342,6 +342,28 @@ BEGIN
     RAISE EXCEPTION 'REVIEW_INVARIANT_VIOLATION: frozen source revision not bound to confirmation' USING ERRCODE = '22023';
   END IF;
 
+  -- Validate confirmed_input presence and object type
+  IF EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(job.snapshot_payload->'confirmed_sources') cs
+    WHERE cs->'confirmed_input' IS NULL OR jsonb_typeof(cs->'confirmed_input') IS DISTINCT FROM 'object'
+  ) THEN
+    RAISE EXCEPTION 'REVIEW_INVARIANT_VIOLATION: missing or invalid confirmed_input in frozen sources' USING ERRCODE = '22023';
+  END IF;
+
+  -- Validate confirmed_input matches persisted revision exactly
+  IF EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(job.snapshot_payload->'confirmed_sources') cs
+    JOIN public.source_artifact_revisions sr
+      ON sr.confirmation_id = job.confirmation_id
+     AND sr.source_question_id = (cs->>'source_question_id')::uuid
+     AND sr.source_revision_id = (cs->>'source_revision_id')::uuid
+    WHERE sr.confirmed_input IS DISTINCT FROM cs->'confirmed_input'
+  ) THEN
+    RAISE EXCEPTION 'REVIEW_INVARIANT_VIOLATION: frozen source revision not bound or confirmed_input mismatched' USING ERRCODE = '22023';
+  END IF;
+
   -- Verify source order correspondence if present
   IF job.source_order IS NOT NULL AND jsonb_typeof(job.source_order) = 'array' THEN
     IF (SELECT jsonb_agg((x->>'source_question_id')::text ORDER BY ord)
@@ -386,6 +408,18 @@ BEGIN
       RAISE EXCEPTION 'REVIEW_INVARIANT_VIOLATION: non-sequential question_no in frozen sources' USING ERRCODE = '22023';
     END IF;
 
+    -- Require valid confirmed_input object with all fields needed for canonicalization
+    IF src.confirmed_input IS NULL OR jsonb_typeof(src.confirmed_input) IS DISTINCT FROM 'object' THEN
+      RAISE EXCEPTION 'REVIEW_INVARIANT_VIOLATION: missing or invalid confirmed_input in frozen sources' USING ERRCODE = '22023';
+    END IF;
+
+    IF src.confirmed_input->>'id' IS NULL
+       OR src.confirmed_input->>'question_text' IS NULL
+       OR jsonb_typeof(src.confirmed_input->'options') IS DISTINCT FROM 'array'
+       OR src.confirmed_input->>'correct_answer' IS NULL THEN
+      RAISE EXCEPTION 'REVIEW_INVARIANT_VIOLATION: malformed confirmed_input fields' USING ERRCODE = '22023';
+    END IF;
+
     -- Normalize options into 4-array [A, B, C, D]
     IF jsonb_typeof(src.options) = 'object' AND src.options ? 'A' AND src.options ? 'B' AND src.options ? 'C' AND src.options ? 'D' THEN
       v_norm_options := jsonb_build_array(src.options->'A', src.options->'B', src.options->'C', src.options->'D');
@@ -399,10 +433,8 @@ BEGIN
       RAISE EXCEPTION 'REVIEW_INVARIANT_VIOLATION: invalid source correct_key' USING ERRCODE = '22023';
     END IF;
 
-    -- Hash canonicalization using migration 015 helpers
-    IF src.confirmed_input IS NOT NULL THEN
-      items_canonical := items_canonical || jsonb_build_array(public._generation_source_item(src.confirmed_input));
-    END IF;
+    -- Hash canonicalization using migration 015 helpers (mandatory for all sources)
+    items_canonical := items_canonical || jsonb_build_array(public._generation_source_item(src.confirmed_input));
 
     sources_json := sources_json || jsonb_build_array(
       jsonb_build_object(
@@ -417,12 +449,14 @@ BEGIN
     );
   END LOOP;
 
-  -- Recompute and verify confirmed source hash if confirmed_input is available
-  IF jsonb_array_length(items_canonical) = n_sources THEN
-    computed_hash := encode(sha256(convert_to(public._generation_json(items_canonical), 'UTF8')), 'hex');
-    IF computed_hash IS DISTINCT FROM job.confirmed_source_hash THEN
-      RAISE EXCEPTION 'REVIEW_INVARIANT_VIOLATION: confirmed source hash mismatch' USING ERRCODE = '22023';
-    END IF;
+  -- Recompute and verify confirmed source hash across complete source list (mandatory)
+  IF jsonb_array_length(items_canonical) <> n_sources THEN
+    RAISE EXCEPTION 'REVIEW_INVARIANT_VIOLATION: canonical items count mismatch' USING ERRCODE = '22023';
+  END IF;
+
+  computed_hash := encode(sha256(convert_to(public._generation_json(items_canonical), 'UTF8')), 'hex');
+  IF computed_hash IS DISTINCT FROM job.confirmed_source_hash THEN
+    RAISE EXCEPTION 'REVIEW_INVARIANT_VIOLATION: confirmed source hash mismatch' USING ERRCODE = '22023';
   END IF;
 
   expected_slots := job.n_versions * n_sources;
