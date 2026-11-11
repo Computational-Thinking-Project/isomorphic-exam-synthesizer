@@ -10,7 +10,6 @@ PostgreSQL 15 container via the existing PostgresCase safety boundary.
 
 import json
 import re
-import subprocess
 from uuid import uuid4
 
 from test_stage3_schema import BOOTSTRAP, ROOT, PostgresCase
@@ -65,7 +64,7 @@ class W4BaselineChainTests(PostgresCase):
 
     def apply_chain(self, candidate=False):
         self.sql((ROOT / "backend/scripts/schema.sql").read_text())
-        for number in range(2, 18):
+        for number in range(2, 19):
             paths = list((ROOT / "backend/migrations").glob(f"{number:03}_*.sql"))
             self.assertEqual(len(paths), 1)
             self.sql(paths[0].read_text())
@@ -77,6 +76,7 @@ class W4BaselineChainTests(PostgresCase):
             "get_generation_source_snapshot(uuid)",
             "save_generation_config(uuid,integer,jsonb,jsonb,jsonb)",
             "persist_generation_clone(uuid,uuid,jsonb)",
+            "get_review_current_snapshot(uuid)",
         ):
             self.assertEqual(self.value(f"SELECT to_regprocedure('public.{signature}') IS NOT NULL"), "t")
         self.assertEqual(self.value("""
@@ -108,25 +108,28 @@ class W4BaselineChainTests(PostgresCase):
                 for old, new in zip(rows, after[table]):
                     self.assertEqual(old, {k: new[k] for k in old}, table)
 
-    def test_fresh_002_through_016(self):
+    def test_fresh_002_through_018(self):
         self.rehearse()
 
     def test_synthetic_five_table_upgrade_22_rows_preserved(self):
         self.rehearse(populated=True)
 
-    def test_fresh_with_unmerged_candidate_017(self):
+    def test_fresh_with_lifecycle_contract(self):
         self.rehearse(candidate=True)
 
-    def test_synthetic_upgrade_with_unmerged_candidate_017(self):
+    def test_synthetic_upgrade_with_lifecycle_contract(self):
         self.rehearse(populated=True, candidate=True)
 
     def test_fresh_019_privileges_and_replay(self):
         self.apply_chain(candidate=True)
         migration = (ROOT / "backend/migrations/019_w4_source_readiness_config.sql").read_text()
+        snapshot_rpc = self.value("SELECT pg_get_functiondef('public.get_review_current_snapshot(uuid)'::regprocedure)")
         self.sql(migration)
+        self.assertEqual(self.value("SELECT pg_get_functiondef('public.get_review_current_snapshot(uuid)'::regprocedure)"), snapshot_rpc)
         self.assert_contract(candidate=True)
         before = self.value("SELECT pg_get_functiondef('public.save_generation_config(uuid,int,jsonb,jsonb,jsonb)'::regprocedure)")
         self.sql(migration)
+        self.assertEqual(self.value("SELECT pg_get_functiondef('public.get_review_current_snapshot(uuid)'::regprocedure)"), snapshot_rpc)
         self.assertEqual(self.value("SELECT pg_get_functiondef('public.save_generation_config(uuid,int,jsonb,jsonb,jsonb)'::regprocedure)"), before)
         self.assertEqual(self.value("""
             SELECT count(*) FROM pg_proc WHERE pronamespace='public'::regnamespace

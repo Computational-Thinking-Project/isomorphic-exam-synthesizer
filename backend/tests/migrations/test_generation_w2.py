@@ -175,6 +175,11 @@ async def db(request):
                     encoding="utf-8-sig"
                 )
             )
+        if getattr(request, "param", None) == "w4":
+            for number in ("017", "018"):
+                files = list((ROOT / "backend/migrations").glob(number + "_*.sql"))
+                assert len(files) == 1
+                await admin.execute(files[0].read_text(encoding="utf-8-sig"))
         owner, worker = await asyncpg.connect(case_dsn), await asyncpg.connect(case_dsn)
         await role(owner, "authenticated")
         await role(worker)

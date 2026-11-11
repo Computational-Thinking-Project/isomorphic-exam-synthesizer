@@ -1,4 +1,4 @@
-"""W4-MVP-01 on PostgreSQL, merged 002-017 plus append-only 019.
+"""W4-MVP-01 on PostgreSQL, merged 002-018 plus append-only 019.
 
 Uses the opt-in disposable W2 fixture. No production credentials or live AI.
 The old W2 fixtures remain useful as compatibility/upgrade evidence separately.
@@ -12,7 +12,7 @@ from uuid import uuid4
 import pytest
 
 from app.services.blueprint.artifacts import prepare_blueprint_artifact, prepare_source_artifacts
-from tests.migrations.test_generation_w2 import ROOT, OWNER, TYPES, asyncpg, role, rpc
+from tests.migrations.test_generation_w2 import OWNER, ROOT, TYPES, asyncpg, role, rpc
 from tests.migrations.test_generation_w2 import db as db  # noqa: F401
 
 TYPES["update_generation_ordering_preferences"] = ["uuid", "jsonb"]
@@ -290,11 +290,62 @@ async def test_update_ordering_preferences_in_reviewed_state(db):
 
     new_prefs = {"shuffle_questions": True, "shuffle_options": False}
     res = await rpc(db.owner, "update_generation_ordering_preferences", db.sid, new_prefs)
-    assert res["success"] is True
-    assert res["ordering_preferences"] == new_prefs
+    assert res == {
+        "success": True, "session_id": db.sid, "status": "reviewed",
+        "ordering_preferences": new_prefs,
+    }
 
     row = json.loads(await stored(db))
     assert row["ordering_preferences"] == new_prefs
+
+
+async def test_preferences_wait_for_parent_and_reject_committed_approval(db):
+    await migrate(db)
+    snapshot = await publish(db)
+    await save(db, snapshot)
+    await db.admin.execute("UPDATE exam_sessions SET status='reviewed' WHERE id=$1::uuid", db.sid)
+    before = await stored(db)
+    transaction = db.admin.transaction()
+    await transaction.start()
+    task = None
+    try:
+        # Model the approval fence while its parent-row transaction is open.
+        await db.admin.execute("UPDATE exam_sessions SET approved_at=now() WHERE id=$1::uuid", db.sid)
+        task = asyncio.create_task(rpc(db.owner, "update_generation_ordering_preferences", db.sid,
+                                       {"shuffle_questions": True, "shuffle_options": True}))
+        for _ in range(100):
+            if await db.admin.fetchval("SELECT wait_event_type='Lock' FROM pg_stat_activity WHERE pid=$1", db.owner.get_server_pid()):
+                break
+            await asyncio.sleep(0.01)
+        else:
+            pytest.fail("preferences never waited for the parent-row lock")
+        assert not task.done()
+        await transaction.commit()
+        with pytest.raises(asyncpg.PostgresError, match="preferences locked"):
+            await task
+        assert await stored(db) == before
+    finally:
+        if db.admin.is_in_transaction():
+            await transaction.rollback()
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_review_snapshot_reader_survives_019_and_replay(db):
+    await migrate(db)
+    snapshot = await publish(db)
+    await save(db, snapshot)
+    await rpc(db.owner, "claim_generation_job", db.sid, False)
+    await db.admin.execute("UPDATE exam_sessions SET status='partial_generated' WHERE id=$1::uuid", db.sid)
+    query = "SELECT get_review_current_snapshot($1::uuid)"
+    before = json.loads(await db.owner.fetchval(query, db.sid))
+    assert before["session_id"] == db.sid
+    assert len(before["sources"]) == 2
+    assert len(before["versions"]) == 2
+    assert before["progress"]["missing_slots"] == 4
+    await migrate(db)
+    assert json.loads(await db.owner.fetchval(query, db.sid)) == before
 
 
 @pytest.mark.parametrize("state", ["draft", "blueprinted", "configured", "approved", "exported"])
@@ -318,4 +369,3 @@ async def test_update_ordering_preferences_acl_and_privileges(db):
         await role(db.owner, principal, str(uuid4()))
         with pytest.raises(asyncpg.PostgresError):
             await rpc(db.owner, "update_generation_ordering_preferences", db.sid, {"shuffle_questions": True, "shuffle_options": True})
-

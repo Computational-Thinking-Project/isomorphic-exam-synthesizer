@@ -2,7 +2,13 @@
 
 ## W4-MVP-01 / migration 019 (consolidated implementation, proposed)
 
-Consolidated forward-only migration 019 (`019_w4_source_readiness_config.sql`), following merged 002-017 (PR #52) and allocated 018 (PR #54).
+Consolidated forward-only migration 019 (`019_w4_source_readiness_config.sql`), following merged 002–018 (PR #52 lifecycle and PR #54 review snapshot).
+
+HTTP configuration remains a PR #30 integration dependency. At `66ad00c`, its
+router exposes `POST /api/sessions/{session_id}/config`; no `/configuration`
+route or alias is implemented here. Under `I-W4MVP01-BE2-01`, BE2/DB/FE2 still
+need to agree the public request schema, OFF/OFF defaults, neutral modes and
+server-derived receipt validation. This document does not change that router.
 
 `save_generation_config(uuid,int,jsonb,jsonb,jsonb)` retains its identity and
 response envelope. It locks the session first, requires owner authorization,
@@ -41,6 +47,11 @@ Endpoint: `PATCH /api/sessions/{session_id}/ordering-preferences` (alias: `PATCH
 - Parent-first transaction lock serializes against concurrent shuffle or finalize calls.
 - Permitted strictly when session status is `reviewed` and not yet finalized or approved.
 - Requires both boolean fields; extra keys or invalid types fail with 422. Locked state returns 423.
+- Returns 200 only for a complete RPC object with `success: true`, the requested
+  session ID, `status: "reviewed"`, and exactly two persisted boolean preferences
+  matching the request. Missing/malformed receipts return
+  `503 ERR_PREFERENCES_UPDATE_FAILED`; that error does not prove rollback.
+  Reload state before deciding whether to retry.
 
 ### Ingestion de-scheduling (ADR-0001)
 
@@ -48,7 +59,12 @@ Endpoint: `PATCH /api/sessions/{session_id}/ordering-preferences` (alias: `PATCH
 Canonical preparation is triggered exclusively upon explicit source confirmation via `confirm_source_flow`.
 Legacy `trigger_blueprint_pipeline` is retired to a safe no-op.
 
-## Historical015/016 behavior (superseded for new saves by018)
+## Historical 015/016 behavior (superseded for new saves by 019)
+
+The sections below record the historical W2 contract, including ON/ON defaults
+and client-selected modes. For new saves under 019, use the W4 rules above;
+historical claim/read behavior remains for existing jobs. Migration 018 adds
+the review snapshot reader and does not replace the configuration contract.
 
 PR #32 owns this SQL/session-detail contract. PR #30 owns Python preflight,
 HTTP error mapping, worker orchestration, AI/clone adapters and SSE.

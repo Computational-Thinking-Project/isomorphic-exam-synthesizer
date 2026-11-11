@@ -1,5 +1,6 @@
 """Unit tests for Exam Sessions CRUD and Clone API endpoints (TASK-104)."""
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1289,11 +1290,14 @@ def test_update_ordering_preferences_strict_bool_rejected(
         {"shuffle_questions": True},  # missing shuffle_options
         {"shuffle_options": False},  # missing shuffle_questions
         {},  # empty payload
+        [],  # root must be an object
+        None,  # JSON null root
         {"shuffle_questions": True, "shuffle_options": False, "extra_field": True},  # extra field
     ],
 )
+@pytest.mark.parametrize("route", ["ordering-preferences", "preferences"])
 def test_update_ordering_preferences_schema_violations(
-    client, mock_auth_user, test_user_id, auth_headers, invalid_payload
+    client, mock_auth_user, test_user_id, auth_headers, invalid_payload, route
 ):
     mock_db = MagicMock()
     with (
@@ -1301,12 +1305,49 @@ def test_update_ordering_preferences_schema_violations(
         patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
     ):
         res = client.patch(
-            "/api/sessions/session-1/ordering-preferences",
-            json=invalid_payload,
-            headers=auth_headers,
+            f"/api/sessions/session-1/{route}",
+            content=json.dumps(invalid_payload),
+            headers={**auth_headers, "Content-Type": "application/json"},
         )
         assert res.status_code == 422
         assert mock_db.rpc.call_count == 0
+
+
+@pytest.mark.parametrize("route", ["ordering-preferences", "preferences"])
+def test_update_ordering_preferences_unauthenticated(client, route):
+    with patch("app.api.dependencies.get_authenticated_client") as db_factory:
+        res = client.patch(
+            f"/api/sessions/session-1/{route}",
+            json={"shuffle_questions": False, "shuffle_options": False},
+        )
+    assert res.status_code == 401
+    db_factory.assert_not_called()
+
+
+@pytest.mark.parametrize("route", ["ordering-preferences", "preferences"])
+@pytest.mark.parametrize("rows,status", [([], 404), ([{"user_id": "foreign-owner"}], 403)])
+def test_update_ordering_preferences_ownership(
+    client, mock_auth_user, auth_headers, route, rows, status
+):
+    mock_db = MagicMock()
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value.data = rows
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        res = client.patch(
+            f"/api/sessions/session-1/{route}",
+            json={"shuffle_questions": False, "shuffle_options": False},
+            headers=auth_headers,
+        )
+    assert res.status_code == status
+    mock_db.rpc.assert_not_called()
+
+
+def test_update_ordering_preferences_openapi_alias_hidden(client):
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "patch" in paths["/api/sessions/{session_id}/ordering-preferences"]
+    assert "/api/sessions/{session_id}/preferences" not in paths
 
 
 @pytest.mark.parametrize(
@@ -1467,8 +1508,9 @@ def test_update_ordering_preferences_all_valid_combinations(
         },
     ],
 )
+@pytest.mark.parametrize("route", ["ordering-preferences", "preferences"])
 def test_update_ordering_preferences_fail_closed_on_bad_receipt(
-    client, mock_auth_user, test_user_id, auth_headers, bad_receipt
+    client, mock_auth_user, test_user_id, auth_headers, bad_receipt, route
 ):
     mock_db = MagicMock()
     mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
@@ -1480,7 +1522,7 @@ def test_update_ordering_preferences_fail_closed_on_bad_receipt(
         patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
     ):
         res = client.patch(
-            "/api/sessions/session-1/ordering-preferences",
+            f"/api/sessions/session-1/{route}",
             json={"shuffle_questions": True, "shuffle_options": False},
             headers=auth_headers,
         )
@@ -1518,4 +1560,3 @@ def test_update_ordering_preferences_db_exceptions(
     assert res.status_code == expected_status
     if expected_error_code:
         assert res.json()["error_code"] == expected_error_code
-

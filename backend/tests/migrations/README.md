@@ -2,7 +2,7 @@
 
 ### W4-MVP-01 baseline rehearsal (no Production access)
 
-S04 config regression module (applies pinned candidate017 then local018):
+W4 config regression module (applies merged 002–018, then local 019):
 
 ```sh
 PYTHONPATH=backend DOCKER_HOST=unix:///var/run/docker.sock DOCKER_CONTEXT=default \
@@ -12,23 +12,24 @@ RUN_POSTGRES_MIGRATION_TESTS=1 .venv/bin/python -m unittest discover \
 
 Set W4_PR30_CHECKOUT to an isolated archive of PR30 at b6b6422 to run the actual
 repository/adapter probe (otherwise that single probe is explicitly skipped).
-W4_BASELINE_015=1 uses the pinned pre018 schema (65c5362) and002–016 without017/018 to reproduce RED.
+W4_BASELINE_015=1 uses the pinned pre-W4 schema (65c5362), but is a historical
+probe, not evidence for the current 018→019 upgrade.
 The module uses real owner/foreign-owner SQL roles, persisted
-confirmation receipts and canonical publications on a full002–016 chain. It
+confirmation receipts and canonical publications on the full 002–018→019 chain. It
 compares whole-row state on denied writes. Malformed-policy/hash cases use
 test-admin corruption fixtures without disabling guards. They never target an
 external database. There is no xfail/expectedFailure or weakened assertion.
 Default opt-out skips are NOT acceptance evidence; see the S02/S03 report for
 the actual explicitly enabled results; the S04 report records RED→GREEN and
-fresh/populated upgrade evidence.018 is a local forward migration, not deployed.
+fresh/populated upgrade evidence at their recorded historical SHAs. Migration 019
+is a local forward migration; these reports do not prove deployment.
 
 `test_w4_baseline_chain.py` uses the existing `PostgresCase` container boundary:
 PostgreSQL 15, network `none`, no published ports/mounts or external DSN. Each
 case creates a fresh random test database; cleanup touches only that container.
-It tests `schema.sql` then every numbered file 002–016 (including the empty010),
-and separately the unmerged PR52 candidate017 at immutable commit598b959.
-That Git object must be available locally; the test never merges/copies017 into
-migration history. No018 is created.
+It tests `schema.sql` then every numbered file 002–018 (including the empty
+010), followed by 019 in the W4 upgrade/replay cases. It preserves PR54
+`get_review_current_snapshot(uuid)` while testing 019.
 
 ```sh
 DOCKER_HOST=unix:///var/run/docker.sock DOCKER_CONTEXT=default \
@@ -36,8 +37,8 @@ RUN_POSTGRES_MIGRATION_TESTS=1 .venv/bin/python -m unittest discover \
   -s backend/tests/migrations -p test_w4_baseline_chain.py -v
 ```
 
-Four cases cover fresh bootstrap and a synthetic populated five-table upgrade,
-each with/without017. The 22 synthetic rows use repository column definitions;
+Six cases cover fresh bootstrap, synthetic populated five-table upgrades,
+019 replay/permissions and historical ON/ON preference preservation. The 22 synthetic rows use repository column definitions;
 the test checks preservation of every original field and row count. This models
 reported Production table presence only, **not** unknown Production DDL, RLS or
 Auth/JWT/PostgREST. It is not a deployment/repair script or migration allocation

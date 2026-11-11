@@ -38,7 +38,7 @@ class W4SourceReadinessConfigTests(PostgresCase):
         baseline = os.getenv("W4_BASELINE_015") == "1"
         schema = subprocess.check_output(["git", "show", "65c536291b0ad23c39e3b7f0615098943117d6e3:backend/scripts/schema.sql"], cwd=ROOT, text=True) if baseline else (ROOT / "backend/scripts/schema.sql").read_text()
         self.sql(schema)
-        for number in range(2, 18):
+        for number in range(2, 19):
             paths = list((ROOT / "backend/migrations").glob(f"{number:03}_*.sql"))
             self.assertEqual(len(paths), 1)
             self.sql(paths[0].read_text())
