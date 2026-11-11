@@ -41,26 +41,8 @@ export default function Stage2ConfigCard({
 
   // Giá trị khởi tạo từ cấu hình đã lưu hoặc mặc định
   const defaultNumVersions = initialConfig?.n_versions ?? initialConfig?.num_versions ?? 2;
-  const availableModes = supportedModes.filter((m) => m.is_available !== false).map((m) => m.id);
-
-  // Phân biệt: nếu initialConfig có mảng active_variation_modes (kể cả rỗng []), giữ nguyên lựa chọn
-  // Nếu chưa có config (null/undefined), chọn tất cả các mode khả dụng
-  const hasSavedModes =
-    Array.isArray(initialConfig?.active_variation_modes) ||
-    Array.isArray(initialConfig?.variation_modes);
-
-  const rawConfiguredModes = Array.isArray(initialConfig?.active_variation_modes)
-    ? initialConfig.active_variation_modes
-    : Array.isArray(initialConfig?.variation_modes)
-    ? initialConfig.variation_modes
-    : null;
-
-  const defaultModes = hasSavedModes
-    ? rawConfiguredModes.filter((id) => availableModes.includes(id))
-    : availableModes;
 
   const [numVersions, setNumVersions] = useState(defaultNumVersions);
-  const [selectedModes, setSelectedModes] = useState(defaultModes);
   // Issue #45: Mặc định tắt (false) cho cả hai tùy chọn xáo trộn
   const [shuffleQuestions, setShuffleQuestions] = useState(
     initialConfig?.ordering_preferences?.shuffle_questions ?? false,
@@ -72,18 +54,6 @@ export default function Stage2ConfigCard({
 
   const totalQuestions = session?.source_questions?.length || session?.blueprint_summary?.total_questions || 0;
   const totalVariantsToGenerate = numVersions * totalQuestions;
-
-  function toggleMode(modeId, isAvailable) {
-    if (!isAvailable || isSubmitting) return;
-
-    setValidationError('');
-    setSelectedModes((prev) => {
-      if (prev.includes(modeId)) {
-        return prev.filter((id) => id !== modeId);
-      }
-      return [...prev, modeId];
-    });
-  }
 
   async function handleSubmit(event) {
     event.preventDefault();

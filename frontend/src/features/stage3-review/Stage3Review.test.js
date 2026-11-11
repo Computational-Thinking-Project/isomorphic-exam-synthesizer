@@ -13,7 +13,7 @@ const { default: Stage3ReviewPage } = await import('./Stage3ReviewPage.jsx');
 
 function renderStage3Page(
   sessionId,
-  { loadSession, retryGen, acceptQuestionFn, regenerateQuestionFn, fetchProgressFn } = {},
+  { loadSession, retryGen, acceptQuestionFn, regenerateQuestionFn } = {},
 ) {
   const container = document.createElement('div');
   const root = createRoot(container);
@@ -49,7 +49,6 @@ function renderStage3Page(
                   retryGen,
                   acceptQuestionFn,
                   regenerateQuestionFn,
-                  fetchProgressFn,
                 }),
               }),
               React.createElement(Route, {

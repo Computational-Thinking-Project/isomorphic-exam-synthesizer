@@ -22,7 +22,6 @@ import { fetchSessionDetail, retryGeneration } from '../../services/stage2Servic
 import {
   acceptQuestion,
   rejectAndRegenerateQuestion,
-  fetchReviewProgress,
 } from '../../services/stage3Service.js';
 
 /**
@@ -129,7 +128,6 @@ export default function Stage3ReviewPage({
   retryGen = retryGeneration,
   acceptQuestionFn = acceptQuestion,
   regenerateQuestionFn = rejectAndRegenerateQuestion,
-  fetchProgressFn = fetchReviewProgress,
 }) {
   const params = useParams();
   const sessionId = params.sessionId || params.id;
