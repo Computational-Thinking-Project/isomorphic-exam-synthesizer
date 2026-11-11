@@ -13,13 +13,15 @@ Endpoint này cung cấp snapshot hiện hành của quy trình Review (Stage 3)
 - Dựng ma trận đầy đủ $N \times M$ slots ($N$ phiên bản đề $\times M$ câu nguồn).
 - Đối với mỗi slot, chỉ trả về đúng **1 candidate hiện hành** (`is_current = true`), hoặc `candidate: null` nếu slot chưa có biến thể (missing slot).
 - Cung cấp nguồn gốc (`origin`) và nguồn báo cáo kiểm định toán học (`validation_source`, `validation_report`).
-- Tính toán tiến độ thẩm định (`progress`) và token xác định tính tươi mới (`freshness_token`) nguyên tử trong cùng một truy vấn CSDL.
+- Tính toán tiến độ thẩm định (`progress`) và token xác định tính tươi mới (`freshness_token`) nhất quán trong cùng một câu lệnh truy vấn CSDL (`STABLE` function snapshot dưới cơ chế snapshot của PostgreSQL read committed statement mà không dùng lock gây nghẽn).
 
 > [!IMPORTANT]
 > **Quy tắc bảo vệ dữ liệu:**
 > 1. Endpoint không sử dụng `service_role`. Người dùng chỉ đọc được phiên thi thuộc sở hữu của mình (`auth.uid() = session.user_id`).
 > 2. Các phiên thi của người khác hoặc không tồn tại sẽ bị ẩn (trả về `404 Not Found`) để tránh rò rỉ sự tồn tại của tài nguyên (RLS concealment).
 > 3. `read_only` là cờ gợi ý cho giao diện người dùng, không thay thế việc kiểm tra quyền ở các Write API.
+> 4. Hàm RPC `get_review_current_snapshot` được khai báo `STABLE` và thực hiện kiểm tra quyền sở hữu không khóa (`WHERE user_id = auth.uid()`), không tranh chấp khóa dòng `FOR SHARE`/`FOR UPDATE` với các writer đồng thời.
+> 5. HTTP response luôn kèm header `Cache-Control: no-store` để ngăn chặn cache trung gian/trình duyệt lưu lại dữ liệu nhạy cảm.
 
 ---
 
@@ -112,8 +114,9 @@ interface ReviewSnapshotCandidate {
    - Danh sách `versions` sắp xếp theo `version_index` ($1 \dots N$).
    - Danh sách `slots` trong mỗi version có đúng $M$ phần tử, thứ tự `source_question_id` khớp tuyệt đối với thứ tự trong `sources`.
    - F5 hoặc reload không làm thay đổi thứ tự hay mapping giữa nguồn và các candidate.
-2. **Current-Only Candidate:**
+2. **Current-Only Candidate & Chiếu Canonical Bất biến:**
    - Mỗi slot chỉ chứa tối đa 1 candidate có `is_current = true`. Tuyệt đối không lấy candidate lịch sử để lấp chỗ.
+   - Các trường `options`, `correct_key`, `solution_md` của candidate được chiếu trực tiếp từ các cột bất biến `canonical_options`, `canonical_correct_key`, `canonical_solution_md` của `version_questions`. Điều này đảm bảo tính ổn định và ngăn ngừa việc đọc nhầm các cột hiển thị (`options`, `correct_key`, `solution_md`) vốn có thể bị xáo trộn bởi shuffle hoặc bị reset khi tái sinh.
    - Nếu slot chưa có current row, `candidate = null`.
    - Nếu phát hiện nhiều hơn 1 candidate `is_current = true` cho cùng một slot `(version_id, source_question_id)`, hệ thống lập tức fail-closed với mã lỗi `503 Service Unavailable`.
 3. **Quy tắc Provenance (`origin`):**
@@ -121,6 +124,7 @@ interface ReviewSnapshotCandidate {
    - `reverted`: Khi `version_questions.is_reverted = TRUE`.
    - `original_clone`: Khi kết quả sinh từ Stage 2 ghi nhận `result_kind = 'ORIGINAL_CLONE'`.
    - `ai_generated`: Khi câu được sinh thành công qua mô hình sinh biến thể AI (`result_kind = 'AI_RESULT'`).
+   - `confirmed_source_fallback`: Giá trị enum được bảo lưu sẵn trong schema DTO/OpenAPI, hiện chưa phát sinh trong DB snapshot do Stage 2 chưa gắn marker fallback riêng biệt.
    - `unknown`: Khi không đủ chứng cứ xác định nguồn gốc tin cậy.
 4. **Quy tắc Validation Report:**
    - Ưu tiên đọc báo cáo từ `version_questions.validation_report` (áp dụng cho câu sinh lại hoặc chỉnh sửa trực tiếp).

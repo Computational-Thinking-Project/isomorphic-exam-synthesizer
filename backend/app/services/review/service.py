@@ -10,6 +10,7 @@ import weakref
 from typing import Any, Callable
 from uuid import UUID, uuid4
 
+from pydantic import ValidationError
 from supabase import Client
 
 from app.models.schemas import (
@@ -360,12 +361,18 @@ class ReviewService:
     async def get_current_snapshot(
         self, session_id: str, user_id: str | None = None
     ) -> ReviewSnapshotResponse:
-        """Fetch atomic snapshot of current review candidate matrix (W4-MVP-03)."""
+        """Fetch snapshot of current review candidate matrix (W4-MVP-03)."""
         resource_ids(session_id)
         raw_data = await self.repo.read_current_snapshot(session_id)
         try:
             return ReviewSnapshotResponse.model_validate(raw_data)
-        except Exception as exc:
+        except ValidationError as exc:
+            logger.error("Snapshot schema validation error for session %s: %s", session_id, exc)
             raise ReviewDomainException(
-                503, "ERR_SNAPSHOT_MALFORMED", f"Snapshot validation error: {exc}"
+                503, "ERR_SNAPSHOT_MALFORMED", "Snapshot data failed schema validation"
+            ) from exc
+        except Exception as exc:
+            logger.error("Unexpected error validating snapshot for session %s: %s", session_id, exc)
+            raise ReviewDomainException(
+                503, "ERR_SNAPSHOT_MALFORMED", "Snapshot data failed schema validation"
             ) from exc

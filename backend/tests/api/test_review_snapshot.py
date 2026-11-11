@@ -506,3 +506,83 @@ def test_exception_mapping_context_distinction():
     assert default_err.status_code == 422
     assert default_err.error_code == "ERR_INVALID_PAYLOAD"
 
+
+@pytest.mark.asyncio
+async def test_review_snapshot_service_malformed_validation_sanitized():
+    """Verify malformed RPC data raises sanitized 503 without leaking Pydantic internals (F05)."""
+    mock_repo = MagicMock()
+    # Malformed data: invalid candidate status and invalid options count
+    malformed_raw = {
+        "session_id": MOCK_SESSION_ID,
+        "session_status": "generated",
+        "read_only": False,
+        "confirmation_id": "90000000-0000-0000-0000-000000000001",
+        "job_snapshot_id": "a0000000-0000-0000-0000-000000000001",
+        "confirmed_source_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "freshness_token": "f" * 64,
+        "progress": {
+            "expected_slots": 1,
+            "current_slots": 1,
+            "approved_slots": 0,
+            "missing_slots": 0,
+            "ready": False,
+        },
+        "sources": [],
+        "versions": [
+            {
+                "version_index": 1,
+                "version_code": "101",
+                "version_id": "30000000-0000-0000-0000-000000000001",
+                "slots": [
+                    {
+                        "source_question_id": "20000000-0000-0000-0000-000000000001",
+                        "question_no": 1,
+                        "candidate": {
+                            "candidate_id": "40000000-0000-0000-0000-000000000001",
+                            "status": "INVALID_STATUS_VALUE",
+                            "content": "Secret internal query value",
+                            "options": ["A", "B"],  # Must be 4
+                            "correct_key": "A",
+                            "origin": "ai_generated",
+                            "validation_source": "unavailable",
+                            "updated_at": "2026-11-11T00:00:00Z",
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    mock_repo.read_current_snapshot = AsyncMock(return_value=malformed_raw)
+
+    service = ReviewService(db=MagicMock())
+    service.repo = mock_repo
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_current_snapshot(MOCK_SESSION_ID)
+
+    err = exc_info.value
+    assert err.status_code == 503
+    assert err.error_code == "ERR_SNAPSHOT_MALFORMED"
+    assert err.detail == "Snapshot data failed schema validation"
+    # Ensure internal exception string / payload data is NOT leaked into the public detail
+    assert "INVALID_STATUS_VALUE" not in err.detail
+    assert "Secret internal query value" not in err.detail
+    assert "pydantic" not in err.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_repository_read_current_snapshot_non_dict():
+    """Verify repository raises ERR_SNAPSHOT_FAILED when RPC returns non-dict."""
+    from app.services.review.repository import ReviewRepository
+
+    mock_db = MagicMock()
+    mock_rpc_builder = MagicMock()
+    mock_rpc_builder.execute.return_value = MagicMock(data="not-a-dict")
+    mock_db.rpc.return_value = mock_rpc_builder
+
+    repo = ReviewRepository(db=mock_db)
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await repo.read_current_snapshot(MOCK_SESSION_ID)
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.error_code == "ERR_INVALID_RPC_RESPONSE"

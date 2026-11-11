@@ -5,6 +5,7 @@ audit, invalidation and replay are SQL responsibilities; no table-write fallback
 or second operation ledger is implemented here.
 """
 
+import asyncio
 import logging
 import re
 from typing import Any, Dict, List, Optional, Union, cast
@@ -311,8 +312,10 @@ class ReviewRepository:
         return await self.load_question(session_id, receipt.question_id)
 
     async def read_current_snapshot(self, session_id: str) -> Dict[str, Any]:
-        """Read atomic review candidate snapshot via PostgreSQL RPC (W4-MVP-03)."""
-        data = self._rpc("get_review_current_snapshot", {"p_session_id": session_id})
+        """Read review candidate snapshot via PostgreSQL RPC (W4-MVP-03)."""
+        data = await asyncio.to_thread(
+            self._rpc, "get_review_current_snapshot", {"p_session_id": session_id}
+        )
         if not isinstance(data, dict):
             raise ReviewDomainException(
                 503, "ERR_SNAPSHOT_FAILED", "RPC snapshot returned non-object response"
