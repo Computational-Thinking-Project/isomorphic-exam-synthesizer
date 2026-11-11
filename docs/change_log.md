@@ -765,3 +765,41 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
   historical backfill or deployed Supabase claim. Existing F02/F07/F09/F10 remain
   reviewer verified; F11 stays in its original
   [thread](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/32#discussion_r4479665885).
+
+
+## DEC-207-003 — Generation lifecycle recovery and durable error persistence (Migration 017)
+
+- **Ngày / người phụ trách:** 07/11/2026 (cập nhật 10/11/2026 cho PR #52 HEAD 4403f3c), Duy / TASK-207, PR #52; consumer: Quỳnh / PR #30.
+- **Trạng thái:** Implemented trên PR #52; reviewer `nhatquynh1107` đã xác minh độc lập F01–F04 trên HEAD `4403f3c` (23 passed, 0 skipped trên PostgreSQL 17 Docker cô lập; 5 checks CI xanh). F05 (ADR documentation) author `claimed_fixed` tại HEAD mới, chờ reviewer xác minh lại; rollout ledger trên Supabase live và PR #30 worker HTTPS E2E tiếp tục ở trạng thái pending; chưa có formal GitHub Approve.
+- **Context / Ngữ cảnh:**
+  - `updated_at` không phù hợp để phát hiện stale job vì metadata update (tiêu đề, môn, khối lớp) hoặc thao tác ngoài luồng làm mới timestamp này mà không phản ánh tiến trình sinh đề thực tế.
+  - Sự cố tiến trình worker đột ngột dừng (crash, OOM, mất mạng) khiến generation job bị kẹt vô thời hạn ở trạng thái `running`.
+  - Thiếu cơ chế lưu bền vững mã lỗi thất bại (`generation_error_code`) qua các lần khởi động lại worker và tái kết nối SSE client.
+  - Cần cơ chế fencing chống xung đột giữa stale scanner và worker hợp lệ vừa hoàn thành (`finish`) hoặc job đã được retry với token mới.
+- **Decision / Quyết định:**
+  - Bổ sung migration 017 (`backend/migrations/017_generation_lifecycle_recovery.sql`) thêm hai cột độc lập trên `public.exam_sessions`:
+    - `generation_last_activity_at TIMESTAMPTZ NULL`: cập nhật nghiêm ngặt khi claim, reserve quota, persist result/clone và heartbeat.
+    - `generation_error_code TEXT NULL`: ràng buộc `CHECK (generation_error_code IS NULL OR generation_error_code ~ '^[A-Z0-9_]{3,64}$')`.
+  - Thiết lập ngưỡng stale timeout 720 giây (12 phút) tính theo đồng hồ database (`clock_timestamp()`).
+  - Cung cấp `list_stale_generation_jobs(p_cutoff_seconds, p_limit, p_after_activity_at, p_after_session_id)` sử dụng keyset pagination trên cặp `(generation_last_activity_at, id)` với index riêng `idx_exam_sessions_generation_stale`, chặn limit từ 1 đến 100.
+  - Cung cấp `fail_stale_generation_job_if_current(p_session_id, p_expected_job_token, p_cutoff_seconds)` với row-level lock (`SELECT ... FOR UPDATE`), kiểm tra tính hợp lệ của token và trạng thái trước khi chuyển sang `failed` và ghi nhận mã lỗi `ERR_GENERATION_INTERRUPTED`. Trả về `recovered: false` an toàn nếu token đã đổi hoặc job đã kết thúc.
+  - Đảm bảo tính đơn điệu của heartbeat (`heartbeat_generation_job`) bằng `GREATEST(generation_last_activity_at, clock_timestamp()) RETURNING ... INTO v_activity_at` dưới row lock để triệt tiêu race condition lùi mốc thời gian khi có transaction cạnh tranh lock (F02).
+  - Ràng buộc bắt buộc mã lỗi không được NULL tại ranh giới RPC `finish_generation_job_with_error` với SQLSTATE tiêu chuẩn `22023` cho các trạng thái kết thúc thất bại (`failed`, `partial_generated`) (F03).
+  - Cung cấp `load_generation_completed_results` trả kèm `generation_error_code` để worker PR #30 tái tạo terminal SSE event sau khi khởi động lại.
+  - Xóa `generation_error_code` về NULL khi `claim_generation_job` retry nhưng bảo toàn quota đã trừ và các question targets đã persist trước đó.
+  - Phân quyền theo nguyên tắc đặc quyền tối thiểu: thu hồi INSERT/UPDATE trực tiếp trên bảng `exam_sessions` từ `PUBLIC`, `anon`, `authenticated`; whitelist quyền UPDATE cột metadata `(title, subject, grade)` cho `authenticated`; bảo vệ cột worker bằng trigger chặn đứng cập nhật trực tiếp với SQLSTATE `42501`; giới hạn EXECUTE các RPC quản lý lifecycle cho `service_role`; ghim `search_path` cho các hàm SECURITY DEFINER.
+- **Alternatives / Lý do chọn giải pháp:**
+  - *Không dùng `updated_at`:* Tránh việc chỉnh sửa thông tin đề thi làm gia hạn sai lệch thời gian tính stale của tiến trình worker.
+  - *Không theo dõi timeout in-memory tại worker:* Worker có thể bị kill bất ngờ; trạng thái in-memory mất hoàn toàn khi container khởi động lại.
+  - *Dùng token fencing và khóa dòng (`FOR UPDATE`):* Ngăn chặn race condition giữa stale scanner chậm chạp và worker vừa hoàn thành nhiệm vụ hoặc job đã retry hợp lệ.
+  - *Giữ nguyên migration 005/015/016 và `finish_generation_job` cũ:* Đảm bảo tương thích ngược hoàn toàn cho các pipeline không dùng error code bổ sung.
+- **Tác động & Phạm vi:**
+  - Schema: `public.exam_sessions` bổ sung 2 cột và 1 index.
+  - RPCs: 5 RPC mới và cập nhật trong migration 017 (`list_stale_generation_jobs`, `fail_stale_generation_job_if_current`, `heartbeat_generation_job`, `finish_generation_job_with_error`, `load_generation_completed_results`).
+  - Integration: PR #52 cung cấp SQL boundary; PR #30 tiêu thụ cho stale scanner, durable error recovery và SSE terminal emission. PR #52 không chứa Python worker code hay UI code.
+- **Tài liệu & Liên kết liên quan:**
+  - SQL migration: `backend/migrations/017_generation_lifecycle_recovery.sql`
+  - Integration test suite: `backend/tests/migrations/test_generation_lifecycle_recovery.py`
+  - API Contract: `docs/api/generation-lifecycle-recovery.md`
+  - Task specification: `docs/tasks/TASK-207.md`
+  - PR liên quan: [PR #52](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/52), [PR #30](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30)
