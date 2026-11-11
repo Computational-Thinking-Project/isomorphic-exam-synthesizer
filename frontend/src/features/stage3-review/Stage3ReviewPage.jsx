@@ -1,20 +1,29 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   AlertCircle,
   AlertTriangle,
   ArrowLeft,
+  ArrowRight,
+  Check,
   CheckCircle,
   CheckCircle2,
   Download,
+  Eye,
   FileCheck,
   Info,
   Loader2,
   RefreshCw,
   Sparkles,
+  X,
 } from 'lucide-react';
 import MathRenderer from '../../components/MathRenderer.jsx';
 import { fetchSessionDetail, retryGeneration } from '../../services/stage2Service.js';
+import {
+  acceptQuestion,
+  rejectAndRegenerateQuestion,
+  fetchReviewProgress,
+} from '../../services/stage3Service.js';
 
 /**
  * Trích xuất an toàn chuỗi thông báo lỗi từ response HTTP
@@ -29,6 +38,22 @@ function extractErrorString(err, fallback = 'Đã xảy ra lỗi.') {
   if (typeof resData?.error === 'string') return resData.error;
   if (typeof err?.message === 'string') return err.message;
   return fallback;
+}
+
+/**
+ * Chuẩn hóa đối tượng options từ mảng hoặc dictionary sang format { A: ..., B: ..., C: ..., D: ... }
+ */
+function normalizeOptions(options) {
+  if (!options) return {};
+  if (Array.isArray(options)) {
+    const letters = ['A', 'B', 'C', 'D'];
+    const res = {};
+    options.forEach((opt, idx) => {
+      if (idx < 4) res[letters[idx]] = opt;
+    });
+    return res;
+  }
+  return options;
 }
 
 /**
@@ -102,6 +127,9 @@ function countTotalLoadedVariants(session) {
 export default function Stage3ReviewPage({
   loadSession = fetchSessionDetail,
   retryGen = retryGeneration,
+  acceptQuestionFn = acceptQuestion,
+  regenerateQuestionFn = rejectAndRegenerateQuestion,
+  fetchProgressFn = fetchReviewProgress,
 }) {
   const params = useParams();
   const sessionId = params.sessionId || params.id;
@@ -115,6 +143,12 @@ export default function Stage3ReviewPage({
   const [regeneratingQuestions, setRegeneratingQuestions] = useState({});
   const [isRetryingAll, setIsRetryingAll] = useState(false);
   const [actionMessage, setActionMessage] = useState(null);
+
+  // Trạng thái modal Kiểm tra đáp án (SolutionDialog)
+  const [selectedSolution, setSelectedSolution] = useState(null);
+  const [isRegeneratingSingle, setIsRegeneratingSingle] = useState(false);
+  const [isApprovingSingle, setIsApprovingSingle] = useState(false);
+  const [approvedVariantIds, setApprovedVariantIds] = useState(new Set());
 
   const loadOperationRef = useRef(0);
   const retryOperationRef = useRef(0);
@@ -147,6 +181,34 @@ export default function Stage3ReviewPage({
         return;
       }
       setSession(data);
+
+      // Thu thập các ID hoặc mã câu đã được duyệt trước đó
+      const initialApproved = new Set();
+      if (Array.isArray(data.version_questions)) {
+        data.version_questions.forEach((q) => {
+          if (q.status === 'approved') {
+            if (q.id) initialApproved.add(q.id);
+            const qVIdx = q.version_index ?? q.version_code;
+            const qNo = q.question_no ?? q.number;
+            if (qVIdx && qNo) initialApproved.add(`${qVIdx}-${qNo}`);
+          }
+        });
+      }
+      if (Array.isArray(data.exam_versions)) {
+        data.exam_versions.forEach((ver, idx) => {
+          const vIdx = ver.version_index ?? ver.index ?? idx + 1;
+          const qList = ver.questions || ver.version_questions || [];
+          qList.forEach((q) => {
+            if (q.status === 'approved') {
+              if (q.id) initialApproved.add(q.id);
+              const qNo = q.question_no ?? q.number;
+              if (qNo) initialApproved.add(`${vIdx}-${qNo}`);
+            }
+          });
+        });
+      }
+      setApprovedVariantIds(initialApproved);
+      setIsLoading(false);
     } catch (err) {
       if (
         !isMountedRef.current ||
@@ -155,141 +217,229 @@ export default function Stage3ReviewPage({
       ) {
         return;
       }
-      setError(extractErrorString(err, 'Không thể tải thông tin chi tiết đề thi.'));
-    } finally {
-      if (
-        isMountedRef.current &&
-        loadOperationRef.current === currentOp &&
-        activeSessionIdRef.current === targetSessionId
-      ) {
-        setIsLoading(false);
-      }
+      setError(extractErrorString(err, 'Không thể tải chi tiết phiên làm việc.'));
+      setIsLoading(false);
     }
   }, [sessionId, loadSession]);
 
   useEffect(() => {
     isMountedRef.current = true;
     activeSessionIdRef.current = sessionId;
-    loadOperationRef.current += 1;
-    retryOperationRef.current += 1;
-
-    // Hủy bỏ bất kỳ bộ hẹn giờ điều hướng nào đang chờ của phiên trước
     if (navigationTimerRef.current) {
       clearTimeout(navigationTimerRef.current);
       navigationTimerRef.current = null;
     }
-
-    // Reset sạch sẽ dữ liệu của phiên trước để tránh rò rỉ hoặc hiển thị nhầm khi đang tải phiên mới
-    setSession(null);
-    setError(null);
-    setActiveVersionTab(1);
-    setActionMessage(null);
-    setRegeneratingQuestions({});
-    setIsRetryingAll(false);
-
     loadData();
 
     return () => {
       isMountedRef.current = false;
-      loadOperationRef.current += 1;
-      retryOperationRef.current += 1;
       if (navigationTimerRef.current) {
         clearTimeout(navigationTimerRef.current);
         navigationTimerRef.current = null;
       }
     };
-  }, [sessionId, loadData]);
+  }, [loadData, sessionId]);
 
-  const numVersions =
-    session?.config?.n_versions ||
-    session?.config?.num_versions ||
-    session?.exam_versions?.length ||
-    2;
+  // Cập nhật variant trong session state
+  const updateVariantInSession = useCallback((updatedVariant, targetVIdx, targetQNo) => {
+    setSession((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      const qNoToMatch = targetQNo ?? updatedVariant.question_no ?? updatedVariant.number;
 
-  const totalSourceQuestions =
-    session?.source_questions?.length ||
-    session?.blueprint_summary?.total_questions ||
-    10;
+      if (Array.isArray(next.version_questions)) {
+        next.version_questions = next.version_questions.map((q) => {
+          const matchesId = q.id && updatedVariant.id && q.id === updatedVariant.id;
+          const qVIdx = q.version_index ?? q.version_code;
+          const matchesSlot = targetVIdx && qVIdx === targetVIdx && (q.question_no ?? q.number) === qNoToMatch;
+          return matchesId || matchesSlot ? { ...q, ...updatedVariant } : q;
+        });
+      }
 
-  const isPartial =
-    session?.status === 'partial_generated' ||
-    Boolean(session?.is_partial);
+      if (Array.isArray(next.exam_versions)) {
+        next.exam_versions = next.exam_versions.map((ver, idx) => {
+          const currentVIdx = ver.version_index ?? ver.index ?? idx + 1;
+          const questionsKey = ver.questions ? 'questions' : ver.version_questions ? 'version_questions' : 'questions';
+          const qList = ver[questionsKey] || [];
+          const updatedList = qList.map((q) => {
+            const matchesId = q.id && updatedVariant.id && q.id === updatedVariant.id;
+            const matchesSlot = targetVIdx && currentVIdx === targetVIdx && (q.question_no ?? q.number) === qNoToMatch;
+            return matchesId || matchesSlot ? { ...q, ...updatedVariant } : q;
+          });
+          return { ...ver, [questionsKey]: updatedList };
+        });
+      }
 
-  const loadedVariantsCount = countTotalLoadedVariants(session);
-  const hasLoadedAnyVariants = loadedVariantsCount > 0;
+      return next;
+    });
+  }, []);
 
-  // Hành động sinh bù cho câu bị thiếu
-  const handleRetryMissingQuestion = async (versionIndex, questionNo) => {
-    const key = `${versionIndex}-${questionNo}`;
-    const thisOp = ++retryOperationRef.current;
-    const targetSessionId = sessionId;
+  // Xử lý mở modal Kiểm tra đáp án
+  const handleOpenSolutionModal = useCallback((variant, qNo, versionIndex) => {
+    const originalQuestion = session?.source_questions?.find(
+      (sq) => (sq.question_no ?? sq.number) === qNo
+    );
+    setSelectedSolution({
+      variant: {
+        ...variant,
+        options: normalizeOptions(variant.options),
+      },
+      qNo,
+      versionIndex,
+      originalQuestion,
+    });
+  }, [session]);
 
-    setRegeneratingQuestions((prev) => ({ ...prev, [key]: true }));
+  const handleCloseSolutionModal = useCallback(() => {
+    if (isRegeneratingSingle || isApprovingSingle) return;
+    setSelectedSolution(null);
+  }, [isRegeneratingSingle, isApprovingSingle]);
+
+  // Xử lý Tạo lại câu hỏi trong SolutionDialog (Reject & Targeted Regeneration)
+  const handleRegenerateSingle = useCallback(async () => {
+    if (!selectedSolution?.variant || isRegeneratingSingle) return;
+    const { variant, qNo, versionIndex } = selectedSolution;
+    const targetQId = variant.id || variant.question_id || `var-${versionIndex}-${qNo}`;
+
+    setIsRegeneratingSingle(true);
     setActionMessage(null);
 
     try {
-      await retryGen(targetSessionId);
-      if (
-        !isMountedRef.current ||
-        retryOperationRef.current !== thisOp ||
-        activeSessionIdRef.current !== targetSessionId
-      ) {
-        return;
-      }
+      const res = await regenerateQuestionFn(sessionId, targetQId);
+      const newOptions = normalizeOptions(res.options || variant.options);
+      const updatedVariant = {
+        ...variant,
+        ...res,
+        id: res.question_id || variant.id,
+        status: res.status || 'pending_review',
+        content: res.content || res.stem_latex || variant.content,
+        options: newOptions,
+        correct_key: res.correct_key || variant.correct_key,
+        solution_md: res.solution_md || variant.solution_md,
+      };
+
+      // Cập nhật session và giữ nguyên modal mở với nội dung câu mới
+      updateVariantInSession(updatedVariant, versionIndex, qNo);
+      setSelectedSolution((prev) => ({
+        ...prev,
+        variant: updatedVariant,
+      }));
+
+      // Bỏ duyệt khỏi danh sách duyệt
+      setApprovedVariantIds((prev) => {
+        const next = new Set(prev);
+        if (variant.id) next.delete(variant.id);
+        if (updatedVariant.id) next.delete(updatedVariant.id);
+        next.delete(`${versionIndex}-${qNo}`);
+        return next;
+      });
+
       setActionMessage({
         type: 'success',
-        text: `Đã kích hoạt tiến trình sinh bù cho Câu ${questionNo} (Mã đề ${versionIndex}).`,
+        text: `Đã tạo lại câu ${qNo} (mã đề #${100 + versionIndex}). Kiểm tra đáp án và duyệt phiên bản mới.`,
+      });
+    } catch (err) {
+      setActionMessage({
+        type: 'error',
+        text: extractErrorString(err, 'Không thể tạo lại câu hỏi.'),
+      });
+    } finally {
+      setIsRegeneratingSingle(false);
+    }
+  }, [selectedSolution, isRegeneratingSingle, regenerateQuestionFn, sessionId, updateVariantInSession]);
+
+  // Xử lý Duyệt biến thể trong SolutionDialog
+  const handleApproveSingle = useCallback(async () => {
+    if (!selectedSolution?.variant || isApprovingSingle) return;
+    const { variant, qNo, versionIndex } = selectedSolution;
+    const targetQId = variant.id || variant.question_id || `var-${versionIndex}-${qNo}`;
+
+    setIsApprovingSingle(true);
+    setActionMessage(null);
+
+    try {
+      await acceptQuestionFn(sessionId, targetQId);
+      const updatedVariant = {
+        ...variant,
+        status: 'approved',
+      };
+
+      updateVariantInSession(updatedVariant, versionIndex, qNo);
+      setSelectedSolution((prev) => ({
+        ...prev,
+        variant: updatedVariant,
+      }));
+
+      setApprovedVariantIds((prev) => {
+        const next = new Set(prev);
+        if (variant.id) next.add(variant.id);
+        next.add(`${versionIndex}-${qNo}`);
+        return next;
+      });
+
+      setActionMessage({
+        type: 'success',
+        text: `Đã duyệt câu ${qNo} · Mã đề #${100 + versionIndex}.`,
+      });
+    } catch (err) {
+      setActionMessage({
+        type: 'error',
+        text: extractErrorString(err, 'Không thể duyệt câu hỏi.'),
+      });
+    } finally {
+      setIsApprovingSingle(false);
+    }
+  }, [selectedSolution, isApprovingSingle, acceptQuestionFn, sessionId, updateVariantInSession]);
+
+  // Xử lý sinh bù câu thiếu (retry partial generation)
+  const handleRetryMissingQuestion = async (versionIndex, questionNo) => {
+    const regKey = `${versionIndex}-${questionNo}`;
+    setRegeneratingQuestions((prev) => ({ ...prev, [regKey]: true }));
+    setActionMessage(null);
+
+    try {
+      await retryGen(sessionId);
+      setActionMessage({
+        type: 'success',
+        text: `Đã gửi yêu cầu sinh bù cho câu ${questionNo} (Mã đề #${100 + versionIndex}). Đang đồng bộ...`,
       });
       await loadData();
     } catch (err) {
-      if (
-        !isMountedRef.current ||
-        retryOperationRef.current !== thisOp ||
-        activeSessionIdRef.current !== targetSessionId
-      ) {
-        return;
-      }
-      const msg = extractErrorString(err, 'Không thể kích hoạt sinh bù cho câu hỏi này.');
-      setActionMessage({ type: 'error', text: msg });
+      setActionMessage({
+        type: 'error',
+        text: extractErrorString(err, 'Không thể gửi yêu cầu sinh bù câu này.'),
+      });
     } finally {
-      if (isMountedRef.current && retryOperationRef.current === thisOp) {
-        setRegeneratingQuestions((prev) => ({ ...prev, [key]: false }));
-      }
+      setRegeneratingQuestions((prev) => ({ ...prev, [regKey]: false }));
     }
   };
 
-  // Hành động "Sinh bù tất cả câu thiếu"
   const handleRetryAllMissing = async () => {
-    if (isRetryingAll) return;
-    const thisOp = ++retryOperationRef.current;
+    const currentOp = ++retryOperationRef.current;
     const targetSessionId = sessionId;
 
     setIsRetryingAll(true);
     setActionMessage(null);
 
-    // Hủy bỏ hẹn giờ chuyển trang cũ nếu đang chờ
-    if (navigationTimerRef.current) {
-      clearTimeout(navigationTimerRef.current);
-      navigationTimerRef.current = null;
-    }
-
     try {
       await retryGen(targetSessionId);
       if (
         !isMountedRef.current ||
-        retryOperationRef.current !== thisOp ||
+        retryOperationRef.current !== currentOp ||
         activeSessionIdRef.current !== targetSessionId
       ) {
         return;
       }
+
       setActionMessage({
         type: 'success',
-        text: 'Đã kích hoạt sinh bù các câu còn thiếu. Đang chuyển về màn hình tiến trình Stage 2...',
+        text: 'Đã kích hoạt sinh bù toàn bộ các câu hỏi còn thiếu. Đang chuyển hướng về tiến trình sinh đề...',
       });
+
       navigationTimerRef.current = setTimeout(() => {
         if (
           isMountedRef.current &&
-          retryOperationRef.current === thisOp &&
+          retryOperationRef.current === currentOp &&
           activeSessionIdRef.current === targetSessionId
         ) {
           navigate(`/session/${targetSessionId}/stage2`);
@@ -298,24 +448,68 @@ export default function Stage3ReviewPage({
     } catch (err) {
       if (
         !isMountedRef.current ||
-        retryOperationRef.current !== thisOp ||
+        retryOperationRef.current !== currentOp ||
         activeSessionIdRef.current !== targetSessionId
       ) {
         return;
       }
-      const msg = extractErrorString(err, 'Không thể kích hoạt sinh bù.');
-      setActionMessage({ type: 'error', text: msg });
-      setIsRetryingAll(false);
+      setActionMessage({
+        type: 'error',
+        text: extractErrorString(err, 'Không thể kích hoạt sinh bù toàn bộ.'),
+      });
+    } finally {
+      if (isMountedRef.current && retryOperationRef.current === currentOp) {
+        setIsRetryingAll(false);
+      }
     }
   };
 
+  const numVersions = session?.config?.n_versions || session?.exam_versions?.length || 1;
+  const totalSourceQuestions = session?.source_questions?.length || 0;
+  const totalLoadedVariants = countTotalLoadedVariants(session);
+  const isPartial = session?.status === 'partial_generated';
+  const hasLoadedAnyVariants = totalLoadedVariants > 0;
+  const totalExpectedSlots = numVersions * totalSourceQuestions;
+
+  // Tính số câu đã duyệt
+  const approvedCount = useMemo(() => {
+    let count = 0;
+    for (let vIdx = 1; vIdx <= numVersions; vIdx++) {
+      for (let qNo = 1; qNo <= totalSourceQuestions; qNo++) {
+        const v = findVariantInSession(session, vIdx, qNo);
+        const slotKey = `${vIdx}-${qNo}`;
+        if (
+          v &&
+          (v.status === 'approved' ||
+            (v.id && approvedVariantIds.has(v.id)) ||
+            approvedVariantIds.has(slotKey))
+        ) {
+          count++;
+        }
+      }
+    }
+    return count;
+  }, [session, numVersions, totalSourceQuestions, approvedVariantIds]);
+
+  const isFinalizeDisabled =
+    totalExpectedSlots === 0 || approvedCount < totalExpectedSlots || isPartial;
+
+  const isSelectedVariantApproved = useMemo(() => {
+    if (!selectedSolution?.variant) return false;
+    const { variant, versionIndex, qNo } = selectedSolution;
+    const slotKey = `${versionIndex}-${qNo}`;
+    return (
+      variant.status === 'approved' ||
+      (variant.id && approvedVariantIds.has(variant.id)) ||
+      approvedVariantIds.has(slotKey)
+    );
+  }, [selectedSolution, approvedVariantIds]);
+
   if (isLoading) {
     return (
-      <div className="flex min-h-[60vh] flex-col items-center justify-center p-6 text-center">
-        <Loader2 className="h-10 w-10 animate-spin text-sky-400" />
-        <p className="mt-4 text-sm font-medium text-slate-300">
-          Đang tải dữ liệu các mã đề thi đẳng cấu...
-        </p>
+      <div className="flex min-h-[400px] flex-col items-center justify-center gap-3 p-8">
+        <Loader2 className="h-8 w-8 animate-spin text-sky-400" />
+        <p className="text-xs text-slate-400">Đang tải chi tiết đề thi và các câu hỏi biến thể...</p>
       </div>
     );
   }
@@ -328,25 +522,35 @@ export default function Stage3ReviewPage({
           className="rounded-2xl border border-rose-500/40 bg-rose-950/40 p-6 text-center shadow-xl"
         >
           <AlertCircle className="mx-auto h-10 w-10 text-rose-400" />
-          <h2 className="mt-3 text-lg font-bold text-white">Lỗi tải dữ liệu</h2>
+          <h2 className="mt-3 text-lg font-bold text-white">Không thể tải đề thi</h2>
           <p className="mt-1 text-sm text-rose-200">{error}</p>
-          <button
-            type="button"
-            onClick={loadData}
-            className="mt-6 inline-flex items-center gap-2 rounded-xl bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Thử lại
-          </button>
+          <div className="mt-6 flex justify-center gap-3">
+            <button
+              type="button"
+              onClick={loadData}
+              className="inline-flex items-center gap-2 rounded-xl bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Thử lại
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/dashboard')}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Về Dashboard
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 px-4 py-8 sm:px-6">
-      {/* Nút quay lại và tiêu đề trang */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
+    <div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6 lg:p-8">
+      {/* Header điều hướng & tóm tắt */}
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-5">
         <div>
           <button
             type="button"
@@ -366,7 +570,7 @@ export default function Stage3ReviewPage({
           </p>
         </div>
 
-        {/* Nút xuất bản / phê duyệt */}
+        {/* Nút xuất bản / phê duyệt header */}
         <div className="flex items-center gap-2">
           {isPartial ? (
             <div className="flex items-center gap-2">
@@ -444,7 +648,7 @@ export default function Stage3ReviewPage({
         </div>
       )}
 
-      {/* Thông báo khi backend chưa nạp dữ liệu chi tiết câu hỏi (tránh suy đoán võ đoán là chưa sinh) */}
+      {/* Thông báo khi backend chưa nạp dữ liệu chi tiết câu hỏi */}
       {!hasLoadedAnyVariants && (
         <div className="rounded-2xl border border-slate-700 bg-slate-900/80 p-8 text-center text-slate-300">
           <Info className="mx-auto h-8 w-8 text-sky-400" />
@@ -489,7 +693,6 @@ export default function Stage3ReviewPage({
           const isRegenerating = regeneratingQuestions[regKey];
 
           if (isMissing) {
-            // Khi cả phiên chưa nạp được bất kỳ variant nào từ API, giữ trạng thái chờ tải (không kết luận là câu bị thiếu)
             if (!hasLoadedAnyVariants) {
               return null;
             }
@@ -533,16 +736,29 @@ export default function Stage3ReviewPage({
           }
 
           // Hiển thị câu hỏi đã hoàn tất
-          const options = variant.options || {};
+          const options = normalizeOptions(variant.options);
           const correctKey = variant.correct_key || variant.answer;
+          const slotKey = `${activeVersionTab}-${qNo}`;
+          const isApproved =
+            variant.status === 'approved' ||
+            (variant.id && approvedVariantIds.has(variant.id)) ||
+            approvedVariantIds.has(slotKey);
+
+          const isFallback = Boolean(
+            variant.is_fallback ||
+            variant.attempts >= 4 ||
+            variant.source_fallback ||
+            variant.warning_flag === 'fallback'
+          );
+
           const hasWarning = Boolean(
             variant.has_warning ||
             variant.status === 'warning' ||
             variant.status === 'needs_review' ||
             variant.warning_message ||
-            (variant.validation_report &&
-              variant.validation_report.is_valid === false),
+            (variant.validation_report && variant.validation_report.is_valid === false)
           );
+
           const warningMsg =
             variant.warning_message ||
             variant.validation_report?.warning ||
@@ -553,13 +769,15 @@ export default function Stage3ReviewPage({
             <div
               key={qNo}
               className={`rounded-2xl border p-5 shadow-lg transition-all ${
-                hasWarning
+                isApproved
+                  ? 'border-emerald-600/40 bg-slate-900/90'
+                  : hasWarning
                   ? 'border-amber-500/50 bg-slate-900/90'
                   : 'border-slate-700 bg-slate-900/90'
               }`}
             >
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
-                <div className="flex items-center gap-2.5">
+                <div className="flex flex-wrap items-center gap-2.5">
                   <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-sky-950/80 text-xs font-bold text-sky-300 border border-sky-800/40">
                     {qNo}
                   </span>
@@ -567,13 +785,26 @@ export default function Stage3ReviewPage({
                     Câu {qNo} (Mã đề #{100 + activeVersionTab})
                   </span>
 
-                  {/* Badge phản ánh đúng chất lượng thẩm định: Đạt chuẩn vs Có cảnh báo */}
-                  {hasWarning ? (
+                  {/* Badge trạng thái duyệt */}
+                  {isApproved ? (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-950/40 px-2.5 py-0.5 text-[11px] font-medium text-emerald-300">
+                      <CheckCircle className="h-3 w-3" />
+                      Đã duyệt
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-800/60 px-2.5 py-0.5 text-[11px] font-medium text-slate-300">
+                      Chưa duyệt
+                    </span>
+                  )}
+
+                  {/* Badge phản ánh chất lượng thẩm định nếu chưa duyệt */}
+                  {!isApproved && hasWarning && (
                     <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-950/40 px-2.5 py-0.5 text-[11px] font-medium text-amber-300">
                       <AlertTriangle className="h-3 w-3" />
                       Cần thẩm định (Có cảnh báo)
                     </span>
-                  ) : (
+                  )}
+                  {!isApproved && !hasWarning && (
                     <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-950/40 px-2.5 py-0.5 text-[11px] font-medium text-emerald-300">
                       <CheckCircle className="h-3 w-3" />
                       Đạt chuẩn
@@ -581,20 +812,30 @@ export default function Stage3ReviewPage({
                   )}
                 </div>
 
-                {/* Nút thao tác câu đã sinh: Khóa rõ ràng khi chưa có endpoint đổi câu đơn lẻ */}
+                {/* Nút Kiểm tra đáp án (Mở modal SolutionDialog) */}
                 <button
                   type="button"
-                  disabled
-                  title="Tính năng đổi biến thể cho câu đã đạt chuẩn sẽ sẵn sàng khi Stage 3 tích hợp đầy đủ đầu nối backend."
-                  className="inline-flex cursor-not-allowed items-center gap-1 rounded-lg border border-slate-800 bg-slate-800/40 px-2.5 py-1 text-xs font-medium text-slate-500 opacity-60"
+                  data-review-inspect={true}
+                  onClick={() => handleOpenSolutionModal(variant, qNo, activeVersionTab)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-sky-600 bg-sky-600/20 px-3 py-1.5 text-xs font-semibold text-sky-200 hover:bg-sky-600 hover:text-white transition-all shadow-sm"
                 >
-                  <RefreshCw className="h-3 w-3" />
-                  Đổi biến thể (Chờ Stage 3)
+                  <Eye className="h-3.5 w-3.5" />
+                  Kiểm tra đáp án
                 </button>
               </div>
 
-              {/* Thông báo chi tiết cảnh báo nếu có */}
-              {hasWarning && (
+              {/* Badge Fallback: Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc */}
+              {isFallback && (
+                <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-950/30 p-2.5 text-xs text-amber-300 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+                  <span className="font-semibold">
+                    Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc
+                  </span>
+                </div>
+              )}
+
+              {/* Thông báo chi tiết cảnh báo nếu có và không phải fallback */}
+              {!isFallback && hasWarning && (
                 <div className="mt-3 rounded-xl border border-amber-500/30 bg-amber-950/20 p-2.5 text-xs text-amber-200/90 flex items-start gap-2">
                   <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400 mt-0.5" />
                   <span>{warningMsg}</span>
@@ -656,6 +897,237 @@ export default function Stage3ReviewPage({
           );
         })}
       </div>
+
+      {/* Thanh trạng thái dưới cùng: Tiến độ duyệt & Nút Rà bộ đề (PREVIEW.html layout) */}
+      <div className="sticky bottom-0 z-40 mt-8 rounded-2xl border border-slate-800 bg-slate-900/95 p-4 shadow-2xl backdrop-blur-md">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <span
+              className={`flex h-2.5 w-2.5 rounded-full ${
+                approvedCount === totalExpectedSlots && totalExpectedSlots > 0
+                  ? 'bg-emerald-400'
+                  : 'bg-amber-400'
+              }`}
+            />
+            <span className="text-sm font-medium text-slate-300">
+              Đã duyệt{' '}
+              <strong className="font-bold text-white">
+                {approvedCount}/{totalExpectedSlots}
+              </strong>{' '}
+              câu
+            </span>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              data-review-finalize={true}
+              disabled={isFinalizeDisabled}
+              onClick={() => navigate(`/session/${sessionId}/stage3/preview`)}
+              className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-6 py-2.5 text-xs font-semibold text-white shadow-lg shadow-sky-600/30 hover:bg-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:cursor-not-allowed disabled:opacity-50 transition-all"
+            >
+              Rà bộ đề
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Modal Kiểm tra đáp án (SolutionDialog) */}
+      {selectedSolution && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="solution-dialog-title"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6"
+        >
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm transition-opacity"
+            onClick={isRegeneratingSingle || isApprovingSingle ? undefined : handleCloseSolutionModal}
+          />
+
+          {/* Dialog Container */}
+          <div className="solution-dialog relative z-10 flex max-h-[90vh] w-full max-w-5xl flex-col rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
+            {/* Dialog Header */}
+            <div className="flex items-center justify-between border-b border-slate-800 px-6 py-4">
+              <div>
+                <h2
+                  id="solution-dialog-title"
+                  className="text-lg font-bold text-white"
+                >
+                  Kiểm tra đáp án · Câu {selectedSolution.qNo} · Mã {100 + selectedSolution.versionIndex}
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Đối chiếu biến thể sinh bởi AI với câu hỏi gốc và lời giải chi tiết.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseSolutionModal}
+                disabled={isRegeneratingSingle || isApprovingSingle}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white disabled:opacity-50"
+                aria-label="Đóng"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Dialog Body (2 Columns) */}
+            <div className="dialog-copy flex-1 overflow-y-auto p-6 space-y-4">
+              {/* Fallback warning trong modal nếu có */}
+              {(selectedSolution.variant.is_fallback ||
+                selectedSolution.variant.attempts >= 4 ||
+                selectedSolution.variant.source_fallback ||
+                selectedSolution.variant.warning_flag === 'fallback') && (
+                <div className="rounded-xl border border-amber-500/40 bg-amber-950/40 p-3 text-xs font-semibold text-amber-300 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+                  <span>Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc</span>
+                </div>
+              )}
+
+              <div className="solution-columns grid grid-cols-1 gap-6 lg:grid-cols-2">
+                {/* Column 1: Biến thể đang xem */}
+                <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                    <h3 className="text-sm font-bold text-slate-200">
+                      Biến thể · Câu {selectedSolution.qNo} · Mã {100 + selectedSolution.versionIndex}
+                    </h3>
+                    <span
+                      className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                        isSelectedVariantApproved
+                          ? 'bg-emerald-950 text-emerald-300 border border-emerald-800'
+                          : 'bg-slate-800 text-slate-300'
+                      }`}
+                    >
+                      {isSelectedVariantApproved ? 'Đã duyệt' : 'Chưa duyệt'}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 text-sm text-slate-100">
+                    <MathRenderer
+                      content={
+                        selectedSolution.variant.content ||
+                        selectedSolution.variant.raw_content ||
+                        ''
+                      }
+                    />
+                  </div>
+
+                  {/* Danh sách options */}
+                  <div className="mt-4 space-y-2">
+                    {Object.entries(selectedSolution.variant.options || {}).map(([key, optVal]) => {
+                      const isCorrect =
+                        String(key).toUpperCase() ===
+                        String(selectedSolution.variant.correct_key || selectedSolution.variant.answer).toUpperCase();
+                      return (
+                        <div
+                          key={key}
+                          className={`flex items-start gap-2.5 rounded-xl border p-2.5 text-xs ${
+                            isCorrect
+                              ? 'border-emerald-500/60 bg-emerald-950/40 text-emerald-100 font-medium'
+                              : 'border-slate-800 bg-slate-900/50 text-slate-300'
+                          }`}
+                        >
+                          <span
+                            className={`font-bold ${
+                              isCorrect ? 'text-emerald-400' : 'text-slate-400'
+                            }`}
+                          >
+                            {key}.
+                          </span>
+                          <div className="flex-1">
+                            <MathRenderer content={String(optVal)} inline />
+                          </div>
+                          {isCorrect && (
+                            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                {/* Column 2: Đáp án và lời giải chi tiết */}
+                <section className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                    <h3 className="text-sm font-bold text-sky-300">
+                      Đáp án và lời giải
+                    </h3>
+                    <span className="text-xs font-semibold text-emerald-400">
+                      Đáp án đúng: {selectedSolution.variant.correct_key || selectedSolution.variant.answer}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 text-xs leading-relaxed text-slate-300">
+                    {selectedSolution.variant.solution_md ? (
+                      <MathRenderer content={selectedSolution.variant.solution_md} />
+                    ) : (
+                      <p className="italic text-slate-500">
+                        Chưa có lời giải chi tiết bằng Markdown cho câu hỏi này.
+                      </p>
+                    )}
+                  </div>
+                </section>
+              </div>
+            </div>
+
+            {/* Dialog Footer Actions: STRICTLY 2 Buttons (Tạo lại & Duyệt biến thể) */}
+            <div className="review-popup-actions flex items-center justify-end gap-3 border-t border-slate-800 bg-slate-950/80 px-6 py-4">
+              {/* Nút 1: Tạo lại (data-review-regenerate) */}
+              <button
+                type="button"
+                data-review-regenerate={true}
+                disabled={isRegeneratingSingle || isApprovingSingle}
+                onClick={handleRegenerateSingle}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 hover:text-white disabled:opacity-50"
+              >
+                {isRegeneratingSingle ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Đang tạo lại…
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Tạo lại
+                  </>
+                )}
+              </button>
+
+              {/* Nút 2: Duyệt biến thể (data-review-approve) */}
+              <button
+                type="button"
+                data-review-approve={true}
+                disabled={isRegeneratingSingle || isApprovingSingle || isSelectedVariantApproved}
+                onClick={handleApproveSingle}
+                className={`inline-flex items-center gap-1.5 rounded-xl px-5 py-2.5 text-xs font-semibold shadow-lg transition-all ${
+                  isSelectedVariantApproved
+                    ? 'cursor-not-allowed bg-emerald-700/60 text-emerald-200 opacity-80'
+                    : 'bg-emerald-600 text-white shadow-emerald-600/30 hover:bg-emerald-500 disabled:opacity-50'
+                }`}
+              >
+                {isApprovingSingle ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Đang duyệt…
+                  </>
+                ) : isSelectedVariantApproved ? (
+                  <>
+                    <Check className="h-3.5 w-3.5" />
+                    Đã duyệt
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="h-3.5 w-3.5" />
+                    Duyệt biến thể
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

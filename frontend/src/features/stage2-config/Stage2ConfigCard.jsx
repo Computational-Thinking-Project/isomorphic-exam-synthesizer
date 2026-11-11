@@ -61,8 +61,9 @@ export default function Stage2ConfigCard({
 
   const [numVersions, setNumVersions] = useState(defaultNumVersions);
   const [selectedModes, setSelectedModes] = useState(defaultModes);
+  // Issue #45: Mặc định tắt (false) cho cả hai tùy chọn xáo trộn
   const [shuffleQuestions, setShuffleQuestions] = useState(
-    initialConfig?.ordering_preferences?.shuffle_questions ?? true,
+    initialConfig?.ordering_preferences?.shuffle_questions ?? false,
   );
   const [shuffleOptions, setShuffleOptions] = useState(
     initialConfig?.ordering_preferences?.shuffle_options ?? false,
@@ -98,14 +99,11 @@ export default function Stage2ConfigCard({
       return;
     }
 
-    // F01: Chuẩn hóa chế độ không biến thể: loại bỏ 'NONE' để luôn gửi [] theo contract
-    const activeModes = selectedModes.filter(
-      (m) => String(m).trim().toUpperCase() !== 'NONE',
-    );
-
+    // Issue #45: Chuẩn hóa payload không gửi user-selected variation modes
+    // Backend tự suy ra từ canonical Blueprint khi nhận active_variation_modes: []
     const payload = {
       n_versions: Number(numVersions),
-      active_variation_modes: activeModes,
+      active_variation_modes: [],
       ordering_preferences: {
         shuffle_questions: Boolean(shuffleQuestions),
         shuffle_options: Boolean(shuffleOptions),
@@ -199,18 +197,18 @@ export default function Stage2ConfigCard({
           </div>
         </div>
 
-        {/* Phần 2: Chế độ biến thể (Variation Modes) */}
+        {/* Phần 2: Chế độ biến thể (Tự động theo Issue #45) */}
         <div>
           <div className="flex items-center justify-between">
             <label className="block text-base font-semibold text-white">
               2. Chế độ biến thể bài toán (Variation Modes)
             </label>
-            <span className="text-xs text-slate-400">
-              Đọc từ Blueprint tự động
+            <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/20 px-2.5 py-0.5 text-xs font-medium text-sky-300">
+              <Sparkles className="h-3 w-3" /> Tự động tối ưu từ Blueprint
             </span>
           </div>
           <p className="mt-1 text-sm text-slate-400">
-            Chọn các phương pháp sinh biến thể câu hỏi tương đương. Các chế độ không khả dụng đã được hệ thống tự động lọc.
+            Hệ thống tự động phân tích và áp dụng các chế độ biến thể toán học tối ưu từ Blueprint đề nguồn đã xác nhận (theo quy ước Issue #45).
           </p>
 
           <div className="mt-4 space-y-3">
@@ -234,68 +232,57 @@ export default function Stage2ConfigCard({
                 </div>
               </div>
             ) : (
-              supportedModes.map((mode) => {
-                const isSelected = selectedModes.includes(mode.id);
-                const isAvailable = mode.is_available !== false;
-
-                return (
-                  <div
-                    key={mode.id}
-                    onClick={(e) => {
-                      if (e.target?.tagName?.toLowerCase() === 'input') return;
-                      toggleMode(mode.id, isAvailable);
-                    }}
-                    className={`relative flex items-start gap-4 rounded-xl border p-4 transition-all ${
-                      !isAvailable
-                        ? 'cursor-not-allowed border-slate-800 bg-slate-900/40 opacity-55'
-                        : isSelected
-                        ? 'cursor-pointer border-sky-500/60 bg-sky-950/25 ring-1 ring-sky-500/30'
-                        : 'cursor-pointer border-slate-700 bg-slate-800/40 hover:border-slate-600 hover:bg-slate-800/70'
-                    }`}
-                  >
-                    <div className="pt-0.5">
-                      <input
-                        type="checkbox"
-                        id={`mode-${mode.id}`}
-                        checked={isSelected && isAvailable}
-                        disabled={!isAvailable || isSubmitting}
-                        onChange={() => toggleMode(mode.id, isAvailable)}
-                        className="h-4 w-4 rounded border-slate-600 bg-slate-700 text-sky-500 focus:ring-sky-500 focus:ring-offset-slate-900 disabled:opacity-40"
-                      />
-                    </div>
-
-                    <div className="flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span
-                          className={`text-sm font-semibold select-none ${
-                            isAvailable ? 'text-white' : 'text-slate-400'
-                          }`}
-                        >
-                          {mode.label}
-                        </span>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {supportedModes.map((mode) => {
+                  const isAvailable = mode.is_available !== false;
+                  return (
+                    <div
+                      key={mode.id}
+                      id={`mode-badge-${mode.id}`}
+                      className={`flex items-start gap-3 rounded-xl border p-4 text-left transition-colors ${
+                        isAvailable
+                          ? 'border-slate-700 bg-slate-800/40 text-slate-200'
+                          : 'border-slate-800/60 bg-slate-900/30 text-slate-500'
+                      }`}
+                    >
+                      <div className="mt-0.5">
                         {isAvailable ? (
-                          <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] font-medium text-slate-300">
-                            Hỗ trợ {mode.question_count}/{totalQuestions} câu
-                          </span>
+                          <CheckCircle2 className="h-4 w-4 text-emerald-400" />
                         ) : (
-                          <span className="rounded bg-rose-950/40 px-2 py-0.5 text-[11px] font-medium text-rose-300">
-                            Không khả dụng
-                          </span>
+                          <AlertCircle className="h-4 w-4 text-amber-500/60" />
                         )}
                       </div>
-                      <p className="mt-1 text-xs text-slate-400">
-                        {mode.description}
-                      </p>
-                      {!isAvailable && mode.unavailable_reason && (
-                        <p className="mt-1.5 flex items-center gap-1 text-xs text-amber-400/90">
-                          <HelpCircle className="h-3.5 w-3.5" />
-                          {mode.unavailable_reason}
-                        </p>
-                      )}
+                      <div className="flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`text-sm font-semibold select-none ${isAvailable ? 'text-white' : 'text-slate-400'}`}>
+                            {mode.label || mode.id}
+                          </span>
+                          {isAvailable ? (
+                            <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] font-medium text-slate-300">
+                              Hỗ trợ {mode.question_count || totalQuestions}/{totalQuestions} câu
+                            </span>
+                          ) : (
+                            <span className="rounded bg-rose-950/40 px-2 py-0.5 text-[11px] font-medium text-rose-300">
+                              Không khả dụng
+                            </span>
+                          )}
+                        </div>
+                        {mode.description && (
+                          <p className="mt-1 text-xs text-slate-400">
+                            {mode.description}
+                          </p>
+                        )}
+                        {!isAvailable && mode.unavailable_reason && (
+                          <p className="mt-1.5 flex items-center gap-1 text-xs text-amber-400/90">
+                            <HelpCircle className="h-3.5 w-3.5" />
+                            {mode.unavailable_reason}
+                          </p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                );
-              })
+                  );
+                })}
+              </div>
             )}
           </div>
         </div>
@@ -376,17 +363,10 @@ export default function Stage2ConfigCard({
                   <Layers className="h-3.5 w-3.5 text-sky-400" />
                   Tổng cộng: <strong className="text-white">{totalVariantsToGenerate}</strong> câu hỏi biến thể
                 </span>
-                {selectedModes.length > 0 ? (
-                  <span className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-slate-200">
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-                    {selectedModes.length} chế độ biến thể được kích hoạt
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-slate-200">
-                    <HelpCircle className="h-3.5 w-3.5 text-slate-400" />
-                    Không chọn biến thể (giữ nguyên câu hỏi gốc)
-                  </span>
-                )}
+                <span className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-slate-200">
+                  <Sparkles className="h-3.5 w-3.5 text-sky-400" />
+                  Tự động tối ưu biến thể từ Blueprint
+                </span>
                 {shuffleQuestions && (
                   <span className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-slate-200">
                     <Shuffle className="h-3.5 w-3.5 text-amber-400" />

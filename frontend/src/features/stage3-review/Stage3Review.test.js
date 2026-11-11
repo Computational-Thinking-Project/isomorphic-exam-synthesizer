@@ -11,7 +11,10 @@ ensureDomEnvironment();
 register('../../test-loader.mjs', import.meta.url);
 const { default: Stage3ReviewPage } = await import('./Stage3ReviewPage.jsx');
 
-function renderStage3Page(sessionId, { loadSession, retryGen } = {}) {
+function renderStage3Page(
+  sessionId,
+  { loadSession, retryGen, acceptQuestionFn, regenerateQuestionFn, fetchProgressFn } = {},
+) {
   const container = document.createElement('div');
   const root = createRoot(container);
   let navigateFn = null;
@@ -44,11 +47,18 @@ function renderStage3Page(sessionId, { loadSession, retryGen } = {}) {
                 element: React.createElement(Stage3ReviewPage, {
                   loadSession,
                   retryGen,
+                  acceptQuestionFn,
+                  regenerateQuestionFn,
+                  fetchProgressFn,
                 }),
               }),
               React.createElement(Route, {
                 path: '/session/:sessionId/stage2',
                 element: React.createElement('div', null, 'Trang Stage 2 Đã Chuyển Hướng'),
+              }),
+              React.createElement(Route, {
+                path: '/session/:sessionId/stage3/preview',
+                element: React.createElement('div', null, 'Trang Stage 3 Preview Rà Bộ Đề'),
               }),
             ),
           ),
@@ -568,6 +578,327 @@ test('Stage3ReviewPage: retry thông thường ở A không đổi phiên sẽ t
     harness.getLocation(),
     '/session/session-normal-retry/stage2',
     'Phải tự động điều hướng về Stage 2 khi người dùng ở lại phiên',
+  );
+
+  await harness.unmount();
+});
+
+test('Stage3ReviewPage: Bấm "Kiểm tra đáp án" mở SolutionDialog hiển thị 2 cột, đúng key, lời giải KaTeX và đúng 2 nút', async () => {
+  const sampleVariant = {
+    id: 'var-q1-v1',
+    question_no: 1,
+    content: 'Tính tích phân $\\int_0^2 2x dx$',
+    options: { A: '2', B: '4', C: '6', D: '8' },
+    correct_key: 'B',
+    solution_md: 'Ta có $\\int_0^2 2x dx = x^2\\Big|_0^2 = 4$.',
+    status: 'pending_review',
+  };
+
+  const mockLoadSession = async (sId) => ({
+    id: sId,
+    title: 'Đề thi Giải tích',
+    status: 'generated',
+    subject: 'Toán',
+    grade: 12,
+    config: { n_versions: 1 },
+    source_questions: [{ id: 'sq1', question_no: 1, raw_content: 'Tính tích phân $\\int_0^1 x dx$' }],
+    exam_versions: [{ version_index: 1, questions: [sampleVariant] }],
+  });
+
+  const harness = renderStage3Page('session-review-dialog', {
+    loadSession: mockLoadSession,
+  });
+
+  await harness.render();
+
+  // 1. Tìm nút "Kiểm tra đáp án"
+  const inspectBtn = harness.container.querySelector('[data-review-inspect="true"]');
+  assert.ok(inspectBtn, 'Phải có nút Kiểm tra đáp án');
+
+  // 2. Bấm vào nút "Kiểm tra đáp án"
+  await act(async () => {
+    inspectBtn.click();
+  });
+
+  // 3. Kiểm tra modal SolutionDialog mở ra
+  const dialog = harness.container.querySelector('[role="dialog"]');
+  assert.ok(dialog, 'Modal SolutionDialog phải mở');
+
+  const title = dialog.querySelector('#solution-dialog-title');
+  assert.ok(title, 'Phải có tiêu đề dialog');
+  assert.ok(title.textContent.includes('Kiểm tra đáp án · Câu 1 · Mã 101'));
+
+  // 4. Kiểm tra hiển thị đáp án đúng và lời giải chi tiết
+  const text = dialog.textContent;
+  assert.ok(text.includes('Đáp án đúng: B'), 'Phải làm nổi bật đáp án đúng B');
+  assert.ok(text.includes('Ta có'), 'Phải chứa nội dung lời giải chi tiết');
+
+  // 5. Kiểm tra đúng 2 nút hành động: "Tạo lại" và "Duyệt biến thể" (KHÔNG có nút Revert, KHÔNG có modal lý do)
+  const regenerateBtn = dialog.querySelector('[data-review-regenerate="true"]');
+  const approveBtn = dialog.querySelector('[data-review-approve="true"]');
+
+  assert.ok(regenerateBtn, 'Phải có nút Tạo lại');
+  assert.equal(regenerateBtn.textContent.trim(), 'Tạo lại');
+  assert.ok(approveBtn, 'Phải có nút Duyệt biến thể');
+  assert.equal(approveBtn.textContent.trim(), 'Duyệt biến thể');
+
+  assert.equal(text.includes('Hoàn nguyên'), false, 'KHÔNG có nút Hoàn nguyên (Revert)');
+  assert.equal(text.includes('Lý do từ chối'), false, 'KHÔNG có modal hỏi lý do từ chối');
+
+  await harness.unmount();
+});
+
+test('Stage3ReviewPage: Bấm "Duyệt biến thể" gọi accept API, chuyển sang "Đã duyệt" và tăng tiến độ ở thanh dưới cùng', async () => {
+  const sampleVariant = {
+    id: 'var-q1-v1',
+    question_no: 1,
+    content: 'Tính tích phân $\\int_0^2 2x dx$',
+    options: { A: '2', B: '4', C: '6', D: '8' },
+    correct_key: 'B',
+    solution_md: 'Ta có $\\int_0^2 2x dx = 4$.',
+    status: 'pending_review',
+  };
+
+  const mockLoadSession = async (sId) => ({
+    id: sId,
+    title: 'Đề thi Giải tích',
+    status: 'generated',
+    subject: 'Toán',
+    grade: 12,
+    config: { n_versions: 1 },
+    source_questions: [{ id: 'sq1', question_no: 1 }],
+    exam_versions: [{ version_index: 1, questions: [sampleVariant] }],
+  });
+
+  const acceptCalls = [];
+  const mockAcceptQuestion = async (sId, qId) => {
+    acceptCalls.push({ sId, qId });
+    return { question_id: qId, question_status: 'approved' };
+  };
+
+  const harness = renderStage3Page('session-review-approve', {
+    loadSession: mockLoadSession,
+    acceptQuestionFn: mockAcceptQuestion,
+  });
+
+  await harness.render();
+
+  // Ban đầu: chưa duyệt câu nào (0/1 câu), nút "Rà bộ đề" bị disable
+  let bottomBarText = harness.container.textContent;
+  assert.ok(bottomBarText.includes('Đã duyệt 0/1 câu'), 'Ban đầu là Đã duyệt 0/1 câu');
+  const finalizeBtn = harness.container.querySelector('[data-review-finalize="true"]');
+  assert.ok(finalizeBtn, 'Phải có nút Rà bộ đề');
+  assert.equal(
+    finalizeBtn.getAttribute('disabled') !== null,
+    true,
+    'Nút Rà bộ đề phải bị disable khi chưa duyệt đủ 100%',
+  );
+
+  // Mở modal Kiểm tra đáp án
+  const inspectBtn = harness.container.querySelector('[data-review-inspect="true"]');
+  await act(async () => {
+    inspectBtn.click();
+  });
+
+  const dialog = harness.container.querySelector('[role="dialog"]');
+  const approveBtn = dialog.querySelector('[data-review-approve="true"]');
+
+  // Bấm nút "Duyệt biến thể"
+  await act(async () => {
+    approveBtn.click();
+  });
+
+  // Kiểm tra gọi accept API
+  assert.equal(acceptCalls.length, 1);
+  assert.equal(acceptCalls[0].sId, 'session-review-approve');
+  assert.equal(acceptCalls[0].qId, 'var-q1-v1');
+
+  // Nút duyệt chuyển thành "Đã duyệt" và bị disabled
+  assert.ok(approveBtn.textContent.includes('Đã duyệt'));
+  assert.equal(approveBtn.getAttribute('disabled') !== null, true);
+
+  // Tiến độ ở thanh dưới cùng cập nhật thành 1/1 câu
+  bottomBarText = harness.container.textContent;
+  assert.ok(bottomBarText.includes('Đã duyệt 1/1 câu'), 'Tiến độ phải cập nhật thành Đã duyệt 1/1 câu');
+
+  // Nút "Rà bộ đề" được mở khóa (enabled) khi đủ 100%
+  assert.equal(
+    finalizeBtn.getAttribute('disabled'),
+    null,
+    'Nút Rà bộ đề phải được kích hoạt khi duyệt đủ 100%',
+  );
+
+  await harness.unmount();
+});
+
+test('Stage3ReviewPage: Bấm "Tạo lại" gọi reject API, giữ nguyên modal mở và hiển thị nội dung câu mới tạo', async () => {
+  const sampleVariant = {
+    id: 'var-q1-old',
+    question_no: 1,
+    content: 'Câu hỏi cũ: Cho tham số m',
+    options: { A: '1', B: '2', C: '3', D: '4' },
+    correct_key: 'A',
+    solution_md: 'Lời giải cũ',
+    status: 'pending_review',
+  };
+
+  const mockLoadSession = async (sId) => ({
+    id: sId,
+    title: 'Đề thi Giải tích',
+    status: 'generated',
+    subject: 'Toán',
+    grade: 12,
+    config: { n_versions: 1 },
+    source_questions: [{ id: 'sq1', question_no: 1 }],
+    exam_versions: [{ version_index: 1, questions: [sampleVariant] }],
+  });
+
+  const regenCalls = [];
+  const mockRegenerateQuestion = async (sId, qId) => {
+    regenCalls.push({ sId, qId });
+    return {
+      question_id: 'var-q1-new',
+      regenerated_from_id: qId,
+      status: 'pending_review',
+      content: 'Câu hỏi mới: Cho tham số k',
+      options: ['10', '20', '30', '99'],
+      correct_key: 'D',
+      solution_md: 'Lời giải mới chi tiết cho k = 99.',
+    };
+  };
+
+  const harness = renderStage3Page('session-review-regen', {
+    loadSession: mockLoadSession,
+    regenerateQuestionFn: mockRegenerateQuestion,
+  });
+
+  await harness.render();
+
+  // Mở modal Kiểm tra đáp án
+  const inspectBtn = harness.container.querySelector('[data-review-inspect="true"]');
+  await act(async () => {
+    inspectBtn.click();
+  });
+
+  const dialog = harness.container.querySelector('[role="dialog"]');
+  assert.ok(dialog.textContent.includes('Câu hỏi cũ: Cho tham số m'));
+
+  // Bấm nút "Tạo lại"
+  const regenerateBtn = dialog.querySelector('[data-review-regenerate="true"]');
+  await act(async () => {
+    regenerateBtn.click();
+  });
+
+  // 1. Kiểm tra API reject/regenerate được gọi
+  assert.equal(regenCalls.length, 1);
+  assert.equal(regenCalls[0].sId, 'session-review-regen');
+  assert.equal(regenCalls[0].qId, 'var-q1-old');
+
+  // 2. Modal vẫn mở và nội dung được cập nhật sang câu mới tạo!
+  const dialogAfter = harness.container.querySelector('[role="dialog"]');
+  assert.ok(dialogAfter, 'Modal phải tiếp tục mở sau khi tạo lại');
+  assert.ok(dialogAfter.textContent.includes('Câu hỏi mới: Cho tham số k'), 'Hiển thị đề bài mới');
+  assert.ok(dialogAfter.textContent.includes('Đáp án đúng: D'), 'Hiển thị đáp án đúng D mới');
+  assert.ok(dialogAfter.textContent.includes('Lời giải mới chi tiết cho k = 99.'), 'Hiển thị lời giải mới');
+
+  // Nút duyệt biến thể sẵn sàng cho câu mới
+  const approveBtn = dialogAfter.querySelector('[data-review-approve="true"]');
+  assert.equal(approveBtn.getAttribute('disabled'), null);
+  assert.equal(approveBtn.textContent.trim(), 'Duyệt biến thể');
+
+  await harness.unmount();
+});
+
+test('Stage3ReviewPage: Hiển thị đúng badge fallback "Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc"', async () => {
+  const fallbackVariant = {
+    id: 'var-q1-fallback',
+    question_no: 1,
+    content: 'Câu hỏi gốc dùng tạm do AI lỗi',
+    options: { A: '1', B: '2', C: '3', D: '4' },
+    correct_key: 'A',
+    solution_md: 'Lời giải gốc',
+    status: 'pending_review',
+    is_fallback: true,
+    attempts: 4,
+  };
+
+  const mockLoadSession = async (sId) => ({
+    id: sId,
+    title: 'Đề thi Có Fallback',
+    status: 'generated',
+    subject: 'Toán',
+    grade: 12,
+    config: { n_versions: 1 },
+    source_questions: [{ id: 'sq1', question_no: 1 }],
+    exam_versions: [{ version_index: 1, questions: [fallbackVariant] }],
+  });
+
+  const harness = renderStage3Page('session-fallback-badge', {
+    loadSession: mockLoadSession,
+  });
+
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(
+    text.includes('Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc'),
+    'Phải hiển thị đúng chuỗi badge fallback trên thẻ câu hỏi',
+  );
+
+  // Mở modal kiểm tra đáp án cũng phải chứa thông báo này
+  const inspectBtn = harness.container.querySelector('[data-review-inspect="true"]');
+  await act(async () => {
+    inspectBtn.click();
+  });
+
+  const dialog = harness.container.querySelector('[role="dialog"]');
+  assert.ok(
+    dialog.textContent.includes('Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc'),
+    'Modal cũng phải hiển thị đúng chuỗi badge fallback',
+  );
+
+  await harness.unmount();
+});
+
+test('Stage3ReviewPage: Bấm "Rà bộ đề" khi duyệt đủ 100% điều hướng tới /session/:id/stage3/preview', async () => {
+  const approvedVariant = {
+    id: 'var-q1-appr',
+    question_no: 1,
+    content: 'Câu hỏi đã duyệt',
+    options: { A: '1', B: '2', C: '3', D: '4' },
+    correct_key: 'A',
+    status: 'approved',
+  };
+
+  const mockLoadSession = async (sId) => ({
+    id: sId,
+    title: 'Đề thi đã duyệt toàn bộ',
+    status: 'generated',
+    subject: 'Toán',
+    grade: 12,
+    config: { n_versions: 1 },
+    source_questions: [{ id: 'sq1', question_no: 1 }],
+    exam_versions: [{ version_index: 1, questions: [approvedVariant] }],
+  });
+
+  const harness = renderStage3Page('session-finalize-nav', {
+    loadSession: mockLoadSession,
+  });
+
+  await harness.render();
+
+  const finalizeBtn = harness.container.querySelector('[data-review-finalize="true"]');
+  assert.ok(finalizeBtn);
+  assert.equal(finalizeBtn.getAttribute('disabled'), null, 'Duyệt 1/1 câu thì nút Rà bộ đề phải enabled');
+
+  await act(async () => {
+    finalizeBtn.click();
+  });
+
+  assert.equal(
+    harness.getLocation(),
+    '/session/session-finalize-nav/stage3/preview',
+    'Phải điều hướng tới màn hình Rà bộ đề (/stage3/preview)',
   );
 
   await harness.unmount();
