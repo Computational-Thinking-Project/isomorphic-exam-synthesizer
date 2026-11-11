@@ -9,16 +9,19 @@ import { api } from './api.js';
  * @param {string|null} idempotencyKey
  * @returns {Promise<object>}
  */
-export async function acceptQuestion(sessionId, questionId, idempotencyKey = null) {
+export async function acceptQuestion(sessionId, questionId, idempotencyKey = null, config = {}) {
   if (!sessionId || !questionId) {
     throw new Error('Cần cung cấp sessionId và questionId hợp lệ.');
   }
 
-  const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {};
+  const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey, ...config.headers } : { ...config.headers };
   const response = await api.post(
     `/sessions/${sessionId}/questions/${questionId}/accept`,
     null,
-    { headers }
+    {
+      ...config,
+      headers,
+    }
   );
   return response.data;
 }
@@ -27,21 +30,29 @@ export async function acceptQuestion(sessionId, questionId, idempotencyKey = nul
  * Từ chối câu hỏi biến thể và kích hoạt AI sinh lại câu mới (Reject & Targeted Regeneration)
  * POST /api/sessions/{session_id}/questions/{version_question_id}/reject
  *
+ * Lưu ý: backend ReviewService có timeout sinh lại câu hỏi 45s, nên client cấu hình timeout 60s
+ * để tránh Axios ngắt sớm khi backend đang hoàn tất tạo biến thể.
+ *
  * @param {string} sessionId
  * @param {string} questionId
  * @param {string|null} idempotencyKey
+ * @param {object} config
  * @returns {Promise<object>}
  */
-export async function rejectAndRegenerateQuestion(sessionId, questionId, idempotencyKey = null) {
+export async function rejectAndRegenerateQuestion(sessionId, questionId, idempotencyKey = null, config = {}) {
   if (!sessionId || !questionId) {
     throw new Error('Cần cung cấp sessionId và questionId hợp lệ.');
   }
 
-  const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {};
+  const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey, ...config.headers } : { ...config.headers };
   const response = await api.post(
     `/sessions/${sessionId}/questions/${questionId}/reject`,
     null,
-    { headers }
+    {
+      timeout: 60000,
+      ...config,
+      headers,
+    }
   );
   return response.data;
 }

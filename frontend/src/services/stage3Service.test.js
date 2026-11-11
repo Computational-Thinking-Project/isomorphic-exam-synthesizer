@@ -55,6 +55,7 @@ test('rejectAndRegenerateQuestion gọi đúng POST /sessions/:id/questions/:qid
     const res = await rejectAndRegenerateQuestion('sess-123', 'q-var-old');
     assert.ok(capturedPost);
     assert.equal(capturedPost.url, '/sessions/sess-123/questions/q-var-old/reject');
+    assert.equal(capturedPost.options.timeout, 60000);
     assert.equal(res.question_id, 'q-var-new');
     assert.equal(res.status, 'pending_review');
     assert.equal(res.content, 'Cho hàm số $y = 2x + 1$');

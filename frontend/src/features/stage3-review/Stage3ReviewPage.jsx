@@ -120,6 +120,24 @@ function countTotalLoadedVariants(session) {
 }
 
 /**
+ * Sinh UUID v4 cho Idempotency-Key
+ */
+function generateClientUUID() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    try {
+      return crypto.randomUUID();
+    } catch {
+      // Fallback nếu crypto.randomUUID không khả dụng
+    }
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+/**
  * Stage3ReviewPage: Màn hình Xem & Duyệt đề thi đẳng cấu (Giai đoạn 3)
  * Route: /session/:sessionId/stage3
  */
@@ -150,9 +168,11 @@ export default function Stage3ReviewPage({
 
   const loadOperationRef = useRef(0);
   const retryOperationRef = useRef(0);
+  const mutationOperationRef = useRef(0);
   const isMountedRef = useRef(true);
   const activeSessionIdRef = useRef(sessionId);
   const navigationTimerRef = useRef(null);
+  const actionKeysRef = useRef(new Map());
 
   const loadData = useCallback(async () => {
     if (!sessionId) {
@@ -223,14 +243,32 @@ export default function Stage3ReviewPage({
   useEffect(() => {
     isMountedRef.current = true;
     activeSessionIdRef.current = sessionId;
+    loadOperationRef.current += 1;
+    mutationOperationRef.current += 1;
+    retryOperationRef.current += 1;
+
     if (navigationTimerRef.current) {
       clearTimeout(navigationTimerRef.current);
       navigationTimerRef.current = null;
     }
+
+    // Reset sạch sẽ dữ liệu của phiên trước để tránh rò rỉ hoặc hiển thị nhầm khi đang tải phiên mới
+    setSession(null);
+    setError(null);
+    setSelectedSolution(null);
+    setApprovedVariantIds(new Set());
+    setActionMessage(null);
+    setIsRegeneratingSingle(false);
+    setIsApprovingSingle(false);
+    actionKeysRef.current.clear();
+
     loadData();
 
     return () => {
       isMountedRef.current = false;
+      loadOperationRef.current += 1;
+      mutationOperationRef.current += 1;
+      retryOperationRef.current += 1;
       if (navigationTimerRef.current) {
         clearTimeout(navigationTimerRef.current);
         navigationTimerRef.current = null;
@@ -299,29 +337,66 @@ export default function Stage3ReviewPage({
     const { variant, qNo, versionIndex } = selectedSolution;
     const targetQId = variant.id || variant.question_id || `var-${versionIndex}-${qNo}`;
 
+    const currentOp = ++mutationOperationRef.current;
+    const targetSessionId = sessionId;
+
+    // Giữ nguyên Idempotency-Key ổn định qua các lần retry cho đến khi thành công
+    const actionLookupKey = `reject-${targetQId}`;
+    let idempotencyKey = actionKeysRef.current.get(actionLookupKey);
+    if (!idempotencyKey) {
+      idempotencyKey = generateClientUUID();
+      actionKeysRef.current.set(actionLookupKey, idempotencyKey);
+    }
+
     setIsRegeneratingSingle(true);
     setActionMessage(null);
 
     try {
-      const res = await regenerateQuestionFn(sessionId, targetQId);
+      const res = await regenerateQuestionFn(sessionId, targetQId, idempotencyKey);
+
+      // Chặn stale response nếu người dùng chuyển session hoặc operation token không còn khớp
+      if (
+        !isMountedRef.current ||
+        mutationOperationRef.current !== currentOp ||
+        activeSessionIdRef.current !== targetSessionId
+      ) {
+        return;
+      }
+
+      // Xóa action key sau khi gọi thành công
+      actionKeysRef.current.delete(actionLookupKey);
+      actionKeysRef.current.delete(`accept-${targetQId}`);
+
       const newOptions = normalizeOptions(res.options || variant.options);
+      // Tạo object mới sạch từ response; không kế thừa cờ fallback/warning từ candidate cũ
       const updatedVariant = {
-        ...variant,
-        ...res,
-        id: res.question_id || variant.id,
+        id: res.question_id || res.id || variant.id,
+        question_id: res.question_id || res.id || variant.question_id,
+        source_question_id: variant.source_question_id,
+        question_no: variant.question_no ?? qNo,
+        number: variant.number ?? qNo,
+        version_index: versionIndex,
         status: res.status || 'pending_review',
-        content: res.content || res.stem_latex || variant.content,
+        content: res.content || res.stem_latex || res.stem || variant.content,
         options: newOptions,
         correct_key: res.correct_key || variant.correct_key,
-        solution_md: res.solution_md || variant.solution_md,
+        solution_md: res.solution_md ?? res.solution ?? variant.solution_md ?? '',
+        is_fallback: Boolean(res.is_fallback),
+        source_fallback: Boolean(res.source_fallback),
+        has_warning: Boolean(res.has_warning),
+        warning_message: res.warning_message || null,
+        validation_report: res.validation_report || null,
       };
 
       // Cập nhật session và giữ nguyên modal mở với nội dung câu mới
       updateVariantInSession(updatedVariant, versionIndex, qNo);
-      setSelectedSolution((prev) => ({
-        ...prev,
-        variant: updatedVariant,
-      }));
+      setSelectedSolution((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          variant: updatedVariant,
+        };
+      });
 
       // Bỏ duyệt khỏi danh sách duyệt
       setApprovedVariantIds((prev) => {
@@ -337,12 +412,25 @@ export default function Stage3ReviewPage({
         text: `Đã tạo lại câu ${qNo} (mã đề #${100 + versionIndex}). Kiểm tra đáp án và duyệt phiên bản mới.`,
       });
     } catch (err) {
+      if (
+        !isMountedRef.current ||
+        mutationOperationRef.current !== currentOp ||
+        activeSessionIdRef.current !== targetSessionId
+      ) {
+        return;
+      }
       setActionMessage({
         type: 'error',
         text: extractErrorString(err, 'Không thể tạo lại câu hỏi.'),
       });
     } finally {
-      setIsRegeneratingSingle(false);
+      if (
+        isMountedRef.current &&
+        mutationOperationRef.current === currentOp &&
+        activeSessionIdRef.current === targetSessionId
+      ) {
+        setIsRegeneratingSingle(false);
+      }
     }
   }, [selectedSolution, isRegeneratingSingle, regenerateQuestionFn, sessionId, updateVariantInSession]);
 
@@ -352,21 +440,47 @@ export default function Stage3ReviewPage({
     const { variant, qNo, versionIndex } = selectedSolution;
     const targetQId = variant.id || variant.question_id || `var-${versionIndex}-${qNo}`;
 
+    const currentOp = ++mutationOperationRef.current;
+    const targetSessionId = sessionId;
+
+    // Giữ nguyên Idempotency-Key ổn định qua các lần retry
+    const actionLookupKey = `accept-${targetQId}`;
+    let idempotencyKey = actionKeysRef.current.get(actionLookupKey);
+    if (!idempotencyKey) {
+      idempotencyKey = generateClientUUID();
+      actionKeysRef.current.set(actionLookupKey, idempotencyKey);
+    }
+
     setIsApprovingSingle(true);
     setActionMessage(null);
 
     try {
-      await acceptQuestionFn(sessionId, targetQId);
+      await acceptQuestionFn(sessionId, targetQId, idempotencyKey);
+
+      // Chặn stale response nếu người dùng chuyển session hoặc operation token không còn khớp
+      if (
+        !isMountedRef.current ||
+        mutationOperationRef.current !== currentOp ||
+        activeSessionIdRef.current !== targetSessionId
+      ) {
+        return;
+      }
+
+      actionKeysRef.current.delete(actionLookupKey);
+
       const updatedVariant = {
         ...variant,
         status: 'approved',
       };
 
       updateVariantInSession(updatedVariant, versionIndex, qNo);
-      setSelectedSolution((prev) => ({
-        ...prev,
-        variant: updatedVariant,
-      }));
+      setSelectedSolution((prev) => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          variant: updatedVariant,
+        };
+      });
 
       setApprovedVariantIds((prev) => {
         const next = new Set(prev);
@@ -380,35 +494,71 @@ export default function Stage3ReviewPage({
         text: `Đã duyệt câu ${qNo} · Mã đề #${100 + versionIndex}.`,
       });
     } catch (err) {
+      if (
+        !isMountedRef.current ||
+        mutationOperationRef.current !== currentOp ||
+        activeSessionIdRef.current !== targetSessionId
+      ) {
+        return;
+      }
       setActionMessage({
         type: 'error',
         text: extractErrorString(err, 'Không thể duyệt câu hỏi.'),
       });
     } finally {
-      setIsApprovingSingle(false);
+      if (
+        isMountedRef.current &&
+        mutationOperationRef.current === currentOp &&
+        activeSessionIdRef.current === targetSessionId
+      ) {
+        setIsApprovingSingle(false);
+      }
     }
   }, [selectedSolution, isApprovingSingle, acceptQuestionFn, sessionId, updateVariantInSession]);
 
   // Xử lý sinh bù câu thiếu (retry partial generation)
   const handleRetryMissingQuestion = async (versionIndex, questionNo) => {
     const regKey = `${versionIndex}-${questionNo}`;
+    const currentOp = ++retryOperationRef.current;
+    const targetSessionId = sessionId;
+
     setRegeneratingQuestions((prev) => ({ ...prev, [regKey]: true }));
     setActionMessage(null);
 
     try {
       await retryGen(sessionId);
+      if (
+        !isMountedRef.current ||
+        retryOperationRef.current !== currentOp ||
+        activeSessionIdRef.current !== targetSessionId
+      ) {
+        return;
+      }
       setActionMessage({
         type: 'success',
         text: `Đã gửi yêu cầu sinh bù cho câu ${questionNo} (Mã đề #${100 + versionIndex}). Đang đồng bộ...`,
       });
       await loadData();
     } catch (err) {
+      if (
+        !isMountedRef.current ||
+        retryOperationRef.current !== currentOp ||
+        activeSessionIdRef.current !== targetSessionId
+      ) {
+        return;
+      }
       setActionMessage({
         type: 'error',
         text: extractErrorString(err, 'Không thể gửi yêu cầu sinh bù câu này.'),
       });
     } finally {
-      setRegeneratingQuestions((prev) => ({ ...prev, [regKey]: false }));
+      if (
+        isMountedRef.current &&
+        retryOperationRef.current === currentOp &&
+        activeSessionIdRef.current === targetSessionId
+      ) {
+        setRegeneratingQuestions((prev) => ({ ...prev, [regKey]: false }));
+      }
     }
   };
 

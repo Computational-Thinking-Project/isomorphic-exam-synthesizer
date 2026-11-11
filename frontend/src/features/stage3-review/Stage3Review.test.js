@@ -902,3 +902,219 @@ test('Stage3ReviewPage: Bấm "Rà bộ đề" khi duyệt đủ 100% điều h�
 
   await harness.unmount();
 });
+
+test('Stage3ReviewPage: Candidate bị fallback sau khi tạo lại thành công không còn hiển thị badge fallback', async () => {
+  const fallbackVariant = {
+    id: 'var-q1-fallback',
+    question_no: 1,
+    content: 'Câu gốc dùng tạm',
+    options: { A: '1', B: '2', C: '3', D: '4' },
+    correct_key: 'A',
+    solution_md: 'Lời giải gốc',
+    status: 'pending_review',
+    is_fallback: true,
+    attempts: 4,
+  };
+
+  const mockLoadSession = async (sId) => ({
+    id: sId,
+    title: 'Đề thi fallback',
+    status: 'generated',
+    subject: 'Toán',
+    grade: 12,
+    config: { n_versions: 1 },
+    source_questions: [{ id: 'sq1', question_no: 1 }],
+    exam_versions: [{ version_index: 1, questions: [fallbackVariant] }],
+  });
+
+  const mockRegenerate = async () => ({
+    question_id: 'var-q1-fresh',
+    status: 'pending_review',
+    content: 'Biến thể sinh lại thành công hợp lệ',
+    options: ['10', '20', '30', '40'],
+    correct_key: 'B',
+    solution_md: 'Lời giải mới không fallback.',
+  });
+
+  const harness = renderStage3Page('session-fallback-reset', {
+    loadSession: mockLoadSession,
+    regenerateQuestionFn: mockRegenerate,
+  });
+
+  await harness.render();
+
+  // Ban đầu có badge fallback
+  assert.ok(harness.container.textContent.includes('Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc'));
+
+  // Mở modal và bấm "Tạo lại"
+  const inspectBtn = harness.container.querySelector('[data-review-inspect="true"]');
+  await act(async () => {
+    inspectBtn.click();
+  });
+
+  const dialog = harness.container.querySelector('[role="dialog"]');
+  const regenBtn = dialog.querySelector('[data-review-regenerate="true"]');
+  await act(async () => {
+    regenBtn.click();
+  });
+
+  // Sau khi tạo lại thành công: badge fallback không còn tồn tại
+  assert.equal(
+    dialog.textContent.includes('Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc'),
+    false,
+    'Modal không được còn badge fallback khi biến thể mới đã sinh thành công',
+  );
+
+  await harness.unmount();
+});
+
+test('Stage3ReviewPage: Idempotency-Key được sinh và giữ nguyên khi retry accept/reject', async () => {
+  const sampleVariant = {
+    id: 'var-idem-1',
+    question_no: 1,
+    content: 'Câu hỏi idempotency',
+    options: { A: '1', B: '2', C: '3', D: '4' },
+    correct_key: 'A',
+    solution_md: 'Lời giải',
+    status: 'pending_review',
+  };
+
+  const mockLoadSession = async (sId) => ({
+    id: sId,
+    title: 'Đề thi test idempotency',
+    status: 'generated',
+    subject: 'Toán',
+    grade: 12,
+    config: { n_versions: 1 },
+    source_questions: [{ id: 'sq1', question_no: 1 }],
+    exam_versions: [{ version_index: 1, questions: [sampleVariant] }],
+  });
+
+  let acceptAttempts = 0;
+  const capturedKeys = [];
+  const mockAccept = async (sId, qId, key) => {
+    capturedKeys.push(key);
+    acceptAttempts += 1;
+    if (acceptAttempts === 1) {
+      throw new Error('Mạng bị chập chờn timeout');
+    }
+    return { question_id: qId, status: 'approved' };
+  };
+
+  const harness = renderStage3Page('session-idem-test', {
+    loadSession: mockLoadSession,
+    acceptQuestionFn: mockAccept,
+  });
+
+  await harness.render();
+
+  const inspectBtn = harness.container.querySelector('[data-review-inspect="true"]');
+  await act(async () => {
+    inspectBtn.click();
+  });
+
+  const dialog = harness.container.querySelector('[role="dialog"]');
+  const approveBtn = dialog.querySelector('[data-review-approve="true"]');
+
+  // Lần 1: Lỗi mạng
+  await act(async () => {
+    approveBtn.click();
+  });
+
+  assert.equal(capturedKeys.length, 1);
+  const firstKey = capturedKeys[0];
+  assert.ok(firstKey, 'Idempotency-Key phải được sinh ra');
+
+  // Lần 2: Người dùng bấm retry
+  await act(async () => {
+    approveBtn.click();
+  });
+
+  assert.equal(capturedKeys.length, 2);
+  assert.equal(capturedKeys[1], firstKey, 'Lần retry phải dùng lại chính xác Idempotency-Key của lần đầu');
+
+  await harness.unmount();
+});
+
+test('Stage3ReviewPage: Chặn stale response của phiên cũ khi chuyển sang phiên mới', async () => {
+  let resolveRegenA = null;
+  const mockRegenerateA = () =>
+    new Promise((resolve) => {
+      resolveRegenA = resolve;
+    });
+
+  const sessionA = {
+    id: 'session-A',
+    title: 'Đề thi A',
+    status: 'generated',
+    subject: 'Toán',
+    grade: 12,
+    config: { n_versions: 1 },
+    source_questions: [{ id: 'sq1', question_no: 1 }],
+    exam_versions: [
+      {
+        version_index: 1,
+        questions: [{ id: 'var-A1', question_no: 1, content: 'Đề câu A1', options: { A: '1' }, status: 'pending_review' }],
+      },
+    ],
+  };
+
+  const sessionB = {
+    id: 'session-B',
+    title: 'Đề thi B',
+    status: 'generated',
+    subject: 'Toán',
+    grade: 12,
+    config: { n_versions: 1 },
+    source_questions: [{ id: 'sq1', question_no: 1 }],
+    exam_versions: [
+      {
+        version_index: 1,
+        questions: [{ id: 'var-B1', question_no: 1, content: 'Đề câu B1', options: { A: '9' }, status: 'pending_review' }],
+      },
+    ],
+  };
+
+  const mockLoadSession = async (sId) => (sId === 'session-A' ? sessionA : sessionB);
+
+  const harness = renderStage3Page('session-A', {
+    loadSession: mockLoadSession,
+    regenerateQuestionFn: mockRegenerateA,
+  });
+
+  await harness.render();
+
+  // Mở modal trên session A và bấm Tạo lại
+  const inspectBtn = harness.container.querySelector('[data-review-inspect="true"]');
+  await act(async () => {
+    inspectBtn.click();
+  });
+
+  const dialog = harness.container.querySelector('[role="dialog"]');
+  const regenBtn = dialog.querySelector('[data-review-regenerate="true"]');
+  await act(async () => {
+    regenBtn.click();
+  });
+
+  // Chuyển sang session B trong lúc request của A chưa xong
+  await harness.navigate('session-B');
+
+  // Bây giờ response của A mới trả về
+  await act(async () => {
+    resolveRegenA({
+      question_id: 'var-A-new',
+      status: 'pending_review',
+      content: 'NỘI DUNG MỚI CỦA PHIÊN A',
+      options: ['1', '2'],
+    });
+  });
+
+  // Đảm bảo dữ liệu session B không bị ghi đè bởi response của A
+  assert.equal(
+    harness.container.textContent.includes('NỘI DUNG MỚI CỦA PHIÊN A'),
+    false,
+    'Response của phiên cũ không được cập nhật vào phiên mới',
+  );
+
+  await harness.unmount();
+});
