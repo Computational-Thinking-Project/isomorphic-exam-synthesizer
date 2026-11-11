@@ -1,0 +1,21 @@
+services:
+  backend:
+    env_file: !reset []
+    environment:
+      ENVIRONMENT: development
+      GEMINI_API_KEY: ""
+      GEMINI_API_KEY_1: ""
+      GEMINI_API_KEY_2: ""
+      GEMINI_API_KEY_3: ""
+      SUPABASE_URL: ""
+      SUPABASE_ANON_KEY: ""
+      SUPABASE_SERVICE_ROLE_KEY: ""
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+  frontend:
+    build:
+      args:
+        VITE_SUPABASE_URL: ""
+        VITE_SUPABASE_PUBLISHABLE_KEY: ""
+    environment:
+      VITE_SUPABASE_URL: ""
+      VITE_SUPABASE_PUBLISHABLE_KEY: ""

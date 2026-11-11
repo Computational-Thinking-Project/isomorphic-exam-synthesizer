@@ -188,3 +188,106 @@ is a W2 RPC in migration 010, not public table access.
 > test tích hợp vẫn thuộc PR #30. Contract và mẫu RPC thật có link ở trên.
 > Tự kiểm PostgreSQL15: clone40 + W2 71 passed, 0 skipped; chưa push, chưa có
 > reviewer xác minh hoặc deployed/SSE/FE E2E. ETA tích hợp chưa được owner xác nhận.
+
+## Generation lifecycle recovery and durable error follow-up — 07/11/2026
+
+- Source of truth: Quỳnh's input requirement for PR #30 stale scanner and durable error recovery
+  ([comment 6690592440](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6690592440)).
+- Author: Duy (PR #32 SQL boundary); Consumer: Quỳnh (PR #30 worker lifecycle/SSE).
+- Workflow v0.1 proposed; base `dev @ 73583d7`, PR #30 @ 8fb6387.
+- Scope: Forward migration `017_generation_lifecycle_recovery.sql`, integration test
+  `test_generation_lifecycle_recovery.py`, and authoritative contract `docs/api/generation-lifecycle-recovery.md`.
+- No modification to existing 005/015/016 migrations; no Python worker/SSE rewrite.
+
+### Key Technical Outputs
+
+1. **Independent Activity Tracking**:
+   - `exam_sessions.generation_last_activity_at TIMESTAMPTZ NULL`: Updated strictly on generation claims, quota reservations, result/clone persists, and heartbeats.
+   - Metadata title/subject/grade updates do not refresh generation timestamp, preserving 720s cutoff timeout.
+2. **Scanner Enumeration**:
+   - `list_stale_generation_jobs(p_cutoff_seconds, p_limit, p_after_activity_at, p_after_session_id)` with keyset pagination over `(generation_last_activity_at, id)` backed by partial index `idx_exam_sessions_generation_stale`.
+3. **Atomic Fenced Recovery**:
+   - `fail_stale_generation_job_if_current(p_session_id, p_expected_job_token, p_cutoff_seconds)` under `SELECT ... FOR UPDATE`. Transitions session to `failed` and records `ERR_GENERATION_INTERRUPTED` atomically; safely returns `recovered: false` on finished or retried tokens.
+4. **Durable Error Persistence & Recovery**:
+   - `exam_sessions.generation_error_code TEXT NULL` constrained to `^[A-Z0-9_]{3,64}$`.
+   - `finish_generation_job_with_error(p_session_id, p_outcome, p_job_token, p_error_code)` records terminal error code.
+   - `load_generation_completed_results(p_session_id)` returns `generation_error_code` for terminal SSE stream reconstruction after process reboot.
+   - Retry via `claim_generation_job` resets error code to NULL while preserving consumed quota, snapshot context, and committed results.
+
+5. **Security Audit & Defense-in-Depth Hardening (PR #52)**:
+   - Verified PostgreSQL ACL privileges: revoking column-level UPDATE alone is insufficient if table-level UPDATE is granted.
+   - Updated `guard_exam_sessions_worker_columns()` to explicitly guard `generation_last_activity_at` and `generation_error_code` against unauthorized modifications (SQLSTATE `42501`).
+   - Reinforced Migration 017 with table-level write revocation (`REVOKE INSERT, UPDATE ON TABLE public.exam_sessions FROM PUBLIC, anon, authenticated`) and explicit metadata column whitelisting (`GRANT UPDATE (title, subject, grade) TO authenticated`).
+   - Pinned search paths on worker RPCs (`heartbeat_generation_job`, `fail_stale_generation_job`) to `pg_catalog, public, pg_temp`.
+   - Added regression test suite covering SEC-01 through SEC-05, Case D table-level grant defense, non-owner authorization, and privilege catalog matrix.
+
+### M3 draft for PR description — prepared locally
+
+- Scope/output: [017](../../backend/migrations/017_generation_lifecycle_recovery.sql),
+  [contract](../api/generation-lifecycle-recovery.md),
+  [integration test suite](../../backend/tests/migrations/test_generation_lifecycle_recovery.py).
+- Environment: PostgreSQL 15 & 17 isolated disposable cluster; asyncpg 0.32.0.
+- Acceptance Checklist (DB boundary):
+  - [x] RPC `list_stale_generation_jobs` with keyset pagination, 1..100 limit, and service_role security.
+  - [x] Independent `generation_last_activity_at` timestamp & partial index `idx_exam_sessions_generation_stale`.
+  - [x] Fenced `fail_stale_generation_job_if_current` re-verifying job token, status, and cutoff under lock.
+  - [x] Stale recovery atomically stores `ERR_GENERATION_INTERRUPTED`.
+  - [x] `finish_generation_job_with_error` records error code; `load_generation_completed_results` reads back after reboot.
+  - [x] Retry clears error code while preserving quota, snapshot context, and committed results.
+  - [x] Fresh/upgrade migration replay, ACL/least privilege, and race conditions covered in integration tests.
+  - [x] Contract documentation delivered for PR #30 integration.
+
+### Copyable response to Quỳnh — prepared locally
+
+> PR #32 đã bổ sung forward migration 017 hoàn thiện hai phụ thuộc SQL/RPC mà PR #30 đang chờ:
+> 1. Stale Scanner: RPC `list_stale_generation_jobs` (keyset pagination, index hỗ trợ, cutoff 720s DB clock) và RPC fencing `fail_stale_generation_job_if_current(p_session_id, p_expected_job_token, p_cutoff_seconds)`.
+> 2. Durable Error Recovery: Cột `generation_error_code` lưu bền vững `ERR_GENERATION_INTERRUPTED` khi stale recovery; RPC `finish_generation_job_with_error` để worker ghi nhận mã lỗi thất bại; `load_generation_completed_results` trả kèm mã lỗi sau restart để khôi phục SSE terminal event; retry tự động xóa lỗi cũ nhưng bảo toàn quota và committed results.
+> Tài liệu contract chi tiết đã có tại `docs/api/generation-lifecycle-recovery.md` và test suite tại `backend/tests/migrations/test_generation_lifecycle_recovery.py`. Phía Python chỉ cần cắm adapter vào `job_repository.py`.
+
+## F01 Remediation — PR #52 Request Changes Response (08/11/2026)
+
+- **Source**: Reviewer finding [F01 on PR #52](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/52#discussion_r4505936087).
+- **Review snapshot**: `CHANGES_REQUESTED` on HEAD `9e9d6f3`.
+- **Root cause analysis**:
+  - In PostgreSQL, same-event `BEFORE UPDATE FOR EACH ROW` triggers on `public.exam_sessions` execute in alphabetical name order.
+  - `trg_finalize_direct_guard` (from migration 009) executes *before* `trg_guard_exam_sessions_worker_columns` (from migration 017) because `'trg_f...' < 'trg_g...'`.
+  - When an authenticated owner attempts direct update on protected worker columns (`generation_error_code`, `generation_last_activity_at`), Trigger 009 intercepts and raises `ERR_DIRECT_LIFECYCLE_MUTATION` with SQLSTATE `42501`.
+  - The previous test hard-coded string matching for `"Direct worker-state modification forbidden"` (Trigger 017's message), failing when Trigger 009 rejected first.
+- **Decision & Fix**:
+  - **No SQL changes**: Production migration `017_generation_lifecycle_recovery.sql` correctly defines the defense-in-depth guard and does not require alteration.
+  - **Test remediation**: Updated `test_table_level_grant_defense_in_depth` in `backend/tests/migrations/test_generation_lifecycle_recovery.py` to assert SQLSTATE `42501` instead of specific error message text.
+  - **Data invariants**: Added pre- and post-mutation row queries (`generation_error_code`, `generation_last_activity_at`, `updated_at`, `title`) verifying complete statement rollback and unmutated state after rejected updates.
+  - **Contract clarification**: Updated `docs/api/generation-lifecycle-recovery.md` documenting alphabetical trigger execution and the SQLSTATE `42501` behavioral invariant.
+- **Status**: Author `claimed_fixed`; pending independent verification by reviewer on the updated commit.
+
+
+## F01–F04 Independent Review Verification (10/11/2026)
+
+- **Reviewer**: Quỳnh (`nhatquynh1107`), review [PR #52](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/52#pullrequestreview-5845408201) and [F01 verification reply](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/52#discussion_r4527445283).
+- **Reviewed HEAD**: `4403f3c201d9883616a07f933160992b43ce082a`.
+- **Environment**: PostgreSQL 17 Docker container (isolated, no host port exposure), Python 3.11, asyncpg 0.32.0, full migration chain `002–017`.
+- **Results**: **23 passed, 0 skipped**; Ruff passed on modified test file; 5 GitHub CI checks succeeded on `4403f3c`.
+- **Finding Statuses**:
+  - **F01**: `verified` by reviewer (Migration 009/017 trigger assertion uses SQLSTATE `42501` and verifies statement rollback/unchanged state).
+  - **F02**: `verified` by reviewer (asyncpg pagination cursor converted to datetime; stale test data uses relative DB time `clock_timestamp() - interval '2 hours'`).
+  - **F03**: `verified` by reviewer (worker-finished-first fixture persists all required targets before `finish(generated)`).
+  - **F04**: `verified` by reviewer (PostgreSQL UUID string and integer grade type compatibility in assertions).
+- **Additional SQL Hardening Verified (23-test suite at `4403f3c`)**:
+  - `heartbeat_generation_job` uses `GREATEST` to prevent activity timestamp regression after row-lock contention.
+  - `finish_generation_job_with_error` rejects NULL error codes on failed/partial outcomes with SQLSTATE `22023`.
+
+## F05 Remediation — Architecture Decision Record & Documentation (10/11/2026)
+
+- **Source**: Reviewer mandatory finding [F05 on PR #52](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/52#discussion_r4527492234).
+- **Issue**: Missing Architecture Decision Record in `docs/change_log.md` for migration 017 schema changes and RPC contract.
+- **Action Taken**:
+  - Added `DEC-207-003: Generation lifecycle recovery and durable error persistence (Migration 017)` in `docs/change_log.md`.
+  - Documented context, problem, architectural decisions, alternatives considered, scope/impact, and authoritative contract links.
+  - Updated PR #52 description (M3) with complete verification evidence and links.
+- **Status & Verification**:
+  - **F05 Verification**: `verified` by reviewer Quỳnh (`nhatquynh1107`) at HEAD `93d46e9` ([discussion_r4528574687](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/52#discussion_r4528574687)).
+  - **Formal Approval**: Quỳnh formally approved PR #52 at HEAD `93d46e9` ([review 5846843461](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/52#pullrequestreview-5846843461)).
+  - **Status distinctions**: Code-level verification on `4403f3c` (23 passed, 0 skipped on isolated PostgreSQL 17 Docker; 5 CI checks success); documentation/F05 verification and formal approval on `93d46e9`.
+- **Explicit Pending Scope**:
+  - Migration 017 deployment and migration-ledger verification in the team's shared/staging Supabase environment.
+  - PR #30 worker HTTPS end-to-end integration.
