@@ -1,4 +1,4 @@
-"""Ingestion Service for Atomic Database Replacement and Blueprint Trigger (TASK-202)."""
+"""Ingestion Service for Atomic Database Replacement (TASK-202)."""
 
 import asyncio
 import logging
@@ -288,35 +288,12 @@ async def trigger_blueprint_pipeline(
     questions: List[Dict[str, Any]],
     db: Optional[Any] = None,
 ) -> None:
-    """Non-blocking background trigger for AI Blueprint Extraction (TASK-203 hook / TASK-205).
+    """Retired ingest hook, retained as a no-op for callers during rollout.
 
-    LIMITATION / SCOPE NOTE:
-    This function serves as an asynchronous event hook ensuring blueprints are persisted
-    for the session (via deterministic fallback / background pipeline before TASK-203 Gemini AI
-    full integration).
+    ADR-0001 requires persisted confirmation before canonical production. An old
+    caller can hold stale source IDs after another import or confirmation; it must
+    never write fallback rows or obtain a service-role client. Canonical work is
+    scheduled by confirm_source_flow / retry_source_artifacts instead.
     """
-    try:
-        if db is None:
-            try:
-                from app.core.database import get_service_role_client
-
-                db = get_service_role_client()
-            except Exception as client_err:
-                logger.warning(
-                    "Could not obtain service role client for background blueprint extraction: %s",
-                    client_err,
-                )
-
-        if db is not None:
-            from app.services.parser.blueprint_service import ensure_blueprints_for_session
-
-            await ensure_blueprints_for_session(db, session_id, questions)
-            logger.info("Blueprint pipeline ensured blueprints for session %s", session_id)
-        else:
-            logger.debug(
-                "Blueprint background task completed without DB client for session %s", session_id
-            )
-    except Exception as exc:
-        logger.error("Error in background blueprint pipeline for session %s: %s", session_id, exc)
 
 

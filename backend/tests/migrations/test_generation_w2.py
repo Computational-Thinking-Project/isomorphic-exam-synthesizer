@@ -103,6 +103,16 @@ async def db(request):
             files = list((ROOT / "backend/migrations").glob(number + "_*.sql"))
             assert len(files) == 1
             await admin.execute(files[0].read_text(encoding="utf-8-sig"))
+        # W4 exercises the full merged source-confirmation chain, including the
+        # UUID overload and revocation of legacy confirmation. Historical W2
+        # upgrade fixtures intentionally retain their original baseline.
+        if getattr(request, "param", None) == "w4":
+            for number in ("010", "011", "012", "013", "014"):
+                files = list((ROOT / "backend/migrations").glob(number + "_*.sql"))
+                assert len(files) == 1
+                sql = files[0].read_text(encoding="utf-8-sig")
+                if sql.strip():
+                    await admin.execute(sql)
         await admin.execute(
             "INSERT INTO auth.users(id,email) VALUES($1::uuid,'fixture@example.invalid')", OWNER
         )

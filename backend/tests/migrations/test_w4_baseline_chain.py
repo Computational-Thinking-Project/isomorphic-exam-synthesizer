@@ -65,16 +65,10 @@ class W4BaselineChainTests(PostgresCase):
 
     def apply_chain(self, candidate=False):
         self.sql((ROOT / "backend/scripts/schema.sql").read_text())
-        for number in range(2, 17):
+        for number in range(2, 18):
             paths = list((ROOT / "backend/migrations").glob(f"{number:03}_*.sql"))
             self.assertEqual(len(paths), 1)
             self.sql(paths[0].read_text())
-        if candidate:
-            # Read immutable PR bytes; do not copy into numbered migration history.
-            sql = subprocess.check_output([
-                "git", "show", f"{PR52}:backend/migrations/017_generation_lifecycle_recovery.sql"
-            ], cwd=ROOT, text=True)
-            self.sql(sql)
 
     def assert_contract(self, candidate=False):
         for signature in (
@@ -126,9 +120,9 @@ class W4BaselineChainTests(PostgresCase):
     def test_synthetic_upgrade_with_unmerged_candidate_017(self):
         self.rehearse(populated=True, candidate=True)
 
-    def test_fresh_018_privileges_and_replay(self):
+    def test_fresh_019_privileges_and_replay(self):
         self.apply_chain(candidate=True)
-        migration = (ROOT / "backend/migrations/018_w4_source_readiness_config.sql").read_text()
+        migration = (ROOT / "backend/migrations/019_w4_source_readiness_config.sql").read_text()
         self.sql(migration)
         self.assert_contract(candidate=True)
         before = self.value("SELECT pg_get_functiondef('public.save_generation_config(uuid,int,jsonb,jsonb,jsonb)'::regprocedure)")
@@ -143,7 +137,7 @@ class W4BaselineChainTests(PostgresCase):
               AND NOT has_table_privilege('authenticated','generation_configs','INSERT')
         """), "t")
 
-    def test_018_populated_upgrade_preserves_explicit_historical_config(self):
+    def test_019_populated_upgrade_preserves_explicit_historical_config(self):
         self.seed_partial_schema()
         self.apply_chain(candidate=True)
         self.sql("""
@@ -153,7 +147,7 @@ class W4BaselineChainTests(PostgresCase):
         """)
         before = self.value("SELECT jsonb_agg(to_jsonb(c)) FROM generation_configs c")
         sources = self.snapshot()
-        self.sql((ROOT / "backend/migrations/018_w4_source_readiness_config.sql").read_text())
+        self.sql((ROOT / "backend/migrations/019_w4_source_readiness_config.sql").read_text())
         self.assertEqual(self.value("SELECT jsonb_agg(to_jsonb(c)) FROM generation_configs c"), before)
         self.assertEqual(self.snapshot(), sources)
         self.sql("""

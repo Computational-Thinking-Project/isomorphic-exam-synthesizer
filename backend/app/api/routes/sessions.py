@@ -37,6 +37,8 @@ from app.models.schemas import (
     CurrentUser,
     IngestSuccessResponse,
     IngestTextRequest,
+    OrderingPreferencesPayload,
+    OrderingPreferencesResponse,
     ReviewDomainException,
     SessionCloneRequest,
     SessionCreate,
@@ -205,7 +207,13 @@ async def get_session_detail(
                     is_ready = True
                 except ValueError:
                     pass
-        elif isinstance(snapshot, dict) and snapshot.get("reason") == "NO_CONFIRMATION":
+        elif (
+            isinstance(snapshot, dict)
+            and snapshot.get("reason") == "NO_CONFIRMATION"
+            and session_record["status"] != "draft"
+        ):
+            # Historical confirmed sessions remain readable. A new import/clone
+            # is draft even if it contains old confirmed legacy Blueprint rows.
             bp_res = (
                 db.table("question_blueprints")
                 .select("id,source_question_id,confirmed_at,is_fallback,variation_modes")
@@ -286,6 +294,88 @@ async def update_session(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
     return SessionItem(**rows[0])
+
+
+@router.patch(
+    "/{session_id}/ordering-preferences",
+    response_model=OrderingPreferencesResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Update ordering preferences before finalization (S05-S06)",
+)
+@router.patch(
+    "/{session_id}/preferences",
+    response_model=OrderingPreferencesResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+async def update_ordering_preferences(
+    session_id: str,
+    payload: OrderingPreferencesPayload,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_user_db),
+) -> OrderingPreferencesResponse:
+    """Update shuffle preferences on a reviewed session before finalization.
+
+    S05-S06 requirement:
+    - Session must be owned by current user.
+    - Session must be in 'reviewed' status, not yet approved or finalized.
+    - Calls update_generation_ordering_preferences RPC atomically locking parent session first.
+    """
+    assert_ownership("exam_sessions", session_id, current_user.id, db=db)
+
+    prefs_dict = {
+        "shuffle_questions": payload.shuffle_questions,
+        "shuffle_options": payload.shuffle_options,
+    }
+
+    try:
+        rpc_res = db.rpc(
+            "update_generation_ordering_preferences",
+            {
+                "p_session_id": session_id,
+                "p_ordering_preferences": prefs_dict,
+            },
+        ).execute()
+    except Exception as exc:
+        err_msg = str(exc)
+        if "preferences locked" in err_msg or "55006" in err_msg:
+            raise ReviewDomainException(
+                423, "ERR_CONFIG_CONFLICT", "Ordering preferences locked or session not in reviewed state"
+            ) from exc
+        if "invalid ordering preferences" in err_msg or "22023" in err_msg:
+            raise ReviewDomainException(
+                422, "ERR_CONFIG_CONFLICT", "Invalid ordering preferences"
+            ) from exc
+        if "Session not found" in err_msg or "configuration not found" in err_msg or "P0002" in err_msg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session or generation configuration not found",
+            ) from exc
+        if "Access denied" in err_msg or "42501" in err_msg:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied",
+            ) from exc
+        logger.error("Failed to update ordering preferences for session %s: %s", session_id, exc)
+        raise ReviewDomainException(
+            503, "ERR_PREFERENCES_UPDATE_FAILED", "Failed to update ordering preferences"
+        ) from exc
+
+    result_data = rpc_res.data
+    if isinstance(result_data, dict):
+        return OrderingPreferencesResponse(
+            success=result_data.get("success", True),
+            session_id=str(result_data.get("session_id", session_id)),
+            status=str(result_data.get("status", "reviewed")),
+            ordering_preferences=result_data.get("ordering_preferences", prefs_dict),
+        )
+
+    return OrderingPreferencesResponse(
+        success=True,
+        session_id=session_id,
+        status="reviewed",
+        ordering_preferences=prefs_dict,
+    )
 
 
 @router.delete(
@@ -501,6 +591,7 @@ async def ingest_file(
         questions=parsed_questions,
     )
 
+    # ADR-0001: only confirm_source_flow may schedule canonical preparation.
     return IngestSuccessResponse(
         session_id=session_id,
         message="Exam file ingested and validated successfully",
@@ -569,6 +660,7 @@ async def ingest_text(
         questions=parsed_questions,
     )
 
+    # ADR-0001: only confirm_source_flow may schedule canonical preparation.
     return IngestSuccessResponse(
         session_id=session_id,
         message="Exam text ingested and validated successfully",

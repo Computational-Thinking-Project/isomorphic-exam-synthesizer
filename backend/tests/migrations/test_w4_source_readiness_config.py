@@ -1,4 +1,4 @@
-"""W4 config contract: GREEN on018; W4_BASELINE_015=1 reproduces old defects.
+"""W4 config contract: GREEN on 019; W4_BASELINE_015=1 reproduces old defects.
 
 Run with RUN_POSTGRES_MIGRATION_TESTS=1 using unittest discovery. Supply an
 isolated pinned PR30 archive via W4_PR30_CHECKOUT to execute the worker probe.
@@ -38,13 +38,12 @@ class W4SourceReadinessConfigTests(PostgresCase):
         baseline = os.getenv("W4_BASELINE_015") == "1"
         schema = subprocess.check_output(["git", "show", "65c536291b0ad23c39e3b7f0615098943117d6e3:backend/scripts/schema.sql"], cwd=ROOT, text=True) if baseline else (ROOT / "backend/scripts/schema.sql").read_text()
         self.sql(schema)
-        for number in range(2, 17):
+        for number in range(2, 18):
             paths = list((ROOT / "backend/migrations").glob(f"{number:03}_*.sql"))
             self.assertEqual(len(paths), 1)
             self.sql(paths[0].read_text())
         if not baseline:
-            self.sql(subprocess.check_output(["git", "show", "598b959c69c0f1c6362daed50fd544cb09dd73f7:backend/migrations/017_generation_lifecycle_recovery.sql"], cwd=ROOT, text=True))
-            self.sql((ROOT / "backend/migrations/018_w4_source_readiness_config.sql").read_text())
+            self.sql((ROOT / "backend/migrations/019_w4_source_readiness_config.sql").read_text())
         self.sql(f"""
             INSERT INTO auth.users(id,email) VALUES ('{OWNER}','w4@example.invalid');
             INSERT INTO public.users(id,email) VALUES ('{OWNER}','w4@example.invalid') ON CONFLICT DO NOTHING;

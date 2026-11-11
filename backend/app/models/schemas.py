@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
 from fastapi import HTTPException
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class SourceQuestion(BaseModel):
@@ -537,6 +537,20 @@ class AnswersMatrixResponse(BaseModel):
     )
 
 
+class OrderingPreferencesPayload(BaseModel):
+    shuffle_questions: bool
+    shuffle_options: bool
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class OrderingPreferencesResponse(BaseModel):
+    success: bool = True
+    session_id: str
+    status: str
+    ordering_preferences: Dict[str, bool]
+
+
 # Re-export validator schemas for convenient consumption across services and routes
 from app.services.validator.base import CheckResult, ValidationReport  # noqa: E402
 
@@ -573,6 +587,8 @@ __all__ = [
     "FinalizeApproveResponse",
     "MatrixItem",
     "AnswersMatrixResponse",
+    "OrderingPreferencesPayload",
+    "OrderingPreferencesResponse",
     "CheckResult",
     "ValidationReport",
 ]

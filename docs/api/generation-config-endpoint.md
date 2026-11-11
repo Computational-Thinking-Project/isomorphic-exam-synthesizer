@@ -1,10 +1,8 @@
 # Generation configuration and persistence — TASK-207a/b
 
-## W4-MVP-01 / migration018 (local implementation, not deployed)
+## W4-MVP-01 / migration 019 (consolidated implementation, proposed)
 
-Task owner authorized018 and retention of both values aliases on2026-11-09.
-Apply after016 and the reviewed PR52 migration017. Actual Production history
-is unverified; this is not a Production execution instruction.
+Consolidated forward-only migration 019 (`019_w4_source_readiness_config.sql`), following merged 002-017 (PR #52) and allocated 018 (PR #54).
 
 `save_generation_config(uuid,int,jsonb,jsonb,jsonb)` retains its identity and
 response envelope. It locks the session first, requires owner authorization,
@@ -14,7 +12,7 @@ NO_CONFIRMATION is rejected for new saves. Historical configs/jobs are unchanged
 the existing legacy claim/read behavior is retained for compatibility.
 
 The modes argument is now only a neutral compatibility placeholder: **exactly
-`[]`** is accepted; NULL, NONE and nonempty client selections fail22023. The server
+`[]`** is accepted; NULL, NONE and nonempty client selections fail 22023. The server
 intersects mapped dimensions across all canonical policies. Policies must be
 nonempty and structurally valid; pending/failed/stale/malformed evidence fails
 closed. Valid policies with no shared mapped dimension yield `[]`/Original Clone.
@@ -28,16 +26,27 @@ Stable ordering for both: modes `["NUMERICAL","parameter_variation","context_swa
 dimensions `["values","context"]`. Alias count is not transformation count.
 The pinned PR30 worker consumes canonical_dimensions from its frozen snapshot.
 
-Ordering defaults are OFF/OFF in the table and RPC. Explicit preferences require
-exactly two strict JSON Booleans; missing/extra keys, nulls and coercible values
-are rejected. All four combinations are legal. N remains SQL integer1–4.
-Invalid input/readiness uses22023; missing/stale manifest or locked config55006;
-foreign owner42501; missing sessionP0002.
+Ordering defaults are OFF/OFF in the table and RPC (`{"shuffle_questions": false, "shuffle_options": false}`).
+Explicit preferences require exactly two strict JSON Booleans; missing/extra keys, nulls and coercible values
+are rejected. All four combinations are legal. N remains SQL integer 1–4.
+Invalid input/readiness uses 22023; missing/stale manifest or locked config 55006;
+foreign owner 42501; missing session P0002.
 
-PR30 HTTP and FE2 adapters still require coordinated updates: expose only N and
-ordering flags, pass neutral[] internally, and validate authoritative response
-modes without comparing them to client selections.018 does not mount a new
-route or implement Stage3 preference saving (S05/S06).
+### S05–S06: Pre-finalization ordering preferences update
+
+RPC: `update_generation_ordering_preferences(p_session_id uuid, p_ordering_preferences jsonb)`
+Endpoint: `PATCH /api/sessions/{session_id}/ordering-preferences` (alias: `PATCH /api/sessions/{session_id}/preferences`)
+
+- Allows updating `shuffle_questions` and `shuffle_options` before finalization.
+- Parent-first transaction lock serializes against concurrent shuffle or finalize calls.
+- Permitted strictly when session status is `reviewed` and not yet finalized or approved.
+- Requires both boolean fields; extra keys or invalid types fail with 422. Locked state returns 423.
+
+### Ingestion de-scheduling (ADR-0001)
+
+`/ingest-file` and `/ingest-text` no longer schedule background blueprint pipelines before confirmation.
+Canonical preparation is triggered exclusively upon explicit source confirmation via `confirm_source_flow`.
+Legacy `trigger_blueprint_pipeline` is retired to a safe no-op.
 
 ## Historical015/016 behavior (superseded for new saves by018)
 

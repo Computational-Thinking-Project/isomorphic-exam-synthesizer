@@ -1,5 +1,5 @@
--- W4-MVP-01 S04. Forward-only, after 016 and PR52's allocated 017.
--- Allocation and alias compatibility authorized by the task owner 2026-11-09.
+-- W4-MVP-01: Canonical-only generation configuration defaults and source readiness guards.
+-- Forward-only migration following merged 002-017 (PR #52) and allocated 018 (PR #54).
 -- No historical rows, job functions, source producer or table grants are changed.
 BEGIN;
 
@@ -46,7 +46,7 @@ BEGIN
 
   snap := public.get_generation_source_snapshot(s.id);
   IF (snap->>'ready')::boolean IS DISTINCT FROM true THEN
-    RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: %',snap->>'reason' USING ERRCODE='22023';
+    RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: %', coalesce(snap->>'reason', 'not ready') USING ERRCODE='22023';
   END IF;
   IF jsonb_typeof(snap->'manifest') IS DISTINCT FROM 'object'
      OR jsonb_typeof(p_expected_snapshot) IS DISTINCT FROM 'object'
@@ -116,4 +116,53 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION public.save_generation_config(uuid,int,jsonb,jsonb,jsonb) FROM PUBLIC,anon;
 GRANT EXECUTE ON FUNCTION public.save_generation_config(uuid,int,jsonb,jsonb,jsonb) TO authenticated,service_role;
+
+-- S05-S06: RPC to update ordering preferences on reviewed sessions before finalization
+CREATE OR REPLACE FUNCTION public.update_generation_ordering_preferences(
+  p_session_id uuid,
+  p_ordering_preferences jsonb
+) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public,pg_temp AS $$
+DECLARE
+  s public.exam_sessions;
+  cfg uuid;
+BEGIN
+  -- Parent-first lock to prevent deadlock with shuffle / save_config
+  SELECT * INTO s FROM public.exam_sessions WHERE id=p_session_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Session not found' USING ERRCODE='P0002';
+  END IF;
+  IF public.current_role()<>'service_role'
+     AND (auth.uid() IS NULL OR auth.uid() IS DISTINCT FROM s.user_id) THEN
+    RAISE EXCEPTION 'Access denied' USING ERRCODE='42501';
+  END IF;
+  IF s.status <> 'reviewed' OR s.approved_at IS NOT NULL
+     OR EXISTS(SELECT 1 FROM public.exam_versions WHERE session_id=s.id AND is_finalized) THEN
+    RAISE EXCEPTION 'ERR_CONFIG_CONFLICT: preferences locked' USING ERRCODE='55006';
+  END IF;
+  IF jsonb_typeof(p_ordering_preferences) IS DISTINCT FROM 'object'
+     OR jsonb_typeof(p_ordering_preferences->'shuffle_questions') IS DISTINCT FROM 'boolean'
+     OR jsonb_typeof(p_ordering_preferences->'shuffle_options') IS DISTINCT FROM 'boolean'
+     OR p_ordering_preferences - ARRAY['shuffle_questions','shuffle_options'] <> '{}'::jsonb THEN
+    RAISE EXCEPTION 'ERR_CONFIG_CONFLICT: invalid ordering preferences' USING ERRCODE='22023';
+  END IF;
+  SELECT id INTO cfg FROM public.generation_configs WHERE session_id=s.id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ERR_CONFIG_CONFLICT: configuration not found' USING ERRCODE='P0002';
+  END IF;
+  UPDATE public.generation_configs
+  SET ordering_preferences = p_ordering_preferences,
+      updated_at = now()
+  WHERE session_id = s.id;
+  RETURN jsonb_build_object(
+    'success', true,
+    'session_id', s.id,
+    'status', s.status,
+    'ordering_preferences', p_ordering_preferences
+  );
+END $$;
+REVOKE ALL ON FUNCTION public.update_generation_ordering_preferences(uuid,jsonb) FROM PUBLIC,anon;
+GRANT EXECUTE ON FUNCTION public.update_generation_ordering_preferences(uuid,jsonb) TO authenticated,service_role;
+
 COMMIT;
+

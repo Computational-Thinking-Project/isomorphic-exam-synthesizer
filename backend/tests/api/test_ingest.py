@@ -62,6 +62,17 @@ def test_ingest_persists_draft_without_scheduling_blueprints(
     schedule.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_retired_ingest_hook_cannot_write_late_blueprints():
+    """An old in-process caller of the hook cannot race confirmation/re-import."""
+    from app.services.parser.ingestion_service import trigger_blueprint_pipeline
+
+    db = MagicMock()
+    await trigger_blueprint_pipeline(MOCK_SESSION_ID, [{"id": "obsolete-source"}], db)
+    db.table.assert_not_called()
+    db.rpc.assert_not_called()
+
+
 def test_postreview_confirm_ingest_race_is_409(client, mock_auth_user, auth_headers):
     """The precheck saw draft, but confirmation won before the source write."""
     mock_db = MagicMock()
