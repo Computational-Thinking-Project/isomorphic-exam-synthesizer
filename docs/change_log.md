@@ -7,6 +7,17 @@
 
 ---
 
+## DEC-OPS-LOCAL-DOCKER-20261109: Docker tự chạy trên máy từng thành viên (proposed)
+
+- **Ngày / người đề xuất:** 09/11/2026 — Duy / @johannguyen015, tác giả [PR #56](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/56).
+- **Trạng thái:** Policy đang đề xuất; chưa có bằng chứng nhóm chấp thuận áp dụng. GitHub Approve, merge tài liệu và organizational acceptance được ghi riêng; review/merge không tự chứng minh adoption hoặc từng thành viên đã chạy Docker.
+- **Ngữ cảnh / lý do:** Cụm “shared development setup” trong [PR #8](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/8) nói về source, Dockerfiles, Compose, dependency locks và CI dùng chung, nhưng có thể bị hiểu thành Docker host trên máy Đạt. Day 0 đã đặt mục tiêu chạy trên máy cá nhân; hướng dẫn contributor cần nêu rõ trách nhiệm local.
+- **Quyết định đề xuất:** Mỗi contributor phát triển hoặc kiểm thử ứng dụng đang chạy tự cài Docker/Compose, clone repo và chạy stack trên máy mình; tự quản lý checkout, `.env`, logs và bằng chứng `doctor/up/smoke` cùng tests liên quan. Ghi command/platform/error thật khi không chạy được; CI hoặc stack của người khác không thay bằng chứng local. Bản [UI walkthrough tĩnh](ui-walkthrough/README.md) được miễn vì chỉ xem dữ liệu mẫu.
+- **Ranh giới / phụ thuộc:** [PR #51](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/51) đã merge phần OPS preparation; không chứng minh beta đã deployed. [Issue #53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53) giữ production-first, private beta nội bộ nhóm, ưu tiên 0đ, không bắt buộc staging riêng. Máy nhóm + Tailscale chỉ là ứng viên có điều kiện; không chọn host/máy Đạt, không giao operator hay đổi HTTPS/OAuth/access control từ policy này. Deployment tập trung là hạng mục riêng, không thay local development/test.
+- **Ảnh hưởng:** `README.md`, `CONTRIBUTING.md`, `docs/setup-docker.md`, Day 0 của `docs/planning.md` và mục changelog này. Không sửa runtime, Compose, cloud, API hoặc schema; không thêm approval gate. Chấp thuận policy cần quyết định của nhóm có dẫn chứng, độc lập với việc hoàn thiện đề xuất tài liệu.
+
+---
+
 ## DEC-DOCS-INPUT-20261109: Đối chiếu yêu cầu và bàn giao input (proposed)
 
 - **Ngày / người đề xuất:** 09/11/2026 — Trung Anh / philip-kkk, PM hỗ trợ soạn theo yêu cầu.
