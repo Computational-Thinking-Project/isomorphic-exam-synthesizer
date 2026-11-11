@@ -1,3 +1,52 @@
+## DEC-207-003 — Generation lifecycle recovery and durable error persistence (Migration 017)
+
+- **Ngày / người phụ trách:** 07/11/2026 (cập nhật 10/11/2026 cho PR #52 HEAD 4403f3c), Duy / TASK-207, PR #52; consumer: Quỳnh / PR #30.
+- **Trạng thái cập nhật 11/11/2026:** PR #52 đã được reviewer Approve và merge vào `dev@294c69a`; F01–F04 được xác minh độc lập trên `4403f3c` (23 passed, 0 skipped trên PostgreSQL 17 Docker cô lập), F05 tài liệu được xác minh trên bản sau đó. PR #30 đã merge `dev` chứa 017 trong code. Applied ledger 017 trên Supabase nhóm và PR #30 worker HTTPS E2E tiếp tục pending; merge code không chứng minh deploy.
+- **Context / Ngữ cảnh:**
+  - `updated_at` không phù hợp để phát hiện stale job vì metadata update (tiêu đề, môn, khối lớp) hoặc thao tác ngoài luồng làm mới timestamp này mà không phản ánh tiến trình sinh đề thực tế.
+  - Sự cố tiến trình worker đột ngột dừng (crash, OOM, mất mạng) khiến generation job bị kẹt vô thời hạn ở trạng thái `running`.
+  - Thiếu cơ chế lưu bền vững mã lỗi thất bại (`generation_error_code`) qua các lần khởi động lại worker và tái kết nối SSE client.
+  - Cần cơ chế fencing chống xung đột giữa stale scanner và worker hợp lệ vừa hoàn thành (`finish`) hoặc job đã được retry với token mới.
+- **Decision / Quyết định:**
+  - Bổ sung migration 017 (`backend/migrations/017_generation_lifecycle_recovery.sql`) thêm hai cột độc lập trên `public.exam_sessions`:
+    - `generation_last_activity_at TIMESTAMPTZ NULL`: cập nhật nghiêm ngặt khi claim, reserve quota, persist result/clone và heartbeat.
+    - `generation_error_code TEXT NULL`: ràng buộc `CHECK (generation_error_code IS NULL OR generation_error_code ~ '^[A-Z0-9_]{3,64}$')`.
+  - Thiết lập ngưỡng stale timeout 720 giây (12 phút) tính theo đồng hồ database (`clock_timestamp()`).
+  - Cung cấp `list_stale_generation_jobs(p_cutoff_seconds, p_limit, p_after_activity_at, p_after_session_id)` sử dụng keyset pagination trên cặp `(generation_last_activity_at, id)` với index riêng `idx_exam_sessions_generation_stale`, chặn limit từ 1 đến 100.
+  - Cung cấp `fail_stale_generation_job_if_current(p_session_id, p_expected_job_token, p_cutoff_seconds)` với row-level lock (`SELECT ... FOR UPDATE`), kiểm tra tính hợp lệ của token và trạng thái trước khi chuyển sang `failed` và ghi nhận mã lỗi `ERR_GENERATION_INTERRUPTED`. Trả về `recovered: false` an toàn nếu token đã đổi hoặc job đã kết thúc.
+  - Đảm bảo tính đơn điệu của heartbeat (`heartbeat_generation_job`) bằng `GREATEST(generation_last_activity_at, clock_timestamp()) RETURNING ... INTO v_activity_at` dưới row lock để triệt tiêu race condition lùi mốc thời gian khi có transaction cạnh tranh lock (F02).
+  - Ràng buộc bắt buộc mã lỗi không được NULL tại ranh giới RPC `finish_generation_job_with_error` với SQLSTATE tiêu chuẩn `22023` cho các trạng thái kết thúc thất bại (`failed`, `partial_generated`) (F03).
+  - Cung cấp `load_generation_completed_results` trả kèm `generation_error_code` để worker PR #30 tái tạo terminal SSE event sau khi khởi động lại.
+  - Xóa `generation_error_code` về NULL khi `claim_generation_job` retry nhưng bảo toàn quota đã trừ và các question targets đã persist trước đó.
+  - Phân quyền theo nguyên tắc đặc quyền tối thiểu: thu hồi INSERT/UPDATE trực tiếp trên bảng `exam_sessions` từ `PUBLIC`, `anon`, `authenticated`; whitelist quyền UPDATE cột metadata `(title, subject, grade)` cho `authenticated`; bảo vệ cột worker bằng trigger chặn đứng cập nhật trực tiếp với SQLSTATE `42501`; giới hạn EXECUTE các RPC quản lý lifecycle cho `service_role`; ghim `search_path` cho các hàm SECURITY DEFINER.
+- **Alternatives / Lý do chọn giải pháp:**
+  - *Không dùng `updated_at`:* Tránh việc chỉnh sửa thông tin đề thi làm gia hạn sai lệch thời gian tính stale của tiến trình worker.
+  - *Không theo dõi timeout in-memory tại worker:* Worker có thể bị kill bất ngờ; trạng thái in-memory mất hoàn toàn khi container khởi động lại.
+  - *Dùng token fencing và khóa dòng (`FOR UPDATE`):* Ngăn chặn race condition giữa stale scanner chậm chạp và worker vừa hoàn thành nhiệm vụ hoặc job đã retry hợp lệ.
+  - *Giữ nguyên migration 005/015/016 và `finish_generation_job` cũ:* Đảm bảo tương thích ngược hoàn toàn cho các pipeline không dùng error code bổ sung.
+- **Tác động & Phạm vi:**
+  - Schema: `public.exam_sessions` bổ sung 2 cột và 1 index.
+  - RPCs: 5 RPC mới và cập nhật trong migration 017 (`list_stale_generation_jobs`, `fail_stale_generation_job_if_current`, `heartbeat_generation_job`, `finish_generation_job_with_error`, `load_generation_completed_results`).
+  - Integration: PR #52 cung cấp SQL boundary; PR #30 tiêu thụ cho stale scanner, durable error recovery và SSE terminal emission. PR #52 không chứa Python worker code hay UI code.
+- **Tài liệu & Liên kết liên quan:**
+  - SQL migration: `backend/migrations/017_generation_lifecycle_recovery.sql`
+  - Integration test suite: `backend/tests/migrations/test_generation_lifecycle_recovery.py`
+  - API Contract: `docs/api/generation-lifecycle-recovery.md`
+  - Task specification: `docs/tasks/TASK-207.md`
+  - PR liên quan: [PR #52](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/52), [PR #30](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30)
+
+## DEC-OPS-LOCAL-DOCKER-20261109: Docker tự chạy trên máy từng thành viên (proposed)
+
+- **Ngày / người đề xuất:** 09/11/2026 — Duy / @johannguyen015, tác giả [PR #56](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/56).
+- **Trạng thái:** Policy đang đề xuất; chưa có bằng chứng nhóm chấp thuận áp dụng. GitHub Approve, merge tài liệu và organizational acceptance được ghi riêng; review/merge không tự chứng minh adoption hoặc từng thành viên đã chạy Docker.
+- **Ngữ cảnh / lý do:** Cụm “shared development setup” trong [PR #8](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/8) nói về source, Dockerfiles, Compose, dependency locks và CI dùng chung, nhưng có thể bị hiểu thành Docker host trên máy Đạt. Day 0 đã đặt mục tiêu chạy trên máy cá nhân; hướng dẫn contributor cần nêu rõ trách nhiệm local.
+- **Quyết định đề xuất:** Mỗi contributor phát triển hoặc kiểm thử ứng dụng đang chạy tự cài Docker/Compose, clone repo và chạy stack trên máy mình; tự quản lý checkout, `.env`, logs và bằng chứng `doctor/up/smoke` cùng tests liên quan. Ghi command/platform/error thật khi không chạy được; CI hoặc stack của người khác không thay bằng chứng local. Bản [UI walkthrough tĩnh](ui-walkthrough/README.md) được miễn vì chỉ xem dữ liệu mẫu.
+- **Ranh giới / phụ thuộc:** [PR #51](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/51) đã merge phần OPS preparation; không chứng minh beta đã deployed. [Issue #53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53) giữ production-first, private beta nội bộ nhóm, ưu tiên 0đ, không bắt buộc staging riêng. Máy nhóm + Tailscale chỉ là ứng viên có điều kiện; không chọn host/máy Đạt, không giao operator hay đổi HTTPS/OAuth/access control từ policy này. Deployment tập trung là hạng mục riêng, không thay local development/test.
+- **Ảnh hưởng:** `README.md`, `CONTRIBUTING.md`, `docs/setup-docker.md`, Day 0 của `docs/planning.md` và mục changelog này. Không sửa runtime, Compose, cloud, API hoặc schema; không thêm approval gate. Chấp thuận policy cần quyết định của nhóm có dẫn chứng, độc lập với việc hoàn thiện đề xuất tài liệu.
+
+---
+
+
 ## DEC-DOCS-INPUT-20261109: Đối chiếu yêu cầu và bàn giao input (proposed)
 
 - **Ngày / người đề xuất:** 09/11/2026 — Trung Anh / philip-kkk, PM hỗ trợ soạn theo yêu cầu.
@@ -784,7 +833,7 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
   reviewer verified; F11 stays in its original
   [thread](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/32#discussion_r4479665885).
 
-## DEC-207-003 — Stage 2 durable generation HTTP wiring
+## DEC-BE2-207-HTTP — Stage 2 durable generation HTTP wiring
 
 - **Ngày / người phụ trách:** 06/11/2026, Quỳnh / TASK-207b, PR #30; agent hỗ trợ Dev.
 - **Trạng thái:** đã push trên Draft PR #30; chưa nghiệm thu DB/FE/proxy thật.
@@ -792,16 +841,16 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
 - **Decision:** dùng migrations thực tế 005/015/016 để claim/quota/save full AI result hoặc ORIGINAL_CLONE/finish/load; owner claim bằng JWT, worker writes bằng service role và job token. `GET /api/sessions/{id}/generation-snapshot` đọc completed/failures từ RPC. Ticket kiểm epoch/cursor trước khi EventSource mở; cursor được chụp trước DB read để replay không bỏ event. Sau restart, ticket khôi phục terminal event từ trạng thái và counts bền vững nếu broker chưa có.
 - **Impact:** backend job repository, runner, main, generation snapshot/stream routes, FE2 Stage 2 API contract. Không thay SQL/AI generator/FE. [Contract và giới hạn](api/generation-job-endpoints.md), [bàn giao](tasks/TASK-207b.md).
 
-## DEC-207-004 — Chặn snapshot tiến độ trộn hai revision
+## DEC-BE2-207-SNAPSHOT — Chặn snapshot tiến độ trộn hai revision
 
 - **Ngày / người phụ trách:** 10/11/2026, Quỳnh / TASK-207b, PR #30 commit `7666247` (head tích hợp `114bfc7`).
 - **Ngữ cảnh:** `load_generation_completed_results` và phép đọc `exam_sessions.status` là các thao tác DB riêng; finish hoặc retry ở giữa có thể ghép counts cũ với status mới, khiến FE2 hiển thị tiến độ sai.
 - **Quyết định:** chụp broker cursor trước khi đọc DB; đọc `id,status,updated_at` của session trước và sau RPC. Nếu hai lần đọc khác nhau, trả `409 ERR_CONFIG_CONFLICT` với yêu cầu tải lại trạng thái; không xuất snapshot trộn revision. FE2 tiếp tục lấy durable snapshot/cursor mới trước ticket/SSE. Không thay SQL, không tự retry mutation.
-- **Phạm vi và bằng chứng:** `generation_snapshot.py` và regression stable/finish-during-read/same-status-new-revision; [contract snapshot](api/generation-job-endpoints.md#event-stream-and-reconnect). CI 5/5 trên `114bfc7`; full backend/Blueprint offline 1759 passed, 274 skipped theo M3 PR #30. Chưa có FE–BE–DB/SSE thật trên cùng image/head hoặc G0 HTTPS; PR #52 migration 017/ledger vẫn là gate recovery riêng.
+- **Phạm vi và bằng chứng:** `generation_snapshot.py` và regression stable/finish-during-read/same-status-new-revision; [contract snapshot](api/generation-job-endpoints.md#event-stream-and-reconnect). CI 5/5 trên `114bfc7`; full backend/Blueprint offline 1759 passed, 274 skipped theo M3 PR #30. Chưa có FE–BE–DB/SSE thật trên cùng image/head hoặc G0 HTTPS; migration 017 đã merge qua PR #52, còn applied ledger và recovery live là gate riêng.
 
 ## DEC-BE2-207-LIFE — W2 recovery and runtime wiring (author implementation)
 
 - Date/owner: 07/11/2026 — Quỳnh, PR #30 commit `bb86423`; author implementation pushed, not accepted.
 - Context: on-access stale recovery and an in-memory SSE broker could not independently recover an abandoned job or retain its error after restart. The public metrics stub did not report the shared worker's live activity.
 - Decision: consume Duy's PR #52 migration 017 RPC contract for cursor-paged stale scanning, token-fenced failure and durable error read-back. Start one scanner on startup/every 30 seconds, retain terminal buffers for at least 15 minutes, clean every 60 seconds and hold a broker lease for issued SSE tickets. Use PR #32 admin dependency and the existing Gemini observer/collector for protected metrics.
-- Impact: generation repository/runner/recovery, snapshot/SSE/ticket/broker, validator adapter, app lifespan and metrics route. The follow-up patch aligns dev and Docker smoke with metrics Auth (anonymous 401 + Bearer challenge) and fixes the CI test fixture for collector 503. PR #52 remains open; DB application, one-worker deployment and live FE/DB/proxy acceptance remain pending. No migration, AI generator, validator aggregator or FE owner code is changed here.
+- Impact: generation repository/runner/recovery, snapshot/SSE/ticket/broker, validator adapter, app lifespan and metrics route. The follow-up patch aligns dev and Docker smoke with metrics Auth (anonymous 401 + Bearer challenge) and fixes the CI test fixture for collector 503. PR #52 later merged into dev; applied DB ledger, one-worker deployment and live FE/DB/proxy acceptance remain pending. No migration, AI generator, validator aggregator or FE owner code is changed here.
