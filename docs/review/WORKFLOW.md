@@ -3,6 +3,7 @@
 | Thông tin | Giá trị |
 |---|---|
 | Phiên bản | **v0.1 — proposed**, soạn ngày 28/10/2026 |
+| Sửa đổi đang đề xuất | **INPUT-20261109**, ngày 09/11/2026: làm rõ vòng giao-nhận input; chờ review tài liệu, chưa xác nhận toàn nhóm áp dụng |
 | Căn cứ lịch tuần | Trung Anh / philip-kkk xác nhận ngày 28/10/2026; Duy là leader |
 | Phạm vi bản này | Bộ hướng dẫn để review và chọn pilot; chưa có bằng chứng rollout toàn nhóm hoặc pilot thực tế |
 | Chưa chốt | Task/PR thử, author/reviewer pilot, quyền cụ thể của các agent, người giải quyết bất đồng theo từng nội dung |
@@ -47,6 +48,28 @@ Quyền đọc/chạy kiểm/sửa/đăng/push/approve/merge tách theo việc �
 
 ETA là ước lượng có người xác nhận và thời điểm cập nhật, không phải bằng chứng đã giao. Mốc của task thật do leader/người phụ trách điền; ví dụ trong TEMPLATES không phải lịch đã phân công. Chốt contract thứ 5 có thể giúp code với fixture từ thứ 6; tích hợp API thật cần đầu vào thật và kiểm tương ứng.
 
+### 3.1. Yêu cầu, bàn giao và xác nhận input
+
+Mỗi input có một ID ổn định và link yêu cầu gốc, phân biệt với finding ID. Giữ ID đang dùng; input mới có thể dùng `I-TASK204-01` hoặc `I-PR42-01`. Không đánh lại số khi đổi head hoặc hỏi tiếp trên PR khác; nếu ID cũ trùng ở nơi khác, luôn kèm link nguồn. Nhiều yêu cầu độc lập cần ID riêng để tránh trả lời A bằng nội dung B.
+
+- **Người yêu cầu** ghi người cung cấp, người nhận/task sử dụng, mục đích và điều kiện đủ dùng: cần quyết định, contract/JSON mẫu, code đã merge hay môi trường đã triển khai. Ghi riêng mốc cần nhận và ETA người cung cấp xác nhận (chưa có thì TBD), cùng người/thời điểm cập nhật. Nếu thiếu owner, báo Duy điều phối; không tự nhận một người đã được giao việc.
+- **Người cung cấp** trả lời cùng ID, nhắc ngắn đúng yêu cầu, nêu quyết định hoặc artifact/phiên bản đã giao, phần chưa đáp ứng, người xử lý phần đó đã xác nhận hay còn TBD và ETA. Quyết định kỹ thuật dẫn về contract chuẩn; nếu consumer cần tự nối adapter thì nói rõ ranh giới đó. Tests cục bộ không thay bằng chứng DB/deployment khi yêu cầu nằm ở các lớp này.
+- **Người nhận** đối chiếu điều kiện đủ dùng, xác nhận nhận đủ cho bước nào hoặc chỉ nhận một phần; dẫn bằng chứng và ghi phần còn thiếu. Im lặng, provider báo xong, PR merge hoặc hết ngày không tự là xác nhận của consumer. Chỉ hỏi tiếp phần còn thiếu, giữ link phần đã nhận.
+
+| Mức | Bằng chứng cần ghi |
+|---|---|
+| `Requested` | Yêu cầu, người giao/nhận, mục đích, điều kiện đủ dùng, need-by và ETA hoặc TBD |
+| `Decided` | Kết luận và link người có thẩm quyền xác nhận; chưa đồng nghĩa code đã có |
+| `Delivered` | Artifact chia sẻ được và revision/head; môi trường/migration đã áp nếu thuộc đầu ra cần giao |
+| `Accepted` | Consumer xác nhận đủ dùng cho bước cụ thể và phiên bản nhận; chưa thay GitHub Approve |
+| `Integrated` | Đường chạy tích hợp đã kiểm, head/môi trường/kết quả và giới hạn |
+
+Chỉ dùng mức phù hợp với yêu cầu, không ép câu hỏi policy đi qua bước tích hợp. Có thể ghi `Delivered một phần` kèm phần còn thiếu; không nâng trạng thái toàn input vì một phần đã đạt. Khi artifact đổi làm mất điều kiện đủ dùng, giữ bằng chứng cũ và ghi rõ phần cần xác nhận/kiểm lại trên bản mới, không tự mang Accepted/Integrated sang bản mới.
+
+**Một nơi tổng hợp:** bảng input trong M2 của task nhận; nếu PR đã có comment tổng hợp đang dùng thì giữ comment đó làm nơi cập nhật và M2 dẫn tới nó. PR khác/M1/M3 chỉ dẫn ID và link, không duy trì bảng trạng thái song song. Trao đổi ở PR Conversation; chỉ cập nhật plan/contract/file tuần khi có kết luận, thay đổi hoặc bàn giao đáng kể, không commit sau mỗi reply. Dùng mẫu trong [M2](TEMPLATES.md#m2).
+
+Ví dụ từ audit 09/11: Hùng hỏi C01 về `generated → reviewed`, còn câu trả lời nói mock policy thì C01 vẫn chưa được giải đáp. Với Quỳnh, SQL đã giao nhưng DB chưa áp thì ghi đúng phần SQL đã nhận và phần môi trường còn chờ; không xin lại toàn bộ SQL. Đây là ví dụ đọc lịch sử, không phải kết luận trạng thái hiện tại hay phân công mới.
+
 ## 4. Thông tin nằm ở đâu?
 
 | Thông tin | Nơi chuẩn |
@@ -54,7 +77,7 @@ ETA là ước lượng có người xác nhận và thời điểm cập nhật
 | Rules và format | WORKFLOW này và TEMPLATES, trong repo chung |
 | Phân công/thứ tự/ETA của tuần | Một file do Duy quản lý; đề xuất `docs/tasks/W<NN>_ASSIGNMENT.md`, hoặc đường dẫn chung đã chọn |
 | Plan/phân tích file/input/cách kiểm/bàn giao | Một file task, ví dụ `docs/tasks/TASK-<ID>.md`, trên nhánh task |
-| Hỏi input/scope, thống nhất lịch và plan | **PR Conversation**; quyết định quan trọng dẫn về plan/file tuần/contract tương ứng |
+| Hỏi input/scope, thống nhất lịch và plan | **PR Conversation**; ID và nơi tổng hợp duy nhất theo mục 3.1; quyết định dẫn về plan/file tuần/contract tương ứng |
 | Gói yêu cầu review | PR description; nếu dài, dùng một comment tổng hợp có link rõ từ body |
 | Finding, phản hồi sửa và xác minh | Cùng review thread, cùng finding ID; vấn đề xuyên file có thể dùng một comment tổng hợp được link |
 | API/schema/props chuẩn | Tài liệu contract của owner, ví dụ [API conventions](../api/endpoint-conventions.md); không lập một bản contract cạnh tranh trong plan |
@@ -71,7 +94,7 @@ Các tên file tuần/task là quy ước đề xuất để leader chọn, tạ
 | 1. Giao việc | Duy điền M1 thứ 4/sáng thứ 5, phát link và phiên bản | Task có mục tiêu, tiêu chí, owner, thứ tự, input/output và mốc giao-nhận |
 | 2. Đọc và plan | Thứ 5 author giao agent đọc AGENTS/CONTRIBUTING/WORKFLOW, M2, task, code/contract; nháp rồi lưu file task theo quyền | Có ma trận file → mục đích → output → dependency, câu hỏi và cách kiểm |
 | 3. Draft PR | Thứ 5 author dùng nhánh task trên nền dev đã kiểm, commit plan và mở **Draft vào dev** theo quyền, link file tuần/task | Có PR để trao đổi trước code; Draft không phải thông báo code đã xong |
-| 4. Làm rõ input | Author hỏi ở Conversation, người cung cấp/owner trả lời, xác nhận ETA; reviewer góp ý plan nếu cần | Kết luận quan trọng cập nhật đúng plan/contract/file tuần; thiếu gì vẫn ghi blocker |
+| 4. Làm rõ input | Hỏi, trả lời và xác nhận theo cùng ID tại mục 3.1; reviewer góp ý plan nếu cần | Rõ mức đã giao/đủ dùng, bằng chứng và phần còn thiếu; chỉ code phần đã đủ rõ |
 | 5. Code | Từ thứ 6 author triển khai phần đã rõ; giao input cho task sau và tự kiểm | Code/tests/docs trong scope, mock/pending phân biệt với tích hợp thật |
 | 6. Ready | Sau push author điền M3 cho head hiện tại, cập nhật PR và request reviewer | Scope/contract/checks/kết quả/giới hạn rõ; chuyển Ready khi đủ đầu vào review |
 | 7. Review | Reviewer giao agent đọc đúng PR/head, plan trong nhánh PR, M3, contract, code/tests và review cũ; kiểm độc lập | M4 có bằng chứng, blocker/nonblocking rõ; owner đăng theo quyền |
