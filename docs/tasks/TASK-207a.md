@@ -1,5 +1,24 @@
 # TASK-207a — Plan và bàn giao W2: API cấu hình sinh đề
 
+## Chốt phạm vi merge W2 — 11/11/2026
+
+- Remote PR #30 tại lúc đối chiếu: `dev@7601d67` / `feat/task-207c-runtime-metrics@5ce0d07`, Ready for review. Merge `dev` mới đưa migration 017 của PR #52 vào cây code; không thêm thay đổi Python 207a so với `114bfc7`. CI trên `5ce0d07` đạt 5/5. Kết quả backend/Blueprint 1759 passed, 274 skipped là lượt chạy ở `114bfc7`, không nhận đã chạy lại trên head mới.
+- Phạm vi xin merge PR #30 là implementation/contract và tự kiểm W2 207a/b/c. Nghiệm thu G0 live trên HTTPS/Supabase là bước riêng sau bàn giao môi trường, **chưa thực hiện trong PR này**; merge code không là bằng chứng 207a Integrated/Done.
+- I-OPS-DB/ENV0 cho ca 207a save/read config N=1 vẫn thiếu project đích đã xác nhận, phiên test/quyền seed-cleanup và deployed SHA. Preflight HTTP local ngày 10/11 bên dưới chỉ kiểm health/401, chưa lưu hoặc đọc config thật. Quỳnh không giữ cấu hình môi trường; không ghi secret vào PR/docs.
+
+## Kiểm tích hợp local 10/11/2026 — PR #30, author preflight
+
+- [Sếp Trung Anh bàn giao FE1 trên PR #30](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6765881540): config W2 ở head `114bfc7` vẫn gửi N, modes và hai shuffle flags qua `POST /api/sessions/{id}/config`. Delta W4 #45 bỏ modes/default OFF là scope riêng, không áp ngược vào smoke W2 này. Đây là đối chiếu contract/source và fixture FE, chưa có save/read API thật.
+- M2/M3 dùng [bản ghi smoke local](TASK-207-pr30-integration-smoke.md). Code head `114bfc7` bằng remote PR #30; base `dev@25a9e78`. Worktree này chỉ có ba file task sửa sẵn từ trước khi kiểm; không lấy `feat/task-207-w2-backend@af77481` ở repo root làm head PR.
+- Compose worktree healthy trên `127.0.0.1:3001` (FE) và `:8001` (BE); FE `/` trả 200, BE `/health` trả 200. `GET /api/sessions` không token trả 401 qua cả proxy và BE. Đây chỉ là preflight đọc, chưa lưu config.
+- `.env` worktree có tên biến nhưng `SUPABASE_URL`, anon/service key và hai biến Vite Supabase đều trống khi kiểm; chưa xác nhận project đích hoặc tài khoản test. **I-OPS-DB/ENV0 còn chặn** POST config và GET đọc lại qua phiên test. Không ghi key/mật khẩu vào tài liệu. App local này chưa phải G0 live qua HTTPS.
+
+## Input ENV0/DB0 nhận ngày 09/11/2026 — nguồn PR #51 và Issue #53
+
+- [Issue #53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53) đã chốt topology production-first, private beta chỉ cho thành viên nhóm được duyệt, ưu tiên chi phí 0đ; không bắt buộc staging server riêng. Đây là quyết định môi trường, chưa có URL HTTPS, host, quyền deploy, roster hay nghiệm thu config qua FE2/proxy.
+- Với I-OPS-DB, local/CI và PostgreSQL cô lập là nơi kiểm migration, RLS A/B và test có thể phá hủy; không chạy các kiểm đó trên production DB. Duy/Hùng còn phải giao approved migration manifest, applied ledger/checksums, kết quả fresh+upgrade, backup/restore cô lập, backend-compatible SHA và người có quyền thực thi. [PR #51](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/51) chỉ có inventory/candidate chuẩn bị, chưa là ledger áp migration hoặc DB proof.
+- Tài khoản A/B và quyền seed/cleanup, origin/OAuth callback, access control cho beta và FE2 save/reload qua HTTPS proxy vẫn thiếu bằng chứng/đầu mối thực thi. PR #51/Issue #53 không bàn giao JSON hoặc thay contract `save_generation_config` của owner DB.
+
 ## Cập nhật author 07/11/2026 — PR #30, working tree sau `8fb6387`
 
 - A1 đã đối chiếu lại trên nhánh `feat/task-207-w2-backend`: canonical preflight,

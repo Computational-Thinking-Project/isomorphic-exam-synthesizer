@@ -1,5 +1,23 @@
 # TASK-207b — Plan và bàn giao W2: Background generation, lưu tiến độ và SSE
 
+## Chốt phạm vi merge W2 — 11/11/2026
+
+- PR #52 đã được Approve và merge vào `dev@294c69a`; PR #30 remote `5ce0d07` đã merge `dev@7601d67` nên có migration 017 trong code. Đạt xác minh suite 017 trên PostgreSQL 17 cô lập: **23 passed, 0 skipped**. Đây là input SQL/contract đã Delivered cho adapter W2, không phải bằng chứng 017 đã áp trên Supabase nhóm.
+- Phạm vi xin merge PR #30 là Python job/snapshot/SSE/recovery adapter W2 cùng contract và checks theo head. G0 live, Gemini thật, PostgREST/RLS, restart và stop grace là nghiệm thu triển khai riêng; **chưa chạy/chưa nhận PASS trong PR này**. Không ghi toàn TASK-207b Integrated/Done từ việc merge code.
+- I-B-STALE không còn chờ sửa test/contract PR #52. I-OPS-DB/ENV0 vẫn chờ approved manifest, shared applied ledger 017, compatible deployed SHA, phiên test/quyền vận hành và quota Gemini. [Checkpoint OPS 11/11](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6794577941) chỉ kiểm static archive `294c69a`, chưa chạy runtime PR #30 hoặc job/SSE/restart. Ca N=1 và recovery dưới đây vẫn pending đúng phạm vi.
+
+## Kiểm tích hợp local 10/11/2026 — PR #30, author preflight
+
+- I-B-FE1-E2E: [Sếp Trung Anh bàn giao FE1 và cập nhật kết quả P4](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30#issuecomment-6765881540): Stage1 → Stage2 đã có code; 16 blob FE liên quan trùng head `114bfc7` và 167/167 targeted fixture/component/service tests đạt. Provider còn chạy lại P4 trên Supabase Local: API/browser PASS, gồm Auth/JWT/PostgREST/RLS, confirm replay, readiness và các ca F5. Đây là **Integrated trong phạm vi P4 Stage1 trên runtime local hiện có**, đủ bàn giao FE1 cho bước tích hợp tiếp. Image app chưa được chứng minh build từ `114bfc7`; canonical producer dùng fake algebra, không gọi Gemini. Chưa có xác nhận Consumer Accepted của Quỳnh, chưa phải config/generation/SSE PR #30 live hoặc G0. Dashboard resume sau generation thuộc W4-MVP-10.
+- M2/M3 và kết quả endpoint đọc-only nằm tại [bản ghi smoke local](TASK-207-pr30-integration-smoke.md), code head `114bfc7`, base `dev@25a9e78`. Chưa gọi generate, snapshot hay ticket/SSE vì chưa có project Supabase và phiên test xác nhận; không ghi PASS cho 207b từ health/401.
+- Tree PR có migration 015/016 nhưng không có 017; chưa có bằng chứng ledger 017 đã áp trên project dùng chung. Nếu chỉ đủ 015/016, smoke luồng cơ bản N=1 sẽ ghi riêng; recovery/`ERR_GENERATION_INTERRUPTED` vẫn **chưa kiểm** theo I-B-STALE và I-OPS-DB. Không tự áp migration hoặc kiểm race/destructive trên DB dùng chung.
+
+## Input OPS nhận ngày 09/11/2026 — nguồn PR #51 và Issue #53
+
+- I-OPS-LIFE: [Duy đã chấp nhận baseline](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/51#issuecomment-6718841843) một backend worker/replica, không reload/autoscale khi broker/ticket còn trong RAM; scanner startup rồi mỗi 30 giây không overlap, trang tối đa 100 có keyset pagination, stale cutoff 720 giây theo DB clock và recheck status/token/activity dưới row lock. Terminal buffer giữ tối thiểu 15 phút, cleanup mỗi 60 giây, không evict subscriber/lease đang dùng; shutdown bounded dự kiến 10 giây. Đây là test baseline, chưa phải deploy/restart acceptance. Quỳnh giữ Python lifecycle, Duy giữ SQL/RPC, Đạt giữ cấu hình/deploy/evidence; stop grace thực tế còn phải bao phủ shutdown đã đo.
+- I-B-STALE: Duy chốt persist `ERR_GENERATION_INTERRUPTED`, read-back sau restart và retry giữ committed results/quota nhưng clear error cũ qua migration 017 của [PR #52](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/52). PR #51 không tạo RPC thứ hai; candidate inventory của PR #51 là bản chuẩn bị theo head PR #52 cũ, không là approved manifest hay bằng chứng đã áp 017.
+- I-OPS-DB/ENV0: [Issue #53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53) chốt một production HTTPS private beta cho nhóm, không bắt buộc staging riêng; host, quyền deploy/restart, operator backup, team principals, A/B/admin identities, kênh secret, DB ledger/backup+restore và quota Gemini vẫn chưa giao. Migration/RLS/race/destructive tests phải dùng PostgreSQL cô lập; G0 FE→BE→DB/Auth/SSE/proxy cần cùng deployed SHA và ledger, chưa có live evidence. Golden 3 câu × N=2 với key/solution oracle vẫn là input riêng chưa bàn giao.
+
 ## F02 author update 08/11/2026 — validator resource bound
 
 - Review Đạt tại PR #30, head `b1f0999`, chỉ ra `asyncio.to_thread` tiếp tục

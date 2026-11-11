@@ -1,5 +1,23 @@
 # TASK-207c — Plan và bàn giao W2: Runtime metrics có Auth
 
+## Chốt phạm vi merge W2 — 11/11/2026
+
+- Remote PR #30 tại lúc đối chiếu là `5ce0d07` trên `dev@7601d67`, Ready for review; CI 5/5 đạt. Review AI/OPS của Đạt trên `b62e007` không có finding code bắt buộc mới, nhưng là COMMENT và chưa thay GitHub Approve trên head cuối.
+- Phạm vi xin merge là implementation metrics/admin guard/observer W2 và checks offline. Nghiệm thu metrics 401/403/200 bằng JWT thật qua HTTPS/proxy, gauge khi chạy job/SSE và số đo restart/stop grace thuộc G0 live riêng, **chưa thực hiện trong PR này**. Kết quả `/health` 200 và metrics không token 401 trên Compose local ngày 10/11 bên dưới không chứng nhận các ca Auth live.
+- I-OPS-DB/I-OPS-LIFE còn thiếu deployed SHA, principals admin/non-admin, quyền môi trường và cấu hình vận hành đã kiểm. Không suy từ PR #51 đã merge hoặc preflight static archive của OPS rằng runtime PR #30 đã được nghiệm thu.
+
+## Kiểm tích hợp local 10/11/2026 — PR #30, author preflight
+
+- M2/M3 chi tiết ở [bản ghi smoke local](TASK-207-pr30-integration-smoke.md), code head `114bfc7`, base `dev@25a9e78`. Compose healthy; `GET /health` trên BE `127.0.0.1:8001` trả 200; `GET /api/health/metrics` không token trả 401 trực tiếp và qua FE proxy `127.0.0.1:3001`. Đây chỉ xác minh health và chặn request không Auth, chưa chứng nhận sáu metrics.
+- `.env` worktree chưa có Supabase URL/key, `ADMIN_EMAILS` chưa cấu hình và chưa có tài khoản A/B/admin. I-OPS-DB/ENV0 còn chặn 200/403 theo vai trò và kiểm gauge qua job/SSE thật. Chưa kiểm HTTPS private beta/proxy deploy (G0 live); app Compose local là môi trường khác.
+
+## Input ENV0/OPS nhận ngày 09/11/2026 — nguồn PR #51 và Issue #53
+
+- [Issue #53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53) chốt production-first, một deployment HTTPS private beta chỉ cho thành viên nhóm được duyệt, không bắt buộc staging riêng. Chỉ topology đã quyết; host/provider, URL/origin, quyền cloud, roster/backup, kênh secret và thời điểm vận hành chưa xác nhận. Cần access control thật theo principal Supabase đã xác thực; `ADMIN_EMAILS` bảo vệ metrics không thay quyền vào beta, và CORS/ẩn URL không đủ.
+- I-OPS-LIFE: [baseline Duy xác nhận ở PR #51](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/51#issuecomment-6718841843) dùng một worker/replica, không reload/autoscale khi registry/broker/ticket còn trong RAM. Đạt phụ trách cấu hình/deploy và evidence; Quỳnh phụ trách Python lifecycle. Stop grace cần bao phủ shutdown thực tế, chưa có chứng cứ cấu hình/restart live.
+- I-OPS-DB: local/CI và PostgreSQL cô lập dành cho migration/RLS và test phá hủy; production DB không dùng cho các phép thử đó. Duy/Hùng còn phải bàn giao approved manifest/ledger 017, backup/restore, SHA tương thích; OPS/Auth còn phải bàn giao A/B/admin/non-admin JWT test qua kênh an toàn, quota Gemini, HTTPS proxy/OAuth callback và quyền seed/cleanup/restart. PR #51 là docs/preflight preparation, chưa chứng nhận protected metrics 401/403/200 qua proxy, Gemini thật hay FE2.
+- [Review PR #51](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/51) còn Changes requested: probe `/docs` có thể nhận nhầm HTML fallback của SPA là proxy backend thành công, và CI chưa chạy tests/lint của OPS tool. Vì vậy output preflight hiện tại chưa là bằng chứng metrics/Auth qua proxy.
+
 ## Cập nhật author 07/11/2026 — wiring và CI trên PR #30
 
 - Commit `bb86423` đã nối `get_current_admin_user` của PR #32, gateway observer,
