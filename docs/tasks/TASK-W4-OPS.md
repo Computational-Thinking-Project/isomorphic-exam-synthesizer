@@ -2,7 +2,7 @@
 
 ## Checkpoint hiện hành — 11/11/2026 (UTC+7)
 
-- Author OPS11/21: Đạt; workflow v0.1 proposed. Nhánh tiếp nối `docs/w4-ops-integration-checkpoint`, base `dev@294c69a1a085ac6487d65b633e06a2f1112e2046`; không mở lại PR51 đã merge. Các checkpoint có ngày cũ phía dưới là lịch sử.
+- Author OPS11/21: Đạt; workflow v0.1 proposed. Nhánh tiếp nối `docs/w4-ops-integration-checkpoint`, base ban đầu `dev@294c69a1a085ac6487d65b633e06a2f1112e2046`; đã sync dev7601d67 sau khi #56 merge (chỉ docs), giữ nguyên SHA294c69a của runtime đã kiểm; không mở lại PR51 đã merge. Các checkpoint có ngày cũ phía dưới là lịch sử.
 - PR51 preparation đã merge. PR52 đã merge thành `294c69a`; Đạt Approve sau 23/23 test PostgreSQL17 thật. Không còn chờ F01–F04 của PR52; **chưa có applied ledger trên DB ứng dụng**.
 - PR54@`7c7200f`: Đạt [Approve](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/54#pullrequestreview-5857922227), 23/23 PostgreSQL15 + 198 API/review tests pass. PR56@`586604b`: [Approve docs](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/56#pullrequestreview-5857894388); không xác nhận policy adoption.
 - PR61@`b327899`: [Request changes](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/61#pullrequestreview-5857931153). 230 passed/1 optional worker-probe skipped; F01 HTTP boolean coercion và F02 success khi receipt RPC thiếu/sai đã tái hiện, chờ Duy sửa. Không sửa nhánh author.
