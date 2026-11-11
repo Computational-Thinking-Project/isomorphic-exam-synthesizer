@@ -7,9 +7,11 @@
 
 ## Quick start (Docker)
 
-**Bắt buộc cho development/test:** Mỗi thành viên phải tự cài Docker trên **máy cá nhân** (Docker Desktop với Linux containers trên Windows/macOS; Docker Engine + Compose trên Linux), có bản checkout Git và tự chạy các container của mình. Không sử dụng máy của Đạt hoặc máy của bất kỳ thành viên nào làm Docker host chung thay cho thiết lập local. `localhost:3000`/`localhost:8000` chỉ trỏ đến máy đang chạy; mỗi người chịu trách nhiệm `.env`, log và kết quả kiểm thử của checkout riêng.
+**Policy đang đề xuất trong [PR #56](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/56), chưa có xác nhận nhóm thông qua.**
 
-Quy định này áp dụng cho chạy ứng dụng và kiểm thử phát triển; bản preview UI tĩnh không cần Docker. Một deployment HTTPS/private beta truy cập chung (Issue #53 / PR #51) là công việc OPS **riêng**, chỉ thực hiện khi có phương án host, người vận hành, quyền truy cập và nghiệm thu được phê duyệt; không mặc định dùng máy Đạt và không thay thế nghĩa vụ tự chạy local.
+**Nội dung đề xuất cho development/test:** Mỗi thành viên phải tự cài Docker trên **máy cá nhân** (Docker Desktop với Linux containers trên Windows/macOS; Docker Engine + Compose trên Linux), có bản checkout Git và tự chạy các container của mình. Không sử dụng máy của Đạt hoặc máy của bất kỳ thành viên nào làm Docker host chung thay cho thiết lập local. `localhost:3000`/`localhost:8000` chỉ trỏ đến máy đang chạy; mỗi người chịu trách nhiệm `.env`, log và kết quả kiểm thử của checkout riêng.
+
+Quy định này áp dụng cho chạy ứng dụng và kiểm thử phát triển; bản preview UI tĩnh không cần Docker. Một deployment HTTPS/private beta truy cập chung ([Issue #53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53) / [PR #51](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/51)) là công việc OPS **riêng**, chỉ thực hiện khi có phương án host, người vận hành, quyền truy cập và nghiệm thu được phê duyệt; không mặc định dùng máy Đạt và không thay thế nghĩa vụ tự chạy local.
 
 **UI walkthrough cho bài trình bày:** lấy nhánh `feat/ui-ux-demo`, xem [gói PREVIEW portable và runbook](docs/ui-walkthrough/README.md). Mở file bằng Chrome, không cần Docker/Node; đây là preview dữ liệu mẫu, tách khỏi ứng dụng sản phẩm.
 
@@ -34,7 +36,8 @@ Then from the repository root, on Windows:
 .\scripts\dev.ps1 up
 ~~~
 
-Frontend: http://localhost:3000. API docs: http://localhost:8000/docs.
+Default URLs: frontend http://localhost:3000, API docs http://localhost:8000/docs.
+For different host ports, see [multiple checkouts and ports](docs/setup-docker.md#multiple-checkouts-and-occupied-ports).
 The up command waits for health checks and starts watching source changes.
 Ctrl+C stops watching; use the down command to stop the containers.
 
@@ -45,10 +48,10 @@ Ctrl+C stops watching; use the down command to stop the containers.
 ~~~
 
 Setup preserves an existing .env. Empty cloud keys support local health checks
-and mock tests. Google login and the profile API require the existing Supabase
-configuration; see the [frontend Auth setup and verification](frontend/README.md).
-Dashboard session data/actions still use mocks. Real Gemini requires backend
-credentials and integration work. Never commit real secrets.
+and tests that use mocks; they do not verify real login, persistence or generation.
+Google login and the profile API require Supabase configuration; see the
+[frontend Auth setup and verification](frontend/README.md). Real Gemini requires
+backend credentials and the relevant integration checks. Never commit real secrets.
 
 For macOS/Linux use PowerShell 7: pwsh ./scripts/dev.ps1 setup (and the same actions).
 For static Nginx build verification, stop dev and use docker compose up --build --detach --wait.

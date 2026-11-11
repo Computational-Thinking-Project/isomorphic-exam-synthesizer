@@ -1,6 +1,10 @@
 # Team Docker setup (TV6)
 
-## Mandatory per-member local environment
+## Proposed per-member local environment
+
+**Policy status: proposed in [PR #56](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/56); team adoption has not been confirmed.**
+The requirements below describe the proposal. Document review/merge, policy
+acceptance and each member's local verification are separate evidence.
 
 **Every contributor developing or testing the application must install Docker
 and Docker Compose on their own computer, clone the repository locally, and run
@@ -14,9 +18,11 @@ A shared configuration means the same Compose files and dependency versions,
 always refer to the contributor's own machine. Each checkout has its own ignored
 `.env`; never share credentials in the repository. CI success or another
 member's running stack is not evidence that your local environment works.
-The standalone static UI walkthrough is exempt because it is not the running app.
+The [standalone static UI walkthrough](ui-walkthrough/README.md) is exempt because
+it is not the running app.
 
-The separate online HTTPS/private-beta deployment described in Issue #53/PR #51
+The separate online HTTPS/private-beta deployment described in
+[Issue #53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53)/[PR #51](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/51)
 requires its own approved host, operator and security checks. It is not assigned
 to Dat's personal machine by default and does not replace local Docker setup.
 
@@ -71,8 +77,8 @@ pwsh ./scripts/dev.ps1 up
 
 ## First run
 
-Install Docker Desktop from https://docs.docker.com/desktop/setup/install/.
-On Windows choose Linux containers with WSL 2. Reopen the terminal after installing.
+Install Docker Desktop on Windows/macOS, or Docker Engine with the Compose plugin
+on Linux. Follow the platform prerequisites above and reopen the terminal after installing.
 The development configuration requires Compose 2.24.4 or later.
 Use your own local checkout from the section above, then run from the repository root:
 
@@ -84,7 +90,8 @@ Use your own local checkout from the section above, then run from the repository
 
 Setup creates the root .env only if absent and validates Compose without printing
 secrets. Doctor bounds its engine probe at 20 seconds. Up builds both images, waits
-for health checks, tests HTTP and the API proxy, then watches source changes.
+up to 120 seconds for Compose health checks after building, tests HTTP and the API
+proxy, then watches source changes. The build itself can take longer.
 The first build requires internet and can take minutes.
 Ctrl+C stops watching; use down to stop the services.
 
@@ -194,8 +201,15 @@ To run the automated checks inside containers:
 .\scripts\dev.ps1 test
 ~~~
 
-Test runs the existing Python mock tests, the SymPy LaTeX parser check, frontend
-tests, ESLint and a Vite build. It does not exercise real cloud credentials.
+Test runs backend `python -m pytest tests -q` (the full backend tests directory,
+including unit/integration/security tests selected by pytest), then the SymPy
+LaTeX parser check and frontend `npm run test`, `npm run lint`, `npm run build`.
+These commands run in sequence and stop on the first failure. Tests with unmet
+prerequisites can skip; report the actual passed/failed/skipped counts. In particular,
+opt-in database tests need their documented isolated database and explicit opt-in;
+the helper does not provision one. Empty cloud keys do not verify live services,
+OAuth, storage or production acceptance. Never point destructive tests at a shared
+or production database.
 
 For a failure, collect the relevant error and recent service logs:
 
@@ -231,12 +245,14 @@ prune, factory reset or delete unrelated containers to fix this project's setup.
 
 | Action after .\scripts\dev.ps1 | Behavior |
 | --- | --- |
-| up | Build/start, health/HTTP checks, watch source changes |
-| up -NoWatch | Start in background; use for CI or demonstrations |
-| test | Python mock unit tests, SymPy parser, frontend tests/lint/build in containers |
+| setup | Find Docker/Compose (>= 2.24.4), create .env only if missing, validate config --quiet |
+| doctor | Validate config and Linux Engine; engine probe has a 20-second timeout |
+| up | Build/start, wait up to 120 seconds for health, HTTP/proxy checks, then Watch |
+| up -NoWatch | Same startup checks, then return with containers running; later source edits are not synced |
+| test | Backend pytest tests -q, SymPy parser, frontend tests/lint/build; report skips and limits above |
 | smoke | Check running backend, browser entry page and frontend API proxy |
 | logs | Last 100 log lines for both services |
-| down | Stop/remove this project's containers/network; no volume deletion |
+| down | Compose down --remove-orphans for this project; no volume deletion |
 
 Without the helper:
 
@@ -254,7 +270,7 @@ TLS and production secret management are not configured.
 ## Configuration
 
 The root .env supplies both configurations. Empty cloud credentials allow the
-current mock UI, health checks and mock tests. This does not verify real Google
+health checks and tests that use mocks. This does not verify real Google
 login, persistence or Gemini generation.
 
 - Backend only: GEMINI_API_KEY, GEMINI_MODEL, SUPABASE_URL, SUPABASE_ANON_KEY,
@@ -307,7 +323,8 @@ requires separate verification.
 - Code does not update: keep the watcher open and check ignored paths.
   NoWatch starts containers but does not sync later edits; run up to rebuild.
 - Missing dependency: regenerate its lockfile, then run up.
-- Test needs only Docker and mock credentials; smoke needs an already running stack.
+- Test runs in Docker; some suites need additional opt-in prerequisites or skip.
+  Smoke needs an already running stack.
 - Shell/Compose/PowerShell/lock files use LF through .gitattributes.
 
 ## Verification and handoff
