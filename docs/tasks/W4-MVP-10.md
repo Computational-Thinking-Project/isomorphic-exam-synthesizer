@@ -67,5 +67,8 @@ Tích hợp Review, Approval, Export và kiểm FE-H2 nằm trong `feat/w4-mvp-1
 ## Bàn giao
 
 - Đầu ra dự kiến cho Bội Anh, Duy và nhánh tích hợp: route matrix có căn cứ, thay đổi điều hướng trên PR #60, kết quả kiểm theo head và danh sách trường hợp chờ Q11.
-- Trạng thái tại commit plan: đã lập M2 và đối chiếu các đầu vào Q11.
+- Đã triển khai đường dẫn dùng chung cho Stage 1/2 ở sáu file frontend trong working tree trên `d4350c0`. `Stage2ConfigPage.jsx` dùng URL chung cho nút quay lại Stage 1.
 - Kiểm baseline tại `d4350c0` với Node `v22.20.0`: lệnh targeted ở trên đạt **78/78**. Đây là kết quả trước triển khai trên fixture và unit tests.
+- Kiểm sau triển khai trên working tree: `node --test --test-concurrency=1` đạt **364/364**, lint và build đạt. Lượt test song song đầu tiên có 4 lỗi trong khi Windows báo thiếu paging file. Lượt một worker hoàn thành với 0 lỗi. Build cảnh báo chunk JavaScript 985,06 kB.
+- Tự review và audit diff: React Router khớp đúng tham số `sessionId` ở 8 ca URL, gồm `new`, UUID, ID có dấu gạch chéo và ký tự query/hash. Kiểm đăng ký route dưới `ProtectedRoute`, handoff dùng `replace`, guard account/session, fallback và số lượt GET. Phần refactor giữ nguyên mapping và luồng request hiện tại.
+- Browser smoke trên app local còn chờ. Phiên kiểm không kết nối được cổng 3000. Các đích Resume phụ thuộc Q11 tiếp tục chờ input.
