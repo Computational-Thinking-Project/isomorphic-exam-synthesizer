@@ -270,9 +270,8 @@ export default function Stage2ConfigPage({
 
     const isBlueprintReady = Boolean(
       session?.status !== 'draft' &&
-      session?.blueprint_summary &&
-      session.blueprint_summary.is_ready !== false &&
-      session.blueprint_summary.supported_modes !== null,
+      session?.blueprint_summary?.is_ready === true &&
+      Array.isArray(session?.blueprint_summary?.supported_modes),
     );
     if (!isBlueprintReady) {
       setConfigError('Đề nguồn chưa hoàn tất phân tích Blueprint. Vui lòng quay lại Giai đoạn 1 để xác nhận đề gốc.');
@@ -607,7 +606,8 @@ export default function Stage2ConfigPage({
           onSubmit={handleConfigSubmit}
           isSubmitting={isSubmittingConfig}
           error={configError}
-          onBack={() => navigate(`/session/${encodeURIComponent(sessionId)}/stage1`)}
+          onBack={() => navigate('/dashboard')}
+          onReturnToStage1={() => navigate(`/session/${encodeURIComponent(sessionId)}/stage1`)}
         />
       )}
     </div>

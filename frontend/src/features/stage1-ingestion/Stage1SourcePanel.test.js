@@ -450,6 +450,11 @@ test('204: confirm pending ở lại Stage 1, sau khi ready bấm tiếp tục m
   await act(async () => button(app.container, 'Kiểm tra trạng thái').click());
   assert.match(app.container.textContent, /Blueprint đã sẵn sàng/);
 
+  const continueButtons = Array.from(app.container.querySelectorAll('button')).filter(
+    (b) => b.textContent.includes('Tiếp tục Stage 2')
+  );
+  assert.equal(continueButtons.length, 1, 'Chỉ có đúng 1 nút Tiếp tục Stage 2, không bị render trùng (Phillip F04)');
+
   await act(async () => button(app.container, 'Tiếp tục Stage 2').click());
   assert.equal(app.container.textContent, `Stage 2 · ${confirmSessionId}`);
   await app.back();
@@ -799,5 +804,44 @@ test('203b: đổi route bỏ incomplete trả muộn; logout khi dialog đang m
   assert.equal(openedModal.closeRequests, 1);
   assert(app.container.textContent.includes('Đăng nhập'));
   assert.equal(app.container.querySelector('textarea'), null);
+  await app.unmount();
+});
+
+test('Phillip F04 & INT-03: Không render trùng nút Kiểm tra trạng thái và xử lý retryAccepted', async () => {
+  let artifact = { session_id: confirmSessionId, ready: false, canonical_status: 'failed', supported_modes: null };
+  let retryCalls = 0;
+  api.defaults.adapter = async (config) => {
+    if (config.url.endsWith('/source-artifacts/retry')) {
+      retryCalls++;
+      return {
+        status: 202,
+        data: { session_id: confirmSessionId, canonical_status: 'running', ready: false, supported_modes: null },
+        headers: {},
+        config,
+      };
+    }
+    if (config.url.endsWith('/source-artifacts')) return response(config, artifact);
+    return config.method === 'get' ? response(config, confirmDetail('blueprinted')) : confirmedResponse(config);
+  };
+  const app = mount(confirmSessionId);
+  await app.render();
+
+  assert.match(app.container.textContent, /Tạo Blueprint thất bại/);
+  const retryBtn = button(app.container, 'Thử tạo lại Blueprint');
+  assert.ok(retryBtn);
+
+  // Click retry
+  await act(async () => retryBtn.click());
+  assert.equal(retryCalls, 1);
+  // While retryAccepted, the text is shown and button is hidden
+  assert.match(app.container.textContent, /Đã tiếp nhận yêu cầu tạo lại/);
+  assert.equal(button(app.container, 'Thử tạo lại Blueprint'), undefined, 'Nút thử tạo lại bị ẩn khi đã tiếp nhận');
+
+  // Verify only 1 "Kiểm tra trạng thái" button
+  const checkButtons = Array.from(app.container.querySelectorAll('button')).filter(
+    (b) => b.textContent.includes('Kiểm tra trạng thái')
+  );
+  assert.equal(checkButtons.length, 1, 'Chỉ có 1 nút Kiểm tra trạng thái');
+
   await app.unmount();
 });

@@ -40,7 +40,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
   const initialCanonicalReady = initialDetail?.blueprint_summary?.is_ready === true;
   const initialCanonicalStatus = initialCanonicalReady
     ? 'ready'
-    : (initialDetail?.status === 'blueprinted' ? 'pending' : null);
+    : null;
   let state = {
     detail: initialDetail, text: '', mode: 'text', file: null, upload: null,
     phase: 'idle', error: '', message: '', cause: null,
@@ -50,6 +50,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     canonicalStatus: initialCanonicalStatus,
     canonicalReady: initialCanonicalReady,
     canonicalError: '',
+    retryAccepted: false,
   };
   const listeners = new Set();
   let revision = 0;
@@ -92,7 +93,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     intent = null;
   }
 
-  function markBlueprinted(detail, canonicalStatus = 'pending', canonicalReady = false, canonicalError = '') {
+  function markBlueprinted(detail, canonicalStatus = null, canonicalReady = false, canonicalError = '') {
     try { clearIntent(); } catch { /* a later verified GET may clear the entry */ }
     storageBlocked = false;
     recoveryRevision = null;
@@ -109,7 +110,51 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       canonicalStatus,
       canonicalReady,
       canonicalError,
+      retryAccepted: false,
     });
+  }
+
+  async function recoverBlueprintedDetail(detail, operation) {
+    if (!operation.current()) return;
+    if (detail.blueprint_summary?.is_ready === true) {
+      markBlueprinted(detail, 'ready', true, '');
+      return;
+    }
+    let cStatus = null;
+    let cReady = false;
+    let cError = '';
+    let updatedDetail = detail;
+    if (readArtifacts) {
+      try {
+        const artifact = await readArtifacts(id, { signal: operation.signal });
+        if (!operation.current()) return;
+        const validStatuses = ['pending', 'running', 'failed', 'ready'];
+        if (validStatuses.includes(artifact?.canonical_status)) {
+          cStatus = artifact.canonical_status;
+          cReady = artifact.ready === true && artifact.canonical_status === 'ready';
+          if (cReady) {
+            updatedDetail = {
+              ...detail,
+              blueprint_summary: {
+                ...(detail.blueprint_summary || {}),
+                is_ready: true,
+                supported_modes: artifact.supported_modes,
+                total_questions: artifact.total_questions,
+              },
+            };
+          }
+        } else {
+          cStatus = null;
+          cReady = false;
+        }
+      } catch {
+        if (!operation.current()) return;
+        cStatus = null;
+        cReady = false;
+        cError = 'Không xác định được trạng thái Blueprint. Vui lòng kiểm tra lại.';
+      }
+    }
+    markBlueprinted(updatedDetail, cStatus, cReady, cError);
   }
 
   function finishConfirmation(detail) {
@@ -140,23 +185,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
         if (!operation.current()) return;
       }
       if (detail.status === 'blueprinted') {
-        let cStatus = detail.blueprint_summary?.is_ready === true ? 'ready' : 'pending';
-        let cReady = detail.blueprint_summary?.is_ready === true;
-        let cError = '';
-        if (readArtifacts) {
-          try {
-            const artifact = await readArtifacts(id, { signal: operation.signal });
-            if (!operation.current()) return;
-            cStatus = artifact.canonical_status;
-            cReady = artifact.ready === true && artifact.canonical_status === 'ready';
-          } catch {
-            if (!operation.current()) return;
-            if (!cReady) {
-              cError = 'Không xác định được trạng thái Blueprint. Vui lòng kiểm tra lại.';
-            }
-          }
-        }
-        markBlueprinted(detail, cStatus, cReady, cError);
+        await recoverBlueprintedDetail(detail, operation);
         return;
       }
       if (['configured', 'generating'].includes(detail.status)) {
@@ -192,23 +221,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       const detail = await readDetail(operation.signal);
       if (!operation.current()) return;
       if (detail.status === 'blueprinted') {
-        let cStatus = detail.blueprint_summary?.is_ready === true ? 'ready' : 'pending';
-        let cReady = detail.blueprint_summary?.is_ready === true;
-        let cError = '';
-        if (readArtifacts) {
-          try {
-            const artifact = await readArtifacts(id, { signal: operation.signal });
-            if (!operation.current()) return;
-            cStatus = artifact.canonical_status;
-            cReady = artifact.ready === true && artifact.canonical_status === 'ready';
-          } catch {
-            if (!operation.current()) return;
-            if (!cReady) {
-              cError = 'Không xác định được trạng thái Blueprint. Vui lòng kiểm tra lại.';
-            }
-          }
-        }
-        markBlueprinted(detail, cStatus, cReady, cError);
+        await recoverBlueprintedDetail(detail, operation);
         return;
       }
       if (['configured', 'generating'].includes(detail.status)) {
@@ -234,7 +247,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       const detail = await readDetail(operation.signal);
       if (!operation.current()) return;
       if (detail.status === 'blueprinted') {
-        markBlueprinted(detail, detail.blueprint_summary?.is_ready === true ? 'ready' : 'pending', detail.blueprint_summary?.is_ready === true);
+        await recoverBlueprintedDetail(detail, operation);
         return;
       }
       if (['configured', 'generating'].includes(detail.status)) { finishConfirmation(detail); return; }
@@ -276,6 +289,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
         canonicalStatus: artifact.canonical_status,
         canonicalReady: isReady,
         canonicalError: '',
+        retryAccepted: false,
         ...(isReady ? {
           detail: {
             ...state.detail,
@@ -305,17 +319,23 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     try {
       await retryArtifacts(id, { signal: operation.signal });
       if (!operation.current()) return;
+      let retryAccepted = true;
+      let cStatus = state.canonicalStatus;
+      let cReady = false;
+      let cError = '';
+      let updatedDetail = state.detail;
       if (readArtifacts) {
-        const artifact = await readArtifacts(id, { signal: operation.signal });
-        if (!operation.current()) return;
-        const isReady = artifact.ready === true && artifact.canonical_status === 'ready';
-        publish({
-          phase: 'idle',
-          canonicalStatus: artifact.canonical_status,
-          canonicalReady: isReady,
-          canonicalError: '',
-          ...(isReady ? {
-            detail: {
+        try {
+          const artifact = await readArtifacts(id, { signal: operation.signal });
+          if (!operation.current()) return;
+          if (artifact.canonical_status === 'running') {
+            retryAccepted = false;
+            cStatus = 'running';
+          } else if (artifact.canonical_status === 'ready' && artifact.ready === true) {
+            retryAccepted = false;
+            cStatus = 'ready';
+            cReady = true;
+            updatedDetail = {
               ...state.detail,
               blueprint_summary: {
                 ...(state.detail.blueprint_summary || {}),
@@ -323,23 +343,38 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
                 supported_modes: artifact.supported_modes,
                 total_questions: artifact.total_questions,
               },
-            },
-          } : {}),
-        });
-      } else {
-        publish({ phase: 'idle', canonicalError: '' });
+            };
+          } else if (artifact.canonical_status === 'failed') {
+            retryAccepted = true;
+            cStatus = 'failed';
+          }
+        } catch {
+          if (!operation.current()) return;
+          retryAccepted = true;
+          cError = 'Đã tiếp nhận yêu cầu tạo lại nhưng chưa đọc được trạng thái. Vui lòng kiểm tra lại.';
+        }
       }
+      publish({
+        phase: 'idle',
+        canonicalStatus: cStatus,
+        canonicalReady: cReady,
+        canonicalError: cError,
+        retryAccepted,
+        message: retryAccepted ? 'Đã tiếp nhận yêu cầu tạo lại Blueprint.' : state.message,
+        detail: updatedDetail,
+      });
     } catch {
       if (!operation.current()) return;
       publish({
         phase: 'idle',
+        retryAccepted: false,
         canonicalError: 'Không thể thử lại tạo Blueprint. Vui lòng kiểm tra lại.',
       });
     }
   }
 
   function proceedToStage2() {
-    if (!state.canonicalReady || !isCurrent()) return;
+    if (busy() || !state.canonicalReady || !isCurrent()) return;
     const detailWithReady = {
       ...state.detail,
       status: 'blueprinted',
@@ -450,7 +485,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
         const detail = await readDetail(operation.signal);
         if (!operation.current()) return;
         if (detail.status === 'blueprinted') {
-          markBlueprinted(detail, detail.blueprint_summary?.is_ready === true ? 'ready' : 'pending', detail.blueprint_summary?.is_ready === true);
+          await recoverBlueprintedDetail(detail, operation);
           return;
         }
         if (['configured', 'generating'].includes(detail.status)) { finishConfirmation(detail); return; }

@@ -81,6 +81,11 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
                 {state.canonicalStatus === 'ready' && 'Blueprint đã sẵn sàng'}
                 {state.canonicalStatus === 'failed' && 'Tạo Blueprint thất bại'}
               </p>
+              {state.retryAccepted && (
+                <p className="mt-1 text-xs text-sky-300">
+                  Đã tiếp nhận yêu cầu tạo lại. Kiểm tra trạng thái để cập nhật.
+                </p>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -91,7 +96,7 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
               >
                 Kiểm tra trạng thái
               </button>
-              {state.canonicalStatus === 'failed' && (
+              {state.canonicalStatus === 'failed' && !state.retryAccepted && (
                 <button
                   type="button"
                   className={buttonClass}
@@ -105,6 +110,7 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
                 <button
                   type="button"
                   className={`${buttonClass} bg-sky-600 font-semibold text-white hover:bg-sky-500`}
+                  disabled={busy}
                   onClick={() => controller.proceedToStage2()}
                 >
                   Tiếp tục Stage 2
@@ -117,14 +123,16 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
       {state.canonicalError && (
         <div role="alert" className="shrink-0 rounded-lg border border-rose-600/40 bg-rose-950/40 p-3 text-rose-300 flex items-center justify-between gap-3">
           <p>{state.canonicalError}</p>
-          <button
-            type="button"
-            className={buttonClass}
-            disabled={busy}
-            onClick={() => void controller.checkCanonicalStatus()}
-          >
-            Kiểm tra trạng thái
-          </button>
+          {!state.canonicalStatus && (
+            <button
+              type="button"
+              className={buttonClass}
+              disabled={busy}
+              onClick={() => void controller.checkCanonicalStatus()}
+            >
+              Kiểm tra trạng thái
+            </button>
+          )}
         </div>
       )}
       <div className="grid min-h-0 flex-1 grid-rows-2 gap-4 md:grid-cols-2 md:grid-rows-1">
@@ -193,12 +201,6 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
           <button type="button" className={buttonClass} disabled={dialogOpen || !controller.canConfirm()}
             aria-describedby={`${inputId}-confirm-help`} onClick={() => { if (!dialogOpen) void controller.confirm(); }}>
             {state.retryConfirmation ? 'Thử xác nhận lại' : 'Xác nhận đề gốc và tiếp tục'}
-          </button>
-        )}
-        {state.canonicalReady && (
-          <button type="button" className={`${buttonClass} bg-sky-600 font-semibold text-white hover:bg-sky-500`}
-            onClick={() => controller.proceedToStage2()}>
-            Tiếp tục Stage 2
           </button>
         )}
         {['submitting', 'reloading'].includes(state.phase) && <button type="button" className={buttonClass} onClick={() => controller.cancelRequest()}>Dừng chờ</button>}
