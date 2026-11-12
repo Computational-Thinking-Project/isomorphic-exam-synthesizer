@@ -1,5 +1,42 @@
 # TASK-302 PostgreSQL schema and RPC tests
 
+## W4-MVP-07 export snapshot
+
+`test_export_snapshot_pg.py` requires backend Python dependencies, Docker CLI
+and `postgres:15-alpine`, with `RUN_POSTGRES_MIGRATION_TESTS=1`. From the repo root:
+
+```powershell
+$env:RUN_POSTGRES_MIGRATION_TESTS = '1'
+$env:PYTHONPATH = "$PWD/backend;$PWD/backend/tests/migrations"
+python -m unittest discover -s backend/tests/migrations -p test_export_snapshot_pg.py -v
+```
+
+Set `DOCKER_BIN` to the absolute CLI path if outside PATH. The suite owns a
+random disposable PostgreSQL15 container (`--network none`, no published ports).
+Each case creates a fresh DB, installs schema and migrations002–018, supplies
+Supabase base grants **before** migrations narrow them, seeds a historical
+reviewed 3×2 exam, then executes actual shuffle/approval RPCs. No cloud keys,
+shared DB, Gemini or complete W2 producer are involved.
+
+The SQL reader replaces HTTP transport only: separate connections run as
+`authenticated` with owner/foreign auth.uid GUCs and real RLS. Cases cover all
+six Golden OFF/OFF slots, non-contiguous source labels (3,8,9) through actual
+shuffle/approval/export and rejection of a mismatched canonical key, cross-user concealment, locked content/metadata,
+Review/shuffle and generation writer fencing (005/016), invalid persisted title,
+concurrent reads/rejected writes and uncommitted approval. The unchanged Golden
+fixture comes from PR49 at `0f760067d9ba343401b46f0c41839065633bc48a`.
+Its illustrative seed strings are not used as persisted receipts: actual
+deterministic shuffle receipts are computed. Owner acceptance remains separate.
+
+The actual preview repository comparison explicitly skips until
+`FinalizeRepository.fetch_preview_snapshot` is available. Run it again after
+task05 integration; a skip is not preview evidence. An isolated local check
+loaded PR49's pinned repository separately and compared its projection on the
+same DB before approval with export after approval. This does not verify HTTP,
+JWT/PostgREST deployment. Pure/stub suite: `python -m pytest backend/tests/exporter -q`
+with `backend` on `PYTHONPATH`. The PostgreSQL adapter suite needs backend
+dependencies, unlike stdlib-only schema tests; it does not certify PDF/Storage.
+
 ### TASK-305 async integration fixtures
 
 The two `tests/services/test_*_real_db_integration.py` modules require `asyncpg`
@@ -502,3 +539,26 @@ The suite covers:
 5. **Exact slot & provenance alignment**: strict evidence join by slot `(session_id, version_index, source_question_id)` with `version_question_id` verification, progress accounting, and fail-closed defense against multiple current candidates or missing expected slots.
 6. **Frozen source integrity & canonical hash verification**: requires valid `confirmed_input` object for every confirmed source, verifies equality with persisted `source_artifact_revisions.confirmed_input`, and validates computed SHA-256 hash across complete source list.
 7. **Optional upstream override**: setting `REVIEW_SNAPSHOT_017_SQL` allows testing against custom or unmerged 017 migration scripts; when unset, it defaults to the merged `017_generation_lifecycle_recovery.sql`.
+
+## Private export ledger — 020 / W4-MVP-08
+
+Requires backend Python dependencies, Docker/Linux engine, and no cloud credentials.
+Each test uses an isolated PostgreSQL15 database; production schema/ordered local
+migrations are installed. `test_private_export_pg.py` upgrades populated approved
+data before020 and also checks fresh installation. No deployment is performed.
+
+```powershell
+$env:RUN_POSTGRES_MIGRATION_TESTS = '1'
+$env:PYTHONPATH = "$PWD/backend;$PWD/backend/tests/migrations"
+# Set DOCKER_BIN to Docker Desktop's CLI if it is not on PATH.
+python -m pytest backend/tests/exporter backend/tests/migrations/test_export_snapshot_pg.py backend/tests/migrations/test_private_export_pg.py -q
+```
+
+This command runs SQL through separate real connections. It covers concurrent
+claims, expiry/takeover, stale tokens, checkpoint/upload/complete/restart response
+loss, receipt/identity mismatches, read-back, rollback, RPC ACL/RLS and restrictive
+export-bucket policies (including an extra permissive policy). Blob storage stays
+fake; HTTP/PostgREST/JWT validation and live Storage/URL expiry are not proven.
+The candidate019 from PR61 is not in this branch; any additional pinned019 probe
+is reported separately from baseline dev018→020. Do not infer a shared migration
+manifest or applied DB state from the test's local chain.
