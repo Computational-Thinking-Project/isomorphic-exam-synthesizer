@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { stage1Path } from '../../sessionPaths.js';
+import { stage1Path, stage3Path } from '../../sessionPaths.js';
 import {
   AlertCircle,
   ArrowLeft,
@@ -335,7 +335,7 @@ export default function Stage2ConfigPage({
   }
 
   const handleCompleteRedirect = useCallback(() => {
-    navigate(`/session/${sessionId}/stage3`);
+    navigate(stage3Path(sessionId));
   }, [navigate, sessionId]);
 
   const handleRetryGeneration = useCallback(async () => {

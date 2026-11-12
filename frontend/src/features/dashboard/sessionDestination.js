@@ -1,8 +1,6 @@
-import { stage1Path, stage2Path } from '../../sessionPaths.js';
+import { stage1Path, stage2Path, stage3Path } from '../../sessionPaths.js';
 
 const pendingDestinations = new Set([
-  'partial_generated',
-  'generated',
   'reviewed',
   'approved',
   'exported',
@@ -16,6 +14,9 @@ export function sessionDestination(session) {
   }
   if (['blueprinted', 'configured', 'generating'].includes(session.status)) {
     return { path: stage2Path(session.id), notice: '' };
+  }
+  if (['partial_generated', 'generated'].includes(session.status)) {
+    return { path: stage3Path(session.id), notice: '' };
   }
   return {
     path: null,
