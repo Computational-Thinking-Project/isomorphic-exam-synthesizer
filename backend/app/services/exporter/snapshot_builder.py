@@ -188,9 +188,9 @@ def _build_version(
     ):
         raise _invalid(f"Thứ tự hiển thị của mã đề {code} không liền mạch từ 1 đến {m}")
     canonical = [q.get("canonical_question_no") for q in questions]
-    if not all(_is_int(n) for n in canonical) or sorted(cast(list[int], canonical)) != list(
-        range(1, m + 1)
-    ):
+    # Canonical numbers retain the source labels (e.g. 3, 8, 9); only display
+    # positions are contiguous. Shuffle/approval bind these labels to source IDs.
+    if not all(_is_int(n) and cast(int, n) > 0 for n in canonical) or len(set(canonical)) != m:
         raise _invalid(f"Thứ tự gốc của mã đề {code} không hợp lệ")
     for number in range(1, m + 1):
         if (version_id, number) not in keys:
@@ -238,7 +238,7 @@ def build_approved_snapshot(
         _build_version(code, grouped[vid], sources, keys, vid) for vid, code in ordered_versions
     )
     revision = revision_of(
-        {**rows.session, "id": session_id},
+        {**rows.session, "id": session_id, "title": title},
         [version.model_dump(mode="json") for version in versions],
     )
     try:

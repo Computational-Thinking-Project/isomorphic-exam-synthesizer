@@ -1,14 +1,14 @@
 """Reader/adapter tests with an in-memory table stub (W4-MVP-07).
 
-The stub is read-only and is NOT a lock or transaction simulator. DB lock behaviour is
-NOT tested here; an opt-in PostgreSQL suite is planned (step 4 of docs/tasks/W4-MVP-07.md)
-and does not exist yet.
+The stub is read-only, not a lock or transaction simulator. Real database authority
+is covered separately in tests/migrations/test_export_snapshot_pg.py.
 """
 
 from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
+from postgrest.exceptions import APIError
 from snapshot_fixtures import OWNER_ID, SESSION_ID, golden_rows, question
 
 from app.models.schemas import ReviewDomainException
@@ -278,3 +278,30 @@ async def test_owner_changing_during_the_read_is_rejected():
     other_owner = "33333333-3333-4333-8333-000000000000"
     error = await _error(Client(golden_rows(), session_overrides=[{}, {"user_id": other_owner}]))
     assert (error.status_code, error.error_code) == (409, "ERR_EXPORT_SNAPSHOT_INVALID")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "table", ["exam_sessions", "generation_configs", "version_questions", "answer_keys"]
+)
+@pytest.mark.parametrize("failure", [TimeoutError, ConnectionError])
+async def test_database_availability_errors_are_not_relabelled_as_invalid_data(table, failure):
+    class Unavailable(Client):
+        def rows(self, name):
+            if name == table:
+                raise failure("synthetic transport failure")
+            return super().rows(name)
+
+    with pytest.raises(failure):
+        await _load(Unavailable(golden_rows()))
+
+
+@pytest.mark.asyncio
+async def test_postgrest_database_error_is_not_relabelled_as_invalid_snapshot():
+    class Unavailable(Client):
+        def rows(self, name):
+            raise APIError({"code": "08006", "message": "synthetic database unavailable"})
+
+    with pytest.raises(APIError) as caught:
+        await _load(Unavailable(golden_rows()))
+    assert caught.value.code == "08006"

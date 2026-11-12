@@ -75,6 +75,66 @@ def test_revision_source_is_a_single_replaceable_seam():
     assert seen["versions"] == 2
 
 
+def test_revision_includes_normalized_artifact_title():
+    base = build_approved_snapshot(to_rows(golden_rows()))
+    changed = build_approved_snapshot(mutated(lambda d: d["session"].update(title="New title")))
+    padded = build_approved_snapshot(
+        mutated(lambda d: d["session"].update(title="  " + d["session"]["title"] + "\n"))
+    )
+    assert changed.revision != base.revision
+    assert padded.title == base.title and padded.revision == base.revision
+
+
+def non_contiguous_source_rows():
+    data = golden_rows()
+    source_numbers = {1: 3, 2: 8, 3: 9}
+    for row in data["questions"] + data["answer_keys"]:
+        row["canonical_question_no"] = source_numbers[row["canonical_question_no"]]
+    return data
+
+
+def test_source_labels_need_not_match_contiguous_display_positions():
+    data = non_contiguous_source_rows()
+    snapshot = build_approved_snapshot(to_rows(data))
+    assert snapshot == build_approved_snapshot(to_rows(golden_rows()))
+    assert {q["canonical_question_no"] for q in data["questions"]} == {3, 8, 9}
+
+
+@pytest.mark.parametrize("bad_number", [0, -1, True, 3.0, "3", None, {}, []])
+def test_invalid_canonical_labels_fail_closed(bad_number):
+    data = non_contiguous_source_rows()
+    question(data, "101", 1)["canonical_question_no"] = bad_number
+    assert _fail(to_rows(data)).error_code == INVALID[0]
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "missing_source",
+        "duplicate_source",
+        "missing_key",
+        "wrong_key_canonical",
+        "duplicate_canonical",
+    ],
+)
+def test_non_contiguous_labels_do_not_relax_source_or_key_integrity(corruption):
+    data = non_contiguous_source_rows()
+    if corruption == "missing_source":
+        data["questions"].remove(question(data, "101", 1))
+    elif corruption == "duplicate_source":
+        question(data, "101", 2)["source_question_id"] = question(data, "101", 1)[
+            "source_question_id"
+        ]
+    elif corruption == "missing_key":
+        data["answer_keys"].remove(key_row(data, "101", 1))
+    elif corruption == "wrong_key_canonical":
+        key_row(data, "101", 1)["canonical_question_no"] = 8
+    else:
+        question(data, "101", 2)["canonical_question_no"] = 3
+    expected = KEYS if corruption in ("missing_key", "wrong_key_canonical") else INVALID
+    assert _fail(to_rows(data)).error_code == expected[0]
+
+
 def test_identity_is_sanitized():
     identity = snapshot_identity(build_approved_snapshot(to_rows(golden_rows())))
     assert set(identity) == {
@@ -133,7 +193,7 @@ CASES = {
     ),
     "gap_in_question_no": (lambda d: question(d, "101", 3).update(question_no=5), INVALID),
     "question_no_not_int": (lambda d: question(d, "101", 3).update(question_no="3"), INVALID),
-    "canonical_not_permutation": (
+    "duplicate_canonical_number": (
         lambda d: question(d, "101", 3).update(canonical_question_no=1),
         INVALID,
     ),

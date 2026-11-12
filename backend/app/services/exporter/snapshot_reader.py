@@ -2,15 +2,16 @@
 
 Read order matters. Each PostgREST call is its own transaction, so there is no
 snapshot isolation across calls. The reads are only consistent IF approved and
-exported sessions are locked against writes. That is concluded from reading the
-migration 009 trigger and the RPC lock checks; migrations 005 and 016 were not
-checked and there is no PostgreSQL test yet. Order: read the session first, continue
+exported sessions are locked against writes. Migration 009 and the generation
+state/fencing guards enforce that boundary; test_export_snapshot_pg.py exercises
+the installed migration chain with independent connections. Order: read the session first, continue
 only if it is locked, read content, then re-read the session and require it to be
 unchanged.
 
-OPEN DECISIONS (PR #58): a dedicated read RPC instead of table reads, and which
-client (service vs user RLS) is used. Both are confined to this module: the caller
-passes the client, and only ``load_rows`` knows how rows are fetched.
+PR #58 decision: keep table reads with an authenticated user/RLS client from
+get_user_db. A foreign session may be invisible (404). A service client must not
+be substituted just to distinguish 403 from 404. Transport/SDK failures propagate
+to the caller and are never converted into an invalid-data conflict (409).
 """
 
 from typing import Any, Dict, List

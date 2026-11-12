@@ -1,5 +1,42 @@
 # TASK-302 PostgreSQL schema and RPC tests
 
+## W4-MVP-07 export snapshot
+
+`test_export_snapshot_pg.py` requires backend Python dependencies, Docker CLI
+and `postgres:15-alpine`, with `RUN_POSTGRES_MIGRATION_TESTS=1`. From the repo root:
+
+```powershell
+$env:RUN_POSTGRES_MIGRATION_TESTS = '1'
+$env:PYTHONPATH = "$PWD/backend;$PWD/backend/tests/migrations"
+python -m unittest discover -s backend/tests/migrations -p test_export_snapshot_pg.py -v
+```
+
+Set `DOCKER_BIN` to the absolute CLI path if outside PATH. The suite owns a
+random disposable PostgreSQL15 container (`--network none`, no published ports).
+Each case creates a fresh DB, installs schema and migrations002–018, supplies
+Supabase base grants **before** migrations narrow them, seeds a historical
+reviewed 3×2 exam, then executes actual shuffle/approval RPCs. No cloud keys,
+shared DB, Gemini or complete W2 producer are involved.
+
+The SQL reader replaces HTTP transport only: separate connections run as
+`authenticated` with owner/foreign auth.uid GUCs and real RLS. Cases cover all
+six Golden OFF/OFF slots, non-contiguous source labels (3,8,9) through actual
+shuffle/approval/export and rejection of a mismatched canonical key, cross-user concealment, locked content/metadata,
+Review/shuffle and generation writer fencing (005/016), invalid persisted title,
+concurrent reads/rejected writes and uncommitted approval. The unchanged Golden
+fixture comes from PR49 at `0f760067d9ba343401b46f0c41839065633bc48a`.
+Its illustrative seed strings are not used as persisted receipts: actual
+deterministic shuffle receipts are computed. Owner acceptance remains separate.
+
+The actual preview repository comparison explicitly skips until
+`FinalizeRepository.fetch_preview_snapshot` is available. Run it again after
+task05 integration; a skip is not preview evidence. An isolated local check
+loaded PR49's pinned repository separately and compared its projection on the
+same DB before approval with export after approval. This does not verify HTTP,
+JWT/PostgREST deployment. Pure/stub suite: `python -m pytest backend/tests/exporter -q`
+with `backend` on `PYTHONPATH`. The PostgreSQL adapter suite needs backend
+dependencies, unlike stdlib-only schema tests; it does not certify PDF/Storage.
+
 ### TASK-305 async integration fixtures
 
 The two `tests/services/test_*_real_db_integration.py` modules require `asyncpg`

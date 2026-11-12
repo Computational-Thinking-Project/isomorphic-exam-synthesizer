@@ -1,76 +1,98 @@
-# W4-MVP-07 — Plan và bàn giao: adapter DB tạo `ApprovedExportSnapshot`
+# W4-MVP-07 — Adapter DB tạo ApprovedExportSnapshot
 
-- Nguồn giao việc: [W4_ASSIGNMENT](W4_ASSIGNMENT.md) (v2.1, đề xuất chưa phê duyệt hết) và [W4_TASK_DETAIL](W4_TASK_DETAIL.md), mục W4-MVP-07. Đây là sub-deliverable của TASK-308, không tạo task trùng.
-- Phụ trách: Hùng (`benalexx007`); reviewer: Duy (đề xuất, chưa xác nhận). Chế độ: author. Workflow v0.1 proposed.
-- Repo/nhánh: `feat/w4-mvp-07-export-adapter`, từ `dev@ed81acd`; PR: Draft (link ghi trên PR).
-- Hạn: 10/11/2026 18:00 (UTC+7) theo W4. ETA tác giả: phần chắc chắn (hợp đồng, fixture, hàm thuần, test cục bộ) trong hạn này; phần chờ xác nhận thì không có ETA cho tới khi người cung cấp trả lời. Chưa có ai xác nhận ETA.
+- Nguồn: [W4_ASSIGNMENT](W4_ASSIGNMENT.md), [W4_TASK_DETAIL](W4_TASK_DETAIL.md), phần 07 của TASK-308.
+- Author: Hùng (`benalexx007`), [PR #58](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58), nhánh `feat/w4-mvp-07-export-adapter`.
+- Workflow v0.1 proposed, gồm INPUT-20261109 tại `dev@21887c1`. Base ban đầu `ed81acd`; đã merge `dev@21887c1` không conflict ngày 12/11/2026.
+- Hạn giao: 10/11/2026 18:00 UTC+7, đã qua. Không tự đổi hạn hoặc coi task đã nghiệm thu.
+- Quyền lượt này: hoàn thiện code/test/docs 07; làm xong phần đã chốt rồi mới đăng câu hỏi còn thiếu. Không làm 08/12, sửa nhánh owner khác hay merge PR.
 
-## Mình cần làm gì?
+## Hành vi và triển khai
 
-- Hành vi: đọc từ DB đã khóa (session `approved`/`exported`) và dựng một `ApprovedExportSnapshot` đã kiểm hợp lệ cho exporter (task 08), không nhận key/câu hỏi/hoán vị từ client.
-- Tiêu chí đạt (DoD của W4_TASK_DETAIL):
-  - chỉ export từ snapshot đã duyệt và lưu bền;
-  - fail-closed khi thiếu hoặc sai dữ liệu: `solution_md` trống, thiếu slot, trùng current, 4 phương án không khác nhau, status câu khác `approved`, key lệch `answer_keys`, session chưa approved, receipt hoán vị cũ (`exam_versions.is_finalized` khác true, thiếu `shuffle_seed`/`permutations`);
-  - 403/409 và test cho trùng current, lệch mapping;
-  - ghi log đã làm sạch định danh snapshot (`session_id`, `revision`, số version/câu; không ghi nội dung câu hỏi, lời giải hay khóa) để so ZIP với preview;
-  - fixture có kiểu và code bàn giao cho 08;
-  - đối chiếu 100% 6 vị trí Golden (3 câu × N=2, OFF/OFF) với preview — fixture của task 05 ở `2c6247b` (PR #49) có vẻ đã là OFF/OFF (identity); **chờ Tâm xác nhận** trước khi viết test.
-- Quy tắc kiểm của hàm thuần (vì `DisplayVersion`/`ApprovedExportSnapshot` chỉ kiểm thứ tự liền mạch, cùng số câu và 1–4 version):
-  - số `exam_versions` == `generation_configs.n_versions` (1–4), mã version duy nhất;
-  - mỗi (version, source_question) có đúng 1 dòng current `approved`, số slot == số `source_questions`;
-  - `answer_keys` phủ đúng (version, 1..M); `correct_option` == `display_correct_key` == `version_questions.correct_key`; `display_no` == `question_no`; `canonical_question_no` hợp lệ và không bị thay thế ngầm.
-- Ngoài phạm vi: route/Storage/ZIP/signed URL và RPC `approved → exported` (task 08); preview API (task 05, Tâm); thêm migration (ledger do Duy giữ, Q08); sửa nhánh hoặc file có sẵn của người khác.
-- Hiện đã có: mô hình `bundle_models.py`, bundler/compiler trên `dev`; `FinalizeRepository.fetch_matrix_raw` làm mẫu kiểm answer key. Chưa có adapter DB nào trên `dev` (`git grep` chỉ thấy exporter dùng `ApprovedExportSnapshot`).
+Đọc session của user đã `approved`/`exported`, dựng model frozen
+`ApprovedExportSnapshot` từ DB cho 08. Không nhận câu/key/hoán vị từ client.
+Fail closed khi thiếu slot, trùng current, key sai mapping, receipt cũ, câu chưa
+approved, stem/solution trống hoặc options không phân biệt. Contract chuẩn:
+[export-snapshot-contract](../api/export-snapshot-contract.md).
 
-## Thiết kế: tách phần chắc chắn khỏi phần chờ xác nhận
-
-File mới trong package exporter (không sửa file có sẵn của `finalize/`), tách đọc và dựng:
-
-| Phần | Vị trí dự kiến | Trạng thái |
+| Phần | Trách nhiệm | Kiểm |
 |---|---|---|
-| Kiểu biên `RawSnapshotRows` (dataclass/TypedDict: meta session, `n_versions`, số nguồn, versions, dòng current, `answer_keys`) — ranh giới giữa bộ đọc và bộ dựng | `backend/app/services/exporter/snapshot_rows.py` | Làm ngay, cố định chữ ký |
-| Hàm thuần dựng và kiểm snapshot, dùng thẳng `DisplayQuestion`/`DisplayVersion` | `backend/app/services/exporter/snapshot_builder.py` | Làm ngay |
-| Bộ đọc DB (owner, trạng thái, truy vấn bảng) trả `RawSnapshotRows` | `backend/app/services/exporter/snapshot_reader.py` | Làm ngay; thay bằng RPC chỉ đổi file này |
-| Hợp đồng JSON snapshot + fixture thành công/lỗi | `docs/api/export-snapshot-contract.md`, `backend/tests/fixtures/` | Làm ngay; dẫn xuất từ `bundle_models.py`, không định nghĩa lại projection của preview (Q06) |
-| Nguồn của `revision` | hàm `snapshot_revision(session_meta, versions) -> str`, mặc định SHA-256 nội dung chuẩn hóa | Chờ Duy; đổi hàm này và giá trị `revision` trong fixture/hợp đồng |
-| Đối chiếu preview (6 vị trí Golden) | test riêng, thêm sau | Chờ Tâm xác nhận fixture ở `2c6247b` (W4-MVP-05; PR #49) |
+| `snapshot_rows.py` | Biên typed raw rows giữa reader/builder | Fixture, unit |
+| `snapshot_builder.py`, `snapshot_common.py` | Kiểm matrix/keys/content, dùng DisplayQuestion/Version có sẵn | Hợp lệ và fail-closed |
+| `snapshot_revision.py` | SHA-256 ID + title chuẩn hóa + versions; loại status/timestamps | Title/content đổi hash; whitespace/lifecycle không đổi hash |
+| `snapshot_reader.py`, `snapshot_adapter.py` | Client RLS user; kiểm owner/approval trước đọc và re-check sau đọc | Stub, PostgreSQL thật |
+| `export_snapshot_golden.json` | Output typed có hoán vị câu/options | Equality với builder |
+| `export_preview_off_off.json` | Fixture nguyên bản PR49 tại `0f760067d9ba343401b46f0c41839065633bc48a` | Đủ 6 slot sau shuffle/approve thật |
+| `test_export_snapshot_pg.py` | Full schema/migrations002–018, shuffle/approve RPC, RLS, lock, fencing, concurrency | PostgreSQL15 dùng một lần |
 
-Tính nhất quán khi đọc (kết luận từ đọc code/SQL trên `dev`, chưa kiểm bằng test PG thật, chưa kiểm RPC 005/016): migration 009 chặn ghi trực tiếp vào các bảng nội dung khi session `approved`/`exported` hoặc `approved_at` khác NULL (`ERR_SESSION_LOCKED`; route dịch thành 423), và các RPC Review/shuffle/`persist_generation_result` đã đọc đều kiểm khóa; trên `dev` không có đường mở khóa. Mỗi lệnh PostgREST là một giao dịch riêng nên không có snapshot isolation giữa các lệnh; cách đọc chỉ đúng khi **đọc `exam_sessions` trước**, chỉ tiếp tục nếu `status ∈ {approved, exported}` và `approved_at` khác NULL, rồi đọc nội dung, rồi **đọc lại** trạng thái/`approved_at` để kiểm không đổi. Đây vẫn là câu hỏi mở cho Duy (Q06/Q08).
+Reader gồm nhiều transaction, không phải transactional snapshot. Test kiểm khóa
+sau duyệt, concurrent readers/writes bị chặn và approve chưa commit. Không thêm
+read RPC khi chưa có bằng chứng cần thiết. Network/SDK errors không đổi thành409;
+08 chịu trách nhiệm response an toàn. Ngoài scope: export route, compiler/PDF,
+Storage, ZIP/signed URL, writer approved→exported (08), API/docs preview (Tâm/05), migration mới.
 
-Quyền và mã lỗi (tái dùng `ReviewDomainException`, theo quy ước `finalize/`): adapter nhận `user_id` đã xác thực từ lớp gọi, không từ client. Session không thấy được hoặc không tồn tại → 404 `ERR_SESSION_NOT_FOUND`; thấy được nhưng `user_id` khác → 403 `ERR_UNAUTHORIZED` (nếu client là service; với client RLS của người dùng thì người khác sẽ thấy 404 — Duy chọn client); UUID sai → 400 `ERR_INVALID_SESSION_ID`; chưa approved/exported → 409 `ERR_INVALID_SESSION_STATE`; khóa/đáp án lệch → 409 `ERR_INCONSISTENT_ANSWER_KEYS` (đã có); các lỗi dữ liệu khác → 409 `ERR_EXPORT_SNAPSHOT_INVALID` (**mã mới, đề xuất**, chưa đăng ký ở đâu khác). Thông báo không lộ SQL hay dữ liệu thô.
+## Bảng input duy nhất
 
-## File và thứ tự triển khai từ thứ 6
+| ID / người giao → nhận | Lựa chọn và nội dung | Trạng thái / bằng chứng | Còn cần |
+|---|---|---|---|
+| I07-01 Duy → Hùng | SHA-256 chuẩn hóa **gồm title**, ổn định qua approved→exported | **Decided, Delivered, Accepted, Integrated cục bộ** theo [Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58#issuecomment-6801792075); code/fixture/test đã cập nhật | Review code cuối; không hỏi lại lựa chọn |
+| I07-02 Duy → Hùng | Table reads với `get_user_db` có RLS; foreign có thể404 | **Decided, Delivered, Accepted, Integrated cục bộ**, cùng comment; PostgreSQL kiểm RLS/lock/concurrency | Không chờ read RPC/service client |
+| I07-03 Duy → Hùng | Giữ lỗi cũ +409 `ERR_EXPORT_SNAPSHOT_INVALID`; availability khác409 | **Decided, Delivered, Accepted, Integrated cục bộ**, cùng comment; timeout/connection/PostgREST tests | Không hỏi lại mã lỗi |
+| I07-04 Tâm (`AI-WFox`) → Hùng | Dùng fixture OFF/OFF PR49 tại SHA trên, preview trước duyệt bằng export sau duyệt từ cùng DB | **Requested**: [câu hỏi gốc](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58#issuecomment-6761403010); reply bị cắt chưa là Delivered. Đã tự kiểm parity, chưa coi owner chấp nhận | Tâm xác nhận fixture bản chốt, cập nhật §4.2 contract preview theo revision Duy đã chốt và dẫn commit; ETA chưa được xác nhận |
+| I07-05 Duy → Hùng; upstream: Duy, Quỳnh (`nhatquynh1107`), Tâm (`AI-WFox`) | Export thiếu solution phải fail-closed, không tự tạo solution/autoapprove | **Decided, Delivered, Accepted, Integrated cục bộ** theo [issue46](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/46#issuecomment-6745367064). Hùng bàn giao409 `ERR_EXPORT_SNAPSHOT_INVALID` khi solution trống | Gate confirm/config/generation của Q01 và chính sách ngoài Golden vẫn do các owner trên chốt; không là lựa chọn còn thiếu của adapter07 |
 
-| Lượt / file | Mục đích | Cách kiểm |
-|---|---|---|
-| 1. Hợp đồng JSON + fixture | Bàn giao shape cho 08/FE/OPS | Fixture nạp được vào `ApprovedExportSnapshot` |
-| 2. `snapshot_rows.py`, `snapshot_builder.py` | Dựng + kiểm snapshot | Test đơn vị từng ca lỗi (kể cả trùng current, vì index DB không cho tạo ca này) |
-| 3. `snapshot_reader.py` | Đọc, kiểm owner, status, đọc lại trạng thái | Test với stub bảng |
-| 4. Test PostgreSQL thật (opt-in) | Đọc đúng từ DB đã khóa, session chưa approved, mapping lệch | `RUN_POSTGRES_MIGRATION_TESTS=1`, tái dùng harness `sql_client_fixture` hiện có; ca "trùng current" chỉ mô phỏng bằng cách bỏ `idx_single_current_version_question` trong container dùng một lần, ghi rõ là mô phỏng |
-| 5. Test đối chiếu preview | 6 vị trí Golden | Sau khi Tâm xác nhận fixture |
+Integrated ở bảng chỉ là áp dụng input trong working tree, không phải task Done,
+GitHub Approve hay deploy. Đã hoàn thiện phần độc lập rồi đăng [follow-up trên #58](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58#issuecomment-6813431143):
+Tâm nhận hai yêu cầu fixture/contract; Duy và Quỳnh được tag ở bàn giao Q01.
+Không sửa PR/issue descriptions. Chưa có phản hồi mới nên I07-04 vẫn Requested.
 
-## Đầu vào và câu hỏi (hỏi trên Draft PR)
+## Tự kiểm ngày 12/11/2026 trước sửa F01
 
-| Cần ai | Câu hỏi | Cần trước | Mặc định mình dùng | ETA bên cung cấp | Link trả lời |
-|---|---|---|---|---|---|
-| Duy | `revision` lấy từ đâu? (DB không có; contract preview của Tâm đề xuất `exam_sessions.updated_at`, nhưng giá trị này đổi khi approve) — [câu hỏi](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58#issuecomment-6761402596) | Trước khi chốt fixture | SHA-256 snapshot chuẩn hóa; hoặc `approved_at`/`updated_at` | chưa có | chờ |
-| Duy | Đọc bằng truy vấn bảng hay RPC đọc riêng? Dùng client nào (service hay RLS người dùng) để có 403 thay vì 404? | Trước lượt 3 | Bảng, không thêm migration (Q08, ledger chưa chốt) | chưa có | chờ |
-| Tâm | Contract preview (4.2) để adapter cấp `title`/`revision` từ `exam_sessions`: đúng ý? Fixture OFF/OFF ở `2c6247b` có phải bản chốt? Adapter đọc DB (không dựng từ response preview) và chỉ dùng preview làm đối chiếu: ổn? — [câu hỏi](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58#issuecomment-6761403010) | Trước lượt 5 | Adapter tự cấp; đối chiếu sau khi Tâm xác nhận | chưa có | chờ |
-| Tâm + Duy | `solution_md` trống: fail-closed (Q01 bản tạm của W4)? | Trước lượt 2 | Fail-closed; Q01 mới là đề xuất, chờ Tâm chốt khi merge vào `dev` | chưa có | chờ |
+- Docker Desktop local, Python3.11, PostgreSQL15-alpine dùng một lần, backend dependencies
+  và Jinja2 trong image test; mạng internal, không host ports, key thật, DB chung hay Docker socket.
+- `pytest backend/tests/exporter backend/tests/migrations/test_export_snapshot_pg.py -q`:
+  **182 passed, 1 skipped, 12 subtests passed**, với repository preview tại SHA trên
+  nạp riêng trong harness (SQL/RLS thật). Skip là compiler external không có, không phải
+  bằng chứng PDF. Một pytest warning do harness import plugin trước collection.
+- Với đúng code nhánh hiện tại, không nạp PR49 riêng: **181 passed, 2 skipped,
+  12 subtests passed**; skip thêm là parity preview chưa merge. Cả hai lần đều có
+  PostgreSQL thật. Fixture Golden được kiểm byte-for-byte với commit PR49 đã ghim.
+- Đã kiểm: hash title/content, typed fixture, availability khác data conflict, foreign RLS,
+  khóa các bảng/metadata, Review/shuffle bị chặn; `persist_version_question` (005) và
+  `persist_generation_result` (016) bị fenced; approve chưa commit; concurrent read/write;
+  đủ 6 slot Golden và projection preview trước duyệt khớp export sau duyệt, gồm matrix.
+- `ruff check backend/app scripts/blueprint` và Ruff các test snapshot/PG mới: pass.
+  `mypy backend/app --ignore-missing-imports`: pass, 97 source files.
+  Ruff format check9file mới/thay và `git diff --check`: pass; JSON/link nội bộ hợp lệ.
+- Giới hạn: SQL transport thay HTTP; seed historical reviewed exam, không full W2/AI
+  producer. Chưa deployed Supabase/JWT/PostgREST, Gemini, compiler/PDF, Storage hoặc E2E08.
+  Preview chưa merge thì parity test trong repo skip rõ; phải chạy lại sau tích hợp cuối.
+  [Hướng dẫn chạy](../../backend/tests/migrations/README.md#w4-mvp-07-export-snapshot).
 
-- Output mình cần giao cho task sau: task 08 (Hùng) nhận typed fixture + code (`RawSnapshotRows`, builder, reader); hợp đồng JSON cho Philip/Đạt/Quỳnh. ETA: cùng hạn 10/11 18:00 cho phần cục bộ; chưa ai xác nhận.
-- Lịch có khả thi không? Phần cục bộ khả thi trong ngày. Task 05 API thật hạn 10/11 12:00; fixture ở `2c6247b` đã đọc được nhưng chưa được Tâm xác nhận. 08 hạn 11/11 18:00 chỉ tích hợp thật được sau 07 và bucket của 11s. Nếu chưa xác nhận kịp, đối chiếu preview chuyển sang sau; báo Duy điều phối.
-- Quyết định đã thống nhất: chưa có.
+## F01 — Author: claimed_fixed (12/11/2026)
 
-## Kế hoạch tự kiểm
+- Lỗi review: canonical bị ép thành1..M khiến session approved có số câu nguồn3,8,9
+  bị từ chối export dù display1,2,3 và mapping hợp lệ.
+- Sửa: chỉ display slots phải liên tiếp; canonical là số nguyên dương không trùng,
+  giữ nguyên nhãn nguồn. Không thay quyền/reader/RawSnapshotRows hoặc đổi dữ liệu
+  nguồn; source/canonical binding vẫn do shuffle/approval xác thực. Adapter tiếp
+  tục kiểm coverage nguồn, completeness và key/canonical khớp nhau.
+- Thêm14 unit regressions cho số nguồn có khoảng trống và các lỗi kiểu/trùng/
+  thiếu câu/lệch key; thêm2 PostgreSQL regressions dùng actual shuffle→approve→adapter
+  với3×2slots và chặn approval khi key mapping bị tráo. Không bypass guard/DDL.
+- Exporter + PostgreSQL native: **197 passed, 2 skipped, 12 subtests**. Bản cuối
+  đối chiếu repository PR49 đã ghim: **198 passed, 1 skipped, 12 subtests**.
+  Skip còn lại là XeLaTeX, warning do harness import plugin trước collection.
+  Ruff/format pass, mypy pass97files, diff check pass. Các giới hạn môi trường
+  và deployment của mục trước vẫn giữ nguyên.
+- Contract và migration test README đã đồng bộ. Đây là kết quả author tự kiểm,
+  chưa có reviewer xác minh bản sửa hoặc GitHub Approve; không sửa báo cáo review cũ.
 
-- Test đơn vị cho hàm thuần và bộ đọc (stub), rồi PostgreSQL 15 thật.
-- Ruff/mypy theo CI. Chưa kiểm: staging, Supabase thật, đối chiếu preview thật.
+## Bàn giao và điều kiện còn lại
 
-## Bàn giao — điền theo kết quả thực tế
+08 (Hùng) nhận entry point, model, fixtures và contract; dùng user RLS, đưa sync I/O
+vào worker thread ở async route, sanitize lỗi hạ tầng tại route. Không service-role
+read để vượt RLS. Code07 không tự upload hay đổi trạng thái.
 
-- PR/commit/output: PR #58 (Draft). Code: `snapshot_{rows,revision,common,builder,reader,adapter}.py`, hợp đồng `docs/api/export-snapshot-contract.md`, fixture `backend/tests/fixtures/export_snapshot_golden.json`.
-- Đã làm / đã kiểm (Python 3.11 Windows, stub bảng, không DB thật): test exporter 157 passed / 8 skipped (87 test của adapter) ở commit này; ruff check, ruff format (file mới) và mypy sạch. Toàn bộ backend chưa chạy lại ở commit này: ở commit trước, lần chạy đầy đủ (trừ `tests/migrations`) được 1166 passed / 10 skipped, và trong lần chạy lại độc lập có 1 test timing (sympy hoặc gateway) lúc fail lúc pass, không thuộc file nào của PR này. **Chưa có test PostgreSQL thật** (lượt 4), nên DoD "unit/DB tests" mới đạt phần unit. Chưa kiểm RPC 005/016, staging, Supabase.
-- Chưa làm: đối chiếu 6 vị trí Golden với preview (chờ Tâm xác nhận fixture); nguồn `revision`, cách đọc/client (chờ Duy).
-- Đã chấp nhận: chưa có (chưa có review GitHub).
-- Còn chờ: các câu hỏi ở trên.
+Đã có code cho các quyết định đã chốt; còn I07-04, review/acceptance cuối và
+kiểm preview sau merge. Đợt bàn giao này đưa code/test/contract hoàn thiện07 và bản
+sửa F01 vào cùng PR58; trạng thái published/CI/approval theo GitHub, chưa coi là đã nghiệm thu.

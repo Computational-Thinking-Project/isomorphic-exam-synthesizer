@@ -15,10 +15,12 @@ async def load_approved_export_snapshot(
     *,
     revision_of: RevisionSource = snapshot_revision,
 ) -> ApprovedExportSnapshot:
-    """Read and validate the export snapshot; ``user_id`` must come from verified auth.
+    """Read the snapshot with the verified user's RLS client (``get_user_db``).
 
     Raises ``ReviewDomainException`` (400/403/404/409). Never accepts keys, questions
     or permutations from a client: everything comes from persisted rows.
+    Network/SDK errors propagate for the route to handle as availability errors;
+    they must not be mapped to 409 or returned as raw SDK/transport messages.
 
     The reader uses the synchronous supabase client (like the repositories under
     ``finalize/``), so this coroutine blocks the event loop while reading; a caller may
