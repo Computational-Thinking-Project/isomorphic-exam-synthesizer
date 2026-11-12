@@ -283,12 +283,24 @@ export default function Stage3ReviewPage({
       const next = { ...prev };
       const qNoToMatch = targetQNo ?? updatedVariant.question_no ?? updatedVariant.number;
 
+      const mergeVariantSlot = (oldQ, nextVar) => {
+        const merged = { ...oldQ, ...nextVar };
+        // Đảm bảo xóa sạch hoàn toàn attempts / warning_flag của câu cũ khi câu mới sinh thành công (không phải fallback)
+        if (!nextVar.is_fallback) {
+          merged.is_fallback = false;
+          merged.source_fallback = false;
+          merged.attempts = nextVar.attempts ?? 1;
+          merged.warning_flag = nextVar.warning_flag || null;
+        }
+        return merged;
+      };
+
       if (Array.isArray(next.version_questions)) {
         next.version_questions = next.version_questions.map((q) => {
           const matchesId = q.id && updatedVariant.id && q.id === updatedVariant.id;
           const qVIdx = q.version_index ?? q.version_code;
           const matchesSlot = targetVIdx && qVIdx === targetVIdx && (q.question_no ?? q.number) === qNoToMatch;
-          return matchesId || matchesSlot ? { ...q, ...updatedVariant } : q;
+          return matchesId || matchesSlot ? mergeVariantSlot(q, updatedVariant) : q;
         });
       }
 
@@ -300,7 +312,7 @@ export default function Stage3ReviewPage({
           const updatedList = qList.map((q) => {
             const matchesId = q.id && updatedVariant.id && q.id === updatedVariant.id;
             const matchesSlot = targetVIdx && currentVIdx === targetVIdx && (q.question_no ?? q.number) === qNoToMatch;
-            return matchesId || matchesSlot ? { ...q, ...updatedVariant } : q;
+            return matchesId || matchesSlot ? mergeVariantSlot(q, updatedVariant) : q;
           });
           return { ...ver, [questionsKey]: updatedList };
         });
@@ -386,6 +398,8 @@ export default function Stage3ReviewPage({
         has_warning: Boolean(res.has_warning),
         warning_message: res.warning_message || null,
         validation_report: res.validation_report || null,
+        attempts: res.attempts ?? (res.is_fallback ? (variant.attempts ?? 4) : 1),
+        warning_flag: res.warning_flag || (res.is_fallback ? 'fallback' : null),
       };
 
       // Cập nhật session và giữ nguyên modal mở với nội dung câu mới
@@ -894,9 +908,9 @@ export default function Stage3ReviewPage({
 
           const isFallback = Boolean(
             variant.is_fallback ||
-            variant.attempts >= 4 ||
             variant.source_fallback ||
-            variant.warning_flag === 'fallback'
+            variant.warning_flag === 'fallback' ||
+            (variant.attempts >= 4 && variant.is_fallback !== false)
           );
 
           const hasWarning = Boolean(
@@ -1125,9 +1139,9 @@ export default function Stage3ReviewPage({
             <div className="dialog-copy flex-1 overflow-y-auto p-6 space-y-4">
               {/* Fallback warning trong modal nếu có */}
               {(selectedSolution.variant.is_fallback ||
-                selectedSolution.variant.attempts >= 4 ||
                 selectedSolution.variant.source_fallback ||
-                selectedSolution.variant.warning_flag === 'fallback') && (
+                selectedSolution.variant.warning_flag === 'fallback' ||
+                (selectedSolution.variant.attempts >= 4 && selectedSolution.variant.is_fallback !== false)) && (
                 <div className="rounded-xl border border-amber-500/40 bg-amber-950/40 p-3 text-xs font-semibold text-amber-300 flex items-center gap-2">
                   <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
                   <span>Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc</span>

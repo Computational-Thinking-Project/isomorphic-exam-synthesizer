@@ -284,6 +284,47 @@ test('Stage2ConfigCard khôi phục đúng cấu hình đã lưu (initialConfig 
   await harness.unmount();
 });
 
+test('Stage2ConfigCard: khôi phục cấu hình thiếu ordering_preferences vẫn mặc định tắt cả 2 checkbox và payload nộp giữ false/false', async () => {
+  let submittedPayload = null;
+  const harness = renderCard({
+    session: sampleSession,
+    initialConfig: {
+      n_versions: 3,
+      active_variation_modes: [],
+      // ordering_preferences bị thiếu hoặc nullish
+    },
+    onSubmit: async (payload) => {
+      submittedPayload = payload;
+    },
+  });
+  await harness.render();
+
+  const shuffleCb = harness.container.querySelector('#shuffle-questions-checkbox');
+  const shuffleOptCb = harness.container.querySelector('#shuffle-options-checkbox');
+  assert.equal(shuffleCb.checked, false, 'shuffle_questions phải mặc định tắt khi initialConfig thiếu field này');
+  assert.equal(shuffleOptCb.checked, false, 'shuffle_options phải mặc định tắt khi initialConfig thiếu field này');
+
+  // Submit form
+  const form = harness.container.querySelector('form');
+  await act(async () => {
+    form.dispatchEvent({
+      type: 'submit',
+      bubbles: true,
+      cancelable: true,
+      preventDefault: () => {},
+    });
+  });
+
+  assert.ok(submittedPayload, 'Form phải submit thành công');
+  assert.deepEqual(
+    submittedPayload.ordering_preferences,
+    { shuffle_questions: false, shuffle_options: false },
+    'Payload submit phải gửi false/false khi không có preference được bật',
+  );
+
+  await harness.unmount();
+});
+
 test('Stage2ConfigCard hiển thị thông báo chờ và vô hiệu hóa nút submit khi Blueprint chưa sẵn sàng', async () => {
   const sessionWithoutBlueprint = {
     id: 'test-no-blueprint',

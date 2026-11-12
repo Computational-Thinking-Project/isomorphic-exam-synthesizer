@@ -958,11 +958,26 @@ test('Stage3ReviewPage: Candidate bị fallback sau khi tạo lại thành công
     regenBtn.click();
   });
 
-  // Sau khi tạo lại thành công: badge fallback không còn tồn tại
+  // Sau khi tạo lại thành công: badge fallback không còn tồn tại trên modal
   assert.equal(
     dialog.textContent.includes('Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc'),
     false,
     'Modal không được còn badge fallback khi biến thể mới đã sinh thành công',
+  );
+
+  // Đóng modal để kiểm tra trực tiếp question card ngoài giao diện chính
+  const closeBtn = dialog.querySelector('button[aria-label="Đóng"]');
+  await act(async () => {
+    closeBtn.click();
+  });
+
+  assert.equal(harness.container.querySelector('[role="dialog"]'), null, 'Modal đã được đóng');
+
+  // Question card ngoài giao diện chính cũng phải xóa sạch badge fallback
+  assert.equal(
+    harness.container.textContent.includes('Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc'),
+    false,
+    'Question card trên trang cũng không được còn badge fallback sau khi tạo lại thành công',
   );
 
   await harness.unmount();
