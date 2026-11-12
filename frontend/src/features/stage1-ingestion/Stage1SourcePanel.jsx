@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { ingestFile, ingestText, validateIngestFile, validateIngestText } from '../../services/ingestion.js';
 import { getSessionDetail } from '../../services/sessions.js';
-import { confirmSource, getSourceArtifactStatus, isSourceUuid } from '../../services/sourceConfirmation.js';
+import { confirmSource, getSourceArtifactStatus, isSourceUuid, retrySourceArtifacts } from '../../services/sourceConfirmation.js';
 import { useAuthStore } from '../auth/authStore.js';
 import { createConfirmationIntentStore } from './confirmationIntent.js';
 import { createSourceIngestionController } from './sourceIngestion.js';
@@ -16,7 +16,9 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
   const [controller] = useState(() => createSourceIngestionController({
     initialDetail: detail, ingestText, ingestFile, load: getSessionDetail,
     validateText: validateIngestText, validateFile: validateIngestFile, isCurrent,
-    confirmSource, readArtifacts: getSourceArtifactStatus, onConfirmed,
+    confirmSource, readArtifacts: getSourceArtifactStatus,
+    retryArtifacts: retrySourceArtifacts,
+    onConfirmed,
     confirmationStore: createConfirmationIntentStore(useAuthStore.getState().session?.user.id, detail.id),
   }));
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
@@ -61,11 +63,70 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
           : 'Đang gửi và xử lý nguồn…'
           : state.phase === 'reloading' ? 'Đang đọc lại nguồn đã lưu…'
             : state.phase === 'confirming' ? 'Đang xác nhận đề nguồn…'
-              : state.phase === 'reconciling' ? 'Đang kiểm tra kết quả xác nhận…' : state.message}
+              : state.phase === 'reconciling' ? 'Đang kiểm tra kết quả xác nhận…'
+                : state.phase === 'checking_status' ? 'Đang kiểm tra trạng thái Blueprint…'
+                  : state.phase === 'retrying_canonical' ? 'Đang yêu cầu tạo lại Blueprint…' : state.message}
       </p>
       {state.upload && <progress aria-label="Tiến độ tải tệp lên" className="w-full shrink-0"
         max="100" value={uploadPercent} />}
       {readOnly && <p>Phiên không còn ở trạng thái nháp. Bạn chỉ có thể đọc nguồn tại đây.</p>}
+      {state.canonicalStatus && (
+        <div className="shrink-0 rounded-lg border border-slate-700 bg-slate-800/80 p-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <p className="text-sm text-slate-300">Trạng thái Blueprint:</p>
+              <p className="text-base font-semibold text-white" data-testid="canonical-status-text">
+                {state.canonicalStatus === 'pending' && 'Đang chờ tạo Blueprint'}
+                {state.canonicalStatus === 'running' && 'Đang tạo Blueprint'}
+                {state.canonicalStatus === 'ready' && 'Blueprint đã sẵn sàng'}
+                {state.canonicalStatus === 'failed' && 'Tạo Blueprint thất bại'}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className={buttonClass}
+                disabled={busy}
+                onClick={() => void controller.checkCanonicalStatus()}
+              >
+                Kiểm tra trạng thái
+              </button>
+              {state.canonicalStatus === 'failed' && (
+                <button
+                  type="button"
+                  className={buttonClass}
+                  disabled={busy}
+                  onClick={() => void controller.retryCanonical()}
+                >
+                  Thử tạo lại Blueprint
+                </button>
+              )}
+              {state.canonicalReady && (
+                <button
+                  type="button"
+                  className={`${buttonClass} bg-sky-600 font-semibold text-white hover:bg-sky-500`}
+                  onClick={() => controller.proceedToStage2()}
+                >
+                  Tiếp tục Stage 2
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {state.canonicalError && (
+        <div role="alert" className="shrink-0 rounded-lg border border-rose-600/40 bg-rose-950/40 p-3 text-rose-300 flex items-center justify-between gap-3">
+          <p>{state.canonicalError}</p>
+          <button
+            type="button"
+            className={buttonClass}
+            disabled={busy}
+            onClick={() => void controller.checkCanonicalStatus()}
+          >
+            Kiểm tra trạng thái
+          </button>
+        </div>
+      )}
       <div className="grid min-h-0 flex-1 grid-rows-2 gap-4 md:grid-cols-2 md:grid-rows-1">
         <form id={`${inputId}-form`} aria-label="Nhập nguồn" className="flex min-h-0 flex-col gap-2 overflow-auto" onSubmit={(event) => {
           event.preventDefault();
@@ -128,10 +189,18 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
         <button type="button" className={buttonClass} disabled={busy} onClick={() => void controller.reload()}>
           {state.confirmationPending ? 'Đọc lại trạng thái phiên' : 'Đọc lại nguồn đã lưu'}
         </button>
-        <button type="button" className={buttonClass} disabled={dialogOpen || !controller.canConfirm()}
-          aria-describedby={`${inputId}-confirm-help`} onClick={() => { if (!dialogOpen) void controller.confirm(); }}>
-          {state.retryConfirmation ? 'Thử xác nhận lại' : 'Xác nhận đề gốc và tiếp tục'}
-        </button>
+        {!readOnly && (
+          <button type="button" className={buttonClass} disabled={dialogOpen || !controller.canConfirm()}
+            aria-describedby={`${inputId}-confirm-help`} onClick={() => { if (!dialogOpen) void controller.confirm(); }}>
+            {state.retryConfirmation ? 'Thử xác nhận lại' : 'Xác nhận đề gốc và tiếp tục'}
+          </button>
+        )}
+        {state.canonicalReady && (
+          <button type="button" className={`${buttonClass} bg-sky-600 font-semibold text-white hover:bg-sky-500`}
+            onClick={() => controller.proceedToStage2()}>
+            Tiếp tục Stage 2
+          </button>
+        )}
         {['submitting', 'reloading'].includes(state.phase) && <button type="button" className={buttonClass} onClick={() => controller.cancelRequest()}>Dừng chờ</button>}
       </div>
       <IncompleteContentDialog open={dialogOpen} errors={incomplete?.errors ?? []}

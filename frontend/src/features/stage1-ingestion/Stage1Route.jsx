@@ -89,7 +89,7 @@ function SessionEntry({ sessionId, accountKey }) {
             <>
               <h2 className="break-words text-xl font-semibold">{state.detail.title}</h2>
               <p className="mt-3 break-words">Môn: {state.detail.subject || 'Chưa ghi'} · Khối: {state.detail.grade}</p>
-              {state.detail.status === 'draft' ? (
+              {state.detail.status === 'draft' || state.detail.status === 'blueprinted' ? (
                 <Stage1SourcePanel detail={state.detail} isCurrent={isCurrent} onConfirmed={openConfirmed} />
               ) : (
                 <p role="status" className="mt-4 text-slate-300">Phiên không còn ở trạng thái nháp. Quay về Dashboard để xem trạng thái mới; màn tiếp tục tương ứng chưa được kết nối.</p>

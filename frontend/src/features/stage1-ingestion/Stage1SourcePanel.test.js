@@ -292,7 +292,7 @@ test('đọc lại cập nhật preview nháp; lần đọc thấy confirmed bà
   assert(app.container.textContent.includes('Nguồn qb'));
   api.defaults.adapter = async (config) => {
     calls.push(config.method);
-    return response(config, detail('session-a', [question('qb')], 'blueprinted'));
+    return response(config, detail('session-a', [question('qb')], 'configured'));
   };
   await act(async () => button(app.container, 'Đọc lại nguồn đã lưu').click());
   assert.equal(app.container.textContent, 'Stage 2 · session-a');
@@ -401,8 +401,10 @@ const dialogButton = (container, text) => button(dialog(container), text);
 const confirmSessionId = '10000000-0000-4000-8000-000000000001';
 const confirmRevision = '20000000-0000-4000-8000-000000000001';
 const confirmLabel = 'Xác nhận đề gốc và tiếp tục';
-const confirmDetail = (status = 'draft') => ({
-  ...detail(confirmSessionId, [question('qa', confirmSessionId)], status), source_revision: confirmRevision,
+const confirmDetail = (status = 'draft', ready = false) => ({
+  ...detail(confirmSessionId, [question('qa', confirmSessionId)], status),
+  source_revision: confirmRevision,
+  ...(status === 'blueprinted' ? { blueprint_summary: { is_ready: ready } } : {}),
 });
 
 test('204: 422 confirm không mở dialog incomplete và không làm mất nháp', async () => {
@@ -431,26 +433,38 @@ function confirmedResponse(config) {
     status: 'blueprinted', canonical_status: 'pending', total_blueprints: 0 });
 }
 
-test('204: confirm pending sang Stage 2 đúng phiên và thay mục Stage 1 trong lịch sử', async () => {
+test('204: confirm pending ở lại Stage 1, sau khi ready bấm tiếp tục mới sang Stage 2', async () => {
+  let artifact = { session_id: confirmSessionId, ready: false, canonical_status: 'pending', supported_modes: null };
   api.defaults.adapter = async (config) => {
     calls.push(config.method);
+    if (config.url.endsWith('/source-artifacts')) return response(config, artifact);
     return config.method === 'get' ? response(config, confirmDetail()) : confirmedResponse(config);
   };
   const app = mount(confirmSessionId);
   await app.render();
   await act(async () => button(app.container, confirmLabel).click());
+  assert.match(app.container.textContent, /Đang chờ tạo Blueprint/);
+  assert.equal(button(app.container, 'Tiếp tục Stage 2'), undefined);
+
+  artifact = { session_id: confirmSessionId, ready: true, canonical_status: 'ready', supported_modes: [] };
+  await act(async () => button(app.container, 'Kiểm tra trạng thái').click());
+  assert.match(app.container.textContent, /Blueprint đã sẵn sàng/);
+
+  await act(async () => button(app.container, 'Tiếp tục Stage 2').click());
   assert.equal(app.container.textContent, `Stage 2 · ${confirmSessionId}`);
   await app.back();
   assert.equal(app.container.textContent, 'Dashboard fixture');
-  assert.deepEqual(calls, ['get', 'post']);
   await app.unmount();
 });
 
-test('204: F5 sau POST mất response đã commit, GET chuyển Stage 2 và dọn đúng key', async () => {
+test('204: F5 sau POST mất response đã commit, GET chuyển Stage 2 và dọn đúng key khi ready', async () => {
   let committed = false;
   let writes = 0;
   api.defaults.adapter = async (config) => {
-    if (config.method === 'get') return response(config, confirmDetail(committed ? 'blueprinted' : 'draft'));
+    if (config.url.endsWith('/source-artifacts')) {
+      return response(config, { session_id: confirmSessionId, ready: true, canonical_status: 'ready', supported_modes: [] });
+    }
+    if (config.method === 'get') return response(config, confirmDetail(committed ? 'blueprinted' : 'draft', true));
     writes++;
     committed = true;
     throw new Error('Response lost after commit');
@@ -489,7 +503,7 @@ test('204: F5 còn nháp, chỉ thao tác retry mới POST với đúng key cũ'
   await refreshed.render();
   assert.equal(keys.length, 1);
   await act(async () => button(refreshed.container, 'Thử xác nhận lại').click());
-  assert.equal(refreshed.container.textContent, `Stage 2 · ${confirmSessionId}`);
+  assert.match(refreshed.container.textContent, /Đang chờ tạo Blueprint/);
   assert.deepEqual(keys, [keys[0], keys[0]]);
   await refreshed.unmount();
 });
@@ -500,7 +514,7 @@ test('204: GET khi mở lại chỉ chuyển Stage 2 cho các trạng thái Dash
     api.defaults.adapter = async (config) => {
       assert.equal(config.method, 'get');
       reads++;
-      return response(config, confirmDetail(status));
+      return response(config, confirmDetail(status, status === 'blueprinted'));
     };
     const app = mount(confirmSessionId);
     await app.render();
@@ -509,6 +523,44 @@ test('204: GET khi mở lại chỉ chuyển Stage 2 cho các trạng thái Dash
     assert.equal(reads, 1);
     await app.unmount();
   }
+});
+
+test('Issue 44: F5 với session blueprinted chưa ready ở lại Stage 1 read-only', async () => {
+  api.defaults.adapter = async (config) => {
+    if (config.url.endsWith('/source-artifacts')) {
+      return response(config, { session_id: confirmSessionId, ready: false, canonical_status: 'running', supported_modes: null });
+    }
+    return response(config, confirmDetail('blueprinted', false));
+  };
+  const app = mount(confirmSessionId);
+  await app.render();
+  assert.match(app.container.textContent, /Phiên không còn ở trạng thái nháp/);
+  assert.match(app.container.textContent, /Đang tạo Blueprint/);
+  assert.equal(button(app.container, 'Tiếp tục Stage 2'), undefined);
+  await app.unmount();
+});
+
+test('Issue 44: canonical failed hiển thị nút thử lại, bấm thử lại gọi POST retry rồi GET', async () => {
+  let status = 'failed';
+  const methods = [];
+  api.defaults.adapter = async (config) => {
+    methods.push(`${config.method.toUpperCase()} ${config.url}`);
+    if (config.url.endsWith('/source-artifacts/retry')) {
+      status = 'running';
+      return response(config, { session_id: confirmSessionId, ready: false, canonical_status: 'running', supported_modes: null }, 202);
+    }
+    if (config.url.endsWith('/source-artifacts')) {
+      return response(config, { session_id: confirmSessionId, ready: false, canonical_status: status, supported_modes: null });
+    }
+    return response(config, confirmDetail('blueprinted', false));
+  };
+  const app = mount(confirmSessionId);
+  await app.render();
+  assert.match(app.container.textContent, /Tạo Blueprint thất bại/);
+  await act(async () => button(app.container, 'Thử tạo lại Blueprint').click());
+  assert.match(app.container.textContent, /Đang tạo Blueprint/);
+  assert(methods.some((m) => m.includes('POST') && m.includes('/source-artifacts/retry')));
+  await app.unmount();
 });
 
 test('F02: reload after another tab confirmed navigates without POST', async () => {

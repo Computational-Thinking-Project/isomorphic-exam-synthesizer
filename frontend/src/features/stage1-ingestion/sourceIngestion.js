@@ -5,7 +5,6 @@ const CONFIRM_UNCERTAIN = 'Chưa rõ kết quả xác nhận. Đọc lại trạ
 const CONFIRM_CHANGED = 'Đề nguồn đã thay đổi. Hãy xem và xác nhận lại bản đang hiển thị.';
 const CONFIRM_STORAGE = 'Chưa thể lưu thông tin xác nhận trong tab này. Hãy kiểm tra lại rồi thử lại.';
 const CONFIRM_RECOVERY = 'Không khôi phục được mã xác nhận cũ. Hãy nạp lại nguồn; chỉ xác nhận sau khi bản mới đã được lưu.';
-const confirmedStatuses = ['blueprinted', 'configured', 'generating'];
 const isUnavailable = (status) => [401, 403, 404].includes(status);
 
 function errorMessage(cause) {
@@ -25,6 +24,7 @@ function errorMessage(cause) {
 // One instance per account/route. Inputs and last saved source remain separate.
 export function createSourceIngestionController({ initialDetail, ingestText, ingestFile, load,
   validateText, validateFile, isCurrent = () => true, confirmSource, readArtifacts,
+  retryArtifacts,
   confirmationStore, newConfirmationKey = () => globalThis.crypto.randomUUID(), onConfirmed = () => {} }) {
   const id = initialDetail.id;
   let intent = null;
@@ -37,12 +37,19 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     recoveryRevision = intent.sourceRevision.toLowerCase();
     intent = null;
   }
+  const initialCanonicalReady = initialDetail?.blueprint_summary?.is_ready === true;
+  const initialCanonicalStatus = initialCanonicalReady
+    ? 'ready'
+    : (initialDetail?.status === 'blueprinted' ? 'pending' : null);
   let state = {
     detail: initialDetail, text: '', mode: 'text', file: null, upload: null,
     phase: 'idle', error: '', message: '', cause: null,
     uncertain: false, requiresReload: false, unavailable: false,
     confirmationError: storageBlocked ? CONFIRM_STORAGE : recoveryRevision ? CONFIRM_RECOVERY : intent ? CONFIRM_UNCERTAIN : '',
     confirmationPending: Boolean(intent), retryConfirmation: false,
+    canonicalStatus: initialCanonicalStatus,
+    canonicalReady: initialCanonicalReady,
+    canonicalError: '',
   };
   const listeners = new Set();
   let revision = 0;
@@ -85,6 +92,26 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     intent = null;
   }
 
+  function markBlueprinted(detail, canonicalStatus = 'pending', canonicalReady = false, canonicalError = '') {
+    try { clearIntent(); } catch { /* a later verified GET may clear the entry */ }
+    storageBlocked = false;
+    recoveryRevision = null;
+    confirmationConflict = false;
+    publish({
+      detail: { ...detail, status: 'blueprinted' },
+      phase: 'idle',
+      confirmationPending: false,
+      retryConfirmation: false,
+      requiresReload: false,
+      unavailable: false,
+      confirmationError: '',
+      message: 'Đã xác nhận đề nguồn.',
+      canonicalStatus,
+      canonicalReady,
+      canonicalError,
+    });
+  }
+
   function finishConfirmation(detail) {
     // The server has confirmed the source. Storage failure cannot change that outcome.
     try { clearIntent(); } catch { /* a later verified GET may clear the entry */ }
@@ -112,7 +139,27 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
         if (!absent) detail = await readDetail(operation.signal);
         if (!operation.current()) return;
       }
-      if (confirmedStatuses.includes(detail.status)) {
+      if (detail.status === 'blueprinted') {
+        let cStatus = detail.blueprint_summary?.is_ready === true ? 'ready' : 'pending';
+        let cReady = detail.blueprint_summary?.is_ready === true;
+        let cError = '';
+        if (readArtifacts) {
+          try {
+            const artifact = await readArtifacts(id, { signal: operation.signal });
+            if (!operation.current()) return;
+            cStatus = artifact.canonical_status;
+            cReady = artifact.ready === true && artifact.canonical_status === 'ready';
+          } catch {
+            if (!operation.current()) return;
+            if (!cReady) {
+              cError = 'Không xác định được trạng thái Blueprint. Vui lòng kiểm tra lại.';
+            }
+          }
+        }
+        markBlueprinted(detail, cStatus, cReady, cError);
+        return;
+      }
+      if (['configured', 'generating'].includes(detail.status)) {
         finishConfirmation(detail);
         return;
       }
@@ -144,7 +191,27 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     try {
       const detail = await readDetail(operation.signal);
       if (!operation.current()) return;
-      if (confirmedStatuses.includes(detail.status)) {
+      if (detail.status === 'blueprinted') {
+        let cStatus = detail.blueprint_summary?.is_ready === true ? 'ready' : 'pending';
+        let cReady = detail.blueprint_summary?.is_ready === true;
+        let cError = '';
+        if (readArtifacts) {
+          try {
+            const artifact = await readArtifacts(id, { signal: operation.signal });
+            if (!operation.current()) return;
+            cStatus = artifact.canonical_status;
+            cReady = artifact.ready === true && artifact.canonical_status === 'ready';
+          } catch {
+            if (!operation.current()) return;
+            if (!cReady) {
+              cError = 'Không xác định được trạng thái Blueprint. Vui lòng kiểm tra lại.';
+            }
+          }
+        }
+        markBlueprinted(detail, cStatus, cReady, cError);
+        return;
+      }
+      if (['configured', 'generating'].includes(detail.status)) {
         finishConfirmation(detail);
         return;
       }
@@ -166,7 +233,11 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     try {
       const detail = await readDetail(operation.signal);
       if (!operation.current()) return;
-      if (confirmedStatuses.includes(detail.status)) { finishConfirmation(detail); return; }
+      if (detail.status === 'blueprinted') {
+        markBlueprinted(detail, detail.blueprint_summary?.is_ready === true ? 'ready' : 'pending', detail.blueprint_summary?.is_ready === true);
+        return;
+      }
+      if (['configured', 'generating'].includes(detail.status)) { finishConfirmation(detail); return; }
       if (detail.status !== 'draft' || !isSourceUuid(detail.source_revision)) throw new Error('Recovery unavailable');
       let restored;
       try { restored = confirmationStore.read(); }
@@ -192,6 +263,94 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     }
   }
 
+  async function checkCanonicalStatus() {
+    if (busy() || !isCurrent() || !readArtifacts) return;
+    const operation = begin();
+    publish({ phase: 'checking_status', canonicalError: '' });
+    try {
+      const artifact = await readArtifacts(id, { signal: operation.signal });
+      if (!operation.current()) return;
+      const isReady = artifact.ready === true && artifact.canonical_status === 'ready';
+      publish({
+        phase: 'idle',
+        canonicalStatus: artifact.canonical_status,
+        canonicalReady: isReady,
+        canonicalError: '',
+        ...(isReady ? {
+          detail: {
+            ...state.detail,
+            blueprint_summary: {
+              ...(state.detail.blueprint_summary || {}),
+              is_ready: true,
+              supported_modes: artifact.supported_modes,
+              total_questions: artifact.total_questions,
+            },
+          },
+        } : {}),
+      });
+    } catch {
+      if (!operation.current()) return;
+      publish({
+        phase: 'idle',
+        canonicalReady: false,
+        canonicalError: 'Không xác định được trạng thái Blueprint. Vui lòng kiểm tra lại.',
+      });
+    }
+  }
+
+  async function retryCanonical() {
+    if (busy() || !isCurrent() || !retryArtifacts) return;
+    const operation = begin();
+    publish({ phase: 'retrying_canonical', canonicalError: '' });
+    try {
+      await retryArtifacts(id, { signal: operation.signal });
+      if (!operation.current()) return;
+      if (readArtifacts) {
+        const artifact = await readArtifacts(id, { signal: operation.signal });
+        if (!operation.current()) return;
+        const isReady = artifact.ready === true && artifact.canonical_status === 'ready';
+        publish({
+          phase: 'idle',
+          canonicalStatus: artifact.canonical_status,
+          canonicalReady: isReady,
+          canonicalError: '',
+          ...(isReady ? {
+            detail: {
+              ...state.detail,
+              blueprint_summary: {
+                ...(state.detail.blueprint_summary || {}),
+                is_ready: true,
+                supported_modes: artifact.supported_modes,
+                total_questions: artifact.total_questions,
+              },
+            },
+          } : {}),
+        });
+      } else {
+        publish({ phase: 'idle', canonicalError: '' });
+      }
+    } catch {
+      if (!operation.current()) return;
+      publish({
+        phase: 'idle',
+        canonicalError: 'Không thể thử lại tạo Blueprint. Vui lòng kiểm tra lại.',
+      });
+    }
+  }
+
+  function proceedToStage2() {
+    if (!state.canonicalReady || !isCurrent()) return;
+    const detailWithReady = {
+      ...state.detail,
+      status: 'blueprinted',
+      blueprint_summary: {
+        ...(state.detail.blueprint_summary || {}),
+        is_ready: true,
+      },
+    };
+    onConfirmed(detailWithReady);
+  }
+
   return {
     getSnapshot: () => state,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
@@ -204,7 +363,15 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       // React's development effect replay must be able to restart a read-only recovery.
       if (state.phase === 'reconciling') state = { ...state, phase: 'idle' };
     },
-    restoreConfirmation: () => intent ? reload() : undefined,
+    restoreConfirmation() {
+      if (intent) return reload();
+      if (state.detail.status === 'blueprinted' && !state.canonicalReady) {
+        return checkCanonicalStatus();
+      }
+    },
+    checkCanonicalStatus,
+    retryCanonical,
+    proceedToStage2,
     reload,
     setMode(mode) {
       if (busy() || !isCurrent() || !['text', 'file'].includes(mode)) return;
@@ -282,7 +449,11 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       try {
         const detail = await readDetail(operation.signal);
         if (!operation.current()) return;
-        if (confirmedStatuses.includes(detail.status)) { finishConfirmation(detail); return; }
+        if (detail.status === 'blueprinted') {
+          markBlueprinted(detail, detail.blueprint_summary?.is_ready === true ? 'ready' : 'pending', detail.blueprint_summary?.is_ready === true);
+          return;
+        }
+        if (['configured', 'generating'].includes(detail.status)) { finishConfirmation(detail); return; }
         if (recoveryRevision && isSourceUuid(detail.source_revision)
           && recoveryRevision !== detail.source_revision.toLowerCase()) {
           try { confirmationStore.clear(); recoveryRevision = null; }
@@ -314,9 +485,21 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       publish({ phase: 'confirming', confirmationPending: true, retryConfirmation: false,
         confirmationError: '', error: '', cause: null, message: '' });
       try {
-        await confirmSource(id, { ...intent, signal: operation.signal });
+        const confirmResult = await confirmSource(id, { ...intent, signal: operation.signal });
         if (!operation.current()) return;
-        finishConfirmation({ ...state.detail, status: 'blueprinted' });
+        const initialStatus = confirmResult?.canonical_status ?? 'pending';
+        const isReady = initialStatus === 'ready';
+        const nextDetail = {
+          ...state.detail,
+          status: 'blueprinted',
+          ...(isReady ? {
+            blueprint_summary: {
+              ...(state.detail.blueprint_summary || {}),
+              is_ready: true,
+            },
+          } : {}),
+        };
+        markBlueprinted(nextDetail, initialStatus, isReady, '');
       } catch (cause) {
         if (!operation.current()) return;
         const status = cause?.response?.status;

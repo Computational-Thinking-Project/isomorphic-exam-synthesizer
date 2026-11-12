@@ -12,7 +12,13 @@ export function sessionDestination(session) {
   if (session.status === 'draft') {
     return { path: `/session/${encodeURIComponent(session.id)}/stage1`, notice: '' };
   }
-  if (['blueprinted', 'configured', 'generating'].includes(session.status)) {
+  if (session.status === 'blueprinted') {
+    if (session.blueprint_summary?.is_ready === true) {
+      return { path: `/session/${encodeURIComponent(session.id)}/stage2`, notice: '' };
+    }
+    return { path: `/session/${encodeURIComponent(session.id)}/stage1`, notice: '' };
+  }
+  if (['configured', 'generating'].includes(session.status)) {
     return { path: `/session/${encodeURIComponent(session.id)}/stage2`, notice: '' };
   }
   return {

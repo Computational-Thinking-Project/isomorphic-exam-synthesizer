@@ -84,6 +84,49 @@ test('Stage2ConfigPage hiển thị cảnh báo khi phiên đang ở trạng th�
   await harness.unmount();
 });
 
+test('Issue 44: Direct Stage 2 URL khi blueprinted chưa ready: form bị vô hiệu hoá, hiển thị quay về Stage 1 và không gọi save config hay start generation', async () => {
+  let saveCalls = 0;
+  let startCalls = 0;
+  const mockLoadSession = async () => ({
+    id: 'blueprinted-not-ready',
+    title: 'Đề chưa ready',
+    status: 'blueprinted',
+    subject: 'Toán',
+    grade: 12,
+    source_questions: [{ id: 'q1', question_no: 1 }],
+    blueprint_summary: {
+      total_questions: 1,
+      is_ready: false,
+      supported_modes: null,
+    },
+  });
+
+  const harness = renderPage('blueprinted-not-ready', {
+    loadSession: mockLoadSession,
+    saveConfig: async () => { saveCalls++; },
+    startGen: async () => { startCalls++; },
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('Chưa có thông tin Blueprint khả dụng'));
+  assert.ok(text.includes('Đề nguồn chưa hoàn tất phân tích Blueprint'));
+  assert.ok(text.includes('Quay về Giai đoạn 1'));
+
+  const submitBtn = harness.container.querySelector('button[type="submit"]');
+  assert.ok(submitBtn);
+  assert.equal(submitBtn.getAttribute('disabled') !== null, true);
+
+  const fieldset = harness.container.querySelector('fieldset');
+  assert.ok(fieldset);
+  assert.equal(fieldset.getAttribute('disabled') !== null, true);
+
+  assert.equal(saveCalls, 0);
+  assert.equal(startCalls, 0);
+
+  await harness.unmount();
+});
+
 test('Stage2ConfigPage hiển thị lỗi khi loadSession thất bại', async () => {
   const mockLoadSession = async () => {
     throw new Error('Lỗi kết nối máy chủ 500');
