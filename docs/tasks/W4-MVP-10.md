@@ -3,21 +3,23 @@
 - Phụ trách: Trung Anh (`philip-kkk`, TV1/FE1). Reviewer đề xuất: Bội Anh cho frontend, Duy cho contract trạng thái. Chờ xác nhận reviewer.
 - Nguồn phân công: [W4_ASSIGNMENT](W4_ASSIGNMENT.md) tại `d4350c0` và [W4_TASK_DETAIL](W4_TASK_DETAIL.md) mục W4-MVP-10.
 - Workflow v0.1 proposed, bản tài liệu `7b7387f` có cập nhật INPUT-20261109. [Mẫu M2](../review/TEMPLATES.md#m2).
-- Nhánh `feat/w4-mvp-10-route-foundation`. Base đã đồng bộ `294c69a`, head lúc lập plan `d4350c0`. [Draft PR #60](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/60).
-- Mốc FE-H1 theo phân công: 10/11 18:00 UTC+7, đã qua. FE-H2 và kiểm live: 12/11 12:00 UTC+7. ETA cho các đầu vào Q11 còn thiếu: TBD.
+- Nhánh `feat/w4-mvp-10-route-foundation`. Base lúc lập plan `294c69a`, đã merge `origin/dev` (`21887c1`, gồm PR #54 `review-snapshot`). [PR #60](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/60).
+- Mốc FE-H1 theo phân công: 10/11 18:00 UTC+7, đã qua. FE-H2 và kiểm live: 12/11 12:00 UTC+7. Hai đầu vào **Q11** (`I-W4MVP10-STATE` và `I-W4MVP10-FE2`) đã chốt xong ngày 12/11.
 
-## Phạm vi có thể triển khai
+## Phạm vi triển khai và Route Matrix Q11 đã chốt
 
-Chuẩn hóa quy tắc mở Stage 1 và Stage 2 theo hành vi đang chạy trên nhánh. Dashboard đọc session detail khi người dùng bấm mở. `getSessionDetail` đã kiểm ID trả về, `source_questions` và `exam_versions`. Resolver chọn đích từ `status` của detail. Stage 1 dùng cùng resolver cho handoff sang Stage 2.
+Đã chuẩn hóa dùng chung đường dẫn Stage 1/2/3, Stage 3 Preview và Export qua `frontend/src/sessionPaths.js`, đồng bộ `STAGE3_ROUTE` trong `App.jsx` và `stage3Path` trong `Stage2ConfigPage.jsx`, và mở điều hướng `partial_generated`, `generated` từ Dashboard sang Stage 3 (`35411a0`).
 
-| Dữ liệu đang có | Hành vi giữ làm tiêu chí |
-|---|---|
-| `draft` | `/session/:sessionId/stage1` |
-| `blueprinted`, `configured`, `generating` | `/session/:sessionId/stage2` |
-| `partial_generated`, `generated`, `reviewed`, `approved`, `exported`, `failed` | Giữ hành vi mở từ Dashboard hiện tại: ở lại Dashboard và hiện notice. Đích mới chờ Q11 hoặc bàn giao module tương ứng. |
-| Status ngoài các nhóm trên | Giữ thông báo trạng thái chưa hỗ trợ và không điều hướng. |
-
-Đường dẫn Stage 3 `/session/:id/stage3` và preview `/session/:id/stage3/preview` đã được nêu trong [handoff PR #59](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/59). Handoff này xác nhận tên đường dẫn. Việc dùng các đường dẫn đó làm đích Resume cho từng trạng thái còn cần contract và component phù hợp. Giữ route Stage 3 đã đăng ký trong `App.jsx`.
+| Trạng thái `session.status` | Đích chốt theo Q11 | Trạng thái trên `feat/w4-mvp-10-route-foundation` (`35411a0`) | Dependency mở khóa đích / hành vi live |
+|---|---|---|---|
+| `draft` | `/session/:sessionId/stage1` | **Đã nối** | Đang hoạt động. |
+| `blueprinted` | `/session/:sessionId/stage1` hoặc `/session/:sessionId/stage2` | **Đang nối `/stage2`** *(giữ nguyên để tránh xung đột với PR #65)* | Chốt cuối theo **PR #65** (Issue #44): chỉ sang `/stage2` khi `blueprint_summary?.is_ready === true`, ngược lại giữ ở `/stage1`. |
+| `configured`, `generating` | `/session/:sessionId/stage2` | **Đã nối** | Đang hoạt động; `PR #30` bổ sung `generation-snapshot` & SSE resume đầy đủ hơn. |
+| `partial_generated`, `generated` | `/session/:sessionId/stage3` | **Đã nối** | Đích Stage 3 đã đăng ký trong `App.jsx`. Trên **PR #59** (adapt snapshot **PR #54**): `partial_generated` mở `read_only: true` + nút sinh bù cấp phiên (`POST /retry-generation` ở **PR #30**); `generated` duyệt/tạo lại từng câu bình thường. |
+| `reviewed` | `/session/:sessionId/stage3/preview` | **Giữ `pendingDestinations` + notice** | Chờ màn S07 trong **PR #59** + **PR #49** (`GET /finalize/preview`, `POST /finalize/shuffle`) + **PR #61** (`PATCH /ordering-preferences` flat payload `{ shuffle_questions, shuffle_options }`). |
+| `approved`, `exported` | `/session/:sessionId/export` | **Giữ `pendingDestinations` + notice** | Chờ màn Export (**W4-MVP-09**) và Export API (**PR #58 / #63**); giữ `approved` khóa chỉnh sửa ở Stage 1–3. |
+| `failed` | `/session/:sessionId/stage2` | **Giữ `pendingDestinations` + notice** | Chờ bổ sung nhánh Recovery View ở `Stage2ConfigPage.jsx` + `generation_error_code` từ FE2 và **PR #30** (`retry-generation`, `generation-snapshot`). |
+| Status ngoài các nhóm trên | Ở lại Dashboard + thông báo chưa hỗ trợ | **Đã giữ** | Không điều hướng sai đích. |
 
 ## Thứ tự triển khai
 
@@ -53,22 +55,22 @@ Các đường dẫn dưới đây tính từ `frontend/src/`.
 
 Chạy lại `sessionDestination.test.js`, `Stage1SourcePanel.test.js` và `sessions.test.js` để kiểm hợp đồng hành vi hiện tại. Chỉ sửa các file test khi cần bao phủ ca hồi quy hoặc entry point đã thay đổi. `ProtectedRoute.jsx` và `services/sessions.js` là điểm cần kiểm qua luồng hiện có. Hai URL Stage 2 trong `Stage3ReviewPage.jsx` thuộc màn Bội Anh đang bàn giao qua PR #59 và sẽ được đối chiếu trong nhánh Resume. Mọi thay đổi mapping theo Q11 cần căn cứ từ phản hồi provider trước khi bổ sung vào plan.
 
-## Đầu vào còn chờ
+## Đầu vào Q11 đã chốt
 
-[Comment Q11 trên PR #60](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/60#issuecomment-6792990184) là nơi theo dõi phản hồi của provider. Khi lập plan, thread có yêu cầu từ Trung Anh và chưa có phản hồi xác nhận từ Duy hoặc Bội Anh.
+[Thread Q11 trên PR #60](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/60#issuecomment-6792990184) đã nhận đủ phản hồi xác nhận từ Duy (`johannguyen015`, 11/11) và Bội Anh (`htbaax`, chốt cuối 12/11):
 
-| ID | Cung cấp → nhận | Điều kiện đủ dùng | Trạng thái / ETA |
+| ID | Cung cấp → nhận | Nội dung đã chốt | Trạng thái |
 |---|---|---|---|
-| `I-W4MVP10-STATE` | Duy → TV1/W4-MVP-10 | Contract hoặc JSON có phiên bản cho `reviewed` trước/sau shuffle, khả năng phục hồi `failed`, cách đọc `approved`/`exported` và artifact. | Chờ xác nhận trước khi nối các đích này. ETA TBD. |
-| `I-W4MVP10-FE2` | Bội Anh → TV1/W4-MVP-10 | Hành vi của `partial_generated`, quyền thao tác khi còn thiếu slot, dữ liệu/props khi vào preview trực tiếp và trách nhiệm điều hướng sau approve. | Đã có đường dẫn Stage 3/preview. Phần hành vi và component wiring chờ xác nhận. ETA TBD. |
+| `I-W4MVP10-STATE` | Duy → TV1/W4-MVP-10 | Dùng `GET /api/sessions/{id}` (`status`, `generation_config.n_versions`, `exam_versions[].is_finalized`) + hợp đồng `GET /finalize/preview` (`PR #49`), `generation-snapshot`/`retry-generation` (`PR #30`), `review/snapshot` (`PR #54`), Export artifact tách màn Export (`Q09/Q10`). | **Đã chốt** (`11/11`) |
+| `I-W4MVP10-FE2` | Bội Anh → TV1/W4-MVP-10 | `partial_generated` mở `/stage3` dạng `read_only` + nút sinh bù cấp phiên (`POST /retry-generation` về `/stage2` SSE); `reviewed` mở `/stage3/preview` (S07 có 2 checkbox `ordering_preferences` + nút xáo toàn bộ đề `POST /finalize/shuffle`); `approved`/`exported` điều hướng sang `/export`; FE2 nhận bổ sung Stage 2 `failed` Recovery View. | **Đã chốt** (`12/11`) |
 
-Tích hợp Review, Approval, Export và kiểm FE-H2 nằm trong `feat/w4-mvp-10-resume-integration` sau khi nhận các module 03/04/06/09 và build tương thích. Export Download thuộc `feat/w4-mvp-09-export-download`. TASK-207 đã hoàn tất phần triển khai theo xác nhận của TV1. Merge PR #30 không phải điều kiện để triển khai ba lượt nền route trên.
+Tích hợp nối live cho `reviewed`, `failed`, `approved`/`exported` và tinh chỉnh UX sau W4 nằm ở lượt merge/nhánh tích hợp kế tiếp khi các PR phụ thuộc (`#65`, `#59`, `#30`, `#49`, `#61`, Export `#58/#63`/W4-MVP-09) đã vào `dev`.
 
-## Bàn giao
+## Bàn giao & Kiểm thử
 
-- Đầu ra dự kiến cho Bội Anh, Duy và nhánh tích hợp: route matrix có căn cứ, thay đổi điều hướng trên PR #60, kết quả kiểm theo head và danh sách trường hợp chờ Q11.
-- Đã triển khai đường dẫn dùng chung cho Stage 1/2 ở sáu file frontend trong working tree trên `d4350c0`. `Stage2ConfigPage.jsx` dùng URL chung cho nút quay lại Stage 1.
-- Kiểm baseline tại `d4350c0` với Node `v22.20.0`: lệnh targeted ở trên đạt **78/78**. Đây là kết quả trước triển khai trên fixture và unit tests.
-- Kiểm sau triển khai trên working tree: `node --test --test-concurrency=1` đạt **364/364**, lint và build đạt. Lượt test song song đầu tiên có 4 lỗi trong khi Windows báo thiếu paging file. Lượt một worker hoàn thành với 0 lỗi. Build cảnh báo chunk JavaScript 985,06 kB.
-- Tự review và audit diff: React Router khớp đúng tham số `sessionId` ở 8 ca URL, gồm `new`, UUID, ID có dấu gạch chéo và ký tự query/hash. Kiểm đăng ký route dưới `ProtectedRoute`, handoff dùng `replace`, guard account/session, fallback và số lượt GET. Phần refactor giữ nguyên mapping và luồng request hiện tại.
-- Browser smoke trên app local còn chờ. Phiên kiểm không kết nối được cổng 3000. Các đích Resume phụ thuộc Q11 tiếp tục chờ input.
+- Đã triển khai nền route Stage 1/2/3/Preview/Export ở `sessionPaths.js` và nối `partial_generated`/`generated` $\rightarrow$ `/stage3` tại commit `35411a0` (trên nhánh đã merge `origin/dev@21887c1`).
+- Kiểm targeted tại `35411a0` (`node --test --test-concurrency=1 src/features/dashboard/sessionDestination.test.js src/features/stage1-ingestion/Stage1SourcePanel.test.js src/features/stage2-config/Stage2ConfigPage.test.js src/features/stage3-review/Stage3Review.test.js src/services/sessions.test.js`): **111/111 PASS** (0 fail, 0 skipped).
+- Kiểm toàn bộ frontend test suite tại `35411a0` (`node --test --test-concurrency=1` từ `frontend/`): **745/745 PASS** (0 fail, 0 skipped).
+- Kiểm tĩnh & build tại `35411a0`: `npm run lint` (`eslint . --max-warnings 0`) **PASS**; `npm run build` (`vite build`) **PASS** (1910 modules, `dist/assets/index-7o-FIu99.js` 985.13 kB).
+- Tự review diff: mọi builder trong `sessionPaths.js` encode `sessionId` đúng một lần qua helper dùng chung; `Stage1Route.jsx` giữ nguyên điều kiện chỉ auto-redirect khi `path === stage2Path(detail.id)`; không sửa vào `Stage3ReviewPage.jsx` hay cụm `blueprinted` của PR #65/#59; giữ các trạng thái chưa có màn/PR trên `dev` (`reviewed`, `approved`, `exported`, `failed`) trong `pendingDestinations` để tránh fallback về `/login`.
+- Browser smoke trực tiếp trên Docker/app local với đầy đủ màn Stage 3 Preview / Export / `failed` recovery tiếp tục thực hiện sau khi các PR phụ thuộc merge vào `dev`.
