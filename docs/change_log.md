@@ -1,3 +1,57 @@
+## DEC-W4-MVP-03: Review Read API và Atomic Snapshot RPC (08/11/2026, proposed - remediated 09/11/2026)
+
+- **Mã & Tiêu đề:** `DEC-W4-MVP-03: Review Read API / Current Candidate Snapshot`.
+- **Ngày & Người đề xuất:** 08/11/2026 (cập nhật 09/11/2026 theo review) — Senior Backend Engineer cho Duy (BE owner).
+- **Ngữ cảnh & Vấn đề (Context):**
+  - Giao diện Stage 3 (Review FE - `htbaax`) cần hiển thị đầy đủ ma trận $N \times M$ slots ($N$ phiên bản đề $\times M$ câu nguồn đã xác nhận).
+  - Trước đây chưa có endpoint đọc snapshot tập trung: frontend phải gọi các API rời rạc hoặc suy đoán câu hỏi hiện hành từ `exam_versions`, dễ gây sai lệch candidate cũ/mới (đặc biệt sau targeted regeneration, revert và F5).
+  - Cần bảo đảm tính nhất quán nguyên tử (single-transaction atomic snapshot), bảo vệ quyền sở hữu (owner authorization không dùng `service_role`), và ẩn hoàn toàn tài nguyên không thuộc sở hữu người dùng (RLS concealment trả về `404 Not Found`).
+- **Quyết định mới (Decision):**
+  1. **Migration 018 (`backend/migrations/018_review_current_snapshot.sql`):** Bổ sung PostgreSQL read-only RPC `public.get_review_current_snapshot(p_session_id uuid) RETURNS jsonb` với `SECURITY DEFINER` và khai báo `STABLE` (lock-free owner verification trên `exam_sessions WHERE user_id = auth.uid()`). Không dùng lock `FOR SHARE`/`FOR UPDATE` trên session row, đảm bảo non-blocking MVCC statement snapshot nhất quán và che giấu session ngoại lai (404 Not Found) mà không gây tắc nghẽn với writer đồng thời. Tách hàm reader riêng `_get_source_artifacts_data` và cập nhật `_review_progress` thành `STABLE`.
+  2. **Frozen Canonical Sources & Immutable Canonical Candidates:** Nguồn được đọc từ `generation_job_snapshots.snapshot_payload->'confirmed_sources'`, chuẩn hóa options 4 phần tử [A, B, C, D], không đọc live table để tránh lệch revision. Candidates được chiếu từ các trường bất biến `canonical_options`, `canonical_correct_key`, `canonical_solution_md` nhằm miễn nhiễm với display shuffle hay reset khi tái sinh.
+  3. **Current-Only Candidate & Fail-Closed Guard:** Chỉ đọc candidate có `is_current = true`. Bổ sung kiểm tra version scope ($1..N$), canonical question mapping (`canonical_question_no` khớp `question_no` nguồn) và kiểm tra duplicate candidate. Mọi vi phạm lập tức fail-closed với mã lỗi `503 Service Unavailable`.
+  4. **Lifecycle & Status Compatibility:** Bổ sung trạng thái `regenerating` vào schema DTO và contract, tương thích với enum `public.question_status`. Snapshot vẫn đọc được an toàn khi có candidate đang sinh lại (với `ready = false`).
+  5. **Authoritative Readiness Consensus:** Tái sử dụng kết quả từ `public._review_progress(s.id)` để xác định `progress.ready` và đối soát `expected_slots`, bảo đảm không tồn tại hai định nghĩa readiness mâu thuẫn giữa Read API và Write API.
+  6. **Deterministic Freshness Token:** Băm SHA-256 trên toàn bộ payload response chuẩn (trước khi gắn token), bảo đảm token thay đổi ngay lập tức khi bất kỳ trường dữ liệu nào trong snapshot thay đổi (candidate status, options, solutions, warnings, validation, v.v.).
+  7. **Preserve Write API Exception Mapping & Sanitized Malformed Handling:** Phân định ngữ cảnh RPC trong `_map_rpc_exception` (`rpc_name = get_review_current_snapshot` trả 503 cho `REVIEW_SOURCE_MISMATCH`, trong khi Write RPCs giữ nguyên mã lỗi 422 `ERR_INVALID_PAYLOAD`). Schema validation error tại service layer được bắt và trả về mã lỗi 503 `ERR_SNAPSHOT_MALFORMED` với thông điệp an toàn, không rò rỉ chi tiết nội bộ của Pydantic ra ngoài client.
+  8. **Authorization Boundary:** Loại bỏ preflight `assert_ownership` tại route GET snapshot, để database RPC làm authoritative security boundary và trả về `REVIEW_NOT_FOUND` (HTTP 404) nhằm che giấu sự tồn tại của session ngoại lai (RLS concealment).
+- **Phạm vi ảnh hưởng (Impact):**
+  - Cập nhật `backend/migrations/018_review_current_snapshot.sql`.
+  - Cập nhật `backend/app/models/schemas.py`, `backend/app/services/review/repository.py`, `backend/app/services/review/service.py`, `backend/app/api/routes/review.py`.
+  - Cập nhật `docs/api/review-snapshot.md`, `backend/tests/fixtures/review_snapshot/`.
+  - Cập nhật `backend/tests/api/test_review_snapshot.py` (22 tests) và `backend/tests/migrations/test_review_snapshot_pg.py` (23 real PostgreSQL tests).
+  - Handoff contract cho Stage 3 Review FE (`htbaax`) và resume routing (Philip).
+
+## DEC-OPS-LOCAL-DOCKER-20261109: Docker tự chạy trên máy từng thành viên (proposed)
+
+- **Ngày / người đề xuất:** 09/11/2026 — Duy / @johannguyen015, tác giả [PR #56](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/56).
+- **Trạng thái:** Policy đang đề xuất; chưa có bằng chứng nhóm chấp thuận áp dụng. GitHub Approve, merge tài liệu và organizational acceptance được ghi riêng; review/merge không tự chứng minh adoption hoặc từng thành viên đã chạy Docker.
+- **Ngữ cảnh / lý do:** Cụm “shared development setup” trong [PR #8](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/8) nói về source, Dockerfiles, Compose, dependency locks và CI dùng chung, nhưng có thể bị hiểu thành Docker host trên máy Đạt. Day 0 đã đặt mục tiêu chạy trên máy cá nhân; hướng dẫn contributor cần nêu rõ trách nhiệm local.
+- **Quyết định đề xuất:** Mỗi contributor phát triển hoặc kiểm thử ứng dụng đang chạy tự cài Docker/Compose, clone repo và chạy stack trên máy mình; tự quản lý checkout, `.env`, logs và bằng chứng `doctor/up/smoke` cùng tests liên quan. Ghi command/platform/error thật khi không chạy được; CI hoặc stack của người khác không thay bằng chứng local. Bản [UI walkthrough tĩnh](ui-walkthrough/README.md) được miễn vì chỉ xem dữ liệu mẫu.
+- **Ranh giới / phụ thuộc:** [PR #51](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/51) đã merge phần OPS preparation; không chứng minh beta đã deployed. [Issue #53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53) giữ production-first, private beta nội bộ nhóm, ưu tiên 0đ, không bắt buộc staging riêng. Máy nhóm + Tailscale chỉ là ứng viên có điều kiện; không chọn host/máy Đạt, không giao operator hay đổi HTTPS/OAuth/access control từ policy này. Deployment tập trung là hạng mục riêng, không thay local development/test.
+- **Ảnh hưởng:** `README.md`, `CONTRIBUTING.md`, `docs/setup-docker.md`, Day 0 của `docs/planning.md` và mục changelog này. Không sửa runtime, Compose, cloud, API hoặc schema; không thêm approval gate. Chấp thuận policy cần quyết định của nhóm có dẫn chứng, độc lập với việc hoàn thiện đề xuất tài liệu.
+
+---
+
+## DEC-DOCS-INPUT-20261109: Đối chiếu yêu cầu và bàn giao input (proposed)
+
+- **Ngày / người đề xuất:** 09/11/2026 — Trung Anh / philip-kkk, PM hỗ trợ soạn theo yêu cầu.
+- **Trạng thái:** đã sửa tài liệu local để review; chưa xác nhận nhóm chấp nhận hoặc rollout. Sửa đổi INPUT-20261109 trên nền workflow v0.1; không đổi ngầm quy tắc giữa vòng review đang chạy.
+- **Ngữ cảnh:** audit thảo luận GitHub chốt 16:42:46 UTC+7 ngày 09/11 cho thấy trả lời lệch ID và nhầm mức quyết định/đã giao/đủ dùng/đã tích hợp. Chưa có bằng chứng thay đổi này giảm số vòng trao đổi.
+- **Đề xuất:** ID input ổn định, yêu cầu có mục đích/điều kiện đủ dùng, người giao/nhận, need-by/ETA; reply đúng ID kèm artifact/phiên bản và phần còn thiếu; consumer xác nhận phạm vi dùng được. Các mức Requested/Decided/Delivered/Accepted/Integrated chỉ dùng khi phù hợp. Một nơi tổng hợp M2 hoặc comment đang dùng; M1/M3/PR dẫn link, không sao chép trạng thái.
+- **Phạm vi ảnh hưởng:** `docs/review/WORKFLOW.md`, `docs/review/TEMPLATES.md`, `.github/pull_request_template.md` và mục log này. M1 đã có người giao/nhận/dependency/ETA; chỉ thêm hướng dẫn dẫn ID. Chưa có căn cứ dùng Issue task template làm nguồn giao việc chính nên giữ nguyên.
+- **Giới hạn:** không đổi task/owner/deadline/MVP/kiến trúc, code hoặc gate approve/merge; các PR hiện có không tự được cập nhật. Bản local chưa commit/push hoặc đăng GitHub từ lượt sửa này.
+## DEC-DAT-W4-OPS-CI — OPS regression coverage (09/11/2026)
+
+- PR51 review fix: CI chạy OPS unittest và Ruff cho `scripts/w4_ops.py`, `scripts/test_w4_ops.py` trên mỗi PR/push thuộc workflow hiện hành.
+- Proxy observation kiểm JSON OpenAPI3.x và routes backend qua `/openapi.json`, tránh SPA fallback báo PASS nhầm. Không đổi API/schema, runtime hay Docker; kết quả vẫn không thay integrated acceptance.
+
+## DEC-DAT-W4-OPS — Production private beta preparation
+
+- Ngày/người:08/11/2026 — Đạt cập nhật theo [quyết định Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/51#issuecomment-6719017111), [ENV0 Issue53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53).
+- Chọn một production HTTPS/private beta chỉ nhóm, free-first; không yêu cầu staging riêng. Static Compose một worker, private access gate thực, isolated destructive tests. Không chọn provider/mua dịch vụ/cấp quyền hoặc xác nhận lịch trực.
+- Ảnh hưởng: docs OPS11/21 và candidate inventory017; historical inventory giữ nguyên, không sửa runtime/API/SQL/Docker. PR51 preparation merge độc lập deployment acceptance; G0/G1/G2/public proof vẫn pending. PR30 F02 và PR52 ACL/real-DB còn blockers.
+
 ## DEC-DOCS-W4-001: Đồng bộ hóa tài liệu W4 theo Review M4 và Quyết định Sản phẩm (08/11/2026, proposed)
 
 - **Ngày / người đề xuất:** 08/11/2026 — Duy (PR #50), theo review M4 của Đạt (@Thanhdat3010).
@@ -165,7 +219,7 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
 
 > Checkpoint tích hợp 26/10/2026: Auth PR #7 đã squash merge vào dev tại `bbb7c5e`. Nhánh TASK-103 đang ghép nền dev và giữ list/phân trang/Clone Modal thật; chưa lưu merge commit. Các mục DEC-TV1 bên dưới ghi đúng phạm vi lịch sử ở ngày thực hiện, không ghi đè bằng chứng hoặc nhận TASK-103 đã hoàn tất.
 
-> **Mục đích:** Tài liệu này dùng để lưu trữ các **quyết định kỹ thuật (Architecture Decision Records - ADR)**, các thay đổi công nghệ hoặc điều chỉnh quy trình phát triển phát sinh trong quá trình triển khai dự án so với tài liệu thiết kế ban đầu.  
+> **Mục đích:** Tài liệu này dùng để lưu trữ các **quyết định kỹ thuật (Architecture Decision Records - ADR)**, các thay đổi công nghệ hoặc điều chỉnh quy trình phát triển phát sinh trong quá trình triển khai dự án so với tài liệu thiết kế ban đầu.
 > Khi dự án triển khai, mọi thay đổi về stack, quy ước code, cấu trúc thư mục hoặc luồng phối hợp giữa các thành viên đều cần được ghi chép tại đây để đảm bảo tính minh bạch và thống nhất cho toàn đội.
 
 ---
@@ -404,7 +458,7 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
   3. Kịch bản kiểm thử quyền `anon` trong `verify_migration_003_permissions.sql` chạy trực tiếp dưới kết nối superuser `postgres`, khiến RPC tin cậy `session_user` và bỏ qua kiểm tra quyền, không xác thực được cơ chế cấm `EXECUTE` (SQLSTATE 42501).
 * **Quyết định:**
   1. **Phân loại ngoại lệ phân tán theo kiểu `isinstance`:** Xây dựng các helper `is_network_timeout`, `is_network_transport`, `is_database_rollback_evidence` kiểm tra cây ngoại lệ `__cause__`/`__context__`. Trả về HTTP 504 Gateway Timeout khi trạng thái commit chưa rõ ràng; chỉ trả về HTTP 500 khẳng định hoàn tác khi có bằng chứng từ `postgrest.exceptions.APIError`.
-  2. **Chuẩn hóa script kiểm quyền migration 003:** 
+  2. **Chuẩn hóa script kiểm quyền migration 003:**
      - Thêm preflight tạo mock users trong `auth.users` và `public.users`.
      - Giả lập caller PostgREST qua `SET SESSION AUTHORIZATION authenticator; SET ROLE anon / authenticated / service_role;`.
      - Xác thực role `anon` bị từ chối `EXECUTE` ở tầng PostgreSQL Engine (SQLSTATE 42501 / Least Privilege SEC-04).
@@ -746,3 +800,41 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
   historical backfill or deployed Supabase claim. Existing F02/F07/F09/F10 remain
   reviewer verified; F11 stays in its original
   [thread](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/32#discussion_r4479665885).
+
+
+## DEC-207-003 — Generation lifecycle recovery and durable error persistence (Migration 017)
+
+- **Ngày / người phụ trách:** 07/11/2026 (cập nhật 10/11/2026 cho PR #52 HEAD 4403f3c), Duy / TASK-207, PR #52; consumer: Quỳnh / PR #30.
+- **Trạng thái:** Implemented trên PR #52; reviewer `nhatquynh1107` đã xác minh độc lập F01–F04 trên HEAD `4403f3c` (23 passed, 0 skipped trên PostgreSQL 17 Docker cô lập; 5 checks CI xanh). F05 (ADR documentation) author `claimed_fixed` tại HEAD mới, chờ reviewer xác minh lại; rollout ledger trên Supabase live và PR #30 worker HTTPS E2E tiếp tục ở trạng thái pending; chưa có formal GitHub Approve.
+- **Context / Ngữ cảnh:**
+  - `updated_at` không phù hợp để phát hiện stale job vì metadata update (tiêu đề, môn, khối lớp) hoặc thao tác ngoài luồng làm mới timestamp này mà không phản ánh tiến trình sinh đề thực tế.
+  - Sự cố tiến trình worker đột ngột dừng (crash, OOM, mất mạng) khiến generation job bị kẹt vô thời hạn ở trạng thái `running`.
+  - Thiếu cơ chế lưu bền vững mã lỗi thất bại (`generation_error_code`) qua các lần khởi động lại worker và tái kết nối SSE client.
+  - Cần cơ chế fencing chống xung đột giữa stale scanner và worker hợp lệ vừa hoàn thành (`finish`) hoặc job đã được retry với token mới.
+- **Decision / Quyết định:**
+  - Bổ sung migration 017 (`backend/migrations/017_generation_lifecycle_recovery.sql`) thêm hai cột độc lập trên `public.exam_sessions`:
+    - `generation_last_activity_at TIMESTAMPTZ NULL`: cập nhật nghiêm ngặt khi claim, reserve quota, persist result/clone và heartbeat.
+    - `generation_error_code TEXT NULL`: ràng buộc `CHECK (generation_error_code IS NULL OR generation_error_code ~ '^[A-Z0-9_]{3,64}$')`.
+  - Thiết lập ngưỡng stale timeout 720 giây (12 phút) tính theo đồng hồ database (`clock_timestamp()`).
+  - Cung cấp `list_stale_generation_jobs(p_cutoff_seconds, p_limit, p_after_activity_at, p_after_session_id)` sử dụng keyset pagination trên cặp `(generation_last_activity_at, id)` với index riêng `idx_exam_sessions_generation_stale`, chặn limit từ 1 đến 100.
+  - Cung cấp `fail_stale_generation_job_if_current(p_session_id, p_expected_job_token, p_cutoff_seconds)` với row-level lock (`SELECT ... FOR UPDATE`), kiểm tra tính hợp lệ của token và trạng thái trước khi chuyển sang `failed` và ghi nhận mã lỗi `ERR_GENERATION_INTERRUPTED`. Trả về `recovered: false` an toàn nếu token đã đổi hoặc job đã kết thúc.
+  - Đảm bảo tính đơn điệu của heartbeat (`heartbeat_generation_job`) bằng `GREATEST(generation_last_activity_at, clock_timestamp()) RETURNING ... INTO v_activity_at` dưới row lock để triệt tiêu race condition lùi mốc thời gian khi có transaction cạnh tranh lock (F02).
+  - Ràng buộc bắt buộc mã lỗi không được NULL tại ranh giới RPC `finish_generation_job_with_error` với SQLSTATE tiêu chuẩn `22023` cho các trạng thái kết thúc thất bại (`failed`, `partial_generated`) (F03).
+  - Cung cấp `load_generation_completed_results` trả kèm `generation_error_code` để worker PR #30 tái tạo terminal SSE event sau khi khởi động lại.
+  - Xóa `generation_error_code` về NULL khi `claim_generation_job` retry nhưng bảo toàn quota đã trừ và các question targets đã persist trước đó.
+  - Phân quyền theo nguyên tắc đặc quyền tối thiểu: thu hồi INSERT/UPDATE trực tiếp trên bảng `exam_sessions` từ `PUBLIC`, `anon`, `authenticated`; whitelist quyền UPDATE cột metadata `(title, subject, grade)` cho `authenticated`; bảo vệ cột worker bằng trigger chặn đứng cập nhật trực tiếp với SQLSTATE `42501`; giới hạn EXECUTE các RPC quản lý lifecycle cho `service_role`; ghim `search_path` cho các hàm SECURITY DEFINER.
+- **Alternatives / Lý do chọn giải pháp:**
+  - *Không dùng `updated_at`:* Tránh việc chỉnh sửa thông tin đề thi làm gia hạn sai lệch thời gian tính stale của tiến trình worker.
+  - *Không theo dõi timeout in-memory tại worker:* Worker có thể bị kill bất ngờ; trạng thái in-memory mất hoàn toàn khi container khởi động lại.
+  - *Dùng token fencing và khóa dòng (`FOR UPDATE`):* Ngăn chặn race condition giữa stale scanner chậm chạp và worker vừa hoàn thành nhiệm vụ hoặc job đã retry hợp lệ.
+  - *Giữ nguyên migration 005/015/016 và `finish_generation_job` cũ:* Đảm bảo tương thích ngược hoàn toàn cho các pipeline không dùng error code bổ sung.
+- **Tác động & Phạm vi:**
+  - Schema: `public.exam_sessions` bổ sung 2 cột và 1 index.
+  - RPCs: 5 RPC mới và cập nhật trong migration 017 (`list_stale_generation_jobs`, `fail_stale_generation_job_if_current`, `heartbeat_generation_job`, `finish_generation_job_with_error`, `load_generation_completed_results`).
+  - Integration: PR #52 cung cấp SQL boundary; PR #30 tiêu thụ cho stale scanner, durable error recovery và SSE terminal emission. PR #52 không chứa Python worker code hay UI code.
+- **Tài liệu & Liên kết liên quan:**
+  - SQL migration: `backend/migrations/017_generation_lifecycle_recovery.sql`
+  - Integration test suite: `backend/tests/migrations/test_generation_lifecycle_recovery.py`
+  - API Contract: `docs/api/generation-lifecycle-recovery.md`
+  - Task specification: `docs/tasks/TASK-207.md`
+  - PR liên quan: [PR #52](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/52), [PR #30](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30)

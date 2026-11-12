@@ -17,14 +17,17 @@
 ## Handoff / Dependencies
 
 - Thứ tự/task phụ thuộc: <link file phân công tuần — nguồn lịch chuẩn>.
-- Input cần từ ai/task nào: <đầu vào cụ thể; mốc cần nhận; ETA đã xác nhận hoặc TBD>.
+- Input: <ID + link nơi tổng hợp duy nhất trong M2/comment; người cung cấp → nhận/task; mức đủ dùng cho phạm vi PR; không áp dụng nếu độc lập>.
+- Phần input còn thiếu: <ID; thiếu gì; mốc cần nhận theo file tuần; ETA + người/ngày xác nhận hoặc TBD; không chép lại bảng M2>.
 - Output giao cho task sau: <cho ai, dạng gì, mốc theo file tuần>.
 - Contract / PR liên quan: <link đúng bản; đã sẵn hoặc pending>.
 - File chung ảnh hưởng / reviewer: <người đã chốt hoặc mới đề xuất>.
 
 ## Status / Questions
 
-<Câu hỏi scope/API/ETA trong Draft thứ 5, ai cần trả lời; hoặc kết luận khi Ready.>
+<Câu hỏi scope/API/ETA trong Draft thứ 5: ID + link yêu cầu gốc và người cần trả lời.
+Reply theo đúng ID bằng mẫu M2; giữ nơi tổng hợp đã chọn. Khi Ready, dẫn xác nhận
+của consumer đủ dùng cho bước nào và phần còn chờ; Delivered chưa tự là Accepted/Integrated.>
 
 - Finding còn mở: <ID + link thread, hoặc chưa có review>.
 
