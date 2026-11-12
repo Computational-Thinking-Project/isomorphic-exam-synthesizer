@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createSessionOpener, sessionDestination } from './sessionDestination.js';
+import {
+  exportPath,
+  stage1Path,
+  stage2Path,
+  stage3Path,
+  stage3PreviewPath,
+} from '../../sessionPaths.js';
 
 function deferred() {
   let resolve;
@@ -20,12 +27,24 @@ function setup(overrides = {}) {
   return { opener, calls, destinations };
 }
 
-test('resolver nối draft sang stage1, blueprinted/configured/generating sang stage2; sáu enum còn lại và unknown không tới màn chưa có', () => {
+test('sessionPaths encode sessionId đúng một lần cho tất cả route Stage 1-3, Preview và Export', () => {
+  assert.equal(stage1Path('new'), '/session/new/stage1');
+  assert.equal(stage1Path('a/b?c#d'), '/session/a%2Fb%3Fc%23d/stage1');
+  assert.equal(stage2Path('a/b'), '/session/a%2Fb/stage2');
+  assert.equal(stage3Path('a/b'), '/session/a%2Fb/stage3');
+  assert.equal(stage3PreviewPath('a/b'), '/session/a%2Fb/stage3/preview');
+  assert.equal(exportPath('a/b'), '/session/a%2Fb/export');
+});
+
+test('resolver nối draft sang stage1, blueprinted/configured/generating sang stage2, partial_generated/generated sang stage3; bốn enum còn lại và unknown không tới màn chưa có', () => {
   assert.deepEqual(sessionDestination({ id: 'a/b', status: 'draft' }), { path: '/session/a%2Fb/stage1', notice: '' });
   for (const status of ['blueprinted', 'configured', 'generating']) {
     assert.deepEqual(sessionDestination({ id: 'saved', status }), { path: '/session/saved/stage2', notice: '' });
   }
-  for (const status of ['partial_generated', 'generated', 'reviewed', 'approved', 'exported', 'failed']) {
+  for (const status of ['partial_generated', 'generated']) {
+    assert.deepEqual(sessionDestination({ id: 'a/b', status }), { path: '/session/a%2Fb/stage3', notice: '' });
+  }
+  for (const status of ['reviewed', 'approved', 'exported', 'failed']) {
     const result = sessionDestination({ id: 'saved', status });
     assert.equal(result.path, null);
     assert.match(result.notice, /chưa được kết nối/);
