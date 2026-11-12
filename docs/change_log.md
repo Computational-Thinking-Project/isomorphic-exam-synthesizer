@@ -847,3 +847,12 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
   - API Contract: `docs/api/generation-lifecycle-recovery.md`
   - Task specification: `docs/tasks/TASK-207.md`
   - PR liên quan: [PR #52](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/52), [PR #30](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30)
+
+## DEC-TV7-W4-008: Private export integration draft (12/11/2026, proposed)
+
+Hùng triển khai pipeline độc lập trên dependency PR #58: manifest/checksums,
+immutable upload/read-back verification, durable ledger ports và safe error/
+lost-response handling. [Contract Q09/Q10](api/private-export-contract.md) là đề
+xuất chờ Duy/Đạt/Philip; chưa bật RPC/migration/HTTP hay thay ACL/cloud config.
+Plan và evidence/giới hạn: [W4-MVP-08](tasks/W4-MVP-08.md). Không coi fake-port
+tests là PostgreSQL/Storage live proof hoặc GitHub approval.

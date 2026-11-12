@@ -2,7 +2,7 @@
 
 - Author: Hùng; Duy review DB/RPC theo [phân công W4](W4_TASK_DETAIL.md).
 - Workflow v0.1 proposed + INPUT-20261109; baseline tài liệu `dev@21887c1`.
-- Nhánh: `feat/w4-mvp-08-private-export`; kế thừa `dev` và dependency 07 tại
+- Nhánh: `feat/w4-mvp-08-private-export`; [Draft PR #63](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63); kế thừa `dev` và dependency 07 tại
   `305f38d` (PR #58 chưa merge). Diff riêng 08 tính từ commit này; PR về `dev`
   phải ghi rõ phần 07 đi kèm cho đến khi #58 merge. Không sửa description PR cũ.
 - Hạn trong phân công: 11/11 18:00, đã qua; không tự tạo hạn thay thế.
@@ -49,6 +49,22 @@ export thiếu solution fail-closed; snapshot revision SHA256, không dùng upda
 
 ## Bàn giao
 
-Chưa có code/checks/acceptance cho 08 tại lúc lập plan. Output giao Philip/09,
-Hùng/12, Quỳnh/13, Đạt/21s; ETA tích hợp thật phụ thuộc input đang Requested.
-Không coi hạn đã qua hoặc hết thời gian chờ là owner đồng ý.
+Đã code pipeline độc lập trong `private_service.py`, port trong `private_models.py`,
+SDK adapter `private_storage.py`, manifest wrapper `manifest_bundle.py`;
+[contract đề xuất](../api/private-export-contract.md). Có checkpoint expected
+path/hash/size trước upload; mất response không đánh failed/xóa object mù.
+
+Đã kiểm Docker local image `export07-backend-check:20261112`, network none,
+dummy env, không mount `.env` thật: `ruff check backend/app scripts/blueprint`
+PASS; `mypy backend/app --ignore-missing-imports` PASS 101 files;
+`pytest backend/tests/exporter -q --tb=short` **206 passed, 1 skipped** (XeLaTeX
+chưa có). Có Typst thật cho snapshot 07 3 câu × 2 mã, PDF magic và manifest
+checksum; fake ledger/Storage cho concurrent requests, retry, lỗi và lost response;
+SDK fake kiểm upsert=false và TTL argument 3600. Không phải RPC/ACL/TTL live proof.
+
+Chưa có concrete ledger/RPC/migration/HTTP adapter; chưa nối Storage thật. Chưa
+GitHub Approve/acceptance hay task Done. Bước 4 còn cần I08-Q09/I08-11S/I08-Q10;
+không tự thay lựa chọn hoặc cấu hình cloud khi các owner chưa trả lời. Output giao
+Philip/09, Hùng/12, Quỳnh/13, Đạt/21s; ETA tích hợp thật phụ thuộc input Requested.
+Không coi hạn đã qua hoặc hết thời gian chờ là owner đồng ý. Reviewer độc lập sẽ
+kiểm scope code đã có, không được diễn giải các input thiếu thành proof đã hoàn tất.
