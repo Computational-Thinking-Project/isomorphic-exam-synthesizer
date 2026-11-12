@@ -37,13 +37,14 @@ Storage, ZIP/signed URL, writer approved→exported (08), API/docs preview (Tâm
 | I07-01 Duy → Hùng | SHA-256 chuẩn hóa **gồm title**, ổn định qua approved→exported | **Decided, Delivered, Accepted, Integrated cục bộ** theo [Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58#issuecomment-6801792075); code/fixture/test đã cập nhật | Review code cuối; không hỏi lại lựa chọn |
 | I07-02 Duy → Hùng | Table reads với `get_user_db` có RLS; foreign có thể404 | **Decided, Delivered, Accepted, Integrated cục bộ**, cùng comment; PostgreSQL kiểm RLS/lock/concurrency | Không chờ read RPC/service client |
 | I07-03 Duy → Hùng | Giữ lỗi cũ +409 `ERR_EXPORT_SNAPSHOT_INVALID`; availability khác409 | **Decided, Delivered, Accepted, Integrated cục bộ**, cùng comment; timeout/connection/PostgREST tests | Không hỏi lại mã lỗi |
-| I07-04 Tâm (`AI-WFox`) → Hùng | Dùng fixture OFF/OFF PR49 tại SHA trên, preview trước duyệt bằng export sau duyệt từ cùng DB | **Requested**: [câu hỏi gốc](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58#issuecomment-6761403010); reply bị cắt chưa là Delivered. Đã tự kiểm parity, chưa coi owner chấp nhận | Tâm xác nhận fixture bản chốt, cập nhật §4.2 contract preview theo revision Duy đã chốt và dẫn commit; ETA chưa được xác nhận |
+| I07-04 Tâm (`AI-WFox`) → Hùng | Dùng fixture OFF/OFF PR49 tại SHA trên, preview trước duyệt bằng export sau duyệt từ cùng DB | **Decided, Delivered, Accepted, Integrated trong code07** theo [Tâm xác nhận](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58#issuecomment-6814323103): fixture đã ghim là bản bàn giao; §4.2 dùng SHA-256 gồm title, không đổi preview response. Contract đã đối chiếu tại PR49 `b9f1b7102c8b81d35513967d0dbd4b4c0751852d` | Kiểm lại parity khi PR49 được tích hợp; không còn chờ lựa chọn fixture/revision. Kết quả parity hiện có dùng repository tại SHA fixture đã ghim, không nhận đã chạy toàn PR49 mới nhất |
 | I07-05 Duy → Hùng; upstream: Duy, Quỳnh (`nhatquynh1107`), Tâm (`AI-WFox`) | Export thiếu solution phải fail-closed, không tự tạo solution/autoapprove | **Decided, Delivered, Accepted, Integrated cục bộ** theo [issue46](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/46#issuecomment-6745367064). Hùng bàn giao409 `ERR_EXPORT_SNAPSHOT_INVALID` khi solution trống | Gate confirm/config/generation của Q01 và chính sách ngoài Golden vẫn do các owner trên chốt; không là lựa chọn còn thiếu của adapter07 |
 
-Integrated ở bảng chỉ là áp dụng input trong working tree, không phải task Done,
+Integrated ở bảng là áp dụng input trong code đã push tại `305f38d`, không phải task Done,
 GitHub Approve hay deploy. Đã hoàn thiện phần độc lập rồi đăng [follow-up trên #58](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58#issuecomment-6813431143):
 Tâm nhận hai yêu cầu fixture/contract; Duy và Quỳnh được tag ở bàn giao Q01.
-Không sửa PR/issue descriptions. Chưa có phản hồi mới nên I07-04 vẫn Requested.
+Không sửa PR/issue descriptions. Tâm đã trả lời đủ hai yêu cầu tại link I07-04;
+không còn input thiết kế chưa chốt trong scope adapter07.
 
 ## Tự kiểm ngày 12/11/2026 trước sửa F01
 
@@ -93,6 +94,9 @@ Không sửa PR/issue descriptions. Chưa có phản hồi mới nên I07-04 v�
 vào worker thread ở async route, sanitize lỗi hạ tầng tại route. Không service-role
 read để vượt RLS. Code07 không tự upload hay đổi trạng thái.
 
-Đã có code cho các quyết định đã chốt; còn I07-04, review/acceptance cuối và
-kiểm preview sau merge. Đợt bàn giao này đưa code/test/contract hoàn thiện07 và bản
-sửa F01 vào cùng PR58; trạng thái published/CI/approval theo GitHub, chưa coi là đã nghiệm thu.
+Đã có code cho các quyết định đã chốt, đủ input để yêu cầu review; còn review/acceptance
+cuối và kiểm preview sau tích hợp. Code/test/contract và sửa F01 đã push tại `305f38d`,
+5/5 GitHub checks success tại bản đó. Cập nhật plan này chỉ đồng bộ input/bàn giao,
+không đổi runtime và không nhận đã chạy lại product tests. Gói M3 tại PR58 phải ghi
+head sau commit tài liệu; checks/approval của head mới theo GitHub. Ready for review
+không phải nghiệm thu, deploy hoặc cho phép merge.
