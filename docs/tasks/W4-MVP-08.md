@@ -13,8 +13,8 @@
 2. Code phần độc lập: snapshot đã duyệt → compiler/bundler → manifest/checksums;
    orchestration qua interface ledger/Storage, kiểm checksum sau upload,
    không complete/exported khi compile/upload/verification thất bại.
-3. Sau khi code phần đủ đầu vào: gửi lựa chọn cụ thể cho Duy, Đạt, Philip để
-   chốt Q09/Q10. Các interface thử nghiệm không phải contract đã được họ nhận.
+3. Sau khi code phần đủ đầu vào: gửi lựa chọn cụ thể cho Duy, Đạt, Philip.
+   Q09 đã có quyết định; Q10/OPS vẫn chờ. Interface hiện hành theo bảng dưới.
 4. Nối RPC, HTTP và Storage thật sau khi nhận/đối chiếu input; kiểm retry,
    concurrent requests, recovery, owner auth, private ACL, signed URL 3600s.
    Sau phần thực hiện được, gọi reviewer `gpt-6.1-sol high`, sửa finding có căn cứ.
@@ -81,7 +81,7 @@ thêm permissive policy. Blob store vẫn fake, không coi là live Supabase pro
 Lệnh chuẩn backend dependencies + Docker và giới hạn ở
 [migration tests README](../../backend/tests/migrations/README.md).
 Ruff `backend/app scripts/blueprint` PASS; mypy `backend/app --ignore-missing-imports`
-PASS 102 files. Probe riêng với candidate019 từ PR61@`9fda6fd568a992ca64172cbcb1047c0ac41f6f31`
+PASS 102 files. Probe riêng tại `d255663` với candidate019 từ PR61@`9fda6fd568a992ca64172cbcb1047c0ac41f6f31`
 đặt trước020 đạt **17 passed, 9 subtests** trên PostgreSQL15 thật, cho historical
 approved fixture/fresh DDL. Không commit candidate019 vào nhánh08; không phải
 W4 producer/config→generate E2E hay final approved migration manifest.
@@ -104,3 +104,18 @@ Docker network-none và xác nhận **206 passed, 1 skipped**; không có action
 finding trong scope đã triển khai. Đây không phải GitHub Approve hay xác minh
 RPC/HTTP/recovery/Storage ACL/URL expiry thật. Bản report chi tiết giữ local tại
 `scratch/review08-independent/review.md`, không commit artifact review/test thô.
+
+Review độc lập **đợt recovery/unexpected behavior**, đúng model `gpt-6.1-sol high`:
+review toàn bộ08 tại `d255663`, tự chạy lại full suite **244 passed, 2 skipped,
+21 subtests** và thêm **4 unexpected probes PASS**: stale worker upload muộn;
+lease hết lúc verify với worker khác complete; GET expired checkpoint không đổi
+ledger; malformed receipts/ready replay sau expiry. Không actionable finding.
+
+Một tác động policy được thu hẹp trước push: giữ owner SELECT như quyền cũ,
+chỉ chặn mutation đúng Q09. SQL/regression/contract sửa tại `3221ea4`; reviewer
+kiểm riêng delta và tự chạy lại **244 passed, 2 skipped, 21 subtests**, thêm
+**1 policy probe PASS** cho owner/foreign/anon, move raw↔export, restrictive
+guards dưới extra permissive policy, raw/source UPDATE/DELETE vẫn hoạt động.
+Không actionable finding trên final code. Báo cáo/lệnh/log chi tiết local:
+`scratch/review08-recovery-independent/review.md`. Không coi review agent là
+GitHub Approve hoặc proof Storage/HTTP/JWT/deployment thật.
