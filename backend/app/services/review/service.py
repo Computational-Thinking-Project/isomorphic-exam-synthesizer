@@ -10,6 +10,7 @@ import weakref
 from typing import Any, Callable
 from uuid import UUID, uuid4
 
+from pydantic import ValidationError
 from supabase import Client
 
 from app.models.schemas import (
@@ -18,6 +19,7 @@ from app.models.schemas import (
     ReviewActionResponse,
     ReviewDomainException,
     ReviewProgressResponse,
+    ReviewSnapshotResponse,
     RollbackErrorCode,
 )
 from app.services.review.receipts import ReservationReceipt, completion_receipt
@@ -355,3 +357,32 @@ class ReviewService:
     ) -> ReviewProgressResponse:
         resource_ids(session_id)
         return ReviewProgressResponse(**await self.repo.progress(session_id))
+
+    async def get_current_snapshot(
+        self, session_id: str, user_id: str | None = None
+    ) -> ReviewSnapshotResponse:
+        """Fetch snapshot of current review candidate matrix (W4-MVP-03)."""
+        resource_ids(session_id)
+        raw_data = await self.repo.read_current_snapshot(session_id)
+        try:
+            return ReviewSnapshotResponse.model_validate(raw_data)
+        except ValidationError as exc:
+            error_types = [str(err.get("type", "unknown")) for err in exc.errors()]
+            logger.error(
+                "Snapshot schema validation error for session %s: error_count=%d types=%s",
+                session_id,
+                exc.error_count(),
+                error_types,
+            )
+            raise ReviewDomainException(
+                503, "ERR_SNAPSHOT_MALFORMED", "Snapshot data failed schema validation"
+            ) from exc
+        except Exception as exc:
+            logger.error(
+                "Unexpected error validating snapshot for session %s: exc_type=%s",
+                session_id,
+                exc.__class__.__name__,
+            )
+            raise ReviewDomainException(
+                503, "ERR_SNAPSHOT_MALFORMED", "Snapshot data failed schema validation"
+            ) from exc
