@@ -27,6 +27,7 @@ Covers:
    - Construction of ApprovedExportSnapshot using actual session title and revision
 """
 
+import hashlib
 import json
 import os
 from typing import Any, Dict
@@ -924,7 +925,6 @@ async def test_preview_export_snapshot_mapping_with_real_session_metadata():
     assert session_row is not None
 
     actual_title = session_row.get("title") or "Đề thi thử THPT"
-    actual_revision = session_row["updated_at"]
 
     # 3. Construct ApprovedExportSnapshot
     export_versions = []
@@ -945,6 +945,17 @@ async def test_preview_export_snapshot_mapping_with_real_session_metadata():
             DisplayVersion(code=v.version_code, questions=tuple(display_questions))
         )
 
+    # Compute canonical content digest revision (aligned with W4-MVP-07 consensus on PR #58)
+    revision_payload = {
+        "session_id": str(res.session_id),
+        "title": actual_title,
+        "versions": [v.model_dump(mode="json") for v in export_versions],
+    }
+    revision_wire = json.dumps(
+        revision_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    actual_revision = f"sha256:{hashlib.sha256(revision_wire.encode('utf-8')).hexdigest()}"
+
     export_snapshot = ApprovedExportSnapshot(
         session_id=UUID(res.session_id),
         revision=actual_revision,
@@ -954,7 +965,8 @@ async def test_preview_export_snapshot_mapping_with_real_session_metadata():
     )
 
     assert export_snapshot.title == "Đề thi thử THPT Quốc Gia môn Toán 2026"
-    assert export_snapshot.revision == "2026-11-06T10:00:00Z"
+    assert export_snapshot.revision.startswith("sha256:")
+    assert len(export_snapshot.revision) == 7 + 64
     assert len(export_snapshot.versions) == 2
     assert export_snapshot.versions[0].code == "101"
     assert export_snapshot.versions[0].questions[0].correct_key == "A"

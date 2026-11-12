@@ -159,13 +159,15 @@ The preview projection contains the complete rendered display data necessary to 
 
 - **`session_id`:** Directly mapped as `UUID(preview.session_id)`.
 - **`title`:** Sourced from `exam_sessions.title` (or default fallback).
-- **`revision`:** Sourced from `exam_sessions.updated_at` (ensuring deterministic revision tracking).
+- **`revision`:** Computed as SHA-256 content digest over `session_id`, normalized `title`, and validated export `versions` JSON (excluding lifecycle status/timestamps, formatted as canonical UTF-8 JSON with `ensure_ascii=False`, `sort_keys=True`, `separators=(",", ":")`, prefixed with `sha256:`). Sourced by the export adapter from persisted DB rows, ensuring invariant content identity across `approved -> exported` transitions (aligned with W4-MVP-07 consensus on PR #58). Note: preview API itself does not expose `revision`.
 - **`status`:** Sourced as `"approved"` or `"exported"` (note: preview is accessible in `"reviewed"` pre-approval and `"approved"` post-approval; export generation is executed only post-approval).
 - **`versions`:** Each `PreviewVersionItem` maps `version_code` to `DisplayVersion.code`.
 - **`questions`:** Each `PreviewQuestionItem` maps to `DisplayQuestion` (`id`, `question_no`, `content`, `options`, `correct_key`, `solution_md`, `status="approved"`). Provenance fields (`source_question_id`, `canonical_question_no`) present in the preview are excluded because `DisplayQuestion` defines `extra="forbid"`.
 
 To construct the snapshot for the export bundler:
 ```python
+import hashlib
+import json
 from uuid import UUID
 from app.services.exporter.bundle_models import ApprovedExportSnapshot, DisplayQuestion, DisplayVersion
 
@@ -189,10 +191,19 @@ export_versions = tuple(
     for v in preview_response.versions
 )
 
-# Title and revision are sourced from the exam_sessions record:
+# Compute canonical SHA-256 revision from session_id, normalized title, and versions:
+revision_payload = {
+    "session_id": str(preview_response.session_id),
+    "title": session_meta.get("title", "Đề thi tổng hợp"),
+    "versions": [v.model_dump(mode="json") for v in export_versions],
+}
+revision_wire = json.dumps(revision_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+calculated_revision = f"sha256:{hashlib.sha256(revision_wire.encode('utf-8')).hexdigest()}"
+
+# Construct ApprovedExportSnapshot:
 snapshot = ApprovedExportSnapshot(
     session_id=UUID(preview_response.session_id),
-    revision=session_meta["updated_at"],
+    revision=calculated_revision,
     title=session_meta.get("title", "Đề thi tổng hợp"),
     status="approved",
     versions=export_versions,
