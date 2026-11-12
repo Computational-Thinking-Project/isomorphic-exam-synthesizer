@@ -1,7 +1,7 @@
 """Synchronous export workflow. Run the WHOLE call in a worker thread from async HTTP.
 
-No public routes/RPC are enabled while Q09/Q10 are unaccepted. Durable ports are
-mandatory; the tests' in-memory ledger is never a production fallback.
+RPC020 implements the accepted Q09 decision. Public routes remain gated on Q10
+and OPS handoff. Durable ports are mandatory; no in-memory production fallback.
 """
 
 import hashlib
@@ -107,7 +107,7 @@ class PrivateExportService:
     def _result(self, identity: ExportIdentity, claim: ExportClaim) -> ExportResult:
         if claim.state == "ready":
             return ExportResult("ready", self._ready(identity, claim.artifact))
-        if claim.state in ("claimed", "pending"):
+        if claim.state in ("claimed", "recovering", "pending"):
             return ExportResult("pending")
         if claim.state == "idle":
             return ExportResult("idle")
@@ -142,6 +142,31 @@ class PrivateExportService:
             raise ExportFailure("ERR_EXPORT_UNAVAILABLE") from None
         if claim.state in ("ready", "pending"):
             return self._result(identity, claim)
+        if claim.state == "recovering":
+            old = self._ready(identity, claim.artifact)
+            if claim.token is None:
+                raise ExportFailure("ERR_EXPORT_METADATA_INVALID")
+            recovery_token = claim.token
+            try:
+                self.store.verify(old)
+            except ExportFailure as exc:
+                if exc.code not in {"ERR_EXPORT_OBJECT_NOT_FOUND", "ERR_EXPORT_CHECKSUM_MISMATCH"}:
+                    raise ExportFailure("ERR_EXPORT_STORAGE_OUTCOME_UNKNOWN") from None
+                try:
+                    claim = self.ledger.restart(
+                        old,
+                        recovery_token,
+                        "missing"
+                        if exc.code == "ERR_EXPORT_OBJECT_NOT_FOUND"
+                        else "checksum_mismatch",
+                    )
+                except Exception:
+                    raise ExportFailure("ERR_EXPORT_OUTCOME_UNKNOWN") from None
+            except Exception:
+                # A timeout/permission error is NOT proof an object is unusable.
+                raise ExportFailure("ERR_EXPORT_STORAGE_OUTCOME_UNKNOWN") from None
+            else:
+                return self._complete(identity, old, recovery_token)
         if claim.state != "claimed" or claim.token is None:
             raise ExportFailure("ERR_EXPORT_METADATA_INVALID")
         token = claim.token
@@ -177,6 +202,11 @@ class PrivateExportService:
             # Upload may have committed despite a lost response. Do not delete it
             # or release its lease: recovery must inspect this attempt's object.
             raise ExportFailure("ERR_EXPORT_STORAGE_OUTCOME_UNKNOWN") from None
+        return self._complete(identity, artifact, token)
+
+    def _complete(
+        self, identity: ExportIdentity, artifact: ReadyExport, token: UUID
+    ) -> ExportResult:
         try:
             committed = self.ledger.complete(artifact, token)
             if self._ready(identity, committed) != artifact:

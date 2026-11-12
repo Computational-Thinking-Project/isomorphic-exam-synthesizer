@@ -1,4 +1,4 @@
-"""Task-08 integration ports; provisional Q09 choices, not deployed RPC contracts."""
+"""Task-08 ports, Q09 decision on PR63; RPC020 is not yet applied to shared DB."""
 
 from dataclasses import dataclass, field
 from typing import Literal, Protocol
@@ -25,6 +25,7 @@ class ExportIdentity:
     owner_id: UUID
     revision: str
     packaging_key: str
+    packager_version: str = PACKAGER_VERSION
 
 
 @dataclass(frozen=True)
@@ -38,7 +39,7 @@ class ReadyExport:
 
 @dataclass(frozen=True)
 class ExportClaim:
-    state: Literal["idle", "claimed", "pending", "ready", "failed"]
+    state: Literal["idle", "claimed", "recovering", "pending", "ready", "failed"]
     token: UUID | None = None
     artifact: ReadyExport | None = None
     error_code: str | None = None
@@ -68,12 +69,12 @@ class SnapshotLoader(Protocol):
 class ExportLedger(Protocol):
     """Must be durable and transactional; no production in-memory substitute.
 
-    Q09 proposal: claim under session lock; one current lease/token per identity;
+    Q09 decision: claim under session lock; one current lease/token per identity;
     complete checks fencing token + approved snapshot, publishes metadata and
     approved->exported together. read never mutates. fail only matches its token,
     never changes session lifecycle or overwrites a ready artifact. A stale worker
-    cannot publish or fail another worker. RPC/storage owners must accept this
-    contract before a concrete adapter or migration is enabled.
+    cannot publish or fail another worker. RPC020 implements these guards; applying
+    it to a shared DB requires the approved manifest/OPS deployment gate.
     """
 
     def read(self, identity: ExportIdentity) -> ExportClaim: ...
@@ -82,6 +83,12 @@ class ExportLedger(Protocol):
 
     def record_built(self, artifact: ReadyExport, token: UUID) -> None:
         """Fence and persist expected path/hash/size BEFORE upload for recovery."""
+        ...
+
+    def restart(
+        self, artifact: ReadyExport, token: UUID, reason: Literal["missing", "checksum_mismatch"]
+    ) -> ExportClaim:
+        """Fence unusable recovery receipt and grant a NEW build token/path."""
         ...
 
     def complete(self, artifact: ReadyExport, token: UUID) -> ReadyExport: ...

@@ -856,3 +856,13 @@ lost-response handling. [Contract Q09/Q10](api/private-export-contract.md) là �
 xuất chờ Duy/Đạt/Philip; chưa bật RPC/migration/HTTP hay thay ACL/cloud config.
 Plan và evidence/giới hạn: [W4-MVP-08](tasks/W4-MVP-08.md). Không coi fake-port
 tests là PostgreSQL/Storage live proof hoặc GitHub approval.
+
+12/11, cập nhật theo [quyết định Q09 của Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6819045971):
+thêm forward migration020, service-only RPC ledger, root-first locks, immutable
+receipt checkpoint và atomic ready/exported; recovery giữ object cũ với quyền
+fencing mới, chỉ restart khi xác minh missing/checksum mismatch. Backend adapter
+và service đã nối; HTTP/Storage thật chưa bật. Targeted restrictive Storage policy
+chặn owner export mutations, giữ raw/source behavior. 900s còn provisional,
+chưa phải shared applied manifest. PostgreSQL15 isolated tests kiểm concurrency,
+response loss/recovery/rollback và ACL; [plan08](tasks/W4-MVP-08.md) giữ kết quả và
+giới hạn. Các chữ ký RPC và semantics hiện hành ở [contract08](api/private-export-contract.md).

@@ -539,3 +539,26 @@ The suite covers:
 5. **Exact slot & provenance alignment**: strict evidence join by slot `(session_id, version_index, source_question_id)` with `version_question_id` verification, progress accounting, and fail-closed defense against multiple current candidates or missing expected slots.
 6. **Frozen source integrity & canonical hash verification**: requires valid `confirmed_input` object for every confirmed source, verifies equality with persisted `source_artifact_revisions.confirmed_input`, and validates computed SHA-256 hash across complete source list.
 7. **Optional upstream override**: setting `REVIEW_SNAPSHOT_017_SQL` allows testing against custom or unmerged 017 migration scripts; when unset, it defaults to the merged `017_generation_lifecycle_recovery.sql`.
+
+## Private export ledger — 020 / W4-MVP-08
+
+Requires backend Python dependencies, Docker/Linux engine, and no cloud credentials.
+Each test uses an isolated PostgreSQL15 database; production schema/ordered local
+migrations are installed. `test_private_export_pg.py` upgrades populated approved
+data before020 and also checks fresh installation. No deployment is performed.
+
+```powershell
+$env:RUN_POSTGRES_MIGRATION_TESTS = '1'
+$env:PYTHONPATH = "$PWD/backend;$PWD/backend/tests/migrations"
+# Set DOCKER_BIN to Docker Desktop's CLI if it is not on PATH.
+python -m pytest backend/tests/exporter backend/tests/migrations/test_export_snapshot_pg.py backend/tests/migrations/test_private_export_pg.py -q
+```
+
+This command runs SQL through separate real connections. It covers concurrent
+claims, expiry/takeover, stale tokens, checkpoint/upload/complete/restart response
+loss, receipt/identity mismatches, read-back, rollback, RPC ACL/RLS and restrictive
+export-bucket policies (including an extra permissive policy). Blob storage stays
+fake; HTTP/PostgREST/JWT validation and live Storage/URL expiry are not proven.
+The candidate019 from PR61 is not in this branch; any additional pinned019 probe
+is reported separately from baseline dev018→020. Do not infer a shared migration
+manifest or applied DB state from the test's local chain.

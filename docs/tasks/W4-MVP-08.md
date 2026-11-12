@@ -28,8 +28,8 @@ Không đưa implementation ledger RAM vào production; không giả kết quả
 |---|---|---|---|---|
 | I08-07 | Hùng/07 → Hùng/08 | ApprovedExportSnapshot từ user RLS, revision SHA256, immutable approved data | Delivered tại `305f38d`, [#58](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58); Duy đã chốt read/revision, chưa GitHub Approve/merge | Nối synchronous reader+builder trong worker thread, không truyền coroutine vào to_thread |
 | I08-COMPILER | Compiler/bundler hiện có → 08 | build_compiled_bundle, BundleArtifact; đầy đủ 2N+1 PDF và TeX/MD | Accepted/Integrated cục bộ tại `45b2e5b`: snapshot 07 → Typst thật → ZIP/manifest, 5 PDF cho 2 mã; không phải deployed proof | Thêm manifest tại lớp 08; không đổi output contract của bundler W3 |
-| I08-Q09 | Hùng đề xuất; Duy review/đồng bộ DB → 08 | Claim/fencing/complete atomic, metadata, recovery; migration slot và RPC contract | Requested theo W4 Q09, chưa có quyết định bổ sung trong trao đổi đã đọc | Code orchestration qua port trước; sau đó gửi lựa chọn lease/token + immutable object, upload thành công/DB mất response cần read-back; ETA provider chưa xác nhận |
-| I08-11S | Đạt (`Thanhdat3010`), Duy điều phối → 08 | Private bucket interface/limits, safe secret channel, authorized environment | Schema có bucket exam-export-bundles và session-first path policy; không là applied/live proof. [Issue #53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53) vẫn thiếu access | Không tự đổi ACL hay dùng service-role để bỏ owner check. Đạt xác nhận bucket/path/limits + test access; ETA chưa xác nhận |
+| I08-Q09 | Hùng đề xuất; Duy review/đồng bộ DB → 08 | Claim/fencing/complete atomic, metadata, recovery; migration slot và RPC contract | Decided/Delivered/Accepted theo [quyết định Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6819045971); Integrated cục bộ: RPC020 + recovery, PostgreSQL15 thực. Không phải shared DB applied hay PR approval | 020 chưa thấy dùng ở PR mở khi kiểm; 019 thuộc PR61. Lease900s còn provisional chờ OPS budget; final manifest/live proof và review implementation vẫn cần |
+| I08-11S | Đạt (`Thanhdat3010`), Duy điều phối → 08 | Private bucket interface/limits, safe secret channel, authorized environment | Duy yêu cầu backend-only export writes: 020 đã code targeted policy và kiểm trên PostgreSQL giả lập Storage schema. Bucket/access/limits/timeout chưa được OPS giao; [Issue #53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53) vẫn thiếu access | Đạt review policy/approved applied manifest và giao bucket private, MIME/size limits, test access/IO budget. Không tự áp DDL hay sửa cloud; ETA chưa xác nhận |
 | I08-Q10 | Hùng đề xuất; Philip (`philip-kkk`) → 09/08 | POST export, GET status, POST download URL, bounded polling/errors | Requested theo Q10; [#60](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/60) xác nhận chưa có contract export hoàn chỉnh | Đề xuất cụ thể sau code độc lập; không bật public routes chưa chốt |
 
 Input Delivered không tự là Accepted/Integrated. Không lặp lại quyết định đã có:
@@ -62,20 +62,43 @@ chưa có). Có Typst thật cho snapshot 07 3 câu × 2 mã, PDF magic và mani
 checksum; fake ledger/Storage cho concurrent requests, retry, lỗi và lost response;
 SDK fake kiểm upsert=false và TTL argument 3600. Không phải RPC/ACL/TTL live proof.
 
-Chưa có concrete ledger/RPC/migration/HTTP adapter; chưa nối Storage thật. Chưa
-GitHub Approve/acceptance hay task Done. Bước 4 còn cần I08-Q09/I08-11S/I08-Q10;
-không tự thay lựa chọn hoặc cấu hình cloud khi các owner chưa trả lời. Output giao
-Philip/09, Hùng/12, Quỳnh/13, Đạt/21s; ETA tích hợp thật phụ thuộc input Requested.
-Không coi hạn đã qua hoặc hết thời gian chờ là owner đồng ý. Reviewer độc lập sẽ
-kiểm scope code đã có, không được diễn giải các input thiếu thành proof đã hoàn tất.
+Đợt tiếp theo sau quyết định Duy: đã thêm `020_private_export_ledger.sql`,
+`SupabaseExportLedger`, recovery outcome/port `restart` và kiểm PostgreSQL thực.
+Explicit POST/service export tiếp quản token mới nhưng giữ path/hash/size object
+cũ; chỉ restart khi SDK404 hoặc checksum mismatch. Unknown transport không giải
+phóng claim/xóa object/build lại mù. GET/status vẫn read-only.
+
+Kiểm Docker PostgreSQL15 qua SQL transport độc lập (thay HTTP, không thay engine):
+`pytest backend/tests/exporter backend/tests/migrations/test_export_snapshot_pg.py
+backend/tests/migrations/test_private_export_pg.py -q --tb=short` đạt
+**244 passed, 2 skipped, 21 subtests**. Hai skip: XeLaTeX chưa có và parity với
+repository PR49 chưa nằm ở dev; warning anyio do harness import trước pytest.
+Các tests mới kiểm populated upgrade018→020/fresh chain, concurrent claims,
+expiry/takeover, stale mutation, checkpoint/upload/complete/restart response loss,
+old-object recovery không rebuild, receipt/identity rejection, lifecycle rollback,
+ready-object loss không tự đổi artifact, actual-role ACL/RLS và Storage policy có
+thêm permissive policy. Blob store vẫn fake, không coi là live Supabase proof.
+Lệnh chuẩn backend dependencies + Docker và giới hạn ở
+[migration tests README](../../backend/tests/migrations/README.md).
+Ruff `backend/app scripts/blueprint` PASS; mypy `backend/app --ignore-missing-imports`
+PASS 102 files. Probe riêng với candidate019 từ PR61@`9fda6fd568a992ca64172cbcb1047c0ac41f6f31`
+đặt trước020 đạt **17 passed, 9 subtests** trên PostgreSQL15 thật, cho historical
+approved fixture/fresh DDL. Không commit candidate019 vào nhánh08; không phải
+W4 producer/config→generate E2E hay final approved migration manifest.
+
+Chưa có HTTP adapter, chưa nối Storage thật, chưa áp migration dùng chung. Chưa
+GitHub Approve hay task Done. Bước 4 còn cần I08-11S/I08-Q10 và final migration
+manifest. Output giao Philip/09, Hùng/12, Quỳnh/13, Đạt/21s; ETA tích hợp thật phụ
+thuộc input Requested. Không coi thời gian chờ là owner đồng ý. Review độc lập
+tiếp theo phải kiểm cả unexpected behavior trên toàn bộ08, bao gồm code đã có.
 
 Đã đăng [yêu cầu đầu vào trên PR #63](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6814634477)
 sau khi push phần code độc lập `45b2e5b`, tag Duy cho I08-Q09, Đạt + Duy cho
-I08-11S, Philip + Duy/Đạt cho I08-Q10. Các mục vẫn Requested, chưa có câu trả lời
-được consumer chấp nhận. Đã kiểm sự hiện diện cấu hình Supabase local mà không
+I08-11S, Philip + Duy/Đạt cho I08-Q10. Q09 đã có quyết định như bảng; hai mục
+I08-11S/Q10 vẫn Requested. Đã kiểm sự hiện diện cấu hình Supabase local mà không
 in giá trị: chỉ placeholder, chưa có môi trường để chạy bước 4 thật.
 
-Review độc lập theo yêu cầu: `gpt-6.1-sol`, reasoning `high`, đọc code 08 tại
+Review độc lập **đợt đầu**: `gpt-6.1-sol`, reasoning `high`, đọc code 08 tại
 `45b2e5b` so với dependency `305f38d`, không sửa code/đăng GitHub. Reviewer tự chạy
 Docker network-none và xác nhận **206 passed, 1 skipped**; không có actionable
 finding trong scope đã triển khai. Đây không phải GitHub Approve hay xác minh

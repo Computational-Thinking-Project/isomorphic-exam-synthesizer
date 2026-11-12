@@ -8,6 +8,8 @@ import hashlib
 from typing import Any
 from urllib.parse import urlsplit
 
+from storage3.exceptions import StorageApiError
+
 from .bundle_models import BundleArtifact
 from .private_models import SIGNED_URL_TTL, ExportFailure, ReadyExport
 
@@ -30,7 +32,12 @@ class SupabasePrivateExportStore:
         )
 
     def verify(self, artifact: ReadyExport) -> None:
-        data = self.bucket.download(artifact.object_path)
+        try:
+            data = self.bucket.download(artifact.object_path)
+        except StorageApiError as exc:
+            if str(exc.status) == "404":
+                raise ExportFailure("ERR_EXPORT_OBJECT_NOT_FOUND") from None
+            raise
         if (
             not isinstance(data, bytes)
             or len(data) != artifact.size_bytes

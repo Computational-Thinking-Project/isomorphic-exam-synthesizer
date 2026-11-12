@@ -1,8 +1,10 @@
 # W4-MVP-08 — Private export integration proposal
 
-Status: **implementation of isolated pipeline/SDK adapter; Q09/Q10 and OPS handoff
-not accepted**. No public route, migration, production ledger or cloud resource is
-enabled by this change. Input status lives only in [task plan](../tasks/W4-MVP-08.md).
+Status: **Q09 architecture accepted with mandatory requirements by Duy** in
+[PR63 decision](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6819045971).
+RPC/ledger/recovery and forward migration020 are implemented for isolated testing.
+Shared DB application, Q10 HTTP/UI execution and OPS handoff remain gated.
+No public route or cloud resource is enabled. Input status: [task plan](../tasks/W4-MVP-08.md).
 Depends on [snapshot 07](export-snapshot-contract.md) / PR #58.
 
 ## Implemented boundary
@@ -26,8 +28,8 @@ export/status results. Download/reissue authorizes again, verifies the object an
 requests a 3600s URL. `expires_at` starts immediately before the signing call, so
 it is conservative; it is not proof that deployment uses the intended TTL.
 
-`ExportLedger` is a port, **not an implementation of DB locking or recovery**.
-Only tests supply a RAM double. There is no production fallback without this port.
+`ExportLedger` is implemented by `SupabaseExportLedger` and RPC020. Only tests
+supply a RAM double; there is no production fallback without the durable adapter.
 `SupabasePrivateExportStore` uses the installed SDK signatures, immutable
 `upsert=false`, `application/zip`, cache-control 0. It does not create buckets,
 inspect ACLs or prove the configured bucket is private. Signed URLs must be HTTPS.
@@ -40,9 +42,11 @@ digest/size of the entire ZIP. No timestamps in the manifest. A packaging/render
 change that changes artifact semantics must bump `PACKAGER_VERSION`; otherwise a
 ready artifact is intentionally reused without recompiling.
 
-## Q09 — proposed durable ledger / RPC decision (Duy)
+## Q09 — accepted architecture / implemented RPC020
 
-Preferred design, pending Duy's DB/RPC review:
+Duy accepted the architecture; implementation still requires independent review
+and deployment acceptance. Migration020 has no dependency on unmerged019 DDL.
+Never skip019 in a shared manifest; coordinate the approved order with Duy/OPS.
 
 - Separate export ledger, not new values in `session_status`. Unique current
   identity `(session_id, packaging_key)`; key is SHA256 of
@@ -72,11 +76,54 @@ Preferred design, pending Duy's DB/RPC review:
   Never delete a committed artifact. Orphan cleanup is a separate owner-authorized
   operation after references and active leases have been checked.
 
-Duy needs to confirm/replace these choices and assign a migration slot/ordered
-manifest, and settle who runs recovery (preferred backend recovery invoked by
-explicit POST, not GET or a new background scanner by default).
-Until then, the port is available for integration but no SQL is invented/applied.
-Tests of fake concurrency are not evidence for SQL atomicity/fencing.
+Recovery runs in the same service operation on explicit export POST; read/status
+never takes over or builds. No background scanner was added. Lease900s remains a
+provisional budget, not permission to ship without OPS timeout/worker review.
+
+### SQL and Python interface
+
+`private_export_ledger_command(p_session_id uuid, p_actor_id uuid, p_identity jsonb,
+p_action text, p_token uuid DEFAULT NULL, p_receipt jsonb DEFAULT NULL,
+p_reason text DEFAULT NULL) RETURNS jsonb` is executable only by `service_role`.
+The invoker's actual PostgreSQL role is checked inside the SECURITY DEFINER
+function; a JWT role/GUC alone cannot grant writer authority. The ledger table
+has RLS and no direct grants to anon/authenticated/service_role.
+
+Identity: `{revision, packaging_key, packager_version}`; SQL recomputes packaging
+key with UTF-8 SHA256. Backend supplies actor/session/revision from verified auth
+and snapshot07, never client JSON. DB also binds rows to the approved timestamp
+and title on first claim and rechecks them before every command. SQL trusts the
+backend's content digest; it does not reproduce Python's content serialization.
+
+Receipt: exactly `{object_path, filename, sha256, size_bytes}`; checkpoint path is
+bound to its build token. Completion must match the immutable persisted receipt.
+Recovery keeps the old path while using a new token; path token and active token
+are intentionally different after takeover.
+
+| Command / port | Result / effect |
+|---|---|
+| read / read | idle, pending, ready or failed; no DML or locks |
+| claim / claim | claimed/new build authority; pending/live lease; ready/reuse; recovering/expired receipt with new authority |
+| checkpoint / record_built | Persist expected receipt before upload; exact replay accepted, changed receipt rejected |
+| complete / complete | ready metadata and approved→exported in one transaction; exact replay accepted |
+| fail / fail | Only build failures before checkpoint; fenced, cannot clear unknown uploads or ready |
+| restart / restart | Only recovery with matching receipt and backend-attested missing/checksum_mismatch; clear unusable receipt and grant another new build token/path |
+
+Claim uses DB-clock expiry under root-first locks, including same-key concurrent
+requests. Mutation checks token and live lease; ready completion/checkpoint replay
+is allowed after expiry only for identical committed receipt/token. Backend receipt
+attests successful Storage verification; SQL cannot inspect Storage bytes.
+
+Verification errors `ERR_EXPORT_OBJECT_NOT_FOUND` (SDK 404) or
+`ERR_EXPORT_CHECKSUM_MISMATCH` allow a fenced restart. Permission errors, timeouts,
+5xx and unknown responses preserve receipt and return unknown outcome. Objects
+are never deleted here. If restart commits but its response is lost, the caller
+also returns unknown; a later explicit request waits for/reclaims the lease.
+
+Migration020 narrows the historical owner policy to raw/source buckets and adds
+restrictive INSERT/UPDATE/DELETE guards for the export bucket on anon/authenticated,
+including protection against extra permissive policies. It does not change public
+flags, MIME/size limits, secrets or unrelated bucket configuration.
 
 ## I08-11S — Storage/access handoff (Đạt, Duy coordinates access)
 
@@ -88,10 +135,10 @@ and the secure channel/location for credentials. Do not paste credentials/JWTs o
 live signed URLs on GitHub. If the real plan limit is smaller, report the conflict
 before choosing to lower the app ceiling or change the Storage plan.
 
-The current base policy allows session owners `FOR ALL` Storage access. Confirm
-whether approved export objects must be backend-write-only; preferred choice is
-backend-only writes for this bucket with owner-authorized URL issuance. This
-policy change requires OPS/DB coordination, not silent reuse of a broad policy.
+The historical base policy allows owner `FOR ALL` Storage access. Duy explicitly
+requires backend-only mutations for exports; migration020 implements that targeted
+change. Đạt must review the policy and applied manifest before deployment, and
+provide live ACL evidence; isolated PostgreSQL policy tests are not live proof.
 
 An already-issued URL is a bearer credential for up to 3600s. Cross-owner API
 issuance must be blocked; direct opening of an existing URL does not re-check
@@ -136,7 +183,8 @@ API. Responses containing a URL must use `Cache-Control: no-store` and not log i
 
 ## Verification limits
 
-Local Docker checks exercise compiler/manifest, fake-ledger orchestration and SDK
-call shape. No concrete RPC, public HTTP endpoint, deployed Supabase/JWT/PostgREST,
-private ACL, real signed URL expiry or full W2 → export proof is delivered yet.
-These are required before declaring 08 Done and stay gated on the inputs above.
+Tests include compiler/manifest, fake-port failure injection and real isolated
+PostgreSQL020 RPC/locking/recovery/policy probes. Exact results live in the task
+plan. SQL test transport replaces HTTP only; blob storage is still fake. Public
+HTTP endpoint, deployed Supabase/JWT/PostgREST/Storage ACL/URL expiry and full W2
+→ export remain unverified. These gates must pass before 08 Done.
