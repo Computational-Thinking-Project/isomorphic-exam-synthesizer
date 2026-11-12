@@ -1189,3 +1189,109 @@ test('F09 Ca 2: Snapshot phục hồi báo 100% nhưng session_status vẫn là 
 
   await harness.unmount();
 });
+
+test('Stage2ConfigPage: hiển thị Recovery View và mã lỗi generation_error_code khi phiên ở trạng thái failed', async () => {
+  const mockLoadSession = async () => ({
+    id: 'failed-session-1',
+    title: 'Đề Toán lỗi',
+    status: 'failed',
+    generation_error_code: 'ERR_MODEL_QUOTA_EXHAUSTED',
+  });
+
+  const harness = renderPage('failed-session-1', {
+    loadSession: mockLoadSession,
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(
+    text.includes('Tiến trình sinh đề thi bị gián đoạn hoặc thất bại'),
+    'Phải hiển thị tiêu đề Recovery View khi phiên bị failed',
+  );
+  assert.ok(
+    text.includes('ERR_MODEL_QUOTA_EXHAUSTED'),
+    'Phải hiển thị mã lỗi generation_error_code',
+  );
+  const retryBtn = harness.container.querySelector('button');
+  assert.ok(retryBtn, 'Phải có nút bấm');
+  assert.ok(
+    text.includes('Thử lại tiến trình sinh đề'),
+    'Phải có nút Thử lại tiến trình sinh đề',
+  );
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigPage: bấm Thử lại tiến trình sinh đề khi phiên failed gọi retryGeneration thành công', async () => {
+  let retryCalledWith = null;
+  const mockLoadSession = async () => ({
+    id: 'failed-session-2',
+    title: 'Đề Toán lỗi retry',
+    status: 'failed',
+    generation_error_code: 'ERR_GENERATION_INTERRUPTED',
+  });
+
+  const mockRetryGen = async (id) => {
+    retryCalledWith = id;
+    return { ok: true };
+  };
+
+  const harness = renderPage('failed-session-2', {
+    loadSession: mockLoadSession,
+    retryGen: mockRetryGen,
+  });
+  await harness.render();
+
+  const buttons = Array.from(harness.container.querySelectorAll('button'));
+  const retryButton = buttons.find((btn) => btn.textContent.includes('Thử lại'));
+  assert.ok(retryButton, 'Phải tìm thấy nút Thử lại');
+
+  await act(async () => {
+    retryButton.click();
+  });
+
+  assert.equal(
+    retryCalledWith,
+    'failed-session-2',
+    'Phải gọi retryGen với đúng sessionId',
+  );
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigPage: bấm Thử lại tiến trình sinh đề khi máy chủ báo lỗi hiển thị thông báo lỗi', async () => {
+  const mockLoadSession = async () => ({
+    id: 'failed-session-3',
+    title: 'Đề Toán lỗi mạng',
+    status: 'failed',
+    generation_error_code: 'ERR_MODEL_TIMEOUT',
+  });
+
+  const mockRetryGen = async () => {
+    const error = new Error('Lỗi kết nối máy chủ khi thử lại');
+    error.response = { data: { error_message: 'Hệ thống đang bảo trì worker.' } };
+    throw error;
+  };
+
+  const harness = renderPage('failed-session-3', {
+    loadSession: mockLoadSession,
+    retryGen: mockRetryGen,
+  });
+  await harness.render();
+
+  const buttons = Array.from(harness.container.querySelectorAll('button'));
+  const retryButton = buttons.find((btn) => btn.textContent.includes('Thử lại'));
+  assert.ok(retryButton, 'Phải tìm thấy nút Thử lại');
+
+  await act(async () => {
+    retryButton.click();
+  });
+
+  const text = harness.container.textContent;
+  assert.ok(
+    text.includes('Hệ thống đang bảo trì worker.'),
+    'Phải hiển thị thông báo lỗi an toàn khi retry thất bại',
+  );
+
+  await harness.unmount();
+});

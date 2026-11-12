@@ -367,6 +367,9 @@ export async function fetchSessionDetail(sessionId) {
         if (snapStatus) {
           data.status = snapStatus;
         }
+        if (snap.generation_error_code) {
+          data.generation_error_code = snap.generation_error_code;
+        }
         data.stream_epoch = snap.stream_epoch;
         data.resume_after_event_id = snap.resume_after_event_id;
       }

@@ -355,6 +355,15 @@ export default function Stage2ConfigPage({
       ) {
         return;
       }
+      setSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: 'generating',
+              generation_error_code: null,
+            }
+          : prev,
+      );
       setIsNewRunActive(true);
       setIsGenerating(true);
       sseState.reconnect();
@@ -535,6 +544,65 @@ export default function Stage2ConfigPage({
               className="rounded-xl bg-amber-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-amber-600/30 hover:bg-amber-500"
             >
               Đến Giai đoạn 1 (Xác nhận đề gốc)
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/dashboard')}
+              className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+            >
+              Về Dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Kiểm tra trạng thái phiên: nếu phiên sinh đề bị thất bại (failed)
+  if (session?.status === 'failed' && !isGenerating && !isNewRunActive) {
+    const errorCode =
+      session?.generation_error_code ||
+      session?.error_code ||
+      session?.progress?.generation_error_code ||
+      session?.progress?.error_code;
+
+    return (
+      <div className="mx-auto max-w-2xl p-6">
+        <div
+          role="alert"
+          className="rounded-2xl border border-rose-500/40 bg-rose-950/30 p-8 text-center shadow-xl"
+        >
+          <AlertCircle className="mx-auto h-12 w-12 text-rose-400" />
+          <h2 className="mt-4 text-xl font-bold text-white">
+            Tiến trình sinh đề thi bị gián đoạn hoặc thất bại
+          </h2>
+          <p className="mt-2 text-sm text-slate-300">
+            Phiên sinh đề gặp sự cố trong quá trình xử lý. Bạn có thể kích hoạt thử lại để tiếp tục tiến trình sinh đề mà không mất cấu hình đã thiết lập.
+          </p>
+          {errorCode && (
+            <div className="mt-4 inline-flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-900/50 px-3.5 py-1.5 text-xs font-mono font-medium text-rose-200">
+              <span>Mã lỗi:</span>
+              <strong className="text-white">{errorCode}</strong>
+            </div>
+          )}
+          {retryError && (
+            <div className="mt-3 text-xs text-rose-300" role="status">
+              {retryError}
+            </div>
+          )}
+          <div className="mt-6 flex justify-center gap-3">
+            <button
+              type="button"
+              onClick={handleRetryGeneration}
+              disabled={isRetryingGeneration}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-rose-600/30 hover:bg-rose-500 disabled:opacity-50"
+            >
+              {isRetryingGeneration ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+              {isRetryingGeneration ? 'Đang kích hoạt lại…' : 'Thử lại tiến trình sinh đề'}
             </button>
             <button
               type="button"
