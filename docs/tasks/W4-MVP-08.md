@@ -27,7 +27,7 @@ Không đưa implementation ledger RAM vào production; không giả kết quả
 | ID / yêu cầu | Cung cấp → nhận | Mục đích / điều kiện đủ dùng | Trạng thái / bằng chứng | Còn thiếu / bước tiếp |
 |---|---|---|---|---|
 | I08-07 | Hùng/07 → Hùng/08 | ApprovedExportSnapshot từ user RLS, revision SHA256, immutable approved data | Delivered tại `305f38d`, [#58](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58); Duy đã chốt read/revision, chưa GitHub Approve/merge | Nối synchronous reader+builder trong worker thread, không truyền coroutine vào to_thread |
-| I08-COMPILER | Compiler/bundler hiện có → 08 | build_compiled_bundle, BundleArtifact; đầy đủ 2N+1 PDF và TeX/MD | Có code trên baseline, đọc contract export-w3-bundler; kiểm tích hợp ở 08 trước Accepted | Thêm manifest tại lớp 08; không đổi output contract của bundler W3 |
+| I08-COMPILER | Compiler/bundler hiện có → 08 | build_compiled_bundle, BundleArtifact; đầy đủ 2N+1 PDF và TeX/MD | Accepted/Integrated cục bộ tại `45b2e5b`: snapshot 07 → Typst thật → ZIP/manifest, 5 PDF cho 2 mã; không phải deployed proof | Thêm manifest tại lớp 08; không đổi output contract của bundler W3 |
 | I08-Q09 | Hùng đề xuất; Duy review/đồng bộ DB → 08 | Claim/fencing/complete atomic, metadata, recovery; migration slot và RPC contract | Requested theo W4 Q09, chưa có quyết định bổ sung trong trao đổi đã đọc | Code orchestration qua port trước; sau đó gửi lựa chọn lease/token + immutable object, upload thành công/DB mất response cần read-back; ETA provider chưa xác nhận |
 | I08-11S | Đạt (`Thanhdat3010`), Duy điều phối → 08 | Private bucket interface/limits, safe secret channel, authorized environment | Schema có bucket exam-export-bundles và session-first path policy; không là applied/live proof. [Issue #53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53) vẫn thiếu access | Không tự đổi ACL hay dùng service-role để bỏ owner check. Đạt xác nhận bucket/path/limits + test access; ETA chưa xác nhận |
 | I08-Q10 | Hùng đề xuất; Philip (`philip-kkk`) → 09/08 | POST export, GET status, POST download URL, bounded polling/errors | Requested theo Q10; [#60](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/60) xác nhận chưa có contract export hoàn chỉnh | Đề xuất cụ thể sau code độc lập; không bật public routes chưa chốt |
@@ -68,3 +68,16 @@ không tự thay lựa chọn hoặc cấu hình cloud khi các owner chưa tr�
 Philip/09, Hùng/12, Quỳnh/13, Đạt/21s; ETA tích hợp thật phụ thuộc input Requested.
 Không coi hạn đã qua hoặc hết thời gian chờ là owner đồng ý. Reviewer độc lập sẽ
 kiểm scope code đã có, không được diễn giải các input thiếu thành proof đã hoàn tất.
+
+Đã đăng [yêu cầu đầu vào trên PR #63](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6814634477)
+sau khi push phần code độc lập `45b2e5b`, tag Duy cho I08-Q09, Đạt + Duy cho
+I08-11S, Philip + Duy/Đạt cho I08-Q10. Các mục vẫn Requested, chưa có câu trả lời
+được consumer chấp nhận. Đã kiểm sự hiện diện cấu hình Supabase local mà không
+in giá trị: chỉ placeholder, chưa có môi trường để chạy bước 4 thật.
+
+Review độc lập theo yêu cầu: `gpt-6.1-sol`, reasoning `high`, đọc code 08 tại
+`45b2e5b` so với dependency `305f38d`, không sửa code/đăng GitHub. Reviewer tự chạy
+Docker network-none và xác nhận **206 passed, 1 skipped**; không có actionable
+finding trong scope đã triển khai. Đây không phải GitHub Approve hay xác minh
+RPC/HTTP/recovery/Storage ACL/URL expiry thật. Bản report chi tiết giữ local tại
+`scratch/review08-independent/review.md`, không commit artifact review/test thô.
