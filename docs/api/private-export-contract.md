@@ -122,7 +122,11 @@ also returns unknown; a later explicit request waits for/reclaims the lease.
 
 Migration020 narrows the historical owner policy to raw/source buckets and adds
 restrictive INSERT/UPDATE/DELETE guards for the export bucket on anon/authenticated,
-including protection against extra permissive policies. It does not change public
+including protection against extra permissive policies. A separate SELECT policy
+preserves existing owner-only export reads, matching Q09's mutation-only scope.
+Signed URLs issued by this backend still require owner authorization and TTL3600;
+this does not limit what a user can do with their own Storage JWT.
+The migration does not change public
 flags, MIME/size limits, secrets or unrelated bucket configuration.
 
 ## I08-11S — Storage/access handoff (Đạt, Duy coordinates access)

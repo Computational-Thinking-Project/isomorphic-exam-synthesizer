@@ -419,14 +419,29 @@ class PrivateExportPostgresTests(ExportSnapshotPostgresFixture):
     def test_storage_policy_blocks_export_mutations_even_with_permissive_policy(self):
         self.sql("""ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
             GRANT USAGE ON SCHEMA storage TO authenticated,service_role;
-            GRANT ALL ON storage.objects TO authenticated,service_role;
-            CREATE POLICY extra_export_access ON storage.objects FOR ALL TO authenticated
-                USING (bucket_id='exam-export-bundles') WITH CHECK (bucket_id='exam-export-bundles');""")
+            GRANT ALL ON storage.objects TO authenticated,service_role;""")
         export = (
             f"INSERT INTO storage.objects VALUES('exam-export-bundles','{self.sid}/fixture.zip');"
         )
         self.assertNotEqual(self.sql(auth() + export, check=False).returncode, 0)
         self.sql(auth(role="service_role") + export)
+        self.assertEqual(
+            self.value(
+                auth()
+                + "SELECT count(*) FROM storage.objects WHERE bucket_id='exam-export-bundles';"
+            ),
+            "1",
+        )
+        self.assertEqual(
+            self.value(
+                auth(OTHER)
+                + "SELECT count(*) FROM storage.objects WHERE bucket_id='exam-export-bundles';"
+            ),
+            "0",
+        )
+        self.sql("""CREATE POLICY extra_export_access ON storage.objects FOR ALL TO authenticated
+            USING (bucket_id='exam-export-bundles') WITH CHECK (bucket_id='exam-export-bundles');""")
+        self.assertNotEqual(self.sql(auth() + export, check=False).returncode, 0)
         self.sql(
             auth()
             + "UPDATE storage.objects SET name='bad' WHERE bucket_id='exam-export-bundles'; DELETE FROM storage.objects WHERE bucket_id='exam-export-bundles';"

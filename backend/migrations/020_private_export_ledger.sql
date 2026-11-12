@@ -173,6 +173,11 @@ CREATE POLICY "User storage isolated access" ON storage.objects FOR ALL USING (
   bucket_id IN ('exam-raw-files','exam-sources') AND (storage.foldername(name))[1] IN
     (SELECT id::text FROM public.exam_sessions WHERE user_id=auth.uid())
 );
+-- Preserve historical owner reads; Q09 removes mutation rights, not SELECT.
+CREATE POLICY "User export read access" ON storage.objects FOR SELECT TO authenticated USING (
+  bucket_id='exam-export-bundles' AND (storage.foldername(name))[1] IN
+    (SELECT id::text FROM public.exam_sessions WHERE user_id=auth.uid())
+);
 -- Restrictive guards also protect against other permissive policies on a project.
 CREATE POLICY "Export backend insert only" ON storage.objects AS RESTRICTIVE FOR INSERT TO anon,authenticated
   WITH CHECK (bucket_id IS DISTINCT FROM 'exam-export-bundles');
