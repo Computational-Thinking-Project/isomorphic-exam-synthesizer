@@ -145,6 +145,9 @@ export default function Stage2ConfigPage({
               if (snapStatus) {
                 data.status = snapStatus;
               }
+              if (snap.generation_error_code) {
+                data.generation_error_code = snap.generation_error_code;
+              }
               if (snap.stream_epoch) {
                 data.stream_epoch = snap.stream_epoch;
               }

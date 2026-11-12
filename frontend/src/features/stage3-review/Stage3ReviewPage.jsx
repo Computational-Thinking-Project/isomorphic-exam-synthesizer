@@ -255,6 +255,9 @@ export default function Stage3ReviewPage({
     // Reset sạch sẽ dữ liệu của phiên trước để tránh rò rỉ hoặc hiển thị nhầm khi đang tải phiên mới
     setSession(null);
     setError(null);
+    setActiveVersionTab(1);
+    setRegeneratingQuestions({});
+    setIsRetryingAll(false);
     setSelectedSolution(null);
     setApprovedVariantIds(new Set());
     setActionMessage(null);
@@ -392,7 +395,7 @@ export default function Stage3ReviewPage({
         content: res.content || res.stem_latex || res.stem || variant.content,
         options: newOptions,
         correct_key: res.correct_key || variant.correct_key,
-        solution_md: res.solution_md ?? res.solution ?? variant.solution_md ?? '',
+        solution_md: res.solution_md ?? res.solution ?? '',
         is_fallback: Boolean(res.is_fallback),
         source_fallback: Boolean(res.source_fallback),
         has_warning: Boolean(res.has_warning),
@@ -632,6 +635,13 @@ export default function Stage3ReviewPage({
   const isPartial = session?.status === 'partial_generated';
   const hasLoadedAnyVariants = totalLoadedVariants > 0;
   const totalExpectedSlots = numVersions * totalSourceQuestions;
+
+  // F01: Tự động đưa activeVersionTab về 1 nếu số lượng mã đề của phiên mới nhỏ hơn tab đang chọn
+  useEffect(() => {
+    if (numVersions > 0 && activeVersionTab > numVersions) {
+      setActiveVersionTab(1);
+    }
+  }, [activeVersionTab, numVersions]);
 
   // Tính số câu đã duyệt
   const approvedCount = useMemo(() => {

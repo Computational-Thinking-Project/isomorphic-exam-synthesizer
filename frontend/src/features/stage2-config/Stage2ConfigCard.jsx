@@ -229,7 +229,7 @@ export default function Stage2ConfigCard({
                           </span>
                           {isAvailable ? (
                             <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] font-medium text-slate-300">
-                              Hỗ trợ {mode.question_count || totalQuestions}/{totalQuestions} câu
+                              Hỗ trợ {mode.question_count ?? totalQuestions}/{totalQuestions} câu
                             </span>
                           ) : (
                             <span className="rounded bg-rose-950/40 px-2 py-0.5 text-[11px] font-medium text-rose-300">

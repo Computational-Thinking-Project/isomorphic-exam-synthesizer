@@ -1295,3 +1295,37 @@ test('Stage2ConfigPage: bấm Thử lại tiến trình sinh đề khi máy ch�
 
   await harness.unmount();
 });
+
+test('F03: Stage2ConfigPage đọc generation_error_code từ fetchGenSnapshot khi session đang generating chuyển sang failed', async () => {
+  const mockLoadSession = async () => ({
+    id: 'failed-snapshot-session',
+    title: 'Đề Toán lỗi từ snapshot',
+    status: 'generating',
+  });
+
+  const mockFetchGenSnapshot = async () => ({
+    session_id: 'failed-snapshot-session',
+    session_status: 'failed',
+    generation_error_code: 'ERR_MODEL_TIMEOUT',
+    progress: { percent: 50 },
+    question_statuses: {},
+  });
+
+  const harness = renderPage('failed-snapshot-session', {
+    loadSession: mockLoadSession,
+    fetchGenSnapshot: mockFetchGenSnapshot,
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(
+    text.includes('Tiến trình sinh đề thi bị gián đoạn hoặc thất bại'),
+    'Phải hiển thị Recovery View khi snapshot báo failed',
+  );
+  assert.ok(
+    text.includes('ERR_MODEL_TIMEOUT'),
+    'Phải hiển thị mã lỗi ERR_MODEL_TIMEOUT từ snapshot',
+  );
+
+  await harness.unmount();
+});

@@ -1133,3 +1133,138 @@ test('Stage3ReviewPage: Chặn stale response của phiên cũ khi chuyển sang
 
   await harness.unmount();
 });
+
+test('F01: Stage3ReviewPage tự động reset activeVersionTab về 1 khi chuyển sang phiên có ít mã đề hơn', async () => {
+  const sessionA = {
+    id: 'session-multi-version',
+    status: 'generated',
+    config: { n_versions: 3 },
+    source_questions: [{ id: 'sq1', question_no: 1 }],
+    exam_versions: [
+      {
+        version_index: 1,
+        code: '101',
+        questions: [{ id: 'var-1-1', question_no: 1, content: 'Biến thể v1 câu 1', options: { A: '1' }, status: 'pending_review' }],
+      },
+      {
+        version_index: 2,
+        code: '102',
+        questions: [{ id: 'var-2-1', question_no: 1, content: 'Biến thể v2 câu 1', options: { A: '2' }, status: 'pending_review' }],
+      },
+      {
+        version_index: 3,
+        code: '103',
+        questions: [{ id: 'var-3-1', question_no: 1, content: 'Biến thể v3 câu 1', options: { A: '3' }, status: 'pending_review' }],
+      },
+    ],
+  };
+
+  const sessionB = {
+    id: 'session-single-version',
+    status: 'generated',
+    config: { n_versions: 1 },
+    source_questions: [{ id: 'sq1', question_no: 1 }],
+    exam_versions: [
+      {
+        version_index: 1,
+        code: '101',
+        questions: [{ id: 'var-b-1', question_no: 1, content: 'Biến thể duy nhất của B', options: { A: '9' }, status: 'pending_review' }],
+      },
+    ],
+  };
+
+  const mockLoad = async (id) => {
+    return id === 'session-multi-version' ? sessionA : sessionB;
+  };
+
+  const harness = renderStage3Page('session-multi-version', { loadSession: mockLoad });
+  await harness.render();
+
+  // Bấm chọn tab mã đề 3
+  const tabButtons = Array.from(harness.container.querySelectorAll('button')).filter((b) =>
+    b.textContent.includes('Mã đề #103'),
+  );
+  assert.ok(tabButtons.length > 0, 'Phải có tab Mã đề #103');
+  await act(async () => {
+    tabButtons[0].click();
+  });
+
+  assert.ok(harness.container.textContent.includes('Biến thể v3 câu 1'));
+
+  // Điều hướng sang session B (chỉ có 1 mã đề)
+  await harness.navigate('session-single-version');
+
+  // activeVersionTab phải tự động đưa về 1, hiển thị biến thể của B mà không báo missing
+  assert.ok(harness.container.textContent.includes('Biến thể duy nhất của B'));
+  assert.equal(harness.container.textContent.includes('Chưa tạo câu hỏi cho mã đề này'), false);
+
+  await harness.unmount();
+});
+
+test('F02: Khi API rejectAndRegenerate trả solution_md null, biến thể mới không được kế thừa solution_md của câu cũ bị từ chối', async () => {
+  const initialSession = {
+    id: 'session-solution-fallback',
+    status: 'generated',
+    config: { n_versions: 1 },
+    source_questions: [{ id: 'sq1', question_no: 1 }],
+    exam_versions: [
+      {
+        version_index: 1,
+        code: '101',
+        questions: [
+          {
+            id: 'var-old',
+            question_no: 1,
+            content: 'Nội dung câu cũ',
+            solution_md: 'LỜI GIẢI CÂU CŨ BỊ TỪ CHỐI',
+            options: { A: 'A', B: 'B' },
+            correct_key: 'A',
+            status: 'pending_review',
+          },
+        ],
+      },
+    ],
+  };
+
+  const mockRegen = async () => ({
+    question_id: 'var-new-no-solution',
+    status: 'pending_review',
+    content: 'Nội dung câu mới sinh lại',
+    options: ['X', 'Y'],
+    correct_key: 'X',
+    solution_md: null,
+    solution: null,
+  });
+
+  const harness = renderStage3Page('session-solution-fallback', {
+    loadSession: async () => initialSession,
+    regenerateQuestionFn: mockRegen,
+  });
+  await harness.render();
+
+  // Mở modal Kiểm tra đáp án
+  const inspectBtn = harness.container.querySelector('[data-review-inspect="true"]');
+  await act(async () => {
+    inspectBtn.click();
+  });
+
+  const dialog = harness.container.querySelector('[role="dialog"]');
+  assert.ok(dialog.textContent.includes('LỜI GIẢI CÂU CŨ BỊ TỪ CHỐI'));
+
+  // Bấm Tạo lại
+  const regenBtn = dialog.querySelector('[data-review-regenerate="true"]');
+  await act(async () => {
+    regenBtn.click();
+  });
+
+  // Sau khi tạo lại thành công với solution_md = null:
+  // Modal phải hiển thị nội dung câu mới, và KHÔNG ĐƯỢC chứa lời giải cũ!
+  assert.ok(dialog.textContent.includes('Nội dung câu mới sinh lại'));
+  assert.equal(
+    dialog.textContent.includes('LỜI GIẢI CÂU CŨ BỊ TỪ CHỐI'),
+    false,
+    'Tuyệt đối không được lấy lại solution_md của câu cũ khi API trả null',
+  );
+
+  await harness.unmount();
+});

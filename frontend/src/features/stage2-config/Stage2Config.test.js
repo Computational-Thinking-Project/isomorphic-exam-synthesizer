@@ -503,3 +503,31 @@ test('Stage2ConfigCard hỗ trợ bật/tắt xáo trộn đáp án shuffle_opti
 
   await harness.unmount();
 });
+
+test('F04: Stage2ConfigCard hiển thị đúng Hỗ trợ 0/N câu khi mode.question_count === 0', async () => {
+  const customSession = {
+    ...sampleSession,
+    blueprint_summary: {
+      total_questions: 5,
+      supported_modes: [
+        {
+          id: 'zero_mode',
+          label: 'Chế độ không có câu hỗ trợ',
+          is_available: true,
+          question_count: 0,
+        },
+      ],
+    },
+  };
+
+  const harness = renderCard({ session: customSession });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(
+    text.includes('Hỗ trợ 0/5 câu'),
+    'Phải hiển thị Hỗ trợ 0/5 câu thay vì fallback về 5/5 câu',
+  );
+
+  await harness.unmount();
+});

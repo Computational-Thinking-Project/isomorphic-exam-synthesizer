@@ -481,6 +481,7 @@ export async function fetchGenerationSnapshot(sessionId) {
   return {
     session_id: data.session_id || sessionId,
     session_status: data.session_status || data.status,
+    generation_error_code: data.generation_error_code ?? null,
     progress: normalizedProgress,
     question_statuses: data.question_statuses || {},
     stream_epoch: data.stream_epoch || null,
