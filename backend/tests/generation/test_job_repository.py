@@ -419,7 +419,9 @@ async def test_ai_result_rpc_receives_full_raw_result_and_projection(monkeypatch
     plan = await repo.claim(session, retry=False)
     assert isinstance(plan.inputs, AIBatchInputs)
     assert plan.inputs.variation_modes == ("values",)
-    fixture = json.loads((Path(__file__).parents[1] / "fixtures/ai_pipeline.json").read_text())
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/ai_pipeline.json").read_text(encoding="utf-8")
+    )
     payload = CandidatePayload.model_validate(fixture["candidates"][0])
     candidate = GeneratedQuestion(
         **payload.model_dump(),
