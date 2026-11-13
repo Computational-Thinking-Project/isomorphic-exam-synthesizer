@@ -1,3 +1,14 @@
+## OPS11/21 checkpoint — 13/11/2026
+
+- Đạt tiếp nối PR51 đã merge bằng nhánh OPS mới từ dev294c69a. Cập nhật task/input-handoff, runbook và migration checkpoint017/018 merged; 019 đã merge qua PR61 tại devb47e4fa; giữ historical inventory73583d7, không tạo applied ledger giả.
+- Independent review: #54 Approve (23 PostgreSQL +198 API/review tests pass), #56 Approve docs; #61@9fda6fd Approve, F01/F02 verified (345pass/1optional worker-skip); #30@66ad00c Approve phạm vi W2, adapter W4 tách issue64. Không sửa nhánh author.
+- Static Docker build từ Git archive base294c69a, env mẫu rỗng/project riêng: healthy, preflight+HTTP smoke PASS, anonymous sessions401 direct/proxy, Typst0.11.1. Cleanup đúng project. Không dùng cloud hoặc env thật; chưa DB-applied/Auth/Gemini/SSE/Storage/Golden/G0/G1/G2 acceptance.
+- Input còn thiếu giữ ID/source tại TASK-W4-OPS#input-handoff. Không đổi owner, lịch, prompt hoặc ENV0; từng module tự quản Docker của mình.
+
+
+
+---
+
 ## DEC-W4-MVP-01-019: Canonical-only generation configuration defaults and source readiness guards (proposed)
 
 - **Ngày / người đề xuất:** 10/11/2026 — Duy (W4-MVP-01), phối hợp reviewer Hùng / Đạt.
