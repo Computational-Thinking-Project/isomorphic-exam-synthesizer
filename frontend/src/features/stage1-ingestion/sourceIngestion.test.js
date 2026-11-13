@@ -45,9 +45,9 @@ test('F03: inaccessible storage remains safely blocked, then restores the origin
   assert.equal(f.confirms[0][1].idempotencyKey, firstKey);
 });
 
-test('F03: storage read failure still hands off an authoritative confirmed GET without POST', async () => {
+test('F03: storage read failure still hands off an authoritative configured GET without POST', async () => {
   const f = confirmationFixture({ confirmationStore: { read: () => { throw new Error('Denied'); }, clear: () => { throw new Error('Denied'); } },
-    load: async () => detail({ status: 'blueprinted', source_revision: revA }) });
+    load: async () => detail({ status: 'configured', source_revision: revA }) });
   await f.controller.reload();
   assert.deepEqual(f.navigations, ['session-a']);
   assert.equal(f.confirms.length, 0);
@@ -69,13 +69,18 @@ test('F01: uncertain request then F5 retry 400/422 releases intent for source re
   }
 });
 
-test('F02: ordinary reload hands off confirmed states without POST', async () => {
-  for (const status of ['blueprinted', 'configured', 'generating']) {
+test('F02: ordinary reload hands off confirmed states without POST, blueprinted stays in Stage 1 until ready', async () => {
+  for (const status of ['configured', 'generating']) {
     const f = confirmationFixture({ load: async () => detail({ status, source_revision: revA }) });
     await f.controller.reload();
     assert.deepEqual(f.navigations, ['session-a']);
     assert.equal(f.confirms.length, 0);
   }
+  const fBlue = confirmationFixture({ load: async () => detail({ status: 'blueprinted', source_revision: revA }) });
+  await fBlue.controller.reload();
+  assert.deepEqual(fBlue.navigations, []);
+  assert.equal(fBlue.confirms.length, 0);
+  assert.equal(fBlue.controller.getSnapshot().detail.status, 'blueprinted');
 });
 
 test('F03: replacement fence persists across F5 and same-revision GET cannot unlock confirm', async () => {
@@ -214,7 +219,7 @@ test('mất response, F5 đọc trạng thái và chỉ retry cùng key khi ngư
   assert.equal(first.memory.intent, null);
 });
 
-test('artifact xuất hiện giữa hai lần đọc, chỉ bàn giao khi GET phiên xác nhận đã commit', async () => {
+test('artifact xuất hiện giữa hai lần đọc, chỉ ghi nhận blueprinted và xóa intent khi GET phiên xác nhận đã commit', async () => {
   let reads = 0;
   const { controller, navigations, confirms, memory } = confirmationFixture({
     load: async () => detail({ source_revision: revA, status: ++reads === 1 ? 'draft' : 'blueprinted' }),
@@ -222,9 +227,11 @@ test('artifact xuất hiện giữa hai lần đọc, chỉ bàn giao khi GET ph
   }, { intent: { sourceRevision: revA, idempotencyKey: firstKey } });
   await controller.restoreConfirmation();
   assert.equal(reads, 2);
-  assert.deepEqual(navigations, ['session-a']);
+  assert.deepEqual(navigations, []);
   assert.deepEqual(confirms, []);
   assert.equal(memory.intent, null);
+  assert.equal(controller.getSnapshot().canonicalStatus, 'pending');
+  assert.equal(controller.getSnapshot().canonicalReady, false);
 });
 
 test('409 tải lại bản B, cần click mới và dùng key mới; 422 confirm giữ preview/nháp', async () => {
@@ -602,3 +609,258 @@ for (const boundary of ['dispose', 'account']) {
     assert.equal(controller.getSnapshot(), snapshot);
   });
 }
+
+test('Issue 44: Confirm thành công với canonical_status=pending → vẫn ở Stage 1, không tự chuyển Stage 2', async () => {
+  const { controller, navigations, confirms } = confirmationFixture({
+    confirmSource: async (...args) => {
+      confirms.push(args);
+      return { session_id: 'session-a', confirmation_id: firstKey, status: 'blueprinted', canonical_status: 'pending' };
+    },
+  });
+  await controller.confirm();
+  assert.equal(confirms.length, 1);
+  assert.deepEqual(navigations, [], 'Không được tự chuyển Stage 2 khi canonical_status là pending');
+  const snap = controller.getSnapshot();
+  assert.equal(snap.detail.status, 'blueprinted');
+  assert.equal(snap.canonicalStatus, 'pending');
+  assert.equal(snap.canonicalReady, false);
+});
+
+test('Issue 44: checkCanonicalStatus cập nhật running/ready và chỉ cho phép tiếp tục khi ready=true', async () => {
+  let artifactState = { session_id: 'session-a', ready: false, canonical_status: 'running', supported_modes: null };
+  const { controller, navigations } = confirmationFixture({
+    initialDetail: detail({ status: 'blueprinted', source_revision: revA }),
+    readArtifacts: async () => artifactState,
+  });
+  await controller.checkCanonicalStatus();
+  assert.equal(controller.getSnapshot().canonicalStatus, 'running');
+  assert.equal(controller.getSnapshot().canonicalReady, false);
+  controller.proceedToStage2();
+  assert.deepEqual(navigations, [], 'running không được chuyển Stage 2');
+
+  artifactState = { session_id: 'session-a', ready: true, canonical_status: 'ready', supported_modes: [] };
+  await controller.checkCanonicalStatus();
+  assert.equal(controller.getSnapshot().canonicalStatus, 'ready');
+  assert.equal(controller.getSnapshot().canonicalReady, true);
+  controller.proceedToStage2();
+  assert.deepEqual(navigations, ['session-a'], 'ready=true chuyển được Stage 2');
+});
+
+test('Issue 44: failed hiển thị lỗi và retryCanonical gọi retry rồi đọc lại trạng thái', async () => {
+  let retryCalls = 0;
+  let artifactState = { session_id: 'session-a', ready: false, canonical_status: 'failed', supported_modes: null };
+  const { controller } = confirmationFixture({
+    initialDetail: detail({ status: 'blueprinted', source_revision: revA }),
+    readArtifacts: async () => artifactState,
+    retryArtifacts: async () => {
+      retryCalls++;
+      artifactState = { session_id: 'session-a', ready: false, canonical_status: 'running', supported_modes: null };
+      return { session_id: 'session-a', ready: false, canonical_status: 'running' };
+    },
+  });
+  await controller.checkCanonicalStatus();
+  assert.equal(controller.getSnapshot().canonicalStatus, 'failed');
+  assert.equal(controller.getSnapshot().canonicalReady, false);
+
+  await controller.retryCanonical();
+  assert.equal(retryCalls, 1);
+  assert.equal(controller.getSnapshot().canonicalStatus, 'running');
+  assert.equal(controller.getSnapshot().canonicalReady, false);
+});
+
+test('Issue 44: F5 với session đã confirm nhưng chưa ready trở về Stage 1 read-only', async () => {
+  const { controller, navigations } = confirmationFixture({
+    initialDetail: detail({ status: 'blueprinted', source_revision: revA }),
+    readArtifacts: async () => ({ session_id: 'session-a', ready: false, canonical_status: 'pending', supported_modes: null }),
+  });
+  assert(!controller.canSubmit(), 'Không thể nạp đề mới sau khi đã confirm');
+  assert(!controller.canConfirm(), 'Không thể xác nhận lại sau khi đã confirm');
+  await controller.restoreConfirmation();
+  assert.deepEqual(navigations, []);
+  assert.equal(controller.getSnapshot().canonicalStatus, 'pending');
+});
+
+test('Issue 44: Đổi account khi request confirm còn pending không được điều hướng', async () => {
+  const pending = deferred();
+  let current = true;
+  const { controller, navigations } = confirmationFixture({
+    isCurrent: () => current,
+    confirmSource: () => pending.promise,
+  });
+  const operation = controller.confirm();
+  current = false;
+  pending.resolve({ session_id: 'session-a', confirmation_id: firstKey, status: 'blueprinted', canonical_status: 'ready' });
+  await operation;
+  assert.deepEqual(navigations, []);
+});
+
+test('Phillip F03: recoverConfirmationStorage with failed status gets authoritative status and never labels pending', async () => {
+  let stored = null;
+  const store = {
+    read: () => {
+      if (!stored) throw Object.assign(new Error('Corrupt'), { code: 'ERR_CONFIRM_STORAGE_CORRUPT' });
+      return stored;
+    },
+    save: (v) => { stored = v; },
+    clear: () => { stored = null; },
+  };
+  const { controller } = confirmationFixture({
+    initialDetail: detail({ status: 'draft', source_revision: revA }),
+    load: async () => detail({ status: 'blueprinted', source_revision: revA }),
+    readArtifacts: async () => ({ session_id: 'session-a', ready: false, canonical_status: 'failed' }),
+    confirmationStore: store,
+  });
+  // Storage was blocked during init because stored is null
+  assert(controller.canRecoverStorage());
+  stored = { kind: 'intent', sourceRevision: revA, idempotencyKey: firstKey };
+  await controller.recoverConfirmationStorage();
+  assert.equal(controller.getSnapshot().detail.status, 'blueprinted');
+  assert.equal(controller.getSnapshot().canonicalStatus, 'failed', 'Must not label pending when backend is failed');
+  assert.equal(controller.getSnapshot().canonicalReady, false);
+});
+
+test('Phillip F03: submit after ingest returns blueprinted with failed status reads authoritative canonical status', async () => {
+  const { controller } = confirmationFixture({
+    initialDetail: detail({ status: 'draft', source_revision: revA }),
+    ingestText: async () => ({ session_id: 'session-a', questions: b }),
+    load: async () => detail({ status: 'blueprinted', source_revision: revA }),
+    readArtifacts: async () => ({ session_id: 'session-a', ready: false, canonical_status: 'failed' }),
+  });
+  controller.setMode('text');
+  controller.setText('Câu 1: 1+1=?\nA. 2\nB. 3\nC. 4\nD. 5\nĐáp án: A');
+  await controller.submit();
+  assert.equal(controller.getSnapshot().detail.status, 'blueprinted');
+  assert.equal(controller.getSnapshot().canonicalStatus, 'failed', 'Submit must not label pending when backend is failed');
+  assert.equal(controller.getSnapshot().canonicalReady, false);
+});
+
+test('Phillip F03: recoverConfirmationStorage with running status displays running, not pending', async () => {
+  let stored = null;
+  const store = {
+    read: () => {
+      if (!stored) throw Object.assign(new Error('Corrupt'), { code: 'ERR_CONFIRM_STORAGE_CORRUPT' });
+      return stored;
+    },
+    save: (v) => { stored = v; },
+    clear: () => { stored = null; },
+  };
+  const { controller } = confirmationFixture({
+    initialDetail: detail({ status: 'draft', source_revision: revA }),
+    load: async () => detail({ status: 'blueprinted', source_revision: revA }),
+    readArtifacts: async () => ({ session_id: 'session-a', ready: false, canonical_status: 'running' }),
+    confirmationStore: store,
+  });
+  assert(controller.canRecoverStorage());
+  stored = { kind: 'intent', sourceRevision: revA, idempotencyKey: firstKey };
+  await controller.recoverConfirmationStorage();
+  assert.equal(controller.getSnapshot().canonicalStatus, 'running', 'Must show running, not pending');
+  assert.equal(controller.getSnapshot().canonicalReady, false);
+});
+
+test('Phillip F03: recovery when canonical GET fails shows uncertainty error, not pending or false readiness', async () => {
+  const { controller } = confirmationFixture({
+    initialDetail: detail({ status: 'blueprinted', source_revision: revA }),
+    load: async () => detail({ status: 'blueprinted', source_revision: revA }),
+    readArtifacts: async () => { throw new Error('Network error'); },
+  });
+  await controller.reload();
+  assert.equal(controller.getSnapshot().detail.status, 'blueprinted');
+  assert.equal(controller.getSnapshot().canonicalStatus, null, 'Must be null when GET fails');
+  assert.equal(controller.getSnapshot().canonicalReady, false);
+  assert.match(controller.getSnapshot().canonicalError, /Không xác định được trạng thái Blueprint/);
+});
+
+test('INT-03: POST retry returns 202 but immediate GET is still failed -> preserves retryAccepted and does not claim failure', async () => {
+  let retryCalls = 0;
+  let artifactState = { session_id: 'session-a', ready: false, canonical_status: 'failed' };
+  const { controller } = confirmationFixture({
+    initialDetail: detail({ status: 'blueprinted', source_revision: revA }),
+    readArtifacts: async () => artifactState,
+    retryArtifacts: async () => {
+      retryCalls++;
+      // Backend returns 202, but background task hasn't changed status yet
+      return { session_id: 'session-a', status: 'accepted' };
+    },
+  });
+  await controller.checkCanonicalStatus();
+  assert.equal(controller.getSnapshot().canonicalStatus, 'failed');
+  assert.equal(controller.getSnapshot().retryAccepted, false);
+
+  await controller.retryCanonical();
+  assert.equal(retryCalls, 1);
+  assert.equal(controller.getSnapshot().retryAccepted, true, 'retryAccepted must be true after 202');
+  assert.equal(controller.getSnapshot().canonicalError, '', 'Must not report error when retry was accepted');
+
+  // Now subsequent GET returns running
+  artifactState = { session_id: 'session-a', ready: false, canonical_status: 'running' };
+  await controller.checkCanonicalStatus();
+  assert.equal(controller.getSnapshot().canonicalStatus, 'running');
+  assert.equal(controller.getSnapshot().retryAccepted, false, 'Cleared on running');
+});
+
+test('INT-03: POST retry succeeds but subsequent GET throws 503 -> preserves accepted state and reports status check error', async () => {
+  let readAttempts = 0;
+  const { controller } = confirmationFixture({
+    initialDetail: detail({ status: 'blueprinted', source_revision: revA }),
+    readArtifacts: async () => {
+      readAttempts++;
+      if (readAttempts === 1) return { session_id: 'session-a', ready: false, canonical_status: 'failed' };
+      throw Object.assign(new Error('Service Unavailable'), { response: { status: 503 } });
+    },
+    retryArtifacts: async () => ({ session_id: 'session-a' }),
+  });
+  await controller.checkCanonicalStatus();
+  await controller.retryCanonical();
+  assert.equal(controller.getSnapshot().retryAccepted, true);
+  assert.match(controller.getSnapshot().canonicalError, /Đã tiếp nhận yêu cầu tạo lại nhưng chưa đọc được trạng thái/);
+});
+
+test('INT-03: POST retry throws 503 -> does not claim acceptance', async () => {
+  const { controller } = confirmationFixture({
+    initialDetail: detail({ status: 'blueprinted', source_revision: revA }),
+    readArtifacts: async () => ({ session_id: 'session-a', ready: false, canonical_status: 'failed' }),
+    retryArtifacts: async () => {
+      throw Object.assign(new Error('Service Unavailable'), { response: { status: 503 } });
+    },
+  });
+  await controller.retryCanonical();
+  assert.equal(controller.getSnapshot().retryAccepted, false);
+  assert.match(controller.getSnapshot().canonicalError, /Không thể thử lại tạo Blueprint/);
+});
+
+test('INT-03: Double click retry while pending triggers only one POST', async () => {
+  const pending = deferred();
+  let retryCalls = 0;
+  const { controller } = confirmationFixture({
+    initialDetail: detail({ status: 'blueprinted', source_revision: revA }),
+    readArtifacts: async () => ({ session_id: 'session-a', ready: false, canonical_status: 'failed' }),
+    retryArtifacts: async () => {
+      retryCalls++;
+      return pending.promise;
+    },
+  });
+  const first = controller.retryCanonical();
+  const second = controller.retryCanonical();
+  pending.resolve({ session_id: 'session-a' });
+  await Promise.all([first, second]);
+  assert.equal(retryCalls, 1, 'Only one retry POST permitted while busy');
+});
+
+test('Phillip F04: proceedToStage2 is guarded against busy states', async () => {
+  let navigations = [];
+  const pending = deferred();
+  const { controller } = confirmationFixture({
+    initialDetail: detail({ status: 'blueprinted', source_revision: revA }),
+    readArtifacts: async () => pending.promise,
+    onConfirmed: (s) => navigations.push(s.id),
+  });
+  const check = controller.checkCanonicalStatus();
+  // While busy checking status, calling proceedToStage2 must do nothing
+  controller.proceedToStage2();
+  assert.equal(navigations.length, 0);
+  pending.resolve({ session_id: 'session-a', ready: true, canonical_status: 'ready', supported_modes: [] });
+  await check;
+  assert.equal(controller.getSnapshot().canonicalReady, true);
+  controller.proceedToStage2();
+  assert.deepEqual(navigations, ['session-a']);
+});

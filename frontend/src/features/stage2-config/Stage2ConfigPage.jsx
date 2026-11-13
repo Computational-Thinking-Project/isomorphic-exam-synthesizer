@@ -269,6 +269,16 @@ export default function Stage2ConfigPage({
   async function handleConfigSubmit(payload) {
     if (isSubmittingConfig) return;
 
+    const isBlueprintReady = Boolean(
+      session?.status !== 'draft' &&
+      session?.blueprint_summary?.is_ready === true &&
+      Array.isArray(session?.blueprint_summary?.supported_modes),
+    );
+    if (!isBlueprintReady) {
+      setConfigError('Đề nguồn chưa hoàn tất phân tích Blueprint. Vui lòng quay lại Giai đoạn 1 để xác nhận đề gốc.');
+      return;
+    }
+
     const thisOpId = ++submitOperationRef.current;
     const targetSessionId = sessionId;
 
@@ -598,6 +608,7 @@ export default function Stage2ConfigPage({
           isSubmitting={isSubmittingConfig}
           error={configError}
           onBack={() => navigate('/dashboard')}
+          onReturnToStage1={() => navigate(stage1Path(sessionId))}
         />
       )}
     </div>

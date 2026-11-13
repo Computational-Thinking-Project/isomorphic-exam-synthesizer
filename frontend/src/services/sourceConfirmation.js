@@ -38,3 +38,13 @@ export async function getSourceArtifactStatus(sessionId, { signal } = {}) {
   }
   return data;
 }
+
+export async function retrySourceArtifacts(sessionId, { signal } = {}) {
+  const { status, data } = await api.post(`${sessionPath(sessionId)}/source-artifacts/retry`, {}, { signal });
+  if (![200, 202].includes(status) || !sameId(data?.session_id, sessionId) || !canonicalStatuses.includes(data.canonical_status)
+    || data.ready !== (data.canonical_status === 'ready')
+    || (data.ready ? !Array.isArray(data.supported_modes) : data.supported_modes !== null)) {
+    throw new Error('Phản hồi thử lại chuẩn bị đề không hợp lệ.');
+  }
+  return data;
+}
