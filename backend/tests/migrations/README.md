@@ -469,3 +469,36 @@ to a writable test-runner path and run
 a supplied solution writes the sample. Copy the emitted JSON to
 `backend/tests/fixtures/w2_clone_rpc_receipt.json` after reviewing it. The sample
 lists omitted context and uses synthetic source data, with no AI cache claim.
+
+
+## W4-MVP-03 Review Snapshot API (migration 018)
+
+`test_review_snapshot_pg.py` covers the pre-shuffle Review snapshot reader RPC
+(`get_review_current_snapshot`) introduced by migration 018, executed against real
+disposable PostgreSQL 15 containers.
+
+Like other migration tests in this directory, the suite requires Docker Desktop
+and explicit opt-in:
+
+```powershell
+$env:RUN_POSTGRES_MIGRATION_TESTS = '1'
+# If docker is not on default PATH:
+# $env:DOCKER_BIN = Join-Path $env:LOCALAPPDATA 'Programs\DockerDesktop\resources\bin\docker.exe'
+python -m unittest backend/tests/migrations/test_review_snapshot_pg.py -v
+```
+
+Or using pytest:
+
+```powershell
+$env:RUN_POSTGRES_MIGRATION_TESTS = '1'
+python -m pytest backend/tests/migrations/test_review_snapshot_pg.py -v
+```
+
+The suite covers:
+1. **Fresh schema and sequential migrations 006–018**: applying full chain cleanly.
+2. **Upgrade & Idempotent replay**: upgrade from populated 016/017 states and repeated replay of 018 without state corruption.
+3. **Statement snapshot & lock-free reads**: `get_review_current_snapshot` is a `STABLE` function providing single-statement MVCC consistency without taking row locks that block concurrent transactions. Foreign callers receive `404` (concealment) without waiting on session locks.
+4. **Canonical projection invariance**: candidate options, key, and solution are projected from immutable canonical columns (`canonical_options`, `canonical_correct_key`, `canonical_solution_md`), ensuring immunity to post-shuffle display mutation or regeneration resets.
+5. **Exact slot & provenance alignment**: strict evidence join by slot `(session_id, version_index, source_question_id)` with `version_question_id` verification, progress accounting, and fail-closed defense against multiple current candidates or missing expected slots.
+6. **Frozen source integrity & canonical hash verification**: requires valid `confirmed_input` object for every confirmed source, verifies equality with persisted `source_artifact_revisions.confirmed_input`, and validates computed SHA-256 hash across complete source list.
+7. **Optional upstream override**: setting `REVIEW_SNAPSHOT_017_SQL` allows testing against custom or unmerged 017 migration scripts; when unset, it defaults to the merged `017_generation_lifecycle_recovery.sql`.

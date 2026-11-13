@@ -2,7 +2,7 @@
 
 ## Baseline hiện hành 11/11 — đọc trước các mốc lịch sử
 
-Base dev `294c69a`: PR51 và PR52 đã merge; 017 có reviewer PostgreSQL23/23 proof, chưa có applied ledger DB ứng dụng. PR30 vẫn Open tại `b62e007`; F02 resource bounds đã reviewer verified, không còn chờ sửa F02. Worker/metrics/SSE vẫn chưa thuộc base này. PR54/018 đã Đạt Approve; PR61/019 chờ F01/F02 HTTP sửa; không tự ghép PR heads làm candidate đã nghiệm thu. [Migration checkpoint](w4-migration-candidate.md) và [input-handoff duy nhất](tasks/TASK-W4-OPS.md#input-handoff) ghi nguồn/version và phần còn thiếu.
+Checkpoint source sync dev74d2135; runtime đã build vẫn là294c69a: PR51 và PR52 đã merge; 017 có reviewer PostgreSQL23/23 proof, chưa có applied ledger DB ứng dụng. PR30 vẫn Open tại `66ad00c`, đã Approve phạm vi W2; F02 resource bounds đã reviewer verified, không còn chờ sửa F02. Worker/metrics/SSE vẫn chưa thuộc base này. PR54/018 đã merged vào dev21887c1; PR61/019@9fda6fd đã Approve, chưa merged/applied; W4 adapter tách issue64; không tự ghép PR heads làm candidate đã nghiệm thu. [Migration checkpoint](w4-migration-candidate.md) và [input-handoff duy nhất](tasks/TASK-W4-OPS.md#input-handoff) ghi nguồn/version và phần còn thiếu.
 
 Ngày11/11 build static base294c69a với cấu hình mẫu rỗng trong project cô lập: preflight/health/SPA/OpenAPI proxy PASS, anonymous sessions401 cả trực tiếp/proxy, Typst0.11.1. Chưa gọi dịch vụ thật; không chứng nhận G0/G1/G2. Lifecycle policy dưới đây giữ nguyên, không thay từ kết quả health.
 
@@ -52,7 +52,7 @@ Inventory static từ dev `73583d775243245cd2479e29d943c329b0b2debb`, không ph�
 | Typst | backend image TYPST_VERSION v0.11.1 | Operator ghi typst --version trong container build thật |
 | Backend Python | Dockerfile Python3.11 base image pinned; requirements.lock hashed | CI/build image digest và dependency changes từng owner |
 | Frontend | npm ci từ package-lock.json, static Nginx target | Philip giao route/API-compatible SHA, rebuild public auth config |
-| W2 integration | PR30@b62e007; F01/F02 verified, Ready/Open; chưa merge/live | Duy bàn giao integrated head sau merge, không deploy PR head như dev đã có |
+| W2 integration | PR30@66ad00c; F01/F02 verified, Approve W2/Open; chưa merge/live | Duy bàn giao integrated head sau merge, không deploy PR head như dev đã có |
 | W4 product policy | Issues45/46; docs PR50 còn review | Duy chốt modes/toggles/fallback; không dùng W2 fixture chứng minh W4 |
 
 Freeze record cho mỗi candidate phải có git SHA, dirty=false, image digests, migration ledger/checksums thực, prompt versions+hashes, model ID, nonsecret config revision, oracle/input checksum. Không lưu key/JWT/prompt chứa đề riêng tư vào report public. Không đổi model/prompt để chữa live demo rồi giữ kết quả kiểm của head cũ.

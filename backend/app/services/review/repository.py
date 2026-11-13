@@ -5,6 +5,7 @@ audit, invalidation and replay are SQL responsibilities; no table-write fallback
 or second operation ledger is implemented here.
 """
 
+import asyncio
 import logging
 import re
 from typing import Any, Dict, List, Optional, Union, cast
@@ -44,8 +45,8 @@ def _get_rows(res: Any) -> List[Dict[str, Any]]:
     return []
 
 
-def _map_rpc_exception(exc: Exception) -> ReviewDomainException:
-    """Map PostgreSQL domain exception messages from Migration 006 RPCs to ReviewDomainException."""
+def _map_rpc_exception(exc: Exception, rpc_name: Optional[str] = None) -> ReviewDomainException:
+    """Map PostgreSQL domain exception messages from RPCs to ReviewDomainException."""
     msg = str(exc)
     if "REVIEW_NOT_FOUND" in msg or "P0002" in msg:
         return ReviewDomainException(
@@ -73,7 +74,27 @@ def _map_rpc_exception(exc: Exception) -> ReviewDomainException:
         return ReviewDomainException(
             429, "ERR_REVIEW_QUOTA_EXHAUSTED", "Đã hết quota 30 lượt sinh lại của buổi review"
         )
-    if "REVIEW_INVALID_PAYLOAD" in msg or "REVIEW_SOURCE_MISMATCH" in msg:
+    if "REVIEW_NOT_READY" in msg or "REVIEW_POST_SHUFFLE_LOCKED" in msg:
+        return ReviewDomainException(
+            409, "ERR_REVIEW_STATE_CONFLICT", "Trạng thái phiên thi không hợp lệ cho thao tác thẩm định"
+        )
+    if "REVIEW_NO_SNAPSHOT" in msg:
+        return ReviewDomainException(
+            409, "ERR_REVIEW_NO_SNAPSHOT", "Không tìm thấy snapshot dữ liệu sinh hợp lệ cho phiên thi"
+        )
+    if "REVIEW_INVARIANT_VIOLATION" in msg:
+        return ReviewDomainException(
+            503, "ERR_REVIEW_INVARIANT_VIOLATION", "Phát hiện dữ liệu biến thể vi phạm tính toàn vẹn (invariant violation)"
+        )
+    if "REVIEW_SOURCE_MISMATCH" in msg:
+        if rpc_name == "get_review_current_snapshot":
+            return ReviewDomainException(
+                503, "ERR_SOURCE_MISMATCH", "Dữ liệu nguồn đã xác nhận không khớp hoặc bị thiếu"
+            )
+        return ReviewDomainException(
+            422, "ERR_INVALID_PAYLOAD", "Dữ liệu gửi lên không hợp lệ hoặc không khớp nguồn đề"
+        )
+    if "REVIEW_INVALID_PAYLOAD" in msg:
         return ReviewDomainException(
             422, "ERR_INVALID_PAYLOAD", "Dữ liệu gửi lên không hợp lệ hoặc không khớp nguồn đề"
         )
@@ -181,7 +202,7 @@ class ReviewRepository:
         try:
             response = client.rpc(name, parameters).execute()
         except Exception as exc:
-            error = _map_rpc_exception(exc)
+            error = _map_rpc_exception(exc, rpc_name=name)
             if worker and error.status_code == 403:
                 error = ReviewDomainException(
                     503, "ERR_DATABASE_UNAVAILABLE", "Worker configuration unavailable"
@@ -289,6 +310,17 @@ class ReviewRepository:
                 "Action result could not be confirmed; retry with the same key",
             ) from exc
         return await self.load_question(session_id, receipt.question_id)
+
+    async def read_current_snapshot(self, session_id: str) -> Dict[str, Any]:
+        """Read review candidate snapshot via PostgreSQL RPC (W4-MVP-03)."""
+        data = await asyncio.to_thread(
+            self._rpc, "get_review_current_snapshot", {"p_session_id": session_id}
+        )
+        if not isinstance(data, dict):
+            raise ReviewDomainException(
+                503, "ERR_SNAPSHOT_FAILED", "RPC snapshot returned non-object response"
+            )
+        return data
 
     async def progress(self, session_id: str) -> Dict[str, Any]:
         data = self._rpc("review_get_progress", {"p_session_id": session_id})

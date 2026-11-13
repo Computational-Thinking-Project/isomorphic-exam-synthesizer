@@ -1,11 +1,36 @@
-## OPS11/21 checkpoint — 11/11/2026
+## OPS11/21 checkpoint — 13/11/2026
 
-- Đạt tiếp nối PR51 đã merge bằng nhánh OPS mới từ dev294c69a. Cập nhật task/input-handoff, runbook và migration checkpoint017 merged /018-019 unmerged; giữ historical inventory73583d7, không tạo applied ledger giả.
-- Independent review: #54 Approve (23 PostgreSQL +198 API/review tests pass), #56 Approve docs; #61 Request changes F01 strict HTTP booleans/F02 malformed RPC receipt (suite230pass/1optional-skip, ca mới tái hiện bằng TestClient). Không sửa nhánh author.
+- Đạt tiếp nối PR51 đã merge bằng nhánh OPS mới từ dev294c69a. Cập nhật task/input-handoff, runbook và migration checkpoint017/018 merged; 019 ở PR61 đã Approve, chưa merge; giữ historical inventory73583d7, không tạo applied ledger giả.
+- Independent review: #54 Approve (23 PostgreSQL +198 API/review tests pass), #56 Approve docs; #61@9fda6fd Approve, F01/F02 verified (345pass/1optional worker-skip); #30@66ad00c Approve phạm vi W2, adapter W4 tách issue64. Không sửa nhánh author.
 - Static Docker build từ Git archive base294c69a, env mẫu rỗng/project riêng: healthy, preflight+HTTP smoke PASS, anonymous sessions401 direct/proxy, Typst0.11.1. Cleanup đúng project. Không dùng cloud hoặc env thật; chưa DB-applied/Auth/Gemini/SSE/Storage/Golden/G0/G1/G2 acceptance.
 - Input còn thiếu giữ ID/source tại TASK-W4-OPS#input-handoff. Không đổi owner, lịch, prompt hoặc ENV0; từng module tự quản Docker của mình.
 
+
 ---
+
+## DEC-W4-MVP-03: Review Read API và Atomic Snapshot RPC (08/11/2026, proposed - remediated 09/11/2026)
+
+- **Mã & Tiêu đề:** `DEC-W4-MVP-03: Review Read API / Current Candidate Snapshot`.
+- **Ngày & Người đề xuất:** 08/11/2026 (cập nhật 09/11/2026 theo review) — Senior Backend Engineer cho Duy (BE owner).
+- **Ngữ cảnh & Vấn đề (Context):**
+  - Giao diện Stage 3 (Review FE - `htbaax`) cần hiển thị đầy đủ ma trận $N \times M$ slots ($N$ phiên bản đề $\times M$ câu nguồn đã xác nhận).
+  - Trước đây chưa có endpoint đọc snapshot tập trung: frontend phải gọi các API rời rạc hoặc suy đoán câu hỏi hiện hành từ `exam_versions`, dễ gây sai lệch candidate cũ/mới (đặc biệt sau targeted regeneration, revert và F5).
+  - Cần bảo đảm tính nhất quán nguyên tử (single-transaction atomic snapshot), bảo vệ quyền sở hữu (owner authorization không dùng `service_role`), và ẩn hoàn toàn tài nguyên không thuộc sở hữu người dùng (RLS concealment trả về `404 Not Found`).
+- **Quyết định mới (Decision):**
+  1. **Migration 018 (`backend/migrations/018_review_current_snapshot.sql`):** Bổ sung PostgreSQL read-only RPC `public.get_review_current_snapshot(p_session_id uuid) RETURNS jsonb` với `SECURITY DEFINER` và khai báo `STABLE` (lock-free owner verification trên `exam_sessions WHERE user_id = auth.uid()`). Không dùng lock `FOR SHARE`/`FOR UPDATE` trên session row, đảm bảo non-blocking MVCC statement snapshot nhất quán và che giấu session ngoại lai (404 Not Found) mà không gây tắc nghẽn với writer đồng thời. Tách hàm reader riêng `_get_source_artifacts_data` và cập nhật `_review_progress` thành `STABLE`.
+  2. **Frozen Canonical Sources & Immutable Canonical Candidates:** Nguồn được đọc từ `generation_job_snapshots.snapshot_payload->'confirmed_sources'`, chuẩn hóa options 4 phần tử [A, B, C, D], không đọc live table để tránh lệch revision. Candidates được chiếu từ các trường bất biến `canonical_options`, `canonical_correct_key`, `canonical_solution_md` nhằm miễn nhiễm với display shuffle hay reset khi tái sinh.
+  3. **Current-Only Candidate & Fail-Closed Guard:** Chỉ đọc candidate có `is_current = true`. Bổ sung kiểm tra version scope ($1..N$), canonical question mapping (`canonical_question_no` khớp `question_no` nguồn) và kiểm tra duplicate candidate. Mọi vi phạm lập tức fail-closed với mã lỗi `503 Service Unavailable`.
+  4. **Lifecycle & Status Compatibility:** Bổ sung trạng thái `regenerating` vào schema DTO và contract, tương thích với enum `public.question_status`. Snapshot vẫn đọc được an toàn khi có candidate đang sinh lại (với `ready = false`).
+  5. **Authoritative Readiness Consensus:** Tái sử dụng kết quả từ `public._review_progress(s.id)` để xác định `progress.ready` và đối soát `expected_slots`, bảo đảm không tồn tại hai định nghĩa readiness mâu thuẫn giữa Read API và Write API.
+  6. **Deterministic Freshness Token:** Băm SHA-256 trên toàn bộ payload response chuẩn (trước khi gắn token), bảo đảm token thay đổi ngay lập tức khi bất kỳ trường dữ liệu nào trong snapshot thay đổi (candidate status, options, solutions, warnings, validation, v.v.).
+  7. **Preserve Write API Exception Mapping & Sanitized Malformed Handling:** Phân định ngữ cảnh RPC trong `_map_rpc_exception` (`rpc_name = get_review_current_snapshot` trả 503 cho `REVIEW_SOURCE_MISMATCH`, trong khi Write RPCs giữ nguyên mã lỗi 422 `ERR_INVALID_PAYLOAD`). Schema validation error tại service layer được bắt và trả về mã lỗi 503 `ERR_SNAPSHOT_MALFORMED` với thông điệp an toàn, không rò rỉ chi tiết nội bộ của Pydantic ra ngoài client.
+  8. **Authorization Boundary:** Loại bỏ preflight `assert_ownership` tại route GET snapshot, để database RPC làm authoritative security boundary và trả về `REVIEW_NOT_FOUND` (HTTP 404) nhằm che giấu sự tồn tại của session ngoại lai (RLS concealment).
+- **Phạm vi ảnh hưởng (Impact):**
+  - Cập nhật `backend/migrations/018_review_current_snapshot.sql`.
+  - Cập nhật `backend/app/models/schemas.py`, `backend/app/services/review/repository.py`, `backend/app/services/review/service.py`, `backend/app/api/routes/review.py`.
+  - Cập nhật `docs/api/review-snapshot.md`, `backend/tests/fixtures/review_snapshot/`.
+  - Cập nhật `backend/tests/api/test_review_snapshot.py` (22 tests) và `backend/tests/migrations/test_review_snapshot_pg.py` (23 real PostgreSQL tests).
+  - Handoff contract cho Stage 3 Review FE (`htbaax`) và resume routing (Philip).
 
 ## DEC-OPS-LOCAL-DOCKER-20261109: Docker tự chạy trên máy từng thành viên (proposed)
 
@@ -204,7 +229,7 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
 
 > Checkpoint tích hợp 26/10/2026: Auth PR #7 đã squash merge vào dev tại `bbb7c5e`. Nhánh TASK-103 đang ghép nền dev và giữ list/phân trang/Clone Modal thật; chưa lưu merge commit. Các mục DEC-TV1 bên dưới ghi đúng phạm vi lịch sử ở ngày thực hiện, không ghi đè bằng chứng hoặc nhận TASK-103 đã hoàn tất.
 
-> **Mục đích:** Tài liệu này dùng để lưu trữ các **quyết định kỹ thuật (Architecture Decision Records - ADR)**, các thay đổi công nghệ hoặc điều chỉnh quy trình phát triển phát sinh trong quá trình triển khai dự án so với tài liệu thiết kế ban đầu.  
+> **Mục đích:** Tài liệu này dùng để lưu trữ các **quyết định kỹ thuật (Architecture Decision Records - ADR)**, các thay đổi công nghệ hoặc điều chỉnh quy trình phát triển phát sinh trong quá trình triển khai dự án so với tài liệu thiết kế ban đầu.
 > Khi dự án triển khai, mọi thay đổi về stack, quy ước code, cấu trúc thư mục hoặc luồng phối hợp giữa các thành viên đều cần được ghi chép tại đây để đảm bảo tính minh bạch và thống nhất cho toàn đội.
 
 ---
@@ -443,7 +468,7 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
   3. Kịch bản kiểm thử quyền `anon` trong `verify_migration_003_permissions.sql` chạy trực tiếp dưới kết nối superuser `postgres`, khiến RPC tin cậy `session_user` và bỏ qua kiểm tra quyền, không xác thực được cơ chế cấm `EXECUTE` (SQLSTATE 42501).
 * **Quyết định:**
   1. **Phân loại ngoại lệ phân tán theo kiểu `isinstance`:** Xây dựng các helper `is_network_timeout`, `is_network_transport`, `is_database_rollback_evidence` kiểm tra cây ngoại lệ `__cause__`/`__context__`. Trả về HTTP 504 Gateway Timeout khi trạng thái commit chưa rõ ràng; chỉ trả về HTTP 500 khẳng định hoàn tác khi có bằng chứng từ `postgrest.exceptions.APIError`.
-  2. **Chuẩn hóa script kiểm quyền migration 003:** 
+  2. **Chuẩn hóa script kiểm quyền migration 003:**
      - Thêm preflight tạo mock users trong `auth.users` và `public.users`.
      - Giả lập caller PostgREST qua `SET SESSION AUTHORIZATION authenticator; SET ROLE anon / authenticated / service_role;`.
      - Xác thực role `anon` bị từ chối `EXECUTE` ở tầng PostgreSQL Engine (SQLSTATE 42501 / Least Privilege SEC-04).
