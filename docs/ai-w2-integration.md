@@ -269,6 +269,14 @@ Blueprint được code kiểm schema, nguồn bất biến, references, chính 
 
 ## Quota và lỗi
 
+Gateway có thể nhận `attempt_observer` qua `AIRuntime` theo
+[contract đo Gemini](api/runtime-metrics-endpoint.md#gemini-attempts-and-errors).
+Hook đồng bộ mở đúng tại lần dispatch SDK sau khi đặt quota. Timeout khi đã
+dispatch tính lỗi provider; hủy từ bên ngoài giữ lượt đã dispatch và loại kết
+quả chưa biết khỏi mẫu số. Lỗi parse hoặc validator sau response thành công
+không tính lỗi provider. Callback chạy trong bộ nhớ, lỗi của nó chỉ phát cảnh
+báo cố định và không ảnh hưởng AI, deadline hay quota.
+
 - Đường thành công: Q request Blueprint + Q×N request candidate kèm solution. Q=20,N=4 là **100 calls**, chưa tính retry; async giúp chờ đồng thời, không giảm số calls. Key pool không đảm bảo tăng quota nếu key chung project/provider limit.
 - Mỗi câu candidate tối đa 4 attempts tổng, kể cả transient retry, schema repair và solution repair. Schema lỗi tối đa 2 repair; chỉ sửa solution riêng tối đa 1 lần khi xác định lỗi consistency/LaTeX. Không gọi solution riêng ở đường thành công.
 - `RequestBudget` chỉ là counter cục bộ cho test/demo. Production dùng hook DB cho trần batch 250/session, review 30 riêng theo phase sau. Reservation trước dispatch có thể tính một lượt nếu task bị hủy ngay sau cấp lượt; không hoàn tiền tự động gây vượt trần.

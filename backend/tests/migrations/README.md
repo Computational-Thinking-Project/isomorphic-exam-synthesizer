@@ -1,5 +1,52 @@
 # TASK-302 PostgreSQL schema and RPC tests
 
+### W4-MVP-01 baseline rehearsal (no Production access)
+
+W4 config regression module (applies merged 002–018, then local 019):
+
+```sh
+PYTHONPATH=backend DOCKER_HOST=unix:///var/run/docker.sock DOCKER_CONTEXT=default \
+RUN_POSTGRES_MIGRATION_TESTS=1 .venv/bin/python -m unittest discover \
+  -s backend/tests/migrations -p test_w4_source_readiness_config.py -v
+```
+
+Set W4_PR30_CHECKOUT to an isolated archive of PR30 at b6b6422 to run the actual
+repository/adapter probe (otherwise that single probe is explicitly skipped).
+W4_BASELINE_015=1 uses the pinned pre-W4 schema (65c5362), but is a historical
+probe, not evidence for the current 018→019 upgrade.
+The module uses real owner/foreign-owner SQL roles, persisted
+confirmation receipts and canonical publications on the full 002–018→019 chain. It
+compares whole-row state on denied writes. Malformed-policy/hash cases use
+test-admin corruption fixtures without disabling guards. They never target an
+external database. There is no xfail/expectedFailure or weakened assertion.
+Default opt-out skips are NOT acceptance evidence; see the S02/S03 report for
+the actual explicitly enabled results; the S04 report records RED→GREEN and
+fresh/populated upgrade evidence at their recorded historical SHAs. Migration 019
+is a local forward migration; these reports do not prove deployment.
+
+`test_w4_baseline_chain.py` uses the existing `PostgresCase` container boundary:
+PostgreSQL 15, network `none`, no published ports/mounts or external DSN. Each
+case creates a fresh random test database; cleanup touches only that container.
+It tests `schema.sql` then every numbered file 002–018 (including the empty
+010), followed by 019 in the W4 upgrade/replay cases. It preserves PR54
+`get_review_current_snapshot(uuid)` while testing 019.
+
+```sh
+DOCKER_HOST=unix:///var/run/docker.sock DOCKER_CONTEXT=default \
+RUN_POSTGRES_MIGRATION_TESTS=1 .venv/bin/python -m unittest discover \
+  -s backend/tests/migrations -p test_w4_baseline_chain.py -v
+```
+
+Six cases cover fresh bootstrap, synthetic populated five-table upgrades,
+019 replay/permissions and historical ON/ON preference preservation. The 22 synthetic rows use repository column definitions;
+the test checks preservation of every original field and row count. This models
+reported Production table presence only, **not** unknown Production DDL, RLS or
+Auth/JWT/PostgREST. It is not a deployment/repair script or migration allocation
+approval. Without the opt-in, SKIP is not PASS.
+
+See [W4 local verification](../../../docs/tasks/W4-MVP-01_LOCAL_VERIFICATION.md)
+for commands, exact SHAs, actual results and the remaining drift/ledger gates.
+
 ### TASK-305 async integration fixtures
 
 The two `tests/services/test_*_real_db_integration.py` modules require `asyncpg`
@@ -469,3 +516,36 @@ to a writable test-runner path and run
 a supplied solution writes the sample. Copy the emitted JSON to
 `backend/tests/fixtures/w2_clone_rpc_receipt.json` after reviewing it. The sample
 lists omitted context and uses synthetic source data, with no AI cache claim.
+
+
+## W4-MVP-03 Review Snapshot API (migration 018)
+
+`test_review_snapshot_pg.py` covers the pre-shuffle Review snapshot reader RPC
+(`get_review_current_snapshot`) introduced by migration 018, executed against real
+disposable PostgreSQL 15 containers.
+
+Like other migration tests in this directory, the suite requires Docker Desktop
+and explicit opt-in:
+
+```powershell
+$env:RUN_POSTGRES_MIGRATION_TESTS = '1'
+# If docker is not on default PATH:
+# $env:DOCKER_BIN = Join-Path $env:LOCALAPPDATA 'Programs\DockerDesktop\resources\bin\docker.exe'
+python -m unittest backend/tests/migrations/test_review_snapshot_pg.py -v
+```
+
+Or using pytest:
+
+```powershell
+$env:RUN_POSTGRES_MIGRATION_TESTS = '1'
+python -m pytest backend/tests/migrations/test_review_snapshot_pg.py -v
+```
+
+The suite covers:
+1. **Fresh schema and sequential migrations 006–018**: applying full chain cleanly.
+2. **Upgrade & Idempotent replay**: upgrade from populated 016/017 states and repeated replay of 018 without state corruption.
+3. **Statement snapshot & lock-free reads**: `get_review_current_snapshot` is a `STABLE` function providing single-statement MVCC consistency without taking row locks that block concurrent transactions. Foreign callers receive `404` (concealment) without waiting on session locks.
+4. **Canonical projection invariance**: candidate options, key, and solution are projected from immutable canonical columns (`canonical_options`, `canonical_correct_key`, `canonical_solution_md`), ensuring immunity to post-shuffle display mutation or regeneration resets.
+5. **Exact slot & provenance alignment**: strict evidence join by slot `(session_id, version_index, source_question_id)` with `version_question_id` verification, progress accounting, and fail-closed defense against multiple current candidates or missing expected slots.
+6. **Frozen source integrity & canonical hash verification**: requires valid `confirmed_input` object for every confirmed source, verifies equality with persisted `source_artifact_revisions.confirmed_input`, and validates computed SHA-256 hash across complete source list.
+7. **Optional upstream override**: setting `REVIEW_SNAPSHOT_017_SQL` allows testing against custom or unmerged 017 migration scripts; when unset, it defaults to the merged `017_generation_lifecycle_recovery.sql`.

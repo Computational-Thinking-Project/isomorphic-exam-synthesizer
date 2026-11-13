@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
+import httpx
 import pytest
 from google.genai import errors, types
 
@@ -11,6 +12,8 @@ from app.core.config import Settings
 from app.services.ai import gateway as module
 from app.services.ai.gateway import GatewayError, GeminiGateway, RequestBudget, RequestContext
 from app.services.generation.attempts import AttemptPermit, DurableAttemptBudget
+from app.services.observability.ai_instrumentation import make_gemini_attempt_observer
+from app.services.observability.runtime_registry import RuntimeRegistry
 
 
 @pytest.fixture
@@ -130,7 +133,8 @@ async def send(gateway, ctx):
 
 @pytest.mark.asyncio
 async def test_rate_limited_key_is_skipped_on_next_request_and_budget_counts(pool):
-    gateway = GeminiGateway(settings())
+    events = []
+    gateway = GeminiGateway(settings(), attempt_observer=lambda: events.append)
     budget = RequestBudget(3)
     pool[0][1].aio.models.generate_content.side_effect = errors.ClientError(429, {})
     with pytest.raises(GatewayError, match="API_RATE_LIMIT"):
@@ -139,6 +143,13 @@ async def test_rate_limited_key_is_skipped_on_next_request_and_budget_counts(poo
     assert budget.used == 2
     assert [c.aio.models.generate_content.await_count for _, c in pool] == [1, 1]
     assert all(args["http_options"].retry_options.attempts == 1 for args, _ in pool)
+    assert [(event.outcome, event.error_code) for event in events] == [
+        ("error", "API_RATE_LIMIT"),
+        ("success", None),
+    ]
+    assert len({event.attempt_id for event in events}) == 2
+    assert all(event.model == gateway.model and event.stage is None for event in events)
+    assert all(event.duration_seconds >= 0 for event in events)
     await gateway.aclose()
 
 
@@ -172,7 +183,8 @@ async def test_all_keys_cool_down_without_spinning_or_spending_budget(pool):
 
 @pytest.mark.asyncio
 async def test_auth_disables_key_and_errors_never_include_sdk_secret(pool):
-    gateway = GeminiGateway(settings())
+    events = []
+    gateway = GeminiGateway(settings(), attempt_observer=lambda: events.append)
     budget = RequestBudget(10)
     for _, client in pool:
         client.aio.models.generate_content.side_effect = errors.ClientError(
@@ -186,6 +198,8 @@ async def test_auth_disables_key_and_errors_never_include_sdk_secret(pool):
     with pytest.raises(GatewayError, match="API_NO_AVAILABLE_KEYS"):
         await send(gateway, context(budget))
     assert budget.used == 2
+    assert [event.error_code for event in events] == ["API_AUTH", "API_AUTH"]
+    assert "secret-credential" not in repr(events)
     await gateway.aclose()
 
 
@@ -226,7 +240,8 @@ async def test_deadline_while_queued_spends_no_extra_request(pool):
         await release.wait()
         return "response"
 
-    gateway = GeminiGateway(settings(GEMINI_MAX_CONCURRENCY=1))
+    observer = Mock(return_value=Mock())
+    gateway = GeminiGateway(settings(GEMINI_MAX_CONCURRENCY=1), attempt_observer=observer)
     pool[0][1].aio.models.generate_content.side_effect = slow
     budget = RequestBudget(3)
     first = asyncio.create_task(send(gateway, context(budget)))
@@ -236,22 +251,75 @@ async def test_deadline_while_queued_spends_no_extra_request(pool):
     assert budget.used == 1
     release.set()
     await first
+    observer.assert_called_once_with()
+    observer.return_value.assert_called_once()
     await gateway.aclose()
 
 
 @pytest.mark.asyncio
-async def test_timeout_and_cancel_release_capacity_and_cleanup(pool):
-    gateway = GeminiGateway(settings(GEMINI_REQUEST_TIMEOUT_SECONDS=0.01))
+async def test_reservation_rejection_or_expiry_after_reservation_does_not_open_observation(
+    pool, monkeypatch
+):
+    observer = Mock()
+    gateway = GeminiGateway(settings(), attempt_observer=observer)
+    budget = RequestBudget(1)
+    deadline = time.monotonic() + 10
+    clock = Mock(return_value=deadline - 1)
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=clock))
+
+    async def reserve_then_expire():
+        await budget.reserve()
+        clock.return_value = deadline
+
+    with pytest.raises(GatewayError, match="JOB_DEADLINE"):
+        await send(gateway, RequestContext(deadline, reserve_then_expire))
+    clock.return_value = deadline - 1
+    with pytest.raises(GatewayError, match="REQUEST_BUDGET_EXHAUSTED"):
+        await send(gateway, RequestContext(deadline, budget.reserve))
+    assert budget.used == 1
+    observer.assert_not_called()
+    for _, client in pool:
+        client.aio.models.generate_content.assert_not_awaited()
+    await gateway.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("timeout_code", ["API_TIMEOUT", "JOB_DEADLINE"])
+async def test_timeout_and_cancel_release_capacity_and_cleanup(pool, timeout_code):
+    registry = RuntimeRegistry()
+    registry.start()
+    observe_registry = make_gemini_attempt_observer(registry)
+    events = []
+    started = asyncio.Event()
+
+    def observe():
+        finish_registry = observe_registry()
+
+        def complete(event):
+            events.append(event)
+            finish_registry(event)
+
+        return complete
+
+    sdk_timeout = 0.05 if timeout_code == "API_TIMEOUT" else 1
+    job_timeout = 0.05 if timeout_code == "JOB_DEADLINE" else 1
+    gateway = GeminiGateway(
+        settings(GEMINI_REQUEST_TIMEOUT_SECONDS=sdk_timeout), attempt_observer=observe
+    )
 
     async def slow(**kwargs):
-        await asyncio.sleep(10)
+        started.set()
+        await asyncio.Event().wait()
 
     pool[0][1].aio.models.generate_content.side_effect = slow
     budget = RequestBudget(5)
-    with pytest.raises(GatewayError, match="API_TIMEOUT"):
-        await send(gateway, context(budget))
+    with pytest.raises(GatewayError, match=timeout_code) as caught:
+        await send(gateway, context(budget, seconds=job_timeout))
+    assert caught.value.retryable is (timeout_code == "API_TIMEOUT")
+    started.clear()
     task = asyncio.create_task(send(gateway, context(budget)))
-    await asyncio.sleep(0)
+    await started.wait()
+    assert registry.snapshot().gemini_call_count == 2
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -264,3 +332,40 @@ async def test_timeout_and_cancel_release_capacity_and_cleanup(pool):
         client.close.assert_called_once()
     with pytest.raises(GatewayError, match="GATEWAY_CLOSED"):
         await send(gateway, context(budget))
+    assert [(event.outcome, event.error_code) for event in events] == [
+        ("timeout", timeout_code),
+        ("cancelled", None),
+        ("success", None),
+    ]
+    snapshot = registry.snapshot()
+    assert snapshot.gemini_call_count == budget.used == 3
+    assert snapshot.gemini_error_rate == 0.5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_phase", ["start", "finish"])
+async def test_observer_failure_preserves_sdk_response_and_error(pool, caplog, failure_phase):
+    failure = RuntimeError("private observer data")
+    complete = Mock(side_effect=failure if failure_phase == "finish" else None)
+    observer = Mock(
+        return_value=complete, side_effect=failure if failure_phase == "start" else None
+    )
+    gateway = GeminiGateway(settings(), attempt_observer=observer)
+    budget = RequestBudget(2)
+    assert await send(gateway, context(budget)) == "response"
+    sdk = pool[0][1].aio.models.generate_content
+    sdk.side_effect = httpx.ReadError("private transport data")
+    with pytest.raises(GatewayError, match="API_TRANSPORT") as caught:
+        await send(gateway, context(budget))
+    assert caught.value.retryable
+    assert sdk.await_count == observer.call_count == budget.used == 2
+    if failure_phase == "finish":
+        assert [call.args[0].error_code for call in complete.call_args_list] == [
+            None,
+            "API_TRANSPORT",
+        ]
+    else:
+        complete.assert_not_called()
+    assert caplog.messages.count(f"Gemini attempt observer could not {failure_phase}.") == 2
+    assert "private" not in caplog.text
+    await gateway.aclose()

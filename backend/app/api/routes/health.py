@@ -2,7 +2,12 @@
 
 import os
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+
+from app.api.dependencies import get_current_admin_user
+from app.models.runtime_metrics import RuntimeMetricsResponse
+from app.models.schemas import CurrentUser
+from app.services.observability.collector import RuntimeMetricsUnavailableError
 
 router = APIRouter()
 
@@ -17,10 +22,21 @@ async def health_check():
     }
 
 
-@router.get("/api/health/metrics", tags=["System"])
-async def metrics_check():
-    """Basic health metrics check for backend service."""
-    return {
-        "status": "operational",
-        "gemini_model": os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite"),
-    }
+@router.get("/api/health/metrics", tags=["System"], response_model=RuntimeMetricsResponse)
+async def metrics_check(
+    request: Request,
+    response: Response,
+    _admin: CurrentUser = Depends(get_current_admin_user),
+) -> RuntimeMetricsResponse:
+    """Read an authenticated snapshot of this worker's live runtime counters."""
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return request.app.state.runtime_metrics.collect()
+    except (AttributeError, RuntimeMetricsUnavailableError):
+        raise HTTPException(
+            503,
+            {
+                "code": "ERR_RUNTIME_METRICS_UNAVAILABLE",
+                "message": "Runtime metrics are temporarily unavailable.",
+            },
+        ) from None

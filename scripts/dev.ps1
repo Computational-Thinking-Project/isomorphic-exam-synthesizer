@@ -80,9 +80,21 @@ function Test-Stack {
     if ($page.StatusCode -ne 200 -or $page.Content -notmatch '<html') {
         throw 'Frontend HTTP check failed.'
     }
-    $proxy = Invoke-RestMethod -Uri "$frontend/api/health/metrics" -TimeoutSec 15
-    if ($proxy.status -ne 'operational') { throw 'Frontend-to-backend proxy check failed.' }
-    Write-Host 'PASS: backend health, frontend HTTP, and frontend API proxy.'
+    Add-Type -AssemblyName System.Net.Http
+    $client = New-Object System.Net.Http.HttpClient
+    $client.Timeout = [TimeSpan]::FromSeconds(15)
+    try {
+        $proxy = $client.GetAsync("$frontend/api/health/metrics").GetAwaiter().GetResult()
+        try {
+            $hasBearerChallenge = @($proxy.Headers.WwwAuthenticate | Where-Object { $_.Scheme -eq 'Bearer' }).Count -gt 0
+            if ([int]$proxy.StatusCode -ne 401 -or -not $hasBearerChallenge) {
+                throw 'Frontend-to-backend proxy auth challenge check failed.'
+            }
+        }
+        finally { $proxy.Dispose() }
+    }
+    finally { $client.Dispose() }
+    Write-Host 'PASS: backend health, frontend HTTP, and frontend API proxy auth challenge.'
 }
 
 Push-Location $repoRoot
