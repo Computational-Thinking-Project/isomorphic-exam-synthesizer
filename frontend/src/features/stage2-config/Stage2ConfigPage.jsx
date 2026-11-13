@@ -72,6 +72,7 @@ export default function Stage2ConfigPage({
   const retryOperationRef = useRef(0);
   const sessionOpRef = useRef(0);
   const resyncOpRef = useRef(0);
+  const sseErrorOpRef = useRef(0);
   const isMountedRef = useRef(true);
   const activeSessionIdRef = useRef(sessionId);
 
@@ -81,6 +82,7 @@ export default function Stage2ConfigPage({
     activeSessionIdRef.current = sessionId;
     const thisOp = ++sessionOpRef.current;
     resyncOpRef.current += 1;
+    sseErrorOpRef.current += 1;
     let active = true;
 
     // Vô hiệu hóa mọi lượt submit và retry đang chờ của phiên trước
@@ -197,6 +199,7 @@ export default function Stage2ConfigPage({
       isMountedRef.current = false;
       submitOperationRef.current += 1;
       retryOperationRef.current += 1;
+      sseErrorOpRef.current += 1;
       setIsSubmittingConfig(false);
       setIsRetryingGeneration(false);
     };
@@ -279,53 +282,76 @@ export default function Stage2ConfigPage({
     [fetchGenSnapshot, loadSession],
   );
 
-  // P2: Đối soát trạng thái chính thống khi kết nối SSE nhận lỗi terminal
+  // P1 & P2 (Duy): Đối soát trạng thái chính thống khi kết nối SSE nhận lỗi
   const handleSSEError = useCallback(
     async (err) => {
+      const targetSessionId = sessionId;
+      const thisSessionOp = sessionOpRef.current;
+      const thisErrorOp = ++sseErrorOpRef.current;
+
+      const isCurrent = () =>
+        Boolean(
+          isMountedRef.current &&
+          activeSessionIdRef.current === targetSessionId &&
+          sessionOpRef.current === thisSessionOp &&
+          sseErrorOpRef.current === thisErrorOp,
+        );
+
+      if (!isCurrent()) return;
+
       const errCode =
         err?.generation_error_code ||
         err?.error_code ||
         err?.code ||
         null;
 
+      // 1. Thử đối soát với snapshot chính thống từ backend
+      let authoritativeFailed = false;
+      let confirmedErrorCode = errCode;
+      let confirmedProgress = null;
+
       try {
-        const snap = await fetchGenSnapshot(sessionId);
-        if (
-          isMountedRef.current &&
-          activeSessionIdRef.current === sessionId
+        const snap = await fetchGenSnapshot(targetSessionId);
+        if (!isCurrent()) return;
+
+        const snapStatus = String(
+          snap?.status ||
+          snap?.session_status ||
+          snap?.progress?.session_status ||
+          snap?.progress?.status ||
+          '',
+        ).trim().toLowerCase();
+
+        if (snapStatus === 'failed') {
+          authoritativeFailed = true;
+          confirmedErrorCode = snap?.generation_error_code || errCode;
+          confirmedProgress = snap?.progress;
+        } else if (
+          snapStatus === 'generating' ||
+          snapStatus === 'partial_generated' ||
+          snapStatus === 'generated'
         ) {
-          const snapStatus =
-            snap?.status ||
-            snap?.session_status ||
-            snap?.progress?.session_status;
-          if (String(snapStatus || '').trim().toLowerCase() === 'failed') {
-            setSession((prev) =>
-              prev
-                ? {
-                    ...prev,
-                    status: 'failed',
-                    generation_error_code:
-                      snap?.generation_error_code || errCode || prev.generation_error_code,
-                    progress: snap.progress || prev.progress,
-                  }
-                : prev,
-            );
-            setIsGenerating(false);
-            setIsNewRunActive(false);
-            return;
-          }
+          // Backend vẫn đang chạy hoặc đã hoàn thành -> lỗi SSE chỉ là transport mạng tạm thời.
+          // Giữ nguyên giao diện để người dùng tiếp tục theo dõi và có thể kết nối lại; KHÔNG ép sang failed!
+          return;
         }
       } catch {
+        if (!isCurrent()) return;
+
+        // Fallback kiểm tra qua loadSession nếu fetchGenSnapshot không khả dụng
         try {
-          const latest = await loadSession(sessionId);
-          if (
-            isMountedRef.current &&
-            activeSessionIdRef.current === sessionId &&
-            String(latest?.status || '').trim().toLowerCase() === 'failed'
+          const latest = await loadSession(targetSessionId);
+          if (!isCurrent()) return;
+
+          const latestStatus = String(latest?.status || '').trim().toLowerCase();
+          if (latestStatus === 'failed') {
+            authoritativeFailed = true;
+            confirmedErrorCode = latest?.generation_error_code || errCode;
+          } else if (
+            latestStatus === 'generating' ||
+            latestStatus === 'partial_generated' ||
+            latestStatus === 'generated'
           ) {
-            setSession(latest);
-            setIsGenerating(false);
-            setIsNewRunActive(false);
             return;
           }
         } catch {
@@ -333,17 +359,32 @@ export default function Stage2ConfigPage({
         }
       }
 
-      if (
-        errCode &&
-        errCode !== 'ERR_EVENT_HISTORY_LOST' &&
-        errCode !== 'ERR_CURSOR_OUTDATED'
-      ) {
+      // Kiểm tra lại trước nhánh cập nhật cuối
+      if (!isCurrent()) return;
+
+      // 2. Chỉ chuyển session sang failed khi backend xác nhận authoritative failed,
+      // HOẶC khi payload từ server là explicit terminal job error (không phải network/transport error)
+      const isExplicitJobError = Boolean(
+        err?.is_job_error === true ||
+        err?.event === 'job_error' ||
+        err?.event === 'failed' ||
+        (errCode && [
+          'ERR_MODEL_TIMEOUT',
+          'ERR_GENERATION_FAILED',
+          'ERR_GENERATION_INTERRUPTED',
+          'ERR_WORKER_CRASHED',
+          'ERR_CONFIG_INVALID',
+        ].includes(errCode)),
+      );
+
+      if (authoritativeFailed || isExplicitJobError) {
         setSession((prev) =>
           prev
             ? {
                 ...prev,
                 status: 'failed',
-                generation_error_code: errCode || prev.generation_error_code,
+                generation_error_code: confirmedErrorCode || prev.generation_error_code || null,
+                ...(confirmedProgress ? { progress: confirmedProgress } : {}),
               }
             : prev,
         );

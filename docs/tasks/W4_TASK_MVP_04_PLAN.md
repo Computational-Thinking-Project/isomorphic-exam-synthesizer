@@ -49,8 +49,8 @@ Week 4 tập trung hoàn thiện trải nghiệm thẩm định đề thi đẳn
 | `frontend/src/services/stage3Service.test.js` | Tạo mới | Unit test kiểm thử việc gọi đúng endpoint, method và header `Idempotency-Key` (3/3 pass). |
 | `frontend/src/features/stage3-review/Stage3ReviewPage.jsx` | Sửa đổi | Triển khai modal `SolutionDialog`, 2 nút Tạo lại / Duyệt biến thể, badge fallback chuẩn, và thanh bottom bar với nút "Rà bộ đề". |
 | `frontend/src/features/stage3-review/Stage3Review.test.js` | Sửa đổi | Bổ sung các kịch bản kiểm thử mới cho dialog, duyệt, tạo lại inline, badge fallback, F01 reset version tab và F02 chặn solution fallback cũ (18/18 pass). |
-| `frontend/src/features/stage2-config/Stage2ConfigPage.jsx` | Sửa đổi | Bổ sung màn hình Recovery View khi phiên sinh đề bị `failed`, hiển thị `generation_error_code` và nút Thử lại tiến trình sinh đề (`retryGeneration`); xử lý dọn dẹp cờ active-run khi nhận snapshot failed qua resync/error. |
-| `frontend/src/features/stage2-config/Stage2ConfigPage.test.js` | Sửa đổi | Bổ sung unit tests cho Recovery View khi phiên `failed`, nhận mã lỗi từ snapshot và test hồi quy P2 cho luồng generating -> SSE onResync(failed) -> Recovery View (26/26 pass). |
+| `frontend/src/features/stage2-config/Stage2ConfigPage.jsx` | Sửa đổi | Bổ sung màn hình Recovery View khi phiên sinh đề bị `failed`, hiển thị `generation_error_code` và nút Thử lại tiến trình sinh đề (`retryGeneration`); cô lập stale SSE error token giữa các session và chỉ chuyển terminal failed khi backend snapshot xác nhận. |
+| `frontend/src/features/stage2-config/Stage2ConfigPage.test.js` | Sửa đổi | Bổ sung unit tests cho Recovery View khi phiên `failed`, nhận mã lỗi từ snapshot, test hồi quy P1 stale SSE error isolation và test P2 transport error vs authoritative snapshot (31/31 pass). |
 | `frontend/src/hooks/useSSE.js` | Sửa đổi | Xử lý snapshot terminal failed trong `triggerRecovery`, chuyển connectionState sang `failed` và dừng reconnect vô tận. |
 | `frontend/src/hooks/useSSE.test.js` | Sửa đổi | Bổ sung test hồi quy P2 cho hook useSSE khi triggerRecovery nhận snapshot failed (24/24 pass). |
 | `frontend/src/services/stage2Service.js` | Sửa đổi | Bảo toàn `generation_error_code` từ session detail và `fetchGenerationSnapshot`, fallback shuffle về `false/false` khi thiếu dữ liệu. |
@@ -65,22 +65,22 @@ Week 4 tập trung hoàn thiện trải nghiệm thẩm định đề thi đẳn
 export PATH="$HOME/.temp-node/bin:$PATH" && cd frontend && npm test
 
 # Kết quả:
-# ✔ 386 tests passed
-# ℹ tests 386
+# ✔ 411 tests passed
+# ℹ tests 411
 # ℹ suites 0
-# ℹ pass 386
+# ℹ pass 411
 # ℹ fail 0
-# ℹ duration_ms 13335.967291
+# ℹ duration_ms 13328.351833
 
 # 2. Kiểm tra Production Build
 export PATH="$HOME/.temp-node/bin:$PATH" && cd frontend && npm run build
 
 # Kết quả:
-# ✓ 1910 modules transformed.
+# ✓ 1911 modules transformed.
 # dist/index.html                   0.71 kB │ gzip:   0.43 kB
-# dist/assets/index-86rfLLPI.css   58.38 kB │ gzip:  13.98 kB
-# dist/assets/index-CJWiqILJ.js   768.34 kB │ gzip: 237.10 kB
-# ✓ built in 1.31s
+# dist/assets/index-BrIAHmbL.css   58.93 kB │ gzip:  14.08 kB
+# dist/assets/index-DGV-JsCQ.js   782.56 kB │ gzip: 240.49 kB
+# ✓ built in 1.81s
 ```
 
 ---

@@ -1584,3 +1584,179 @@ test('P2: generating → SSE onResync(failed) → recovery view with error code 
 
   await harness.unmount();
 });
+
+test('P1: stale SSE error của session A resolve muộn sau khi chuyển sang session B không làm hỏng trạng thái session B', async () => {
+  let capturedErrorA = null;
+  let resolveSnapshotA;
+  const deferredSnapshotAPromise = new Promise((resolve) => {
+    resolveSnapshotA = resolve;
+  });
+
+  const sessions = {
+    'session-A': {
+      id: 'session-A',
+      title: 'Phiên A đang sinh',
+      status: 'generating',
+      config: { num_versions: 2 },
+      source_questions: [{ id: 'q1', question_no: 1 }],
+      blueprint_summary: { total_questions: 1, is_ready: true, supported_modes: [] },
+      progress: { percent: 30, completed_count: 1, total_count: 2, hasData: true },
+    },
+    'session-B': {
+      id: 'session-B',
+      title: 'Phiên B bình thường',
+      status: 'blueprinted',
+      source_questions: [{ id: 'q2', question_no: 1 }],
+      blueprint_summary: { total_questions: 1, is_ready: true, supported_modes: [] },
+    },
+  };
+
+  const mockLoadSession = async (sid) => sessions[sid];
+  const mockFetchGenSnapshot = async (sid) => {
+    if (sid === 'session-A') {
+      return await deferredSnapshotAPromise;
+    }
+    return null;
+  };
+
+  const mockUseSSE = (sid, options) => {
+    if (sid === 'session-A') {
+      capturedErrorA = options.onError;
+    }
+    return {
+      connectionState: 'connected',
+      progress: { percent: 30, completedCount: 1, totalCount: 2, hasData: true },
+      questionStatuses: {},
+      warnings: [],
+      isDone: false,
+      isPartial: false,
+      error: null,
+      reconnectCount: 0,
+      reconnect: () => {},
+    };
+  };
+
+  const harness = renderPage('session-A', {
+    loadSession: mockLoadSession,
+    fetchGenSnapshot: mockFetchGenSnapshot,
+    useSSEHook: mockUseSSE,
+  });
+
+  // 1. Tải phiên A đang sinh
+  await harness.render();
+  let text = harness.container.textContent;
+  assert.ok(text.includes('Tiến trình sinh đề AI') || text.includes('Đang tạo các biến thể đề thi'));
+  assert.ok(typeof capturedErrorA === 'function', 'Phải nhận được onError của phiên A');
+
+  // 2. Kích hoạt onError của A nhưng promise fetch snapshot của A chưa resolve
+  act(() => {
+    capturedErrorA({
+      code: 'ERR_GENERATION_INTERRUPTED',
+      message: 'Lỗi tiến trình phiên A',
+    });
+  });
+
+  // 3. Người dùng chuyển sang phiên B (trạng thái blueprinted)
+  await harness.navigate('session-B');
+  text = harness.container.textContent;
+  assert.ok(text.includes('Phiên B bình thường'), 'Giao diện phải hiển thị phiên B');
+
+  // 4. Lúc này snapshot của A mới resolve về trạng thái failed kèm mã lỗi
+  await act(async () => {
+    resolveSnapshotA({
+      session_id: 'session-A',
+      session_status: 'failed',
+      generation_error_code: 'ERR_GENERATION_INTERRUPTED',
+    });
+    await new Promise((r) => setTimeout(r, 50));
+  });
+
+  // 5. Xác minh: Phiên B tuyệt đối không bị callback của A biến thành failed hoặc mở Recovery View
+  text = harness.container.textContent;
+  assert.equal(
+    text.includes('Tiến trình sinh đề thi bị gián đoạn hoặc thất bại'),
+    false,
+    'Phiên B tuyệt đối không bị ảnh hưởng bởi lỗi trả muộn của phiên A',
+  );
+  assert.ok(
+    text.includes('Phiên B bình thường'),
+    'Phiên B vẫn giữ nguyên thông tin cấu hình của mình',
+  );
+
+  await harness.unmount();
+});
+
+test('P2: lỗi kết nối SSE transport khi snapshot vẫn generating không được chuyển nhầm sang Recovery View failed', async () => {
+  let capturedError = null;
+
+  const mockLoadSession = async (sid) => ({
+    id: sid,
+    title: 'Đề Toán đang sinh bình thường',
+    status: 'generating',
+    source_questions: [{ id: 'q1', question_no: 1 }],
+    config: { num_versions: 2 },
+    exam_versions: [{ version_index: 1 }, { version_index: 2 }],
+    blueprint_summary: { total_questions: 1, is_ready: true, supported_modes: [] },
+    progress: { percent: 60, completed_count: 1, total_count: 2, hasData: true },
+  });
+
+  // Snapshot đối soát từ backend báo job vẫn đang generating bình thường
+  const mockFetchGenSnapshot = async (sid) => ({
+    session_id: sid,
+    session_status: 'generating',
+    progress: { percent: 60, completed_count: 1, total_count: 2 },
+    question_statuses: {},
+  });
+
+  const mockUseSSE = (sid, options) => {
+    capturedError = options.onError;
+    return {
+      connectionState: 'connected',
+      progress: { percent: 60, completedCount: 1, totalCount: 2, hasData: true },
+      questionStatuses: {},
+      warnings: [],
+      isDone: false,
+      isPartial: false,
+      error: null,
+      reconnectCount: 0,
+      reconnect: () => {},
+    };
+  };
+
+  const harness = renderPage('transport-error-session', {
+    loadSession: mockLoadSession,
+    fetchGenSnapshot: mockFetchGenSnapshot,
+    useSSEHook: mockUseSSE,
+  });
+
+  await harness.render();
+  let text = harness.container.textContent;
+  assert.ok(
+    text.includes('Tiến trình sinh đề AI') || text.includes('Đang tạo các biến thể đề thi'),
+    'Giao diện ban đầu hiển thị tiến độ',
+  );
+  assert.ok(typeof capturedError === 'function', 'Phải nhận được callback onError');
+
+  // Kích hoạt lỗi kết nối mạng SSE (lỗi transport / socket drop)
+  await act(async () => {
+    await capturedError({
+      code: 'ERR_NETWORK',
+      message: 'Mất kết nối EventSource tạm thời',
+    });
+  });
+
+  // Xác minh: Vì authoritative snapshot báo status vẫn là generating,
+  // giao diện KHÔNG ĐƯỢC biến thành failed, KHÔNG mở Recovery View sai
+  text = harness.container.textContent;
+  assert.equal(
+    text.includes('Tiến trình sinh đề thi bị gián đoạn hoặc thất bại'),
+    false,
+    'Tuyệt đối không mở Recovery View khi lỗi chỉ là transport và snapshot vẫn generating',
+  );
+  assert.ok(
+    text.includes('Tiến trình sinh đề AI') || text.includes('Đang tạo các biến thể đề thi'),
+    'Vẫn tiếp tục duy trì giao diện theo dõi tiến độ để người dùng kết nối lại',
+  );
+
+  await harness.unmount();
+});
