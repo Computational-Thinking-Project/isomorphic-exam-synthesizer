@@ -1,5 +1,71 @@
 # Generation configuration and persistence — TASK-207a/b
 
+## W4-MVP-01 / migration 019 (consolidated implementation, proposed)
+
+Consolidated forward-only migration 019 (`019_w4_source_readiness_config.sql`), following merged 002–018 (PR #52 lifecycle and PR #54 review snapshot).
+
+HTTP configuration remains a PR #30 integration dependency. At `66ad00c`, its
+router exposes `POST /api/sessions/{session_id}/config`; no `/configuration`
+route or alias is implemented here. Under `I-W4MVP01-BE2-01`, BE2/DB/FE2 still
+need to agree the public request schema, OFF/OFF defaults, neutral modes and
+server-derived receipt validation. This document does not change that router.
+
+`save_generation_config(uuid,int,jsonb,jsonb,jsonb)` retains its identity and
+response envelope. It locks the session first, requires owner authorization,
+blueprinted/configured status, no frozen job snapshot/finalized version, and
+ready confirmed canonical sources with a matching non-null expected manifest.
+NO_CONFIRMATION is rejected for new saves. Historical configs/jobs are unchanged;
+the existing legacy claim/read behavior is retained for compatibility.
+
+The modes argument is now only a neutral compatibility placeholder: **exactly
+`[]`** is accepted; NULL, NONE and nonempty client selections fail 22023. The server
+intersects mapped dimensions across all canonical policies. Policies must be
+nonempty and structurally valid; pending/failed/stale/malformed evidence fails
+closed. Valid policies with no shared mapped dimension yield `[]`/Original Clone.
+
+| Shared dimension | Stored aliases | Frozen canonical dimension |
+|---|---|---|
+| values | NUMERICAL, parameter_variation | values once |
+| context | context_swap | context once |
+
+Stable ordering for both: modes `["NUMERICAL","parameter_variation","context_swap"]`,
+dimensions `["values","context"]`. Alias count is not transformation count.
+The pinned PR30 worker consumes canonical_dimensions from its frozen snapshot.
+
+Ordering defaults are OFF/OFF in the table and RPC (`{"shuffle_questions": false, "shuffle_options": false}`).
+Explicit preferences require exactly two strict JSON Booleans; missing/extra keys, nulls and coercible values
+are rejected. All four combinations are legal. N remains SQL integer 1–4.
+Invalid input/readiness uses 22023; missing/stale manifest or locked config 55006;
+foreign owner 42501; missing session P0002.
+
+### S05–S06: Pre-finalization ordering preferences update
+
+RPC: `update_generation_ordering_preferences(p_session_id uuid, p_ordering_preferences jsonb)`
+Endpoint: `PATCH /api/sessions/{session_id}/ordering-preferences` (alias: `PATCH /api/sessions/{session_id}/preferences`)
+
+- Allows updating `shuffle_questions` and `shuffle_options` before finalization.
+- Parent-first transaction lock serializes against concurrent shuffle or finalize calls.
+- Permitted strictly when session status is `reviewed` and not yet finalized or approved.
+- Requires both boolean fields; extra keys or invalid types fail with 422. Locked state returns 423.
+- Returns 200 only for a complete RPC object with `success: true`, the requested
+  session ID, `status: "reviewed"`, and exactly two persisted boolean preferences
+  matching the request. Missing/malformed receipts return
+  `503 ERR_PREFERENCES_UPDATE_FAILED`; that error does not prove rollback.
+  Reload state before deciding whether to retry.
+
+### Ingestion de-scheduling (ADR-0001)
+
+`/ingest-file` and `/ingest-text` no longer schedule background blueprint pipelines before confirmation.
+Canonical preparation is triggered exclusively upon explicit source confirmation via `confirm_source_flow`.
+Legacy `trigger_blueprint_pipeline` is retired to a safe no-op.
+
+## Historical 015/016 behavior (superseded for new saves by 019)
+
+The sections below record the historical W2 contract, including ON/ON defaults
+and client-selected modes. For new saves under 019, use the W4 rules above;
+historical claim/read behavior remains for existing jobs. Migration 018 adds
+the review snapshot reader and does not replace the configuration contract.
+
 PR #32 owns this SQL/session-detail contract. PR #30 owns Python preflight,
 HTTP error mapping, worker orchestration, AI/clone adapters and SSE.
 Migrations **010 → 011** follow adopted 004–009. Implementation/self-check is not

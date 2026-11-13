@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { stage1Path, stage3Path } from '../../sessionPaths.js';
 import {
   AlertCircle,
   ArrowLeft,
@@ -378,6 +379,16 @@ export default function Stage2ConfigPage({
   async function handleConfigSubmit(payload) {
     if (isSubmittingConfig) return;
 
+    const isBlueprintReady = Boolean(
+      session?.status !== 'draft' &&
+      session?.blueprint_summary?.is_ready === true &&
+      Array.isArray(session?.blueprint_summary?.supported_modes),
+    );
+    if (!isBlueprintReady) {
+      setConfigError('Đề nguồn chưa hoàn tất phân tích Blueprint. Vui lòng quay lại Giai đoạn 1 để xác nhận đề gốc.');
+      return;
+    }
+
     const thisOpId = ++submitOperationRef.current;
     const targetSessionId = sessionId;
 
@@ -444,7 +455,7 @@ export default function Stage2ConfigPage({
   }
 
   const handleCompleteRedirect = useCallback(() => {
-    navigate(`/session/${sessionId}/stage3`);
+    navigate(stage3Path(sessionId));
   }, [navigate, sessionId]);
 
   const handleRetryGeneration = useCallback(async () => {
@@ -650,7 +661,7 @@ export default function Stage2ConfigPage({
           <div className="mt-6 flex justify-center gap-3">
             <button
               type="button"
-              onClick={() => navigate(`/session/${sessionId}/stage1`)}
+              onClick={() => navigate(stage1Path(sessionId))}
               className="rounded-xl bg-amber-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-amber-600/30 hover:bg-amber-500"
             >
               Đến Giai đoạn 1 (Xác nhận đề gốc)
@@ -775,6 +786,7 @@ export default function Stage2ConfigPage({
           isSubmitting={isSubmittingConfig}
           error={configError}
           onBack={() => navigate('/dashboard')}
+          onReturnToStage1={() => navigate(stage1Path(sessionId))}
         />
       )}
     </div>

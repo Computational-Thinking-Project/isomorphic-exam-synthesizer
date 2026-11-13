@@ -27,16 +27,17 @@ export default function Stage2ConfigCard({
   onSubmit,
   isSubmitting = false,
   error = null,
-  onBack,
+  onBack = null,
+  onReturnToStage1 = null,
 }) {
   const formId = useId();
 
   // Danh sách các chế độ từ Blueprint
   const supportedModes = session?.blueprint_summary?.supported_modes || [];
   const isBlueprintReady = Boolean(
-    session?.blueprint_summary &&
-    session.blueprint_summary.is_ready !== false &&
-    session.blueprint_summary.supported_modes !== null,
+    session?.status !== 'draft' &&
+    session?.blueprint_summary?.is_ready === true &&
+    Array.isArray(session?.blueprint_summary?.supported_modes),
   );
 
   // Giá trị khởi tạo từ cấu hình đã lưu hoặc mặc định
@@ -127,7 +128,26 @@ export default function Stage2ConfigCard({
         </div>
       )}
 
+      {!isBlueprintReady && (
+        <div className="mb-6 rounded-xl border border-amber-500/40 bg-amber-950/20 p-4 text-center text-sm text-amber-200">
+          <p className="font-semibold">Chưa có thông tin Blueprint khả dụng</p>
+          <p className="mt-1 text-xs text-amber-300/80">
+            Đề nguồn chưa hoàn tất phân tích Blueprint hoặc thiếu dữ liệu câu hỏi. Vui lòng quay lại Giai đoạn 1 để xác nhận đề gốc.
+          </p>
+          {onReturnToStage1 && (
+            <button
+              type="button"
+              onClick={onReturnToStage1}
+              className="mt-3 inline-flex items-center rounded-lg border border-amber-500/50 bg-amber-950/40 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-900/50"
+            >
+              Quay về Giai đoạn 1
+            </button>
+          )}
+        </div>
+      )}
+
       <form id={formId} onSubmit={handleSubmit} className="space-y-8">
+        <fieldset disabled={isSubmitting || !isBlueprintReady} className="space-y-8">
         {/* Phần 1: Chọn số lượng mã đề */}
         <div>
           <label className="block text-base font-semibold text-white">
@@ -183,12 +203,9 @@ export default function Stage2ConfigCard({
 
           <div className="mt-4 space-y-3">
             {!isBlueprintReady ? (
-              <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 p-4 text-center text-sm text-amber-200">
-                <p className="font-semibold">Chưa có thông tin Blueprint khả dụng</p>
-                <p className="mt-1 text-xs text-amber-300/80">
-                  Đề nguồn chưa hoàn tất phân tích Blueprint hoặc thiếu dữ liệu câu hỏi. Vui lòng quay lại Giai đoạn 1 để xác nhận đề gốc.
-                </p>
-              </div>
+              <p className="text-xs text-amber-300/80">
+                Đang chờ Blueprint sẵn sàng để hiển thị các phương pháp sinh biến thể.
+              </p>
             ) : supportedModes.length === 0 ? (
               <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-4 text-sm text-slate-300">
                 <div className="flex items-start gap-3">
@@ -353,6 +370,7 @@ export default function Stage2ConfigCard({
             </div>
           </div>
         </div>
+        </fieldset>
 
         {/* Nút hành động */}
         <div className="flex flex-wrap items-center justify-between gap-4 pt-4">
@@ -363,7 +381,7 @@ export default function Stage2ConfigCard({
               disabled={isSubmitting}
               className="rounded-xl border border-slate-700 px-5 py-2.5 text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-50"
             >
-              Quay lại Bước 1
+              Quay về Dashboard
             </button>
           ) : (
             <div />

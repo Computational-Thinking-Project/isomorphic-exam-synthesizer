@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
 from fastapi import HTTPException
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 
 class SourceQuestion(BaseModel):
@@ -537,6 +537,128 @@ class AnswersMatrixResponse(BaseModel):
     )
 
 
+class OrderingPreferencesPayload(BaseModel):
+    shuffle_questions: StrictBool
+    shuffle_options: StrictBool
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class OrderingPreferencesResponse(BaseModel):
+    success: bool
+    session_id: str
+    status: str
+    ordering_preferences: Dict[str, bool]
+
+
+class ReviewSnapshotSource(BaseModel):
+    """Câu hỏi nguồn đã xác nhận và đóng băng trong snapshot (W4-MVP-03)."""
+
+    source_question_id: UUID = Field(..., description="Mã định danh câu nguồn (UUID)")
+    question_no: int = Field(..., ge=1, description="Số thứ tự câu nguồn (1..M)")
+    source_revision_id: UUID = Field(..., description="Mã phiên bản nguồn đã xác nhận (UUID)")
+    content: str = Field(..., description="Nội dung câu hỏi nguồn")
+    options: List[str] = Field(..., description="Danh sách 4 phương án [A, B, C, D]")
+    correct_key: Literal["A", "B", "C", "D"] = Field(..., description="Đáp án đúng của câu nguồn")
+    solution_md: Optional[str] = Field(None, description="Lời giải chi tiết câu nguồn (Markdown)")
+
+    @field_validator("options")
+    @classmethod
+    def validate_options_length(cls, v: List[str]) -> List[str]:
+        if len(v) != 4:
+            raise ValueError("options must contain exactly 4 elements")
+        return [str(opt) for opt in v]
+
+
+class ReviewSnapshotCandidate(BaseModel):
+    """Biến thể câu hỏi hiện hành hiển thị tại một slot thẩm định (W4-MVP-03)."""
+
+    candidate_id: UUID = Field(..., description="Mã biến thể câu hỏi (version_questions.id)")
+    status: Literal["pending_review", "approved", "rejected", "regenerating"] = Field(
+        ..., description="Trạng thái thẩm định của biến thể"
+    )
+    content: str = Field(..., description="Nội dung câu hỏi biến thể")
+    options: List[str] = Field(..., description="Danh sách 4 phương án [A, B, C, D]")
+    correct_key: Literal["A", "B", "C", "D"] = Field(..., description="Đáp án đúng biến thể")
+    solution_md: Optional[str] = Field(None, description="Lời giải chi tiết biến thể")
+    has_warning: bool = Field(False, description="Cờ cảnh báo kiểm định toán học hoặc định dạng")
+    validation_report: Optional[Dict[str, Any]] = Field(
+        None, description="Báo cáo kiểm định toán học on-the-fly"
+    )
+    validation_source: Literal["version_question", "generation_result", "unavailable"] = Field(
+        ..., description="Nguồn xuất xứ của báo cáo kiểm định"
+    )
+    origin: Literal[
+        "ai_generated",
+        "original_clone",
+        "regenerated",
+        "reverted",
+        "confirmed_source_fallback",
+        "unknown",
+    ] = Field(..., description="Nguồn gốc sinh của ứng viên biến thể")
+    is_reverted: bool = Field(False, description="Biến thể đã từng bị hoàn nguyên về câu nguồn")
+    updated_at: str = Field(..., description="Thời điểm cập nhật bản ghi gần nhất (ISO 8601)")
+
+    @field_validator("options")
+    @classmethod
+    def validate_options_length(cls, v: List[str]) -> List[str]:
+        if len(v) != 4:
+            raise ValueError("options must contain exactly 4 elements")
+        return [str(opt) for opt in v]
+
+
+class ReviewSnapshotSlot(BaseModel):
+    """Một vị trí câu hỏi trong ma trận phiên bản đề (W4-MVP-03)."""
+
+    source_question_id: UUID = Field(..., description="Mã câu nguồn đối chiếu")
+    question_no: int = Field(..., ge=1, description="Số thứ tự câu hỏi đối chiếu")
+    candidate: Optional[ReviewSnapshotCandidate] = Field(
+        None, description="Ứng viên hiện hành duy nhất hoặc null nếu slot còn thiếu"
+    )
+
+
+class ReviewSnapshotVersion(BaseModel):
+    """Một phiên bản đề thi trong ma trận thẩm định (W4-MVP-03)."""
+
+    version_index: int = Field(..., ge=1, le=4, description="Chỉ số phiên bản (1..4)")
+    version_code: str = Field(..., description="Mã đề thi hiển thị (ví dụ '101')")
+    version_id: Optional[UUID] = Field(
+        None, description="Mã phiên bản (UUID) nếu đã được lưu CSDL"
+    )
+    slots: List[ReviewSnapshotSlot] = Field(
+        ..., description="Danh sách các slot câu hỏi của phiên bản này"
+    )
+
+
+class ReviewSnapshotProgress(BaseModel):
+    """Tiến độ thẩm định tính toán đồng thời trong snapshot (W4-MVP-03)."""
+
+    expected_slots: int = Field(..., ge=0, description="Tổng số slot cần có (N x M)")
+    current_slots: int = Field(..., ge=0, description="Số slot hiện đã có candidate")
+    approved_slots: int = Field(..., ge=0, description="Số candidate đã được duyệt")
+    missing_slots: int = Field(..., ge=0, description="Số slot còn thiếu chưa sinh")
+    ready: bool = Field(False, description="Đã duyệt đủ toàn bộ ma trận câu hỏi")
+
+
+class ReviewSnapshotResponse(BaseModel):
+    """Snapshot hiện hành của quy trình thẩm định Stage 3 (W4-MVP-03)."""
+
+    session_id: UUID = Field(..., description="Mã phiên làm việc")
+    session_status: str = Field(..., description="Trạng thái phiên làm việc")
+    read_only: bool = Field(..., description="Cờ giao diện chỉ đọc")
+    confirmation_id: UUID = Field(..., description="Mã xác nhận nguồn")
+    job_snapshot_id: UUID = Field(..., description="Mã snapshot công việc sinh")
+    confirmed_source_hash: str = Field(..., description="Mã băm SHA-256 nguồn đóng băng")
+    freshness_token: str = Field(..., description="Token kiểm tra tính tươi mới của trạng thái")
+    progress: ReviewSnapshotProgress = Field(..., description="Thống kê tiến độ thẩm định")
+    sources: List[ReviewSnapshotSource] = Field(
+        ..., description="Danh sách câu nguồn đã đóng băng"
+    )
+    versions: List[ReviewSnapshotVersion] = Field(
+        ..., description="Ma trận các phiên bản đề và slot ứng viên"
+    )
+
+
 # Re-export validator schemas for convenient consumption across services and routes
 from app.services.validator.base import CheckResult, ValidationReport  # noqa: E402
 
@@ -573,6 +695,14 @@ __all__ = [
     "FinalizeApproveResponse",
     "MatrixItem",
     "AnswersMatrixResponse",
+    "OrderingPreferencesPayload",
+    "OrderingPreferencesResponse",
     "CheckResult",
     "ValidationReport",
+    "ReviewSnapshotSource",
+    "ReviewSnapshotCandidate",
+    "ReviewSnapshotSlot",
+    "ReviewSnapshotVersion",
+    "ReviewSnapshotProgress",
+    "ReviewSnapshotResponse",
 ]
