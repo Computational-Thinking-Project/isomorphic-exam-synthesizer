@@ -728,6 +728,39 @@ async def test_preview_rejects_invalid_version_code_format():
 
 
 @pytest.mark.asyncio
+async def test_preview_rejects_whitespace_padded_version_code():
+    """F07: Fails closed with 409 when version_code has leading or trailing whitespace."""
+    db_state = _build_valid_preview_db_state()
+    db_state["exam_versions"][0]["version_code"] = "101 "
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "version_code" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_case_insensitive_duplicate_version_codes():
+    """F07: Fails closed with 409 when version codes differ only by case (e.g. 'A' vs 'a')."""
+    db_state = _build_valid_preview_db_state()
+    db_state["exam_versions"][0]["version_code"] = "A"
+    db_state["exam_versions"][0]["shuffle_seed"] = generate_deterministic_seed(MOCK_SESSION_ID, "A")[0]
+    db_state["exam_versions"][1]["version_code"] = "a"
+    db_state["exam_versions"][1]["shuffle_seed"] = generate_deterministic_seed(MOCK_SESSION_ID, "a")[0]
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+    assert "trùng lặp" in exc_info.value.detail or "version_code" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
 async def test_preview_rejects_oversized_option_exceeding_16000_chars():
     """Fails closed with 409 when an option exceeds the Exporter 16,000-character limit."""
     db_state = _build_valid_preview_db_state()
@@ -970,6 +1003,103 @@ async def test_preview_export_snapshot_mapping_with_real_session_metadata():
     assert len(export_snapshot.versions) == 2
     assert export_snapshot.versions[0].code == "101"
     assert export_snapshot.versions[0].questions[0].correct_key == "A"
+
+
+@pytest.mark.asyncio
+async def test_preview_and_export_parity_with_gapped_canonical_labels():
+    """Cross-PR Integration: Supports gapped positive source_questions.question_no labels (e.g. 3, 8, 25)
+    while projecting contiguous 1..M display question_no values for ApprovedExportSnapshot parity.
+    """
+    db_state = _build_valid_preview_db_state()
+    canonical_map = {1: 3, 2: 8, 3: 25}
+    gapped_permutations = {
+        "question_order": [8, 25, 3],
+        "display_to_canonical": {"1": 8, "2": 25, "3": 3},
+        "canonical_to_display": {"8": 1, "25": 2, "3": 3},
+        "option_permutations": {
+            "1": {"A": "A", "B": "B", "C": "C", "D": "D"},
+            "2": {"A": "A", "B": "B", "C": "C", "D": "D"},
+            "3": {"A": "A", "B": "B", "C": "C", "D": "D"},
+        },
+    }
+
+    for src in db_state["source_questions"]:
+        src["question_no"] = canonical_map[src["question_no"]]
+
+    for v in db_state["exam_versions"]:
+        v["permutations"] = gapped_permutations
+
+    # Remap version_questions so display slots 1, 2, 3 carry canonical_question_no 8, 25, 3 respectively
+    old_by_v_and_c: Dict[tuple, Dict[str, Any]] = {}
+    for row in db_state["version_questions"]:
+        old_by_v_and_c[(row["version_id"], row["canonical_question_no"])] = row
+
+    remapped_vqs = []
+    remapped_aks = []
+    display_to_old_canonical = {1: 2, 2: 3, 3: 1}
+    for v in db_state["exam_versions"]:
+        vid = v["id"]
+        for disp_no, old_c in display_to_old_canonical.items():
+            row = dict(old_by_v_and_c[(vid, old_c)])
+            row["question_no"] = disp_no
+            row["canonical_question_no"] = canonical_map[old_c]
+            remapped_vqs.append(row)
+            remapped_aks.append(
+                {
+                    "version_id": vid,
+                    "question_no": disp_no,
+                    "correct_option": row["correct_key"],
+                    "display_no": disp_no,
+                    "display_correct_key": row["correct_key"],
+                    "canonical_question_no": canonical_map[old_c],
+                }
+            )
+
+    db_state["version_questions"] = remapped_vqs
+    db_state["answer_keys"] = remapped_aks
+
+    client = MockSupabaseClient(db_state)
+    service = FinalizeService(client)
+    res = await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+
+    assert res.total_questions == 3
+    for v in res.versions:
+        assert [q.question_no for q in v.questions] == [1, 2, 3]
+        assert [q.canonical_question_no for q in v.questions] == [8, 25, 3]
+
+    # Verify strict parity with Exporter ApprovedExportSnapshot contract (contiguous display question_no 1..3)
+    repo = FinalizeRepository(client)
+    session_row = await repo.get_session_meta(MOCK_SESSION_ID)
+    assert session_row is not None
+    actual_title = session_row.get("title") or "Đề thi thử THPT"
+
+    export_versions = tuple(
+        DisplayVersion(
+            code=v.version_code,
+            questions=tuple(
+                DisplayQuestion(
+                    id=UUID(q.id),
+                    question_no=q.question_no,
+                    content=q.content,
+                    options=(q.options[0], q.options[1], q.options[2], q.options[3]),
+                    correct_key=q.correct_key,
+                    solution_md=q.solution_md,
+                    status="approved",
+                )
+                for q in v.questions
+            ),
+        )
+        for v in res.versions
+    )
+    export_snapshot = ApprovedExportSnapshot(
+        session_id=UUID(res.session_id),
+        revision="sha256:" + ("a" * 64),
+        title=actual_title,
+        status="approved",
+        versions=export_versions,
+    )
+    assert [q.question_no for q in export_snapshot.versions[0].questions] == [1, 2, 3]
+    assert [q.correct_key for q in export_snapshot.versions[0].questions] == ["C", "D", "A"]
 
 
 # ==============================================================================

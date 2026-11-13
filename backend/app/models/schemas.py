@@ -546,7 +546,7 @@ class PreviewQuestionItem(BaseModel):
         ..., ge=1, le=20, description="Thứ tự hiển thị của câu hỏi sau hoán vị (1..N)"
     )
     canonical_question_no: int = Field(
-        ..., ge=1, le=20, description="Thứ tự gốc của câu hỏi trong đề nguồn (1..N)"
+        ..., ge=1, description="Thứ tự gốc của câu hỏi trong đề nguồn"
     )
     content: str = Field(..., description="Nội dung đề bài câu hỏi")
     options: List[str] = Field(

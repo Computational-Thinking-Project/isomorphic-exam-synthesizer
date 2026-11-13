@@ -625,8 +625,19 @@ class FinalizeRepository:
             )
 
         ids = [str(v["id"]) for v in versions]
-        codes = [str(v["version_code"]) for v in versions]
-        if len(set(ids)) != n or len(set(codes)) != n:
+        codes: List[str] = []
+        for v in versions:
+            raw_code = v.get("version_code")
+            if (
+                not isinstance(raw_code, str)
+                or raw_code != raw_code.strip()
+                or not VERSION_CODE_REGEX.match(raw_code)
+            ):
+                raise inconsistent(
+                    f"Mã phiên bản (version_code) '{raw_code}' không hợp lệ hoặc sai định dạng quy định"
+                )
+            codes.append(raw_code)
+        if len(set(ids)) != n or len({c.casefold() for c in codes}) != n:
             raise inconsistent("Mã hoặc định danh phiên bản đề bị trùng lặp")
 
         # Step 4: Source questions count & 1:1 mappings
@@ -646,15 +657,16 @@ class FinalizeRepository:
         for s in sources:
             s_id = str(s.get("id", ""))
             s_no = s.get("question_no")
-            if not isinstance(s_no, int) or isinstance(s_no, bool) or s_no not in range(1, m + 1):
+            if not isinstance(s_no, int) or isinstance(s_no, bool) or s_no < 1:
                 raise inconsistent("Thứ tự câu hỏi nguồn (question_no) không hợp lệ")
             if s_no in source_by_no or s_id in source_by_id:
                 raise inconsistent("Phát hiện trùng lặp mã hoặc thứ tự câu hỏi nguồn")
             source_by_no[s_no] = s_id
             source_by_id[s_id] = s_no
 
-        if set(source_by_no.keys()) != set(range(1, m + 1)):
-            raise inconsistent("Danh sách câu hỏi nguồn không liên tục từ 1 đến M")
+        canonical_numbers = set(source_by_no.keys())
+        if len(canonical_numbers) != m:
+            raise inconsistent("Danh sách mã số câu hỏi nguồn không hợp lệ")
 
         # Step 5: Version questions
         raw_questions = _get_rows(
@@ -703,7 +715,8 @@ class FinalizeRepository:
                 or opt not in ("A", "B", "C", "D")
                 or (display_opt is not None and display_opt != opt)
                 or not isinstance(canonical_q_no, int)
-                or canonical_q_no not in range(1, m + 1)
+                or isinstance(canonical_q_no, bool)
+                or canonical_q_no not in canonical_numbers
             ):
                 raise inconsistent("Dữ liệu bảng tra đáp án không hợp lệ hoặc không nhất quán")
 
@@ -723,13 +736,9 @@ class FinalizeRepository:
         preview_versions: List[Dict[str, Any]] = []
         for v in versions:
             vid = str(v["id"])
-            v_code = str(v.get("version_code", "")).strip()
+            v_code = str(v["version_code"])
             v_seed = v.get("shuffle_seed")
             permutations = v.get("permutations")
-
-            # Validate version code format against Exporter DisplayVersion contract
-            if not v_code or not VERSION_CODE_REGEX.match(v_code):
-                raise inconsistent(f"Mã phiên bản (version_code) '{v_code}' không hợp lệ hoặc sai định dạng quy định")
 
             # Validate shuffle seed against deterministic contract
             expected_seed, _ = generate_deterministic_seed(str(session_id), v_code)
@@ -753,7 +762,8 @@ class FinalizeRepository:
                 not isinstance(q_order, list)
                 or len(q_order) != m
                 or any(not isinstance(x, int) or isinstance(x, bool) for x in q_order)
-                or sorted(q_order) != list(range(1, m + 1))
+                or len(set(q_order)) != m
+                or set(q_order) != canonical_numbers
             ):
                 raise inconsistent(f"Thứ tự câu hỏi (question_order) của phiên bản {v_code} không hợp lệ")
 
@@ -774,7 +784,7 @@ class FinalizeRepository:
                 if not str(d_str).isdigit() or not isinstance(c_val, int) or isinstance(c_val, bool):
                     raise inconsistent(f"Ánh xạ display_to_canonical của phiên bản {v_code} không hợp lệ")
                 d_int = int(d_str)
-                if d_int not in range(1, m + 1) or c_val not in range(1, m + 1):
+                if d_int not in range(1, m + 1) or c_val not in canonical_numbers:
                     raise inconsistent(f"Giá trị ánh xạ display_to_canonical của phiên bản {v_code} vượt giới hạn")
                 if c_to_d.get(str(c_val)) != d_int and c_to_d.get(c_val) != d_int:
                     raise inconsistent(f"Ánh xạ hai chiều hoán vị không đối xứng cho phiên bản {v_code}")
@@ -783,7 +793,7 @@ class FinalizeRepository:
                 if not str(c_str).isdigit() or not isinstance(d_val, int) or isinstance(d_val, bool):
                     raise inconsistent(f"Ánh xạ canonical_to_display của phiên bản {v_code} không hợp lệ")
                 c_int = int(c_str)
-                if c_int not in range(1, m + 1) or d_val not in range(1, m + 1):
+                if c_int not in canonical_numbers or d_val not in range(1, m + 1):
                     raise inconsistent(f"Giá trị ánh xạ canonical_to_display của phiên bản {v_code} vượt giới hạn")
                 if d_to_c.get(str(d_val)) != c_int and d_to_c.get(d_val) != c_int:
                     raise inconsistent(f"Ánh xạ hai chiều hoán vị không đối xứng cho phiên bản {v_code}")
@@ -861,7 +871,11 @@ class FinalizeRepository:
                     raise inconsistent(f"Câu hỏi {q_no} trong phiên bản {v_code} chưa được thẩm định phê duyệt (status='{q_status}')")
 
                 # Canonical question mapping & Source Lineage
-                if not isinstance(canonical_no, int) or canonical_no not in range(1, m + 1):
+                if (
+                    not isinstance(canonical_no, int)
+                    or isinstance(canonical_no, bool)
+                    or canonical_no not in canonical_numbers
+                ):
                     raise inconsistent(f"Thứ tự câu hỏi gốc (canonical_question_no) của câu {q_no} trong phiên bản {v_code} không hợp lệ")
 
                 if src_id not in source_by_id or source_by_id[src_id] != canonical_no:

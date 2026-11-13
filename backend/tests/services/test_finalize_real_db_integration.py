@@ -291,6 +291,21 @@ async def setup_real_postgres_database(isolated_pg_dsn):  # noqa: F811
             with open(path, "r", encoding="utf-8-sig") as f:
                 await conn.execute(f.read().lstrip("\ufeff"))
 
+        # 5b. Grant production-equivalent privileges while preserving Migration 009 write revocations
+        await conn.execute("""
+        GRANT USAGE ON SCHEMA public, auth TO anon, authenticated, service_role;
+        GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO anon, authenticated, service_role;
+        GRANT SELECT ON ALL TABLES IN SCHEMA public TO authenticated;
+        GRANT INSERT, UPDATE, DELETE ON
+            public.exam_sessions,
+            public.source_questions,
+            public.question_blueprints,
+            public.generation_configs
+            TO authenticated;
+        GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+        GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
+        """)
+
         # 6. Seed owner user
         await conn.execute(f"""
         INSERT INTO auth.users(id, email) VALUES ('{OWNER_ID}', 'teacher@school.edu.vn') ON CONFLICT (id) DO NOTHING;
