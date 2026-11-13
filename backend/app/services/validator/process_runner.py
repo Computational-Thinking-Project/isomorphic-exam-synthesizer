@@ -9,6 +9,7 @@ preventing GIL deadlocks, IPC pipe deadlocks, and orphan background tasks.
 import logging
 import multiprocessing
 import queue
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional, Tuple
@@ -53,6 +54,9 @@ def run_with_timeout(
     args: Tuple[Any, ...] = (),
     kwargs: Optional[Dict[str, Any]] = None,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    *,
+    start_method: str | None = None,
+    cancel_signal: threading.Event | None = None,
 ) -> ProcessResult:
     """
     Run `target_func(*args, **kwargs)` inside an isolated process with a hard timeout.
@@ -74,10 +78,10 @@ def run_with_timeout(
         kwargs = {}
 
     start_time = time.perf_counter()
-    ctx = multiprocessing.get_context()
+    ctx = multiprocessing.get_context(start_method)
     res_queue = ctx.Queue()
 
-    process = ctx.Process(
+    process = ctx.Process(  # type: ignore[attr-defined]
         target=_worker_wrapper,
         args=(target_func, args, kwargs, res_queue),
         daemon=True,
@@ -85,59 +89,75 @@ def run_with_timeout(
 
     got_result = False
     result_tuple = None
+    cancelled = False
+    timed_out = False
+    worker_error: str | None = None
+    started = False
 
     try:
+        if cancel_signal is not None and cancel_signal.is_set():
+            return ProcessResult(success=False, error="Execution cancelled before start.")
         process.start()
+        started = True
 
-        # Step 1: Read from queue before waiting on join to avoid IPC pipe buffer deadlock.
-        # If payload is large (>64-128 KiB), the worker blocks on put() until parent reads.
-        try:
-            result_tuple = res_queue.get(timeout=timeout)
-            got_result = True
-        except (queue.Empty, Exception):
-            got_result = False
+        # Read before joining: a large result can block the worker on the queue.
+        # Polling is opt-in so an async caller can stop the actual process promptly.
+        while not got_result:
+            if cancel_signal is not None and cancel_signal.is_set():
+                cancelled = True
+                break
+            remaining = timeout - (time.perf_counter() - start_time)
+            if remaining <= 0:
+                timed_out = True
+                break
+            try:
+                result_tuple = res_queue.get(
+                    timeout=min(remaining, 0.05) if cancel_signal is not None else remaining
+                )
+                got_result = True
+            except queue.Empty:
+                if not process.is_alive():
+                    worker_error = "Worker exited without returning a result."
+                    break
+            except (EOFError, OSError, ValueError) as exc:
+                worker_error = f"Worker result could not be read: {exc}"
+                break
 
         elapsed = time.perf_counter() - start_time
+        if got_result and elapsed > timeout:
+            timed_out = True
 
-        # Step 2: Handle timeout condition
-        if not got_result or elapsed > timeout:
-            if process.is_alive():
-                logger.warning(
-                    "Process %s timed out after %.2fs. Initiating termination/kill cleanup.",
-                    process.pid,
-                    timeout,
-                )
-                process.terminate()
-                process.join(timeout=0.5)
-                if process.is_alive():
-                    process.kill()
-                    process.join(timeout=0.5)
-                process.join()
-
-            return ProcessResult(
-                success=False,
-                timed_out=True,
-                error=f"Execution timed out after {timeout:.1f}s.",
-                duration_sec=elapsed,
-                exit_code=process.exitcode,
-            )
-
-        # Process finished: join and guarantee worker termination in all branches
-        process.join(timeout=0.5)
+        # Do not report completion until the OS worker has actually stopped.
+        process.join(timeout=0.5 if got_result else 0)
         if process.is_alive():
-            logger.warning(
-                "Process %s still alive after returning result; initiating cleanup.",
-                process.pid,
-            )
+            logger.warning("Stopping validation process %s.", process.pid)
             process.terminate()
             process.join(timeout=0.5)
             if process.is_alive():
                 process.kill()
                 process.join(timeout=0.5)
-            process.join()
+        if process.is_alive():
+            raise RuntimeError(f"Validation process {process.pid} could not be reaped.")
 
         exit_code = process.exitcode
         duration = time.perf_counter() - start_time
+        if cancelled:
+            return ProcessResult(
+                success=False,
+                error="Execution cancelled.",
+                duration_sec=duration,
+                exit_code=exit_code,
+                metadata={"pid": process.pid},
+            )
+        if timed_out:
+            return ProcessResult(
+                success=False,
+                timed_out=True,
+                error=f"Execution timed out after {timeout:.1f}s.",
+                duration_sec=duration,
+                exit_code=exit_code,
+                metadata={"pid": process.pid},
+            )
 
         if result_tuple is not None:
             success, data, err = result_tuple
@@ -148,6 +168,7 @@ def run_with_timeout(
                 timed_out=False,
                 duration_sec=duration,
                 exit_code=exit_code,
+                metadata={"pid": process.pid},
             )
 
         # Fallback in case result was placed just as process exited
@@ -161,17 +182,27 @@ def run_with_timeout(
                 duration_sec=duration,
                 exit_code=exit_code,
             )
-        except (queue.Empty, Exception) as exc:
-            err_msg = f"Process terminated with exit code {exit_code} without returning data: {exc}"
+        except (queue.Empty, EOFError, OSError, ValueError) as exc:
+            err_msg = (
+                worker_error
+                or f"Process terminated with exit code {exit_code} without returning data: {exc}"
+            )
             return ProcessResult(
                 success=False,
                 timed_out=False,
                 error=err_msg,
                 duration_sec=duration,
                 exit_code=exit_code,
+                metadata={"pid": process.pid},
             )
 
     finally:
+        if started and process.is_alive():
+            process.terminate()
+            process.join(timeout=0.5)
+            if process.is_alive():
+                process.kill()
+                process.join(timeout=0.5)
         try:
             res_queue.close()
             res_queue.cancel_join_thread()
