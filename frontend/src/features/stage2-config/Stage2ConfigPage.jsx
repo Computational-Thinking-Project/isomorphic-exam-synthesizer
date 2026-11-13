@@ -201,7 +201,7 @@ export default function Stage2ConfigPage({
     };
   }, [sessionId, loadSession, fetchGenSnapshot]);
 
-  // F04 / F06: Callback tải lại snapshot phiên khi mất lịch sử SSE / nhận tín hiệu resync
+  // F04 / F06 / P2: Callback tải lại snapshot phiên khi mất lịch sử SSE / nhận tín hiệu resync
   const handleResyncSnapshot = useCallback(
     async (sid) => {
       const thisSessionOp = sessionOpRef.current;
@@ -226,12 +226,22 @@ export default function Stage2ConfigPage({
           data?.progress?.session_status ||
           data?.progress?.status;
 
+        const errCode =
+          data?.generation_error_code ||
+          data?.error_code ||
+          data?.progress?.generation_error_code ||
+          data?.progress?.error_code ||
+          null;
+
+        const isFailed = String(snapStatus || '').trim().toLowerCase() === 'failed';
+
         if (data?.progress) {
           setSession((prev) =>
             prev
               ? {
                   ...prev,
                   status: snapStatus || prev.status,
+                  generation_error_code: errCode ?? prev.generation_error_code ?? null,
                   progress: data.progress,
                   question_statuses: {
                     ...(prev.question_statuses || {}),
@@ -246,14 +256,110 @@ export default function Stage2ConfigPage({
               : prev,
           );
         } else if (data) {
-          setSession(data);
+          setSession((prev) => ({
+            ...(prev || {}),
+            ...data,
+            status: snapStatus || data.status || prev?.status,
+            generation_error_code:
+              errCode ?? data.generation_error_code ?? prev?.generation_error_code ?? null,
+          }));
         }
+
+        // P2 (Duy): Giải phóng các cờ đang chạy khi snapshot xác nhận trạng thái terminal failed
+        if (isFailed) {
+          setIsGenerating(false);
+          setIsNewRunActive(false);
+        }
+
         return data;
       }
       return null;
     },
     [fetchGenSnapshot, loadSession],
   );
+
+  // P2: Đối soát trạng thái chính thống khi kết nối SSE nhận lỗi terminal
+  const handleSSEError = useCallback(
+    async (err) => {
+      const errCode =
+        err?.generation_error_code ||
+        err?.error_code ||
+        err?.code ||
+        null;
+
+      try {
+        const snap = await fetchGenSnapshot(sessionId);
+        if (
+          isMountedRef.current &&
+          activeSessionIdRef.current === sessionId
+        ) {
+          const snapStatus =
+            snap?.status ||
+            snap?.session_status ||
+            snap?.progress?.session_status;
+          if (String(snapStatus || '').trim().toLowerCase() === 'failed') {
+            setSession((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    status: 'failed',
+                    generation_error_code:
+                      snap?.generation_error_code || errCode || prev.generation_error_code,
+                    progress: snap.progress || prev.progress,
+                  }
+                : prev,
+            );
+            setIsGenerating(false);
+            setIsNewRunActive(false);
+            return;
+          }
+        }
+      } catch {
+        try {
+          const latest = await loadSession(sessionId);
+          if (
+            isMountedRef.current &&
+            activeSessionIdRef.current === sessionId &&
+            String(latest?.status || '').trim().toLowerCase() === 'failed'
+          ) {
+            setSession(latest);
+            setIsGenerating(false);
+            setIsNewRunActive(false);
+            return;
+          }
+        } catch {
+          // Bỏ qua lỗi mạng trong fallback
+        }
+      }
+
+      if (
+        errCode &&
+        errCode !== 'ERR_EVENT_HISTORY_LOST' &&
+        errCode !== 'ERR_CURSOR_OUTDATED'
+      ) {
+        setSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: 'failed',
+                generation_error_code: errCode || prev.generation_error_code,
+              }
+            : prev,
+        );
+        setIsGenerating(false);
+        setIsNewRunActive(false);
+      }
+    },
+    [fetchGenSnapshot, loadSession, sessionId],
+  );
+
+  // P2: Đồng bộ dọn dẹp cờ tiến trình sinh khi session chuyển sang failed từ bất kỳ nguồn dữ liệu nào
+  useEffect(() => {
+    if (session?.status === 'failed' && (isGenerating || isNewRunActive)) {
+      setIsGenerating(false);
+      setIsNewRunActive(false);
+    }
+  }, [session?.status, isGenerating, isNewRunActive]);
 
   // Hook SSE kết nối khi ở trạng thái isGenerating
   const sseState = useSSEHook(sessionId, {
@@ -265,6 +371,7 @@ export default function Stage2ConfigPage({
     initialStreamEpoch:
       session?.stream_epoch ?? session?.progress?.stream_epoch ?? null,
     onResync: handleResyncSnapshot,
+    onError: handleSSEError,
   });
 
   // Xử lý nộp form cấu hình

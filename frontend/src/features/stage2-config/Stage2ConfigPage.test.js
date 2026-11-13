@@ -1329,3 +1329,110 @@ test('F03: Stage2ConfigPage đọc generation_error_code từ fetchGenSnapshot k
 
   await harness.unmount();
 });
+
+test('P2: generating → SSE onResync(failed) → recovery view with error code and retry action', async () => {
+  let capturedResync = null;
+  const mockUseSSE = (sid, options) => {
+    capturedResync = options.onResync;
+    return {
+      connectionState: 'connected',
+      progress: {
+        percent: 45,
+        completedCount: 2,
+        totalCount: 6,
+        hasData: true,
+      },
+      questionStatuses: {},
+      warnings: [],
+      isDone: false,
+      isPartial: false,
+      error: null,
+      reconnectCount: 0,
+      reconnect: () => {},
+    };
+  };
+
+  const mockLoadSession = async (sid) => ({
+    id: sid,
+    title: 'Đề Toán đang sinh',
+    status: 'generating',
+    source_questions: [{ id: 'q1', question_no: 1 }, { id: 'q2', question_no: 2 }],
+    config: { num_versions: 2 },
+    exam_versions: [{ version_index: 1 }, { version_index: 2 }],
+    blueprint_summary: { total_questions: 2, supported_modes: [], is_ready: true },
+    progress: { percent: 45, completed_count: 2, total_count: 6, hasData: true },
+  });
+
+  const mockFetchGenSnapshot = async (sid) => ({
+    session_id: sid,
+    session_status: 'failed',
+    generation_error_code: 'ERR_GENERATION_INTERRUPTED',
+    progress: { percent: 45, completed_count: 2, total_count: 6 },
+    question_statuses: {},
+  });
+
+  let retryCalledWith = null;
+  const mockRetryGen = async (sid) => {
+    retryCalledWith = sid;
+    return { ok: true };
+  };
+
+  const harness = renderPage('failed-resync-session', {
+    loadSession: mockLoadSession,
+    fetchGenSnapshot: mockFetchGenSnapshot,
+    useSSEHook: mockUseSSE,
+    retryGen: mockRetryGen,
+  });
+
+  // 1. Initial render: Session is generating -> Progress view is active
+  await harness.render();
+  let text = harness.container.textContent;
+  assert.ok(
+    text.includes('Tiến trình sinh đề AI') || text.includes('Đang tạo các biến thể đề thi'),
+    'Giao diện ban đầu phải hiển thị màn hình tiến độ sinh đề',
+  );
+  assert.equal(
+    text.includes('Tiến trình sinh đề thi bị gián đoạn hoặc thất bại'),
+    false,
+    'Chưa được hiển thị Recovery View trước khi resync',
+  );
+  assert.ok(typeof capturedResync === 'function', 'Hook useSSE phải nhận được callback onResync');
+
+  // 2. Trigger onResync returning failed status with generation_error_code
+  await act(async () => {
+    await capturedResync('failed-resync-session');
+  });
+
+  // 3. Verify that Recovery View is now displayed with error code and progress UI is dismissed
+  text = harness.container.textContent;
+  assert.ok(
+    text.includes('Tiến trình sinh đề thi bị gián đoạn hoặc thất bại'),
+    'Phải hiển thị Recovery View sau khi SSE onResync nhận kết quả failed',
+  );
+  assert.ok(
+    text.includes('ERR_GENERATION_INTERRUPTED'),
+    'Phải hiển thị mã lỗi ERR_GENERATION_INTERRUPTED từ snapshot',
+  );
+  assert.equal(
+    text.includes('Đang tạo các biến thể đề thi'),
+    false,
+    'Màn hình tiến độ sinh đề phải được dọn dẹp khi chuyển sang Recovery View',
+  );
+
+  // 4. Verify retry action is available and clickable
+  const buttons = Array.from(harness.container.querySelectorAll('button'));
+  const retryBtn = buttons.find((btn) => btn.textContent.includes('Thử lại'));
+  assert.ok(retryBtn, 'Recovery View phải có nút Thử lại');
+
+  await act(async () => {
+    retryBtn.click();
+  });
+
+  assert.equal(
+    retryCalledWith,
+    'failed-resync-session',
+    'Thao tác thử lại phải kích hoạt retryGen với đúng mã phiên',
+  );
+
+  await harness.unmount();
+});
