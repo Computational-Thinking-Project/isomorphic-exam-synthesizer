@@ -1,4 +1,3 @@
-from copy import deepcopy
 from uuid import UUID
 
 import pytest
@@ -12,7 +11,7 @@ from app.models.generation_config import (
 
 
 def request_payload(**overrides: object) -> dict[str, object]:
-    return {"n_versions": 2, "active_variation_modes": ["NUMERICAL"], **overrides}
+    return {"n_versions": 2, **overrides}
 
 
 @pytest.mark.parametrize("n_versions", [1, 4])
@@ -27,71 +26,58 @@ def test_reject_invalid_or_coerced_version_count(n_versions: object) -> None:
         GenerationConfigRequest.model_validate(request_payload(n_versions=n_versions))
 
 
-@pytest.mark.parametrize("field", ["n_versions", "active_variation_modes"])
-def test_required_request_fields(field: str) -> None:
-    payload = request_payload()
-    del payload[field]
+def test_version_count_is_required() -> None:
     with pytest.raises(ValidationError):
-        GenerationConfigRequest.model_validate(payload)
-
-
-def test_modes_are_exact_deduplicated_and_case_sensitive_without_mutation() -> None:
-    payload = request_payload(
-        active_variation_modes=[" NUMERICAL ", "NONE", "NUMERICAL", "numerical", " CUSTOM "]
-    )
-    original = deepcopy(payload)
-    config = GenerationConfigRequest.model_validate(payload)
-    assert config.active_variation_modes == [" NUMERICAL ", "NONE", "NUMERICAL", "numerical", " CUSTOM "]
-    assert payload == original
-
-
-def test_empty_requested_modes_are_allowed() -> None:
-    config = GenerationConfigRequest.model_validate(request_payload(active_variation_modes=[]))
-    assert config.active_variation_modes == []
+        GenerationConfigRequest.model_validate({})
 
 
 @pytest.mark.parametrize(
-    "modes", [None, "NUMERICAL", {"NUMERICAL": True}, [1], [True], [None], [""], [" \t\n"]]
+    "payload", [{"n_versions": 2}, {"n_versions": 2, "active_variation_modes": []}]
 )
-def test_reject_invalid_mode_structure_and_blank_items(modes: object) -> None:
+def test_accept_omitted_or_empty_requested_modes(payload: dict[str, object]) -> None:
+    assert GenerationConfigRequest.model_validate(payload).active_variation_modes == []
+
+
+@pytest.mark.parametrize(
+    "modes", [None, (), "NUMERICAL", {"NUMERICAL": True}, [1], ["NUMERICAL"], ["NONE"], [""]]
+)
+def test_reject_client_selected_modes(modes: object) -> None:
     with pytest.raises(ValidationError):
         GenerationConfigRequest.model_validate(request_payload(active_variation_modes=modes))
 
 
-@pytest.mark.parametrize(
-    ("provided", "expected"),
-    [
-        ({}, {"shuffle_questions": True, "shuffle_options": True}),
-        ({"shuffle_questions": False}, {"shuffle_questions": False, "shuffle_options": True}),
-        ({"shuffle_options": False}, {"shuffle_questions": True, "shuffle_options": False}),
-        (
-            {"shuffle_questions": False, "shuffle_options": False},
-            {"shuffle_questions": False, "shuffle_options": False},
-        ),
-    ],
-)
-def test_default_and_partial_ordering_preferences(
-    provided: dict[str, bool], expected: dict[str, bool]
-) -> None:
-    config = GenerationConfigRequest.model_validate(request_payload(ordering_preferences=provided))
-    assert config.ordering_preferences.model_dump() == expected
+@pytest.mark.parametrize("questions", [False, True])
+@pytest.mark.parametrize("options", [False, True])
+def test_accept_each_explicit_shuffle_combination(questions: bool, options: bool) -> None:
+    prefs = {"shuffle_questions": questions, "shuffle_options": options}
+    config = GenerationConfigRequest.model_validate(request_payload(ordering_preferences=prefs))
+    assert config.ordering_preferences.model_dump() == prefs
 
 
-def test_omitted_ordering_defaults_are_independent() -> None:
+@pytest.mark.parametrize("prefs", [{}, {"shuffle_questions": True}, {"shuffle_options": False}])
+def test_explicit_ordering_requires_both_flags(prefs: dict[str, bool]) -> None:
+    with pytest.raises(ValidationError):
+        GenerationConfigRequest.model_validate(request_payload(ordering_preferences=prefs))
+
+
+def test_omitted_ordering_defaults_are_off_and_independent() -> None:
     first = GenerationConfigRequest.model_validate(request_payload())
     second = GenerationConfigRequest.model_validate(request_payload())
-    first.ordering_preferences.shuffle_options = False
+    first.ordering_preferences.shuffle_options = True
+    first.active_variation_modes.append("test")
+    assert second.active_variation_modes == []
     assert second.ordering_preferences.model_dump() == {
-        "shuffle_questions": True,
-        "shuffle_options": True,
+        "shuffle_questions": False,
+        "shuffle_options": False,
     }
 
 
 @pytest.mark.parametrize("field", ["shuffle_questions", "shuffle_options"])
 @pytest.mark.parametrize("value", [None, 0, 1, 1.0, "true", "false", []])
 def test_ordering_flags_are_strict_booleans(field: str, value: object) -> None:
+    prefs = {"shuffle_questions": False, "shuffle_options": False, field: value}
     with pytest.raises(ValidationError):
-        OrderingPreferences.model_validate({field: value})
+        OrderingPreferences.model_validate(prefs)
 
 
 @pytest.mark.parametrize("value", [None, [], "shuffle"])
@@ -109,11 +95,17 @@ def test_unknown_request_fields_are_rejected(field: str) -> None:
 def test_unknown_nested_fields_are_rejected() -> None:
     with pytest.raises(ValidationError):
         GenerationConfigRequest.model_validate(
-            request_payload(ordering_preferences={"shuffle_answers": True})
+            request_payload(
+                ordering_preferences={
+                    "shuffle_questions": False,
+                    "shuffle_options": False,
+                    "shuffle_answers": True,
+                }
+            )
         )
 
 
-def test_response_serializes_uuid_and_normalized_config() -> None:
+def test_response_preserves_server_derived_modes_and_ordering() -> None:
     response = GenerationConfigResponse.model_validate(
         {
             "success": True,
@@ -121,10 +113,10 @@ def test_response_serializes_uuid_and_normalized_config() -> None:
             "config_id": "22222222-2222-4222-8222-222222222222",
             "status": "configured",
             "config": {
-                **request_payload(active_variation_modes=[]),
+                **request_payload(active_variation_modes=["NUMERICAL", "parameter_variation"]),
                 "ordering_preferences": {"shuffle_questions": True, "shuffle_options": False},
-                "source_manifest": None,
-                "canonical_dimensions": [],
+                "source_manifest": {"sources": []},
+                "canonical_dimensions": ["values"],
                 "mapping_version": "1.0",
             },
         }
@@ -137,10 +129,10 @@ def test_response_serializes_uuid_and_normalized_config() -> None:
         "status": "configured",
         "config": {
             "n_versions": 2,
-            "active_variation_modes": [],
+            "active_variation_modes": ["NUMERICAL", "parameter_variation"],
             "ordering_preferences": {"shuffle_questions": True, "shuffle_options": False},
-            "source_manifest": None,
-            "canonical_dimensions": [],
+            "source_manifest": {"sources": []},
+            "canonical_dimensions": ["values"],
             "mapping_version": "1.0",
         },
     }
@@ -166,8 +158,9 @@ def test_response_rejects_invalid_shape(overrides: dict[str, object]) -> None:
                 "config_id": "22222222-2222-4222-8222-222222222222",
                 "status": "configured",
                 "config": {
-                    **request_payload(),
-                    "source_manifest": None,
+                    **request_payload(active_variation_modes=["NUMERICAL", "parameter_variation"]),
+                    "ordering_preferences": {"shuffle_questions": False, "shuffle_options": False},
+                    "source_manifest": {"sources": []},
                     "canonical_dimensions": ["values"],
                     "mapping_version": "1.0",
                 },

@@ -3,39 +3,33 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 
 
 class OrderingPreferences(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    shuffle_questions: StrictBool = True
-    shuffle_options: StrictBool = True
+    shuffle_questions: StrictBool
+    shuffle_options: StrictBool
 
 
 class GenerationConfigRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     n_versions: int = Field(strict=True, ge=1, le=4)
+    active_variation_modes: list[StrictStr] = Field(default_factory=list, strict=True, max_length=0)
+    ordering_preferences: OrderingPreferences = Field(
+        default_factory=lambda: OrderingPreferences(shuffle_questions=False, shuffle_options=False)
+    )
+
+
+class SavedGenerationConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    n_versions: int = Field(strict=True, ge=1, le=4)
     active_variation_modes: list[StrictStr] = Field(strict=True)
-    ordering_preferences: OrderingPreferences = Field(default_factory=OrderingPreferences)
-
-    @field_validator("active_variation_modes")
-    @classmethod
-    def normalize_modes(cls, modes: list[str]) -> list[str]:
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for item in modes:
-            if not item.strip():
-                raise ValueError("Variation mode IDs must not be blank.")
-            if item not in seen:
-                seen.add(item)
-                normalized.append(item)
-        return normalized
-
-
-class SavedGenerationConfig(GenerationConfigRequest):
-    source_manifest: dict[str, object] | None
+    ordering_preferences: OrderingPreferences
+    source_manifest: dict[str, object]
     canonical_dimensions: list[Literal["values", "context"]]
     mapping_version: Literal["1.0"]
 

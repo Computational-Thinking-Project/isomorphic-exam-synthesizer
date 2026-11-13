@@ -1,7 +1,6 @@
 from collections.abc import Callable, Iterator
 from copy import deepcopy
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, call
@@ -20,12 +19,10 @@ from app.models.generation_config import GenerationConfigRequest, GenerationConf
 from app.models.schemas import CurrentUser
 from app.services.generation.config_repository import GenerationConfigStore
 from app.services.generation.config_service import (
-    BlueprintConfigContext,
     CanonicalBlueprintConfigContext,
     GenerationConfigContext,
     GenerationConfigError,
     SourceQuestionConfigContext,
-    VariationModeConflict,
 )
 
 SESSION_ID = UUID(int=101)
@@ -44,8 +41,21 @@ STORAGE_DETAIL = {
 }
 
 
+def make_manifest(session_id: UUID) -> dict[str, object]:
+    return {"confirmation_id": str(session_id), "sources": []}
+
+
 def make_context(session_id: UUID = SESSION_ID) -> GenerationConfigContext:
     ids = (UUID(int=session_id.int * 10 + 1), UUID(int=session_id.int * 10 + 2))
+    transformation = {
+        "id": "replace_values",
+        "dimension": "values",
+        "description": "Replace numerical values",
+        "target_refs": [],
+        "preconditions": [],
+        "limits": [],
+    }
+    blueprint = {"requirement": {"variation_policy": {"allowed_transformations": [transformation]}}}
     return GenerationConfigContext(
         session_id=session_id,
         status="blueprinted",
@@ -53,19 +63,16 @@ def make_context(session_id: UUID = SESSION_ID) -> GenerationConfigContext:
             SourceQuestionConfigContext(id=question_id, session_id=session_id)
             for question_id in ids
         ),
-        blueprints=tuple(
-            BlueprintConfigContext(
-                source_question_id=question_id,
-                variation_modes=["NUMERICAL", "NONE"] if index == 0 else ["NONE"],
-                confirmed_at=datetime(2026, 10, 26, tzinfo=timezone.utc),
-            )
-            for index, question_id in enumerate(ids)
+        snapshot_ready=True,
+        expected_snapshot=make_manifest(session_id),
+        canonical_blueprints=tuple(
+            CanonicalBlueprintConfigContext(question_id, blueprint) for question_id in ids
         ),
     )
 
 
 def payload(**overrides: object) -> dict[str, object]:
-    return {"n_versions": 2, "active_variation_modes": ["NONE"], **overrides}
+    return {"n_versions": 2, **overrides}
 
 
 def receipt(
@@ -84,9 +91,9 @@ def receipt(
             "n_versions": selected["n_versions"],
             "active_variation_modes": modes,
             "ordering_preferences": selected.get(
-                "ordering_preferences", {"shuffle_questions": True, "shuffle_options": True}
+                "ordering_preferences", {"shuffle_questions": False, "shuffle_options": False}
             ),
-            "source_manifest": manifest,
+            "source_manifest": make_manifest(session_id) if manifest is None else manifest,
             "canonical_dimensions": ["values"] if "NUMERICAL" in modes else [],
             "mapping_version": "1.0",
         },
@@ -219,8 +226,8 @@ def api(monkeypatch: pytest.MonkeyPatch) -> Iterator[ApiHarness]:
         yield ApiHarness(client, store, db, factory, ownership, auth, authenticated_client, owners)
 
 
-def test_success_normalizes_request_and_reuses_auth_and_ownership(api: ApiHarness) -> None:
-    response = api.post(payload(active_variation_modes=["NONE", "NONE"]))
+def test_success_defaults_and_reuses_auth_and_ownership(api: ApiHarness) -> None:
+    response = api.post(payload())
     assert response.status_code == 200
     assert response.json() == receipt()
     api.auth.auth.get_user.assert_called_once_with(TOKEN_A)
@@ -229,17 +236,20 @@ def test_success_normalizes_request_and_reuses_auth_and_ownership(api: ApiHarnes
     api.factory.assert_called_once_with(api.db)
     assert api.store.load_calls == [SESSION_ID]
     assert api.store.save_calls[0][1].active_variation_modes == []
-    assert api.store.save_calls[0][2] is None
+    assert api.store.save_calls[0][2] == make_manifest(SESSION_ID)
     assert response.headers["X-RateLimit-Limit"] == "60"
 
 
 @pytest.mark.parametrize("session_status", ["blueprinted", "configured"])
-def test_empty_modes_and_partial_false_ordering_are_preserved(
+def test_empty_modes_and_explicit_ordering_are_preserved(
     api: ApiHarness, session_status: str
 ) -> None:
     api.store.contexts[SESSION_ID] = replace(make_context(), status=session_status)
     response = api.post(
-        payload(active_variation_modes=[], ordering_preferences={"shuffle_options": False})
+        payload(
+            active_variation_modes=[],
+            ordering_preferences={"shuffle_questions": True, "shuffle_options": False},
+        )
     )
     assert response.status_code == 200
     assert response.json()["config"]["active_variation_modes"] == []
@@ -260,10 +270,15 @@ def test_save_again_uses_configured_context_and_returns_latest_fake_record(api: 
 
 
 def test_returns_validated_saved_data_instead_of_echoing_request(api: ApiHarness) -> None:
-    api.store.saved_result = receipt(config={"n_versions": 4, "active_variation_modes": []})
+    api.store.saved_result = receipt(
+        config={"n_versions": 2, "active_variation_modes": ["NUMERICAL", "parameter_variation"]}
+    )
     response = api.post(payload(n_versions=2))
     assert response.status_code == 200
-    assert response.json()["config"]["n_versions"] == 4
+    assert response.json()["config"]["active_variation_modes"] == [
+        "NUMERICAL",
+        "parameter_variation",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -316,14 +331,16 @@ def test_invalid_uuid_is_rejected_before_endpoint_body(api: ApiHarness) -> None:
     "body",
     [
         {},
-        {"n_versions": 2},
         payload(n_versions=True),
         payload(n_versions=5),
         payload(n_versions="2"),
         payload(active_variation_modes=None),
         payload(active_variation_modes=[""]),
+        payload(active_variation_modes=["NUMERICAL"]),
+        payload(active_variation_modes=["NONE"]),
         payload(ordering_preferences=None),
-        payload(ordering_preferences={"shuffle_options": "false"}),
+        payload(ordering_preferences={"shuffle_options": False}),
+        payload(ordering_preferences={"shuffle_questions": False, "shuffle_options": "false"}),
         payload(user_id=USER_B),
         payload(status="configured"),
     ],
@@ -349,16 +366,15 @@ def test_invalid_session_state_returns_domain_409_without_save(
     assert api.store.save_calls == []
 
 
-@pytest.mark.parametrize("problem", ["empty_sources", "missing_blueprint", "unconfirmed_blueprint"])
+@pytest.mark.parametrize("problem", ["empty_sources", "missing_blueprint", "no_confirmation"])
 def test_source_readiness_returns_domain_422_without_save(api: ApiHarness, problem: str) -> None:
     context = make_context()
     if problem == "empty_sources":
-        context = replace(context, source_questions=(), blueprints=())
+        context = replace(context, source_questions=(), canonical_blueprints=())
     elif problem == "missing_blueprint":
-        context = replace(context, blueprints=context.blueprints[:1])
+        context = replace(context, canonical_blueprints=context.canonical_blueprints[:1])
     else:
-        first, second = context.blueprints
-        context = replace(context, blueprints=(replace(first, confirmed_at=None), second))
+        context = replace(context, snapshot_ready=False, snapshot_reason="NO_CONFIRMATION")
     api.store.contexts[SESSION_ID] = context
     response = api.post(payload(active_variation_modes=[]))
     assert response.status_code == 422
@@ -366,59 +382,16 @@ def test_source_readiness_returns_domain_422_without_save(api: ApiHarness, probl
     assert api.store.save_calls == []
 
 
-def test_mode_conflicts_return_question_details_without_save(api: ApiHarness) -> None:
-    response = api.post(payload(active_variation_modes=["NUMERICAL"]))
-    assert response.status_code == 400
-    assert response.json()["detail"]["code"] == "ERR_CONFIG_CONFLICT"
-    assert response.json()["detail"]["conflicts"] == [
-        {
-            "source_question_id": str(make_context().source_questions[1].id),
-            "unsupported_modes": ["NUMERICAL"],
-        }
-    ]
-    assert api.store.save_calls == []
-
-
-@pytest.mark.parametrize("modes", [["NONE", "NUMERICAL"], ["numerical"], [" NUMERICAL "], ["STRUCTURAL"]])
-def test_unpublished_or_mixed_modes_return_public_400(api: ApiHarness, modes: list[str]) -> None:
-    response = api.post(payload(active_variation_modes=modes))
-    assert response.status_code == 400
-    assert response.json()["detail"]["code"] == "ERR_CONFIG_CONFLICT"
-    assert api.store.save_calls == []
-
-
 def test_canonical_preflight_passes_exact_manifest_to_save(api: ApiHarness) -> None:
-    old = make_context()
-    manifest = {"confirmation_id": "fixture", "sources": [{"source_question_id": str(source.id)} for source in old.source_questions]}
-    api.store.contexts[SESSION_ID] = replace(
-        old,
-        blueprints=(),
-        snapshot_ready=True,
-        snapshot_reason=None,
-        expected_snapshot=manifest,
-        canonical_blueprints=tuple(
-            CanonicalBlueprintConfigContext(
-                source_question_id=source.id,
-                canonical_blueprint={"requirement": {"variation_policy": {"allowed_transformations": [{"dimension": "values"}]}}},
-            )
-            for source in old.source_questions
-        ),
-    )
-    response = api.post(payload(active_variation_modes=["NUMERICAL"]))
+    context = make_context()
+    manifest = {
+        "confirmation_id": "fixture",
+        "sources": [{"source_question_id": str(source.id)} for source in context.source_questions],
+    }
+    api.store.contexts[SESSION_ID] = replace(context, expected_snapshot=manifest)
+    response = api.post(payload(active_variation_modes=[]))
     assert response.status_code == 200
     assert api.store.save_calls[0][2] == manifest
-
-
-def test_malformed_stored_modes_return_safe_500(api: ApiHarness) -> None:
-    context = make_context()
-    first, second = context.blueprints
-    api.store.contexts[SESSION_ID] = replace(
-        context, blueprints=(replace(first, variation_modes=None), second)
-    )
-    response = api.post(payload(active_variation_modes=[]))
-    assert response.status_code == 500
-    assert response.json() == {"detail": STORAGE_DETAIL}
-    assert api.store.save_calls == []
 
 
 @pytest.mark.parametrize("phase", ["factory", "read", "save"])
@@ -486,22 +459,6 @@ def test_snapshot_load_domain_error_is_preserved(api: ApiHarness) -> None:
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "ERR_SOURCE_NOT_READY"
     assert api.store.save_calls == []
-
-
-def test_save_recheck_mode_conflicts_keep_details(api: ApiHarness) -> None:
-    question_id = make_context().source_questions[0].id
-    api.store.save_error = GenerationConfigError(
-        400,
-        "ERR_CONFIG_CONFLICT",
-        "Blueprint changed before save.",
-        (VariationModeConflict(question_id, ("NONE",)),),
-    )
-    response = api.post(payload())
-    assert response.status_code == 400
-    assert response.json()["detail"]["conflicts"] == [
-        {"source_question_id": str(question_id), "unsupported_modes": ["NONE"]}
-    ]
-    assert api.store.saved == {}
 
 
 @pytest.mark.parametrize(
