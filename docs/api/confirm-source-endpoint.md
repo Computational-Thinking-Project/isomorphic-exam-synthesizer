@@ -4,6 +4,13 @@ Current backend contract on `fix/be1-source-confirm-contract`; FE1 adoption and
 independent review remain separate gates. See [handoff](source-confirm-handoff.md)
 and [real test evidence](source-confirm-test-evidence.md).
 
+W4-MVP-01 ingestion boundary: ingest-file and ingest-text persist parsed draft
+source without scheduling legacy `question_blueprints` extraction. Canonical
+production continues through the existing confirmation/retry flow below, after
+the durable confirmation receipt. Ingestion request/response contracts and
+source revision behavior are unchanged. This local code change does not assert
+that any deployed database or frontend has been updated.
+
 1. GET `/api/sessions/{id}` with owner JWT. Echo its UUID `source_revision`.
    Revision and ordered source questions come from one locked RPC snapshot.
 2. POST `/api/sessions/{id}/confirm-source` with owner JWT, JSON content type,

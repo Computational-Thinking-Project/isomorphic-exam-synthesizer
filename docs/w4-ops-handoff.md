@@ -2,7 +2,7 @@
 
 ## Baseline hiện hành 11/11 — đọc trước các mốc lịch sử
 
-Checkpoint source sync dev74d2135; runtime đã build vẫn là294c69a: PR51 và PR52 đã merge; 017 có reviewer PostgreSQL23/23 proof, chưa có applied ledger DB ứng dụng. PR30 vẫn Open tại `66ad00c`, đã Approve phạm vi W2; F02 resource bounds đã reviewer verified, không còn chờ sửa F02. Worker/metrics/SSE vẫn chưa thuộc base này. PR54/018 đã merged vào dev21887c1; PR61/019@9fda6fd đã Approve, chưa merged/applied; W4 adapter tách issue64; không tự ghép PR heads làm candidate đã nghiệm thu. [Migration checkpoint](w4-migration-candidate.md) và [input-handoff duy nhất](tasks/TASK-W4-OPS.md#input-handoff) ghi nguồn/version và phần còn thiếu.
+Checkpoint source sync devb47e4fa; runtime đã build vẫn là294c69a: PR51 và PR52 đã merge; 017 có reviewer PostgreSQL23/23 proof, chưa có applied ledger DB ứng dụng. PR30 vẫn Open tại `66ad00c`, đã Approve phạm vi W2; F02 resource bounds đã reviewer verified, không còn chờ sửa F02. Worker/metrics/SSE vẫn chưa thuộc base này. PR54/018 đã merged vào dev21887c1; PR61/019@9fda6fd đã Approve, đã merged vào devb47e4fa; DB-applied UNVERIFIED; W4 adapter tách issue64; không tự ghép PR heads làm candidate đã nghiệm thu. [Migration checkpoint](w4-migration-candidate.md) và [input-handoff duy nhất](tasks/TASK-W4-OPS.md#input-handoff) ghi nguồn/version và phần còn thiếu.
 
 Ngày11/11 build static base294c69a với cấu hình mẫu rỗng trong project cô lập: preflight/health/SPA/OpenAPI proxy PASS, anonymous sessions401 cả trực tiếp/proxy, Typst0.11.1. Chưa gọi dịch vụ thật; không chứng nhận G0/G1/G2. Lifecycle policy dưới đây giữ nguyên, không thay từ kết quả health.
 

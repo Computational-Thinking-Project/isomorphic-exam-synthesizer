@@ -25,6 +25,7 @@ const sampleSession = {
     { id: 'q5', question_no: 5, question_text: 'Câu 5' },
   ],
   blueprint_summary: {
+    is_ready: true,
     total_questions: 5,
     supported_modes: [
       {
@@ -322,6 +323,7 @@ test('Stage2ConfigCard chỉ hiển thị chế độ thật mà Blueprint hỗ 
     status: 'blueprinted',
     source_questions: [{ id: 'q1', question_no: 1 }],
     blueprint_summary: {
+      is_ready: true,
       total_questions: 1,
       supported_modes: [
         {
@@ -465,6 +467,30 @@ test('Stage2ConfigCard hỗ trợ bật/tắt xáo trộn đáp án shuffle_opti
 
   assert.ok(submittedPayload);
   assert.equal(submittedPayload.ordering_preferences.shuffle_options, true, 'Payload phải gửi shuffle_options: true');
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigCard khóa submit và hiển thị cảnh báo khi blueprint_summary thiếu is_ready (INT-02 strict readiness)', async () => {
+  const sessionMissingIsReady = {
+    ...sampleSession,
+    blueprint_summary: {
+      total_questions: 5,
+      supported_modes: [
+        { id: 'parameter_variation', label: 'Thay đổi số liệu', is_available: true },
+      ],
+      // is_ready bị thiếu (legacy hoặc unready metadata)
+    },
+  };
+
+  const harness = renderCard({ session: sessionMissingIsReady });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('Chưa có thông tin Blueprint khả dụng'), 'Phải cảnh báo Blueprint chưa sẵn sàng');
+
+  const submitBtn = harness.container.querySelector('button[type="submit"]');
+  assert.equal(submitBtn.getAttribute('disabled') !== null, true, 'Nút submit phải bị vô hiệu hóa khi thiếu is_ready');
 
   await harness.unmount();
 });

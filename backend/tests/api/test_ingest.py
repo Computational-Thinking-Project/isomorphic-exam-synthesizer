@@ -1,7 +1,7 @@
 """Unit tests for Exam Ingestion API Endpoints (TASK-202)."""
 
 import io
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import docx
 import httpcore
@@ -22,6 +22,55 @@ def mock_auth_user(mock_user_response):
     mock_supabase = MagicMock()
     mock_supabase.auth.get_user.return_value = mock_user_response
     return mock_supabase
+
+
+@pytest.mark.parametrize("kind", ["text", "file"])
+def test_ingest_persists_draft_without_scheduling_blueprints(
+    client, mock_auth_user, auth_headers, kind
+):
+    """Neither ingest entry point may start Blueprint work before confirmation."""
+    mock_db = MagicMock()
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.side_effect = [
+        MagicMock(data=[{"user_id": mock_auth_user.auth.get_user.return_value.user.id}]),
+        MagicMock(data=[{"status": "draft"}]),
+    ]
+    raw_text = "Câu 1: Cho $x = 1$. Giá trị của $x$ là:\nA. 1  B. 2  C. 3  D. 4\nBẢNG ĐÁP ÁN: 1.A"
+    saved = [{"id": "q-1", "session_id": MOCK_SESSION_ID, "question_no": 1,
+              "raw_content": "Cho $x = 1$. Giá trị của $x$ là:",
+              "options": {"A": "1", "B": "2", "C": "3", "D": "4"}, "correct_key": "A"}]
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+        patch("app.api.routes.sessions.replace_source_questions_atomically",
+              new_callable=AsyncMock, return_value=saved) as replace,
+        patch("app.api.routes.sessions.upload_exam_file_to_storage", new_callable=AsyncMock) as upload,
+        patch("starlette.background.BackgroundTasks.add_task") as schedule,
+    ):
+        if kind == "text":
+            response = client.post(f"/api/sessions/{MOCK_SESSION_ID}/ingest-text",
+                                   json={"raw_text": raw_text}, headers=auth_headers)
+        else:
+            response = client.post(f"/api/sessions/{MOCK_SESSION_ID}/ingest-file",
+                                   files={"file": ("source.md", raw_text.encode(), "text/markdown")},
+                                   headers=auth_headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["questions"] == saved
+    replace.assert_awaited_once()
+    assert replace.await_args.kwargs["session_id"] == MOCK_SESSION_ID
+    assert len(replace.await_args.kwargs["questions"]) == 1
+    assert upload.await_count == (1 if kind == "file" else 0)
+    schedule.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_retired_ingest_hook_cannot_write_late_blueprints():
+    """An old in-process caller of the hook cannot race confirmation/re-import."""
+    from app.services.parser.ingestion_service import trigger_blueprint_pipeline
+
+    db = MagicMock()
+    await trigger_blueprint_pipeline(MOCK_SESSION_ID, [{"id": "obsolete-source"}], db)
+    db.table.assert_not_called()
+    db.rpc.assert_not_called()
 
 
 def test_postreview_confirm_ingest_race_is_409(client, mock_auth_user, auth_headers):

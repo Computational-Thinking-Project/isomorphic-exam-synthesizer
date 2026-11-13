@@ -12,7 +12,16 @@ export function sessionDestination(session) {
   if (session.status === 'draft') {
     return { path: stage1Path(session.id), notice: '' };
   }
-  if (['blueprinted', 'configured', 'generating'].includes(session.status)) {
+  if (session.status === 'blueprinted') {
+    return {
+      path:
+        session.blueprint_summary?.is_ready === true
+          ? stage2Path(session.id)
+          : stage1Path(session.id),
+      notice: '',
+    };
+  }
+  if (['configured', 'generating'].includes(session.status)) {
     return { path: stage2Path(session.id), notice: '' };
   }
   if (['partial_generated', 'generated'].includes(session.status)) {

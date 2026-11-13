@@ -1,12 +1,12 @@
 # W4 migration checkpoint — Git inventory, không phải applied ledger
 
-Đạt cập nhật 13/11/2026, đồng bộ `dev@74d2135`; runtime local đã build vẫn ghim294c69a. [Historical inventory73583d7](w4-migration-inventory.md) giữ nguyên; không dùng bản lịch sử để suy DB hiện đã áp migration nào. SHA256 dưới đây tính từ **Git blob bytes**, không từ working-copy CRLF.
+Đạt cập nhật 13/11/2026, đồng bộ `dev@b47e4fa`; runtime local đã build vẫn ghim294c69a. [Historical inventory73583d7](w4-migration-inventory.md) giữ nguyên; không dùng bản lịch sử để suy DB hiện đã áp migration nào. SHA256 dưới đây tính từ **Git blob bytes**, không từ working-copy CRLF.
 
 | Migration / nguồn ghim | SHA256 Git blob | Trạng thái đủ dùng cho OPS |
 |---|---|---|
 | `017_generation_lifecycle_recovery.sql` — dev294c69a, PR52 đã merge | `76544a154a9230529cbb385958784e32dcfb93bcc17f358622f5b82ef721fdff` | Merged/reviewer verified; DB-applied và live recovery UNVERIFIED |
 | `018_review_current_snapshot.sql` — PR54@7c7200f4cc5b02a355a60993a19b1fc865f81579 | `4e36271d5254343c228132f22e765dfe76b09a518e06a8f898d36701ea14012d` | Merged vào dev tại21887c1; Git blob/checksum giữ nguyên, DB-applied UNVERIFIED |
-| `019_w4_source_readiness_config.sql` — PR61@9fda6fd568a992ca64172cbcb1047c0ac41f6f31 | `5ca0464ddaac534caa0f85c615cc31dee187bee32e5ee7a19609b976dd2ce6ba` | Open/Đạt Approve, F01/F02 verified; chưa merged/applied, chưa phải approved deployment manifest |
+| `019_w4_source_readiness_config.sql` — PR61@9fda6fd568a992ca64172cbcb1047c0ac41f6f31 | `5ca0464ddaac534caa0f85c615cc31dee187bee32e5ee7a19609b976dd2ce6ba` | Merged/Đạt Approve, F01/F02 verified; devb47e4fa, DB-applied UNVERIFIED, chưa phải approved deployment manifest |
 
 ## Bằng chứng đã kiểm và giới hạn
 

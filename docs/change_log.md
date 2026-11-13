@@ -1,12 +1,30 @@
 ## OPS11/21 checkpoint — 13/11/2026
 
-- Đạt tiếp nối PR51 đã merge bằng nhánh OPS mới từ dev294c69a. Cập nhật task/input-handoff, runbook và migration checkpoint017/018 merged; 019 ở PR61 đã Approve, chưa merge; giữ historical inventory73583d7, không tạo applied ledger giả.
+- Đạt tiếp nối PR51 đã merge bằng nhánh OPS mới từ dev294c69a. Cập nhật task/input-handoff, runbook và migration checkpoint017/018 merged; 019 đã merge qua PR61 tại devb47e4fa; giữ historical inventory73583d7, không tạo applied ledger giả.
 - Independent review: #54 Approve (23 PostgreSQL +198 API/review tests pass), #56 Approve docs; #61@9fda6fd Approve, F01/F02 verified (345pass/1optional worker-skip); #30@66ad00c Approve phạm vi W2, adapter W4 tách issue64. Không sửa nhánh author.
 - Static Docker build từ Git archive base294c69a, env mẫu rỗng/project riêng: healthy, preflight+HTTP smoke PASS, anonymous sessions401 direct/proxy, Typst0.11.1. Cleanup đúng project. Không dùng cloud hoặc env thật; chưa DB-applied/Auth/Gemini/SSE/Storage/Golden/G0/G1/G2 acceptance.
 - Input còn thiếu giữ ID/source tại TASK-W4-OPS#input-handoff. Không đổi owner, lịch, prompt hoặc ENV0; từng module tự quản Docker của mình.
 
 
+
 ---
+
+## DEC-W4-MVP-01-019: Canonical-only generation configuration defaults and source readiness guards (proposed)
+
+- **Ngày / người đề xuất:** 10/11/2026 — Duy (W4-MVP-01), phối hợp reviewer Hùng / Đạt.
+- **Ngữ cảnh & Vấn đề:**
+  1. Ingest (/ingest-file, /ingest-text) tự động kích hoạt trigger_blueprint_pipeline trước khi người dùng xác nhận đề nguồn, vi phạm ADR-0001 (xác nhận trước khi sinh canonical Blueprint).
+  2. Bảng generation_configs và RPC save_generation_config có cấu hình mặc định ordering_preferences là {"shuffle_questions": true, "shuffle_options": true}, mâu thuẫn với yêu cầu Issue #45 (mặc định tắt cả hai tùy chọn xáo trộn).
+  3. Cần kiểm tra chặt chẽ n_versions (1-4), ràng buộc boolean nghiêm ngặt cho shuffle_questions và shuffle_options (chấp nhận cả 4 tổ hợp), chặn client tự ý chọn variation modes, và chặn generation khi canonical Blueprint chưa ready.
+  4. Thiếu RPC/endpoint cho phép chỉnh sửa ordering preferences ở Stage 3 trước finalization (S05-S06).
+- **Quyết định mới:**
+  1. Loại bỏ việc gọi trigger_blueprint_pipeline ngầm trong các endpoint ingest; biến hook cũ thành safe no-op.
+  2. Đồng bộ mặc định ordering_preferences thành {"shuffle_questions": false, "shuffle_options": false} trên cả schema.sql và migration 019.
+  3. Migration 019 (019_w4_source_readiness_config.sql):
+     - save_generation_config: client chỉ được truyền active_variation_modes = '[]' (server tự suy ra từ canonical blueprint allowed transformations); chặn pending/failed/malformed canonical sources; kiểm tra N 1-4; validate strict booleans cho shuffle preferences; snapshot manifest check; session lock.
+     - update_generation_ordering_preferences: RPC cho Stage 3 cho phép cập nhật shuffle preferences khi session ở trạng thái reviewed và chưa bị finalize/approve; khóa hàng session cha để chống race condition.
+  4. Thêm API endpoint PATCH /api/sessions/{session_id}/ordering-preferences (alias PATCH /api/sessions/{session_id}/preferences).
+- **Phạm vi ảnh hưởng:** backend/app/api/routes/sessions.py, backend/app/models/schemas.py, backend/app/services/parser/ingestion_service.py, backend/migrations/019_w4_source_readiness_config.sql, backend/scripts/schema.sql, docs/api/generation-config-endpoint.md, test suites.
 
 ## DEC-W4-MVP-03: Review Read API và Atomic Snapshot RPC (08/11/2026, proposed - remediated 09/11/2026)
 
