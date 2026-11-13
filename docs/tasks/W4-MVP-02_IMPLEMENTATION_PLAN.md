@@ -2,9 +2,9 @@
 
 - **Nguồn giao việc:** [W4_ASSIGNMENT v2.1](W4_ASSIGNMENT.md) và [W4_TASK_DETAIL](W4_TASK_DETAIL.md) trên `dev@6bcb9f7`; phạm vi triển khai cụ thể tại [Issue #64](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/64). Hai file W4 vẫn ghi trạng thái kế hoạch/chờ xác nhận của từng owner; các trạng thái PR trong đó là snapshot cũ.
 - **Phụ trách:** Quỳnh (`nhatquynh1107`), Python generation adapter và fallback producer. **Reviewer đề xuất trong Issue #64:** Đạt (`Thanhdat3010`) cho DB/OPS; Duy (`johannguyen015`) giữ BE/DB contract và integration; Bội Anh (`htbaax`) phối hợp FE. Reviewer GitHub cho PR mới chưa được chốt.
-- **Repo/nhánh:** `isomorphic-exam-synthesizer`, `feat/w4-mvp-02-generation-contract-adapter` từ `dev@6bcb9f7`. **PR:** [Draft #67](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/67) ở plan head `761cac5`, chỉ có M2; không sửa PR #30 đã merge.
+- **Repo/nhánh:** `isomorphic-exam-synthesizer`, `feat/w4-mvp-02-generation-contract-adapter` từ `dev@6bcb9f7`. **PR:** [Draft #67](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/67). Head GitHub tại checkpoint vẫn là plan `761cac5`; Phase A đã được triển khai local trên nhánh W4.
 - **Hạn và ETA:** W4_ASSIGNMENT ghi mốc mục tiêu W4-MVP-02 ngày 10/11, Issue #64 đề xuất integration candidate 13/11, G1 14/11 và demo 15/11. Tại thời điểm lập plan 13/11, mốc 10/11 đã qua; **Quỳnh chưa xác nhận ETA triển khai hoặc ca phối hợp cuối tuần**. Cần Quỳnh phản hồi khả năng nhận việc/ETA và Duy điều phối lại nếu chuỗi phụ thuộc không khả thi; không coi các mốc kế hoạch là cam kết cá nhân.
-- **Workflow:** v0.1 và INPUT-20261109 đều **proposed**; M2 nằm ở file này, M3 sẽ ở Draft PR body theo head được push. Trạng thái hiện tại: **plan-only**, chưa triển khai hay kiểm W4 adapter.
+- **Workflow:** v0.1 và INPUT-20261109 đều **proposed**. M2 nằm ở file này. Cập nhật M3 trong Draft PR body theo head được push.
 
 ## Mình cần làm gì?
 
@@ -15,7 +15,7 @@
 - **C5 — generation fallback:** sau 1 initial + 3 retries không có AI candidate hợp lệ, dùng đúng confirmed source revision cho slot hiện hành, cảnh báo và `pending_review`, không auto-approve hay export khi thiếu dữ liệu bắt buộc. Chỉ triển khai DB write/provenance sau khi Duy chốt contract Q01 và writer.
 - **Tiêu chí bàn giao:** unit/API regression cho C1–C5; real disposable PostgreSQL chain 002–019 và HTTP→RPC→claim→worker với Duy/Đạt; Golden/live chỉ ghi Integrated khi có deployed SHA, ledger, tài khoản và log cùng môi trường. Checklist chi tiết giữ tại Issue #64; không tick trước khi kiểm.
 - **Ngoài phạm vi:** không đưa W4 vào PR #30; không rewrite generation engine, validator, metrics, SSE/recovery nếu không có regression cụ thể; không sửa review Revert RPC, export, UI, migration 019 signature/grants hoặc cloud DB khi chưa có owner quyết định/quyền tương ứng.
-- **Hiện đã có:** PR [#30](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30) W2 merge vào `dev@6bcb9f7`; PR [#61](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/61) migration/contract 019 đã merge. Đây là **code/contract có sẵn**, không phải bằng chứng Python adapter W4 hoặc applied ledger trên Supabase nhóm. Nhánh task hiện chưa có commit implementation riêng so với `dev`.
+- **Hiện đã có:** PR [#30](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/30) W2 merge vào `dev@6bcb9f7`; PR [#61](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/61) đã giao migration/contract 019. Phase A nối Python với contract này. Bằng chứng ledger Supabase vẫn chờ theo I-OPS-DB/ENV0.
 
 ## File và thứ tự triển khai
 
@@ -28,13 +28,13 @@
 | C5 — generation fallback producer và tests liên quan; file cụ thể chốt sau contract | Four-attempt confirmed-source fallback với provenance, warning và pending review | Không lưu AI invalid như hợp lệ; một current row/slot; missing key/solution fail closed | Q01 và DB writer/provenance do Duy chốt | Provider/validator failure, attempt 4, duplicate retry, restart và real DB writer test |
 | Handoff — contract docs và `docs/change_log.md` **nếu** API/data contract đổi | Ghi đúng quyết định mới và JSON request/receipt | FE/BE/OPS dùng cùng revision; không ghi proposed thành accepted | Quyết định owner và diff thực tế | Kiểm link, Markdown, diff; M3 dẫn exact SHA và checks |
 
-## Kế hoạch nhánh và commit theo phase — đề xuất, chưa triển khai
+## Kế hoạch nhánh và commit theo phase
 
 **Nguyên tắc:** Một branch/PR cho một đầu ra review được. C1–C5 mặc định tiếp tục trên Draft #67; không tạo branch cho từng commit. Các branch khác chỉ tạo khi gate ở bảng dưới đạt và Quỳnh/Duy xác nhận thứ tự tích hợp. Mọi commit message và file là **dự kiến**, không phải cam kết file đã sửa; khi code cho thấy phạm vi khác, cập nhật M2/M3 cùng lý do trước review. Không sửa M1 W4_ASSIGNMENT/W4_TASK_DETAIL do Duy quản lý để tự đổi owner hoặc deadline.
 
 | Nhánh / PR | Base và điều kiện tạo | Scope và đầu ra | Quyết định hiện tại |
 |---|---|---|---|
-| `feat/w4-mvp-02-generation-contract-adapter` / Draft #67 | Đã có từ `dev@6bcb9f7`; đồng bộ `dev` mới theo diff trước mỗi lượt code | C1–C4, C5 khi Q01/writer đủ dùng, DB regression, contract docs; review/merge W4-MVP-02 vào `dev` | **Đường chính.** Giữ plan, code và phản hồi trên cùng PR; chưa có implementation commit. |
+| `feat/w4-mvp-02-generation-contract-adapter` / Draft #67 | Đã có từ `dev@6bcb9f7`; đồng bộ `dev` mới theo diff trước mỗi lượt code | C1–C4, C5 khi Q01/writer đủ dùng, DB regression, contract docs; review/merge W4-MVP-02 vào `dev` | **Đường chính.** Phase A giữ request, preflight và receipt trong cùng một thay đổi để đường lưu config chạy nhất quán. |
 | `feat/w4-mvp-02-confirmed-source-fallback` / stacked PR **chỉ nếu cần** | Tạo từ head #67 sau C1–C4 khi Duy xác nhận C5 writer đến muộn hoặc cần review DB riêng; PR tạm base #67, retarget `dev` sau khi #67 merge | Chỉ C5 producer/DB adapter + tests, không chép C1–C4 hoặc sửa SQL/review RPC của Duy | **Chưa tạo.** Nếu tách, cập nhật scope #67 và Issue #64; hai PR cộng lại mới đạt W4-MVP-02. Nếu writer đến kịp thì làm C5 ngay trên #67. |
 | `test/w4-mvp-13-golden-e2e` / PR evidence **nếu có artifact cần version** | Tạo từ `dev` đã chứa adapter và P0 dependencies; chỉ sau khi Duy/Đạt giao deployed SHA, ledger, quyền test và Q14 fixture/oracle | Script/fixture kiểm Golden và báo cáo G0/G1/G2 có SHA, môi trường, PASS/FAIL/BLOCKED; không tự sửa module owner khác | **Chưa tạo/chưa chạy live.** Nếu chỉ cần bằng chứng ở PR/tracker hiện có, dùng nơi đó thay vì tạo branch tài liệu trùng. |
 | `test/w4-mvp-17-regression` / P1 **tùy điều kiện** | Chỉ từ `dev` sau Golden attempt `13a` và negative baseline `12a`, khi P0 không cần cùng thời gian | Tối đa hai fixture/recorded regression, status matrix và evidence trung thực | **Chưa tạo.** Nếu không đủ input/thời gian ghi `P1_BLOCKED` hoặc `NOT_RUN`, không làm chậm G1. |
@@ -43,7 +43,9 @@
 
 ### Phase A — request, readiness và receipt trên Draft #67
 
-| Commit dự kiến | File dự kiến sửa và lý do | Điều kiện / kiểm trước khi commit |
+Ba hàng dưới mô tả từng phần của Phase A. Request và receipt dùng chung endpoint, nên commit triển khai gộp C1–C3 để tránh một bản trung gian chấp nhận `[]` nhưng báo lỗi sau khi DB trả modes đã suy ra.
+
+| Phần theo kế hoạch | File dự kiến sửa và lý do | Điều kiện / kiểm trước khi commit |
 |---|---|---|
 | `fix(generation): accept W4 neutral config requests` | `backend/app/models/generation_config.py`: tách request validation khỏi saved response, default OFF/OFF và strict modes/N/bool; `backend/tests/generation/test_config_models.py`: biên omitted/`[]`/nonempty/null/type và bốn shuffle combinations; `backend/tests/api/test_generation_config.py`: HTTP 422 và response server-derived. Chỉ chạm `backend/app/api/routes/generation_config.py` nếu model binding/error mapping thực tế cần đổi. | #61/Issue #45 đã giao; unit/API tests của các trường hợp trên. |
 | `fix(generation): require canonical config readiness` | `backend/app/services/generation/config_service.py`: loại legacy `NO_CONFIRMATION` khỏi W4 save path; `backend/app/services/generation/config_repository.py`: giữ snapshot provenance, owner/revision/manifest fail-closed; `backend/tests/generation/test_config_service.py` và `test_config_repository.py`: stale/incomplete/malformed/cross-user và zero-write khi preflight reject; `backend/tests/api/test_generation_config.py`: HTTP status. | Đối chiếu `get_generation_source_snapshot` từ #61 và trạng thái code thật; SQL parent lock vẫn là authority cuối. |
@@ -89,11 +91,13 @@
 - C2–C3: owner/foreign user, missing/stale/partial canonical source, malformed transformations, revision/manifest conflict, zero RPC write khi preflight reject; RPC receipt thực và outcome uncertain reload policy.
 - C4–C5: frozen AI/Clone dispatch, zero Gemini cho clone, seed/slot/idempotency; 4 attempts, provider/validator failure, confirmed revision/solution, duplicate retry, restart/resume, không tạo valid candidate giả.
 - Môi trường: trước tiên unit/API mock và disposable PostgreSQL 17 với chain 002–019; Ruff/mypy và backend regression. Chỉ khi được giao môi trường thật mới kiểm HTTP→PostgREST→worker/SSE/Gemini/FE và ghi deployed SHA, project, vai trò, kết quả, giới hạn. Không chạy destructive tests trên Supabase dùng chung.
-- Chưa chạy kiểm W4 adapter ở thời điểm plan-only; các con số test W2/#61 là evidence của head khác, không tự chuyển thành kết quả của PR mới.
+- PostgreSQL thật và browser/HTTPS vẫn chờ môi trường phù hợp. Kết quả W2/#61 vẫn gắn với head đã kiểm của từng PR.
 
 ## Bàn giao — điền theo kết quả thực tế
 
-- **PR/commit/output:** [Draft #67](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/67) có plan commit `761cac5`; chưa có commit implementation W4. Sau code, ghi exact SHA, JSON request/receipt, diff và checks tại M3.
-- **Đã làm / đã kiểm:** đối chiếu M1 W4, Issue #64, workflow/M2 và code nền `dev@6bcb9f7`; chưa chạy tests W4 hoặc real integration.
+- **PR/commit/output:** Phase A ở commit local `c53058a`. Commit chuyển mặc định OFF/OFF từ bản lưu `af77481` sang request Python của W4, chỉ lưu config khi snapshot canonical sẵn, gửi modes `[]` vào RPC và đọc lại modes từ receipt.
+- **Đã kiểm local:** Windows / Python 3.12.10, 228 test fixture cho config, job repository, recovery, SSE, snapshot và runtime metrics đều qua. Ruff và mypy qua.
+- **Regression rộng:** backend + Blueprint ở bản code Phase A có 1791 pass, 330 skip, 18 fail liên quan deadline AI batch hoặc timeout validator/SymPy. Chạy riêng đúng 18 ca trên nền `f793e97` với cùng môi trường cho 4 fail AI batch và 14 pass. Bốn ca đã tái hiện trên nền. Kết quả của 14 ca còn lại khác nhau giữa hai lượt, chưa xác định nguyên nhân. PostgreSQL 019 và G0 live vẫn chờ kiểm riêng.
+- **Bàn giao FE Stage 2 cho Bội Anh / 04:** bỏ `active_variation_modes` hoặc gửi `[]`. Có thể bỏ toàn bộ `ordering_preferences` để nhận mặc định OFF/OFF. Khi gửi object, truyền đủ hai cờ boolean. Các modes trong response là giá trị DB suy ra. Frontend tại nền `dev@6bcb9f7` vẫn gửi lựa chọn modes theo W2, cần bản FE tương thích để kiểm UI.
 - **Đã chấp nhận:** chưa có independent review/Approve cho PR W4 mới; chưa có G0/G1 live PASS.
-- **Còn chờ / bước tiếp:** Quỳnh xác nhận nhận việc và ETA trên Issue #64/PR #67; Duy chốt Q01/DB writer; Duy/Đạt giao DB0/ENV0, Tâm/Duy xác nhận Golden oracle; triển khai C1–C4 trước trong phạm vi đã rõ. Branch tách C5/13/17 chỉ tạo khi gate ở kế hoạch nhánh đạt.
+- **Còn chờ / bước tiếp:** xác minh C4 với job đã lưu; Duy chốt Q01/DB writer; Duy/Đạt giao DB0/ENV0, Tâm/Duy xác nhận Golden oracle. Branch tách C5/13/17 chỉ tạo khi gate ở kế hoạch nhánh đạt.
