@@ -3,6 +3,16 @@
 - `POST /api/sessions/{session_id}/config` nhận `n_versions` nguyên 1–4, modes bỏ qua hoặc `[]` và cờ shuffle mặc định OFF/OFF. RPC 019 suy ra modes từ canonical Blueprint của nguồn đã xác nhận. API trả cấu hình DB đã lưu cùng manifest. [Contract config](api/generation-config-endpoint.md)
 - Claim đối chiếu receipt 015–017 với frozen config/context, manifest và các slot đã commit trước khi dispatch. Frozen dimensions hợp lệ chọn AI. Modes và dimensions cùng rỗng chọn Original Clone với 0 lượt Gemini. Retry giữ snapshot và slot đã commit, kể cả alias `1.0` đã lưu từ W2.
 - Receipt sai trả `503 ERR_GENERATION_STORAGE_FAILURE` trước khi chạy worker. Nếu DB đã commit claim, recovery 017 xử lý job stale và chặn token cũ. [Bằng chứng và phần chờ trong M2](tasks/W4-MVP-02_IMPLEMENTATION_PLAN.md#bàn-giao--ghi-theo-bằng-chứng-thực-tế)
+## OPS11/21 checkpoint — 13/11/2026
+
+- Đạt tiếp nối PR51 đã merge bằng nhánh OPS mới từ dev294c69a. Cập nhật task/input-handoff, runbook và migration checkpoint017/018 merged; 019 đã merge qua PR61 tại devb47e4fa; giữ historical inventory73583d7, không tạo applied ledger giả.
+- Independent review: #54 Approve (23 PostgreSQL +198 API/review tests pass), #56 Approve docs; #61@9fda6fd Approve, F01/F02 verified (345pass/1optional worker-skip); #30@66ad00c Approve phạm vi W2, adapter W4 tách issue64. Không sửa nhánh author.
+- Static Docker build từ Git archive base294c69a, env mẫu rỗng/project riêng: healthy, preflight+HTTP smoke PASS, anonymous sessions401 direct/proxy, Typst0.11.1. Cleanup đúng project. Không dùng cloud hoặc env thật; chưa DB-applied/Auth/Gemini/SSE/Storage/Golden/G0/G1/G2 acceptance.
+- Input còn thiếu giữ ID/source tại TASK-W4-OPS#input-handoff. Không đổi owner, lịch, prompt hoặc ENV0; từng module tự quản Docker của mình.
+
+
+
+---
 
 ## DEC-W4-MVP-01-019: Canonical-only generation configuration defaults and source readiness guards (proposed)
 
