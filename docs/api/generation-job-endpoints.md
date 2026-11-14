@@ -2,6 +2,14 @@
 
 ## Implementation status
 
+W4 follow-up in Draft #67 uses migration 019 to infer modes from the confirmed
+canonical Blueprint when saving configuration. A save request with `[]` can
+therefore lead to an AI job. Start and retry select the worker from the frozen
+receipt. The adapter checks the saved config, source manifest, and committed
+slots before scheduling. A malformed or inconsistent receipt returns HTTP 503
+`ERR_GENERATION_STORAGE_FAILURE`. If SQL committed the claim before returning
+that receipt, migration 017's fenced stale recovery can settle the durable job.
+
 Author checkpoint 07/11/2026: The uncommitted Python integration now calls
 PR #52's migration 017 finish-with-error and fenced stale scanner RPCs,
 exposes the durable error on snapshot/restarted terminal SSE, and schedules

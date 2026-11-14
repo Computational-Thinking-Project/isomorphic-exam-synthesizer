@@ -16,9 +16,10 @@ from app.models.generation import (
     ValidationReport,
     render_solution,
 )
+from app.services.generation.ai_batch_adapter import AIBatchInputs
 from app.services.generation.ai_mapping import PreparedAIResult
 from app.services.generation.events import GenerationEventBroker
-from app.services.generation.job_contracts import GeneratedDraft
+from app.services.generation.job_contracts import GeneratedDraft, GenerationJobError
 from app.services.generation.job_repository import CloneJobInputs, GenerationJobRepository
 from app.services.generation.jobs import GenerationJobRunner
 from app.services.observability.runtime_registry import RuntimeRegistry
@@ -37,9 +38,9 @@ class FakeRPCClient:
         return SimpleNamespace(execute=lambda: SimpleNamespace(data=value))
 
 
-def claim_fixture(*, clone=True, completed=()):
-    session, job, snapshot, source, source_revision, blueprint_revision = (
-        uuid4() for _ in range(6)
+def claim_fixture(*, clone=True):
+    session, job, snapshot, source, source_revision, blueprint_revision, confirmation = (
+        uuid4() for _ in range(7)
     )
     frozen = {
         "source_question_id": str(source),
@@ -58,37 +59,57 @@ def claim_fixture(*, clone=True, completed=()):
         "canonical_blueprint": {},
     }
     context = {
+        "session_id": str(session),
+        "confirmation_id": str(confirmation),
+        "ready": True,
+        "reason": None,
         "confirmed_sources": [frozen],
         "canonical_dimensions": [] if clone else ["values"],
+        "public_modes": [] if clone else ["NUMERICAL", "parameter_variation"],
+        "n_versions": 2,
+        "ordering_preferences": {"shuffle_questions": False, "shuffle_options": False},
+        "mapping_version": "1.0",
         "confirmed_source_hash": "c" * 64,
         "base_seed": 100,
     }
-    committed = [
-        {
-            "version_index": row["version_index"],
-            "source_question_id": str(source),
-            "question_no": 1,
-            "result_kind": row["result_kind"],
-        }
-        for row in completed
-    ]
+    update_source_manifest(context)
     claim = {
         "session_id": str(session),
         "job_id": str(job),
         "snapshot_id": str(snapshot),
+        "status": "generating",
         "context": context,
         "gemini_call_count": 7,
-        "config": {"n_versions": 2, "active_variation_modes": [] if clone else ["VARY_VALUES"]},
-        "committed_targets": committed,
+        "config": {
+            "n_versions": 2,
+            "active_variation_modes": list(context["public_modes"]),
+            "ordering_preferences": dict(context["ordering_preferences"]),
+        },
+        "committed_targets": [],
     }
     loaded = {
         "session_id": str(session),
         "snapshot_id": str(snapshot),
         "context": context,
-        "completed": list(completed),
+        "completed": [],
         "failures": [],
     }
     return session, job, snapshot, source, claim, loaded
+
+
+def update_source_manifest(context):
+    sources = context["confirmed_sources"]
+    context["source_order"] = [row["source_question_id"] for row in sources]
+    context["manifest"] = {
+        "confirmation_id": context["confirmation_id"],
+        "sources": [
+            {
+                key: row[key]
+                for key in ("source_question_id", "question_no", "source_revision_id", "blueprint_revision_id")
+            }
+            for row in sources
+        ],
+    }
 
 
 @pytest.mark.asyncio
@@ -159,8 +180,12 @@ async def test_clone_claim_resume_persists_only_missing_frozen_slot(monkeypatch)
     events = GenerationEventBroker()
     registry = RuntimeRegistry()
     registry.start()
-    runner = GenerationJobRunner(None, events, registry)
-    plan = await runner.claim(repo, session)
+
+    def unexpected_ai_batch():
+        pytest.fail("Original Clone must not construct an AI batch")
+
+    runner = GenerationJobRunner(None, events, registry, batch=unexpected_ai_batch)
+    plan = await runner.claim(repo, session, retry=True)
     assert isinstance(plan.inputs, CloneJobInputs)
     assert plan.saved == {plan.targets[0]}
     outcome = await runner.run(plan, repo)
@@ -168,7 +193,7 @@ async def test_clone_claim_resume_persists_only_missing_frozen_slot(monkeypatch)
     assert [name for name, _ in worker.calls].count("persist_generation_clone") == 1
     assert not any(name == "reserve_generation_quota" for name, _ in worker.calls)
     assert worker.calls[-2][1]["p_clone_record"] == {**record, "version_index": 2, "seed": 2100}
-    assert owner.calls[0][1] == {"p_session_id": str(session), "p_is_retry": False}
+    assert owner.calls[0][1] == {"p_session_id": str(session), "p_is_retry": True}
 
 
 @pytest.mark.asyncio
@@ -286,6 +311,92 @@ async def test_claim_rejects_disagreement_between_claim_and_durable_results(monk
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "claim_object", "status", "mode_mismatch", "unknown_alias", "wrong_dimension",
+        "duplicate_dimensions", "wrong_order", "wrong_revision", "mapping_version",
+        "config_version", "ordering_type", "duplicate_committed", "load_object",
+        "load_snapshot", "load_context", "load_slot_bool", "load_result_kind",
+        "load_failed_result_as_completed",
+    ],
+)
+async def test_invalid_frozen_claim_returns_storage_error_without_worker_writes(monkeypatch, damage):
+    session, _, snapshot, source, claim, loaded = claim_fixture(clone=False)
+    context = claim["context"]
+    if damage == "claim_object":
+        claim = None
+    elif damage == "status":
+        claim["status"] = "failed"
+    elif damage == "mode_mismatch":
+        claim["config"]["active_variation_modes"] = []
+    elif damage == "unknown_alias":
+        context["public_modes"] = claim["config"]["active_variation_modes"] = ["UNKNOWN"]
+    elif damage == "wrong_dimension":
+        context["canonical_dimensions"] = ["context"]
+    elif damage == "duplicate_dimensions":
+        context["canonical_dimensions"] = ["values", "values"]
+    elif damage == "wrong_order":
+        context["source_order"] = [str(uuid4())]
+    elif damage == "wrong_revision":
+        context["manifest"]["sources"][0]["source_revision_id"] = str(uuid4())
+    elif damage == "mapping_version":
+        context["mapping_version"] = "2.0"
+    elif damage == "config_version":
+        context["n_versions"] = 3
+    elif damage == "ordering_type":
+        context["ordering_preferences"]["shuffle_questions"] = 0
+    elif damage == "load_object":
+        loaded = None
+    elif damage == "load_snapshot":
+        loaded["snapshot_id"] = str(uuid4())
+    elif damage == "load_context":
+        loaded["context"] = {**context, "base_seed": 101}
+    else:
+        slot = {
+            "version_index": 1,
+            "source_question_id": str(source),
+            "question_no": 1,
+            "result_kind": "AI_RESULT",
+        }
+        claim["committed_targets"] = [slot]
+        if damage == "duplicate_committed":
+            claim["committed_targets"].append(dict(slot))
+        elif damage == "load_slot_bool":
+            loaded["completed"] = [{**slot, "snapshot_id": str(snapshot), "version_index": True}]
+        elif damage == "load_failed_result_as_completed":
+            loaded["completed"] = [{
+                **slot,
+                "snapshot_id": str(snapshot),
+                "request_fingerprint": "d" * 64,
+                "raw_result": QuestionResult(
+                    version_index=1,
+                    source_question_id=str(source),
+                    request_fingerprint="d" * 64,
+                    error_code="PROVIDER_FAILED",
+                    attempts=4,
+                ).model_dump(),
+            }]
+        else:
+            loaded["completed"] = [
+                {**slot, "snapshot_id": str(snapshot), "result_kind": "ORIGINAL_CLONE"}
+            ]
+
+    owner = FakeRPCClient({"claim_generation_job": claim})
+    worker = FakeRPCClient({"load_generation_completed_results": loaded})
+    monkeypatch.setattr(
+        "app.services.generation.job_repository.get_service_role_client", lambda: worker
+    )
+    with pytest.raises(GenerationJobError) as exc:
+        await GenerationJobRepository(owner).claim(session, retry=False)
+
+    assert exc.value.status_code == 503
+    assert exc.value.code == "ERR_GENERATION_STORAGE_FAILURE"
+    assert [name for name, _ in owner.calls] == ["claim_generation_job"]
+    assert all(name == "load_generation_completed_results" for name, _ in worker.calls)
+
+
+@pytest.mark.asyncio
 async def test_ai_result_rpc_receives_full_raw_result_and_projection(monkeypatch):
     session, job, snapshot, source, claim, loaded = claim_fixture(clone=False)
     owner = FakeRPCClient({"claim_generation_job": claim})
@@ -306,7 +417,11 @@ async def test_ai_result_rpc_receives_full_raw_result_and_projection(monkeypatch
     )
     repo = GenerationJobRepository(owner)
     plan = await repo.claim(session, retry=False)
-    fixture = json.loads((Path(__file__).parents[1] / "fixtures/ai_pipeline.json").read_text())
+    assert isinstance(plan.inputs, AIBatchInputs)
+    assert plan.inputs.variation_modes == ("values",)
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/ai_pipeline.json").read_text(encoding="utf-8")
+    )
     payload = CandidatePayload.model_validate(fixture["candidates"][0])
     candidate = GeneratedQuestion(
         **payload.model_dump(),
@@ -357,7 +472,14 @@ async def test_ai_result_seed_uses_frozen_source_ordinal_after_resume(
     second["blueprint_revision_id"] = str(uuid4())
     second["confirmed_input"]["id"] = str(second_source)
     claim["context"]["confirmed_sources"].append(second)
+    update_source_manifest(claim["context"])
     claim["config"]["n_versions"] = n_versions
+    claim["context"]["n_versions"] = n_versions
+    # Migration 015 kept the selected alias and ordered dimensions alphabetically.
+    w2_modes = ["NUMERICAL", "context_swap"]
+    claim["config"]["active_variation_modes"] = w2_modes
+    claim["context"]["public_modes"] = list(w2_modes)
+    claim["context"]["canonical_dimensions"] = ["context", "values"]
 
     fixture = json.loads(
         (Path(__file__).parents[1] / "fixtures/ai_pipeline.json").read_text(encoding="utf-8")
@@ -410,6 +532,8 @@ async def test_ai_result_seed_uses_frozen_source_ordinal_after_resume(
     repo = GenerationJobRepository(owner)
     plan = await repo.claim(session, retry=True)
     assert plan.saved == {plan.targets[0]}
+    assert isinstance(plan.inputs, AIBatchInputs)
+    assert plan.inputs.variation_modes == ("context", "values")
     assert plan.inputs.completed == (committed,)
 
     for version in range(1, n_versions + 1):

@@ -87,6 +87,19 @@ def test_unknown_storage_errors_do_not_leak_or_auto_retry(job_api) -> None:
     runner.run.assert_not_awaited()
 
 
+@pytest.mark.parametrize("path", ["generate", "retry-generation"])
+def test_invalid_frozen_claim_does_not_schedule_worker(job_api, path: str) -> None:
+    client, sid, runner, *_ = job_api
+    runner.claim.side_effect = GenerationJobError(
+        503, "ERR_GENERATION_STORAGE_FAILURE", "Generation snapshot could not be verified."
+    )
+    response = client.post(f"/api/sessions/{sid}/{path}")
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "ERR_GENERATION_STORAGE_FAILURE"
+    runner.claim.assert_awaited_once()
+    runner.run.assert_not_awaited()
+
+
 def test_generate_and_retry_share_quota_across_session_ids(job_api) -> None:
     client, sid, runner, factory, ownership, app, plan, store = job_api
     for index in range(10):

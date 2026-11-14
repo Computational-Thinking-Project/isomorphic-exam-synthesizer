@@ -17,7 +17,12 @@ import pytest_asyncio
 from pydantic import SecretStr
 
 from app.core.config import Settings
-from app.models.generation import CandidatePayload, QuestionResult, StepByStepSolution
+from app.models.generation import (
+    CandidatePayload,
+    QuestionResult,
+    StepByStepSolution,
+    ValidationReport,
+)
 from app.models.generation_events import GenerationEventData
 from app.models.schemas import SourceQuestion
 from app.services.ai.gateway import GeminiGateway
@@ -35,6 +40,7 @@ from app.services.generation.job_contracts import (
 )
 from app.services.generation.service import GenerationService, candidate_identity
 from app.services.observability.runtime_registry import RuntimeRegistry
+from app.services.validator.base import CheckResult
 from app.services.validator.pipeline import CandidateValidator
 
 
@@ -357,8 +363,27 @@ async def test_schema_exhaustion_keeps_errors_without_inventing_drafts(ai_case):
     batch = await execute(case, plan=plan, callback=receive)
     assert batch.status == "failed" and batch.results[0].candidate is None
     assert batch.results[0].error_code is not None
+    assert batch.results[0].attempts == 3
     assert delivered[0].draft is None and case.store.rows == {}
-    assert case.store.count == len(case.calls) <= 4
+    assert case.store.count == len(case.calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_four_validation_failures_leave_the_slot_incomplete(ai_case, monkeypatch):
+    case = ai_case
+    plan = replace(case.plan, targets=case.plan.targets[:1])
+    case.responses[:] = [case.data["candidates"][0]] * 4
+    validate = AsyncMock(return_value=ValidationReport(checks=[
+        CheckResult(check_name="syntax", passed=False, status="failed"),
+    ]))
+    monkeypatch.setattr(case.service.validator, "validate", validate)
+
+    batch = await execute(case, plan=plan)
+
+    assert batch.status == "failed"
+    assert batch.results[0].error_code == "VALIDATION_FAILED"
+    assert batch.results[0].attempts == validate.await_count == case.store.count == len(case.calls) == 4
+    assert case.store.rows == {}
 
 
 @pytest.mark.asyncio

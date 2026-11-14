@@ -24,6 +24,7 @@ from app.services.generation.job_contracts import (
     GenerationQuotaExceeded,
     QuestionTarget,
 )
+from app.services.generation.mode_mapper import PUBLIC_TO_CANONICAL_DIMENSIONS
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +49,94 @@ def _uuid(value: object) -> UUID:
     if not isinstance(value, str):
         raise ValueError("Malformed generation UUID.")
     return UUID(value)
+
+
+def _check_frozen_config(config: dict[str, Any], context: dict[str, Any]) -> tuple[str, ...]:
+    modes = _array(config["active_variation_modes"])
+    dimensions = _array(context["canonical_dimensions"])
+    preferences = _object(config["ordering_preferences"])
+    frozen_preferences = _object(context["ordering_preferences"])
+    if (
+        type(context["n_versions"]) is not int
+        or config["n_versions"] != context["n_versions"]
+        or modes != context["public_modes"]
+        or preferences != frozen_preferences
+        or any(
+            type(prefs.get(key)) is not bool
+            for prefs in (preferences, frozen_preferences)
+            for key in ("shuffle_questions", "shuffle_options")
+        )
+        or context["mapping_version"] != "1.0"
+    ):
+        raise ValueError("Claim configuration differs from its frozen context.")
+    if (
+        any(not isinstance(mode, str) or mode not in PUBLIC_TO_CANONICAL_DIMENSIONS for mode in modes)
+        or any(not isinstance(dimension, str) for dimension in dimensions)
+        or len(modes) != len(set(modes))
+        or len(dimensions) != len(set(dimensions))
+        or set(dimensions) != {PUBLIC_TO_CANONICAL_DIMENSIONS[mode] for mode in modes}
+    ):
+        raise ValueError("Frozen public modes and AI dimensions disagree.")
+    # W2 can store one alias for values and order dimensions differently from 019.
+    # Keep the original order for resumed generation.
+    return tuple(dimensions)
+
+
+def _check_frozen_sources(context: dict[str, Any], session_id: UUID) -> list[dict[str, Any]]:
+    sources = _array(context["confirmed_sources"])
+    manifest = _object(context["manifest"])
+    confirmation_id = _uuid(context["confirmation_id"])
+    entries = _array(manifest["sources"])
+    source_hash = context["confirmed_source_hash"]
+    if (
+        _uuid(context["session_id"]) != session_id
+        or context["ready"] is not True
+        or context["reason"] is not None
+        or _uuid(manifest["confirmation_id"]) != confirmation_id
+        or not 1 <= len(sources) <= 20
+        or len(entries) != len(sources)
+        or type(context["base_seed"]) is not int
+        or not isinstance(source_hash, str)
+        or re.fullmatch(r"[0-9a-f]{64}", source_hash) is None
+    ):
+        raise ValueError("Malformed frozen source manifest.")
+    rows: list[dict[str, Any]] = []
+    source_ids: set[UUID] = set()
+    previous_question_no = 0
+    for source, entry in zip(sources, entries, strict=True):
+        row = _object(source)
+        manifest_row = _object(entry)
+        source_id = _uuid(row["source_question_id"])
+        question_no = row["question_no"]
+        if (
+            source_id in source_ids
+            or type(question_no) is not int
+            or question_no <= previous_question_no
+            or type(manifest_row["question_no"]) is not int
+            or manifest_row["question_no"] != question_no
+            or any(
+                _uuid(row[key]) != _uuid(manifest_row[key])
+                for key in ("source_question_id", "source_revision_id", "blueprint_revision_id")
+            )
+            or any(
+                not isinstance(row[key], str) or re.fullmatch(r"[0-9a-f]{64}", row[key]) is None
+                for key in ("source_fingerprint", "blueprint_fingerprint")
+            )
+        ):
+            raise ValueError("Frozen source does not match its manifest.")
+        rows.append(row)
+        source_ids.add(source_id)
+        previous_question_no = question_no
+    if context["source_order"] != [row["source_question_id"] for row in rows]:
+        raise ValueError("Frozen source order differs from its manifest.")
+    return rows
+
+
+def _target_from_receipt(row: dict[str, Any]) -> QuestionTarget:
+    version, question_no = row["version_index"], row["question_no"]
+    if type(version) is not int or type(question_no) is not int:
+        raise ValueError("Malformed generation slot.")
+    return QuestionTarget(_uuid(row["source_question_id"]), question_no, version)
 
 
 def _rpc_error(exc: APIError) -> GenerationJobError:
@@ -97,46 +186,37 @@ class GenerationJobRepository:
             ) from exc
 
     async def claim(self, session_id: UUID, *, retry: bool) -> GenerationPlan:
-        receipt = _object(
-            await self._rpc(
-                "claim_generation_job",
-                {"p_session_id": str(session_id), "p_is_retry": retry},
-                worker=False,
-            )
-        )
-        loaded = _object(
-            await self._rpc("load_generation_completed_results", {"p_session_id": str(session_id)})
-        )
         try:
+            receipt = _object(
+                await self._rpc(
+                    "claim_generation_job",
+                    {"p_session_id": str(session_id), "p_is_retry": retry},
+                    worker=False,
+                )
+            )
             if (
                 _uuid(receipt["session_id"]) != session_id
-                or _uuid(loaded["session_id"]) != session_id
+                or receipt["status"] != "generating"
             ):
-                raise ValueError("Claim session changed.")
+                raise ValueError("Claim session or status changed.")
             job_id = _uuid(receipt["job_id"])
             snapshot_id = _uuid(receipt["snapshot_id"])
-            if _uuid(loaded["snapshot_id"]) != snapshot_id:
-                raise ValueError("Loaded results belong to another snapshot.")
             context = _object(receipt["context"])
-            if loaded["context"] != context:
-                raise ValueError("Frozen generation context changed during claim.")
             config = _object(receipt["config"])
-            sources = _array(context["confirmed_sources"])
             n_versions = config["n_versions"]
             count = receipt["gemini_call_count"]
             if type(n_versions) is not int or not 1 <= n_versions <= 4:
                 raise ValueError("Invalid frozen version count.")
             if type(count) is not int or not 0 <= count <= 250:
                 raise ValueError("Invalid durable quota count.")
+            dimensions = _check_frozen_config(config, context)
+            sources = _check_frozen_sources(context, session_id)
             targets: list[QuestionTarget] = []
             source_models: list[SourceQuestion] = []
             blueprints: dict[str, dict[str, Any]] = {}
-            for row_value in sources:
-                row = _object(row_value)
+            for row in sources:
                 source_id = _uuid(row["source_question_id"])
                 question_no = row["question_no"]
-                if type(question_no) is not int or question_no < 1:
-                    raise ValueError("Invalid frozen source order.")
                 confirmed = _object(row["confirmed_input"])
                 source_model = SourceQuestion.model_validate(confirmed)
                 if source_model.id != str(source_id):
@@ -145,47 +225,55 @@ class GenerationJobRepository:
                 blueprints[str(source_id)] = _object(row["canonical_blueprint"])
                 for version in range(1, n_versions + 1):
                     targets.append(QuestionTarget(source_id, question_no, version))
-            if len(sources) != len({row.id for row in source_models}):
-                raise ValueError("Duplicate frozen source.")
-            completed_rows = _array(loaded["completed"])
-            committed_rows = _array(receipt["committed_targets"])
+            loaded = _object(
+                await self._rpc("load_generation_completed_results", {"p_session_id": str(session_id)})
+            )
+            if (
+                _uuid(loaded["session_id"]) != session_id
+                or _uuid(loaded["snapshot_id"]) != snapshot_id
+                or loaded["context"] != context
+            ):
+                raise ValueError("Loaded results belong to another frozen snapshot.")
+            target_set = set(targets)
+            source_positions = {
+                _uuid(row["source_question_id"]): index for index, row in enumerate(sources)
+            }
+            clone_mode = not dimensions
+            result_kind = "ORIGINAL_CLONE" if clone_mode else "AI_RESULT"
+            claimed: set[QuestionTarget] = set()
+            for value in _array(receipt["committed_targets"]):
+                row = _object(value)
+                target = _target_from_receipt(row)
+                if target not in target_set or target in claimed or row["result_kind"] != result_kind:
+                    raise ValueError("Claimed result is outside the frozen job.")
+                claimed.add(target)
             saved: set[QuestionTarget] = set()
             ai_completed: list[QuestionResult] = []
-            public_modes = _array(config["active_variation_modes"])
-            dimensions = _array(context["canonical_dimensions"])
-            if (not public_modes) != (not dimensions):
-                raise ValueError("Frozen public modes and AI dimensions disagree.")
-            clone_mode = not public_modes
-            for row_value in completed_rows:
+            for row_value in _array(loaded["completed"]):
                 row = _object(row_value)
-                target = next(
-                    (
-                        target
-                        for target in targets
-                        if target.version_index == row["version_index"]
-                        and str(target.source_question_id) == row["source_question_id"]
-                        and target.question_no == row["question_no"]
-                    ),
-                    None,
-                )
-                if target is None or target in saved or _uuid(row["snapshot_id"]) != snapshot_id:
+                target = _target_from_receipt(row)
+                if target not in claimed or target in saved or _uuid(row["snapshot_id"]) != snapshot_id:
                     raise ValueError("Committed target is outside frozen snapshot.")
-                if row["result_kind"] != ("ORIGINAL_CLONE" if clone_mode else "AI_RESULT"):
+                if row["result_kind"] != result_kind:
                     raise ValueError("Committed result kind differs from frozen modes.")
                 saved.add(target)
                 if not clone_mode:
                     result = QuestionResult.model_validate(row["raw_result"])
-                    if result.request_fingerprint != row["request_fingerprint"]:
-                        raise ValueError("Committed AI fingerprint changed.")
+                    candidate = result.candidate
+                    position = source_positions[target.source_question_id]
+                    if (
+                        candidate is None
+                        or result.error_code is not None
+                        or result.request_fingerprint != row["request_fingerprint"]
+                        or result.version_index != target.version_index
+                        or _uuid(result.source_question_id) != target.source_question_id
+                        or _uuid(candidate.source_question_id) != target.source_question_id
+                        or candidate.seed != context["base_seed"] + target.version_index * 1000 + position
+                        or candidate.blueprint_fingerprint != sources[position]["blueprint_fingerprint"]
+                    ):
+                        raise ValueError("Committed AI result differs from its frozen slot.")
                     ai_completed.append(result)
-            claim_saved = {
-                (row["version_index"], row["source_question_id"], row["question_no"])
-                for row in map(_object, committed_rows)
-            }
-            loaded_saved = {
-                (t.version_index, str(t.source_question_id), t.question_no) for t in saved
-            }
-            if claim_saved != loaded_saved:
+            if claimed != saved:
                 raise ValueError("Claim and completed results disagree.")
             if clone_mode:
                 inputs: object = CloneJobInputs(snapshot_id, deepcopy(context))
@@ -195,7 +283,7 @@ class GenerationJobRepository:
                     blueprints=blueprints,
                     confirmed_source_hash=context["confirmed_source_hash"],
                     base_seed=context["base_seed"],
-                    variation_modes=tuple(dimensions),
+                    variation_modes=dimensions,
                     completed=tuple(ai_completed),
                     snapshot_id=snapshot_id,
                 )
