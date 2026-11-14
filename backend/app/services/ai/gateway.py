@@ -5,16 +5,46 @@ credentials and bounds concurrency, waiting and transport time.
 """
 
 import asyncio
+import logging
 import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Literal
+from uuid import UUID, uuid4
 
 import httpx
 from google import genai
 from google.genai import errors, types
 
 from app.core.config import Settings
+
+logger = logging.getLogger(__name__)
+
+GeminiAttemptOutcome = Literal["success", "error", "timeout", "cancelled"]
+_OBSERVABLE_ERROR_CODES = {
+    "API_AUTH",
+    "API_CLIENT",
+    "API_RATE_LIMIT",
+    "API_REQUEST",
+    "API_TIMEOUT",
+    "API_TRANSPORT",
+    "JOB_DEADLINE",
+}
+
+
+@dataclass(frozen=True)
+class GeminiAttemptEvent:
+    attempt_id: UUID
+    model: str
+    stage: str | None
+    duration_seconds: float
+    outcome: GeminiAttemptOutcome
+    error_code: str | None
+
+
+GeminiAttemptCompletion = Callable[[GeminiAttemptEvent], None]
+GeminiAttemptObserver = Callable[[], GeminiAttemptCompletion]
 
 
 class GatewayError(RuntimeError):
@@ -56,7 +86,7 @@ class _Credential:
 
 
 class GeminiGateway:
-    def __init__(self, config: Settings):
+    def __init__(self, config: Settings, *, attempt_observer: GeminiAttemptObserver | None = None):
         keys = config.get_gemini_api_keys()
         if not keys:
             raise GatewayError("API_KEY_MISSING")
@@ -66,6 +96,7 @@ class GeminiGateway:
         self._semaphore = asyncio.Semaphore(config.GEMINI_MAX_CONCURRENCY)
         self._selection_lock = asyncio.Lock()
         self._closed = False
+        self._attempt_observer = attempt_observer
         self._credentials = [
             _Credential(
                 genai.Client(
@@ -99,6 +130,11 @@ class GeminiGateway:
     ) -> types.GenerateContentResponse:
         if self._closed:
             raise GatewayError("GATEWAY_CLOSED")
+        completion = None
+        attempt_id = None
+        started_at = 0.0
+        outcome: GeminiAttemptOutcome = "cancelled"
+        error_code = None
         try:
             async with asyncio.timeout_at(context.deadline):
                 async with self._semaphore:
@@ -109,38 +145,71 @@ class GeminiGateway:
                     await context.reserve_request()
                     if time.monotonic() >= context.deadline:
                         raise GatewayError("JOB_DEADLINE")
-                    try:
-                        async with asyncio.timeout(self._timeout):
-                            return await entry.client.aio.models.generate_content(
-                                model=self.model, contents=contents, config=config
-                            )
-                    except errors.APIError as exc:
-                        status = exc.code
-                        if status in {401, 403}:
-                            entry.disabled = True
-                            raise GatewayError(
-                                "API_AUTH", retryable=any(not key.disabled for key in self._credentials)
-                            ) from None
-                        if status == 429:
-                            entry.available_at = time.monotonic() + self._cooldown
-                        raise GatewayError(
-                            "API_RATE_LIMIT" if status == 429 else "API_REQUEST",
-                            retryable=status in {408, 429, 500, 502, 503, 504},
-                        ) from None
-                    except TimeoutError:
-                        raise
-                    except (httpx.TransportError, OSError):
-                        raise GatewayError("API_TRANSPORT", retryable=True) from None
-                    except GatewayError:
-                        raise
-                    except Exception:
-                        # SDK exceptions may contain credentials or request URLs.
-                        raise GatewayError("API_CLIENT") from None
+                    if self._attempt_observer is not None:
+                        try:
+                            attempt_id = uuid4()
+                            completion = self._attempt_observer()
+                            started_at = time.monotonic()
+                        except Exception:
+                            logger.warning("Gemini attempt observer could not start.")
+                    response = await self._send(entry, contents, config)
         except TimeoutError:
+            outcome = "timeout"
+            error_code = "JOB_DEADLINE"
+            raise GatewayError(error_code, retryable=False) from None
+        except GatewayError as exc:
+            outcome = "timeout" if exc.code == "API_TIMEOUT" else "error"
+            error_code = exc.code if exc.code in _OBSERVABLE_ERROR_CODES else "API_CLIENT"
+            raise
+        else:
+            outcome = "success"
+            return response
+        finally:
+            if completion is not None and attempt_id is not None:
+                try:
+                    completion(
+                        GeminiAttemptEvent(
+                            attempt_id=attempt_id,
+                            model=self.model,
+                            stage=None,
+                            duration_seconds=time.monotonic() - started_at,
+                            outcome=outcome,
+                            error_code=error_code,
+                        )
+                    )
+                except Exception:
+                    logger.warning("Gemini attempt observer could not finish.")
+
+    async def _send(
+        self, entry: _Credential, contents: str, config: types.GenerateContentConfig
+    ) -> types.GenerateContentResponse:
+        try:
+            async with asyncio.timeout(self._timeout):
+                return await entry.client.aio.models.generate_content(
+                    model=self.model, contents=contents, config=config
+                )
+        except errors.APIError as exc:
+            status = exc.code
+            if status in {401, 403}:
+                entry.disabled = True
+                raise GatewayError(
+                    "API_AUTH", retryable=any(not key.disabled for key in self._credentials)
+                ) from None
+            if status == 429:
+                entry.available_at = time.monotonic() + self._cooldown
             raise GatewayError(
-                "JOB_DEADLINE" if time.monotonic() >= context.deadline else "API_TIMEOUT",
-                retryable=time.monotonic() < context.deadline,
+                "API_RATE_LIMIT" if status == 429 else "API_REQUEST",
+                retryable=status in {408, 429, 500, 502, 503, 504},
             ) from None
+        except TimeoutError:
+            raise GatewayError("API_TIMEOUT", retryable=True) from None
+        except (httpx.TransportError, OSError):
+            raise GatewayError("API_TRANSPORT", retryable=True) from None
+        except GatewayError:
+            raise
+        except Exception:
+            # SDK exceptions may contain credentials or request URLs.
+            raise GatewayError("API_CLIENT") from None
 
     async def aclose(self) -> None:
         if self._closed:

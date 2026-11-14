@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS public.generation_configs (
   session_id UUID NOT NULL REFERENCES public.exam_sessions(id) ON DELETE CASCADE,
   n_versions INT NOT NULL CHECK (n_versions BETWEEN 1 AND 4),
   active_variation_modes JSONB NOT NULL DEFAULT '[]'::jsonb,
-  ordering_preferences JSONB NOT NULL DEFAULT '{"shuffle_questions": true, "shuffle_options": true}'::jsonb,
+  ordering_preferences JSONB NOT NULL DEFAULT '{"shuffle_questions": false, "shuffle_options": false}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT uq_generation_configs_session_id UNIQUE (session_id)

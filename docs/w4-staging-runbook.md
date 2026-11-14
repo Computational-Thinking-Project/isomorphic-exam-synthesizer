@@ -1,5 +1,13 @@
 # W4 production private beta và demo runbook — bản chuẩn bị
 
+## Checkpoint 13/11 và phạm vi chạy tiếp
+
+Base đã build/kiểm local: `dev@294c69a1a085ac6487d65b633e06a2f1112e2046` (PR51 + PR52 merged). Git archive sạch, static Compose project riêng, env mẫu rỗng, ports13000/18000: build/health/preflight/smoke PASS; anonymous sessions401 trực tiếp/proxy; Typst0.11.1; stack test đã dừng. Không dùng env/DB thật, không thay stack của thành viên khác. Evidence và image IDs tại [checkpoint task](tasks/TASK-W4-OPS.md).
+
+Trước lần integrated smoke tiếp theo, nhận DB0 manifest/applied ledger + compatible candidate SHA, identities/quyền I-OPS-DB, worker #30 và export/Storage Q09/Q10. 017 đã merge; 018 đã merged vào dev21887c1; 019 ở PR61@9fda6fd đã Approve, F01/F02 verified, đã merged vào devb47e4fa; DB-applied UNVERIFIED. Đọc [migration checkpoint/hashes](w4-migration-candidate.md); không áp tất cả PR heads lên DB nhóm để lấp dependency. Chuẩn bị script/phiếu chạy tại [demo rehearsal](w4-demo-rehearsal.md); Q14 Golden/oracle và Q20 nơi lưu proof còn theo bảng input chuẩn.
+
+G0 preflight11/11 và G0 integrated12/11 18:00 là mốc nguồn W4; chưa có proof thật thì ghi BLOCKED, không chuyển health PASS thành nghiệm thu. Việc review/push docs không thay quyền cloud, team access hoặc chốt lại topology #53. Những nhận định ghi base/ngày cũ phía dưới là lịch sử cần đối chiếu checkpoint này.
+
 Owner chuẩn bị: Đạt; trạng thái 07/11/2026: tài liệu kiểm tĩnh, chưa có production private beta URL/deployment proof. [Plan và input owners](tasks/TASK-W4-OPS.md). [Docker setup](setup-docker.md) là hướng dẫn kỹ thuật hiện hành; runbook này bổ sung trình tự nghiệm thu W4, không tự đổi contract sản phẩm.
 
 [Handoff lifecycle/version](w4-ops-handoff.md) có phương án cụ thể cho Duy/Quỳnh chốt; [migration inventory](w4-migration-inventory.md) chỉ giúp đối chiếu checksum, chưa cấp phép thực thi SQL.
@@ -61,7 +69,7 @@ Hiện frontend http://localhost:3000, backend http://localhost:8000; thay theo 
 2. Người được cấp quyền áp manifest trên isolated DB, ghi IDs/checksums/kết quả, xác minh config/claim/persist/resume/finish theo backend tests. Không publish raw DB dump.
 3. Cấu hình cùng Supabase project cho backend/browser; kiểm login Google thật, callback và browser refresh trên URL đã duyệt. Duy quản lý cấp/revoke ADMIN_EMAILS; ghi thời điểm restart/redeploy cần để áp config mới.
 4. Build/deploy đúng SHA, ghi images/config fingerprint không lộ secrets, DB ledger, model/prompt version. Khi env đổi, recreate backend/rebuild browser theo thay đổi; restart đơn thuần không áp Compose env mới.
-5. Smoke trước và sau restart. Job cũ phải được fenced, target đã commit không sinh lại, quota không reset. Baseline đã được Duy chốt08/11, contract017 tại PR52; PR30 đã nối nhưng F02 còn open, chưa deployed; không nhận PASS từ health200.
+5. Smoke trước và sau restart. Job cũ phải được fenced, target đã commit không sinh lại, quota không reset. Baseline đã được Duy chốt08/11, contract017 tại PR52; PR30@b62e007 đã nối, F02 reviewer verified; chưa merge/deployed; không nhận PASS từ health200.
 6. Rollback app về candidate trước chỉ sau kiểm tương thích schema. DB rollback/restore hoặc forward-fix do Duy/Hùng có quyền thực hiện; không dùng down -v, prune hay restore phá dữ liệu để che lỗi.
 7. Kết thúc test riêng: `docker compose down` đúng project; không xóa volumes/bucket hay môi trường dùng chung.
 

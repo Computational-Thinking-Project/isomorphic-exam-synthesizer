@@ -1,6 +1,8 @@
 import asyncio
 import copy
 import json
+import multiprocessing
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,8 +19,11 @@ from app.services.blueprint.common import ToolError, canonical
 from app.services.blueprint.schema_adapter import generation_payload
 from app.services.blueprint.service import BlueprintService, source_fingerprint
 from app.services.generation.service import GenerationService
+from app.services.observability.ai_instrumentation import make_gemini_attempt_observer
+from app.services.observability.runtime_registry import RuntimeRegistry
 from app.services.validator.base import CheckResult
 from app.services.validator.pipeline import CandidateValidator, validate_solution
+from app.services.validator.process_runner import ProcessResult, run_with_timeout
 
 
 @pytest.fixture
@@ -338,48 +343,90 @@ async def test_runtime_is_lazy_and_services_share_one_gateway(monkeypatch):
     from app.services.ai import runtime
 
     gateway = SimpleNamespace(model="offline", aclose=AsyncMock())
-    factory = AsyncMock()  # Startup must not touch SDK/network.
+    factory = Mock(return_value=gateway)
     monkeypatch.setattr(runtime, "GeminiGateway", factory)
-    services = runtime.AIRuntime(Settings(_env_file=None))
+    observer = Mock()
+    settings = Settings(_env_file=None)
+    services = runtime.AIRuntime(settings, attempt_observer=observer)
     await services.aclose()
     factory.assert_not_called()
-    monkeypatch.setattr(runtime, "GeminiGateway", lambda settings: gateway)
     assert services.blueprints.gateway is services.generation.gateway is gateway
     assert services.generation is services.generation
+    factory.assert_called_once_with(settings, attempt_observer=observer)
     await services.aclose()
     gateway.aclose.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_real_gateway_shares_reservations_across_extraction_and_generation(pipeline, monkeypatch):
+@pytest.mark.parametrize("accept_candidate", [True, False])
+async def test_real_gateway_shares_reservations_across_extraction_and_generation(
+    pipeline, monkeypatch, accept_candidate
+):
     from app.core.config import Settings
     from app.services.ai import gateway as transport
 
     p = pipeline
 
     def response(payload):
-        return SimpleNamespace(text=canonical(payload), candidates=[SimpleNamespace(finish_reason="STOP")],
-                               model_version="offline", usage_metadata=None)
+        return SimpleNamespace(
+            text=canonical(payload),
+            candidates=[SimpleNamespace(finish_reason="STOP")],
+            model_version="offline",
+            usage_metadata=None,
+        )
 
-    sdk = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=AsyncMock(
-        side_effect=[response(generation_payload(p.blueprint)), response(p.candidates[0])])),
-        aclose=AsyncMock()), close=Mock())
+    sdk = SimpleNamespace(
+        aio=SimpleNamespace(
+            models=SimpleNamespace(
+                generate_content=AsyncMock(
+                    side_effect=[
+                        response(generation_payload(p.blueprint)),
+                        response(p.candidates[0]),
+                    ]
+                )
+            ),
+            aclose=AsyncMock(),
+        ),
+        close=Mock(),
+    )
     monkeypatch.setattr(transport.genai, "Client", lambda **kwargs: sdk)
-    config = Settings(_env_file=None, GEMINI_API_KEY="offline-key", GEMINI_API_KEY_1="",
-                      GEMINI_API_KEY_2="", GEMINI_API_KEY_3="")
+    config = Settings(
+        _env_file=None,
+        GEMINI_API_KEY="offline-key",
+        GEMINI_API_KEY_1="",
+        GEMINI_API_KEY_2="",
+        GEMINI_API_KEY_3="",
+    )
+    if not accept_candidate:
+        p.validator.validate.side_effect = None
+        p.validator.validate.return_value = ValidationReport(
+            checks=[CheckResult(check_name="domain", passed=False, status="failed")]
+        )
+    registry = RuntimeRegistry()
+    registry.start()
     budget = RequestBudget(2)
     context = RequestContext(time.monotonic() + 30, budget.reserve)
-    async with transport.GeminiGateway(config) as gateway:
-        blueprints, _ = await BlueprintService(gateway).extract_sources([p.source],
-            confirmed_source_hash=p.confirmed, context=context)
+    async with transport.GeminiGateway(
+        config, attempt_observer=make_gemini_attempt_observer(registry)
+    ) as gateway:
+        blueprints, _ = await BlueprintService(gateway).extract_sources(
+            [p.source], confirmed_source_hash=p.confirmed, context=context
+        )
         service = GenerationService(gateway, p.validator)
-        result = await service.generate_question(p.source, blueprints[0]["blueprint"],
-            confirmed_source_hash=p.confirmed, context=context)
-        assert result.candidate and budget.used == 2
-        blocked = await service.generate_question(p.source, blueprints[0]["blueprint"],
-            confirmed_source_hash=p.confirmed, context=context)
+        result = await service.generate_question(
+            p.source, blueprints[0]["blueprint"], confirmed_source_hash=p.confirmed, context=context
+        )
+        assert (result.candidate is not None) is accept_candidate
+        if not accept_candidate:
+            assert result.validation.failures[0].check_name == "domain"
+        blocked = await service.generate_question(
+            p.source, blueprints[0]["blueprint"], confirmed_source_hash=p.confirmed, context=context
+        )
         assert blocked.error_code == "REQUEST_BUDGET_EXHAUSTED"
-    assert sdk.aio.models.generate_content.await_count == 2
+    snapshot = registry.snapshot()
+    assert snapshot.gemini_call_count == 2
+    assert sdk.aio.models.generate_content.await_count == budget.used == 2
+    assert snapshot.gemini_error_rate == 0
     sdk.aio.aclose.assert_awaited_once()
     sdk.close.assert_called_once()
 
@@ -429,3 +476,157 @@ async def test_real_validator_keeps_arbitrary_problem_unknown_and_detects_false_
         "solution": StepByStepSolution(correct_key="A", final_answer="9", steps=[{"explanation": "Sai có chủ ý để kiểm thử."}])})
     report = await validator.validate(equation, deadline=time.monotonic() + 15)
     assert any(c.check_name == "answer_verified" for c in report.failures)
+
+
+@pytest.mark.asyncio
+async def test_candidate_validator_passes_frozen_blueprint_to_four_tiers(pipeline, monkeypatch):
+    from app.services.validator.base import ValidationReport as AggregateReport
+
+    candidate = CandidatePayload.model_validate(pipeline.candidates[0])
+    blueprint = {"requirement": {"parameter_domains": {"x": [1, 5]}}}
+    received = []
+
+    def fake_validate(question_text, options, correct_answer, **kwargs):
+        received.append((question_text, options, correct_answer, kwargs))
+        return AggregateReport(
+            passed=False, status="failed", confidence="rule_only",
+            checks=[CheckResult(check_name="parameter_bounds", passed=False, status="failed")],
+        )
+
+    monkeypatch.setattr("app.services.validator.pipeline.validate_question", fake_validate)
+    def run_in_test_process(target, *, args=(), **kwargs):
+        return ProcessResult(success=True, data=target(*args))
+
+    monkeypatch.setattr("app.services.validator.pipeline.run_with_timeout", run_in_test_process)
+    report = await CandidateValidator().validate(
+        candidate, deadline=time.monotonic() + 5, blueprint=blueprint
+    )
+    assert received[0][3]["blueprint"] == blueprint
+    assert received[0][3]["parameters"] is None
+    assert any(check.check_name == "parameter_bounds" for check in report.failures)
+    assert any(check.check_name == "parameter_coverage" for check in report.checks)
+
+
+@pytest.mark.asyncio
+async def test_f02_deadline_keeps_real_slots_until_worker_cleanup(pipeline, monkeypatch):
+    candidate = CandidatePayload.model_validate(pipeline.candidates[0])
+    lock = threading.Lock()
+    three_started = threading.Event()
+    active = 0
+    maximum = 0
+
+    def blocked_worker(target, *, cancel_signal, **kwargs):
+        nonlocal active, maximum
+        with lock:
+            active += 1
+            maximum = max(maximum, active)
+            if active == 3:
+                three_started.set()
+        try:
+            assert cancel_signal.wait(timeout=2)
+            time.sleep(0.2)  # OS cleanup still owns the slot after caller timeout.
+            return ProcessResult(success=False, error="cancelled")
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr("app.services.validator.pipeline.run_with_timeout", blocked_worker)
+    validator = CandidateValidator(timeout=1)
+    timed_out = [
+        asyncio.create_task(
+            validator.validate(candidate, deadline=time.monotonic() + 0.3)
+        )
+        for _ in range(3)
+    ]
+    assert await asyncio.to_thread(three_started.wait, 2)
+    fourth = asyncio.create_task(
+        validator.validate(candidate, deadline=time.monotonic() + 1)
+    )
+    results = await asyncio.gather(*timed_out, return_exceptions=True)
+    assert all(isinstance(result, TimeoutError) for result in results)
+    assert maximum <= 3
+    fourth.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await fourth
+    assert active == 0
+    assert await validator.aclose(timeout_seconds=1)
+
+
+@pytest.mark.asyncio
+async def test_f02_external_cancel_reclaims_worker_before_slot_reuse(pipeline, monkeypatch):
+    candidate = CandidatePayload.model_validate(pipeline.candidates[0])
+    started = threading.Event()
+    stopped = threading.Event()
+
+    def blocked_worker(target, *, cancel_signal, **kwargs):
+        started.set()
+        assert cancel_signal.wait(timeout=2)
+        time.sleep(0.05)
+        stopped.set()
+        return ProcessResult(success=False, error="cancelled")
+
+    monkeypatch.setattr("app.services.validator.pipeline.run_with_timeout", blocked_worker)
+    validator = CandidateValidator(timeout=5)
+    task = asyncio.create_task(validator.validate(candidate, deadline=time.monotonic() + 5))
+    assert await asyncio.to_thread(started.wait, 2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert stopped.is_set()
+    assert await validator.aclose(timeout_seconds=1)
+
+
+def _f02_block_forever():
+    while True:
+        time.sleep(0.05)
+
+
+@pytest.mark.asyncio
+async def test_f02_real_processes_never_exceed_three(pipeline, monkeypatch):
+    candidate = CandidatePayload.model_validate(pipeline.candidates[0])
+    before = {child.pid for child in multiprocessing.active_children()}
+
+    def run_blocker(target, *, cancel_signal, **kwargs):
+        return run_with_timeout(
+            _f02_block_forever,
+            timeout=15,
+            start_method="spawn",
+            cancel_signal=cancel_signal,
+        )
+
+    monkeypatch.setattr("app.services.validator.pipeline.run_with_timeout", run_blocker)
+    validator = CandidateValidator(timeout=15)
+    deadline = time.monotonic() + 15
+    first = [
+        asyncio.create_task(validator.validate(candidate, deadline=deadline))
+        for _ in range(3)
+    ]
+    fourth = None
+    maximum = 0
+    try:
+        for _ in range(500):
+            active = {child.pid for child in multiprocessing.active_children()} - before
+            maximum = max(maximum, len(active))
+            if len(active) == 3:
+                break
+            await asyncio.sleep(0.01)
+        assert maximum == 3
+        fourth = asyncio.create_task(validator.validate(candidate, deadline=deadline))
+        await asyncio.sleep(0.05)
+        for task in first:
+            task.cancel()
+        for _ in range(100):
+            active = {child.pid for child in multiprocessing.active_children()} - before
+            maximum = max(maximum, len(active))
+            if all(task.done() for task in first):
+                break
+            await asyncio.sleep(0.01)
+        assert maximum <= 3
+    finally:
+        for task in [*first, fourth]:
+            if task is not None:
+                task.cancel()
+        await asyncio.gather(*(task for task in [*first, fourth] if task is not None),
+                             return_exceptions=True)
+        assert await validator.aclose(timeout_seconds=2)
+    assert not {child.pid for child in multiprocessing.active_children()} - before

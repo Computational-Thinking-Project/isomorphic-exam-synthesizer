@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
 from fastapi import HTTPException
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 
 class SourceQuestion(BaseModel):
@@ -537,6 +537,20 @@ class AnswersMatrixResponse(BaseModel):
     )
 
 
+class OrderingPreferencesPayload(BaseModel):
+    shuffle_questions: StrictBool
+    shuffle_options: StrictBool
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class OrderingPreferencesResponse(BaseModel):
+    success: bool
+    session_id: str
+    status: str
+    ordering_preferences: Dict[str, bool]
+
+
 class ReviewSnapshotSource(BaseModel):
     """Câu hỏi nguồn đã xác nhận và đóng băng trong snapshot (W4-MVP-03)."""
 
@@ -681,6 +695,8 @@ __all__ = [
     "FinalizeApproveResponse",
     "MatrixItem",
     "AnswersMatrixResponse",
+    "OrderingPreferencesPayload",
+    "OrderingPreferencesResponse",
     "CheckResult",
     "ValidationReport",
     "ReviewSnapshotSource",

@@ -1,6 +1,6 @@
+import { stage1Path, stage2Path, stage3Path } from '../../sessionPaths.js';
+
 const pendingDestinations = new Set([
-  'partial_generated',
-  'generated',
   'reviewed',
   'approved',
   'exported',
@@ -10,10 +10,22 @@ const pendingDestinations = new Set([
 // Only connect destinations whose screen and contract have been handed over.
 export function sessionDestination(session) {
   if (session.status === 'draft') {
-    return { path: `/session/${encodeURIComponent(session.id)}/stage1`, notice: '' };
+    return { path: stage1Path(session.id), notice: '' };
   }
-  if (['blueprinted', 'configured', 'generating'].includes(session.status)) {
-    return { path: `/session/${encodeURIComponent(session.id)}/stage2`, notice: '' };
+  if (session.status === 'blueprinted') {
+    return {
+      path:
+        session.blueprint_summary?.is_ready === true
+          ? stage2Path(session.id)
+          : stage1Path(session.id),
+      notice: '',
+    };
+  }
+  if (['configured', 'generating'].includes(session.status)) {
+    return { path: stage2Path(session.id), notice: '' };
+  }
+  if (['partial_generated', 'generated'].includes(session.status)) {
+    return { path: stage3Path(session.id), notice: '' };
   }
   return {
     path: null,

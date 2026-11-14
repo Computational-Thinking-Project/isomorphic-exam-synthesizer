@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { stage1Path } from '../../sessionPaths.js';
 import { useAuthStore } from '../auth/authStore.js';
 import DashboardPage from './DashboardPage.jsx';
 import { getSessionDetail, listSessions } from '../../services/sessions.js';
@@ -195,7 +196,7 @@ function DashboardContent({ accountKey }) {
         openingSessionId={opening.phase === 'loading' ? opening.sessionId : null}
         onCreate={() => {
           opener.cancel();
-          navigate('/session/new/stage1');
+          navigate(stage1Path('new'));
         }}
         onOpen={(session) => {
           setNotice('');

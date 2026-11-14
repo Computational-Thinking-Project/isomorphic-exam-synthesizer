@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
+import { stage1Path, stage2Path } from '../../sessionPaths.js';
 import { useAuthStore } from '../auth/authStore.js';
 import { createSession, getSessionDetail } from '../../services/sessions.js';
 import { sessionDestination } from '../dashboard/sessionDestination.js';
@@ -26,7 +27,7 @@ function SessionEntry({ sessionId, accountKey }) {
   const openConfirmed = useCallback((detail) => {
     if (!detail || !isCurrent() || detail.id.toLowerCase() !== sessionId?.toLowerCase()) return;
     const { path } = sessionDestination(detail);
-    if (!path?.endsWith('/stage2')) return;
+    if (path !== stage2Path(detail.id)) return;
     const accountId = useAuthStore.getState().session?.user.id;
     try { createConfirmationIntentStore(accountId, detail.id).clear(); } catch { /* the server already confirmed */ }
     navigate(path, { replace: true });
@@ -36,7 +37,7 @@ function SessionEntry({ sessionId, accountKey }) {
     create: createSession,
     load: getSessionDetail,
     isCurrent,
-    onCreated: (id) => navigate(`/session/${encodeURIComponent(id)}/stage1`, { replace: true }),
+    onCreated: (id) => navigate(stage1Path(id), { replace: true }),
   }));
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot, controller.getSnapshot);
 
@@ -89,7 +90,7 @@ function SessionEntry({ sessionId, accountKey }) {
             <>
               <h2 className="break-words text-xl font-semibold">{state.detail.title}</h2>
               <p className="mt-3 break-words">Môn: {state.detail.subject || 'Chưa ghi'} · Khối: {state.detail.grade}</p>
-              {state.detail.status === 'draft' ? (
+              {state.detail.status === 'draft' || state.detail.status === 'blueprinted' ? (
                 <Stage1SourcePanel detail={state.detail} isCurrent={isCurrent} onConfirmed={openConfirmed} />
               ) : (
                 <p role="status" className="mt-4 text-slate-300">Phiên không còn ở trạng thái nháp. Quay về Dashboard để xem trạng thái mới; màn tiếp tục tương ứng chưa được kết nối.</p>
