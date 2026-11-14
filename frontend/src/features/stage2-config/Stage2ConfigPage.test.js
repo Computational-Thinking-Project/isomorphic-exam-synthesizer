@@ -44,6 +44,14 @@ function renderPage(sessionId = 'session-123', customProps = {}) {
                 element: React.createElement(Stage2ConfigPage, customProps),
               }),
               React.createElement(Route, {
+                path: '/session/:id/stage1',
+                element: React.createElement('div', null, 'Trang Stage 1 Đã Chuyển Hướng'),
+              }),
+              React.createElement(Route, {
+                path: '/dashboard',
+                element: React.createElement('div', null, 'Trang Dashboard Đã Chuyển Hướng'),
+              }),
+              React.createElement(Route, {
                 path: '/session/:id/stage3',
                 element: React.createElement('div', null, 'Trang Stage 3 Đã Chuyển Hướng'),
               }),
@@ -82,6 +90,142 @@ test('Stage2ConfigPage hiển thị cảnh báo khi phiên đang ở trạng th�
   assert.ok(text.includes('Giai đoạn 1'));
 
   await harness.unmount();
+});
+
+test('Issue 44: Direct Stage 2 URL khi blueprinted chưa ready: form bị vô hiệu hoá, hiển thị quay về Stage 1 và không gọi save config hay start generation', async () => {
+  let saveCalls = 0;
+  let startCalls = 0;
+  const mockLoadSession = async () => ({
+    id: 'blueprinted-not-ready',
+    title: 'Đề chưa ready',
+    status: 'blueprinted',
+    subject: 'Toán',
+    grade: 12,
+    source_questions: [{ id: 'q1', question_no: 1 }],
+    blueprint_summary: {
+      total_questions: 1,
+      is_ready: false,
+      supported_modes: null,
+    },
+  });
+
+  const harness = renderPage('blueprinted-not-ready', {
+    loadSession: mockLoadSession,
+    saveConfig: async () => { saveCalls++; },
+    startGen: async () => { startCalls++; },
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('Chưa có thông tin Blueprint khả dụng'));
+  assert.ok(text.includes('Đề nguồn chưa hoàn tất phân tích Blueprint'));
+  assert.ok(text.includes('Quay về Giai đoạn 1'));
+
+  const submitBtn = harness.container.querySelector('button[type="submit"]');
+  assert.ok(submitBtn);
+  assert.equal(submitBtn.getAttribute('disabled') !== null, true);
+
+  const fieldset = harness.container.querySelector('fieldset');
+  assert.ok(fieldset);
+  assert.equal(fieldset.getAttribute('disabled') !== null, true);
+
+  const buttons = Array.from(harness.container.querySelectorAll('button'));
+  const returnBtn = buttons.find((b) => b.textContent.includes('Quay về Giai đoạn 1'));
+  assert.ok(returnBtn, 'Phải tìm thấy nút Quay về Giai đoạn 1');
+  let fieldsetParent = returnBtn.parentElement;
+  while (fieldsetParent && fieldsetParent.tagName !== 'FIELDSET') {
+    fieldsetParent = fieldsetParent.parentElement;
+  }
+  assert.equal(Boolean(fieldsetParent && fieldsetParent.tagName === 'FIELDSET'), false, 'Nút Quay về Giai đoạn 1 phải nằm ngoài fieldset disabled (Phillip F01)');
+  assert.equal(returnBtn.getAttribute('disabled'), null, 'Nút Quay về Giai đoạn 1 không bị disabled');
+
+  await act(async () => {
+    returnBtn.click();
+  });
+  assert.equal(harness.getLocation(), '/session/blueprinted-not-ready/stage1', 'Bấm nút phải điều hướng về stage1');
+
+  assert.equal(saveCalls, 0);
+  assert.equal(startCalls, 0);
+
+  await harness.unmount();
+});
+
+test('Phillip F02: Khi Blueprint đã ready, footer hiển thị nút Quay về Dashboard và điều hướng đúng', async () => {
+  const mockLoadSession = async () => ({
+    id: 'ready-session-1',
+    title: 'Đề đã ready',
+    status: 'blueprinted',
+    subject: 'Toán',
+    grade: 12,
+    source_questions: [{ id: 'q1', question_no: 1 }],
+    blueprint_summary: {
+      total_questions: 1,
+      is_ready: true,
+      supported_modes: [],
+    },
+  });
+
+  const harness = renderPage('ready-session-1', {
+    loadSession: mockLoadSession,
+  });
+  await harness.render();
+
+  const buttons = Array.from(harness.container.querySelectorAll('button'));
+  const footerBackBtn = buttons.find((b) => b.textContent.includes('Quay về Dashboard'));
+  assert.ok(footerBackBtn, 'Phải có nút Quay về Dashboard ở footer (Phillip F02)');
+  assert.equal(footerBackBtn.getAttribute('disabled'), null);
+
+  await act(async () => {
+    footerBackBtn.click();
+  });
+  assert.equal(harness.getLocation(), '/dashboard', 'Footer back điều hướng về Dashboard, tránh vòng lặp redirect (Phillip F02)');
+
+  await harness.unmount();
+});
+
+test('INT-02: Strict canonical readiness gating in Stage2ConfigPage (matrix)', async () => {
+  const cases = [
+    { name: 'is_ready: true, supported_modes: []', summary: { is_ready: true, supported_modes: [] }, allowed: true },
+    { name: 'is_ready: true, supported_modes: valid array', summary: { is_ready: true, supported_modes: [{ id: 'NUMERICAL', is_available: true }] }, allowed: true },
+    { name: 'is_ready: false', summary: { is_ready: false, supported_modes: [] }, allowed: false },
+    { name: 'is_ready: null', summary: { is_ready: null, supported_modes: [] }, allowed: false },
+    { name: 'is_ready missing', summary: { supported_modes: [] }, allowed: false },
+    { name: 'supported_modes missing/null', summary: { is_ready: true, supported_modes: null }, allowed: false },
+    { name: 'blueprint_summary: null', summary: null, allowed: false },
+  ];
+
+  for (const c of cases) {
+    let saveCalls = 0;
+    const harness = renderPage(`session-gate-${c.allowed ? 'ok' : 'blocked'}`, {
+      loadSession: async () => ({
+        id: 'session-gate',
+        status: 'blueprinted',
+        subject: 'Toán',
+        grade: 12,
+        source_questions: [{ id: 'q1' }],
+        blueprint_summary: c.summary,
+      }),
+      saveConfig: async () => { saveCalls++; },
+      startGen: async () => {},
+    });
+    await harness.render();
+
+    const submitBtn = harness.container.querySelector('button[type="submit"]');
+    assert.ok(submitBtn, `Submit button must exist for ${c.name}`);
+    if (c.allowed) {
+      assert.equal(submitBtn.getAttribute('disabled') === null, true, `${c.name} phải được mở submit`);
+    } else {
+      assert.equal(submitBtn.getAttribute('disabled') !== null, true, `${c.name} phải bị khóa submit`);
+      const form = harness.container.querySelector('form');
+      if (form) {
+        await act(async () => {
+          form.dispatchEvent({ type: 'submit', bubbles: true, cancelable: true, preventDefault: () => {} });
+        });
+      }
+      assert.equal(saveCalls, 0, `${c.name} không được gọi saveConfig`);
+    }
+    await harness.unmount();
+  }
 });
 
 test('Stage2ConfigPage hiển thị lỗi khi loadSession thất bại', async () => {
@@ -145,6 +289,7 @@ test('Stage2ConfigPage xử lý lỗi Axios 400 có ERR_CONFIG_CONFLICT: đọc 
     status: 'blueprinted',
     source_questions: [{ id: 'q1', question_no: 1 }],
     blueprint_summary: {
+      is_ready: true,
       total_questions: 1,
       supported_modes: [
         { id: 'parameter_variation', label: 'Thay số', question_count: 1, is_available: true },
@@ -307,6 +452,7 @@ test('Stage2ConfigPage cô lập submit: chuyển A đang lưu sang B thì form 
       status: 'blueprinted',
       source_questions: [{ id: 'q1', question_no: 1 }],
       blueprint_summary: {
+        is_ready: true,
         total_questions: 1,
         supported_modes: [{ id: 'parameter_variation', label: 'Thay số', is_available: true }],
       },
@@ -317,6 +463,7 @@ test('Stage2ConfigPage cô lập submit: chuyển A đang lưu sang B thì form 
       status: 'blueprinted',
       source_questions: [{ id: 'q2', question_no: 1 }],
       blueprint_summary: {
+        is_ready: true,
         total_questions: 1,
         supported_modes: [{ id: 'parameter_variation', label: 'Thay số', is_available: true }],
       },
@@ -421,6 +568,7 @@ test('Stage2ConfigPage nạp cấu hình đã lưu (initialConfig n_versions: 4)
       ordering_preferences: { shuffle_questions: true },
     },
     blueprint_summary: {
+      is_ready: true,
       total_questions: 1,
       supported_modes: [
         { id: 'parameter_variation', label: 'Thay số', question_count: 1, is_available: true },
@@ -1185,6 +1333,429 @@ test('F09 Ca 2: Snapshot phục hồi báo 100% nhưng session_status vẫn là 
     harness.getLocation(),
     '/session/session-f09-snapshot-generating-100/stage2',
     'Không được chuyển Stage 3 khi snapshot báo 100% nhưng session_status vẫn là generating',
+  );
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigPage: hiển thị Recovery View và mã lỗi generation_error_code khi phiên ở trạng thái failed', async () => {
+  const mockLoadSession = async () => ({
+    id: 'failed-session-1',
+    title: 'Đề Toán lỗi',
+    status: 'failed',
+    generation_error_code: 'ERR_MODEL_QUOTA_EXHAUSTED',
+  });
+
+  const harness = renderPage('failed-session-1', {
+    loadSession: mockLoadSession,
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(
+    text.includes('Tiến trình sinh đề thi bị gián đoạn hoặc thất bại'),
+    'Phải hiển thị tiêu đề Recovery View khi phiên bị failed',
+  );
+  assert.ok(
+    text.includes('ERR_MODEL_QUOTA_EXHAUSTED'),
+    'Phải hiển thị mã lỗi generation_error_code',
+  );
+  const retryBtn = harness.container.querySelector('button');
+  assert.ok(retryBtn, 'Phải có nút bấm');
+  assert.ok(
+    text.includes('Thử lại tiến trình sinh đề'),
+    'Phải có nút Thử lại tiến trình sinh đề',
+  );
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigPage: bấm Thử lại tiến trình sinh đề khi phiên failed gọi retryGeneration thành công', async () => {
+  let retryCalledWith = null;
+  const mockLoadSession = async () => ({
+    id: 'failed-session-2',
+    title: 'Đề Toán lỗi retry',
+    status: 'failed',
+    generation_error_code: 'ERR_GENERATION_INTERRUPTED',
+  });
+
+  const mockRetryGen = async (id) => {
+    retryCalledWith = id;
+    return { ok: true };
+  };
+
+  const harness = renderPage('failed-session-2', {
+    loadSession: mockLoadSession,
+    retryGen: mockRetryGen,
+  });
+  await harness.render();
+
+  const buttons = Array.from(harness.container.querySelectorAll('button'));
+  const retryButton = buttons.find((btn) => btn.textContent.includes('Thử lại'));
+  assert.ok(retryButton, 'Phải tìm thấy nút Thử lại');
+
+  await act(async () => {
+    retryButton.click();
+  });
+
+  assert.equal(
+    retryCalledWith,
+    'failed-session-2',
+    'Phải gọi retryGen với đúng sessionId',
+  );
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigPage: bấm Thử lại tiến trình sinh đề khi máy chủ báo lỗi hiển thị thông báo lỗi', async () => {
+  const mockLoadSession = async () => ({
+    id: 'failed-session-3',
+    title: 'Đề Toán lỗi mạng',
+    status: 'failed',
+    generation_error_code: 'ERR_MODEL_TIMEOUT',
+  });
+
+  const mockRetryGen = async () => {
+    const error = new Error('Lỗi kết nối máy chủ khi thử lại');
+    error.response = { data: { error_message: 'Hệ thống đang bảo trì worker.' } };
+    throw error;
+  };
+
+  const harness = renderPage('failed-session-3', {
+    loadSession: mockLoadSession,
+    retryGen: mockRetryGen,
+  });
+  await harness.render();
+
+  const buttons = Array.from(harness.container.querySelectorAll('button'));
+  const retryButton = buttons.find((btn) => btn.textContent.includes('Thử lại'));
+  assert.ok(retryButton, 'Phải tìm thấy nút Thử lại');
+
+  await act(async () => {
+    retryButton.click();
+  });
+
+  const text = harness.container.textContent;
+  assert.ok(
+    text.includes('Hệ thống đang bảo trì worker.'),
+    'Phải hiển thị thông báo lỗi an toàn khi retry thất bại',
+  );
+
+  await harness.unmount();
+});
+
+test('F03: Stage2ConfigPage đọc generation_error_code từ fetchGenSnapshot khi session đang generating chuyển sang failed', async () => {
+  const mockLoadSession = async () => ({
+    id: 'failed-snapshot-session',
+    title: 'Đề Toán lỗi từ snapshot',
+    status: 'generating',
+  });
+
+  const mockFetchGenSnapshot = async () => ({
+    session_id: 'failed-snapshot-session',
+    session_status: 'failed',
+    generation_error_code: 'ERR_MODEL_TIMEOUT',
+    progress: { percent: 50 },
+    question_statuses: {},
+  });
+
+  const harness = renderPage('failed-snapshot-session', {
+    loadSession: mockLoadSession,
+    fetchGenSnapshot: mockFetchGenSnapshot,
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(
+    text.includes('Tiến trình sinh đề thi bị gián đoạn hoặc thất bại'),
+    'Phải hiển thị Recovery View khi snapshot báo failed',
+  );
+  assert.ok(
+    text.includes('ERR_MODEL_TIMEOUT'),
+    'Phải hiển thị mã lỗi ERR_MODEL_TIMEOUT từ snapshot',
+  );
+
+  await harness.unmount();
+});
+
+test('P2: generating → SSE onResync(failed) → recovery view with error code and retry action', async () => {
+  let capturedResync = null;
+  const mockUseSSE = (sid, options) => {
+    capturedResync = options.onResync;
+    return {
+      connectionState: 'connected',
+      progress: {
+        percent: 45,
+        completedCount: 2,
+        totalCount: 6,
+        hasData: true,
+      },
+      questionStatuses: {},
+      warnings: [],
+      isDone: false,
+      isPartial: false,
+      error: null,
+      reconnectCount: 0,
+      reconnect: () => {},
+    };
+  };
+
+  const mockLoadSession = async (sid) => ({
+    id: sid,
+    title: 'Đề Toán đang sinh',
+    status: 'generating',
+    source_questions: [{ id: 'q1', question_no: 1 }, { id: 'q2', question_no: 2 }],
+    config: { num_versions: 2 },
+    exam_versions: [{ version_index: 1 }, { version_index: 2 }],
+    blueprint_summary: { total_questions: 2, supported_modes: [], is_ready: true },
+    progress: { percent: 45, completed_count: 2, total_count: 6, hasData: true },
+  });
+
+  const mockFetchGenSnapshot = async (sid) => ({
+    session_id: sid,
+    session_status: 'failed',
+    generation_error_code: 'ERR_GENERATION_INTERRUPTED',
+    progress: { percent: 45, completed_count: 2, total_count: 6 },
+    question_statuses: {},
+  });
+
+  let retryCalledWith = null;
+  const mockRetryGen = async (sid) => {
+    retryCalledWith = sid;
+    return { ok: true };
+  };
+
+  const harness = renderPage('failed-resync-session', {
+    loadSession: mockLoadSession,
+    fetchGenSnapshot: mockFetchGenSnapshot,
+    useSSEHook: mockUseSSE,
+    retryGen: mockRetryGen,
+  });
+
+  // 1. Initial render: Session is generating -> Progress view is active
+  await harness.render();
+  let text = harness.container.textContent;
+  assert.ok(
+    text.includes('Tiến trình sinh đề AI') || text.includes('Đang tạo các biến thể đề thi'),
+    'Giao diện ban đầu phải hiển thị màn hình tiến độ sinh đề',
+  );
+  assert.equal(
+    text.includes('Tiến trình sinh đề thi bị gián đoạn hoặc thất bại'),
+    false,
+    'Chưa được hiển thị Recovery View trước khi resync',
+  );
+  assert.ok(typeof capturedResync === 'function', 'Hook useSSE phải nhận được callback onResync');
+
+  // 2. Trigger onResync returning failed status with generation_error_code
+  await act(async () => {
+    await capturedResync('failed-resync-session');
+  });
+
+  // 3. Verify that Recovery View is now displayed with error code and progress UI is dismissed
+  text = harness.container.textContent;
+  assert.ok(
+    text.includes('Tiến trình sinh đề thi bị gián đoạn hoặc thất bại'),
+    'Phải hiển thị Recovery View sau khi SSE onResync nhận kết quả failed',
+  );
+  assert.ok(
+    text.includes('ERR_GENERATION_INTERRUPTED'),
+    'Phải hiển thị mã lỗi ERR_GENERATION_INTERRUPTED từ snapshot',
+  );
+  assert.equal(
+    text.includes('Đang tạo các biến thể đề thi'),
+    false,
+    'Màn hình tiến độ sinh đề phải được dọn dẹp khi chuyển sang Recovery View',
+  );
+
+  // 4. Verify retry action is available and clickable
+  const buttons = Array.from(harness.container.querySelectorAll('button'));
+  const retryBtn = buttons.find((btn) => btn.textContent.includes('Thử lại'));
+  assert.ok(retryBtn, 'Recovery View phải có nút Thử lại');
+
+  await act(async () => {
+    retryBtn.click();
+  });
+
+  assert.equal(
+    retryCalledWith,
+    'failed-resync-session',
+    'Thao tác thử lại phải kích hoạt retryGen với đúng mã phiên',
+  );
+
+  await harness.unmount();
+});
+
+test('P1: stale SSE error của session A resolve muộn sau khi chuyển sang session B không làm hỏng trạng thái session B', async () => {
+  let capturedErrorA = null;
+  let resolveSnapshotA;
+  const deferredSnapshotAPromise = new Promise((resolve) => {
+    resolveSnapshotA = resolve;
+  });
+
+  const sessions = {
+    'session-A': {
+      id: 'session-A',
+      title: 'Phiên A đang sinh',
+      status: 'generating',
+      config: { num_versions: 2 },
+      source_questions: [{ id: 'q1', question_no: 1 }],
+      blueprint_summary: { total_questions: 1, is_ready: true, supported_modes: [] },
+      progress: { percent: 30, completed_count: 1, total_count: 2, hasData: true },
+    },
+    'session-B': {
+      id: 'session-B',
+      title: 'Phiên B bình thường',
+      status: 'blueprinted',
+      source_questions: [{ id: 'q2', question_no: 1 }],
+      blueprint_summary: { total_questions: 1, is_ready: true, supported_modes: [] },
+    },
+  };
+
+  const mockLoadSession = async (sid) => sessions[sid];
+  const mockFetchGenSnapshot = async (sid) => {
+    if (sid === 'session-A') {
+      return await deferredSnapshotAPromise;
+    }
+    return null;
+  };
+
+  const mockUseSSE = (sid, options) => {
+    if (sid === 'session-A') {
+      capturedErrorA = options.onError;
+    }
+    return {
+      connectionState: 'connected',
+      progress: { percent: 30, completedCount: 1, totalCount: 2, hasData: true },
+      questionStatuses: {},
+      warnings: [],
+      isDone: false,
+      isPartial: false,
+      error: null,
+      reconnectCount: 0,
+      reconnect: () => {},
+    };
+  };
+
+  const harness = renderPage('session-A', {
+    loadSession: mockLoadSession,
+    fetchGenSnapshot: mockFetchGenSnapshot,
+    useSSEHook: mockUseSSE,
+  });
+
+  // 1. Tải phiên A đang sinh
+  await harness.render();
+  let text = harness.container.textContent;
+  assert.ok(text.includes('Tiến trình sinh đề AI') || text.includes('Đang tạo các biến thể đề thi'));
+  assert.ok(typeof capturedErrorA === 'function', 'Phải nhận được onError của phiên A');
+
+  // 2. Kích hoạt onError của A nhưng promise fetch snapshot của A chưa resolve
+  act(() => {
+    capturedErrorA({
+      code: 'ERR_GENERATION_INTERRUPTED',
+      message: 'Lỗi tiến trình phiên A',
+    });
+  });
+
+  // 3. Người dùng chuyển sang phiên B (trạng thái blueprinted)
+  await harness.navigate('session-B');
+  text = harness.container.textContent;
+  assert.ok(text.includes('Phiên B bình thường'), 'Giao diện phải hiển thị phiên B');
+
+  // 4. Lúc này snapshot của A mới resolve về trạng thái failed kèm mã lỗi
+  await act(async () => {
+    resolveSnapshotA({
+      session_id: 'session-A',
+      session_status: 'failed',
+      generation_error_code: 'ERR_GENERATION_INTERRUPTED',
+    });
+    await new Promise((r) => setTimeout(r, 50));
+  });
+
+  // 5. Xác minh: Phiên B tuyệt đối không bị callback của A biến thành failed hoặc mở Recovery View
+  text = harness.container.textContent;
+  assert.equal(
+    text.includes('Tiến trình sinh đề thi bị gián đoạn hoặc thất bại'),
+    false,
+    'Phiên B tuyệt đối không bị ảnh hưởng bởi lỗi trả muộn của phiên A',
+  );
+  assert.ok(
+    text.includes('Phiên B bình thường'),
+    'Phiên B vẫn giữ nguyên thông tin cấu hình của mình',
+  );
+
+  await harness.unmount();
+});
+
+test('P2: lỗi kết nối SSE transport khi snapshot vẫn generating không được chuyển nhầm sang Recovery View failed', async () => {
+  let capturedError = null;
+
+  const mockLoadSession = async (sid) => ({
+    id: sid,
+    title: 'Đề Toán đang sinh bình thường',
+    status: 'generating',
+    source_questions: [{ id: 'q1', question_no: 1 }],
+    config: { num_versions: 2 },
+    exam_versions: [{ version_index: 1 }, { version_index: 2 }],
+    blueprint_summary: { total_questions: 1, is_ready: true, supported_modes: [] },
+    progress: { percent: 60, completed_count: 1, total_count: 2, hasData: true },
+  });
+
+  // Snapshot đối soát từ backend báo job vẫn đang generating bình thường
+  const mockFetchGenSnapshot = async (sid) => ({
+    session_id: sid,
+    session_status: 'generating',
+    progress: { percent: 60, completed_count: 1, total_count: 2 },
+    question_statuses: {},
+  });
+
+  const mockUseSSE = (sid, options) => {
+    capturedError = options.onError;
+    return {
+      connectionState: 'connected',
+      progress: { percent: 60, completedCount: 1, totalCount: 2, hasData: true },
+      questionStatuses: {},
+      warnings: [],
+      isDone: false,
+      isPartial: false,
+      error: null,
+      reconnectCount: 0,
+      reconnect: () => {},
+    };
+  };
+
+  const harness = renderPage('transport-error-session', {
+    loadSession: mockLoadSession,
+    fetchGenSnapshot: mockFetchGenSnapshot,
+    useSSEHook: mockUseSSE,
+  });
+
+  await harness.render();
+  let text = harness.container.textContent;
+  assert.ok(
+    text.includes('Tiến trình sinh đề AI') || text.includes('Đang tạo các biến thể đề thi'),
+    'Giao diện ban đầu hiển thị tiến độ',
+  );
+  assert.ok(typeof capturedError === 'function', 'Phải nhận được callback onError');
+
+  // Kích hoạt lỗi kết nối mạng SSE (lỗi transport / socket drop)
+  await act(async () => {
+    await capturedError({
+      code: 'ERR_NETWORK',
+      message: 'Mất kết nối EventSource tạm thời',
+    });
+  });
+
+  // Xác minh: Vì authoritative snapshot báo status vẫn là generating,
+  // giao diện KHÔNG ĐƯỢC biến thành failed, KHÔNG mở Recovery View sai
+  text = harness.container.textContent;
+  assert.equal(
+    text.includes('Tiến trình sinh đề thi bị gián đoạn hoặc thất bại'),
+    false,
+    'Tuyệt đối không mở Recovery View khi lỗi chỉ là transport và snapshot vẫn generating',
+  );
+  assert.ok(
+    text.includes('Tiến trình sinh đề AI') || text.includes('Đang tạo các biến thể đề thi'),
+    'Vẫn tiếp tục duy trì giao diện theo dõi tiến độ để người dùng kết nối lại',
   );
 
   await harness.unmount();

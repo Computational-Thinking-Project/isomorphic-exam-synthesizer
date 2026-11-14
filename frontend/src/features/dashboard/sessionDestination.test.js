@@ -36,9 +36,15 @@ test('sessionPaths encode sessionId đúng một lần cho tất cả route Stag
   assert.equal(exportPath('a/b'), '/session/a%2Fb/export');
 });
 
-test('resolver nối draft sang stage1, blueprinted/configured/generating sang stage2, partial_generated/generated sang stage3; bốn enum còn lại và unknown không tới màn chưa có', () => {
+test('resolver nối draft sang stage1, blueprinted ready hoặc configured/generating sang stage2; blueprinted chưa ready về stage1; partial_generated/generated sang stage3; bốn enum còn lại và unknown không tới màn chưa có', () => {
   assert.deepEqual(sessionDestination({ id: 'a/b', status: 'draft' }), { path: '/session/a%2Fb/stage1', notice: '' });
-  for (const status of ['blueprinted', 'configured', 'generating']) {
+  assert.deepEqual(sessionDestination({ id: 'saved', status: 'blueprinted' }), { path: '/session/saved/stage1', notice: '' });
+  assert.deepEqual(sessionDestination({ id: 'saved', status: 'blueprinted', blueprint_summary: { is_ready: false } }), { path: '/session/saved/stage1', notice: '' });
+  assert.deepEqual(sessionDestination({ id: 'saved', status: 'blueprinted', blueprint_summary: { is_ready: null } }), { path: '/session/saved/stage1', notice: '' });
+  assert.deepEqual(sessionDestination({ id: 'saved', status: 'blueprinted', blueprint_summary: { is_ready: 'true' } }), { path: '/session/saved/stage1', notice: '' });
+  assert.deepEqual(sessionDestination({ id: 'saved', status: 'blueprinted', blueprint_summary: { is_ready: 1 } }), { path: '/session/saved/stage1', notice: '' });
+  assert.deepEqual(sessionDestination({ id: 'saved', status: 'blueprinted', blueprint_summary: { is_ready: true } }), { path: '/session/saved/stage2', notice: '' });
+  for (const status of ['configured', 'generating']) {
     assert.deepEqual(sessionDestination({ id: 'saved', status }), { path: '/session/saved/stage2', notice: '' });
   }
   for (const status of ['partial_generated', 'generated']) {

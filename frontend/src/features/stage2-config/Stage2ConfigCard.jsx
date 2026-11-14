@@ -27,42 +27,26 @@ export default function Stage2ConfigCard({
   onSubmit,
   isSubmitting = false,
   error = null,
-  onBack,
+  onBack = null,
+  onReturnToStage1 = null,
 }) {
   const formId = useId();
 
   // Danh sách các chế độ từ Blueprint
   const supportedModes = session?.blueprint_summary?.supported_modes || [];
   const isBlueprintReady = Boolean(
-    session?.blueprint_summary &&
-    session.blueprint_summary.is_ready !== false &&
-    session.blueprint_summary.supported_modes !== null,
+    session?.status !== 'draft' &&
+    session?.blueprint_summary?.is_ready === true &&
+    Array.isArray(session?.blueprint_summary?.supported_modes),
   );
 
   // Giá trị khởi tạo từ cấu hình đã lưu hoặc mặc định
   const defaultNumVersions = initialConfig?.n_versions ?? initialConfig?.num_versions ?? 2;
-  const availableModes = supportedModes.filter((m) => m.is_available !== false).map((m) => m.id);
-
-  // Phân biệt: nếu initialConfig có mảng active_variation_modes (kể cả rỗng []), giữ nguyên lựa chọn
-  // Nếu chưa có config (null/undefined), chọn tất cả các mode khả dụng
-  const hasSavedModes =
-    Array.isArray(initialConfig?.active_variation_modes) ||
-    Array.isArray(initialConfig?.variation_modes);
-
-  const rawConfiguredModes = Array.isArray(initialConfig?.active_variation_modes)
-    ? initialConfig.active_variation_modes
-    : Array.isArray(initialConfig?.variation_modes)
-    ? initialConfig.variation_modes
-    : null;
-
-  const defaultModes = hasSavedModes
-    ? rawConfiguredModes.filter((id) => availableModes.includes(id))
-    : availableModes;
 
   const [numVersions, setNumVersions] = useState(defaultNumVersions);
-  const [selectedModes, setSelectedModes] = useState(defaultModes);
+  // Issue #45: Mặc định tắt (false) cho cả hai tùy chọn xáo trộn
   const [shuffleQuestions, setShuffleQuestions] = useState(
-    initialConfig?.ordering_preferences?.shuffle_questions ?? true,
+    initialConfig?.ordering_preferences?.shuffle_questions ?? false,
   );
   const [shuffleOptions, setShuffleOptions] = useState(
     initialConfig?.ordering_preferences?.shuffle_options ?? false,
@@ -71,18 +55,6 @@ export default function Stage2ConfigCard({
 
   const totalQuestions = session?.source_questions?.length || session?.blueprint_summary?.total_questions || 0;
   const totalVariantsToGenerate = numVersions * totalQuestions;
-
-  function toggleMode(modeId, isAvailable) {
-    if (!isAvailable || isSubmitting) return;
-
-    setValidationError('');
-    setSelectedModes((prev) => {
-      if (prev.includes(modeId)) {
-        return prev.filter((id) => id !== modeId);
-      }
-      return [...prev, modeId];
-    });
-  }
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -98,14 +70,11 @@ export default function Stage2ConfigCard({
       return;
     }
 
-    // F01: Chuẩn hóa chế độ không biến thể: loại bỏ 'NONE' để luôn gửi [] theo contract
-    const activeModes = selectedModes.filter(
-      (m) => String(m).trim().toUpperCase() !== 'NONE',
-    );
-
+    // Issue #45: Chuẩn hóa payload không gửi user-selected variation modes
+    // Backend tự suy ra từ canonical Blueprint khi nhận active_variation_modes: []
     const payload = {
       n_versions: Number(numVersions),
-      active_variation_modes: activeModes,
+      active_variation_modes: [],
       ordering_preferences: {
         shuffle_questions: Boolean(shuffleQuestions),
         shuffle_options: Boolean(shuffleOptions),
@@ -159,7 +128,26 @@ export default function Stage2ConfigCard({
         </div>
       )}
 
+      {!isBlueprintReady && (
+        <div className="mb-6 rounded-xl border border-amber-500/40 bg-amber-950/20 p-4 text-center text-sm text-amber-200">
+          <p className="font-semibold">Chưa có thông tin Blueprint khả dụng</p>
+          <p className="mt-1 text-xs text-amber-300/80">
+            Đề nguồn chưa hoàn tất phân tích Blueprint hoặc thiếu dữ liệu câu hỏi. Vui lòng quay lại Giai đoạn 1 để xác nhận đề gốc.
+          </p>
+          {onReturnToStage1 && (
+            <button
+              type="button"
+              onClick={onReturnToStage1}
+              className="mt-3 inline-flex items-center rounded-lg border border-amber-500/50 bg-amber-950/40 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-900/50"
+            >
+              Quay về Giai đoạn 1
+            </button>
+          )}
+        </div>
+      )}
+
       <form id={formId} onSubmit={handleSubmit} className="space-y-8">
+        <fieldset disabled={isSubmitting || !isBlueprintReady} className="space-y-8">
         {/* Phần 1: Chọn số lượng mã đề */}
         <div>
           <label className="block text-base font-semibold text-white">
@@ -199,28 +187,25 @@ export default function Stage2ConfigCard({
           </div>
         </div>
 
-        {/* Phần 2: Chế độ biến thể (Variation Modes) */}
+        {/* Phần 2: Chế độ biến thể (Tự động theo Issue #45) */}
         <div>
           <div className="flex items-center justify-between">
             <label className="block text-base font-semibold text-white">
               2. Chế độ biến thể bài toán (Variation Modes)
             </label>
-            <span className="text-xs text-slate-400">
-              Đọc từ Blueprint tự động
+            <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/20 px-2.5 py-0.5 text-xs font-medium text-sky-300">
+              <Sparkles className="h-3 w-3" /> Tự động tối ưu từ Blueprint
             </span>
           </div>
           <p className="mt-1 text-sm text-slate-400">
-            Chọn các phương pháp sinh biến thể câu hỏi tương đương. Các chế độ không khả dụng đã được hệ thống tự động lọc.
+            Hệ thống tự động phân tích và áp dụng các chế độ biến thể toán học tối ưu từ Blueprint đề nguồn đã xác nhận (theo quy ước Issue #45).
           </p>
 
           <div className="mt-4 space-y-3">
             {!isBlueprintReady ? (
-              <div className="rounded-xl border border-amber-500/40 bg-amber-950/20 p-4 text-center text-sm text-amber-200">
-                <p className="font-semibold">Chưa có thông tin Blueprint khả dụng</p>
-                <p className="mt-1 text-xs text-amber-300/80">
-                  Đề nguồn chưa hoàn tất phân tích Blueprint hoặc thiếu dữ liệu câu hỏi. Vui lòng quay lại Giai đoạn 1 để xác nhận đề gốc.
-                </p>
-              </div>
+              <p className="text-xs text-amber-300/80">
+                Đang chờ Blueprint sẵn sàng để hiển thị các phương pháp sinh biến thể.
+              </p>
             ) : supportedModes.length === 0 ? (
               <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-4 text-sm text-slate-300">
                 <div className="flex items-start gap-3">
@@ -234,68 +219,57 @@ export default function Stage2ConfigCard({
                 </div>
               </div>
             ) : (
-              supportedModes.map((mode) => {
-                const isSelected = selectedModes.includes(mode.id);
-                const isAvailable = mode.is_available !== false;
-
-                return (
-                  <div
-                    key={mode.id}
-                    onClick={(e) => {
-                      if (e.target?.tagName?.toLowerCase() === 'input') return;
-                      toggleMode(mode.id, isAvailable);
-                    }}
-                    className={`relative flex items-start gap-4 rounded-xl border p-4 transition-all ${
-                      !isAvailable
-                        ? 'cursor-not-allowed border-slate-800 bg-slate-900/40 opacity-55'
-                        : isSelected
-                        ? 'cursor-pointer border-sky-500/60 bg-sky-950/25 ring-1 ring-sky-500/30'
-                        : 'cursor-pointer border-slate-700 bg-slate-800/40 hover:border-slate-600 hover:bg-slate-800/70'
-                    }`}
-                  >
-                    <div className="pt-0.5">
-                      <input
-                        type="checkbox"
-                        id={`mode-${mode.id}`}
-                        checked={isSelected && isAvailable}
-                        disabled={!isAvailable || isSubmitting}
-                        onChange={() => toggleMode(mode.id, isAvailable)}
-                        className="h-4 w-4 rounded border-slate-600 bg-slate-700 text-sky-500 focus:ring-sky-500 focus:ring-offset-slate-900 disabled:opacity-40"
-                      />
-                    </div>
-
-                    <div className="flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span
-                          className={`text-sm font-semibold select-none ${
-                            isAvailable ? 'text-white' : 'text-slate-400'
-                          }`}
-                        >
-                          {mode.label}
-                        </span>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {supportedModes.map((mode) => {
+                  const isAvailable = mode.is_available !== false;
+                  return (
+                    <div
+                      key={mode.id}
+                      id={`mode-badge-${mode.id}`}
+                      className={`flex items-start gap-3 rounded-xl border p-4 text-left transition-colors ${
+                        isAvailable
+                          ? 'border-slate-700 bg-slate-800/40 text-slate-200'
+                          : 'border-slate-800/60 bg-slate-900/30 text-slate-500'
+                      }`}
+                    >
+                      <div className="mt-0.5">
                         {isAvailable ? (
-                          <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] font-medium text-slate-300">
-                            Hỗ trợ {mode.question_count}/{totalQuestions} câu
-                          </span>
+                          <CheckCircle2 className="h-4 w-4 text-emerald-400" />
                         ) : (
-                          <span className="rounded bg-rose-950/40 px-2 py-0.5 text-[11px] font-medium text-rose-300">
-                            Không khả dụng
-                          </span>
+                          <AlertCircle className="h-4 w-4 text-amber-500/60" />
                         )}
                       </div>
-                      <p className="mt-1 text-xs text-slate-400">
-                        {mode.description}
-                      </p>
-                      {!isAvailable && mode.unavailable_reason && (
-                        <p className="mt-1.5 flex items-center gap-1 text-xs text-amber-400/90">
-                          <HelpCircle className="h-3.5 w-3.5" />
-                          {mode.unavailable_reason}
-                        </p>
-                      )}
+                      <div className="flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className={`text-sm font-semibold select-none ${isAvailable ? 'text-white' : 'text-slate-400'}`}>
+                            {mode.label || mode.id}
+                          </span>
+                          {isAvailable ? (
+                            <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] font-medium text-slate-300">
+                              Hỗ trợ {mode.question_count ?? totalQuestions}/{totalQuestions} câu
+                            </span>
+                          ) : (
+                            <span className="rounded bg-rose-950/40 px-2 py-0.5 text-[11px] font-medium text-rose-300">
+                              Không khả dụng
+                            </span>
+                          )}
+                        </div>
+                        {mode.description && (
+                          <p className="mt-1 text-xs text-slate-400">
+                            {mode.description}
+                          </p>
+                        )}
+                        {!isAvailable && mode.unavailable_reason && (
+                          <p className="mt-1.5 flex items-center gap-1 text-xs text-amber-400/90">
+                            <HelpCircle className="h-3.5 w-3.5" />
+                            {mode.unavailable_reason}
+                          </p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                );
-              })
+                  );
+                })}
+              </div>
             )}
           </div>
         </div>
@@ -376,17 +350,10 @@ export default function Stage2ConfigCard({
                   <Layers className="h-3.5 w-3.5 text-sky-400" />
                   Tổng cộng: <strong className="text-white">{totalVariantsToGenerate}</strong> câu hỏi biến thể
                 </span>
-                {selectedModes.length > 0 ? (
-                  <span className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-slate-200">
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-                    {selectedModes.length} chế độ biến thể được kích hoạt
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-slate-200">
-                    <HelpCircle className="h-3.5 w-3.5 text-slate-400" />
-                    Không chọn biến thể (giữ nguyên câu hỏi gốc)
-                  </span>
-                )}
+                <span className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-slate-200">
+                  <Sparkles className="h-3.5 w-3.5 text-sky-400" />
+                  Tự động tối ưu biến thể từ Blueprint
+                </span>
                 {shuffleQuestions && (
                   <span className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-slate-200">
                     <Shuffle className="h-3.5 w-3.5 text-amber-400" />
@@ -403,6 +370,7 @@ export default function Stage2ConfigCard({
             </div>
           </div>
         </div>
+        </fieldset>
 
         {/* Nút hành động */}
         <div className="flex flex-wrap items-center justify-between gap-4 pt-4">
@@ -413,7 +381,7 @@ export default function Stage2ConfigCard({
               disabled={isSubmitting}
               className="rounded-xl border border-slate-700 px-5 py-2.5 text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-50"
             >
-              Quay lại Bước 1
+              Quay về Dashboard
             </button>
           ) : (
             <div />

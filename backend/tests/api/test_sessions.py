@@ -1,9 +1,9 @@
 """Unit tests for Exam Sessions CRUD and Clone API endpoints (TASK-104)."""
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 SOURCE_REVISION = "11111111-2222-4333-8444-555555555555"
 
@@ -274,11 +274,10 @@ def test_get_session_detail_success(client, mock_auth_user, test_user_id, auth_h
     assert data["generation_config"] is not None
     assert data["generation_config"]["n_versions"] == 2
     assert data["blueprint_summary"] is not None
-    assert data["blueprint_summary"]["is_ready"] is True
-    mode_ids = [m["id"] for m in data["blueprint_summary"]["supported_modes"]]
-    assert "parameter_variation" in mode_ids
-    assert "context_swap" in mode_ids
-    assert all(m["is_available"] is True for m in data["blueprint_summary"]["supported_modes"])
+    # W4: this fixture is draft + NO_CONFIRMATION. Copied/old confirmed legacy
+    # rows must not make an unconfirmed import/clone appear generation-ready.
+    assert data["blueprint_summary"]["is_ready"] is False
+    assert data["blueprint_summary"]["supported_modes"] is None
     # Q01: source_revision must be present and equal to updated_at
     assert data["source_revision"] == SOURCE_REVISION
     mock_db.rpc.assert_any_call("get_session_source_preview", {"p_session_id": "session-1"})
@@ -1214,3 +1213,350 @@ async def test_legacy_whitespace_id_does_not_publish_a_selectable_alias():
         "id": "NUMERICAL", "label": "Thay đổi số liệu", "question_count": 1, "is_available": False,
         "unavailable_reason": "Chỉ hỗ trợ 1/2 câu trong đề (yêu cầu toàn bộ câu hỏi hỗ trợ).",
     }]
+
+
+def test_update_ordering_preferences_success(client, mock_auth_user, test_user_id, auth_headers):
+    mock_db = MagicMock()
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
+        {"user_id": test_user_id, "status": "reviewed"}
+    ]
+    mock_db.rpc.return_value.execute.return_value.data = {
+        "success": True,
+        "session_id": "session-1",
+        "status": "reviewed",
+        "ordering_preferences": {"shuffle_questions": True, "shuffle_options": False},
+    }
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        res = client.patch(
+            "/api/sessions/session-1/ordering-preferences",
+            json={"shuffle_questions": True, "shuffle_options": False},
+            headers=auth_headers,
+        )
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["success"] is True
+    assert data["ordering_preferences"] == {"shuffle_questions": True, "shuffle_options": False}
+
+
+def test_update_ordering_preferences_locked(client, mock_auth_user, test_user_id, auth_headers):
+    mock_db = MagicMock()
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
+        {"user_id": test_user_id, "status": "draft"}
+    ]
+    mock_db.rpc.return_value.execute.side_effect = Exception("ERR_CONFIG_CONFLICT: preferences locked (55006)")
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        res = client.patch(
+            "/api/sessions/session-1/ordering-preferences",
+            json={"shuffle_questions": True, "shuffle_options": False},
+            headers=auth_headers,
+        )
+    assert res.status_code == 423
+
+
+@pytest.mark.parametrize(
+    "invalid_val",
+    ["true", "false", "yes", "no", 0, 1, None, [], {}],
+)
+@pytest.mark.parametrize("field_name", ["shuffle_questions", "shuffle_options"])
+def test_update_ordering_preferences_strict_bool_rejected(
+    client, mock_auth_user, test_user_id, auth_headers, invalid_val, field_name
+):
+    mock_db = MagicMock()
+    payload = {"shuffle_questions": True, "shuffle_options": False}
+    payload[field_name] = invalid_val
+
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        for route in [
+            "/api/sessions/session-1/ordering-preferences",
+            "/api/sessions/session-1/preferences",
+        ]:
+            res = client.patch(route, json=payload, headers=auth_headers)
+            assert res.status_code == 422, f"Expected 422 for {field_name}={invalid_val!r}, got {res.status_code}"
+            assert mock_db.rpc.call_count == 0
+
+
+@pytest.mark.parametrize(
+    "invalid_payload",
+    [
+        {"shuffle_questions": True},  # missing shuffle_options
+        {"shuffle_options": False},  # missing shuffle_questions
+        {},  # empty payload
+        [],  # root must be an object
+        None,  # JSON null root
+        {"shuffle_questions": True, "shuffle_options": False, "extra_field": True},  # extra field
+    ],
+)
+@pytest.mark.parametrize("route", ["ordering-preferences", "preferences"])
+def test_update_ordering_preferences_schema_violations(
+    client, mock_auth_user, test_user_id, auth_headers, invalid_payload, route
+):
+    mock_db = MagicMock()
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        res = client.patch(
+            f"/api/sessions/session-1/{route}",
+            content=json.dumps(invalid_payload),
+            headers={**auth_headers, "Content-Type": "application/json"},
+        )
+        assert res.status_code == 422
+        assert mock_db.rpc.call_count == 0
+
+
+@pytest.mark.parametrize("route", ["ordering-preferences", "preferences"])
+def test_update_ordering_preferences_unauthenticated(client, route):
+    with patch("app.api.dependencies.get_authenticated_client") as db_factory:
+        res = client.patch(
+            f"/api/sessions/session-1/{route}",
+            json={"shuffle_questions": False, "shuffle_options": False},
+        )
+    assert res.status_code == 401
+    db_factory.assert_not_called()
+
+
+@pytest.mark.parametrize("route", ["ordering-preferences", "preferences"])
+@pytest.mark.parametrize("rows,status", [([], 404), ([{"user_id": "foreign-owner"}], 403)])
+def test_update_ordering_preferences_ownership(
+    client, mock_auth_user, auth_headers, route, rows, status
+):
+    mock_db = MagicMock()
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value.data = rows
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        res = client.patch(
+            f"/api/sessions/session-1/{route}",
+            json={"shuffle_questions": False, "shuffle_options": False},
+            headers=auth_headers,
+        )
+    assert res.status_code == status
+    mock_db.rpc.assert_not_called()
+
+
+def test_update_ordering_preferences_openapi_alias_hidden(client):
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "patch" in paths["/api/sessions/{session_id}/ordering-preferences"]
+    assert "/api/sessions/{session_id}/preferences" not in paths
+
+
+@pytest.mark.parametrize(
+    ("q", "o"),
+    [
+        (False, False),
+        (False, True),
+        (True, False),
+        (True, True),
+    ],
+)
+@pytest.mark.parametrize(
+    "route_template",
+    [
+        "/api/sessions/session-1/ordering-preferences",
+        "/api/sessions/session-1/preferences",
+    ],
+)
+def test_update_ordering_preferences_all_valid_combinations(
+    client, mock_auth_user, test_user_id, auth_headers, q, o, route_template
+):
+    mock_db = MagicMock()
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
+        {"user_id": test_user_id, "status": "reviewed"}
+    ]
+    mock_db.rpc.return_value.execute.return_value.data = {
+        "success": True,
+        "session_id": "session-1",
+        "status": "reviewed",
+        "ordering_preferences": {"shuffle_questions": q, "shuffle_options": o},
+    }
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        res = client.patch(
+            route_template,
+            json={"shuffle_questions": q, "shuffle_options": o},
+            headers=auth_headers,
+        )
+    assert res.status_code == 200, res.text
+    assert res.json() == {
+        "success": True,
+        "session_id": "session-1",
+        "status": "reviewed",
+        "ordering_preferences": {"shuffle_questions": q, "shuffle_options": o},
+    }
+
+
+@pytest.mark.parametrize(
+    "bad_receipt",
+    [
+        None,
+        [],
+        {},
+        "not-a-dict",
+        123,
+        # Missing or invalid success
+        {
+            "session_id": "session-1",
+            "status": "reviewed",
+            "ordering_preferences": {"shuffle_questions": True, "shuffle_options": False},
+        },
+        {
+            "success": False,
+            "session_id": "session-1",
+            "status": "reviewed",
+            "ordering_preferences": {"shuffle_questions": True, "shuffle_options": False},
+        },
+        {
+            "success": "true",
+            "session_id": "session-1",
+            "status": "reviewed",
+            "ordering_preferences": {"shuffle_questions": True, "shuffle_options": False},
+        },
+        # Missing or invalid session_id
+        {
+            "success": True,
+            "status": "reviewed",
+            "ordering_preferences": {"shuffle_questions": True, "shuffle_options": False},
+        },
+        {
+            "success": True,
+            "session_id": "different-session-uuid",
+            "status": "reviewed",
+            "ordering_preferences": {"shuffle_questions": True, "shuffle_options": False},
+        },
+        {
+            "success": True,
+            "session_id": 12345,
+            "status": "reviewed",
+            "ordering_preferences": {"shuffle_questions": True, "shuffle_options": False},
+        },
+        # Missing or invalid status
+        {
+            "success": True,
+            "session_id": "session-1",
+            "ordering_preferences": {"shuffle_questions": True, "shuffle_options": False},
+        },
+        {
+            "success": True,
+            "session_id": "session-1",
+            "status": "draft",
+            "ordering_preferences": {"shuffle_questions": True, "shuffle_options": False},
+        },
+        # Missing or invalid ordering_preferences
+        {
+            "success": True,
+            "session_id": "session-1",
+            "status": "reviewed",
+        },
+        {
+            "success": True,
+            "session_id": "session-1",
+            "status": "reviewed",
+            "ordering_preferences": None,
+        },
+        {
+            "success": True,
+            "session_id": "session-1",
+            "status": "reviewed",
+            "ordering_preferences": [],
+        },
+        {
+            "success": True,
+            "session_id": "session-1",
+            "status": "reviewed",
+            "ordering_preferences": {"shuffle_questions": True},
+        },
+        {
+            "success": True,
+            "session_id": "session-1",
+            "status": "reviewed",
+            "ordering_preferences": {
+                "shuffle_questions": True,
+                "shuffle_options": False,
+                "extra_key": True,
+            },
+        },
+        {
+            "success": True,
+            "session_id": "session-1",
+            "status": "reviewed",
+            "ordering_preferences": {"shuffle_questions": 1, "shuffle_options": 0},
+        },
+        {
+            "success": True,
+            "session_id": "session-1",
+            "status": "reviewed",
+            "ordering_preferences": {"shuffle_questions": "true", "shuffle_options": "false"},
+        },
+        # Receipt preferences do not match requested preferences
+        {
+            "success": True,
+            "session_id": "session-1",
+            "status": "reviewed",
+            "ordering_preferences": {"shuffle_questions": False, "shuffle_options": True},
+        },
+    ],
+)
+@pytest.mark.parametrize("route", ["ordering-preferences", "preferences"])
+def test_update_ordering_preferences_fail_closed_on_bad_receipt(
+    client, mock_auth_user, test_user_id, auth_headers, bad_receipt, route
+):
+    mock_db = MagicMock()
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
+        {"user_id": test_user_id, "status": "reviewed"}
+    ]
+    mock_db.rpc.return_value.execute.return_value.data = bad_receipt
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        res = client.patch(
+            f"/api/sessions/session-1/{route}",
+            json={"shuffle_questions": True, "shuffle_options": False},
+            headers=auth_headers,
+        )
+    assert res.status_code == 503
+    data = res.json()
+    assert data["error_code"] == "ERR_PREFERENCES_UPDATE_FAILED"
+
+
+@pytest.mark.parametrize(
+    ("db_exc", "expected_status", "expected_error_code"),
+    [
+        (Exception("invalid ordering preferences: (22023)"), 422, "ERR_CONFIG_CONFLICT"),
+        (Exception("Session not found (P0002)"), 404, None),
+        (Exception("Access denied (42501)"), 403, None),
+        (Exception("Unexpected database timeout"), 503, "ERR_PREFERENCES_UPDATE_FAILED"),
+    ],
+)
+def test_update_ordering_preferences_db_exceptions(
+    client, mock_auth_user, test_user_id, auth_headers, db_exc, expected_status, expected_error_code
+):
+    mock_db = MagicMock()
+    mock_db.table.return_value.select.return_value.eq.return_value.execute.return_value.data = [
+        {"user_id": test_user_id, "status": "reviewed"}
+    ]
+    mock_db.rpc.return_value.execute.side_effect = db_exc
+    with (
+        patch("app.api.dependencies.get_supabase_client", return_value=mock_auth_user),
+        patch("app.api.dependencies.get_authenticated_client", return_value=mock_db),
+    ):
+        res = client.patch(
+            "/api/sessions/session-1/ordering-preferences",
+            json={"shuffle_questions": True, "shuffle_options": False},
+            headers=auth_headers,
+        )
+    assert res.status_code == expected_status
+    if expected_error_code:
+        assert res.json()["error_code"] == expected_error_code

@@ -6,7 +6,7 @@ import { auth } from './test-support/supabase.stub.js';
 
 register('./test-support/auth-loader.js', import.meta.url);
 const { api } = await import('./api.js');
-const { confirmSource, getSourceArtifactStatus } = await import('./sourceConfirmation.js');
+const { confirmSource, getSourceArtifactStatus, retrySourceArtifacts } = await import('./sourceConfirmation.js');
 
 const id = '10000000-0000-4000-8000-000000000001';
 const sourceRevision = '20000000-0000-4000-8000-000000000002';
@@ -77,5 +77,19 @@ test('đọc canonical artifact đúng phiên, phân biệt pending với ready 
       return response(config, artifact);
     };
     assert.deepEqual(await getSourceArtifactStatus(id), artifact);
+  }
+});
+
+test('thử lại canonical artifact thành công (200 hoặc 202) và kiểm tra định dạng phản hồi', async () => {
+  for (const [status, artifact] of [
+    [202, { session_id: id, ready: false, canonical_status: 'running', supported_modes: null }],
+    [200, { session_id: id, ready: true, canonical_status: 'ready', supported_modes: [] }],
+  ]) {
+    api.defaults.adapter = async (config) => {
+      assert.equal(config.method, 'post');
+      assert.equal(config.url, `/sessions/${id}/source-artifacts/retry`);
+      return response(config, artifact, status);
+    };
+    assert.deepEqual(await retrySourceArtifacts(id), artifact);
   }
 });

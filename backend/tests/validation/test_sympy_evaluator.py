@@ -208,8 +208,15 @@ class TestRegressionPhilipFeedbackPR12:
         assert res_2.status == EvaluationStatus.UNSUPPORTED
         assert res_2.passed is False
 
-    def test_no_partial_answers_trailing_tokens(self):
+    def test_no_partial_answers_trailing_tokens(self, monkeypatch):
         """Review feedback: candidate answers with dangling tokens like '2 +' or '2; ?' must fail."""
+
+        def unexpected_process(*args, **kwargs):
+            raise AssertionError("Malformed answer must not start CAS.")
+
+        monkeypatch.setattr(
+            "app.services.validator.sympy_evaluator.run_with_timeout", unexpected_process
+        )
         res_plus = verify_equation_solution("x = 2", "2 +")
         assert res_plus.status == EvaluationStatus.UNSUPPORTED
         assert res_plus.passed is False
