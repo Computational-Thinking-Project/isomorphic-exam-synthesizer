@@ -304,6 +304,7 @@ def test_get_answers_matrix_success(
                 headers=auth_headers,
             )
             assert res.status_code == 200
+            assert res.headers.get("Cache-Control") == "no-store"
             data = res.json()
             assert data["session_id"] == MOCK_SESSION_ID
             assert data["total_questions"] == 2
@@ -346,6 +347,21 @@ async def test_finalize_service_matrix_ordering():
     assert result.matrix[0].answers == {"101": "A", "102": "C"}
     assert result.matrix[1].question_no == 2
     assert result.matrix[1].answers == {"101": "B", "102": "D"}
+
+
+@pytest.mark.asyncio
+async def test_get_answers_matrix_cross_user_forbidden():
+    """FinalizeService.get_answers_matrix raises 403 ERR_UNAUTHORIZED if session user_id mismatches."""
+    mock_db = MagicMock()
+    mock_repo = MagicMock()
+    mock_repo.get_session_meta = AsyncMock(
+        return_value={"id": MOCK_SESSION_ID, "status": "approved", "user_id": "other-user-999"}
+    )
+    service = FinalizeService(mock_db, repo=mock_repo)
+    with pytest.raises(ReviewDomainException) as exc:
+        await service.get_answers_matrix(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc.value.status_code == 403
+    assert exc.value.error_code == "ERR_UNAUTHORIZED"
 
 
 # ==============================================================================

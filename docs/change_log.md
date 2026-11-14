@@ -1,3 +1,38 @@
+## W4-MVP-05: Post-shuffle pre-approval preview projection API — 08/11/2026 (proposed)
+
+Introduces dedicated read-only endpoint `GET /api/sessions/{session_id}/finalize/preview`
+providing post-shuffle examination preview projection before final approval. Enforces
+full parity with exporter `DisplayQuestion` invariants (non-empty content/solution, 4
+normalized distinct options, status='approved'), complete answer-key integrity checks,
+and finalized shuffle provenance verification. Resolves Decision Q06. See the
+[preview projection contract](api/preview-projection-contract.md).
+
+### Review Round 2 Findings (F01–F04) Resolution:
+- **F01 (Real PostgreSQL integration & fixture):** Fixed `reviewed_exam_session` fixture
+  schema compliance by populating `canonical_question_no` on `answer_keys` and valid
+  `permutations` on `exam_versions`. Upgraded `test_preview_snapshot_on_real_pg` to exercise
+  the complete `prepare_shuffle` -> `finalize_persist_shuffle` transactional RPC -> `get_preview_snapshot`
+  pipeline on PostgreSQL, asserting slots, choices, answer keys, and canonical mappings.
+- **F02 (Persisted shuffle provenance validation):** Replicated migration 008 invariants in
+  `fetch_preview_snapshot()`: verified non-empty `shuffle_seed`, complete permutation map
+  bijections, exact match between displayed options and `canonical_options` under `option_permutations`,
+  `correct_key == perm_map[canonical_correct_key]`, and synchronized explanation markdown
+  against `canonical_solution_md`.
+- **F03 (Canonical & source lineage validation):** Enforced 1:1 set coverage of source questions
+  for each version and verified `source_by_id[source_question_id] == canonical_question_no`,
+  failing closed on swapped or omitted source references.
+- **F04 (Export title mapping & mock column projection):** Added `title` to `.select()` in
+  `FinalizeRepository.get_session_meta()` and updated `MockSupabaseClient` in `finalize_test_client.py`
+  to project selected columns, preventing false-positive tests on unqueried fields.
+- **F05 (Self-Review hardening & cache invariant alignment):**
+  - Enforced `Cache-Control: no-store` on `GET /{session_id}/finalize/preview` and `GET /{session_id}/finalize/matrix` to prevent intermediate caching of sensitive exam projections, aligning with PR #54 (`w4-mvp-03-review-snapshot`).
+  - Constrained `PreviewVersionItem.total_questions` to `ge=1, le=20` for strict parity with `PreviewSnapshotResponse.total_questions` and domain invariants ($1 \le M \le 20$).
+  - Enforced strict dictionary length validation (`len(c_to_d) == m`, `len(d_to_c) == m`, `len(opt_perms) == m`) in `fetch_preview_snapshot()`, immediately failing closed on incomplete or extraneous permutation maps with descriptive errors.
+  - Added session user ownership guard (`user_id` validation) in `FinalizeService.get_answers_matrix()`, aligning authorization defense-in-depth with `get_preview_snapshot()`.
+  - Added test coverage for `Cache-Control: no-store` headers, permutation dictionary bounds, matrix cross-user authorization, and Pydantic validation of version item bounds.
+
+---
+
 ## OPS11/21 checkpoint — 13/11/2026
 
 - Đạt tiếp nối PR51 đã merge bằng nhánh OPS mới từ dev294c69a. Cập nhật task/input-handoff, runbook và migration checkpoint017/018 merged; 019 đã merge qua PR61 tại devb47e4fa; giữ historical inventory73583d7, không tạo applied ledger giả.
