@@ -44,6 +44,14 @@ function renderPage(sessionId = 'session-123', customProps = {}) {
                 element: React.createElement(Stage2ConfigPage, customProps),
               }),
               React.createElement(Route, {
+                path: '/session/:id/stage1',
+                element: React.createElement('div', null, 'Trang Stage 1 Đã Chuyển Hướng'),
+              }),
+              React.createElement(Route, {
+                path: '/dashboard',
+                element: React.createElement('div', null, 'Trang Dashboard Đã Chuyển Hướng'),
+              }),
+              React.createElement(Route, {
                 path: '/session/:id/stage3',
                 element: React.createElement('div', null, 'Trang Stage 3 Đã Chuyển Hướng'),
               }),
@@ -82,6 +90,142 @@ test('Stage2ConfigPage hiển thị cảnh báo khi phiên đang ở trạng th�
   assert.ok(text.includes('Giai đoạn 1'));
 
   await harness.unmount();
+});
+
+test('Issue 44: Direct Stage 2 URL khi blueprinted chưa ready: form bị vô hiệu hoá, hiển thị quay về Stage 1 và không gọi save config hay start generation', async () => {
+  let saveCalls = 0;
+  let startCalls = 0;
+  const mockLoadSession = async () => ({
+    id: 'blueprinted-not-ready',
+    title: 'Đề chưa ready',
+    status: 'blueprinted',
+    subject: 'Toán',
+    grade: 12,
+    source_questions: [{ id: 'q1', question_no: 1 }],
+    blueprint_summary: {
+      total_questions: 1,
+      is_ready: false,
+      supported_modes: null,
+    },
+  });
+
+  const harness = renderPage('blueprinted-not-ready', {
+    loadSession: mockLoadSession,
+    saveConfig: async () => { saveCalls++; },
+    startGen: async () => { startCalls++; },
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('Chưa có thông tin Blueprint khả dụng'));
+  assert.ok(text.includes('Đề nguồn chưa hoàn tất phân tích Blueprint'));
+  assert.ok(text.includes('Quay về Giai đoạn 1'));
+
+  const submitBtn = harness.container.querySelector('button[type="submit"]');
+  assert.ok(submitBtn);
+  assert.equal(submitBtn.getAttribute('disabled') !== null, true);
+
+  const fieldset = harness.container.querySelector('fieldset');
+  assert.ok(fieldset);
+  assert.equal(fieldset.getAttribute('disabled') !== null, true);
+
+  const buttons = Array.from(harness.container.querySelectorAll('button'));
+  const returnBtn = buttons.find((b) => b.textContent.includes('Quay về Giai đoạn 1'));
+  assert.ok(returnBtn, 'Phải tìm thấy nút Quay về Giai đoạn 1');
+  let fieldsetParent = returnBtn.parentElement;
+  while (fieldsetParent && fieldsetParent.tagName !== 'FIELDSET') {
+    fieldsetParent = fieldsetParent.parentElement;
+  }
+  assert.equal(Boolean(fieldsetParent && fieldsetParent.tagName === 'FIELDSET'), false, 'Nút Quay về Giai đoạn 1 phải nằm ngoài fieldset disabled (Phillip F01)');
+  assert.equal(returnBtn.getAttribute('disabled'), null, 'Nút Quay về Giai đoạn 1 không bị disabled');
+
+  await act(async () => {
+    returnBtn.click();
+  });
+  assert.equal(harness.getLocation(), '/session/blueprinted-not-ready/stage1', 'Bấm nút phải điều hướng về stage1');
+
+  assert.equal(saveCalls, 0);
+  assert.equal(startCalls, 0);
+
+  await harness.unmount();
+});
+
+test('Phillip F02: Khi Blueprint đã ready, footer hiển thị nút Quay về Dashboard và điều hướng đúng', async () => {
+  const mockLoadSession = async () => ({
+    id: 'ready-session-1',
+    title: 'Đề đã ready',
+    status: 'blueprinted',
+    subject: 'Toán',
+    grade: 12,
+    source_questions: [{ id: 'q1', question_no: 1 }],
+    blueprint_summary: {
+      total_questions: 1,
+      is_ready: true,
+      supported_modes: [],
+    },
+  });
+
+  const harness = renderPage('ready-session-1', {
+    loadSession: mockLoadSession,
+  });
+  await harness.render();
+
+  const buttons = Array.from(harness.container.querySelectorAll('button'));
+  const footerBackBtn = buttons.find((b) => b.textContent.includes('Quay về Dashboard'));
+  assert.ok(footerBackBtn, 'Phải có nút Quay về Dashboard ở footer (Phillip F02)');
+  assert.equal(footerBackBtn.getAttribute('disabled'), null);
+
+  await act(async () => {
+    footerBackBtn.click();
+  });
+  assert.equal(harness.getLocation(), '/dashboard', 'Footer back điều hướng về Dashboard, tránh vòng lặp redirect (Phillip F02)');
+
+  await harness.unmount();
+});
+
+test('INT-02: Strict canonical readiness gating in Stage2ConfigPage (matrix)', async () => {
+  const cases = [
+    { name: 'is_ready: true, supported_modes: []', summary: { is_ready: true, supported_modes: [] }, allowed: true },
+    { name: 'is_ready: true, supported_modes: valid array', summary: { is_ready: true, supported_modes: [{ id: 'NUMERICAL', is_available: true }] }, allowed: true },
+    { name: 'is_ready: false', summary: { is_ready: false, supported_modes: [] }, allowed: false },
+    { name: 'is_ready: null', summary: { is_ready: null, supported_modes: [] }, allowed: false },
+    { name: 'is_ready missing', summary: { supported_modes: [] }, allowed: false },
+    { name: 'supported_modes missing/null', summary: { is_ready: true, supported_modes: null }, allowed: false },
+    { name: 'blueprint_summary: null', summary: null, allowed: false },
+  ];
+
+  for (const c of cases) {
+    let saveCalls = 0;
+    const harness = renderPage(`session-gate-${c.allowed ? 'ok' : 'blocked'}`, {
+      loadSession: async () => ({
+        id: 'session-gate',
+        status: 'blueprinted',
+        subject: 'Toán',
+        grade: 12,
+        source_questions: [{ id: 'q1' }],
+        blueprint_summary: c.summary,
+      }),
+      saveConfig: async () => { saveCalls++; },
+      startGen: async () => {},
+    });
+    await harness.render();
+
+    const submitBtn = harness.container.querySelector('button[type="submit"]');
+    assert.ok(submitBtn, `Submit button must exist for ${c.name}`);
+    if (c.allowed) {
+      assert.equal(submitBtn.getAttribute('disabled') === null, true, `${c.name} phải được mở submit`);
+    } else {
+      assert.equal(submitBtn.getAttribute('disabled') !== null, true, `${c.name} phải bị khóa submit`);
+      const form = harness.container.querySelector('form');
+      if (form) {
+        await act(async () => {
+          form.dispatchEvent({ type: 'submit', bubbles: true, cancelable: true, preventDefault: () => {} });
+        });
+      }
+      assert.equal(saveCalls, 0, `${c.name} không được gọi saveConfig`);
+    }
+    await harness.unmount();
+  }
 });
 
 test('Stage2ConfigPage hiển thị lỗi khi loadSession thất bại', async () => {
@@ -145,6 +289,7 @@ test('Stage2ConfigPage xử lý lỗi Axios 400 có ERR_CONFIG_CONFLICT: đọc 
     status: 'blueprinted',
     source_questions: [{ id: 'q1', question_no: 1 }],
     blueprint_summary: {
+      is_ready: true,
       total_questions: 1,
       supported_modes: [
         { id: 'parameter_variation', label: 'Thay số', question_count: 1, is_available: true },
@@ -307,6 +452,7 @@ test('Stage2ConfigPage cô lập submit: chuyển A đang lưu sang B thì form 
       status: 'blueprinted',
       source_questions: [{ id: 'q1', question_no: 1 }],
       blueprint_summary: {
+        is_ready: true,
         total_questions: 1,
         supported_modes: [{ id: 'parameter_variation', label: 'Thay số', is_available: true }],
       },
@@ -317,6 +463,7 @@ test('Stage2ConfigPage cô lập submit: chuyển A đang lưu sang B thì form 
       status: 'blueprinted',
       source_questions: [{ id: 'q2', question_no: 1 }],
       blueprint_summary: {
+        is_ready: true,
         total_questions: 1,
         supported_modes: [{ id: 'parameter_variation', label: 'Thay số', is_available: true }],
       },
@@ -421,6 +568,7 @@ test('Stage2ConfigPage nạp cấu hình đã lưu (initialConfig n_versions: 4)
       ordering_preferences: { shuffle_questions: true },
     },
     blueprint_summary: {
+      is_ready: true,
       total_questions: 1,
       supported_modes: [
         { id: 'parameter_variation', label: 'Thay số', question_count: 1, is_available: true },

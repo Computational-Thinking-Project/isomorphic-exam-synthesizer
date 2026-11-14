@@ -6,6 +6,18 @@
 
 ## 0. Quyết định điều hành, mục tiêu demo và giới hạn 10 ngày
 
+### Xác nhận nhận task TV1 / FE1, 11/11/2026
+
+Trung Anh (`philip-kkk`) nhận W4-MVP-09, W4-MVP-10 và vai trò FE Integration Owner. Phần bàn giao cho W4-MVP-21 gồm route, ảnh màn hình và bằng chứng kiểm frontend.
+
+| Nhánh | Phạm vi | Trạng thái |
+|---|---|---|
+| `feat/w4-mvp-10-route-foundation` | Nền route, mở lại session và guard điều hướng | Đã nhận task. Chuẩn bị Draft PR từ `dev@294c69a`. Đủ input để triển khai các route đã xác định. Q11 còn chờ Duy và Bội Anh xác nhận. |
+| `feat/w4-mvp-09-export-download` | Màn tải ZIP và tích hợp Export API | Đã nhận task. Cần contract Q10 từ Hùng để triển khai theo API. |
+| `feat/w4-mvp-10-resume-integration` | Nối Review, Approval và Export. Kiểm Resume trên build tích hợp. | Đã nhận task. Chờ bàn giao các module tương ứng để kiểm thật. |
+
+FE-H1 đã qua mốc 10/11 18:00 và đang chuẩn bị candidate. Mốc kế hoạch FE-H2 và kiểm Download/Resume thật là 12/11 12:00 (UTC+7), phụ thuộc bàn giao module và môi trường kiểm.
+
 **Mục tiêu duy nhất:** Đến **15/11** có **một demo trực tiếp trọn quy trình** trên môi trường triển khai thực tế (theo [Issue #53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53): Production-first / Private Beta nội bộ nhóm, ưu tiên hosting 0đ, không bắt buộc staging server riêng biệt) với dịch vụ thật: Google Auth → tạo/mở session → nhập một đề nguồn hợp lệ → xác nhận nguồn → canonical Blueprint nội bộ → chọn `N=1..4` → generation/persistence/SSE → review (Accept/Reject/targeted Regenerate/Revert) → shuffle/preview → final approval → export ZIP PDF + LaTeX + Markdown + bảng đáp án/lời giải → private Storage/signed URL → tải xuống → reload/resume. **Không cam kết public release, tải cao, độ tin cậy đại trà hoặc pilot giáo viên.**
 
 **Golden demo fixture cố định từ D1:** ưu tiên **1 đề Markdown** có **3 câu nguồn**, đủ đáp án và lời giải được nhóm đối chiếu trước, `N=2`, hai checkbox shuffle **OFF** mặc định; kiểm thao tác Review/Regenerate/Revert theo kịch bản, sau đó Approval và ZIP. Thử shuffle ON ở **một phiên test tách biệt nếu đủ điều kiện**; không biến nó thành lý do trì hoãn demo chính. Chỉ chọn DOCX/LaTeX/text hoặc `N=4` cho demo thêm sau khi phiên Golden chuẩn đã PASS. Các thao tác không thể đồng thời tồn tại trên cùng candidate (ví dụ Accept và Revert) có thể thực hiện trên **câu/phiên thử nghiệm khác nhau** nhưng phải ghi minh bạch.

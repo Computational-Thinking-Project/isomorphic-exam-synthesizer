@@ -449,6 +449,21 @@ def test_background_publication_and_retry_are_actual_producer(flow, monkeypatch)
     assert state.extracts == 1
 
 
+def test_confirm_schedules_canonical_only_after_persisted_confirmation(flow, monkeypatch):
+    state, client = flow
+    monkeypatch.setattr(source_artifacts, "blueprint_service", lambda request: state.extractor)
+    payload = {"source_revision": state.revision}
+    response = client.post(url(state), json=payload)
+    assert response.status_code == 200, response.text
+    assert state.extracts == 1
+    names = [name for name, _ in state.calls]
+    assert names.index("confirm_source_artifacts") < names.index("claim_source_production")
+    assert names.index("claim_source_production") < names.index("publish_canonical_blueprint")
+    assert "question_blueprints" not in state.table_calls
+    assert client.post(url(state), json=payload).status_code == 200
+    assert state.extracts == 1  # Ready replay does not schedule another extraction.
+
+
 def test_postcommit_read_failure_retains_confirmation_and_same_key_reconciles(flow):
     state, client = flow
     state.read_error = True

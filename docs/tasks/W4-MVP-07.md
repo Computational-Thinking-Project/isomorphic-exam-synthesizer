@@ -90,6 +90,14 @@ không còn input thiết kế chưa chốt trong scope adapter07.
 
 ## Bàn giao và điều kiện còn lại
 
+Đồng bộ `dev@4c2d424` ngày 14/11/2026: conflict chỉ ở README migration và
+changelog, giữ cả hai phần độc lập. Docker network-none: Ruff pass, mypy pass
+120 files, exporter **188 passed, 1 skipped**. PostgreSQL15 disposable qua SQL
+transport: **197 passed, 2 skipped, 12 subtests**; skip compiler XeLaTeX và PR49
+chưa tích hợp, một warning harness anyio. Không chạy lại pinned PR49 parity ở
+lượt này. Duy và Tâm đã GitHub Approve head `8e2941a`; approval đó không tự xác
+minh bản đồng bộ mới và không thay kiểm tích hợp/deployment.
+
 08 (Hùng) nhận entry point, model, fixtures và contract; dùng user RLS, đưa sync I/O
 vào worker thread ở async route, sanitize lỗi hạ tầng tại route. Không service-role
 read để vượt RLS. Code07 không tự upload hay đổi trạng thái.

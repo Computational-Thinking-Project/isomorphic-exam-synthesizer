@@ -20,13 +20,30 @@ import ast
 import builtins
 import logging
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from app.services.validator.base import CheckResult
 from app.services.validator.process_runner import run_with_timeout
 
 logger = logging.getLogger(__name__)
+
+# An enclosing validator worker already gives every CAS operation a hard process
+# boundary. Avoid spawning a child from that daemon process; standalone callers
+# continue to use the existing per-CAS process runner.
+_within_validator_process: ContextVar[bool] = ContextVar("within_validator_process", default=False)
+
+
+@contextmanager
+def validator_process_context() -> Iterator[None]:
+    token = _within_validator_process.set(True)
+    try:
+        yield
+    finally:
+        _within_validator_process.reset(token)
+
 
 MAX_EXPRESSION_LENGTH: int = 500
 DEFAULT_EVALUATION_TIMEOUT: float = 5.0
@@ -343,6 +360,10 @@ def _verify_solution_internal(
     cleaned_eq = clean_latex(equation_str)
     cleaned_ans = clean_latex(candidate_answer_str)
 
+    invalid_answer = _invalid_answer_token(cleaned_ans)
+    if invalid_answer is not None:
+        return EvaluationStatus.UNSUPPORTED, invalid_answer
+
     # 1. Parse equation
     if "=" in cleaned_eq:
         lhs_str, rhs_str = cleaned_eq.split("=", 1)
@@ -386,12 +407,6 @@ def _verify_solution_internal(
         part_clean = part.strip()
         if not part_clean:
             continue
-        # Check invalid tokens or dangling characters (e.g. "2 +", "2; ?")
-        if re.search(r"[+\-*/^=,\\]\s*$", part_clean) or any(c in part_clean for c in "?!@#$%&"):
-            return (
-                EvaluationStatus.UNSUPPORTED,
-                f"Candidate answer contains invalid or dangling token: '{part_clean}'.",
-            )
         if "=" in part_clean:
             _, val_part = part_clean.split("=", 1)
             val_part = val_part.strip()
@@ -449,6 +464,17 @@ def _verify_solution_internal(
     )
 
 
+def _invalid_answer_token(cleaned_answer: str) -> str | None:
+    """Reject obvious syntax errors before starting an expensive CAS worker."""
+    for part in re.split(r"[;,]|\bhoặc\b", cleaned_answer):
+        value = part.strip()
+        if value and (
+            re.search(r"[+\-*/^=,\\]\s*$", value) or any(char in value for char in "?!@#$%&")
+        ):
+            return f"Candidate answer contains invalid or dangling token: '{value}'."
+    return None
+
+
 def extract_equation_from_text(text: str) -> Optional[str]:
     """
     Heuristically extract a mathematical equation from a question text.
@@ -496,29 +522,49 @@ def verify_equation_solution(
             detail=f"Candidate answer exceeds maximum length bound of {MAX_EXPRESSION_LENGTH} characters.",
         )
 
-    proc_res = run_with_timeout(
-        _verify_solution_internal,
-        args=(equation_str, candidate_answer_str),
-        timeout=timeout,
-    )
-
-    if proc_res.timed_out:
-        return EvaluationResult(
-            status=EvaluationStatus.TIMEOUT,
-            passed=False,
-            confidence="rule_only",
-            detail=f"SymPy evaluation timed out after {timeout:.1f}s.",
-        )
-
-    if not proc_res.success:
+    invalid_answer = _invalid_answer_token(clean_latex(candidate_answer_str))
+    if invalid_answer is not None:
         return EvaluationResult(
             status=EvaluationStatus.UNSUPPORTED,
             passed=False,
             confidence="rule_only",
-            detail=f"Process runner error: {proc_res.error}",
+            detail=invalid_answer,
         )
 
-    status, detail_msg = proc_res.data
+    if _within_validator_process.get():
+        try:
+            status, detail_msg = _verify_solution_internal(equation_str, candidate_answer_str)
+        except Exception as exc:
+            return EvaluationResult(
+                status=EvaluationStatus.UNSUPPORTED,
+                passed=False,
+                confidence="rule_only",
+                detail=f"CAS execution error: {type(exc).__name__}: {exc}",
+            )
+    else:
+        proc_res = run_with_timeout(
+            _verify_solution_internal,
+            args=(equation_str, candidate_answer_str),
+            timeout=timeout,
+        )
+
+        if proc_res.timed_out:
+            return EvaluationResult(
+                status=EvaluationStatus.TIMEOUT,
+                passed=False,
+                confidence="rule_only",
+                detail=f"SymPy evaluation timed out after {timeout:.1f}s.",
+            )
+
+        if not proc_res.success:
+            return EvaluationResult(
+                status=EvaluationStatus.UNSUPPORTED,
+                passed=False,
+                confidence="rule_only",
+                detail=f"Process runner error: {proc_res.error}",
+            )
+
+        status, detail_msg = proc_res.data
     is_passed = status == EvaluationStatus.VERIFIED
     confidence = (
         "sympy_verified"
