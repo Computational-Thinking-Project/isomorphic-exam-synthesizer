@@ -12,8 +12,9 @@ import { useAuthProfile } from './features/auth/useAuthProfile.js';
 import DashboardRoute from './features/dashboard/DashboardRoute.jsx';
 import Stage1Route from './features/stage1-ingestion/Stage1Route.jsx';
 import Stage2ConfigPage from './features/stage2-config/Stage2ConfigPage.jsx';
-import { STAGE1_ROUTE, STAGE2_ROUTE, STAGE3_ROUTE } from './sessionPaths.js';
+import { STAGE1_ROUTE, STAGE2_ROUTE, STAGE3_ROUTE, STAGE3_PREVIEW_ROUTE } from './sessionPaths.js';
 import Stage3ReviewPage from './features/stage3-review/Stage3ReviewPage.jsx';
+import Stage3PreviewPage from './features/stage3-preview/Stage3PreviewPage.jsx';
 import { getSupabase } from './services/supabase.js';
 import { classifyAuthError } from './services/authErrors.js';
 
@@ -151,6 +152,7 @@ export default function App() {
           <Route path={STAGE1_ROUTE} element={<Stage1Route />} />
           <Route path={STAGE2_ROUTE} element={<Stage2ConfigPage />} />
           <Route path={STAGE3_ROUTE} element={<Stage3ReviewPage />} />
+          <Route path={STAGE3_PREVIEW_ROUTE} element={<Stage3PreviewPage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/login" replace />} />

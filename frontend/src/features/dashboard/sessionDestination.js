@@ -1,7 +1,11 @@
-import { stage1Path, stage2Path, stage3Path } from '../../sessionPaths.js';
+import {
+  stage1Path,
+  stage2Path,
+  stage3Path,
+  stage3PreviewPath,
+} from '../../sessionPaths.js';
 
 const pendingDestinations = new Set([
-  'reviewed',
   'approved',
   'exported',
   'failed',
@@ -26,6 +30,9 @@ export function sessionDestination(session) {
   }
   if (['partial_generated', 'generated'].includes(session.status)) {
     return { path: stage3Path(session.id), notice: '' };
+  }
+  if (session.status === 'reviewed') {
+    return { path: stage3PreviewPath(session.id), notice: '' };
   }
   return {
     path: null,
