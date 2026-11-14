@@ -120,7 +120,7 @@ classDiagram
 - `id` (UUID): Version question ID (`version_questions.id`).
 - `source_question_id` (UUID): Original source question ID (`source_questions.id`).
 - `question_no` (`int`, 1..M): Final display slot number in this exam paper.
-- `canonical_question_no` (`int`, 1..M): Source question slot number prior to question shuffling (for provenance).
+- `canonical_question_no` (`int`, >= 1): Source question label (`source_questions.question_no`) prior to question shuffling (for provenance; may be non-contiguous, while display `question_no` is always contiguous `1..M`).
 - `content` (`str`): Question stem text (LaTeX/Markdown).
 - `options` (`List[str]`, length 4): Exactly 4 choices rendered in shuffled display order corresponding to labels [A, B, C, D].
 - `correct_key` (`Literal["A", "B", "C", "D"]`): Display correct key corresponding to the permuted `options` array.
@@ -191,10 +191,13 @@ export_versions = tuple(
     for v in preview_response.versions
 )
 
+# Normalize title once before computing the SHA-256 revision and building the snapshot:
+normalized_title = str(session_meta.get("title") or "").strip() or "Đề thi tổng hợp"
+
 # Compute canonical SHA-256 revision from session_id, normalized title, and versions:
 revision_payload = {
     "session_id": str(preview_response.session_id),
-    "title": session_meta.get("title", "Đề thi tổng hợp"),
+    "title": normalized_title,
     "versions": [v.model_dump(mode="json") for v in export_versions],
 }
 revision_wire = json.dumps(revision_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -204,7 +207,7 @@ calculated_revision = f"sha256:{hashlib.sha256(revision_wire.encode('utf-8')).he
 snapshot = ApprovedExportSnapshot(
     session_id=UUID(preview_response.session_id),
     revision=calculated_revision,
-    title=session_meta.get("title", "Đề thi tổng hợp"),
+    title=normalized_title,
     status="approved",
     versions=export_versions,
 )

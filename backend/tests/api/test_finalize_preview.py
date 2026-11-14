@@ -946,6 +946,7 @@ async def test_preview_repeat_get_deterministic():
 async def test_preview_export_snapshot_mapping_with_real_session_metadata():
     """Proves W4-MVP-07 consumer can construct ApprovedExportSnapshot using actual session metadata."""
     db_state = _build_valid_preview_db_state()
+    db_state["exam_sessions"][0]["title"] = "  Đề thi thử THPT Quốc Gia môn Toán 2026  "
     client = MockSupabaseClient(db_state)
     service = FinalizeService(client)
 
@@ -957,7 +958,7 @@ async def test_preview_export_snapshot_mapping_with_real_session_metadata():
     session_row = await repo.get_session_meta(MOCK_SESSION_ID)
     assert session_row is not None
 
-    actual_title = session_row.get("title") or "Đề thi thử THPT"
+    actual_title = str(session_row.get("title") or "").strip() or "Đề thi thử THPT"
 
     # 3. Construct ApprovedExportSnapshot
     export_versions = []
@@ -997,7 +998,20 @@ async def test_preview_export_snapshot_mapping_with_real_session_metadata():
         versions=tuple(export_versions),
     )
 
+    canonical_payload = {
+        "session_id": str(res.session_id),
+        "title": "Đề thi thử THPT Quốc Gia môn Toán 2026",
+        "versions": [v.model_dump(mode="json") for v in export_versions],
+    }
+    expected_revision = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(canonical_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+    )
+
     assert export_snapshot.title == "Đề thi thử THPT Quốc Gia môn Toán 2026"
+    assert export_snapshot.revision == expected_revision
     assert export_snapshot.revision.startswith("sha256:")
     assert len(export_snapshot.revision) == 7 + 64
     assert len(export_snapshot.versions) == 2
