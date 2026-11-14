@@ -152,7 +152,7 @@ export async function saveStage2Config(sessionId, configPayload, { scenario = 's
     num_versions: Number(num_versions),
     variation_modes: [...variation_modes],
     ordering_preferences: {
-      shuffle_questions: Boolean(ordering_preferences?.shuffle_questions ?? true),
+      shuffle_questions: Boolean(ordering_preferences?.shuffle_questions ?? false),
     },
   };
 

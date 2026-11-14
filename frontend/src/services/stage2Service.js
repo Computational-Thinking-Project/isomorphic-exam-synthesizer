@@ -20,7 +20,12 @@ export async function fetchSessionDetail(sessionId) {
         num_versions: rawConfig.num_versions ?? rawConfig.n_versions ?? 2,
         active_variation_modes: rawConfig.active_variation_modes ?? rawConfig.variation_modes ?? [],
         variation_modes: rawConfig.variation_modes ?? rawConfig.active_variation_modes ?? [],
-        ordering_preferences: rawConfig.ordering_preferences ?? { shuffle_questions: true },
+        ordering_preferences: rawConfig.ordering_preferences
+          ? {
+              shuffle_questions: Boolean(rawConfig.ordering_preferences.shuffle_questions ?? false),
+              shuffle_options: Boolean(rawConfig.ordering_preferences.shuffle_options ?? false),
+            }
+          : { shuffle_questions: false, shuffle_options: false },
       }
     : data.n_versions
     ? {
@@ -28,7 +33,12 @@ export async function fetchSessionDetail(sessionId) {
         num_versions: data.n_versions,
         active_variation_modes: data.active_variation_modes || [],
         variation_modes: data.active_variation_modes || [],
-        ordering_preferences: data.ordering_preferences || { shuffle_questions: true },
+        ordering_preferences: data.ordering_preferences
+          ? {
+              shuffle_questions: Boolean(data.ordering_preferences.shuffle_questions ?? false),
+              shuffle_options: Boolean(data.ordering_preferences.shuffle_options ?? false),
+            }
+          : { shuffle_questions: false, shuffle_options: false },
       }
     : null;
 
@@ -357,6 +367,9 @@ export async function fetchSessionDetail(sessionId) {
         if (snapStatus) {
           data.status = snapStatus;
         }
+        if (snap.generation_error_code) {
+          data.generation_error_code = snap.generation_error_code;
+        }
         data.stream_epoch = snap.stream_epoch;
         data.resume_after_event_id = snap.resume_after_event_id;
       }
@@ -399,7 +412,7 @@ export async function saveSessionConfig(sessionId, configPayload) {
     active_variation_modes: normalizedModes,
     ordering_preferences: {
       shuffle_questions: Boolean(
-        configPayload.ordering_preferences?.shuffle_questions ?? true,
+        configPayload.ordering_preferences?.shuffle_questions ?? false,
       ),
       shuffle_options: Boolean(
         configPayload.ordering_preferences?.shuffle_options ?? false,
@@ -468,6 +481,7 @@ export async function fetchGenerationSnapshot(sessionId) {
   return {
     session_id: data.session_id || sessionId,
     session_status: data.session_status || data.status,
+    generation_error_code: data.generation_error_code ?? null,
     progress: normalizedProgress,
     question_statuses: data.question_statuses || {},
     stream_epoch: data.stream_epoch || null,

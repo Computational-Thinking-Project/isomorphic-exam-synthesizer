@@ -100,10 +100,9 @@ test('Stage2ConfigCard hiển thị đúng danh sách chế độ biến thể v
   assert.ok(text.includes('Hoán đổi ẩn số'));
   assert.ok(text.includes('Chưa đủ điều kiện cho đề này'), 'Phải nêu lý do không khả dụng');
 
-  const checkboxes = harness.container.querySelectorAll('input[type="checkbox"]');
-  const inversionCheckbox = checkboxes.find((c) => c.getAttribute('id') === 'mode-variable_inversion');
-  assert.ok(inversionCheckbox, 'Phải có checkbox cho variable_inversion');
-  assert.equal(inversionCheckbox.getAttribute('disabled') !== null, true, 'variable_inversion phải bị disable');
+  const inversionBadge = harness.container.querySelector('#mode-badge-variable_inversion');
+  assert.ok(inversionBadge, 'Phải có badge cho variable_inversion');
+  assert.ok(inversionBadge.textContent.includes('Không khả dụng'), 'variable_inversion phải đánh dấu không khả dụng');
 
   await harness.unmount();
 });
@@ -118,11 +117,11 @@ test('Stage2ConfigCard cung cấp cả hai tùy chọn shuffle_questions và shu
 
   const shuffleCb = harness.container.querySelector('#shuffle-questions-checkbox');
   assert.ok(shuffleCb, 'Phải có checkbox id shuffle-questions-checkbox');
-  assert.equal(shuffleCb.checked, true, 'shuffle_questions mặc định là Bật');
+  assert.equal(shuffleCb.checked, false, 'shuffle_questions mặc định là Tắt (false) theo Issue #45');
 
   const shuffleOptCb = harness.container.querySelector('#shuffle-options-checkbox');
   assert.ok(shuffleOptCb, 'Phải có checkbox id shuffle-options-checkbox');
-  assert.equal(shuffleOptCb.checked, false, 'shuffle_options mặc định là Tắt');
+  assert.equal(shuffleOptCb.checked, false, 'shuffle_options mặc định là Tắt (false) theo Issue #45');
 
   await harness.unmount();
 });
@@ -177,9 +176,9 @@ test('Stage2ConfigCard nộp cấu hình thành công với đúng payload quy �
 
   assert.ok(submittedPayload, 'onSubmit phải được gọi');
   assert.equal(submittedPayload.n_versions, 2);
-  assert.deepEqual(submittedPayload.active_variation_modes, ['parameter_variation', 'context_swap']);
+  assert.deepEqual(submittedPayload.active_variation_modes, [], 'Gửi active_variation_modes: [] theo Issue #45');
   assert.deepEqual(submittedPayload.ordering_preferences, {
-    shuffle_questions: true,
+    shuffle_questions: false,
     shuffle_options: false,
   });
 
@@ -196,20 +195,19 @@ test('Stage2ConfigCard bấm trực tiếp checkbox chỉ đổi lựa chọn đ
   });
   await harness.render();
 
-  // Tìm checkbox context_swap
-  const checkboxes = harness.container.querySelectorAll('input[type="checkbox"]');
-  const contextCb = checkboxes.find((c) => c.getAttribute('id') === 'mode-context_swap');
-  assert.ok(contextCb, 'Phải tìm thấy checkbox context_swap');
-  assert.equal(contextCb.checked, true, 'Ban đầu context_swap được chọn');
+  // Tìm checkbox shuffle_questions
+  const shuffleCb = harness.container.querySelector('#shuffle-questions-checkbox');
+  assert.ok(shuffleCb, 'Phải tìm thấy checkbox shuffle-questions-checkbox');
+  assert.equal(shuffleCb.checked, false, 'Ban đầu shuffle_questions tắt theo Issue #45');
 
   // Bấm trực tiếp vào checkbox
   await act(async () => {
-    contextCb.click();
+    shuffleCb.click();
   });
 
-  assert.equal(contextCb.checked, false, 'Sau khi click 1 lần, context_swap phải bị bỏ chọn (không bị double toggle trở lại true)');
+  assert.equal(shuffleCb.checked, true, 'Sau khi click 1 lần, shuffle_questions bật lên true (không bị double toggle trở lại false)');
 
-  // Nộp form để kiểm tra payload thực tế chỉ còn parameter_variation
+  // Nộp form để kiểm tra payload thực tế
   const form = harness.container.querySelector('form');
   await act(async () => {
     form.dispatchEvent({
@@ -221,7 +219,8 @@ test('Stage2ConfigCard bấm trực tiếp checkbox chỉ đổi lựa chọn đ
   });
 
   assert.ok(submittedPayload);
-  assert.deepEqual(submittedPayload.active_variation_modes, ['parameter_variation']);
+  assert.equal(submittedPayload.ordering_preferences.shuffle_questions, true);
+  assert.equal(submittedPayload.ordering_preferences.shuffle_options, false);
 
   await harness.unmount();
 });
@@ -240,17 +239,10 @@ test('Stage2ConfigCard giữ nguyên lựa chọn rỗng đã lưu (active_varia
   });
   await harness.render();
 
-  const checkboxes = harness.container.querySelectorAll('input[type="checkbox"]');
-  const paramCb = checkboxes.find((c) => c.getAttribute('id') === 'mode-parameter_variation');
-  const contextCb = checkboxes.find((c) => c.getAttribute('id') === 'mode-context_swap');
-
-  assert.equal(paramCb.checked, false, 'Không tự ý chọn lại mode khi cấu hình đã lưu là []');
-  assert.equal(contextCb.checked, false, 'context_swap không được chọn khi cấu hình đã lưu là []');
-
   const text = harness.container.textContent;
-  assert.ok(text.includes('Không chọn biến thể (giữ nguyên câu hỏi gốc)'), 'Hiển thị thẻ tóm tắt phù hợp');
+  assert.ok(text.includes('Tự động tối ưu biến thể'), 'Hiển thị thẻ tóm tắt phù hợp');
 
-  // Nộp form khi không chọn mode nào
+  // Nộp form khi cấu hình rỗng
   const form = harness.container.querySelector('form');
   await act(async () => {
     form.dispatchEvent({
@@ -272,8 +264,11 @@ test('Stage2ConfigCard khôi phục đúng cấu hình đã lưu (initialConfig 
     session: sampleSession,
     initialConfig: {
       n_versions: 4,
-      active_variation_modes: ['parameter_variation'],
-      ordering_preferences: { shuffle_questions: false },
+      active_variation_modes: [],
+      ordering_preferences: {
+        shuffle_questions: true,
+        shuffle_options: true,
+      },
     },
   });
   await harness.render();
@@ -282,11 +277,51 @@ test('Stage2ConfigCard khôi phục đúng cấu hình đã lưu (initialConfig 
   assert.ok(text.includes('4 mã đề'), 'Phải nạp số lượng 4 mã đề từ initialConfig');
   assert.ok(text.includes('20 câu hỏi biến thể'), '4 * 5 = 20 câu');
 
-  const checkboxes = harness.container.querySelectorAll('input[type="checkbox"]');
-  const paramCb = checkboxes.find((c) => c.getAttribute('id') === 'mode-parameter_variation');
-  const contextCb = checkboxes.find((c) => c.getAttribute('id') === 'mode-context_swap');
-  assert.equal(paramCb.checked, true, 'parameter_variation được chọn');
-  assert.equal(contextCb.checked, false, 'context_swap không được chọn theo initialConfig');
+  const shuffleCb = harness.container.querySelector('#shuffle-questions-checkbox');
+  const shuffleOptCb = harness.container.querySelector('#shuffle-options-checkbox');
+  assert.equal(shuffleCb.checked, true, 'shuffle_questions được khôi phục là true');
+  assert.equal(shuffleOptCb.checked, true, 'shuffle_options được khôi phục là true');
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigCard: khôi phục cấu hình thiếu ordering_preferences vẫn mặc định tắt cả 2 checkbox và payload nộp giữ false/false', async () => {
+  let submittedPayload = null;
+  const harness = renderCard({
+    session: sampleSession,
+    initialConfig: {
+      n_versions: 3,
+      active_variation_modes: [],
+      // ordering_preferences bị thiếu hoặc nullish
+    },
+    onSubmit: async (payload) => {
+      submittedPayload = payload;
+    },
+  });
+  await harness.render();
+
+  const shuffleCb = harness.container.querySelector('#shuffle-questions-checkbox');
+  const shuffleOptCb = harness.container.querySelector('#shuffle-options-checkbox');
+  assert.equal(shuffleCb.checked, false, 'shuffle_questions phải mặc định tắt khi initialConfig thiếu field này');
+  assert.equal(shuffleOptCb.checked, false, 'shuffle_options phải mặc định tắt khi initialConfig thiếu field này');
+
+  // Submit form
+  const form = harness.container.querySelector('form');
+  await act(async () => {
+    form.dispatchEvent({
+      type: 'submit',
+      bubbles: true,
+      cancelable: true,
+      preventDefault: () => {},
+    });
+  });
+
+  assert.ok(submittedPayload, 'Form phải submit thành công');
+  assert.deepEqual(
+    submittedPayload.ordering_preferences,
+    { shuffle_questions: false, shuffle_options: false },
+    'Payload submit phải gửi false/false khi không có preference được bật',
+  );
 
   await harness.unmount();
 });
@@ -467,6 +502,35 @@ test('Stage2ConfigCard hỗ trợ bật/tắt xáo trộn đáp án shuffle_opti
 
   assert.ok(submittedPayload);
   assert.equal(submittedPayload.ordering_preferences.shuffle_options, true, 'Payload phải gửi shuffle_options: true');
+
+  await harness.unmount();
+});
+
+test('F04: Stage2ConfigCard hiển thị đúng Hỗ trợ 0/N câu khi mode.question_count === 0', async () => {
+  const customSession = {
+    ...sampleSession,
+    blueprint_summary: {
+      is_ready: true,
+      total_questions: 5,
+      supported_modes: [
+        {
+          id: 'zero_mode',
+          label: 'Chế độ không có câu hỗ trợ',
+          is_available: true,
+          question_count: 0,
+        },
+      ],
+    },
+  };
+
+  const harness = renderCard({ session: customSession });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(
+    text.includes('Hỗ trợ 0/5 câu'),
+    'Phải hiển thị Hỗ trợ 0/5 câu thay vì fallback về 5/5 câu',
+  );
 
   await harness.unmount();
 });

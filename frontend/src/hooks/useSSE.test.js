@@ -1219,3 +1219,71 @@ test('F09: Khi snapshot trong triggerRecovery báo 100% nhưng session_status v�
 
   await harness.unmount();
 });
+
+test('P2: useSSE triggerRecovery nhận snapshot failed thì chuyển ngay sang failed, gọi onError và không reconnect vô tận', async () => {
+  MockEventSource.instances = [];
+  let onErrorPayload = null;
+
+  const mockOnResync = async () => ({
+    status: 'failed',
+    session_status: 'failed',
+    generation_error_code: 'ERR_WORKER_CRASHED',
+    message: 'Worker tiến trình sinh đề gặp sự cố.',
+  });
+
+  const harness = renderHookHarness(() =>
+    useSSE('session-p2-hook-recovery-failed', {
+      requestTicket: async () => ({ ticket: 't-p2' }),
+      eventSourceFactory: (url) => new MockEventSource(url),
+      onResync: mockOnResync,
+      onError: (err) => {
+        onErrorPayload = err;
+      },
+    }),
+  );
+
+  await harness.render();
+  assert.equal(MockEventSource.instances.length, 1);
+  const es = MockEventSource.instances[0];
+
+  // Phát sinh lỗi mất lịch sử trong stream -> kích hoạt triggerRecovery -> onResync
+  await act(async () => {
+    es.simulateOpen();
+    es.emit('error', { error_code: 'ERR_EVENT_HISTORY_LOST' });
+  });
+
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 200));
+  });
+
+  // TIÊU CHÍ ĐẠT:
+  // 1. connectionState = 'failed'
+  // 2. error được cập nhật từ snapshot
+  // 3. onError callback được gọi với snapshot
+  // 4. Không mở thêm instance EventSource mới nào khác (không reconnect vô tận)
+  assert.equal(harness.result.connectionState, 'failed', 'connectionState phải là failed');
+  assert.ok(
+    harness.result.error?.includes('ERR_WORKER_CRASHED') ||
+      harness.result.error?.includes('Worker'),
+    'error phải chứa thông tin lỗi từ snapshot',
+  );
+  assert.ok(onErrorPayload, 'onError callback phải được gọi');
+  assert.equal(
+    onErrorPayload?.generation_error_code,
+    'ERR_WORKER_CRASHED',
+    'onError phải nhận payload failed snapshot',
+  );
+
+  // Đợi thêm thời gian vượt quá reconnect timer (600ms) để chứng minh KHÔNG reconnect lại
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 700));
+  });
+
+  assert.equal(
+    MockEventSource.instances.length,
+    1,
+    'Tuyệt đối không được mở thêm kết nối EventSource mới khi đã terminal failed',
+  );
+
+  await harness.unmount();
+});
