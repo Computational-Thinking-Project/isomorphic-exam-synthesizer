@@ -19,11 +19,20 @@
 
 Trong luồng làm việc tạo đề thi hoán vị (Isomorphic Exam Synthesizer):
 - **Giai đoạn trước (Stage 3 Item Review - S06):** Giáo viên đã duyệt hoàn tất 100% các câu hỏi biến thể (`status = 'approved'`). Tại màn hình S06, khi tất cả các cặp (câu, mã) đạt 100% duyệt, nút **"Rà bộ đề"** kích hoạt và điều hướng giáo viên đến tuyến đường `/session/:sessionId/stage3/preview`.
-- **Cải tiến UX cốt lõi (Nút Xáo Trộn Duy Nhất - Single Shuffle Action):**
-  - **Loại bỏ việc yêu cầu giáo viên bật/tắt thủ công 2 toggles riêng lẻ** (`shuffle_questions` và `shuffle_options`). Việc bắt giáo viên phải cấu hình từng toggle gây rối rắm và dễ dẫn đến sai sót (ví dụ: chỉ xáo câu mà quên xáo đáp án).
-  - Thay vào đó, giao diện tinh gọn với **DUY NHẤT 1 NÚT HÀNH ĐỘNG: "Xáo trộn mã đề"** (kèm chú thích: *"Tự động xáo trộn thứ tự câu hỏi và phương án A, B, C, D cho toàn bộ các mã đề"*).
-  - Khi giáo viên nhấn nút này, hệ thống sẽ tự động đồng bộ cấu hình xáo trộn toàn diện (`shuffle_questions: true, shuffle_options: true`) và kích hoạt thuật toán hoán vị Fisher-Yates trên máy chủ qua `POST /api/sessions/{session_id}/finalize/shuffle`.
-  - Thuật toán xáo trộn Fisher-Yates trên server sử dụng seed xác định (deterministic seed `sha256(session_id + version_code)` theo TASK-303), đảm bảo kết quả tái lập tuyệt đối và máy chủ là ranh giới tính toán tin cậy duy nhất (trusted computation boundary).
+
+### 1.1. Chuẩn Hóa UX: Gom 2 Nút/Toggles Shuffle Thành 1 Nút Hành Động Phù Hợp Với PREVIEW.html
+
+- **Đối chiếu nguyên mẫu thiết kế `docs/ui-walkthrough/PREVIEW.html` (Màn hình S07):**
+  - Trong nguyên mẫu thiết kế giao diện chuẩn của hệ thống (`PREVIEW.html`), tại màn hình S07 (component `Wm` - *Rà bản cuối*), tác vụ của giáo viên được tối giản thành **1 hành động duy nhất: "Trộn lại mã" / "Xáo trộn mã đề"**, hoàn toàn **không xuất hiện 2 toggles riêng lẻ** (`shuffle_questions` và `shuffle_options`).
+  - Thiết kế gốc của PM/Designer định hình bản chất của bộ đề hoán vị là bắt buộc xáo trộn đồng thời cả thứ tự câu hỏi và phương án A, B, C, D để đảm bảo tính phân tán và chống nhìn bài tuyệt đối giữa các mã đề trong phòng thi.
+- **Loại bỏ sự phức tạp và nguy cơ cấu hình sai:**
+  - Trong các bản nháp quy hoạch ban đầu (`W4_TASK_DETAIL.md`), ý tưởng hiển thị lại 2 checkbox riêng biệt (`shuffle_questions` và `shuffle_options`) vô tình gây rối rắm giao diện và tạo gánh nặng nhận thức (cognitive load) không cần thiết cho giáo viên. Nếu giáo viên chỉ tick xáo câu mà quên xáo phương án, các mã đề sẽ bị trùng vị trí đáp án đúng, làm giảm chất lượng đề thi hoán vị.
+  - Do đó, việc **GOM 2 TOGGLES SHUFFLE THÀNH 1 NÚT DUY NHẤT "Xáo trộn mã đề"** là bước chuẩn hóa chuẩn mực, bám sát 100% nguyên mẫu thiết kế `docs/ui-walkthrough/PREVIEW.html`.
+- **Cơ chế hoạt động:**
+  - **Trạng thái chưa xáo trộn (`needsShuffle = true` / 409 `ERR_SHUFFLE_REQUIRED`):** Giao diện hiển thị thẻ thông báo nổi bật kèm **DUY NHẤT 1 NÚT HÀNH ĐỘNG: "Xáo trộn mã đề"** (`data-testid="btn-shuffle"`).
+  - Khi giáo viên nhấn nút này, hệ thống tự động đồng bộ cấu hình xáo trộn toàn diện (`shuffle_questions: true, shuffle_options: true`) qua `PATCH /api/sessions/{session_id}/ordering-preferences`, sau đó gọi `POST /api/sessions/{session_id}/finalize/shuffle` để kích hoạt thuật toán Fisher-Yates xác định trên máy chủ.
+  - **Trạng thái đã xáo trộn (`needsShuffle = false`):** Giao diện cung cấp nút **"Xáo trộn lại"** (`data-testid="btn-reshuffle"`) cho phép giáo viên sinh lại hoán vị nếu muốn, song song với nút **"Phê duyệt & Khóa đề"** (`data-testid="btn-open-approve"`).
+
 - **Mục tiêu của W4-MVP-06 (Màn hình S07):**
   1. Hiển thị trạng thái khởi tạo rõ ràng: nếu chưa xáo trộn (nhận `409 ERR_SHUFFLE_REQUIRED`), hiển thị lời kêu gọi CTA với nút duy nhất **"Xáo trộn mã đề"**.
   2. Kích hoạt xáo trộn trên máy chủ an toàn.

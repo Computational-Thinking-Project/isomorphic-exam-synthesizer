@@ -207,13 +207,13 @@ flowchart TD
 
 **Tác dụng:** Ràng buộc một quyết định cuối của giáo viên trước khi lock đề; không cho nhầm `reviewed` với `approved` hoặc export khi còn review.
 
-**Input:** fully reviewed session + 2 shuffle flags, API update-preferences, `POST /finalize/shuffle`, GET pre-approval projection `05`, `POST /finalize/approve`, authoritative `status`/error response.
+**Input:** fully reviewed session, API update-preferences (PR #61), `POST /finalize/shuffle`, GET pre-approval projection `05`, `POST /finalize/approve`, authoritative `status`/error response.
 
-**Xử lý/Output:** Stage 3 sau item review hiển thị lại 2 checkbox (được chỉnh trước shuffle), nút Finalize Shuffle, preview tất cả versions + keys/solutions, confirm final approval; sau lock readonly/Export route. Khi settings thay đổi trước shuffle, persisted DB config là nguồn chân lý; không chỉnh sau `is_finalized`.
+**Xử lý/Output:** Bám sát nguyên mẫu thiết kế `docs/ui-walkthrough/PREVIEW.html` (Màn hình S07 - `Wm`), giao diện loại bỏ 2 checkbox/toggle riêng lẻ và gom thành duy nhất 1 nút hành động **"Xáo trộn mã đề"** (tự động áp dụng cả `shuffle_questions: true, shuffle_options: true`). Bản xem trước hiển thị tất cả versions + keys/solutions, bảng ma trận đối soát đáp án chéo, nút "Xáo trộn lại" và modal xác nhận phê duyệt (HTTP 423 Content Lock); sau khi lock chuyển sang chế độ View-Only / điều hướng Export route.
 
-**DoD:** [ ] Session partial/generating/failed hoặc còn pending/rejected không approve; [ ] POST shuffle đúng config đã lưu, không nhận permutation từ browser; [ ] preview từ 05, không tự re-shuffle; [ ] confirm approval và locked state; [ ] 403/409/423/retry/refresh test; [ ] 4 combos shuffle, OFF/OFF Golden; [ ] locked state sau F5; [ ] props/routes giao Philip.
+**DoD:** [x] Session partial/generating/failed hoặc còn pending/rejected không approve; [x] POST shuffle đúng config (gửi đồng thời `true`/`true`), không nhận permutation từ browser; [x] preview từ 05, không tự re-shuffle phía client; [x] confirm approval và locked state (HTTP 423); [x] 403/409/423/retry/refresh test; [x] locked state sau F5; [x] props/routes giao Philip (`I-W4MVP10-FE2`).
 
-**Vướng mắc:** Nếu user muốn sửa toggle **sau** khi đã shuffle nhưng **trước** approve, #45 nói "trước final shuffle" nên **không** âm thầm unshuffle; **Duy + Tâm + `htbaax`** chốt thông báo UX `Q07`.
+**Vướng mắc / Chốt UX:** Đã giải quyết theo Q07 & `PREVIEW.html`: Giao diện tinh gọn với 1 nút "Xáo trộn mã đề" duy nhất và 1 nút "Xáo trộn lại" (re-shuffle) trước khi chốt duyệt, loại bỏ sự phức tạp và rủi ro lệch cấu hình của 2 checkbox độc lập.
 
 ### W4-MVP-07 — DB adapter tạo `ApprovedExportSnapshot` từ dữ liệu đã khóa
 
