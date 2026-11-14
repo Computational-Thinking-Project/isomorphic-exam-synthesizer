@@ -121,10 +121,16 @@ class W4ConfirmedSourceFallbackPostgresCase(unittest.TestCase):
     @classmethod
     def stop_container(cls):
         if cls.container:
-            cls.run_docker("rm", "--force", cls.container, check=False)
+            try:
+                cls.run_docker("rm", "--force", cls.container, check=False)
+            except Exception:
+                pass
 
     @classmethod
     def run_docker(cls, *args, check=True, input=None):
+        kwargs = {}
+        if input is None:
+            kwargs["stdin"] = subprocess.DEVNULL
         return subprocess.run(
             [cls.docker, *args],
             input=input,
@@ -133,6 +139,7 @@ class W4ConfirmedSourceFallbackPostgresCase(unittest.TestCase):
             capture_output=True,
             check=check,
             timeout=60,
+            **kwargs,
         )
 
     @classmethod
@@ -290,7 +297,7 @@ class W4ConfirmedSourceFallbackPostgresCase(unittest.TestCase):
         stem = "Giải phương trình 2x + 4 = 0." if source_idx == 1 else "Tính đạo hàm của y = x^2."
         opts = ["x = -2", "x = 2", "x = -4", "x = 4"] if source_idx == 1 else ["y' = 2x", "y' = x", "y' = 2", "y' = x^2"]
         sol = "Ta có 2x = -4 suy ra x = -2." if source_idx == 1 else "Đạo hàm là 2x."
-        
+
         # Read frozen fingerprint and hash from DB
         fp = self.sql(f"SELECT source_fingerprint FROM public.source_artifact_revisions WHERE source_revision_id = '{rev_id}'").stdout.strip()
         hsh = self.sql(f"SELECT confirmed_source_hash FROM public.generation_job_snapshots WHERE id = '{JOB_TOKEN}'").stdout.strip()
@@ -432,7 +439,7 @@ class W4ConfirmedSourceFallbackPostgresCase(unittest.TestCase):
         # 2. Persist fallback
         raw = self._get_fallback_raw_result(version_index=1, source_idx=1, last_error="VALIDATION_FAILED")
         res_fb = self._call_persist_fallback(raw, version_index=1, source_idx=1)
-        self.assertEqual(res_fb.returncode, 0, res_fb_stderr := res_fb.stderr)
+        self.assertEqual(res_fb.returncode, 0, res_fb.stderr)
 
         receipt = json.loads(res_fb.stdout.strip().split("\n")[-1])
         self.assertTrue(receipt["success"])
@@ -585,7 +592,7 @@ class W4ConfirmedSourceFallbackPostgresCase(unittest.TestCase):
         res1 = self._call_persist_fallback(raw1, version_index=1, source_idx=1)
         self.assertEqual(res1.returncode, 0)
 
-        # Committed check
+        # 1. Valid pending_review fallback: included
         committed = self.sql(f"""
         SELECT source_question_id, version_index, result_kind, is_success, error_code
         FROM public._generation_committed('{FIXTURE_SESSION}'::uuid, '{JOB_TOKEN}'::uuid);
@@ -596,10 +603,36 @@ class W4ConfirmedSourceFallbackPostgresCase(unittest.TestCase):
         self.assertEqual(committed[3], "t")
         self.assertEqual(committed[4], "GENERATION_RETRIES_EXHAUSTED")
 
-        # Corrupt candidate status -> excluded from committed
+        # 2. Valid approved fallback: included
+        self.sql(f"UPDATE public.version_questions SET status = 'approved' WHERE source_question_id = '{SOURCE_Q1}';")
+        count_approved = self.sql(f"SELECT count(*) FROM public._generation_committed('{FIXTURE_SESSION}'::uuid, '{JOB_TOKEN}'::uuid);").stdout.strip()
+        self.assertEqual(count_approved, "1")
+
+        # 3. Rejected fallback: excluded
         self.sql(f"UPDATE public.version_questions SET status = 'rejected' WHERE source_question_id = '{SOURCE_Q1}';")
-        count = self.sql(f"SELECT count(*) FROM public._generation_committed('{FIXTURE_SESSION}'::uuid, '{JOB_TOKEN}'::uuid);").stdout.strip()
-        self.assertEqual(count, "0")
+        count_rejected = self.sql(f"SELECT count(*) FROM public._generation_committed('{FIXTURE_SESSION}'::uuid, '{JOB_TOKEN}'::uuid);").stdout.strip()
+        self.assertEqual(count_rejected, "0")
+
+        # 4. Noncurrent fallback: excluded
+        self.sql(f"UPDATE public.version_questions SET status = 'approved', is_current = false WHERE source_question_id = '{SOURCE_Q1}';")
+        count_noncurrent = self.sql(f"SELECT count(*) FROM public._generation_committed('{FIXTURE_SESSION}'::uuid, '{JOB_TOKEN}'::uuid);").stdout.strip()
+        self.assertEqual(count_noncurrent, "0")
+
+        # 5. Tampered content: excluded
+        self.sql(f"UPDATE public.version_questions SET is_current = true, content = 'Tampered content' WHERE source_question_id = '{SOURCE_Q1}';")
+        count_tampered_content = self.sql(f"SELECT count(*) FROM public._generation_committed('{FIXTURE_SESSION}'::uuid, '{JOB_TOKEN}'::uuid);").stdout.strip()
+        self.assertEqual(count_tampered_content, "0")
+
+        # 6. Tampered validation report: excluded
+        content_escaped = raw1["content"].replace("'", "''")
+        self.sql(f"UPDATE public.version_questions SET content = '{content_escaped}', validation_report = jsonb_set(validation_report, '{{attempts}}', '3') WHERE source_question_id = '{SOURCE_Q1}';")
+        count_tampered_report = self.sql(f"SELECT count(*) FROM public._generation_committed('{FIXTURE_SESSION}'::uuid, '{JOB_TOKEN}'::uuid);").stdout.strip()
+        self.assertEqual(count_tampered_report, "0")
+
+        # 7. Invalid candidate correct_key (diverged from canonical/payload): excluded
+        self.sql(f"UPDATE public.version_questions SET validation_report = jsonb_set(validation_report, '{{attempts}}', '4'), correct_key = 'B' WHERE source_question_id = '{SOURCE_Q1}';")
+        count_tampered_provenance = self.sql(f"SELECT count(*) FROM public._generation_committed('{FIXTURE_SESSION}'::uuid, '{JOB_TOKEN}'::uuid);").stdout.strip()
+        self.assertEqual(count_tampered_provenance, "0")
 
     def test_load_generation_completed_results_historical_receipts(self):
         """load_generation_completed_results returns completed and historical receipts."""
@@ -719,14 +752,174 @@ class W4ConfirmedSourceFallbackPostgresCase(unittest.TestCase):
         self.assertEqual(cand["origin"], "regenerated")
         self.assertEqual(cand["content"], "Regenerated question")
 
-        # Verify historical fallback receipt still preserved in load_generation_completed_results
+        # Verify historical fallback receipt still preserved in load_generation_completed_results,
+        # while current completed results exclude the replaced candidate
         load_sql = f"""
         SET ROLE service_role;
         SELECT public.load_generation_completed_results('{FIXTURE_SESSION}'::uuid);
         """
         load_res = json.loads(self.sql(load_sql).stdout.strip().split("\n")[-1])
-        # fallback_receipts includes all 4 historical records
+        # Replaced fallback is no longer current completed result
+        self.assertEqual(len(load_res["completed"]), 3)
+        completed_slots = {(c["version_index"], c["source_question_id"]) for c in load_res["completed"]}
+        self.assertNotIn((1, SOURCE_Q1), completed_slots)
+        # fallback_receipts preserves all 4 historical records
         self.assertEqual(len(load_res["fallback_receipts"]), 4)
+
+    def test_accepted_fallback_remains_completed_after_real_rpc(self):
+        """Accepted fallback candidate remains in _generation_committed and completed results."""
+        # A2. Prepare four valid fallback results across 2x2 matrix
+        persisted_candidates = {}
+        for v in (1, 2):
+            for s in (1, 2):
+                raw = self._get_fallback_raw_result(version_index=v, source_idx=s)
+                res = self._call_persist_fallback(raw, version_index=v, source_idx=s)
+                self.assertEqual(res.returncode, 0, res.stderr)
+                receipt = json.loads(res.stdout.strip().split("\n")[-1])
+                self.assertTrue(receipt["success"])
+                self.assertEqual(receipt["candidate_status"], "pending_review")
+                self.assertEqual(receipt["result_kind"], "CONFIRMED_SOURCE_FALLBACK")
+                q_id = receipt["version_question_id"]
+                persisted_candidates[(v, s)] = {
+                    "question_id": q_id,
+                    "raw": raw,
+                    "receipt": receipt,
+                }
+                # Assert candidate initial DB state
+                row = self.sql(f"SELECT status, is_current FROM public.version_questions WHERE id = '{q_id}'").stdout.strip().split("|")
+                self.assertEqual(row[0], "pending_review")
+                self.assertEqual(row[1], "t")
+
+        # A3. Transition session to generated
+        self.sql(f"UPDATE public.exam_sessions SET status = 'generated' WHERE id = '{FIXTURE_SESSION}';")
+        # Verify session is editable
+        session_status = self.sql(f"SELECT status FROM public.exam_sessions WHERE id = '{FIXTURE_SESSION}'").stdout.strip()
+        self.assertEqual(session_status, "generated")
+
+        # A4. Capture baseline completed results
+        baseline_load_sql = f"""
+        SET ROLE service_role;
+        SELECT public.load_generation_completed_results('{FIXTURE_SESSION}'::uuid);
+        """
+        baseline_res = self.sql(baseline_load_sql)
+        self.assertEqual(baseline_res.returncode, 0, baseline_res.stderr)
+        baseline_data = json.loads(baseline_res.stdout.strip().split("\n")[-1])
+        self.assertEqual(len(baseline_data["completed"]), 4)
+        self.assertEqual(len(baseline_data["fallback_receipts"]), 4)
+
+        baseline_slots = {
+            (c["version_index"], c["source_question_id"])
+            for c in baseline_data["completed"]
+        }
+        self.assertEqual(len(baseline_slots), 4)
+
+        # Select exactly one current fallback candidate (v=1, s=1)
+        target_info = persisted_candidates[(1, 1)]
+        target_qid = target_info["question_id"]
+
+        # Preserve candidate data before Accept for comparison
+        pre_accept_cand = self.sql(f"""
+        SELECT content, canonical_options::text, canonical_correct_key, canonical_solution_md, validation_report::text
+        FROM public.version_questions WHERE id = '{target_qid}';
+        """).stdout.strip().split("|")
+        pre_content = pre_accept_cand[0]
+        pre_options = pre_accept_cand[1]
+        pre_key = pre_accept_cand[2]
+        pre_sol = pre_accept_cand[3]
+        pre_report = pre_accept_cand[4]
+
+        # A5. Invoke real Accept RPC as authenticated fixture owner
+        action_id = str(uuid4())
+        accept_sql = f"""
+        SET ROLE authenticated;
+        SELECT set_config('request.jwt.claim.sub', '{FIXTURE_USER}', false);
+        SELECT set_config('request.jwt.claim.role', 'authenticated', false);
+        SELECT public.review_accept_question(
+          '{FIXTURE_SESSION}'::uuid,
+          '{target_qid}'::uuid,
+          '{action_id}'::uuid
+        );
+        """
+        accept_res = self.sql(accept_sql)
+        self.assertEqual(accept_res.returncode, 0, accept_res.stderr)
+        accept_receipt = json.loads(accept_res.stdout.strip().split("\n")[-1])
+        self.assertEqual(accept_receipt["question_status"], "approved")
+        self.assertEqual(accept_receipt["question_id"], target_qid)
+
+        # Read candidate back from database
+        post_accept_cand = self.sql(f"""
+        SELECT status, is_current, content, canonical_options::text, canonical_correct_key, canonical_solution_md, validation_report::text
+        FROM public.version_questions WHERE id = '{target_qid}';
+        """).stdout.strip().split("|")
+        self.assertEqual(post_accept_cand[0], "approved")
+        self.assertEqual(post_accept_cand[1], "t")
+        self.assertEqual(post_accept_cand[2], pre_content)
+        self.assertEqual(post_accept_cand[3], pre_options)
+        self.assertEqual(post_accept_cand[4], pre_key)
+        self.assertEqual(post_accept_cand[5], pre_sol)
+        self.assertEqual(post_accept_cand[6], pre_report)
+
+        # Confirm session remains generated and other 3 slots remain pending_review
+        curr_session_status = self.sql(f"SELECT status FROM public.exam_sessions WHERE id = '{FIXTURE_SESSION}'").stdout.strip()
+        self.assertEqual(curr_session_status, "generated")
+
+        other_statuses = self.sql(f"""
+        SELECT status FROM public.version_questions
+        WHERE id IN ('{persisted_candidates[(1, 2)]["question_id"]}',
+                     '{persisted_candidates[(2, 1)]["question_id"]}',
+                     '{persisted_candidates[(2, 2)]["question_id"]}');
+        """).stdout.strip().split("\n")
+        for st in other_statuses:
+            self.assertEqual(st.strip(), "pending_review")
+
+        # A6. Verify completed results after Accept
+        after_load_sql = f"""
+        SET ROLE service_role;
+        SELECT public.load_generation_completed_results('{FIXTURE_SESSION}'::uuid);
+        """
+        after_res = self.sql(after_load_sql)
+        self.assertEqual(after_res.returncode, 0, after_res.stderr)
+        after_data = json.loads(after_res.stdout.strip().split("\n")[-1])
+
+        # BEFORE FIX: len(after_data["completed"]) will be 3 instead of 4!
+        self.assertEqual(
+            len(after_data["completed"]),
+            4,
+            f"Expected 4 completed slots after Accept, got {len(after_data['completed'])}: {after_data['completed']}"
+        )
+        self.assertEqual(len(after_data["fallback_receipts"]), 4)
+
+        after_slots = {
+            (c["version_index"], c["source_question_id"])
+            for c in after_data["completed"]
+        }
+        self.assertEqual(after_slots, baseline_slots)
+
+        # Verify accepted slot retained fallback result kind and unchanged raw_result
+        accepted_item = [c for c in after_data["completed"] if c["version_index"] == 1 and c["source_question_id"] == SOURCE_Q1][0]
+        self.assertEqual(accepted_item["result_kind"], "CONFIRMED_SOURCE_FALLBACK")
+        self.assertEqual(accepted_item["raw_result"], target_info["raw"])
+
+        # C4. Verify review snapshot compatibility on accepted fallback
+        review_sql = f"""
+        SET ROLE authenticated;
+        SELECT set_config('request.jwt.claim.sub', '{FIXTURE_USER}', false);
+        SELECT set_config('request.jwt.claim.role', 'authenticated', false);
+        SELECT public.get_review_current_snapshot('{FIXTURE_SESSION}'::uuid);
+        """
+        snap_res = self.sql(review_sql)
+        self.assertEqual(snap_res.returncode, 0, snap_res.stderr)
+        snap = json.loads(snap_res.stdout.strip().split("\n")[-1])
+        self.assertEqual(snap["progress"]["current_slots"], 4)
+        self.assertEqual(snap["progress"]["approved_slots"], 1)
+        self.assertEqual(snap["progress"]["expected_slots"], 4)
+
+        cand_snap = snap["versions"][0]["slots"][0]["candidate"]
+        self.assertEqual(cand_snap["candidate_id"], target_qid)
+        self.assertEqual(cand_snap["status"], "approved")
+        self.assertEqual(cand_snap["origin"], "confirmed_source_fallback")
+        self.assertTrue(cand_snap["has_warning"])
+        self.assertEqual(cand_snap["validation_report"]["validation_status"], "not_validated")
 
 
 if __name__ == "__main__":

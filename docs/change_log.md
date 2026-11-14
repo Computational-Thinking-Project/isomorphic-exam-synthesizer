@@ -7,6 +7,41 @@
 
 
 
+## DEC-W4-C5-021: Confirmed-source fallback writer and read-back contract (proposed)
+
+- **Mã & Tiêu đề:** `DEC-W4-C5-021 — Confirmed-source fallback writer and read-back contract`.
+- **Ngày & Người đề xuất:** 14/11/2026 — Senior Backend Engineer (tác giả PR #68, nhánh `feat/w4-c5-confirmed-source-fallback-db`), phối hợp reviewer @Thanhdat3010 (DAT-68-F01).
+- **Ngữ cảnh & Vấn đề (Context):**
+  - Khi quy trình sinh đề AI đã vét cạn toàn bộ lượt thử (1 lần chính + 3 lần retry = 4 attempts) mà vẫn thất bại hoặc không vượt qua thẩm định, hệ thống cần cơ chế dự phòng an toàn (confirmed-source fallback) sử dụng nội dung câu hỏi nguồn đã xác nhận (`confirmed_sources`).
+  - Dữ liệu dự phòng đã lưu bền vững cần hỗ trợ cơ chế đọc lại có thẩm quyền (`load_generation_completed_results`) và phục vụ hiển thị/duyệt ở Stage 3 Review (`get_review_current_snapshot`).
+  - **Sự cố DAT-68-F01 [P2]:** Trong bản ban đầu của migration 021, hàm `_generation_committed` chỉ lọc điều kiện `q.status = 'pending_review'`. Khi giảng viên thực hiện thao tác Accept câu hỏi dự phòng qua RPC chuẩn `review_accept_question`, hàm `_review_apply_action` cập nhật trạng thái candidate thành `approved`. Do đó, câu hỏi dự phòng hợp lệ bị loại bỏ sai lệch khỏi `_generation_committed`, khiến `load_generation_completed_results` giảm số lượng `completed` (ví dụ từ 4/4 xuống 3/4).
+- **Quyết định mới (Decision):**
+  1. **Migration 021 (`backend/migrations/021_w4_confirmed_source_fallback.sql`):**
+     - Mở rộng ràng buộc `generation_result_kind` bổ sung nhánh `CONFIRMED_SOURCE_FALLBACK` (bắt buộc `request_fingerprint` 64-hex, `attempts = 4`, `error_code = 'GENERATION_RETRIES_EXHAUSTED'`, `is_success = true`, `clone_fingerprint IS NULL`).
+     - Writer `persist_generation_result` ghi nhận nguyên tử bản ghi fallback, candidate trong `version_questions` với `status = 'pending_review'`, `has_warning = true`, `validation_report` (chứa `validation_status = 'not_validated'`), và kết quả vào `generation_target_results`.
+     - Read-back `load_generation_completed_results` bổ sung mảng `fallback_receipts` chứa biên lai lịch sử của các slot fallback đã ghi nhận.
+     - **Sửa lỗi DAT-68-F01:** Cập nhật điều kiện lọc trong `_generation_committed` thành `q.status IN ('pending_review', 'approved')` cho nhánh `CONFIRMED_SOURCE_FALLBACK`.
+     - Giữ nguyên toàn bộ các chốt chặn bảo mật và toàn vẹn: `q.is_current = true`, ràng buộc session/snapshot, đối soát nội dung câu hỏi, đối soát options/correct_key/solution_md chuẩn hóa, tính toàn vẹn của `validation_report`, và tính toán độc lập `_generation_fallback_record`.
+     - Các trạng thái loại trừ: candidate `rejected`, candidate `is_current = false` (lịch sử sau khi bị regenerate), nội dung hoặc báo cáo validation bị làm sai lệch/tampered đều bị loại khỏi `_generation_committed`.
+- **Phạm vi ảnh hưởng (Impact):**
+  - CSDL & Migration: `backend/migrations/021_w4_confirmed_source_fallback.sql`.
+  - Integration Test Suite: `backend/tests/migrations/test_w4_confirmed_source_fallback_pg.py` (bổ sung test hồi quy `test_accepted_fallback_remains_completed_after_real_rpc` và kiểm chứng các ca phủ định).
+  - Tương thích hợp đồng đọc kết quả sinh: `load_generation_completed_results` duy trì đủ các slot hoàn thành sau khi duyệt.
+  - Tương thích Stage 3 Review: `get_review_current_snapshot` nhận diện đúng `origin = 'confirmed_source_fallback'`, `has_warning = true`, `validation_status = 'not_validated'`.
+  - Hạ tầng tiêu thụ downstream: Module Python C5 consumer trong PR #67.
+- **Phụ thuộc & Trạng thái (Dependencies & Status):**
+  - PR #68 chỉ bao gồm CSDL writer/read-back checkpoints 1–2; PR #67 (Python consumer C5) và Q01 generation preflight/HTTP gate là các hạng mục riêng, chưa được coi là đã tích hợp.
+  - Chưa áp dụng migration 021 lên shared Supabase hay môi trường production chung; không tự nhận `Accepted`/`Integrated` cho đến khi consumer tương ứng xác nhận tích hợp thành công.
+- **Xác minh (Verification):**
+  - Đã tái hiện lỗi red-phase trên migration 021 gốc: sau Accept, `completed` giảm từ 4/4 xuống 3/4 (`AssertionError: 3 != 4`).
+  - Đã xác minh green-phase sau khi sửa SQL: `test_accepted_fallback_remains_completed_after_real_rpc` PASS (4/4 slots duy trì đầy đủ sau khi gọi RPC thực `review_accept_question`).
+  - Kiểm chứng toàn bộ bộ kiểm liên quan trên Docker PostgreSQL 15 cô lập:
+    - `test_w4_confirmed_source_fallback_pg.py`: 14 passed (100%).
+    - `test_w4_baseline_chain.py`: 6 passed (100%).
+    - `test_review_snapshot_pg.py`: 23 passed (100%).
+    - `test_job_repository.py` & `test_review_snapshot.py`: 37 passed (100%).
+    - Ruff check & Mypy: All checks passed.
+
 ---
 
 ## DEC-W4-MVP-01-019: Canonical-only generation configuration defaults and source readiness guards (proposed)

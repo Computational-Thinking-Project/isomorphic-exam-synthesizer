@@ -525,7 +525,7 @@ LANGUAGE sql STABLE SET search_path = pg_catalog, public, pg_temp AS $$
       (r.result_kind = 'CONFIRMED_SOURCE_FALLBACK'
        AND r.error_code = 'GENERATION_RETRIES_EXHAUSTED' AND r.attempts = 4
        AND r.clone_fingerprint IS NULL AND r.request_fingerprint IS NOT NULL
-       AND q.status = 'pending_review'
+       AND q.status IN ('pending_review', 'approved')
        AND q.validation_report = jsonb_build_object(
          'fallback_source', true,
          'reason', 'GENERATION_RETRIES_EXHAUSTED',
