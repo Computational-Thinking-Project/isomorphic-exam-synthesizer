@@ -142,7 +142,20 @@ export function adaptPreviewSnapshot(raw) {
   const versions = Array.isArray(raw.versions)
     ? raw.versions.map((ver) => {
         const questions = Array.isArray(ver.questions)
-          ? [...ver.questions].sort((a, b) => (a.question_no || 0) - (b.question_no || 0))
+          ? [...ver.questions]
+              .sort((a, b) => (a.question_no || 0) - (b.question_no || 0))
+              .map((q) => {
+                let options = q.options;
+                if (options && !Array.isArray(options) && typeof options === 'object') {
+                  options = ['A', 'B', 'C', 'D'].map((k) => options[k] || '');
+                } else if (!Array.isArray(options)) {
+                  options = [];
+                }
+                return {
+                  ...q,
+                  options,
+                };
+              })
           : [];
 
         // Đảm bảo answer_keys là map phẳng { "1": "A", ... }

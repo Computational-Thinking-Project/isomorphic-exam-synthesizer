@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -36,11 +36,21 @@ export default function Stage3PreviewPage() {
   const [isApproveModalOpen, setIsApproveModalOpen] = useState(false);
   const [approveError, setApproveError] = useState(null);
   const [toast, setToast] = useState(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
     setTimeout(() => {
-      setToast(null);
+      if (isMountedRef.current) {
+        setToast(null);
+      }
     }, 4000);
   };
 
@@ -51,12 +61,14 @@ export default function Stage3PreviewPage() {
 
     try {
       const data = await fetchFinalizePreview(sessionId);
+      if (!isMountedRef.current) return;
       setPreviewData(data);
       setNeedsShuffle(!data.is_finalized);
       if (data.versions?.length > 0 && !selectedTab) {
         setSelectedTab(data.versions[0].version_code);
       }
     } catch (err) {
+      if (!isMountedRef.current) return;
       // 409 ERR_SHUFFLE_REQUIRED: Session ở trạng thái reviewed nhưng chưa shuffle
       if (err.status === 409 || err.errorCode === 'ERR_SHUFFLE_REQUIRED') {
         setNeedsShuffle(true);
@@ -68,7 +80,9 @@ export default function Stage3PreviewPage() {
         setError(err.message || 'Không thể tải bản xem trước đề thi.');
       }
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   }, [sessionId, selectedTab]);
 
@@ -78,10 +92,8 @@ export default function Stage3PreviewPage() {
 
   // Tự động chọn tab đầu tiên khi có dữ liệu versions
   useEffect(() => {
-    if (previewData?.versions?.length > 0 && (!selectedTab || selectedTab === 'matrix')) {
-      if (!selectedTab) {
-        setSelectedTab(previewData.versions[0].version_code);
-      }
+    if (previewData?.versions?.length > 0 && !selectedTab) {
+      setSelectedTab(previewData.versions[0].version_code);
     }
   }, [previewData, selectedTab]);
 
@@ -91,12 +103,16 @@ export default function Stage3PreviewPage() {
     setError(null);
     try {
       await executeFullShuffle(sessionId);
+      if (!isMountedRef.current) return;
       showToast('Đã xáo trộn các mã đề và cập nhật đáp án thành công!', 'success');
       await loadData();
     } catch (err) {
+      if (!isMountedRef.current) return;
       showToast(err.message || 'Không thể thực hiện xáo trộn đề thi.', 'error');
     } finally {
-      setShuffling(false);
+      if (isMountedRef.current) {
+        setShuffling(false);
+      }
     }
   };
 
@@ -106,14 +122,18 @@ export default function Stage3PreviewPage() {
     setApproveError(null);
     try {
       await triggerFinalizeApprove(sessionId);
+      if (!isMountedRef.current) return;
       setIsApproveModalOpen(false);
       showToast('Đã phê duyệt và khóa đề thi thành công!', 'success');
       // Chuyển tiếp sang Stage 4 Export
       navigate(exportPath(sessionId));
     } catch (err) {
+      if (!isMountedRef.current) return;
       setApproveError(err.message || 'Có lỗi xảy ra khi phê duyệt đề thi.');
     } finally {
-      setApproving(false);
+      if (isMountedRef.current) {
+        setApproving(false);
+      }
     }
   };
 
@@ -190,16 +210,29 @@ export default function Stage3PreviewPage() {
 
             {/* Header Action Buttons */}
             {!isLocked && !needsShuffle && (
-              <button
-                type="button"
-                data-testid="btn-open-approve"
-                onClick={() => setIsApproveModalOpen(true)}
-                disabled={shuffling}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-sm transition-colors shadow-sm disabled:opacity-50"
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                <span>Phê duyệt & Khóa đề</span>
-              </button>
+              <>
+                <button
+                  type="button"
+                  data-testid="btn-reshuffle"
+                  onClick={handleShuffle}
+                  disabled={shuffling}
+                  className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-300 font-medium text-sm transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-4 h-4 ${shuffling ? 'animate-spin' : ''}`} />
+                  <span>{shuffling ? 'Đang xáo trộn...' : 'Xáo trộn lại'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  data-testid="btn-open-approve"
+                  onClick={() => setIsApproveModalOpen(true)}
+                  disabled={shuffling}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-sm transition-colors shadow-sm disabled:opacity-50"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Phê duyệt & Khóa đề</span>
+                </button>
+              </>
             )}
 
             {isLocked && (

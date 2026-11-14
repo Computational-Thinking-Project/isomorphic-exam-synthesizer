@@ -276,6 +276,31 @@ test('adaptPreviewSnapshot: sắp xếp questions theo question_no và chuẩn h
   assert.equal(adapted.matrix.length, 1);
 });
 
+test('adaptPreviewSnapshot: chuẩn hóa options từ object { A, B, C, D } sang mảng 4 phần tử', () => {
+  const raw = {
+    session_id: 'test-session-opts',
+    versions: [
+      {
+        version_code: '101',
+        questions: [
+          {
+            question_no: 1,
+            options: { A: 'Phương án A', B: 'Phương án B', C: 'Phương án C', D: 'Phương án D' },
+          },
+        ],
+      },
+    ],
+  };
+
+  const adapted = adaptPreviewSnapshot(raw);
+  assert.deepEqual(adapted.versions[0].questions[0].options, [
+    'Phương án A',
+    'Phương án B',
+    'Phương án C',
+    'Phương án D',
+  ]);
+});
+
 test('adaptPreviewSnapshot: trả về null khi input rỗng', () => {
   assert.equal(adaptPreviewSnapshot(null), null);
   assert.equal(adaptPreviewSnapshot(undefined), null);
