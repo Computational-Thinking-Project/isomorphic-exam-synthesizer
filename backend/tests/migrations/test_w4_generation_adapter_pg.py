@@ -1,4 +1,4 @@
-"""Run the HTTP adapters and worker against disposable PostgreSQL 002–019.
+"""Run the HTTP adapters and worker against disposable PostgreSQL through 021.
 
 The client bridge uses real SQL roles and RPCs with fixture authentication.
 It does not exercise PostgREST, JWT transport, or a live AI provider.
@@ -7,6 +7,7 @@ It does not exercise PostgREST, JWT transport, or a live AI provider.
 import asyncio
 import json
 from concurrent.futures import Future
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -25,7 +26,8 @@ from app.api.routes import (
 )
 from app.core.rate_limit import create_limiter, register_rate_limiter
 from app.models.generation import BatchResult, QuestionResult
-from app.models.schemas import CurrentUser
+from app.models.schemas import CurrentUser, SourceQuestion
+from app.services.blueprint.adapters import source_to_item
 from app.services.generation.ai_batch_adapter import AIBatchAdapter
 from app.services.generation.config_repository import GenerationConfigRepository
 from app.services.generation.events import GenerationEventBroker
@@ -39,6 +41,9 @@ from tests.migrations.test_w4_config_guards import OFF, migrate, publish
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.parametrize("db", ["w4"], indirect=True)]
 FOREIGN = "00000000-0000-0000-0000-000000000002"
+FALLBACK_SQL = (
+    Path(__file__).resolve().parents[2] / "migrations/021_w4_confirmed_source_fallback.sql"
+)
 RPC_ARGS = {
     "get_session_source_preview": ("p_session_id",),
     "get_generation_source_snapshot": ("p_session_id",),
@@ -69,13 +74,14 @@ class SqlClient:
         self.session_id = session_id
         self.calls: list[tuple[str, dict]] = []
         self.damage_claim = False
+        self.lose_fallback_response = False
 
     def execute_sql(self, coroutine):
         future: Future = asyncio.run_coroutine_threadsafe(coroutine, self.loop)
         try:
             return SimpleNamespace(data=future.result(timeout=10))
         except asyncpg.PostgresError as exc:
-            raise APIError({"code": exc.sqlstate, "message": exc.message}) from exc
+            raise APIError({"code": exc.sqlstate, "message": exc.message, "details": exc.detail}) from exc
 
     def rpc(self, name, params):
         self.calls.append((name, params))
@@ -87,6 +93,11 @@ class SqlClient:
             result = self.execute_sql(rpc(self.connection, name, *(params[key] for key in names)))
             if self.damage_claim and name == "claim_generation_job":
                 result.data["context"]["mapping_version"] = "corrupted"
+            if self.lose_fallback_response and name == "persist_generation_result" and (
+                params["p_raw_result"].get("result_kind") == "CONFIRMED_SOURCE_FALLBACK"
+            ):
+                self.lose_fallback_response = False
+                raise TimeoutError("Fixture dropped committed fallback response.")
             return result
 
         return SimpleNamespace(execute=execute)
@@ -147,7 +158,23 @@ async def test_corrupt_claim_is_rejected_and_durable_job_recovers(db, monkeypatc
     await run_generation_case(db, monkeypatch, clone=True, corrupt_claim=True)
 
 
-async def run_generation_case(db, monkeypatch, *, clone, corrupt_claim=False, partial_first=False):
+@pytest.mark.parametrize("lost_response", [False, True])
+async def test_fallback_retry_uses_current_021_receipt(db, monkeypatch, lost_response):
+    await run_generation_case(
+        db, monkeypatch, clone=False, partial_first=True, fallback_first=True,
+        lost_response=lost_response,
+    )
+
+
+@pytest.mark.parametrize("retry", [False, True])
+async def test_q01_characterizes_missing_solution_claim_on_021(db, monkeypatch, retry):
+    await run_generation_case(db, monkeypatch, clone=True, missing_solution=True, retry_missing=retry)
+
+
+async def run_generation_case(
+    db, monkeypatch, *, clone, corrupt_claim=False, partial_first=False,
+    fallback_first=False, lost_response=False, missing_solution=False, retry_missing=False,
+):
     for name, types in (
         ("get_session_source_preview", ["uuid"]),
         ("fail_stale_generation_job", ["uuid", "int"]),
@@ -155,11 +182,26 @@ async def run_generation_case(db, monkeypatch, *, clone, corrupt_claim=False, pa
     ):
         monkeypatch.setitem(TYPES, name, types)
     await migrate(db)
+    await db.admin.execute(FALLBACK_SQL.read_text(encoding="utf-8-sig"))
+    for index, row in enumerate(db.rows):
+        solution = "" if missing_solution and index == 1 else "Count valid placements and multiply the probability by 3190."
+        row["solution_md"] = solution
+        source = SourceQuestion(
+            id=row["id"], question_text=row["raw_content"], options=row["options"],
+            correct_answer=row["correct_key"], solution=solution,
+        )
+        db.blueprints[index]["requirement"]["source"] = source_to_item(source)["source"]
+        await db.admin.execute(
+            "UPDATE source_questions SET solution_md = $1 WHERE id = $2::uuid", solution, row["id"]
+        )
     snapshot = await publish(db, clone=clone)
+    if missing_solution:
+        assert snapshot["confirmed_sources"][1]["confirmed_input"]["solution"] == ""
     loop = asyncio.get_running_loop()
     owner = SqlClient(db.owner, loop, db.sid)
     worker = SqlClient(db.worker, loop, db.sid)
     owner.damage_claim = corrupt_claim
+    worker.lose_fallback_response = lost_response
     monkeypatch.setattr("app.services.generation.job_repository.get_service_role_client", lambda: worker)
     foreign_conn = await asyncpg.connect(db.dsn)
     await role(foreign_conn, "authenticated", FOREIGN)
@@ -172,20 +214,33 @@ async def run_generation_case(db, monkeypatch, *, clone, corrupt_claim=False, pa
         assert kwargs["n_versions"] == 1
         assert [source.id for source in sources] == snapshot["source_order"]
         cached = {result.source_question_id: result for result in kwargs["completed"]}
+        committed_fallbacks = kwargs.get("committed_fallbacks", frozenset())
         first_run_is_partial = partial_first and not provider_calls
         results = []
         for index, source in enumerate(sources):
+            if (1, source.id) in committed_fallbacks:
+                continue
             if source.id in cached:
                 results.append(cached[source.id])
                 continue
-            await kwargs["context"].reserve_request()
-            provider_calls.append(index)
+            fallback = fallback_first and first_run_is_partial and index == 0
+            for _ in range(4 if fallback else 1):
+                await kwargs["context"].reserve_request()
+                provider_calls.append(index)
             result = QuestionResult.model_validate(result_for(
-                db, {"context": snapshot}, index=index, success=not (first_run_is_partial and index == 1),
+                db, {"context": snapshot}, index=index,
+                success=not (fallback or (first_run_is_partial and index == 1)),
             ))
+            if fallback:
+                result.attempts = 4
+                result.error_code = "VALIDATION_FAILED"
+                result._exhausted_attempts = True
             await kwargs["on_result"](result)
             results.append(result)
-        return BatchResult(status="partial_generated" if first_run_is_partial else "generated", results=results)
+        status = "failed" if fallback_first and first_run_is_partial else (
+            "partial_generated" if first_run_is_partial else "generated"
+        )
+        return BatchResult(status=status, results=results)
 
     registry = RuntimeRegistry()
     events = GenerationEventBroker()
@@ -242,6 +297,17 @@ async def run_generation_case(db, monkeypatch, *, clone, corrupt_claim=False, pa
             saved = detail.json()["generation_config"]
             assert all(saved[key] == value for key, value in config.items())
             response = client.post(base + "/generate")
+            if missing_solution:
+                # 021 has no Q01 gate. HTTP accepts the claim, then the worker fails closed.
+                assert response.status_code == 202, response.text
+                if retry_missing:
+                    retry = client.post(base + "/retry-generation")
+                    assert retry.status_code == 202, retry.text
+                progress = client.get(base + "/generation-snapshot").json()
+                assert progress["status"] == "failed"
+                assert progress["generation_error_code"] == "ERR_SOURCE_SOLUTION_REQUIRED"
+                assert progress["progress"]["completed_count"] == 1
+                return
             if corrupt_claim:
                 assert response.status_code == 503, response.text
                 assert response.json()["detail"]["code"] == "ERR_GENERATION_STORAGE_FAILURE"
@@ -265,11 +331,19 @@ async def run_generation_case(db, monkeypatch, *, clone, corrupt_claim=False, pa
             assert stream.status_code == 200
             assert stream.text.count("event: question_done") == len(snapshot["source_order"])
             assert "event: done" in stream.text
+            if fallback_first:
+                assert stream.text.count("GENERATION_RETRIES_EXHAUSTED") == 1
 
     try:
         await asyncio.to_thread(exercise_http)
         persisted = await rpc(db.worker, "load_generation_completed_results", db.sid)
-        if corrupt_claim:
+        if missing_solution:
+            assert not provider_calls and len(persisted["completed"]) == 1
+            claims = [params["p_is_retry"] for name, params in owner.calls if name == "claim_generation_job"]
+            assert claims == ([False, True] if retry_missing else [False])
+            assert await db.admin.fetchval("SELECT count(*) FROM generation_job_snapshots") == 1
+            assert await db.admin.fetchval("SELECT count(*) FROM version_questions WHERE is_current") == 1
+        elif corrupt_claim:
             assert not provider_calls and persisted["completed"] == []
             state = await db.admin.fetchrow(
                 "SELECT status, active_job_id FROM exam_sessions WHERE id=$1::uuid", db.sid
@@ -289,9 +363,17 @@ async def run_generation_case(db, monkeypatch, *, clone, corrupt_claim=False, pa
             assert exc.value.sqlstate == "55006"
         else:
             result_kind = "ORIGINAL_CLONE" if clone else "AI_RESULT"
-            assert [row["result_kind"] for row in persisted["completed"]] == [result_kind] * 2
+            expected_kinds = ["CONFIRMED_SOURCE_FALLBACK", "AI_RESULT"] if fallback_first else [result_kind] * 2
+            assert [row["result_kind"] for row in persisted["completed"]] == expected_kinds
+            if fallback_first:
+                assert len(persisted["fallback_receipts"]) == 1
+                assert persisted["fallback_receipts"][0]["raw_result"]["solution_md"] == db.rows[0]["solution_md"]
+                writes = [params for name, params in worker.calls if name == "persist_generation_result"]
+                assert len([p for p in writes if p["p_raw_result"].get("result_kind") == expected_kinds[0]]) == 1
             assert await db.admin.fetchval("SELECT count(*) FROM version_questions WHERE is_current") == 2
             expected_calls = [] if clone else ([0, 1, 1] if partial_first else [0, 1])
+            if fallback_first:
+                expected_calls = [0, 0, 0, 0, 1, 1]
             assert provider_calls == expected_calls
             assert await db.admin.fetchval(
                 "SELECT gemini_call_count FROM exam_sessions WHERE id=$1::uuid", db.sid

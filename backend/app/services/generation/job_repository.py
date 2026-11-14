@@ -1,7 +1,8 @@
-"""TASK-207b adapter for committed 005/015/016 and PR #52's 017 RPCs."""
+"""Generation job adapter for the W2 lifecycle and W4 fallback RPCs."""
 
 from __future__ import annotations
 
+import json
 import re
 from copy import deepcopy
 from dataclasses import dataclass
@@ -19,9 +20,14 @@ from app.models.schemas import SourceQuestion
 from app.services.generation.ai_batch_adapter import AIBatchInputs
 from app.services.generation.ai_mapping import PreparedAIResult
 from app.services.generation.job_contracts import (
+    FALLBACK_WARNING,
+    SOURCE_SOLUTION_MESSAGE,
+    SOURCE_SOLUTION_REQUIRED,
+    ConfirmedSourceFallback,
     GenerationJobError,
     GenerationPlan,
     GenerationQuotaExceeded,
+    IncompleteGenerationSource,
     QuestionTarget,
 )
 from app.services.generation.mode_mapper import PUBLIC_TO_CANONICAL_DIMENSIONS
@@ -139,6 +145,96 @@ def _target_from_receipt(row: dict[str, Any]) -> QuestionTarget:
     return QuestionTarget(_uuid(row["source_question_id"]), question_no, version)
 
 
+FALLBACK_KIND = "CONFIRMED_SOURCE_FALLBACK"
+
+
+def _fallback_record(
+    *, target: QuestionTarget, source: dict[str, Any], source_index: int,
+    snapshot_id: UUID, confirmation_id: UUID, source_hash: str, base_seed: int,
+    request_fingerprint: str, last_error_code: str,
+) -> dict[str, Any]:
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", request_fingerprint) is None
+        or re.fullmatch(r"[A-Z0-9_]{3,64}", last_error_code) is None
+    ):
+        raise ValueError("Invalid fallback fingerprint or failure code.")
+    confirmed = _object(source["confirmed_input"])
+    content = confirmed.get("question_text")
+    solution = _require_frozen_solution(confirmed)
+    options, correct_key = confirmed.get("options"), confirmed.get("correct_answer")
+    if (
+        not isinstance(content, str) or not content.strip()
+        or not isinstance(options, list) or len(options) != 4
+        or any(not isinstance(option, str) or not option.strip() for option in options)
+        or correct_key not in ("A", "B", "C", "D")
+    ):
+        raise IncompleteGenerationSource("Frozen fallback source is incomplete.")
+    return {
+        "result_kind": FALLBACK_KIND,
+        "snapshot_id": str(snapshot_id),
+        "confirmation_id": str(confirmation_id),
+        "version_index": target.version_index,
+        "source_question_id": str(target.source_question_id),
+        "question_no": target.question_no,
+        "source_revision_id": str(_uuid(source["source_revision_id"])),
+        "blueprint_revision_id": str(_uuid(source["blueprint_revision_id"])),
+        "source_fingerprint": source["source_fingerprint"],
+        "confirmed_source_hash": source_hash,
+        "seed": base_seed + target.version_index * 1000 + source_index,
+        "request_fingerprint": request_fingerprint,
+        "attempts": 4,
+        "error_code": FALLBACK_WARNING,
+        "last_error_code": last_error_code,
+        "content": content,
+        "options": options,
+        "correct_key": correct_key,
+        "solution_md": solution,
+        "has_warning": True,
+    }
+
+
+def _require_frozen_solution(confirmed: dict[str, Any]) -> str:
+    solution = confirmed.get("solution")
+    if not isinstance(solution, str) or not solution.strip():
+        raise IncompleteGenerationSource(
+            "Frozen source is missing a solution.", code=SOURCE_SOLUTION_REQUIRED,
+        )
+    return solution
+
+
+def _check_current_fallback(row: dict[str, Any], expected: dict[str, Any]) -> None:
+    if (
+        row["is_success"] is not True
+        or row["result_kind"] != FALLBACK_KIND
+        or _uuid(row["snapshot_id"]) != _uuid(expected["snapshot_id"])
+        or type(row["seed"]) is not int or row["seed"] != expected["seed"]
+        or row["request_fingerprint"] != expected["request_fingerprint"]
+        or row["clone_fingerprint"] is not None
+        or _object(row["raw_result"]) != expected
+    ):
+        raise ValueError("Current fallback does not match its frozen slot.")
+
+
+def _check_fallback_readback(
+    loaded: dict[str, Any], target: QuestionTarget, row: dict[str, Any], expected: dict[str, Any]
+) -> None:
+    _check_current_fallback(row, expected)
+    receipts = [
+        receipt for receipt in map(_object, _array(loaded["fallback_receipts"]))
+        if _target_from_receipt(receipt) == target
+    ]
+    if len(receipts) != 1:
+        raise ValueError("Expected one verified receipt for the current fallback.")
+    receipt = receipts[0]
+    if (
+        _uuid(receipt["snapshot_id"]) != _uuid(expected["snapshot_id"])
+        or receipt["result_kind"] != FALLBACK_KIND
+        or _object(receipt["raw_result"]) != expected
+    ):
+        raise ValueError("Fallback receipt does not match the current result.")
+    _uuid(receipt["version_question_id"])
+
+
 def _rpc_error(exc: APIError) -> GenerationJobError:
     code = str(getattr(exc, "code", "") or "").upper()
     message = str(getattr(exc, "message", "") or "")
@@ -150,6 +246,21 @@ def _rpc_error(exc: APIError) -> GenerationJobError:
         return GenerationJobError(
             409, "ERR_CONFIG_CONFLICT", "Generation state changed; reload the session."
         )
+    if code == "22023" and message == SOURCE_SOLUTION_REQUIRED:
+        try:
+            numbers = _array(_object(json.loads(exc.details or ""))["question_numbers"])
+            if (
+                not numbers or len(numbers) > 20
+                or any(type(number) is not int or number < 1 for number in numbers)
+                or numbers != sorted(set(numbers))
+            ):
+                raise ValueError("Invalid source question numbers.")
+            return GenerationJobError(
+                422, SOURCE_SOLUTION_REQUIRED, SOURCE_SOLUTION_MESSAGE,
+                question_numbers=tuple(numbers),
+            )
+        except (KeyError, TypeError, ValueError):
+            pass
     if code == "22023" and message.startswith("ERR_SOURCE_NOT_READY"):
         return GenerationJobError(422, "ERR_SOURCE_NOT_READY", "The source is not ready.")
     if code == "22023" and message.startswith("ERR_CONFIG_CONFLICT"):
@@ -218,7 +329,10 @@ class GenerationJobRepository:
                 source_id = _uuid(row["source_question_id"])
                 question_no = row["question_no"]
                 confirmed = _object(row["confirmed_input"])
-                source_model = SourceQuestion.model_validate(confirmed)
+                model_input = dict(confirmed)
+                if model_input.get("solution") is None:
+                    model_input["solution"] = ""
+                source_model = SourceQuestion.model_validate(model_input)
                 if source_model.id != str(source_id):
                     raise ValueError("Frozen source ID differs from confirmed input.")
                 source_models.append(source_model)
@@ -239,28 +353,40 @@ class GenerationJobRepository:
                 _uuid(row["source_question_id"]): index for index, row in enumerate(sources)
             }
             clone_mode = not dimensions
-            result_kind = "ORIGINAL_CLONE" if clone_mode else "AI_RESULT"
-            claimed: set[QuestionTarget] = set()
+            allowed_kinds = {"ORIGINAL_CLONE"} if clone_mode else {"AI_RESULT", FALLBACK_KIND}
+            claimed: dict[QuestionTarget, str] = {}
             for value in _array(receipt["committed_targets"]):
                 row = _object(value)
                 target = _target_from_receipt(row)
-                if target not in target_set or target in claimed or row["result_kind"] != result_kind:
+                kind = row["result_kind"]
+                if target not in target_set or target in claimed or kind not in allowed_kinds:
                     raise ValueError("Claimed result is outside the frozen job.")
-                claimed.add(target)
+                claimed[target] = kind
             saved: set[QuestionTarget] = set()
             ai_completed: list[QuestionResult] = []
+            fallback_slots: set[tuple[int, str]] = set()
             for row_value in _array(loaded["completed"]):
                 row = _object(row_value)
                 target = _target_from_receipt(row)
                 if target not in claimed or target in saved or _uuid(row["snapshot_id"]) != snapshot_id:
                     raise ValueError("Committed target is outside frozen snapshot.")
-                if row["result_kind"] != result_kind:
+                if row["result_kind"] != claimed[target]:
                     raise ValueError("Committed result kind differs from frozen modes.")
                 saved.add(target)
-                if not clone_mode:
+                position = source_positions[target.source_question_id]
+                if row["result_kind"] == FALLBACK_KIND:
+                    raw = _object(row["raw_result"])
+                    expected = _fallback_record(
+                        target=target, source=sources[position], source_index=position,
+                        snapshot_id=snapshot_id, confirmation_id=_uuid(context["confirmation_id"]),
+                        source_hash=context["confirmed_source_hash"], base_seed=context["base_seed"],
+                        request_fingerprint=row["request_fingerprint"], last_error_code=raw["last_error_code"],
+                    )
+                    _check_fallback_readback(loaded, target, row, expected)
+                    fallback_slots.add((target.version_index, str(target.source_question_id)))
+                elif not clone_mode:
                     result = QuestionResult.model_validate(row["raw_result"])
                     candidate = result.candidate
-                    position = source_positions[target.source_question_id]
                     if (
                         candidate is None
                         or result.error_code is not None
@@ -273,7 +399,7 @@ class GenerationJobRepository:
                     ):
                         raise ValueError("Committed AI result differs from its frozen slot.")
                     ai_completed.append(result)
-            if claimed != saved:
+            if claimed.keys() != saved:
                 raise ValueError("Claim and completed results disagree.")
             if clone_mode:
                 inputs: object = CloneJobInputs(snapshot_id, deepcopy(context))
@@ -286,6 +412,9 @@ class GenerationJobRepository:
                     variation_modes=dimensions,
                     completed=tuple(ai_completed),
                     snapshot_id=snapshot_id,
+                    confirmation_id=_uuid(context["confirmation_id"]),
+                    frozen_sources={row["source_question_id"]: deepcopy(row) for row in sources},
+                    committed_fallbacks=frozenset(fallback_slots),
                 )
             return GenerationPlan(
                 session_id, job_id, tuple(targets), frozenset(saved), count, inputs
@@ -377,6 +506,112 @@ class GenerationJobRepository:
                 503, "ERR_GENERATION_STORAGE_FAILURE", "Invalid result receipt."
             )
 
+    async def save_fallback(self, plan: GenerationPlan, result: ConfirmedSourceFallback) -> None:
+        target = result.target
+        inputs = plan.inputs
+        if (
+            not isinstance(inputs, AIBatchInputs)
+            or inputs.snapshot_id is None or inputs.confirmation_id is None
+            or target not in plan.targets or target in plan.saved
+        ):
+            raise ValueError("Fallback requires an unsaved frozen AI slot.")
+        source_id = str(target.source_question_id)
+        source_index = next(index for index, source in enumerate(inputs.sources) if source.id == source_id)
+        expected = _fallback_record(
+            target=target, source=inputs.frozen_sources[source_id], source_index=source_index,
+            snapshot_id=inputs.snapshot_id, confirmation_id=inputs.confirmation_id,
+            source_hash=inputs.confirmed_source_hash, base_seed=inputs.base_seed,
+            request_fingerprint=result.request_fingerprint, last_error_code=result.last_error_code,
+        )
+        params = {
+            "p_session_id": str(plan.session_id),
+            "p_job_token": str(plan.job_id),
+            "p_version_index": target.version_index,
+            "p_source_question_id": source_id,
+            "p_question_no": target.question_no,
+            "p_is_success": True,
+            "p_error_code": FALLBACK_WARNING,
+            "p_attempts": 4,
+            "p_seed": expected["seed"],
+            "p_request_fingerprint": result.request_fingerprint,
+            "p_raw_result": expected,
+            "p_content": expected["content"],
+            "p_options": expected["options"],
+            "p_correct_key": expected["correct_key"],
+            "p_solution_md": expected["solution_md"],
+            "p_has_warning": True,
+        }
+        try:
+            receipt = _object(await self._rpc("persist_generation_result", params))
+            if (
+                receipt["success"] is not True
+                or type(receipt["replayed"]) is not bool
+                or _uuid(receipt["session_id"]) != plan.session_id
+                or _uuid(receipt["snapshot_id"]) != inputs.snapshot_id
+                or type(receipt["version_index"]) is not int
+                or receipt["version_index"] != target.version_index
+                or _uuid(receipt["source_question_id"]) != target.source_question_id
+                or receipt["result_kind"] != FALLBACK_KIND
+                or receipt["candidate_status"] != "pending_review"
+                or type(receipt["attempts"]) is not int or receipt["attempts"] != 4
+                or receipt["error_code"] != FALLBACK_WARNING
+                or _uuid(receipt["source_revision_id"]) != _uuid(expected["source_revision_id"])
+                or receipt["confirmed_source_hash"] != inputs.confirmed_source_hash
+            ):
+                raise ValueError("Fallback writer receipt differs from the frozen slot.")
+            _uuid(receipt["version_question_id"])
+        except GenerationJobError as exc:
+            cause = exc.__cause__
+            if isinstance(cause, APIError):
+                if str(cause.code) == "22023" and str(cause.message).startswith("ERR_SOURCE_NOT_READY:"):
+                    code = (
+                        SOURCE_SOLUTION_REQUIRED
+                        if cause.message == "ERR_SOURCE_NOT_READY: missing or whitespace solution"
+                        else "ERR_SOURCE_NOT_READY"
+                    )
+                    raise IncompleteGenerationSource(
+                        "Frozen fallback source failed verification.", code=code,
+                    ) from exc
+                # A known SQL rejection is definitive. An API transport/protocol error can be uncertain.
+                if str(cause.code) in {"22023", "23505", "42501", "55006", "P0002"}:
+                    raise
+            await self._reconcile_fallback(plan, target, expected)
+        except (KeyError, TypeError, ValueError):
+            await self._reconcile_fallback(plan, target, expected)
+
+    async def _reconcile_fallback(
+        self, plan: GenerationPlan, target: QuestionTarget, expected: dict[str, Any]
+    ) -> None:
+        try:
+            loaded = _object(await self._rpc(
+                "load_generation_completed_results", {"p_session_id": str(plan.session_id)}
+            ))
+            if (
+                _uuid(loaded["session_id"]) != plan.session_id
+                or _uuid(loaded["snapshot_id"]) != _uuid(expected["snapshot_id"])
+            ):
+                raise ValueError("Fallback read-back changed session or snapshot.")
+            matches = [
+                row for row in map(_object, _array(loaded["completed"]))
+                if _target_from_receipt(row) == target
+            ]
+            if len(matches) != 1:
+                raise ValueError("Expected one current fallback for the written slot.")
+            _check_fallback_readback(loaded, target, matches[0], expected)
+            state = _array(await run_in_threadpool(
+                lambda: self._worker_db.table("exam_sessions").select("status,active_job_id")
+                .eq("id", str(plan.session_id)).limit(1).execute().data
+            ))
+            if len(state) != 1:
+                raise ValueError("Missing session for fallback read-back.")
+            session = _object(state[0])
+            if session["status"] != "generating" or _uuid(session["active_job_id"]) != plan.job_id:
+                raise ValueError("Fallback read-back outlived the active claim.")
+        except Exception as exc:
+            raise GenerationJobError(
+                503, "ERR_GENERATION_STORAGE_FAILURE", "Fallback write could not be confirmed."
+            ) from exc
+
     async def save_clone(self, plan: GenerationPlan, target: QuestionTarget) -> None:
         inputs = plan.inputs
         if not isinstance(inputs, CloneJobInputs):
@@ -395,6 +630,7 @@ class GenerationJobRepository:
         if index is None or source is None or source["question_no"] != target.question_no:
             raise ValueError("Clone target is outside frozen source order.")
         confirmed = _object(source["confirmed_input"])
+        solution = _require_frozen_solution(confirmed)
         record = {
             "result_kind": "ORIGINAL_CLONE",
             "snapshot_id": str(inputs.snapshot_id),
@@ -409,7 +645,7 @@ class GenerationJobRepository:
             "content": confirmed["question_text"],
             "options": confirmed["options"],
             "correct_key": confirmed["correct_answer"],
-            "solution_md": confirmed.get("solution"),
+            "solution_md": solution,
         }
         receipt = _object(
             await self._rpc(

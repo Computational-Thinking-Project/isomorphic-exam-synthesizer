@@ -36,6 +36,7 @@ from app.services.generation.job_contracts import (
     GenerationJobStore,
     GenerationPlan,
     GenerationQuotaExceeded,
+    IncompleteGenerationSource,
     QuestionTarget,
 )
 from app.services.generation.service import GenerationService, candidate_identity
@@ -364,7 +365,7 @@ async def test_schema_exhaustion_keeps_errors_without_inventing_drafts(ai_case):
     assert batch.status == "failed" and batch.results[0].candidate is None
     assert batch.results[0].error_code is not None
     assert batch.results[0].attempts == 3
-    assert delivered[0].draft is None and case.store.rows == {}
+    assert delivered[0].draft is None and not delivered[0].exhausted_attempts and case.store.rows == {}
     assert case.store.count == len(case.calls) == 3
 
 
@@ -378,12 +379,61 @@ async def test_four_validation_failures_leave_the_slot_incomplete(ai_case, monke
     ]))
     monkeypatch.setattr(case.service.validator, "validate", validate)
 
-    batch = await execute(case, plan=plan)
+    deliver = AsyncMock()
+    batch = await execute(case, plan=plan, callback=deliver)
 
     assert batch.status == "failed"
     assert batch.results[0].error_code == "VALIDATION_FAILED"
     assert batch.results[0].attempts == validate.await_count == case.store.count == len(case.calls) == 4
+    assert deliver.await_args.args[0].exhausted_attempts is True
+    assert "exhausted_attempts" not in batch.results[0].model_dump()
     assert case.store.rows == {}
+
+
+@pytest.mark.asyncio
+async def test_fourth_loop_iteration_without_quota_does_not_trigger_fallback(ai_case, monkeypatch):
+    case = ai_case
+    case.store.count = 247
+    plan = replace(case.plan, targets=case.plan.targets[:1], gemini_call_count=247)
+    case.responses[:] = [case.data["candidates"][0]] * 3
+    monkeypatch.setattr(case.service.validator, "validate", AsyncMock(return_value=ValidationReport(checks=[
+        CheckResult(check_name="syntax", passed=False, status="failed"),
+    ])))
+    deliver = AsyncMock()
+
+    batch = await execute(case, plan=plan, callback=deliver)
+
+    assert batch.results[0].attempts == 4 and len(case.calls) == 3
+    assert batch.results[0].error_code == "REQUEST_BUDGET_EXHAUSTED"
+    assert deliver.await_args.args[0].exhausted_attempts is False
+
+
+@pytest.mark.asyncio
+async def test_service_skips_fallback_without_requiring_a_cached_ai_candidate(ai_case, monkeypatch):
+    case = ai_case
+    saved = case.plan.targets[0]
+    plan = replace(case.plan, saved=frozenset({saved}))
+    inputs = case.inputs.model_copy(update={"committed_fallbacks": frozenset({(1, str(saved.source_question_id))})})
+    monkeypatch.setattr(case.service.validator, "validate", AsyncMock(return_value=ValidationReport()))
+    deliver = AsyncMock()
+
+    batch = await execute(case, plan=plan, inputs=inputs, callback=deliver)
+
+    assert batch.status == "generated"
+    assert [result.version_index for result in batch.results] == [2]
+    assert case.store.count == len(case.calls) == 1
+    assert deliver.await_args.args[0].target == plan.targets[1]
+
+
+@pytest.mark.asyncio
+async def test_worker_source_failure_survives_batch_task_group(ai_case):
+    case = ai_case
+    plan = replace(case.plan, targets=case.plan.targets[:1])
+    case.responses[:] = ["not JSON"] * 3
+    error = IncompleteGenerationSource("Missing frozen data")
+    with pytest.raises(IncompleteGenerationSource) as exc:
+        await execute(case, plan=plan, callback=AsyncMock(side_effect=error))
+    assert exc.value is error
 
 
 @pytest.mark.asyncio

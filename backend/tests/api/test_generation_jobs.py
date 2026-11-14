@@ -9,7 +9,11 @@ from app.api.dependencies import get_current_user, get_user_db
 from app.api.routes.generation_jobs import create_generation_job_router
 from app.core.rate_limit import create_limiter, register_rate_limiter
 from app.models.schemas import CurrentUser
-from app.services.generation.job_contracts import GenerationJobError
+from app.services.generation.job_contracts import (
+    SOURCE_SOLUTION_MESSAGE,
+    SOURCE_SOLUTION_REQUIRED,
+    GenerationJobError,
+)
 from app.services.generation.jobs import GenerationJobRunner
 
 
@@ -97,6 +101,22 @@ def test_invalid_frozen_claim_does_not_schedule_worker(job_api, path: str) -> No
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "ERR_GENERATION_STORAGE_FAILURE"
     runner.claim.assert_awaited_once()
+    runner.run.assert_not_awaited()
+
+
+@pytest.mark.parametrize("path", ["generate", "retry-generation"])
+def test_missing_source_solution_returns_numbered_422_before_dispatch(job_api, path):
+    client, sid, runner, *_ = job_api
+    runner.claim.side_effect = GenerationJobError(
+        422, SOURCE_SOLUTION_REQUIRED, SOURCE_SOLUTION_MESSAGE, question_numbers=(1, 3),
+    )
+    response = client.post(f"/api/sessions/{sid}/{path}")
+    assert response.status_code == 422
+    assert response.json()["detail"] == {
+        "code": SOURCE_SOLUTION_REQUIRED,
+        "message": SOURCE_SOLUTION_MESSAGE,
+        "question_numbers": [1, 3],
+    }
     runner.run.assert_not_awaited()
 
 

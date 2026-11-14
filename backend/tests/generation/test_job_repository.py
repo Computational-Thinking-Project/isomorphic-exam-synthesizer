@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from postgrest.exceptions import APIError
 
 from app.models.generation import (
     CandidatePayload,
@@ -19,8 +20,16 @@ from app.models.generation import (
 from app.services.generation.ai_batch_adapter import AIBatchInputs
 from app.services.generation.ai_mapping import PreparedAIResult
 from app.services.generation.events import GenerationEventBroker
-from app.services.generation.job_contracts import GeneratedDraft, GenerationJobError
-from app.services.generation.job_repository import CloneJobInputs, GenerationJobRepository
+from app.services.generation.job_contracts import (
+    ConfirmedSourceFallback,
+    GeneratedDraft,
+    GenerationJobError,
+)
+from app.services.generation.job_repository import (
+    CloneJobInputs,
+    GenerationJobRepository,
+    _rpc_error,
+)
 from app.services.generation.jobs import GenerationJobRunner
 from app.services.observability.runtime_registry import RuntimeRegistry
 
@@ -35,7 +44,28 @@ class FakeRPCClient:
         value = self.responses[name]
         if isinstance(value, list):
             value = value.pop(0)
+        if isinstance(value, Exception):
+            raise value
         return SimpleNamespace(execute=lambda: SimpleNamespace(data=value))
+
+
+@pytest.mark.parametrize(
+    ("details", "status", "numbers"),
+    [
+        ('{"question_numbers":[1,3]}', 422, (1, 3)),
+        ('{"question_numbers":[3,1]}', 503, ()),
+        ('{"question_numbers":[1,1]}', 503, ()),
+        ('{"question_numbers":[true]}', 503, ()),
+        ('{"question_numbers":[]}', 503, ()),
+        ("bad detail", 503, ()),
+    ],
+)
+def test_q01_sql_error_detail_is_validated(details, status, numbers):
+    error = _rpc_error(APIError({
+        "code": "22023", "message": "ERR_SOURCE_SOLUTION_REQUIRED", "details": details,
+    }))
+    assert error.status_code == status
+    assert error.question_numbers == numbers
 
 
 def claim_fixture(*, clone=True):
@@ -110,6 +140,30 @@ def update_source_manifest(context):
             for row in sources
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_fallback_write_does_not_replay_or_count_historical_receipt(monkeypatch):
+    session, _, snapshot, source, claim, loaded = claim_fixture(clone=False)
+    historical = {**loaded, "fallback_receipts": [
+        {"snapshot_id": str(snapshot), "source_question_id": str(source), "version_index": 1},
+    ]}
+    owner = FakeRPCClient({"claim_generation_job": claim})
+    worker = FakeRPCClient({
+        "load_generation_completed_results": [loaded, historical],
+        "persist_generation_result": TimeoutError("Lost write reply"),
+    })
+    monkeypatch.setattr("app.services.generation.job_repository.get_service_role_client", lambda: worker)
+    repo = GenerationJobRepository(owner)
+    plan = await repo.claim(session, retry=False)
+
+    with pytest.raises(GenerationJobError) as exc:
+        await repo.save_fallback(plan, ConfirmedSourceFallback(plan.targets[0], "d" * 64, "VALIDATION_FAILED"))
+
+    assert exc.value.code == "ERR_GENERATION_STORAGE_FAILURE"
+    assert [name for name, _ in worker.calls] == [
+        "load_generation_completed_results", "persist_generation_result", "load_generation_completed_results",
+    ]
 
 
 @pytest.mark.asyncio
