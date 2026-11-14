@@ -102,11 +102,10 @@ threadpool so these new routes do not block other active streams.
 
 ### Q01 — Confirmed source solution
 
-Target contract for Issue #64 / C5, decided on 14/11/2026. Implementation and
-HTTP/SQL verification of the pre-claim guard are pending. The Python adapter
-can map the agreed HTTP payload from the proposed SQL error transport. On
-migration 021, the disposable integration test still observes HTTP 202 before
-the worker reports the missing solution. [Owner decision](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/67#issuecomment-6877849395)
+Issue #64 / C5 uses migration 022 for the pre-claim guard. The SQL error uses
+SQLSTATE `22023`, `MESSAGE = ERR_SOURCE_SOLUTION_REQUIRED` and JSON `DETAIL`
+with `question_numbers`. The Python adapter maps that error to the HTTP
+payload below. [Owner decision](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/67#issuecomment-6877849395) · [SQL agreement](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/67#issuecomment-6880863821)
 
 - Keep `confirm-source` on its existing contract. In both AI and Original Clone,
   `/generate` checks all confirmed sources. `/retry-generation` checks the
@@ -127,11 +126,11 @@ the worker reports the missing solution. [Owner decision](https://github.com/Com
 }
 ```
 
-- The check and claim must use the same source revision or frozen snapshot.
-  Reuse the existing snapshot, manifest and locking where they provide that
-  guarantee. If they leave a race, bring the smallest SQL guard to the BE/DB
-  owner for agreement. Receipt validation after a committed claim cannot
-  satisfy the pre-claim requirement.
+- Migration 022 checks the same canonical or frozen snapshot that the claim
+  uses while holding the session lock. On retry it counts valid commits from
+  `_generation_committed` by source and checks sources with missing versions.
+  The guard runs before inserting a snapshot or changing the session status or
+  active job token.
 - Missing required source data detected after the job starts is fatal and
   settles to `failed`, preserving committed slots. Nonfatal incomplete jobs
   keep the existing `partial_generated` outcome when at least one slot was
