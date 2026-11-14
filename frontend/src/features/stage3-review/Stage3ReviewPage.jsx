@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { stage2Path, stage3PreviewPath } from '../../sessionPaths.js';
 import {
   AlertCircle,
   AlertTriangle,
@@ -723,7 +724,7 @@ export default function Stage3ReviewPage({
           retryOperationRef.current === currentOp &&
           activeSessionIdRef.current === targetSessionId
         ) {
-          navigate(`/session/${targetSessionId}/stage2`);
+          navigate(stage2Path(targetSessionId));
         }
       }, 1200);
     } catch (err) {
@@ -842,7 +843,7 @@ export default function Stage3ReviewPage({
         <div>
           <button
             type="button"
-            onClick={() => navigate(`/session/${sessionId}/stage2`)}
+            onClick={() => navigate(stage2Path(sessionId))}
             className="mb-2 inline-flex items-center gap-1.5 text-xs font-semibold text-sky-400 hover:text-sky-300"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
@@ -1211,7 +1212,7 @@ export default function Stage3ReviewPage({
               type="button"
               data-review-finalize={true}
               disabled={isFinalizeDisabled}
-              onClick={() => navigate(`/session/${sessionId}/stage3/preview`)}
+              onClick={() => navigate(stage3PreviewPath(sessionId))}
               className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-6 py-2.5 text-xs font-semibold text-white shadow-lg shadow-sky-600/30 hover:bg-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:cursor-not-allowed disabled:opacity-50 transition-all"
             >
               Rà bộ đề
