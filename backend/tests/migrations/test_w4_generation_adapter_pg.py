@@ -1,4 +1,4 @@
-"""Run the HTTP adapters and worker against disposable PostgreSQL through 021.
+"""Run the HTTP adapters and worker against disposable PostgreSQL through 022.
 
 The client bridge uses real SQL roles and RPCs with fixture authentication.
 It does not exercise PostgREST, JWT transport, or a live AI provider.
@@ -31,19 +31,29 @@ from app.services.blueprint.adapters import source_to_item
 from app.services.generation.ai_batch_adapter import AIBatchAdapter
 from app.services.generation.config_repository import GenerationConfigRepository
 from app.services.generation.events import GenerationEventBroker
+from app.services.generation.job_contracts import SOURCE_SOLUTION_MESSAGE, SOURCE_SOLUTION_REQUIRED
 from app.services.generation.job_repository import GenerationJobRepository
 from app.services.generation.jobs import GenerationJobRunner
 from app.services.generation.tickets import StreamTicketStore
 from app.services.observability.runtime_registry import RuntimeRegistry
-from tests.migrations.test_generation_w2 import OWNER, TYPES, asyncpg, result_for, role, rpc
+from tests.migrations.test_generation_w2 import (
+    OWNER,
+    TYPES,
+    asyncpg,
+    persist,
+    result_for,
+    role,
+    rpc,
+)
 from tests.migrations.test_generation_w2 import db as db  # noqa: F401
-from tests.migrations.test_w4_config_guards import OFF, migrate, publish
+from tests.migrations.test_w4_config_guards import OFF, migrate, publish, save
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.parametrize("db", ["w4"], indirect=True)]
 FOREIGN = "00000000-0000-0000-0000-000000000002"
 FALLBACK_SQL = (
     Path(__file__).resolve().parents[2] / "migrations/021_w4_confirmed_source_fallback.sql"
 )
+SOLUTION_GUARD_SQL = FALLBACK_SQL.with_name("022_w4_generation_solution_guard.sql")
 RPC_ARGS = {
     "get_session_source_preview": ("p_session_id",),
     "get_generation_source_snapshot": ("p_session_id",),
@@ -166,9 +176,114 @@ async def test_fallback_retry_uses_current_021_receipt(db, monkeypatch, lost_res
     )
 
 
-@pytest.mark.parametrize("retry", [False, True])
-async def test_q01_characterizes_missing_solution_claim_on_021(db, monkeypatch, retry):
-    await run_generation_case(db, monkeypatch, clone=True, missing_solution=True, retry_missing=retry)
+@pytest.mark.parametrize("clone", [False, True], ids=["ai", "clone"])
+@pytest.mark.parametrize("retry", [False, True], ids=["start", "retry"])
+async def test_q01_blocks_before_claim_mutation(db, monkeypatch, clone, retry):
+    await run_generation_case(db, monkeypatch, clone=clone, missing_solution=True, retry_missing=retry)
+
+
+@pytest.mark.parametrize("committed_versions", [1, 2])
+async def test_q01_retry_requires_solutions_only_for_sources_with_missing_slots(db, monkeypatch, committed_versions):
+    monkeypatch.setitem(TYPES, "finish_generation_job_with_error", ["uuid", "text", "uuid", "text"])
+    snapshot = await publish_generation_fixture(db, clone=False, missing_solution=True)
+    await save(db, snapshot, versions=2)
+    initial = await rpc(db.owner, "claim_generation_job", db.sid, False)
+    for version in range(1, committed_versions + 1):
+        await persist(db, initial, result_for(db, initial, index=1, version=version))
+    await rpc(db.worker, "finish_generation_job_with_error", db.sid, "partial_generated", initial["job_id"], "ERR_GENERATION_INCOMPLETE")
+    # Exercise applying 022 twice on a populated database.
+    for _ in range(2):
+        await db.admin.execute(SOLUTION_GUARD_SQL.read_text(encoding="utf-8-sig"))
+    if committed_versions == 1:
+        before = await generation_state(db)
+        with pytest.raises(asyncpg.PostgresError) as error:
+            await rpc(db.owner, "claim_generation_job", db.sid, True)
+        assert error.value.sqlstate == "22023"
+        assert error.value.message == SOURCE_SOLUTION_REQUIRED
+        assert json.loads(error.value.detail) == {"question_numbers": [2]}
+        assert await generation_state(db) == before
+        return
+    resumed = await rpc(db.owner, "claim_generation_job", db.sid, True)
+    assert resumed["snapshot_id"] == initial["snapshot_id"]
+    assert resumed["context"] == initial["context"]
+    assert resumed["job_id"] != initial["job_id"]
+    assert [(row["version_index"], row["question_no"]) for row in resumed["committed_targets"]] == [(1, 2), (2, 2)]
+    for actor in ("anon", "authenticated", "service_role"):
+        assert not await db.admin.fetchval(
+            "SELECT has_function_privilege($1, 'public._generation_claim_010(uuid,boolean)', 'EXECUTE')", actor,
+        )
+
+
+@pytest.mark.parametrize("missing", ["null", "absent"])
+async def test_q01_retry_checks_locked_snapshot_and_reports_sorted_source_numbers(db, monkeypatch, missing):
+    monkeypatch.setitem(TYPES, "finish_generation_job_with_error", ["uuid", "text", "uuid", "text"])
+    snapshot = await publish_generation_fixture(db, clone=False)
+    await save(db, snapshot, versions=2)
+    initial = await rpc(db.owner, "claim_generation_job", db.sid, False)
+    await rpc(db.worker, "finish_generation_job_with_error", db.sid, "failed", initial["job_id"], "ERR_GENERATION_INTERRUPTED")
+    await db.admin.execute(SOLUTION_GUARD_SQL.read_text(encoding="utf-8-sig"))
+    before = await generation_state(db)
+
+    async with asyncio.TaskGroup() as tasks:
+        async def claim_after_lock():
+            with pytest.raises(asyncpg.PostgresError) as error:
+                await rpc(db.owner, "claim_generation_job", db.sid, True)
+            assert error.value.sqlstate == "22023"
+            assert error.value.message == SOURCE_SOLUTION_REQUIRED
+            assert json.loads(error.value.detail) == {"question_numbers": [1, 2]}
+
+        async with db.admin.transaction():
+            await db.admin.fetchval("SELECT id FROM exam_sessions WHERE id = $1::uuid FOR UPDATE", db.sid)
+            altered = initial["context"]
+            for row in altered["confirmed_sources"]:
+                if missing == "null":
+                    row["confirmed_input"]["solution"] = None
+                else:
+                    del row["confirmed_input"]["solution"]
+            await db.admin.execute(
+                "UPDATE generation_job_snapshots SET snapshot_payload = $2::jsonb WHERE session_id = $1::uuid",
+                db.sid, json.dumps(altered),
+            )
+            tasks.create_task(claim_after_lock())
+            async with asyncio.timeout(5):
+                while not await db.admin.fetchval("SELECT pg_blocking_pids($1)", db.owner.get_server_pid()):
+                    await asyncio.sleep(0.02)
+
+    after = await generation_state(db)
+    assert after["session"] == before["session"]
+    assert after["results"] == before["results"] and after["questions"] == before["questions"]
+    saved = json.loads(after["snapshot"])
+    assert saved["id"] == initial["snapshot_id"]
+    assert saved["snapshot_payload"] == altered
+
+
+async def generation_state(db):
+    return await db.admin.fetchrow("""
+        SELECT to_jsonb(s) AS session,
+          (SELECT to_jsonb(j) FROM generation_job_snapshots j WHERE j.session_id = s.id) AS snapshot,
+          (SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id) FROM generation_target_results r
+            WHERE r.session_id = s.id) AS results,
+          (SELECT jsonb_agg(to_jsonb(q) ORDER BY q.id) FROM version_questions q
+            JOIN exam_versions v ON v.id = q.version_id WHERE v.session_id = s.id) AS questions
+        FROM exam_sessions s WHERE s.id = $1::uuid
+    """, db.sid)
+
+
+async def publish_generation_fixture(db, *, clone, missing_solution=False):
+    await migrate(db)
+    await db.admin.execute(FALLBACK_SQL.read_text(encoding="utf-8-sig"))
+    for index, row in enumerate(db.rows):
+        solution = "\t\u00a0" if missing_solution and index == 1 else "Count valid placements and multiply the probability by 3190."
+        row["solution_md"] = solution
+        source = SourceQuestion(
+            id=row["id"], question_text=row["raw_content"], options=row["options"],
+            correct_answer=row["correct_key"], solution=solution,
+        )
+        db.blueprints[index]["requirement"]["source"] = source_to_item(source)["source"]
+        await db.admin.execute(
+            "UPDATE source_questions SET solution_md = $1 WHERE id = $2::uuid", solution, row["id"]
+        )
+    return await publish(db, clone=clone)
 
 
 async def run_generation_case(
@@ -181,22 +296,11 @@ async def run_generation_case(
         ("finish_generation_job_with_error", ["uuid", "text", "uuid", "text"]),
     ):
         monkeypatch.setitem(TYPES, name, types)
-    await migrate(db)
-    await db.admin.execute(FALLBACK_SQL.read_text(encoding="utf-8-sig"))
-    for index, row in enumerate(db.rows):
-        solution = "" if missing_solution and index == 1 else "Count valid placements and multiply the probability by 3190."
-        row["solution_md"] = solution
-        source = SourceQuestion(
-            id=row["id"], question_text=row["raw_content"], options=row["options"],
-            correct_answer=row["correct_key"], solution=solution,
-        )
-        db.blueprints[index]["requirement"]["source"] = source_to_item(source)["source"]
-        await db.admin.execute(
-            "UPDATE source_questions SET solution_md = $1 WHERE id = $2::uuid", solution, row["id"]
-        )
-    snapshot = await publish(db, clone=clone)
+    snapshot = await publish_generation_fixture(db, clone=clone, missing_solution=missing_solution)
     if missing_solution:
-        assert snapshot["confirmed_sources"][1]["confirmed_input"]["solution"] == ""
+        assert snapshot["confirmed_sources"][1]["confirmed_input"]["solution"].strip() == ""
+    if not retry_missing:
+        await db.admin.execute(SOLUTION_GUARD_SQL.read_text(encoding="utf-8-sig"))
     loop = asyncio.get_running_loop()
     owner = SqlClient(db.owner, loop, db.sid)
     worker = SqlClient(db.worker, loop, db.sid)
@@ -296,18 +400,30 @@ async def run_generation_case(
             assert detail.json()["blueprint_summary"]["is_ready"] is True
             saved = detail.json()["generation_config"]
             assert all(saved[key] == value for key, value in config.items())
-            response = client.post(base + "/generate")
             if missing_solution:
-                # 021 has no Q01 gate. HTTP accepts the claim, then the worker fails closed.
-                assert response.status_code == 202, response.text
                 if retry_missing:
-                    retry = client.post(base + "/retry-generation")
-                    assert retry.status_code == 202, retry.text
-                progress = client.get(base + "/generation-snapshot").json()
-                assert progress["status"] == "failed"
-                assert progress["generation_error_code"] == "ERR_SOURCE_SOLUTION_REQUIRED"
-                assert progress["progress"]["completed_count"] == 1
+                    # Upgrade a session already frozen before 022. The old worker
+                    # finishes fatal. Seed its valid first result before the retry.
+                    assert client.post(base + "/generate").status_code == 202
+                    owner.execute_sql(prepare_q01_retry())
+                before = owner.execute_sql(generation_state(db)).data
+                assert (before["snapshot"] is not None) == retry_missing
+                if retry_missing:
+                    assert len(json.loads(before["results"])) == 1
+                    assert json.loads(before["session"])["status"] == "failed"
+                endpoint = "/retry-generation" if retry_missing else "/generate"
+                worker_calls = len(worker.calls)
+                response = client.post(base + endpoint)
+                assert response.status_code == 422, response.text
+                assert response.json()["detail"] == {
+                    "code": SOURCE_SOLUTION_REQUIRED,
+                    "message": SOURCE_SOLUTION_MESSAGE,
+                    "question_numbers": [2],
+                }
+                assert owner.execute_sql(generation_state(db)).data == before
+                assert all(name == "fail_stale_generation_job" for name, _ in worker.calls[worker_calls:])
                 return
+            response = client.post(base + "/generate")
             if corrupt_claim:
                 assert response.status_code == 503, response.text
                 assert response.json()["detail"]["code"] == "ERR_GENERATION_STORAGE_FAILURE"
@@ -334,16 +450,24 @@ async def run_generation_case(
             if fallback_first:
                 assert stream.text.count("GENERATION_RETRIES_EXHAUSTED") == 1
 
+    async def prepare_q01_retry():
+        if not clone:
+            # AI validates all missing sources ahead of dispatch. Seed a valid
+            # committed slot via the real writer while a 021 retry owns the row.
+            job = await rpc(db.owner, "claim_generation_job", db.sid, True)
+            await persist(db, job, result_for(db, job))
+            await rpc(db.worker, "finish_generation_job_with_error", db.sid, "failed", job["job_id"], SOURCE_SOLUTION_REQUIRED)
+        await db.admin.execute(SOLUTION_GUARD_SQL.read_text(encoding="utf-8-sig"))
+
     try:
         await asyncio.to_thread(exercise_http)
-        persisted = await rpc(db.worker, "load_generation_completed_results", db.sid)
         if missing_solution:
-            assert not provider_calls and len(persisted["completed"]) == 1
-            claims = [params["p_is_retry"] for name, params in owner.calls if name == "claim_generation_job"]
-            assert claims == ([False, True] if retry_missing else [False])
-            assert await db.admin.fetchval("SELECT count(*) FROM generation_job_snapshots") == 1
-            assert await db.admin.fetchval("SELECT count(*) FROM version_questions WHERE is_current") == 1
-        elif corrupt_claim:
+            assert not provider_calls
+            snapshots = await db.admin.fetchval("SELECT count(*) FROM generation_job_snapshots")
+            assert snapshots == int(retry_missing)
+            return
+        persisted = await rpc(db.worker, "load_generation_completed_results", db.sid)
+        if corrupt_claim:
             assert not provider_calls and persisted["completed"] == []
             state = await db.admin.fetchrow(
                 "SELECT status, active_job_id FROM exam_sessions WHERE id=$1::uuid", db.sid
