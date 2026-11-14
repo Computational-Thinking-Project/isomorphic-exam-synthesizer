@@ -100,6 +100,64 @@ is_current_owner=...)`, same prefix:
 Factories use the existing Auth helpers. Sync ownership SDK calls run in the
 threadpool so these new routes do not block other active streams.
 
+### Q01 — Confirmed source solution
+
+Target contract for Issue #64 / C5, decided on 14/11/2026. Implementation and
+HTTP/SQL verification of the pre-claim guard are pending. The Python adapter
+can map the agreed HTTP payload from the proposed SQL error transport. On
+migration 021, the disposable integration test still observes HTTP 202 before
+the worker reports the missing solution. [Owner decision](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/67#issuecomment-6877849395)
+
+- Keep `confirm-source` on its existing contract. In both AI and Original Clone,
+  `/generate` checks all confirmed sources. `/retry-generation` checks the
+  sources of missing slots in the frozen snapshot and preserves valid committed
+  slots, including committed fallback results.
+- A missing, null, empty, or whitespace-only `confirmed_input.solution` returns
+  HTTP 422 before the claim is written, the session enters `generating`, or
+  the worker or Gemini is dispatched. `question_numbers` contains the affected
+  source question numbers in ascending order, with each number listed once.
+
+```json
+{
+  "detail": {
+    "code": "ERR_SOURCE_SOLUTION_REQUIRED",
+    "message": "Confirmed sources require solutions before generation. Create a new session with complete source data.",
+    "question_numbers": [1, 3]
+  }
+}
+```
+
+- The check and claim must use the same source revision or frozen snapshot.
+  Reuse the existing snapshot, manifest and locking where they provide that
+  guarantee. If they leave a race, bring the smallest SQL guard to the BE/DB
+  owner for agreement. Receipt validation after a committed claim cannot
+  satisfy the pre-claim requirement.
+- Missing required source data detected after the job starts is fatal and
+  settles to `failed`, preserving committed slots. Nonfatal incomplete jobs
+  keep the existing `partial_generated` outcome when at least one slot was
+  committed and `failed` otherwise. Snapshot and SSE reflect the durable
+  status and progress. An uncertain settlement must surface as an error.
+- When a frozen snapshot is blocked for missing solutions, direct the user
+  to create a new session with complete source data. Adding a solution after
+  confirmation is deferred outside W4.
+
+### C5 — Confirmed-source fallback
+
+- An AI slot can fall back after four qualifying attempts in one execution of
+  that slot. The session quota remains durable across retries. Early exits such
+  as quota exhaustion, deadline, cancellation, or a non-retryable provider
+  error preserve their existing behavior.
+- Python sends `CONFIRMED_SOURCE_FALLBACK` to the service-role writer from
+  migration 021. SQL verifies the frozen source and records a pending-review
+  result marked `not_validated`. The runner sends a
+  `GENERATION_RETRIES_EXHAUSTED` warning and `question_done` after confirming
+  the write. When the write reply is uncertain, the adapter reads the current
+  slot back and checks its verified receipt without replaying the write.
+- On retry, a verified current fallback in `completed` is skipped, including
+  after a teacher accepts it. `fallback_receipts` can also contain historical
+  rows after regeneration. A historical receipt alone does not count as a
+  completed slot. The AI cache contains only successful AI candidates.
+
 ## Event stream and reconnect
 
 Wire frame:

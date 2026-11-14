@@ -1,3 +1,9 @@
+## Issue #64 — C5 Python consumer cho migration 021 (Draft #67)
+
+- AI job ghi `CONFIRMED_SOURCE_FALLBACK` sau bốn lượt đủ điều kiện trong một lần chạy slot. Writer đối chiếu provenance và ghi `pending_review`. Worker phát `GENERATION_RETRIES_EXHAUSTED` và `question_done` sau khi xác nhận ghi.
+- Retry bỏ qua fallback hiện hành đã commit và giữ các receipt lịch sử ngoài tập completed và cache AI. Nếu mất phản hồi ghi, consumer đối chiếu record hiện hành và job token qua read-back.
+- Q01 đã có Python mapping và xử lý fatal sau khi job bắt đầu. Guard SQL trước claim, số migration và transport của `question_numbers` chờ Duy chốt. [Checkpoint C5](tasks/W4-MVP-02_IMPLEMENTATION_PLAN.md#bàn-giao--ghi-theo-bằng-chứng-thực-tế)
+
 ## 13/11/2026 — Issue #64: Python generation adapter cho migration 019 (Draft #67)
 
 - `POST /api/sessions/{session_id}/config` nhận `n_versions` nguyên 1–4, modes bỏ qua hoặc `[]` và cờ shuffle mặc định OFF/OFF. RPC 019 suy ra modes từ canonical Blueprint của nguồn đã xác nhận. API trả cấu hình DB đã lưu cùng manifest. [Contract config](api/generation-config-endpoint.md)
