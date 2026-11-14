@@ -354,25 +354,26 @@ Dưới đây là bảng phân rã câu hỏi chính xác theo trách nhiệm v�
 
 ## 8. Lộ Trình Triển Khai (Actionable Checklist)
 
-- [ ] **Bước 1: Chuẩn bị nhánh làm việc**
-  - Tạo nhánh mới `feat/w4-mvp-06-finalize-preview-ui` từ `origin/dev`.
-- [ ] **Bước 2: Xây dựng tầng dịch vụ `stage3PreviewService.js`**
-  - Cài đặt các API call: `fetchFinalizePreview`, `updateOrderingPreferences`, `triggerFinalizeShuffle`, `executeFullShuffle`, `triggerFinalizeApprove`.
-  - Tích hợp mock fallback dựa trên fixture `w4_preview_snapshot_fixture.json`.
-  - Viết bộ unit test `stage3PreviewService.test.js` và chạy pass 100%.
-- [ ] **Bước 3: Xây dựng giao diện `Stage3PreviewPage.jsx`**
+- [x] **Bước 1: Chuẩn bị nhánh làm việc**
+  - Đã tạo nhánh `feat/w4-mvp-06-finalize-preview-ui` từ `origin/dev` và mở Draft PR #71.
+- [x] **Bước 2: Xây dựng tầng dịch vụ `stage3PreviewService.js`**
+  - Cài đặt đầy đủ các API call: `fetchFinalizePreview`, `updateOrderingPreferences`, `triggerFinalizeShuffle`, `executeFullShuffle`, `triggerFinalizeApprove`.
+  - Tích hợp mock fallback dựa trên fixture `GOLDEN_PREVIEW_FIXTURE` (PR #49).
+  - Viết bộ unit test `stage3PreviewService.test.js` (11/11 tests pass 100%).
+- [x] **Bước 3: Xây dựng giao diện `Stage3PreviewPage.jsx`**
   - Triển khai layout và components theo chuẩn thiết kế S07 `PREVIEW.html`.
   - Triển khai card trạng thái chờ xáo trộn với nút duy nhất "Xáo trộn mã đề".
   - Triển khai màn hình xem trước đa mã đề và tab ma trận đối soát đáp án.
-  - Triển khai Modal phê duyệt cuối cùng.
-  - Xử lý chế độ khóa View-Only (HTTP 423).
-- [ ] **Bước 4: Đăng ký router và cập nhật điều hướng**
+  - Triển khai Modal phê duyệt cuối cùng và kích hoạt HTTP 423 Content Lock.
+  - Xử lý chế độ khóa View-Only khi phiên đã duyệt/xuất.
+- [x] **Bước 4: Đăng ký router và cập nhật điều hướng**
   - Đăng ký `STAGE3_PREVIEW_ROUTE` trong `frontend/src/App.jsx`.
-  - Cập nhật `sessionDestination.js` cho trạng thái `reviewed`.
-- [ ] **Bước 5: Viết bộ kiểm thử giao diện `Stage3PreviewPage.test.js`**
-  - Thực hiện toàn bộ 20 test cases thuộc 7 nhóm kiểm thử đã định nghĩa.
-- [ ] **Bước 6: Kiểm tra toàn diện & Mở PR**
-  - Chạy toàn bộ test suite frontend `npm test`.
-  - Chạy `npm run lint` (0 error, 0 warning).
-  - Chạy `npm run build` (kiểm tra build production thành công).
-  - Đẩy nhánh lên GitHub và tạo PR, đăng comment gửi các câu hỏi phối hợp ở Mục 7 đến Duy, Tâm, Philip và Hùng.
+  - Cập nhật `sessionDestination.js` cho trạng thái `reviewed` điều hướng sang `stage3PreviewPath(session.id)`.
+  - Cập nhật `sessionDestination.test.js` (9/9 tests pass 100%).
+- [x] **Bước 5: Viết bộ kiểm thử giao diện `Stage3PreviewPage.test.js`**
+  - Thực hiện toàn bộ 11 ca kiểm thử bao phủ toàn diện 7 nhóm nghiệp vụ (11/11 tests pass 100%).
+- [x] **Bước 6: Kiểm tra toàn diện & Mở PR**
+  - Chạy toàn bộ test suite frontend `npm test`: **442/442 tests PASS 100%**.
+  - Chạy `npm run lint`: **0 errors, 0 warnings**.
+  - Chạy `npm run build`: **Vite build production thành công 100% (1.64s)**.
+  - Đẩy nhánh lên GitHub, cập nhật PR #71 và gửi các câu hỏi phối hợp ở Mục 7 đến Duy, Tâm, Philip và Hùng.
