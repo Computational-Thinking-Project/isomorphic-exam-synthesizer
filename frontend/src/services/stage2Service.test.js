@@ -511,3 +511,36 @@ test('F04: requestEventTicket gửi query param last_event_id khi có cursor', a
     api.post = originalPost;
   }
 });
+
+test('fetchSessionDetail: khi session có generation_config thiếu ordering_preferences thì mặc định fallback false/false theo Issue #45', async () => {
+  const originalGet = api.get;
+  api.get = async () => ({
+    data: {
+      id: 'session-no-ordering-pref',
+      status: 'configured',
+      generation_config: {
+        n_versions: 2,
+        active_variation_modes: ['parameter_variation'],
+        // thiếu ordering_preferences
+      },
+      source_questions: [{ id: 'q1', variation_modes: ['parameter_variation'] }],
+      blueprint_summary: {
+        is_ready: true,
+        total_questions: 1,
+        supported_modes: [{ id: 'parameter_variation', is_available: true }],
+      },
+    },
+  });
+
+  try {
+    const detail = await fetchSessionDetail('session-no-ordering-pref');
+    assert.ok(detail.config, 'Phải có config');
+    assert.deepEqual(
+      detail.config.ordering_preferences,
+      { shuffle_questions: false, shuffle_options: false },
+      'ordering_preferences thiếu phải fallback về false/false, không được tự động bật true',
+    );
+  } finally {
+    api.get = originalGet;
+  }
+});

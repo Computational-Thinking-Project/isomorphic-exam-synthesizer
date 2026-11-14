@@ -207,6 +207,25 @@ export function useSSE(sessionId, {
             callbacksRef.current.onDone?.(freshSnapshot);
             return;
           }
+
+          // P2: Nếu backend xác nhận terminal failure từ snapshot (failed)
+          const isSnapshotFailed =
+            String(freshStatus || '').trim().toLowerCase() === 'failed';
+
+          if (isSnapshotFailed) {
+            isDoneRef.current = true;
+            setIsDone(false);
+            setConnectionState('failed');
+            const errMsg =
+              freshSnapshot.generation_error_code ||
+              freshSnapshot.error_message ||
+              freshSnapshot.message ||
+              'Tiến trình sinh đề thất bại từ máy chủ.';
+            setError(errMsg);
+            isRecoveringRef.current = false;
+            callbacksRef.current.onError?.(freshSnapshot);
+            return;
+          }
         }
       }
 
