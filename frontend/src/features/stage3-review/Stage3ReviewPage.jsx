@@ -18,10 +18,13 @@ import {
   X,
 } from 'lucide-react';
 import MathRenderer from '../../components/MathRenderer.jsx';
-import { fetchSessionDetail, retryGeneration } from '../../services/stage2Service.js';
+import { retryGeneration } from '../../services/stage2Service.js';
 import {
   acceptQuestion,
   rejectAndRegenerateQuestion,
+  fetchReviewSnapshot,
+  adaptReviewSnapshot,
+  normalizeOptions,
 } from '../../services/stage3Service.js';
 
 /**
@@ -40,19 +43,40 @@ function extractErrorString(err, fallback = 'Đã xảy ra lỗi.') {
 }
 
 /**
- * Chuẩn hóa đối tượng options từ mảng hoặc dictionary sang format { A: ..., B: ..., C: ..., D: ... }
+ * Thu thập toàn bộ ID, candidate_id và mã vị trí (${vIdx}-${qNo}) của các câu đã được duyệt
  */
-function normalizeOptions(options) {
-  if (!options) return {};
-  if (Array.isArray(options)) {
-    const letters = ['A', 'B', 'C', 'D'];
-    const res = {};
-    options.forEach((opt, idx) => {
-      if (idx < 4) res[letters[idx]] = opt;
+function extractApprovedIds(sessionData) {
+  const approved = new Set();
+  if (!sessionData) return approved;
+
+  if (Array.isArray(sessionData.version_questions)) {
+    sessionData.version_questions.forEach((q) => {
+      if (q.status === 'approved') {
+        if (q.id) approved.add(q.id);
+        if (q.candidate_id) approved.add(q.candidate_id);
+        const qVIdx = q.version_index ?? q.version_code;
+        const qNo = q.question_no ?? q.number;
+        if (qVIdx && qNo) approved.add(`${qVIdx}-${qNo}`);
+      }
     });
-    return res;
   }
-  return options;
+
+  if (Array.isArray(sessionData.exam_versions)) {
+    sessionData.exam_versions.forEach((ver, idx) => {
+      const vIdx = ver.version_index ?? ver.index ?? idx + 1;
+      const qList = ver.questions || ver.version_questions || [];
+      qList.forEach((q) => {
+        if (q.status === 'approved') {
+          if (q.id) approved.add(q.id);
+          if (q.candidate_id) approved.add(q.candidate_id);
+          const qNo = q.question_no ?? q.number;
+          if (qNo) approved.add(`${vIdx}-${qNo}`);
+        }
+      });
+    });
+  }
+
+  return approved;
 }
 
 /**
@@ -142,7 +166,7 @@ function generateClientUUID() {
  * Route: /session/:sessionId/stage3
  */
 export default function Stage3ReviewPage({
-  loadSession = fetchSessionDetail,
+  loadSession = fetchReviewSnapshot,
   retryGen = retryGeneration,
   acceptQuestionFn = acceptQuestion,
   regenerateQuestionFn = rejectAndRegenerateQuestion,
@@ -190,7 +214,7 @@ export default function Stage3ReviewPage({
     setError(null);
 
     try {
-      const data = await loadSession(targetSessionId);
+      const rawData = await loadSession(targetSessionId);
       if (
         !isMountedRef.current ||
         loadOperationRef.current !== currentOp ||
@@ -198,33 +222,10 @@ export default function Stage3ReviewPage({
       ) {
         return;
       }
+      const data = adaptReviewSnapshot(rawData);
       setSession(data);
 
-      // Thu thập các ID hoặc mã câu đã được duyệt trước đó
-      const initialApproved = new Set();
-      if (Array.isArray(data.version_questions)) {
-        data.version_questions.forEach((q) => {
-          if (q.status === 'approved') {
-            if (q.id) initialApproved.add(q.id);
-            const qVIdx = q.version_index ?? q.version_code;
-            const qNo = q.question_no ?? q.number;
-            if (qVIdx && qNo) initialApproved.add(`${qVIdx}-${qNo}`);
-          }
-        });
-      }
-      if (Array.isArray(data.exam_versions)) {
-        data.exam_versions.forEach((ver, idx) => {
-          const vIdx = ver.version_index ?? ver.index ?? idx + 1;
-          const qList = ver.questions || ver.version_questions || [];
-          qList.forEach((q) => {
-            if (q.status === 'approved') {
-              if (q.id) initialApproved.add(q.id);
-              const qNo = q.question_no ?? q.number;
-              if (qNo) initialApproved.add(`${vIdx}-${qNo}`);
-            }
-          });
-        });
-      }
+      const initialApproved = extractApprovedIds(data);
       setApprovedVariantIds(initialApproved);
       setIsLoading(false);
     } catch (err) {
@@ -300,7 +301,11 @@ export default function Stage3ReviewPage({
 
       if (Array.isArray(next.version_questions)) {
         next.version_questions = next.version_questions.map((q) => {
-          const matchesId = q.id && updatedVariant.id && q.id === updatedVariant.id;
+          const matchesId =
+            (q.id && updatedVariant.id && q.id === updatedVariant.id) ||
+            (q.candidate_id && updatedVariant.candidate_id && q.candidate_id === updatedVariant.candidate_id) ||
+            (q.id && updatedVariant.candidate_id && q.id === updatedVariant.candidate_id) ||
+            (q.candidate_id && updatedVariant.id && q.candidate_id === updatedVariant.id);
           const qVIdx = q.version_index ?? q.version_code;
           const matchesSlot = targetVIdx && qVIdx === targetVIdx && (q.question_no ?? q.number) === qNoToMatch;
           return matchesId || matchesSlot ? mergeVariantSlot(q, updatedVariant) : q;
@@ -313,7 +318,11 @@ export default function Stage3ReviewPage({
           const questionsKey = ver.questions ? 'questions' : ver.version_questions ? 'version_questions' : 'questions';
           const qList = ver[questionsKey] || [];
           const updatedList = qList.map((q) => {
-            const matchesId = q.id && updatedVariant.id && q.id === updatedVariant.id;
+            const matchesId =
+              (q.id && updatedVariant.id && q.id === updatedVariant.id) ||
+              (q.candidate_id && updatedVariant.candidate_id && q.candidate_id === updatedVariant.candidate_id) ||
+              (q.id && updatedVariant.candidate_id && q.id === updatedVariant.candidate_id) ||
+              (q.candidate_id && updatedVariant.id && q.candidate_id === updatedVariant.id);
             const matchesSlot = targetVIdx && currentVIdx === targetVIdx && (q.question_no ?? q.number) === qNoToMatch;
             return matchesId || matchesSlot ? mergeVariantSlot(q, updatedVariant) : q;
           });
@@ -350,7 +359,7 @@ export default function Stage3ReviewPage({
   const handleRegenerateSingle = useCallback(async () => {
     if (!selectedSolution?.variant || isRegeneratingSingle) return;
     const { variant, qNo, versionIndex } = selectedSolution;
-    const targetQId = variant.id || variant.question_id || `var-${versionIndex}-${qNo}`;
+    const targetQId = variant.candidate_id || variant.id || variant.question_id || `var-${versionIndex}-${qNo}`;
 
     const currentOp = ++mutationOperationRef.current;
     const targetSessionId = sessionId;
@@ -382,27 +391,29 @@ export default function Stage3ReviewPage({
       actionKeysRef.current.delete(actionLookupKey);
       actionKeysRef.current.delete(`accept-${targetQId}`);
 
-      const newOptions = normalizeOptions(res.options || variant.options);
+      const newOptions = normalizeOptions(res?.options || variant.options);
       // Tạo object mới sạch từ response; không kế thừa cờ fallback/warning từ candidate cũ
+      const newCandidateId = res?.candidate_id || res?.question_id || res?.id || variant.candidate_id || variant.id;
       const updatedVariant = {
-        id: res.question_id || res.id || variant.id,
-        question_id: res.question_id || res.id || variant.question_id,
+        id: newCandidateId,
+        candidate_id: newCandidateId,
+        question_id: newCandidateId,
         source_question_id: variant.source_question_id,
         question_no: variant.question_no ?? qNo,
         number: variant.number ?? qNo,
         version_index: versionIndex,
-        status: res.status || 'pending_review',
-        content: res.content || res.stem_latex || res.stem || variant.content,
+        status: res?.status || 'pending_review',
+        content: res?.content || res?.stem_latex || res?.stem || variant.content,
         options: newOptions,
-        correct_key: res.correct_key || variant.correct_key,
-        solution_md: res.solution_md ?? res.solution ?? '',
-        is_fallback: Boolean(res.is_fallback),
-        source_fallback: Boolean(res.source_fallback),
-        has_warning: Boolean(res.has_warning),
-        warning_message: res.warning_message || null,
-        validation_report: res.validation_report || null,
-        attempts: res.attempts ?? (res.is_fallback ? (variant.attempts ?? 4) : 1),
-        warning_flag: res.warning_flag || (res.is_fallback ? 'fallback' : null),
+        correct_key: res?.correct_key || variant.correct_key,
+        solution_md: res?.solution_md ?? res?.solution ?? '',
+        is_fallback: Boolean(res?.is_fallback),
+        source_fallback: Boolean(res?.source_fallback),
+        has_warning: Boolean(res?.has_warning),
+        warning_message: res?.warning_message || null,
+        validation_report: res?.validation_report || null,
+        attempts: res?.attempts ?? (res?.is_fallback ? (variant.attempts ?? 4) : 1),
+        warning_flag: res?.warning_flag || (res?.is_fallback ? 'fallback' : null),
       };
 
       // Cập nhật session và giữ nguyên modal mở với nội dung câu mới
@@ -419,7 +430,9 @@ export default function Stage3ReviewPage({
       setApprovedVariantIds((prev) => {
         const next = new Set(prev);
         if (variant.id) next.delete(variant.id);
+        if (variant.candidate_id) next.delete(variant.candidate_id);
         if (updatedVariant.id) next.delete(updatedVariant.id);
+        if (updatedVariant.candidate_id) next.delete(updatedVariant.candidate_id);
         next.delete(`${versionIndex}-${qNo}`);
         return next;
       });
@@ -428,6 +441,70 @@ export default function Stage3ReviewPage({
         type: 'success',
         text: `Đã tạo lại câu ${qNo} (mã đề #${100 + versionIndex}). Kiểm tra đáp án và duyệt phiên bản mới.`,
       });
+
+      // Refetch current snapshot sau regenerate để cập nhật candidate thay thế và persisted progress
+      try {
+        const latestRaw = await loadSession(targetSessionId);
+        if (
+          isMountedRef.current &&
+          mutationOperationRef.current === currentOp &&
+          activeSessionIdRef.current === targetSessionId &&
+          latestRaw
+        ) {
+          const adapted = adaptReviewSnapshot(latestRaw);
+          const snapshotVariant = findVariantInSession(adapted, versionIndex, qNo);
+
+          // Nếu snapshot trả về vẫn mang ID câu cũ bị từ chối (do mock tĩnh hoặc DB replication lag),
+          // ưu tiên giữ lại updatedVariant mới sinh thay vì bị rollback về câu cũ
+          const isStaleRejected =
+            snapshotVariant &&
+            (snapshotVariant.id === variant.id ||
+              (variant.candidate_id && snapshotVariant.candidate_id === variant.candidate_id));
+
+          if (isStaleRejected) {
+            adapted.exam_versions = (adapted.exam_versions || []).map((ver) => {
+              if ((ver.version_index ?? 1) === versionIndex) {
+                const qList = (ver.questions || []).map((q) => {
+                  if ((q.question_no ?? q.number) === qNo) {
+                    return updatedVariant;
+                  }
+                  return q;
+                });
+                return { ...ver, questions: qList };
+              }
+              return ver;
+            });
+          }
+
+          setSession(adapted);
+          const replacement = findVariantInSession(adapted, versionIndex, qNo) || updatedVariant;
+          if (replacement) {
+            setSelectedSolution((prev) => (prev ? { ...prev, variant: replacement } : null));
+          }
+          const authoritativeApproved = extractApprovedIds(adapted);
+          setApprovedVariantIds((prev) => {
+            const next = new Set(prev);
+            next.delete(`${versionIndex}-${qNo}`);
+            if (variant.id) next.delete(variant.id);
+            if (variant.candidate_id) next.delete(variant.candidate_id);
+            if (replacement?.id) next.delete(replacement.id);
+            if (replacement?.candidate_id) next.delete(replacement.candidate_id);
+            authoritativeApproved.forEach((id) => {
+              if (
+                id !== `${versionIndex}-${qNo}` &&
+                id !== variant.id &&
+                id !== variant.candidate_id &&
+                (!replacement || (id !== replacement.id && id !== replacement.candidate_id))
+              ) {
+                next.add(id);
+              }
+            });
+            return next;
+          });
+        }
+      } catch {
+        // Refetch thất bại trong nền không làm hỏng dữ liệu hiển thị từ regenerateQuestionFn
+      }
     } catch (err) {
       if (
         !isMountedRef.current ||
@@ -449,13 +526,13 @@ export default function Stage3ReviewPage({
         setIsRegeneratingSingle(false);
       }
     }
-  }, [selectedSolution, isRegeneratingSingle, regenerateQuestionFn, sessionId, updateVariantInSession]);
+  }, [selectedSolution, isRegeneratingSingle, regenerateQuestionFn, sessionId, updateVariantInSession, loadSession]);
 
   // Xử lý Duyệt biến thể trong SolutionDialog
   const handleApproveSingle = useCallback(async () => {
     if (!selectedSolution?.variant || isApprovingSingle) return;
     const { variant, qNo, versionIndex } = selectedSolution;
-    const targetQId = variant.id || variant.question_id || `var-${versionIndex}-${qNo}`;
+    const targetQId = variant.candidate_id || variant.id || variant.question_id || `var-${versionIndex}-${qNo}`;
 
     const currentOp = ++mutationOperationRef.current;
     const targetSessionId = sessionId;
@@ -502,6 +579,7 @@ export default function Stage3ReviewPage({
       setApprovedVariantIds((prev) => {
         const next = new Set(prev);
         if (variant.id) next.add(variant.id);
+        if (variant.candidate_id) next.add(variant.candidate_id);
         next.add(`${versionIndex}-${qNo}`);
         return next;
       });
@@ -510,6 +588,44 @@ export default function Stage3ReviewPage({
         type: 'success',
         text: `Đã duyệt câu ${qNo} · Mã đề #${100 + versionIndex}.`,
       });
+
+      // Refetch current snapshot sau accept để cập nhật persisted review progress và freshness token
+      try {
+        const latestRaw = await loadSession(targetSessionId);
+        if (
+          isMountedRef.current &&
+          mutationOperationRef.current === currentOp &&
+          activeSessionIdRef.current === targetSessionId &&
+          latestRaw
+        ) {
+          const adapted = adaptReviewSnapshot(latestRaw);
+          // Đảm bảo không ghi đè trạng thái approved vừa duyệt nếu snapshot từ mock tĩnh trả về câu chưa duyệt
+          adapted.exam_versions = (adapted.exam_versions || []).map((ver) => {
+            if ((ver.version_index ?? 1) === versionIndex) {
+              const qList = (ver.questions || []).map((q) => {
+                if ((q.question_no ?? q.number) === qNo) {
+                  return { ...q, status: 'approved' };
+                }
+                return q;
+              });
+              return { ...ver, questions: qList };
+            }
+            return ver;
+          });
+          setSession(adapted);
+          const authoritativeApproved = extractApprovedIds(adapted);
+          setApprovedVariantIds((prev) => {
+            const merged = new Set(prev);
+            authoritativeApproved.forEach((id) => merged.add(id));
+            if (variant.id) merged.add(variant.id);
+            if (variant.candidate_id) merged.add(variant.candidate_id);
+            merged.add(`${versionIndex}-${qNo}`);
+            return merged;
+          });
+        }
+      } catch {
+        // Refetch thất bại trong nền không làm hỏng optimistic update đã hiển thị cho người dùng
+      }
     } catch (err) {
       if (
         !isMountedRef.current ||
@@ -531,7 +647,7 @@ export default function Stage3ReviewPage({
         setIsApprovingSingle(false);
       }
     }
-  }, [selectedSolution, isApprovingSingle, acceptQuestionFn, sessionId, updateVariantInSession]);
+  }, [selectedSolution, isApprovingSingle, acceptQuestionFn, sessionId, updateVariantInSession, loadSession]);
 
   // Xử lý sinh bù câu thiếu (retry partial generation)
   const handleRetryMissingQuestion = async (versionIndex, questionNo) => {
@@ -633,7 +749,7 @@ export default function Stage3ReviewPage({
   const totalSourceQuestions = session?.source_questions?.length || 0;
   const totalLoadedVariants = countTotalLoadedVariants(session);
   const isPartial = session?.status === 'partial_generated';
-  const hasLoadedAnyVariants = totalLoadedVariants > 0;
+  const hasLoadedAnyVariants = totalLoadedVariants > 0 || Boolean(session?.raw_snapshot?.versions);
   const totalExpectedSlots = numVersions * totalSourceQuestions;
 
   // F01: Tự động đưa activeVersionTab về 1 nếu số lượng mã đề của phiên mới nhỏ hơn tab đang chọn

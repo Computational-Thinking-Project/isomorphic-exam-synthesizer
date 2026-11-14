@@ -1268,3 +1268,460 @@ test('F02: Khi API rejectAndRegenerate trả solution_md null, biến thể mớ
 
   await harness.unmount();
 });
+
+test('PR #54 Contract: Initial load dựng đúng ma trận câu hỏi và ứng viên từ GET /review/snapshot', async () => {
+  const pr54Snapshot = {
+    session_id: 'sess-snap-contract-1',
+    session_status: 'generated',
+    read_only: false,
+    confirmation_id: 'conf-uuid-1',
+    job_snapshot_id: 'job-uuid-1',
+    confirmed_source_hash: 'hash-abc',
+    freshness_token: 'token-xyz-1',
+    progress: {
+      expected_slots: 4,
+      current_slots: 4,
+      approved_slots: 0,
+      missing_slots: 0,
+      ready: false,
+    },
+    sources: [
+      {
+        source_question_id: 'src-q-1',
+        question_no: 1,
+        source_revision_id: 'rev-1',
+        content: 'Nguồn 1: Tìm đạo hàm $y = x^3$',
+        options: ['3x^2', 'x^2', '3x', '0'],
+        correct_key: 'A',
+        solution_md: 'Đạo hàm là $3x^2$.',
+      },
+      {
+        source_question_id: 'src-q-2',
+        question_no: 2,
+        source_revision_id: 'rev-2',
+        content: 'Nguồn 2: Tính tích phân $\\int_0^1 x dx$',
+        options: ['1/2', '1', '2', '0'],
+        correct_key: 'A',
+        solution_md: 'Tích phân là $1/2$.',
+      },
+    ],
+    versions: [
+      {
+        version_index: 1,
+        version_code: '101',
+        version_id: 'v-101',
+        slots: [
+          {
+            source_question_id: 'src-q-1',
+            question_no: 1,
+            candidate: {
+              candidate_id: 'cand-101-q1',
+              status: 'pending_review',
+              content: 'Biến thể 101-1: Tìm đạo hàm $y = 4x^3$',
+              options: ['12x^2', '4x^2', '12x', '0'],
+              correct_key: 'A',
+              solution_md: 'Đạo hàm là $12x^2$.',
+              has_warning: false,
+              validation_report: { is_valid: true },
+              validation_source: 'version_question',
+              origin: 'ai_generated',
+              is_reverted: false,
+              updated_at: '2026-11-14T10:00:00Z',
+            },
+          },
+          {
+            source_question_id: 'src-q-2',
+            question_no: 2,
+            candidate: {
+              candidate_id: 'cand-101-q2',
+              status: 'pending_review',
+              content: 'Biến thể 101-2: Tính tích phân $\\int_0^2 x dx$',
+              options: ['1', '2', '3', '4'],
+              correct_key: 'B',
+              solution_md: 'Tích phân bằng 2.',
+              has_warning: false,
+              validation_report: { is_valid: true },
+              validation_source: 'version_question',
+              origin: 'ai_generated',
+              is_reverted: false,
+              updated_at: '2026-11-14T10:00:00Z',
+            },
+          },
+        ],
+      },
+      {
+        version_index: 2,
+        version_code: '102',
+        version_id: 'v-102',
+        slots: [
+          {
+            source_question_id: 'src-q-1',
+            question_no: 1,
+            candidate: {
+              candidate_id: 'cand-102-q1',
+              status: 'pending_review',
+              content: 'Biến thể 102-1: Tìm đạo hàm $y = 5x^3$',
+              options: ['15x^2', '5x^2', '15x', '0'],
+              correct_key: 'A',
+              solution_md: 'Đạo hàm là $15x^2$.',
+              has_warning: false,
+              validation_report: { is_valid: true },
+              validation_source: 'version_question',
+              origin: 'ai_generated',
+              is_reverted: false,
+              updated_at: '2026-11-14T10:00:00Z',
+            },
+          },
+          {
+            source_question_id: 'src-q-2',
+            question_no: 2,
+            candidate: {
+              candidate_id: 'cand-102-q2',
+              status: 'pending_review',
+              content: 'Biến thể 102-2: Tính tích phân $\\int_0^3 x dx$',
+              options: ['9/2', '9', '3', '1'],
+              correct_key: 'A',
+              solution_md: 'Tích phân bằng $9/2$.',
+              has_warning: false,
+              validation_report: { is_valid: true },
+              validation_source: 'version_question',
+              origin: 'ai_generated',
+              is_reverted: false,
+              updated_at: '2026-11-14T10:00:00Z',
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  const harness = renderStage3Page('sess-snap-contract-1', {
+    loadSession: async () => pr54Snapshot,
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  // Tab mã đề
+  assert.ok(text.includes('Mã đề #101'));
+  assert.ok(text.includes('Mã đề #102'));
+
+  // Nội dung ứng viên của Mã đề #101
+  assert.ok(text.includes('Biến thể 101-1: Tìm đạo hàm'));
+  assert.ok(text.includes('Biến thể 101-2: Tính tích phân'));
+  assert.ok(text.includes('12x^2'));
+  assert.ok(text.includes('Đạo hàm là'));
+
+  // Tiến độ ban đầu
+  assert.ok(text.includes('Đã duyệt 0/4 câu'));
+
+  await harness.unmount();
+});
+
+test('PR #54 Contract: Approved state hiển thị đúng trạng thái đã duyệt và gọi acceptQuestion với candidate.candidate_id', async () => {
+  const pr54SnapshotWithApproved = {
+    session_id: 'sess-snap-contract-2',
+    session_status: 'generated',
+    read_only: false,
+    sources: [
+      {
+        source_question_id: 'src-q-1',
+        question_no: 1,
+        content: 'Nguồn 1',
+        options: ['A', 'B', 'C', 'D'],
+        correct_key: 'A',
+      },
+      {
+        source_question_id: 'src-q-2',
+        question_no: 2,
+        content: 'Nguồn 2',
+        options: ['A', 'B', 'C', 'D'],
+        correct_key: 'B',
+      },
+    ],
+    versions: [
+      {
+        version_index: 1,
+        version_code: '101',
+        slots: [
+          {
+            source_question_id: 'src-q-1',
+            question_no: 1,
+            candidate: {
+              candidate_id: 'cand-uuid-approved-1',
+              status: 'approved',
+              content: 'Biến thể 1 đã duyệt',
+              options: ['A1', 'B1', 'C1', 'D1'],
+              correct_key: 'A',
+              solution_md: 'Lời giải 1',
+              has_warning: false,
+            },
+          },
+          {
+            source_question_id: 'src-q-2',
+            question_no: 2,
+            candidate: {
+              candidate_id: 'cand-uuid-pending-2',
+              status: 'pending_review',
+              content: 'Biến thể 2 chưa duyệt',
+              options: ['A2', 'B2', 'C2', 'D2'],
+              correct_key: 'B',
+              solution_md: 'Lời giải 2',
+              has_warning: false,
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  const acceptCalls = [];
+  const mockAccept = async (sId, qId, idempotencyKey) => {
+    acceptCalls.push({ sId, qId, idempotencyKey });
+    return { question_id: qId, question_status: 'approved' };
+  };
+
+  const harness = renderStage3Page('sess-snap-contract-2', {
+    loadSession: async () => pr54SnapshotWithApproved,
+    acceptQuestionFn: mockAccept,
+  });
+  await harness.render();
+
+  // Slot 1 đã duyệt sẵn -> progress là 1/2 câu
+  assert.ok(harness.container.textContent.includes('Đã duyệt 1/2 câu'));
+
+  // Mở modal kiểm tra đáp án của câu 2
+  const inspectButtons = harness.container.querySelectorAll('[data-review-inspect="true"]');
+  assert.equal(inspectButtons.length, 2);
+  await act(async () => {
+    inspectButtons[1].click(); // Câu 2
+  });
+
+  const dialog = harness.container.querySelector('[role="dialog"]');
+  assert.ok(dialog.textContent.includes('Biến thể 2 chưa duyệt'));
+
+  // Bấm "Duyệt biến thể"
+  const approveBtn = dialog.querySelector('[data-review-approve="true"]');
+  await act(async () => {
+    approveBtn.click();
+  });
+
+  // Xác nhận gọi accept với đúng candidate.candidate_id
+  assert.equal(acceptCalls.length, 1);
+  assert.equal(acceptCalls[0].sId, 'sess-snap-contract-2');
+  assert.equal(acceptCalls[0].qId, 'cand-uuid-pending-2');
+  assert.ok(acceptCalls[0].idempotencyKey);
+
+  // Tiến độ cập nhật lên 2/2 câu
+  assert.ok(harness.container.textContent.includes('Đã duyệt 2/2 câu'));
+
+  await harness.unmount();
+});
+
+test('PR #54 Contract: Replacement sau khi regenerate gọi reject với candidate.candidate_id và refetch snapshot', async () => {
+  let loadCallCount = 0;
+  const initialSnapshot = {
+    session_id: 'sess-snap-contract-3',
+    session_status: 'generated',
+    sources: [
+      {
+        source_question_id: 'src-q-1',
+        question_no: 1,
+        content: 'Nguồn 1',
+        options: ['A', 'B', 'C', 'D'],
+        correct_key: 'A',
+      },
+    ],
+    versions: [
+      {
+        version_index: 1,
+        version_code: '101',
+        slots: [
+          {
+            source_question_id: 'src-q-1',
+            question_no: 1,
+            candidate: {
+              candidate_id: 'cand-uuid-original',
+              status: 'pending_review',
+              content: 'Nội dung ban đầu của ứng viên',
+              options: ['A1', 'B1', 'C1', 'D1'],
+              correct_key: 'A',
+              solution_md: 'Lời giải ban đầu',
+              has_warning: false,
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  const refreshedSnapshot = {
+    ...initialSnapshot,
+    freshness_token: 'token-after-regen',
+    versions: [
+      {
+        version_index: 1,
+        version_code: '101',
+        slots: [
+          {
+            source_question_id: 'src-q-1',
+            question_no: 1,
+            candidate: {
+              candidate_id: 'cand-uuid-replacement',
+              status: 'pending_review',
+              content: 'Nội dung ứng viên thay thế từ snapshot sau regenerate',
+              options: ['X', 'Y', 'Z', 'T'],
+              correct_key: 'C',
+              solution_md: 'Lời giải ứng viên thay thế',
+              has_warning: false,
+              origin: 'regenerated',
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  const mockLoadSession = async () => {
+    loadCallCount++;
+    return loadCallCount === 1 ? initialSnapshot : refreshedSnapshot;
+  };
+
+  const rejectCalls = [];
+  const mockReject = async (sId, qId, idempotencyKey) => {
+    rejectCalls.push({ sId, qId, idempotencyKey });
+    return {
+      question_id: 'cand-uuid-replacement',
+      regenerated_from_id: qId,
+      status: 'pending_review',
+      content: 'Nội dung ứng viên thay thế từ snapshot sau regenerate',
+      options: ['X', 'Y', 'Z', 'T'],
+      correct_key: 'C',
+      solution_md: 'Lời giải ứng viên thay thế',
+    };
+  };
+
+  const harness = renderStage3Page('sess-snap-contract-3', {
+    loadSession: mockLoadSession,
+    regenerateQuestionFn: mockReject,
+  });
+  await harness.render();
+
+  assert.ok(harness.container.textContent.includes('Nội dung ban đầu của ứng viên'));
+
+  // Mở modal
+  const inspectBtn = harness.container.querySelector('[data-review-inspect="true"]');
+  await act(async () => {
+    inspectBtn.click();
+  });
+
+  // Bấm Tạo lại
+  const dialog = harness.container.querySelector('[role="dialog"]');
+  const regenBtn = dialog.querySelector('[data-review-regenerate="true"]');
+  await act(async () => {
+    regenBtn.click();
+  });
+
+  // Xác nhận gọi reject với đúng candidate.candidate_id ('cand-uuid-original')
+  assert.equal(rejectCalls.length, 1);
+  assert.equal(rejectCalls[0].sId, 'sess-snap-contract-3');
+  assert.equal(rejectCalls[0].qId, 'cand-uuid-original');
+
+  // Xác nhận loadSession được refetch
+  assert.ok(loadCallCount >= 2, 'Phải tự động refetch snapshot sau khi regenerate');
+
+  // Modal và màn hình hiển thị ứng viên thay thế
+  assert.ok(dialog.textContent.includes('Nội dung ứng viên thay thế từ snapshot sau regenerate'));
+  assert.ok(dialog.textContent.includes('Đáp án đúng: C'));
+
+  await harness.unmount();
+});
+
+test('PR #54 Contract: Missing slot (candidate: null) hiển thị trạng thái chưa sinh, không tính vào approvedCount', async () => {
+  const pr54PartialSnapshot = {
+    session_id: 'sess-snap-contract-4',
+    session_status: 'partial_generated',
+    read_only: true,
+    progress: {
+      expected_slots: 2,
+      current_slots: 1,
+      approved_slots: 1,
+      missing_slots: 1,
+      ready: false,
+    },
+    sources: [
+      {
+        source_question_id: 'src-q-1',
+        question_no: 1,
+        content: 'Nguồn 1: Phương trình bậc 2',
+        options: ['1', '2', '3', '4'],
+        correct_key: 'A',
+      },
+      {
+        source_question_id: 'src-q-2',
+        question_no: 2,
+        content: 'Nguồn 2: Hình không gian Oxyz',
+        options: ['A', 'B', 'C', 'D'],
+        correct_key: 'B',
+      },
+    ],
+    versions: [
+      {
+        version_index: 1,
+        version_code: '101',
+        slots: [
+          {
+            source_question_id: 'src-q-1',
+            question_no: 1,
+            candidate: {
+              candidate_id: 'cand-uuid-slot-1',
+              status: 'approved',
+              content: 'Biến thể câu 1 đã sinh xong và được duyệt',
+              options: ['1', '2', '3', '4'],
+              correct_key: 'A',
+              solution_md: 'Lời giải câu 1',
+              has_warning: false,
+            },
+          },
+          {
+            source_question_id: 'src-q-2',
+            question_no: 2,
+            candidate: null, // missing slot! Chưa sinh thành công
+          },
+        ],
+      },
+    ],
+  };
+
+  const harness = renderStage3Page('sess-snap-contract-4', {
+    loadSession: async () => pr54PartialSnapshot,
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+
+  // 1. Câu 1 hiển thị bình thường với badge Đã duyệt
+  assert.ok(text.includes('Biến thể câu 1 đã sinh xong và được duyệt'));
+
+  // 2. Câu 2 (candidate: null) hiển thị card chưa sinh và nút Sinh bù câu này
+  assert.ok(
+    text.includes('Câu 2 (Mã đề #101) — Chưa được sinh thành công'),
+    'candidate: null phải hiển thị trạng thái Chưa được sinh thành công'
+  );
+  const retryBtn = Array.from(harness.container.querySelectorAll('button')).find(
+    (b) => b.textContent.includes('Sinh bù câu này')
+  );
+  assert.ok(retryBtn, 'Missing slot phải có nút Sinh bù câu này');
+
+  // 3. Approved count: chỉ tính 1/2 câu (slot missing KHÔNG ĐƯỢC tính vào approvedCount)
+  assert.ok(text.includes('Đã duyệt 1/2 câu'), 'Missing slot tuyệt đối không được tính là approved');
+
+  // 4. Nút Rà bộ đề bị disabled
+  const finalizeBtn = harness.container.querySelector('[data-review-finalize="true"]');
+  assert.equal(
+    finalizeBtn.getAttribute('disabled') !== null,
+    true,
+    'Nút Rà bộ đề phải bị vô hiệu hóa khi còn missing slot'
+  );
+
+  await harness.unmount();
+});
