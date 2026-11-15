@@ -24,13 +24,23 @@
 
 Đối chiếu thực tế tại Issue #75 cho thấy môi trường DB Supabase hiện hữu chỉ mới áp dụng đến `003_confirm_exam_source_rpc.sql` trên 5 bảng cơ sở (`users`, `exam_sessions`, `source_questions`, `question_blueprints`, `exam_versions`), thiếu các bảng baseline (`generation_configs`, `version_questions`, `answer_keys`, `review_logs`, `security_events`) và toàn bộ chuỗi migrations `004`–`022`.
 
-Để áp dụng an toàn mà không chạy lại toàn bộ `schema.sql` (vốn chứa DDL không idempotent và policies trùng lặp), migration reconciliation `003b_reconcile_baseline.sql` được thiết lập và kiểm thử rehearsal thành công trong container PostgreSQL 15 cô lập.
+Để áp dụng an toàn mà không chạy lại toàn bộ `schema.sql` (vốn chứa DDL không idempotent và policies trùng lặp), migration reconciliation `003b_reconcile_baseline.sql` được cập nhật tối giản, an toàn và kiểm thử rehearsal thành công trong container PostgreSQL 15 cô lập.
+
+### Cập nhật và kiểm thử `003b_reconcile_baseline.sql` (Commit `f93cc9b57d0c912bbc15b839f075a8833dc55dfe`)
+
+- **Khắc phục Privilege Regression:** Loại bỏ toàn bộ `GRANT INSERT, UPDATE, DELETE` cấp cho role `authenticated` trên các bảng được bảo vệ (`generation_configs`, `version_questions`, `answer_keys`, `review_logs`, `security_events`). Chỉ cấp quyền `SELECT` tối thiểu cho `authenticated`. Quyền ghi của role `authenticated` bị thu hồi hoàn toàn nhằm ngăn chặn việc hoàn tác (undo) các biện pháp bảo vệ ở migration `009` và `015` khi chạy hoặc replay `003b`.
+- **Chính sách Owner-Read RLS trên `generation_configs`:** Bổ sung policy `generation_configs_owner_read` cho phép `authenticated` đọc cấu hình thuộc session của chính mình (`EXISTS (SELECT 1 FROM exam_sessions s WHERE s.id = generation_configs.session_id AND s.user_id = auth.uid())`). Giải quyết triệt để lỗi 0-row khi truy vấn trực tiếp từ `GET /api/sessions/{sessionId}`.
+- **Bảo vệ bảng `security_events`:** Kích hoạt RLS, tạo policy cho phép user xem audit log của chính mình (`user_id = auth.uid()`), chỉ cho phép `service_role` thực hiện `INSERT`. Cấm hoàn toàn untrusted `INSERT`, `UPDATE`, `DELETE` từ phía client.
+- **Targeted Compatibility Checks:** Thêm kiểm tra catalog tương thích cho enum `question_status`, `review_action_type`, điều kiện tiên quyết 5 bảng cơ sở, và kiểm tra loại bảng/cột thiết yếu nếu các bảng đã tồn tại trước đó. Thất bại có tính nguyên tử (fail closed) khi phát hiện xung đột.
+- **Replay Safety:** Replay `003b` sau khi áp dụng toàn bộ chuỗi `004`–`022` thành công 100%, bảo lưu nguyên vẹn trạng thái quyền ghi bị thu hồi, không sinh ra policy thừa và không làm biến đổi bất kỳ bản ghi dữ liệu nào.
 
 ### Candidate Manifest được kiểm thử Rehearsal (003b + 004–022)
 
+SQL source commit cho `003b`: `f93cc9b57d0c912bbc15b839f075a8833dc55dfe`
+
 | Thứ tự | File / Migration | SHA256 Git blob | Vai trò / Mục đích | Trạng thái Rehearsal |
 |---|---|---|---|---|
-| 01 | `003b_reconcile_baseline.sql` | `39dfcc48ceef71e69c6f2b4c149db4bf3c8163cc21def6a8a507be2751caec31` | Tạo 5 bảng baseline thiếu & RLS/grants an toàn | PASS |
+| 01 | `003b_reconcile_baseline.sql` | `b8d9497ee4683708be121738e9103bf87039272382d6f882b27f52ace8932b44` | Tạo 5 bảng baseline thiếu, RLS owner-read & least privilege | PASS |
 | 02 | `004_save_generation_config_rpc.sql` | `c66a1416b875ee407f0663301d841120cf9b5b5c16480ea07aea4435583aba25` | `save_generation_config` RPC & triggers | PASS |
 | 03 | `005_generation_job_operations_rpc.sql` | `55d3d51d1608ad4ec6c57d542428af728d6cdec28373846d0752018da4f1ea65` | `generation_jobs` table & worker RPCs | PASS |
 | 04 | `006_stage3_review_and_shuffle.sql` | `c6a50d885f0382c791db2ad7dcd1450c4f766e58d2884dbae615a8028daa27c5` | Review ledger, `_review_lock_session`, artifact tables | PASS |
@@ -50,8 +60,34 @@
 | 17 | `021_w4_confirmed_source_fallback.sql` | `6730db5f18be9e18463f8ffcc08ede4ec6af7552810aa7412f8a924981665c67` | Confirmed-source fallback RPCs | PASS |
 | 18 | `022_w4_generation_solution_guard.sql` | `ef9c8ce310ad1a7c60576df80d3ce08e5c41a8f643e747d3a2b2fef5cdab682e` | Solution guards on canonical claims | PASS |
 
+*Ghi chú:* Migration `020` (PR #63) chưa được merge vào `dev`, nằm ngoài phạm vi manifest này.
+
+### Bằng chứng Kiểm thử Thực tế trên PostgreSQL 15 Cô lập
+
+Bộ test tự động chuyên biệt `backend/tests/migrations/test_issue75_baseline_reconciliation.py` đã thực thi trực tiếp trên container `postgres:15-alpine` (`--network none`, không mock catalog, không nạp `schema.sql` để che giấu khoảng trống):
+- **T01 (Reconciliation cơ sở 5 bảng):** PASS. Tạo đúng 5 bảng thiếu, RLS enabled, enum chuẩn, quyền authenticated chỉ SELECT, bảo toàn 100% dữ liệu gốc.
+- **T02 (Chuỗi candidate đầy đủ):** PASS. Áp dụng tuần tự `003b` rồi `004`–`022` (bỏ qua `010`). Tất cả 7 RPC trọng yếu tồn tại, cột `source_content_revision` được tạo kèm giá trị default, toàn bộ bản ghi gốc bảo toàn.
+- **T03 (Replay an toàn sau `009`/`015`/`022`):** PASS. Replay `003b` không cấp lại quyền ghi cho `authenticated`, không thay đổi cấu trúc bảng, không làm mất bản ghi.
+- **T04 (Từ chối enum không tương thích):** PASS. Phát hiện enum `question_status` thiếu label, rollback toàn bộ transaction.
+- **T05 (Từ chối bảng không tương thích):** PASS. Phát hiện đối tượng xung đột (view thay vì table), rollback và giữ nguyên dữ liệu 5 bảng gốc.
+- **T06 (Phân lập quyền đọc User A / B):** PASS. User A chỉ đọc được `generation_configs` của mình, không đọc được của User B.
+- **T07 (Chặn quyền ghi trực tiếp sau hardening):** PASS. User A thử `INSERT`, `UPDATE`, `DELETE` trực tiếp trên `generation_configs` đều bị PostgreSQL từ chối (`42501`).
+- **T08 (Phân lập và chống giả mạo `security_events`):** PASS. `service_role` ghi được audit log, `authenticated` đọc được log của mình nhưng bị từ chối `INSERT` giả mạo.
+- **T12 (Hợp đồng `get_session_source_preview`):** PASS. Chủ sở hữu đọc được session kèm revision và danh sách câu hỏi; người dùng khác bị từ chối (`ARTIFACT_NOT_FOUND` / `P0002`).
+
+Kết quả thực thi các bộ kiểm thử liên quan:
+1. `test_issue75_baseline_reconciliation.py`: 9/9 tests PASS (30.7s)
+2. `test_w4_baseline_chain.py`: 6/6 tests PASS (25.1s)
+3. `test_stage3_schema.py`: 16/16 tests PASS (20.9s)
+4. `test_source_confirmation_revision.py`: 16/16 tests PASS (54.3s)
+5. `test_sessions.py` & `test_confirm_source.py`: 186/186 tests PASS (1.6s)
+6. `ruff check` & `mypy`: 0 issues / type safe across 114 source files.
+
 ## Điều kiện trước khi áp trên DB ứng dụng
 
-Duy/Hùng bàn giao approved ordered manifest (bao gồm prerequisites/bootstrap và đường fresh/upgrade từ ledger thực), backend-compatible SHA, backup owner + restore rehearsal/forward-fix và quyền chạy. Proposed sequence017→018→019 không thay quyết định deployment của DB owner; PR head có thể thay đổi nên phải đối chiếu hash lại sau merge.
+Rehearsal trên môi trường giả lập (synthetic 5-table fixture) đã hoàn tất và đạt 100% tiêu chí kỹ thuật. Tuy nhiên, **tính tương thích trên cơ sở dữ liệu thật vẫn là UNVERIFIED** cho đến khi:
+1. DB owner (Duy / Hùng) đối chiếu DDL, RLS policies, trigger và ledger thực tế của Supabase mục tiêu.
+2. Snapshot backup thực tế được tạo và kiểm tra khả năng phục hồi (restore verification) trên môi trường cô lập.
+3. DB owner ký duyệt (GO decision) cho kế hoạch chạy manifest tuần tự này.
 
-Operator ghi actual applied version/checksum/time/operator/DB alias và kết quả kiểm; chưa có receipt này thì DB-applied vẫn UNVERIFIED. Không chạy destructive tests trên Supabase nhóm/production. Không tải/chạy SQL tự động từ file inventory này. Authority/ENV0 tại [Issue53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53); input đủ dùng theo [DB0](tasks/TASK-W4-OPS.md#input-handoff).
+**Trạng thái hiện tại: Shared Supabase = NO-GO.** Không được phép thực thi DDL hoặc migration trực tiếp trên Supabase chia sẻ khi chưa có xác nhận từ Gate 1, 2 và 3.

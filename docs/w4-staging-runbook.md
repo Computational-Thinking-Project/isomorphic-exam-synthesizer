@@ -63,16 +63,48 @@ docker compose exec -T backend typst --version
 
 Hiện frontend http://localhost:3000, backend http://localhost:8000; thay theo port thực tế. HTTPS public production private beta cần topology/access được duyệt và TLS ingress riêng; các lệnh này không tự cung cấp HTTPS. Một Uvicorn worker theo image hiện có; không tự scale khi SSE/tickets còn in-memory.
 
-## 3. DB, Auth, deploy và recovery
+## 3. DB, Auth, deploy và recovery — Quy trình Vận hành Chi tiết (Operator Only)
 
-1. Nhận migration manifest/compatible SHA từ Duy, proof fresh+upgrade, test project và người có quyền chạy. Không chạy tất cả SQL theo tên file trên shared DB khi chưa biết ledger.
-2. Với sự cố Issue #75 (Stage 1 HTTP 503 / missing `get_session_source_preview`), quy trình áp dụng tuần tự bao gồm `003b_reconcile_baseline.sql` rồi đến `004`–`022` (bỏ qua `010` rỗng). Không chạy lại toàn bộ `schema.sql` trực tiếp trên DB đã có dữ liệu.
-3. Người được cấp quyền áp manifest trên isolated DB, ghi IDs/checksums/kết quả, xác minh config/claim/persist/resume/finish theo backend tests. Không publish raw DB dump.
-4. Cấu hình cùng Supabase project cho backend/browser; kiểm login Google thật, callback và browser refresh trên URL đã duyệt. Duy quản lý cấp/revoke ADMIN_EMAILS; ghi thời điểm restart/redeploy cần để áp config mới.
-5. Build/deploy đúng SHA, ghi images/config fingerprint không lộ secrets, DB ledger, model/prompt version. Khi env đổi, recreate backend/rebuild browser theo thay đổi; restart đơn thuần không áp Compose env mới.
-6. Smoke trước và sau restart. Sau khi deploy DB, bắt buộc chạy `NOTIFY pgrst, 'reload schema';` trên Supabase để PostgREST cập nhật cache RPC. Job cũ phải được fenced, target đã commit không sinh lại, quota không reset. Baseline đã được Duy chốt08/11, contract017 tại PR52; PR30@b62e007 đã nối, F02 reviewer verified; chưa merge/deployed; không nhận PASS từ health200.
-7. Rollback app về candidate trước chỉ sau kiểm tương thích schema. DB rollback/restore hoặc forward-fix do Duy/Hùng có quyền thực hiện; không dùng down -v, prune hay restore phá dữ liệu để che lỗi.
-8. Kết thúc test riêng: `docker compose down` đúng project; không xóa volumes/bucket hay môi trường dùng chung.
+> [!IMPORTANT]
+> **Giới hạn Thẩm quyền:** PR này và các tác vụ chuẩn bị kỹ thuật **KHÔNG THỰC HIỆN** bất kỳ thao tác DDL/migration nào trên database Supabase chia sẻ. Thao tác trên môi trường chia sẻ chỉ được tiến hành sau khi hoàn thành đầy đủ các cổng kiểm soát (Gates) dưới đây.
+
+### 3.1. Trước khi Triển khai (Pre-deployment Gates)
+1. **Xác nhận Target Environment & Commit:**
+   - Supabase project URL và database alias chính xác.
+   - Backend runtime commit SHA khớp với candidate đã kiểm thử.
+2. **Đối chiếu Ledger & DDL mục tiêu:**
+   - Đối chiếu danh sách bảng, cột, constraints, enums, triggers và migration ledger thực tế trên target DB để xác nhận baseline 5 bảng tương thích.
+3. **Phê duyệt Manifest & Checksums:**
+   - Đối chiếu 18 bước tuần tự trong manifest (`003b` ➔ `004`–`022`, bỏ qua `010` rỗng) cùng các mã băm SHA-256 Git blob tương ứng.
+4. **Backup & Phục hồi Độc lập (Mandatory GO/NO-GO Gate):**
+   - DB owner (Duy / Hùng) thực hiện backup/snapshot đầy đủ trên dashboard Supabase (PITR / pg_dump).
+   - Xác nhận reference backup, người phụ trách và đã kiểm tra phục hồi (restore verification) trên một DB cô lập.
+5. **Điều phối Vận hành & Phê duyệt:**
+   - Thông báo cửa sổ bảo trì (maintenance window).
+   - Nhận phê duyệt chính thức (GO decision) từ DB owner (Duy / Hùng).
+
+### 3.2. Trong khi Triển khai (Execution Sequence)
+1. **Kiểm tra Checksum:** Operator kiểm tra tính toàn vẹn của từng file SQL trước khi nạp.
+2. **Thực thi Tuần tự:**
+   - Áp dụng `003b_reconcile_baseline.sql` để thiết lập các bảng, enum, policy owner-read và quyền tối thiểu.
+   - Lần lượt áp dụng chuỗi `004` đến `022` (bỏ qua `010` rỗng; không áp dụng `020` chưa merge).
+   - Ghi lại nhật ký thực thi: thời gian UTC, người chạy, kết quả từng bước (SUCCESS/FAILURE). Dừng ngay lập tức nếu có bước lỗi.
+3. **Tải lại Cache Schema PostgREST:**
+   - Sau khi các migrations hoàn tất thành công, bắt buộc thực thi lệnh reload cache trên Supabase:
+     ```sql
+     NOTIFY pgrst, 'reload schema';
+     ```
+   - *Lưu ý:* `reload schema` chỉ cập nhật cache của các RPC/bảng đã tồn tại, không thể tự tạo ra các RPC bị thiếu.
+
+### 3.3. Sau khi Triển khai (Post-deployment Smoke & Receipt)
+Operator thực hiện kiểm tra và lập Deployment Receipt (tuyệt đối không lưu secret, JWT hay dữ liệu bài thi thật vào báo cáo):
+- **S01 RPC:** Kiểm tra `to_regprocedure('public.get_session_source_preview(uuid)') IS NOT NULL`, cùng các RPC `save_generation_config`, `confirm_source_artifacts`, `get_review_current_snapshot`.
+- **S02 Session API:** Chủ sở hữu gọi `GET /api/sessions/{sessionId}` trả về 200 OK với `source_content_revision` và `source_questions`; không còn lỗi HTTP 503 (`PGRST202`).
+- **S03 Giao diện Web:** Truy cập `/session/{sessionId}/stage1` tải bình thường và hiển thị đúng sau khi F5.
+- **S04 Xác nhận Đề nguồn:** Kiểm tra luồng xác nhận nguồn (`confirm_source_artifacts`) trên session thử nghiệm.
+- **S05 Phân lập Tài khoản:** Xác minh User B không thể truy cập session hoặc configuration của User A (HTTP 403/404).
+- **S06 Khôi phục Tiến trình:** Scanner phục hồi thế hệ (`list_stale_generation_jobs`) hoạt động đúng quyền `service_role`.
+- **S07 Biên bản Bàn giao (Deployment Receipt):** Lưu trữ mã SHA ứng dụng, checksums SQL đã chạy, reference backup, thời gian áp dụng, và kết quả các bước smoke S01–S06.
 
 ## 4. Checklist smoke và owner nhận lỗi
 
