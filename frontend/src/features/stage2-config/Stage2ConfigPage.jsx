@@ -654,33 +654,35 @@ export default function Stage2ConfigPage({
   // Giao diện khi tải phiên thất bại
   if (sessionError) {
     return (
-      <div className="mx-auto max-w-xl p-6">
-        <div
-          role="alert"
-          className="rounded-2xl border border-rose-500/40 bg-rose-950/40 p-6 text-center shadow-xl"
-        >
-          <AlertCircle className="mx-auto h-10 w-10 text-rose-400" />
-          <h2 className="mt-3 text-lg font-bold text-white">
-            Không thể tải phiên làm việc
-          </h2>
-          <p className="mt-1 text-sm text-rose-200">{sessionError}</p>
-          <div className="mt-6 flex justify-center gap-3">
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-              Thử lại
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/dashboard')}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Về Dashboard
-            </button>
+      <div className="min-h-screen bg-[#0f172a] text-[#f8fafc] dark p-6">
+        <div className="mx-auto max-w-xl">
+          <div
+            role="alert"
+            className="rounded-2xl border border-rose-500/40 bg-rose-950/40 p-6 text-center shadow-xl"
+          >
+            <AlertCircle className="mx-auto h-10 w-10 text-rose-400" />
+            <h2 className="mt-3 text-lg font-bold text-white">
+              Không thể tải phiên làm việc
+            </h2>
+            <p className="mt-1 text-sm text-rose-200">{sessionError}</p>
+            <div className="mt-6 flex justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="inline-flex items-center gap-2 rounded-xl bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Thử lại
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/dashboard')}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                Về Dashboard
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -690,30 +692,32 @@ export default function Stage2ConfigPage({
   // Kiểm tra trạng thái phiên: nếu chưa xong Stage 1 (draft)
   if (session?.status === 'draft') {
     return (
-      <div className="mx-auto max-w-2xl p-6">
-        <div className="rounded-2xl border border-amber-500/40 bg-amber-950/30 p-8 text-center shadow-xl">
-          <FileQuestion className="mx-auto h-12 w-12 text-amber-400" />
-          <h2 className="mt-4 text-xl font-bold text-white">
-            Đề nguồn chưa được xác nhận (Giai đoạn 1)
-          </h2>
-          <p className="mt-2 text-sm text-slate-300">
-            Phiên làm việc này đang ở trạng thái bản thảo (<code>draft</code>). Bạn cần xác nhận nội dung đề nguồn ở Giai đoạn 1 để hệ thống tự động bóc tách Blueprint trước khi sang cấu hình sinh đề.
-          </p>
-          <div className="mt-6 flex justify-center gap-3">
-            <button
-              type="button"
-              onClick={() => navigate(stage1Path(sessionId))}
-              className="rounded-xl bg-amber-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-amber-600/30 hover:bg-amber-500"
-            >
-              Đến Giai đoạn 1 (Xác nhận đề gốc)
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/dashboard')}
-              className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
-            >
-              Về Dashboard
-            </button>
+      <div className="min-h-screen bg-[#0f172a] text-[#f8fafc] dark p-6">
+        <div className="mx-auto max-w-2xl">
+          <div className="rounded-2xl border border-amber-500/40 bg-amber-950/30 p-8 text-center shadow-xl">
+            <FileQuestion className="mx-auto h-12 w-12 text-amber-400" />
+            <h2 className="mt-4 text-xl font-bold text-white">
+              Đề nguồn chưa được xác nhận (Giai đoạn 1)
+            </h2>
+            <p className="mt-2 text-sm text-slate-300">
+              Phiên làm việc này đang ở trạng thái bản thảo (<code>draft</code>). Bạn cần xác nhận nội dung đề nguồn ở Giai đoạn 1 để hệ thống tự động bóc tách Blueprint trước khi sang cấu hình sinh đề.
+            </p>
+            <div className="mt-6 flex justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => navigate(stage1Path(sessionId))}
+                className="rounded-xl bg-amber-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-amber-600/30 hover:bg-amber-500"
+              >
+                Đến Giai đoạn 1 (Xác nhận đề gốc)
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/dashboard')}
+                className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+              >
+                Về Dashboard
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -729,50 +733,52 @@ export default function Stage2ConfigPage({
       session?.progress?.error_code;
 
     return (
-      <div className="mx-auto max-w-2xl p-6">
-        <div
-          role="alert"
-          className="rounded-2xl border border-rose-500/40 bg-rose-950/30 p-8 text-center shadow-xl"
-        >
-          <AlertCircle className="mx-auto h-12 w-12 text-rose-400" />
-          <h2 className="mt-4 text-xl font-bold text-white">
-            Tiến trình sinh đề thi bị gián đoạn hoặc thất bại
-          </h2>
-          <p className="mt-2 text-sm text-slate-300">
-            Phiên sinh đề gặp sự cố trong quá trình xử lý. Bạn có thể kích hoạt thử lại để tiếp tục tiến trình sinh đề mà không mất cấu hình đã thiết lập.
-          </p>
-          {errorCode && (
-            <div className="mt-4 inline-flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-900/50 px-3.5 py-1.5 text-xs font-mono font-medium text-rose-200">
-              <span>Mã lỗi:</span>
-              <strong className="text-white">{errorCode}</strong>
+      <div className="min-h-screen bg-[#0f172a] text-[#f8fafc] dark p-6">
+        <div className="mx-auto max-w-2xl">
+          <div
+            role="alert"
+            className="rounded-2xl border border-rose-500/40 bg-rose-950/30 p-8 text-center shadow-xl"
+          >
+            <AlertCircle className="mx-auto h-12 w-12 text-rose-400" />
+            <h2 className="mt-4 text-xl font-bold text-white">
+              Tiến trình sinh đề thi bị gián đoạn hoặc thất bại
+            </h2>
+            <p className="mt-2 text-sm text-slate-300">
+              Phiên sinh đề gặp sự cố trong quá trình xử lý. Bạn có thể kích hoạt thử lại để tiếp tục tiến trình sinh đề mà không mất cấu hình đã thiết lập.
+            </p>
+            {errorCode && (
+              <div className="mt-4 inline-flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-900/50 px-3.5 py-1.5 text-xs font-mono font-medium text-rose-200">
+                <span>Mã lỗi:</span>
+                <strong className="text-white">{errorCode}</strong>
+              </div>
+            )}
+            {retryError && (
+              <div className="mt-3 text-xs text-rose-300" role="status">
+                {retryError}
+              </div>
+            )}
+            <div className="mt-6 flex justify-center gap-3">
+              <button
+                type="button"
+                onClick={handleRetryGeneration}
+                disabled={isRetryingGeneration}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-rose-600/30 hover:bg-rose-500 disabled:opacity-50"
+              >
+                {isRetryingGeneration ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" />
+                )}
+                {isRetryingGeneration ? 'Đang kích hoạt lại…' : 'Thử lại tiến trình sinh đề'}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/dashboard')}
+                className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+              >
+                Về Dashboard
+              </button>
             </div>
-          )}
-          {retryError && (
-            <div className="mt-3 text-xs text-rose-300" role="status">
-              {retryError}
-            </div>
-          )}
-          <div className="mt-6 flex justify-center gap-3">
-            <button
-              type="button"
-              onClick={handleRetryGeneration}
-              disabled={isRetryingGeneration}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-rose-600/30 hover:bg-rose-500 disabled:opacity-50"
-            >
-              {isRetryingGeneration ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="h-3.5 w-3.5" />
-              )}
-              {isRetryingGeneration ? 'Đang kích hoạt lại…' : 'Thử lại tiến trình sinh đề'}
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/dashboard')}
-              className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
-            >
-              Về Dashboard
-            </button>
           </div>
         </div>
       </div>
@@ -781,7 +787,7 @@ export default function Stage2ConfigPage({
 
 
   return (
-    <div className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-[#0f172a] text-[#f8fafc] dark px-4 py-8 sm:px-6 lg:px-8">
       {/* Nút điều hướng phụ trên cùng */}
       <div className="mx-auto mb-6 max-w-5xl">
         <button

@@ -2,16 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { mockCloneSession } from '../../services/mocks/cloneMock.js';
 
 const primaryButtonClass =
-  'rounded-lg bg-sky-400 px-4 py-2 font-medium text-slate-950 ' +
-  'hover:bg-sky-300 focus-visible:outline focus-visible:outline-2 ' +
-  'focus-visible:outline-offset-4 focus-visible:outline-sky-400 ' +
-  'disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center gap-2';
+  'rounded-xl bg-highlight px-5 py-2.5 text-sm font-semibold text-white ' +
+  'hover:bg-[#253b57] focus-visible:outline-none focus-visible:ring-2 ' +
+  'focus-visible:ring-highlight focus-visible:ring-offset-2 ' +
+  'disabled:cursor-not-allowed disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm transition-all';
 
 const secondaryButtonClass =
-  'rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-300 ' +
-  'hover:bg-slate-800 focus-visible:outline focus-visible:outline-2 ' +
-  'focus-visible:outline-offset-4 focus-visible:outline-sky-400 ' +
-  'disabled:cursor-not-allowed disabled:opacity-50';
+  'rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-medium text-strong ' +
+  'hover:bg-rail focus-visible:outline-none focus-visible:ring-2 ' +
+  'focus-visible:ring-highlight focus-visible:ring-offset-2 ' +
+  'disabled:cursor-not-allowed disabled:opacity-50 transition-all';
 
 function getDefaultTitle(session) {
   if (!session) return '';
@@ -272,20 +272,20 @@ export default function CloneSessionModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="clone-modal-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/60 p-4 backdrop-blur-sm"
       onClick={handleBackdropClick}
     >
       <div
         ref={modalBoxRef}
-        className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-6 shadow-2xl"
+        className="w-full max-w-md rounded-2xl border border-line bg-surface p-6 sm:p-8 shadow-2xl"
       >
         <header className="mb-4">
-          <h2 id="clone-modal-title" className="text-xl font-semibold text-slate-100">
+          <h2 id="clone-modal-title" className="text-xl font-bold text-strong">
             Nhân bản phiên đề thi
           </h2>
-          <p className="mt-1 text-sm text-slate-400">
+          <p className="mt-1 text-sm text-muted">
             Tạo một bản sao độc lập từ phiên{' '}
-            <span className="font-medium text-slate-200">
+            <span className="font-semibold text-strong">
               “{session.title || 'Chưa đặt tên'}”
             </span>
             .
@@ -295,7 +295,7 @@ export default function CloneSessionModal({
         {errorMessage && (
           <div
             role="alert"
-            className="mb-4 rounded-lg border border-rose-800 bg-rose-950/40 p-3 text-sm text-rose-300"
+            className="mb-4 rounded-xl border border-danger-border bg-danger-soft p-3 text-sm text-danger"
           >
             {errorMessage}
           </div>
@@ -305,9 +305,9 @@ export default function CloneSessionModal({
           <div>
             <label
               htmlFor="clone-session-title"
-              className="block text-sm font-medium text-slate-300 mb-1"
+              className="block text-sm font-semibold text-strong mb-1.5"
             >
-              Tiêu đề phiên mới <span className="text-rose-400">*</span>
+              Tiêu đề phiên mới <span className="text-danger">*</span>
             </label>
             <input
               ref={inputRef}
@@ -321,7 +321,7 @@ export default function CloneSessionModal({
                 if (errorMessage) setErrorMessage('');
               }}
               placeholder="Nhập tiêu đề cho phiên nhân bản..."
-              className="w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-slate-100 placeholder-slate-500 focus:border-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-400 disabled:opacity-50"
+              className="w-full rounded-xl border border-zinc-300 bg-white px-3.5 py-2.5 text-strong placeholder-muted focus:border-highlight focus:outline-none focus:ring-2 focus:ring-highlight/20 transition-all disabled:opacity-50"
             />
           </div>
 
@@ -342,7 +342,7 @@ export default function CloneSessionModal({
             >
               {isSubmitting ? (
                 <>
-                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-950 border-t-transparent" />
+                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
                   Đang nhân bản…
                 </>
               ) : (

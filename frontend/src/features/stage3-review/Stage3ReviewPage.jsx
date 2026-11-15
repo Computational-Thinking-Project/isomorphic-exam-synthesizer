@@ -795,40 +795,44 @@ export default function Stage3ReviewPage({
 
   if (isLoading) {
     return (
-      <div className="flex min-h-[400px] flex-col items-center justify-center gap-3 p-8">
-        <Loader2 className="h-8 w-8 animate-spin text-sky-400" />
-        <p className="text-xs text-slate-400">Đang tải chi tiết đề thi và các câu hỏi biến thể...</p>
+      <div className="min-h-screen bg-[#0f172a] text-[#f8fafc] dark flex items-center justify-center p-8">
+        <div className="flex flex-col items-center justify-center gap-3">
+          <Loader2 className="h-8 w-8 animate-spin text-sky-400" />
+          <p className="text-xs text-slate-400">Đang tải chi tiết đề thi và các câu hỏi biến thể...</p>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="mx-auto max-w-xl p-6">
-        <div
-          role="alert"
-          className="rounded-2xl border border-rose-500/40 bg-rose-950/40 p-6 text-center shadow-xl"
-        >
-          <AlertCircle className="mx-auto h-10 w-10 text-rose-400" />
-          <h2 className="mt-3 text-lg font-bold text-white">Không thể tải đề thi</h2>
-          <p className="mt-1 text-sm text-rose-200">{error}</p>
-          <div className="mt-6 flex justify-center gap-3">
-            <button
-              type="button"
-              onClick={loadData}
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-              Thử lại
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/dashboard')}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Về Dashboard
-            </button>
+      <div className="min-h-screen bg-[#0f172a] text-[#f8fafc] dark p-6">
+        <div className="mx-auto max-w-xl">
+          <div
+            role="alert"
+            className="rounded-2xl border border-rose-500/40 bg-rose-950/40 p-6 text-center shadow-xl"
+          >
+            <AlertCircle className="mx-auto h-10 w-10 text-rose-400" />
+            <h2 className="mt-3 text-lg font-bold text-white">Không thể tải đề thi</h2>
+            <p className="mt-1 text-sm text-rose-200">{error}</p>
+            <div className="mt-6 flex justify-center gap-3">
+              <button
+                type="button"
+                onClick={loadData}
+                className="inline-flex items-center gap-2 rounded-xl bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Thử lại
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/dashboard')}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                Về Dashboard
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -836,7 +840,8 @@ export default function Stage3ReviewPage({
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6 lg:p-8">
+    <div className="min-h-screen bg-[#0f172a] text-[#f8fafc] dark">
+      <div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6 lg:p-8">
       {/* Header điều hướng & tóm tắt */}
       <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-5">
         <div>
@@ -1417,5 +1422,6 @@ export default function Stage3ReviewPage({
         </div>
       )}
     </div>
-  );
+  </div>
+);
 }

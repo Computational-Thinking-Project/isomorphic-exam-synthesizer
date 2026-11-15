@@ -105,3 +105,19 @@ Chuẩn bị kế hoạch chi tiết, nhánh tính năng và Draft PR để ti�
    - Redirect sau khi đăng nhập Google OAuth.
    - Trạng thái hiển thị ổn định của Stage 2 và Stage 3 qua container tối tương thích.
    - Chụp ảnh Before / After đối với từng màn hình để đính kèm vào PR khi chuyển sang trạng thái Ready for Review.
+
+---
+
+## 5. Kết Quả Triển Khai & Xác Minh (Implementation & Verification)
+
+- **Trạng thái:** Đã hoàn thành triển khai giao diện Paper Canvas cho tất cả các trang mục tiêu.
+- **Các trang đã nâng cấp:**
+  1. **Đăng nhập (`/login`):** Thẻ Paper Card trung tâm, icon Google SVG chính thức, huy hiệu Exam Mirror, viền mảnh thanh nhã.
+  2. **Dashboard (`/dashboard`):** Header mới kèm UserAvatar và Đăng xuất, lưới thẻ phiên Paper Canvas, huy hiệu trạng thái semantic, tích hợp `CreateSessionModal` (tái sử dụng 100% `createSessionEntryController`), phân trang Paper Canvas.
+  3. **Tạo phiên mới (`/session/new/stage1`):** Form Paper Card trang nhã với bộ chọn nhanh môn học và khối lớp, breadcrumb điều hướng.
+  4. **Stage 1 Nguồn đề (`/session/:sessionId/stage1`):** Tab chuyển đổi trên mobile, dropzone nét đứt, textarea font chuẩn, banner trạng thái Blueprint kèm 4 trạng thái, xem trước câu hỏi với chip "Đáp án" (`.answer-key-label`), math formula qua `MathRenderer`.
+  5. **Cách ly Stage 2 & 3:** Bọc container tối cục bộ (`bg-[#0f172a] text-[#f8fafc] dark`) chống xung đột màu.
+- **Kết quả kiểm thử tự động:**
+  - `npm --prefix frontend test`: **420/420 pass** (100% pass, 0 fail, 0 skipped).
+  - `npm --prefix frontend run lint`: **0 errors, 0 warnings** (`--max-warnings 0`).
+  - `npm --prefix frontend run build`: **Vite production build thành công** (built in ~23s).
