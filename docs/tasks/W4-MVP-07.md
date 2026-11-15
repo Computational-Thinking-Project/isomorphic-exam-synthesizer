@@ -90,6 +90,12 @@ không còn input thiết kế chưa chốt trong scope adapter07.
 
 ## Bàn giao và điều kiện còn lại
 
+15/11/2026: đồng bộ tiếp `dev@c2ee9fd` (đã có PR59 và migration021/PR68),
+không conflict. PostgreSQL15 disposable trên full chain002–019→021:
+**197 passed, 2 skipped, 12 subtests**; skip XeLaTeX/PR49 parity và một warning
+anyio harness như trước. Ruff/typecheck theo kết quả gói M3 của head sau push;
+không nhận CI cũ thay checks của bản đồng bộ mới.
+
 Đồng bộ `dev@4c2d424` ngày 14/11/2026: conflict chỉ ở README migration và
 changelog, giữ cả hai phần độc lập. Docker network-none: Ruff pass, mypy pass
 120 files, exporter **188 passed, 1 skipped**. PostgreSQL15 disposable qua SQL
