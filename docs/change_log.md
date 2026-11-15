@@ -33,6 +33,18 @@ and finalized shuffle provenance verification. Resolves Decision Q06. See the
 
 ---
 
+## Issue #64 — C5 Python consumer cho migration 021 (Draft #67)
+
+- AI job ghi `CONFIRMED_SOURCE_FALLBACK` sau bốn lượt đủ điều kiện trong một lần chạy slot. Writer đối chiếu provenance và ghi `pending_review`. Worker phát `GENERATION_RETRIES_EXHAUSTED` và `question_done` sau khi xác nhận ghi.
+- Retry bỏ qua fallback hiện hành đã commit và giữ các receipt lịch sử ngoài tập completed và cache AI. Nếu mất phản hồi ghi, consumer đối chiếu record hiện hành và job token qua read-back.
+- Q01 dùng migration 022 để kiểm lời giải trên cùng snapshot và khóa session của claim. SQLSTATE `22023` cung cấp `question_numbers` cho HTTP `422`. Lỗi phát hiện muộn vẫn kết thúc fatal và giữ slot đã commit. [Checkpoint C5](tasks/W4-MVP-02_IMPLEMENTATION_PLAN.md#bàn-giao--ghi-theo-bằng-chứng-thực-tế)
+
+## 13/11/2026 — Issue #64: Python generation adapter cho migration 019 (Draft #67)
+
+- `POST /api/sessions/{session_id}/config` nhận `n_versions` nguyên 1–4, modes bỏ qua hoặc `[]` và cờ shuffle mặc định OFF/OFF. RPC 019 suy ra modes từ canonical Blueprint của nguồn đã xác nhận. API trả cấu hình DB đã lưu cùng manifest. [Contract config](api/generation-config-endpoint.md)
+- Claim đối chiếu receipt 015–017 với frozen config/context, manifest và các slot đã commit trước khi dispatch. Frozen dimensions hợp lệ chọn AI. Modes và dimensions cùng rỗng chọn Original Clone với 0 lượt Gemini. Retry giữ snapshot và slot đã commit, kể cả alias `1.0` đã lưu từ W2.
+- Receipt sai trả `503 ERR_GENERATION_STORAGE_FAILURE` trước khi chạy worker. Nếu DB đã commit claim, recovery 017 xử lý job stale và chặn token cũ. [Bằng chứng và phần chờ trong M2](tasks/W4-MVP-02_IMPLEMENTATION_PLAN.md#bàn-giao--ghi-theo-bằng-chứng-thực-tế)
+
 ## OPS11/21 checkpoint — 13/11/2026
 
 - Đạt tiếp nối PR51 đã merge bằng nhánh OPS mới từ dev294c69a. Cập nhật task/input-handoff, runbook và migration checkpoint017/018 merged; 019 đã merge qua PR61 tại devb47e4fa; giữ historical inventory73583d7, không tạo applied ledger giả.

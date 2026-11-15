@@ -9,13 +9,31 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictBool, field_
 
 from app.models.generation_events import SessionOutcome
 
+SOURCE_SOLUTION_REQUIRED = "ERR_SOURCE_SOLUTION_REQUIRED"
+FALLBACK_WARNING = "GENERATION_RETRIES_EXHAUSTED"
+SOURCE_SOLUTION_MESSAGE = (
+    "Confirmed sources require solutions before generation. "
+    "Create a new session with complete source data."
+)
+
 
 class GenerationJobError(Exception):
-    def __init__(self, status_code: int, code: str, message: str) -> None:
+    def __init__(
+        self, status_code: int, code: str, message: str, *, question_numbers: tuple[int, ...] = ()
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.code = code
         self.message = message
+        self.question_numbers = question_numbers
+
+
+class IncompleteGenerationSource(ValueError):
+    """A running job encountered incomplete frozen source data."""
+
+    def __init__(self, message: str, *, code: str = "ERR_SOURCE_NOT_READY") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 class GenerationQuotaExceeded(RuntimeError):
@@ -27,6 +45,13 @@ class QuestionTarget:
     source_question_id: UUID
     question_no: int
     version_index: int
+
+
+@dataclass(frozen=True, slots=True)
+class ConfirmedSourceFallback:
+    target: QuestionTarget
+    request_fingerprint: str
+    last_error_code: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +161,9 @@ class GenerationJobStore(Protocol):
         ...
     async def save_clone(self, plan: GenerationPlan, target: QuestionTarget) -> None:
         """Commit a frozen ORIGINAL_CLONE record without an AI reservation."""
+        ...
+    async def save_fallback(self, plan: GenerationPlan, result: ConfirmedSourceFallback) -> None:
+        """Commit and verify the confirmed source fallback for an exhausted AI slot."""
         ...
     async def finish(
         self, plan: GenerationPlan, outcome: SessionOutcome, *, error_code: str | None

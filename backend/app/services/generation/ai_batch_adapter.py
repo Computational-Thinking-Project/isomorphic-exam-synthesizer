@@ -16,7 +16,13 @@ from app.models.generation import BatchResult, QuestionResult
 from app.models.schemas import SourceQuestion
 from app.services.generation.ai_mapping import PreparedAIResult, prepare_question_result
 from app.services.generation.ai_request_context import JobRequestReservation
-from app.services.generation.job_contracts import GenerationJobStore, GenerationPlan, QuestionTarget
+from app.services.generation.job_contracts import (
+    GenerationJobError,
+    GenerationJobStore,
+    GenerationPlan,
+    IncompleteGenerationSource,
+    QuestionTarget,
+)
 from app.services.generation.service import GenerationService
 
 
@@ -36,6 +42,9 @@ class AIBatchInputs(BaseModel):
     variation_modes: tuple[StrictStr, ...]
     completed: tuple[QuestionResult, ...]
     snapshot_id: UUID | None = None
+    confirmation_id: UUID | None = None
+    frozen_sources: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    committed_fallbacks: frozenset[tuple[int, str]] = frozenset()
 
     @field_validator("confirmed_source_hash")
     @classmethod
@@ -67,8 +76,16 @@ def _check_plan_inputs(plan: GenerationPlan, inputs: AIBatchInputs) -> None:
         if result.candidate.seed != expected_seed:
             raise ValueError("Completed AI result does not match the job seed.")
         cached.add(prepared.target)
-    if cached != set(plan.saved):
-        raise ValueError("Completed AI records do not match the committed job targets.")
+    fallback_targets = {
+        target for target in plan.targets
+        if (target.version_index, str(target.source_question_id)) in inputs.committed_fallbacks
+    }
+    if (
+        len(fallback_targets) != len(inputs.committed_fallbacks)
+        or cached & fallback_targets
+        or cached | fallback_targets != set(plan.saved)
+    ):
+        raise ValueError("Completed AI and fallback records do not match the committed job targets.")
 
 
 class AIBatchAdapter:
@@ -125,11 +142,14 @@ class AIBatchAdapter:
                     variation_modes=list(snapshot.variation_modes),
                     completed=list(snapshot.completed),
                     on_result=deliver,
+                    committed_fallbacks=snapshot.committed_fallbacks,
                 )
         except asyncio.CancelledError:
             raise
         except Exception:
             reservation.raise_if_failed()
+            if isinstance(callback_failure, (GenerationJobError, IncompleteGenerationSource)):
+                raise callback_failure
             raise
         reservation.raise_if_failed()
         if callback_failure is not None:
@@ -137,11 +157,15 @@ class AIBatchAdapter:
         checked = BatchResult.model_validate(batch.model_dump())
         results = [prepare_question_result(result, plan) for result in checked.results]
         keys = [result.target for result in results]
-        if len(keys) != len(plan.targets) or set(keys) != set(plan.targets):
+        ai_targets = {
+            target for target in plan.targets
+            if (target.version_index, str(target.source_question_id)) not in snapshot.committed_fallbacks
+        }
+        if len(keys) != len(ai_targets) or set(keys) != ai_targets:
             raise ValueError("AI batch did not return exactly the planned targets.")
         if acknowledged != set(plan.targets) - set(plan.saved):
             raise ValueError("AI batch returned before all new result callbacks completed.")
-        completed_count = sum(result.draft is not None for result in results)
+        completed_count = len(snapshot.committed_fallbacks) + sum(result.draft is not None for result in results)
         expected_status = (
             "generated"
             if completed_count == len(plan.targets)

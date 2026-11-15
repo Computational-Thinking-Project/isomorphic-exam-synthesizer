@@ -276,3 +276,15 @@ def test_restart_ticket_restores_stale_error_code(stream_api) -> None:
     assert stream.status_code == 200
     assert "event: error" in stream.text
     assert '"error_code":"ERR_GENERATION_INTERRUPTED"' in stream.text
+
+
+def test_restart_ticket_keeps_progress_for_fatal_source_error(stream_api) -> None:
+    client, sid, uid, registry, tickets, events, owner, app = stream_api
+    app.state.terminal.return_value = ("failed", 1, 2, "ERR_SOURCE_SOLUTION_REQUIRED")
+    response = client.post(f"/api/sessions/{sid}/events/ticket?stream_epoch={events.epoch}")
+    assert response.status_code == 200
+    stream = client.get(f"/api/sessions/{sid}/events?ticket={response.json()['ticket']}")
+    assert stream.status_code == 200 and "event: error" in stream.text
+    assert '"session_status":"failed"' in stream.text
+    assert '"completed_count":1' in stream.text
+    assert '"error_code":"ERR_SOURCE_SOLUTION_REQUIRED"' in stream.text
