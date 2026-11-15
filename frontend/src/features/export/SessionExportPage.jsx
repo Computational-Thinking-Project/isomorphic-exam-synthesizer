@@ -2,6 +2,11 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useAuthStore } from '../auth/authStore.js';
 import { getSessionDetail } from '../../services/sessions.js';
+import {
+  getExportStatus,
+  triggerExport as defaultTriggerExport,
+  issueDownloadUrl as defaultIssueDownloadUrl,
+} from '../../services/exportService.js';
 import { createExportController } from './exportController.js';
 
 const buttonClass = 'rounded-lg border border-slate-600 px-4 py-2 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50';
@@ -18,9 +23,9 @@ function defaultOpenDownload(url, filename) {
 
 export default function SessionExportPage({
   loadSession = getSessionDetail,
-  getStatus,
-  triggerExport,
-  issueDownloadUrl,
+  getStatus = getExportStatus,
+  triggerExport = defaultTriggerExport,
+  issueDownloadUrl = defaultIssueDownloadUrl,
   openDownload = defaultOpenDownload,
 }) {
   const { sessionId } = useParams();

@@ -216,10 +216,10 @@ test('cancel hoặc đổi account hủy timer, abort request và bỏ kết qu�
   assert.equal(timerCount(), 0);
 });
 
-test('mapping lỗi 401/403/404/409/422/423/503 an toàn không lộ raw message', async () => {
-  for (const status of [401, 403, 404, 409, 422, 423, 503]) {
+test('mapping lỗi 401/403/404/409/422/423/503/504 an toàn không lộ raw message', async () => {
+  for (const status of [401, 403, 404, 409, 422, 423, 503, 504]) {
     const { controller } = setup({
-      getStatus: async () => ({ status: 'idle' }),
+      getStatus: async () => ({ state: 'idle' }),
       triggerExport: async () => {
         throw { response: { status }, message: 'SECRET_INTERNAL_TRACE' };
       },
@@ -229,10 +229,66 @@ test('mapping lỗi 401/403/404/409/422/423/503 an toàn không lộ raw message
     const snap = controller.getSnapshot();
     assert.ok(snap.error);
     assert.doesNotMatch(snap.error, /SECRET_INTERNAL_TRACE/);
-    if (status === 503) {
+    if (status === 503 || status === 504) {
       assert.equal(snap.phase, 'error');
     } else {
       assert.equal(snap.phase, 'failed');
     }
   }
+});
+
+test('đọc đúng payload Q10 với state, sha256 và size_bytes', async () => {
+  const { controller } = setup({
+    getStatus: async () => ({
+      state: 'ready',
+      filename: 'exam_bundle_s1.zip',
+      sha256: 'deadbeef1234',
+      size_bytes: 4096,
+    }),
+  });
+  await controller.load('s1');
+  const snap = controller.getSnapshot();
+  assert.equal(snap.phase, 'ready_to_download');
+  assert.deepEqual(snap.artifact, {
+    filename: 'exam_bundle_s1.zip',
+    size_bytes: 4096,
+    sha256: 'deadbeef1234',
+    size: 4096,
+    hash: 'deadbeef1234',
+  });
+});
+
+test('chặn startExport khi đang ở phase error cho tới khi refreshStatus reconcile xong', async () => {
+  let statusCheckCount = 0;
+  let exportCount = 0;
+  const { controller } = setup({
+    getStatus: async () => {
+      statusCheckCount += 1;
+      if (statusCheckCount === 1) return { state: 'idle' };
+      return {
+        state: 'ready',
+        filename: 'exam_bundle_s1.zip',
+        sha256: 'abc',
+        size_bytes: 100,
+      };
+    },
+    triggerExport: async () => {
+      exportCount += 1;
+      throw { response: { status: 504 }, message: 'Gateway timeout' };
+    },
+  });
+
+  await controller.load('s1');
+  await controller.startExport();
+  assert.equal(controller.getSnapshot().phase, 'error');
+  assert.equal(exportCount, 1);
+
+  // Chưa reconcile -> chặn POST /export lặp lại
+  await controller.startExport();
+  assert.equal(exportCount, 1);
+
+  // Reconcile qua GET /export -> cập nhật sang ready_to_download
+  await controller.refreshStatus();
+  assert.equal(controller.getSnapshot().phase, 'ready_to_download');
+  assert.equal(statusCheckCount, 2);
 });

@@ -34,7 +34,7 @@ export function formatExportError(cause, action = 'general') {
   if (status === 423) {
     return 'Phiên đang bị khóa thao tác chỉnh sửa.';
   }
-  if (status === 503 || !status) {
+  if (status === 503 || status === 504 || !status) {
     if (action === 'export') {
       return 'Chưa xác nhận được kết quả đóng gói từ máy chủ. Vui lòng bấm "Kiểm tra trạng thái" trước khi thử lại.';
     }
@@ -59,10 +59,18 @@ function parseExpiryMs(grant, nowFn) {
 
 function normalizeArtifact(payload, sessionId) {
   const fallbackName = `exam_bundle_${sessionId}.zip`;
+  const sizeBytes = Number.isFinite(payload?.size_bytes)
+    ? payload.size_bytes
+    : (Number.isFinite(payload?.size) ? payload.size : null);
+  const sha256 = typeof payload?.sha256 === 'string'
+    ? payload.sha256
+    : (typeof payload?.hash === 'string' ? payload.hash : null);
   return {
     filename: typeof payload?.filename === 'string' && payload.filename ? payload.filename : fallbackName,
-    size: Number.isFinite(payload?.size) ? payload.size : null,
-    hash: typeof payload?.hash === 'string' ? payload.hash : (typeof payload?.sha256 === 'string' ? payload.sha256 : null),
+    size_bytes: sizeBytes,
+    sha256,
+    size: sizeBytes,
+    hash: sha256,
   };
 }
 
@@ -141,7 +149,7 @@ export function createExportController({
   );
 
   const applyStatusSnapshot = (sessionId, snapshot, { allowStartPoll = true } = {}) => {
-    const statusValue = snapshot?.status;
+    const statusValue = snapshot?.state ?? snapshot?.status;
     if (statusValue === 'ready') {
       stopPolling();
       publish({
@@ -214,7 +222,8 @@ export function createExportController({
         try {
           const snapshot = await getStatus(sessionId, { signal: op.signal });
           if (!op.current()) return;
-          if (snapshot?.status === 'preparing' || snapshot?.status === 'pending') {
+          const pollStatus = snapshot?.state ?? snapshot?.status;
+          if (pollStatus === 'preparing' || pollStatus === 'pending') {
             if (now() - pollStartedAt >= maxPollDurationMs) {
               publish({
                 phase: 'poll_timeout',
@@ -307,6 +316,7 @@ export function createExportController({
         || !EXPORTABLE_STATUSES.has(state.detail.status)
         || !hasExportAdapters()
         || state.phase === 'preparing'
+        || state.phase === 'error'
       ) {
         return;
       }
@@ -318,12 +328,13 @@ export function createExportController({
       try {
         const result = await triggerExport(sessionId, { signal: op.signal });
         if (!op.current()) return;
-        const normalizedStatus = result?.status === 'pending' ? 'preparing' : (result?.status || 'preparing');
-        applyStatusSnapshot(sessionId, { ...result, status: normalizedStatus });
+        const rawStatus = result?.state ?? result?.status;
+        const normalizedStatus = rawStatus === 'pending' ? 'preparing' : (rawStatus || 'preparing');
+        applyStatusSnapshot(sessionId, { ...result, state: normalizedStatus, status: normalizedStatus });
       } catch (cause) {
         if (!op.current()) return;
         const status = cause?.response?.status;
-        if (status === 503 || !status) {
+        if (status === 503 || status === 504 || !status) {
           publish({
             phase: 'error',
             busyAction: null,

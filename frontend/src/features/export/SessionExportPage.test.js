@@ -12,6 +12,7 @@ const { createRoot } = await import('react-dom/client');
 const { MemoryRouter, Route, Routes } = await import('react-router-dom');
 register('../../test-loader.mjs', import.meta.url);
 register('../../services/test-support/auth-loader.js', import.meta.url);
+const { api } = await import('../../services/api.js');
 const { default: SessionExportPage } = await import('./SessionExportPage.jsx');
 
 function findButtons(root, text) {
@@ -88,6 +89,9 @@ test('SessionExportPage hiển thị trạng thái unwired khi chưa truyền Q1
       grade: 12,
       status: 'approved',
     }),
+    getStatus: null,
+    triggerExport: null,
+    issueDownloadUrl: null,
   });
 
   assert.match(view.container.textContent, /Đề Đại số 12/);
@@ -172,6 +176,103 @@ test('SessionExportPage cho phép tạo gói ZIP và tải xuống khi đã nố
   assert.equal(downloadCalls, 1);
   assert.deepEqual(opened, [{
     url: 'https://storage.example.test/s1.zip',
+    filename: 'exam_bundle_s1.zip',
+  }]);
+
+  await view.unmount();
+});
+
+test('SessionExportPage chạy trọn luồng qua exportService mặc định với api adapter Q10', async () => {
+  const requests = [];
+  const opened = [];
+  api.defaults.adapter = async (config) => {
+    requests.push({ method: config.method, url: config.url, data: config.data });
+    if (config.method === 'get' && config.url === '/sessions/s1') {
+      return {
+        status: 200,
+        data: {
+          id: 's1',
+          user_id: 'account-a',
+          title: 'Đề thi thử Q10',
+          subject: 'Toán',
+          grade: 12,
+          status: 'approved',
+          created_at: '2026-11-01T00:00:00Z',
+          updated_at: '2026-11-15T00:00:00Z',
+          source_questions: [],
+          exam_versions: [],
+        },
+        headers: {},
+        config,
+      };
+    }
+    if (config.method === 'get' && config.url === '/sessions/s1/export') {
+      return { status: 200, data: { state: 'idle' }, headers: {}, config };
+    }
+    if (config.method === 'post' && config.url === '/sessions/s1/export') {
+      return {
+        status: 200,
+        data: {
+          state: 'ready',
+          filename: 'exam_bundle_s1.zip',
+          sha256: 'hash-q10',
+          size_bytes: 5120,
+        },
+        headers: {},
+        config,
+      };
+    }
+    if (config.method === 'post' && config.url === '/sessions/s1/export/download-url') {
+      return {
+        status: 200,
+        data: {
+          url: 'https://storage.example.test/exam_bundle_s1.zip?sig=q10',
+          expires_at: new Date(Date.now() + 3600_000).toISOString(),
+          expires_in: 3600,
+          filename: 'exam_bundle_s1.zip',
+        },
+        headers: {},
+        config,
+      };
+    }
+    throw new Error(`Unexpected HTTP call: ${config.method} ${config.url}`);
+  };
+
+  const view = await mountExportPage({
+    openDownload: (url, filename) => opened.push({ url, filename }),
+  });
+  // Đợi getSessionDetail -> getExportStatus hoàn tất
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 10));
+  });
+
+  const exportBtn = findButtons(view.container, 'Tạo gói ZIP')[0];
+  assert.ok(exportBtn);
+  await act(async () => {
+    exportBtn.click();
+    await new Promise((r) => setTimeout(r, 10));
+  });
+
+  const downloadBtn = findButtons(view.container, 'Tải gói ZIP')[0];
+  assert.ok(downloadBtn);
+  await act(async () => {
+    downloadBtn.click();
+    await new Promise((r) => setTimeout(r, 10));
+  });
+
+  assert.deepEqual(
+    requests.map((r) => `${r.method.toUpperCase()} ${r.url}`),
+    [
+      'GET /sessions/s1',
+      'GET /sessions/s1/export',
+      'POST /sessions/s1/export',
+      'POST /sessions/s1/export/download-url',
+    ],
+  );
+  assert.equal(requests[2].data, undefined);
+  assert.equal(requests[3].data, undefined);
+  assert.deepEqual(opened, [{
+    url: 'https://storage.example.test/exam_bundle_s1.zip?sig=q10',
     filename: 'exam_bundle_s1.zip',
   }]);
 
