@@ -637,3 +637,64 @@ test('F05: Đổi sessionId từ A sang B, response trả về muộn của A kh
     await harness.unmount();
   }
 });
+
+test('R1: Đổi sessionId từ A sang B khi modal phê duyệt đang mở, modal phải tự động đóng và không cho phép approve nhầm B', async () => {
+  const originalGet = api.get;
+  const originalPost = api.post;
+  const postCalls = [];
+
+  api.get = async (url) => {
+    if (url.includes('session-A')) {
+      return {
+        data: {
+          ...GOLDEN_PREVIEW_FIXTURE,
+          session_id: 'session-A',
+        },
+      };
+    }
+    if (url.includes('session-B')) {
+      return {
+        data: {
+          ...GOLDEN_PREVIEW_FIXTURE,
+          session_id: 'session-B',
+        },
+      };
+    }
+    return { data: GOLDEN_PREVIEW_FIXTURE };
+  };
+
+  api.post = async (url, payload) => {
+    postCalls.push({ url, payload });
+    return { data: { success: true } };
+  };
+
+  const harness = renderPreviewPage('session-A');
+  try {
+    // 1. Tải session A thành công và mở modal phê duyệt
+    await harness.render();
+    const openApproveBtn = harness.container.querySelector('[data-testid="btn-open-approve"]');
+    assert.ok(openApproveBtn);
+
+    await act(async () => {
+      openApproveBtn.click();
+    });
+
+    // Modal đang mở ở session A
+    assert.ok(harness.container.querySelector('[role="dialog"]'), 'Modal phê duyệt của A phải đang mở');
+
+    // 2. Chuyển sang session B trên cùng component
+    await harness.navigate('/session/session-B/stage3/preview');
+
+    // 3. Modal phải lập tức đóng lại khi sessionId đổi, không được giữ modal của A dưới session B
+    assert.equal(
+      harness.container.querySelector('[role="dialog"]'),
+      null,
+      'Modal phê duyệt của A phải tự động đóng khi chuyển sang session B',
+    );
+    assert.equal(postCalls.length, 0, 'Không có lệnh POST nào được gửi khi chuyển route');
+  } finally {
+    api.get = originalGet;
+    api.post = originalPost;
+    await harness.unmount();
+  }
+});

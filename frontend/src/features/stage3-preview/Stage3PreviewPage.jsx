@@ -46,12 +46,14 @@ export default function Stage3PreviewPage() {
     };
   }, []);
 
-  // F05: Reset trạng thái khi sessionId thay đổi để tránh stale data giữa 2 phiên
+  // F05 & R1: Reset trạng thái và đóng modal khi sessionId thay đổi để tránh stale data và approve nhầm phiên
   useEffect(() => {
     setPreviewData(null);
     setSelectedTab('');
     setError(null);
     setNeedsShuffle(false);
+    setIsApproveModalOpen(false);
+    setApproveError(null);
   }, [sessionId]);
 
   const showToast = (message, type = 'success') => {
