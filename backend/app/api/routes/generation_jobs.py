@@ -46,9 +46,10 @@ def create_generation_job_router(
             store = store_factory(db)
             plan = await runner.claim(store, session_id, retry=retry)
         except GenerationJobError as exc:
-            raise HTTPException(
-                exc.status_code, {"code": exc.code, "message": exc.message}
-            ) from exc
+            detail: dict[str, object] = {"code": exc.code, "message": exc.message}
+            if exc.question_numbers:
+                detail["question_numbers"] = list(exc.question_numbers)
+            raise HTTPException(exc.status_code, detail) from exc
         except Exception:
             raise HTTPException(
                 503,
