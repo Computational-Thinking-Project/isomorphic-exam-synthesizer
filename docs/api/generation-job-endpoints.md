@@ -2,6 +2,14 @@
 
 ## Implementation status
 
+W4 follow-up in Draft #67 uses migration 019 to infer modes from the confirmed
+canonical Blueprint when saving configuration. A save request with `[]` can
+therefore lead to an AI job. Start and retry select the worker from the frozen
+receipt. The adapter checks the saved config, source manifest, and committed
+slots before scheduling. A malformed or inconsistent receipt returns HTTP 503
+`ERR_GENERATION_STORAGE_FAILURE`. If SQL committed the claim before returning
+that receipt, migration 017's fenced stale recovery can settle the durable job.
+
 Author checkpoint 07/11/2026: The uncommitted Python integration now calls
 PR #52's migration 017 finish-with-error and fenced stale scanner RPCs,
 exposes the durable error on snapshot/restarted terminal SSE, and schedules
@@ -91,6 +99,63 @@ is_current_owner=...)`, same prefix:
 
 Factories use the existing Auth helpers. Sync ownership SDK calls run in the
 threadpool so these new routes do not block other active streams.
+
+### Q01 — Confirmed source solution
+
+Issue #64 / C5 uses migration 022 for the pre-claim guard. The SQL error uses
+SQLSTATE `22023`, `MESSAGE = ERR_SOURCE_SOLUTION_REQUIRED` and JSON `DETAIL`
+with `question_numbers`. The Python adapter maps that error to the HTTP
+payload below. [Owner decision](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/67#issuecomment-6877849395) · [SQL agreement](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/67#issuecomment-6880863821)
+
+- Keep `confirm-source` on its existing contract. In both AI and Original Clone,
+  `/generate` checks all confirmed sources. `/retry-generation` checks the
+  sources of missing slots in the frozen snapshot and preserves valid committed
+  slots, including committed fallback results.
+- A missing, null, empty, or whitespace-only `confirmed_input.solution` returns
+  HTTP 422 before the claim is written, the session enters `generating`, or
+  the worker or Gemini is dispatched. `question_numbers` contains the affected
+  source question numbers in ascending order, with each number listed once.
+
+```json
+{
+  "detail": {
+    "code": "ERR_SOURCE_SOLUTION_REQUIRED",
+    "message": "Confirmed sources require solutions before generation. Create a new session with complete source data.",
+    "question_numbers": [1, 3]
+  }
+}
+```
+
+- Migration 022 checks the same canonical or frozen snapshot that the claim
+  uses while holding the session lock. On retry it counts valid commits from
+  `_generation_committed` by source and checks sources with missing versions.
+  The guard runs before inserting a snapshot or changing the session status or
+  active job token.
+- Missing required source data detected after the job starts is fatal and
+  settles to `failed`, preserving committed slots. Nonfatal incomplete jobs
+  keep the existing `partial_generated` outcome when at least one slot was
+  committed and `failed` otherwise. Snapshot and SSE reflect the durable
+  status and progress. An uncertain settlement must surface as an error.
+- When a frozen snapshot is blocked for missing solutions, direct the user
+  to create a new session with complete source data. Adding a solution after
+  confirmation is deferred outside W4.
+
+### C5 — Confirmed-source fallback
+
+- An AI slot can fall back after four qualifying attempts in one execution of
+  that slot. The session quota remains durable across retries. Early exits such
+  as quota exhaustion, deadline, cancellation, or a non-retryable provider
+  error preserve their existing behavior.
+- Python sends `CONFIRMED_SOURCE_FALLBACK` to the service-role writer from
+  migration 021. SQL verifies the frozen source and records a pending-review
+  result marked `not_validated`. The runner sends a
+  `GENERATION_RETRIES_EXHAUSTED` warning and `question_done` after confirming
+  the write. When the write reply is uncertain, the adapter reads the current
+  slot back and checks its verified receipt without replaying the write.
+- On retry, a verified current fallback in `completed` is skipped, including
+  after a teacher accepts it. `fallback_receipts` can also contain historical
+  rows after regeneration. A historical receipt alone does not count as a
+  completed slot. The AI cache contains only successful AI candidates.
 
 ## Event stream and reconnect
 
