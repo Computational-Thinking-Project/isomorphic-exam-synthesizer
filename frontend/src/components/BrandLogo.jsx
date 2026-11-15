@@ -1,45 +1,38 @@
 import { useState } from 'react';
-import { Sparkles } from 'lucide-react';
 
 export default function BrandLogo({
-  variant = 'default',
   size = 'md',
   className = '',
 }) {
   const [hasError, setHasError] = useState(false);
 
-  const imgHeightClass =
+  // Exact aspect ratio and coordinate clipping from docs/ui-walkthrough/PREVIEW.html
+  // Original image: 666 x 375. Content bounding box: 594 x 128 at (40, 128).
+  const sizeClasses =
     size === 'sm'
-      ? 'h-7 sm:h-8'
+      ? 'w-[180px] sm:w-[210px]'
       : size === 'lg'
-        ? 'h-11 sm:h-12'
-        : 'h-8 sm:h-9';
+        ? 'w-[260px] sm:w-[320px] md:w-[360px]'
+        : 'w-[210px] sm:w-[250px] md:w-[270px]';
 
   return (
-    <div className={`inline-flex items-center gap-3 select-none ${className}`}>
+    <div
+      className={`relative inline-block select-none overflow-hidden ${sizeClasses} aspect-[594/128] shrink-0 ${className}`}
+      role="img"
+      aria-label="EXAM MIRROR"
+    >
       {!hasError ? (
         <img
           src="/brand-logo.png"
-          alt="EXAM MIRROR Logo"
+          alt="EXAM MIRROR"
           onError={() => setHasError(true)}
-          className={`${imgHeightClass} w-auto object-contain shrink-0`}
+          className="absolute w-[calc(100%*666/594)] max-w-none left-[calc(-100%*40/594)] top-[-100%] h-auto pointer-events-none select-none"
           draggable={false}
         />
       ) : (
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-support-bg text-highlight border border-support-line font-black">
-          <Sparkles className="h-5 w-5" aria-hidden="true" />
+        <span className="flex h-full w-full items-center font-black text-xl tracking-tight text-strong uppercase">
+          Exam Mirror
         </span>
-      )}
-
-      {variant !== 'compact' && (
-        <div className="flex flex-col justify-center leading-none">
-          <span className="text-sm font-extrabold tracking-tight text-strong uppercase">
-            Exam Mirror
-          </span>
-          <span className="text-[10px] font-medium text-muted tracking-wider mt-0.5">
-            Isomorphic Exam Synthesizer
-          </span>
-        </div>
       )}
     </div>
   );

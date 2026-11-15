@@ -149,8 +149,8 @@ function DashboardContent({ accountKey }) {
   return (
     <div className="min-h-screen bg-canvas text-ink">
       <aside className="sticky top-0 z-30 border-b border-line bg-surface/90 backdrop-blur-sm shadow-soft">
-        <div className="mx-auto max-w-6xl px-4 py-2.5 sm:py-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="mx-auto max-w-[1160px] px-4 sm:px-8 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <BrandLogo size="md" />
 
             <div className="flex items-center gap-3 sm:gap-4">

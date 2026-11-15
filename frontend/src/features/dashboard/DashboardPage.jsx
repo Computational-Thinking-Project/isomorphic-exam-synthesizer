@@ -94,40 +94,57 @@ export default function DashboardPage({
   const activeFilterCount = (searchQuery.trim() ? 1 : 0) + (statusFilter !== 'all' ? 1 : 0);
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-8 sm:py-10">
-      {/* Page Header / Hero Banner */}
-      <header className="relative mb-8 overflow-hidden rounded-2xl border border-line bg-gradient-to-r from-surface via-surface to-support-bg/50 p-6 sm:p-8 shadow-soft">
-        <div className="relative z-10 flex flex-wrap items-center justify-between gap-6">
-          <div className="max-w-2xl">
+    <main className="mx-auto max-w-[1160px] px-4 sm:px-8 py-6 sm:py-8">
+      {/* Page Heading Banner matching docs/ui-walkthrough/PREVIEW.html */}
+      <section
+        aria-labelledby="library-heading"
+        className="relative mb-6 overflow-hidden rounded-2xl border border-line bg-surface p-6 sm:p-8 shadow-paper"
+      >
+        <div className="relative z-10 flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+          <div className="max-w-xl">
             <div className="inline-flex items-center gap-2 rounded-full border border-support-line bg-support-bg px-3 py-1 text-xs font-semibold text-highlight mb-3">
               <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Exam Mirror · Paper Canvas Workspace</span>
+              <span>Exam Mirror · Thư viện đề thi</span>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-strong">
-              Thư viện đề thi
+
+            <h1
+              id="library-heading"
+              className="text-3xl sm:text-4xl font-extrabold tracking-tight text-strong"
+            >
+              Thư viện đề
             </h1>
+
             <p className="mt-2 text-sm text-muted leading-relaxed">
-              Quản lý các phiên làm việc, tiếp tục biên soạn hoặc xem lại các đề đã chốt.
-              Mỗi bộ đề hỗ trợ sinh biến thể câu hỏi đẳng cấu với thẩm định đại số tự động.
+              Tiếp tục biên soạn hoặc xem lại các đề đã chốt. Mỗi bộ đề hỗ trợ sinh biến thể câu hỏi đẳng cấu với thẩm định đại số tự động bằng SymPy.
             </p>
+
+            {items && items.length > 0 && (
+              <button
+                type="button"
+                disabled={!onCreate}
+                onClick={onCreate}
+                className="mt-5 inline-flex items-center gap-2 rounded-xl bg-highlight px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#253b57] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-highlight focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                <span>Tạo bộ đề mới</span>
+              </button>
+            )}
           </div>
 
-          {items && items.length > 0 && (
-            <button
-              type="button"
-              disabled={!onCreate}
-              onClick={onCreate}
-              className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-highlight px-5 py-3 text-sm font-semibold text-white shadow-md transition-all hover:bg-[#253b57] hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-highlight focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              <Plus className="h-4 w-4" aria-hidden="true" />
-              <span>Tạo bộ đề mới</span>
-            </button>
-          )}
+          {/* Decorative artwork from PREVIEW.html */}
+          <div className="hidden md:flex shrink-0 items-center justify-center">
+            <img
+              src="/library-artwork.webp"
+              alt=""
+              className="w-[260px] lg:w-[300px] h-auto object-contain select-none pointer-events-none drop-shadow-sm"
+              draggable={false}
+            />
+          </div>
         </div>
-      </header>
+      </section>
 
       {/* Toolbar: Search, Status Filter & Count */}
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-1 flex-wrap items-center gap-3 min-w-[280px]">
           {/* Search Field */}
           <div className="relative flex-1 min-w-[200px] max-w-md">
@@ -187,40 +204,18 @@ export default function DashboardPage({
         )}
       </div>
 
-      {/* Main Section */}
+      {/* Main Library Panel matching PREVIEW.html */}
       <section
         aria-label="Danh sách phiên đề"
         aria-busy={status === 'loading'}
+        className="rounded-xl border border-line bg-surface overflow-hidden shadow-soft"
       >
-        {/* Loading State: Skeleton Cards */}
+        {/* Loading State */}
         {status === 'loading' && (
-          <div>
-            <p role="status" className="sr-only">
+          <div className="p-8 sm:p-12 text-center">
+            <p role="status" className="text-sm text-muted animate-pulse">
               Đang tải danh sách đề…
             </p>
-            <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-              {[1, 2, 3, 4, 5, 6].map((idx) => (
-                <div
-                  key={idx}
-                  className="flex h-52 animate-pulse flex-col justify-between rounded-2xl border border-line bg-surface p-6 shadow-soft"
-                >
-                  <div>
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="h-5 w-3/5 rounded-lg bg-support-bg" />
-                      <div className="h-5 w-1/4 rounded-full bg-support-bg" />
-                    </div>
-                    <div className="mt-4 flex gap-3">
-                      <div className="h-4 w-20 rounded bg-rail" />
-                      <div className="h-4 w-20 rounded bg-rail" />
-                    </div>
-                  </div>
-                  <div className="flex gap-2 pt-4 border-t border-line">
-                    <div className="h-9 flex-1 rounded-xl bg-support-bg" />
-                    <div className="h-9 w-24 rounded-xl bg-rail" />
-                  </div>
-                </div>
-              ))}
-            </div>
           </div>
         )}
 
@@ -228,7 +223,7 @@ export default function DashboardPage({
         {status === 'error' && (
           <div
             role="alert"
-            className="rounded-2xl border border-danger-border bg-danger-soft p-8 text-center shadow-soft"
+            className="p-8 text-center bg-danger-soft text-danger"
           >
             <AlertCircle className="mx-auto h-10 w-10 text-danger" aria-hidden="true" />
             <h2 className="mt-3 text-lg font-bold text-danger">Không tải được danh sách đề</h2>
@@ -248,7 +243,7 @@ export default function DashboardPage({
         {status === 'success' && items.length === 0 && (
           <div
             role="status"
-            className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-line bg-surface p-12 text-center shadow-soft"
+            className="flex flex-col items-center justify-center p-12 sm:p-16 text-center"
           >
             <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-support-bg text-highlight border border-support-line">
               <FilePlus2 className="h-7 w-7" aria-hidden="true" />
@@ -256,13 +251,13 @@ export default function DashboardPage({
             <h2 className="mt-4 text-lg font-bold text-strong">
               Bạn chưa có phiên đề thi nào
             </h2>
-            <p className="mt-1 max-w-sm text-sm text-muted">
+            <p className="mt-1 max-w-sm text-sm text-muted leading-relaxed">
               Bắt đầu tạo bộ đề đầu tiên để nạp nguồn, bóc tách cấu trúc và sinh các mã đề trắc nghiệm đẳng cấu.
             </p>
             <button
               type="button"
               onClick={onCreate}
-              className="mt-6 inline-flex items-center gap-2 rounded-xl bg-highlight px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#253b57] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-highlight"
+              className="mt-6 inline-flex items-center gap-2 rounded-xl bg-highlight px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#253b57] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-highlight"
             >
               <Plus className="h-4 w-4" aria-hidden="true" />
               Tạo bộ đề ngay
@@ -274,7 +269,7 @@ export default function DashboardPage({
         {status === 'success' && items.length > 0 && filteredItems.length === 0 && (
           <div
             role="status"
-            className="flex flex-col items-center justify-center rounded-2xl border border-line bg-surface p-10 text-center shadow-soft"
+            className="flex flex-col items-center justify-center p-10 text-center"
           >
             <Search className="h-8 w-8 text-muted mb-2" aria-hidden="true" />
             <h3 className="text-base font-bold text-strong">Không tìm thấy bộ đề phù hợp</h3>
@@ -291,20 +286,33 @@ export default function DashboardPage({
           </div>
         )}
 
-        {/* Session Card Grid */}
+        {/* Table Header Row (Hidden on mobile, visible on desktop matching PREVIEW.html) */}
         {status === 'success' && filteredItems.length > 0 && (
-          <ul className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
-            {filteredItems.map((session) => (
-              <li key={session.id} className="min-w-0">
-                <DashboardSessionCard
-                  session={session}
-                  onOpen={onOpen}
-                  onClone={onClone}
-                  openingSessionId={openingSessionId}
-                />
-              </li>
-            ))}
-          </ul>
+          <div>
+            <div
+              className="hidden md:grid md:grid-cols-[minmax(240px,1fr)_140px_110px_180px] gap-4 px-6 py-3 bg-support-bg text-support-text text-xs font-semibold uppercase tracking-wider border-b border-line"
+              aria-hidden="true"
+            >
+              <span>Tên bộ đề</span>
+              <span>Trạng thái</span>
+              <span>Ngày tạo</span>
+              <span className="text-right">Thao tác</span>
+            </div>
+
+            {/* Session List Rows */}
+            <ul className="divide-y divide-line" aria-label="Danh sách bộ đề">
+              {filteredItems.map((session) => (
+                <li key={session.id}>
+                  <DashboardSessionCard
+                    session={session}
+                    onOpen={onOpen}
+                    onClone={onClone}
+                    openingSessionId={openingSessionId}
+                  />
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
       </section>
     </main>
