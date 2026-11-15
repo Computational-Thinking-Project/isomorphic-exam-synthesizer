@@ -66,12 +66,13 @@ Hiện frontend http://localhost:3000, backend http://localhost:8000; thay theo 
 ## 3. DB, Auth, deploy và recovery
 
 1. Nhận migration manifest/compatible SHA từ Duy, proof fresh+upgrade, test project và người có quyền chạy. Không chạy tất cả SQL theo tên file trên shared DB khi chưa biết ledger.
-2. Người được cấp quyền áp manifest trên isolated DB, ghi IDs/checksums/kết quả, xác minh config/claim/persist/resume/finish theo backend tests. Không publish raw DB dump.
-3. Cấu hình cùng Supabase project cho backend/browser; kiểm login Google thật, callback và browser refresh trên URL đã duyệt. Duy quản lý cấp/revoke ADMIN_EMAILS; ghi thời điểm restart/redeploy cần để áp config mới.
-4. Build/deploy đúng SHA, ghi images/config fingerprint không lộ secrets, DB ledger, model/prompt version. Khi env đổi, recreate backend/rebuild browser theo thay đổi; restart đơn thuần không áp Compose env mới.
-5. Smoke trước và sau restart. Job cũ phải được fenced, target đã commit không sinh lại, quota không reset. Baseline đã được Duy chốt08/11, contract017 tại PR52; PR30@b62e007 đã nối, F02 reviewer verified; chưa merge/deployed; không nhận PASS từ health200.
-6. Rollback app về candidate trước chỉ sau kiểm tương thích schema. DB rollback/restore hoặc forward-fix do Duy/Hùng có quyền thực hiện; không dùng down -v, prune hay restore phá dữ liệu để che lỗi.
-7. Kết thúc test riêng: `docker compose down` đúng project; không xóa volumes/bucket hay môi trường dùng chung.
+2. Với sự cố Issue #75 (Stage 1 HTTP 503 / missing `get_session_source_preview`), quy trình áp dụng tuần tự bao gồm `003b_reconcile_baseline.sql` rồi đến `004`–`022` (bỏ qua `010` rỗng). Không chạy lại toàn bộ `schema.sql` trực tiếp trên DB đã có dữ liệu.
+3. Người được cấp quyền áp manifest trên isolated DB, ghi IDs/checksums/kết quả, xác minh config/claim/persist/resume/finish theo backend tests. Không publish raw DB dump.
+4. Cấu hình cùng Supabase project cho backend/browser; kiểm login Google thật, callback và browser refresh trên URL đã duyệt. Duy quản lý cấp/revoke ADMIN_EMAILS; ghi thời điểm restart/redeploy cần để áp config mới.
+5. Build/deploy đúng SHA, ghi images/config fingerprint không lộ secrets, DB ledger, model/prompt version. Khi env đổi, recreate backend/rebuild browser theo thay đổi; restart đơn thuần không áp Compose env mới.
+6. Smoke trước và sau restart. Sau khi deploy DB, bắt buộc chạy `NOTIFY pgrst, 'reload schema';` trên Supabase để PostgREST cập nhật cache RPC. Job cũ phải được fenced, target đã commit không sinh lại, quota không reset. Baseline đã được Duy chốt08/11, contract017 tại PR52; PR30@b62e007 đã nối, F02 reviewer verified; chưa merge/deployed; không nhận PASS từ health200.
+7. Rollback app về candidate trước chỉ sau kiểm tương thích schema. DB rollback/restore hoặc forward-fix do Duy/Hùng có quyền thực hiện; không dùng down -v, prune hay restore phá dữ liệu để che lỗi.
+8. Kết thúc test riêng: `docker compose down` đúng project; không xóa volumes/bucket hay môi trường dùng chung.
 
 ## 4. Checklist smoke và owner nhận lỗi
 
