@@ -131,3 +131,16 @@ Chuẩn bị kế hoạch chi tiết, nhánh tính năng và Draft PR để ti�
 - **F03 (P2 — Hủy request khi modal unmount):** Cập nhật cleanup effect trong `CreateSessionModal.jsx` để gọi `controller.cancel()` khi unmount hoặc đóng modal lúc đang pending, hủy bỏ AbortController signal và ngăn ngừa callback `onCreated` điều hướng muộn. Đã kiểm thử qua `CreateSessionModal.test.js`.
 - **F04 (P3 — Thiếu token Tailwind):** Đã bổ sung các token `ink`, `strong`, `muted` vào `tailwind.config.js` đồng bộ với biến CSS trong `index.css`. Production build thành công và CSS generated đầy đủ.
 - **Lưu ý Stage 2/3:** Giữ nguyên wrapper container tối (`bg-[#0f172a] text-[#f8fafc] dark`) để bảo toàn tính tương thích hiển thị cho đến khi có task redesign Stage 2/3 riêng biệt.
+
+---
+
+## 7. Ghi Chú Phản Hồi Trải Nghiệm & Điểm Chưa Hợp Lý Cần Điều Chỉnh (UX Feedback Notes)
+
+Qua quá trình rà soát trực quan trên giao diện thực tế, ghi nhận các điểm chưa hợp lý cần tinh chỉnh trong các lượt cập nhật tiếp theo:
+
+1. **Chưa có ảnh logo:** Khu vực thương hiệu và header trang hiện thiếu hình ảnh logo chính thức của ứng dụng (đang hiển thị icon thay thế hoặc chỉ có text). Cần bổ sung asset ảnh logo đồng bộ với nguyên mẫu thiết kế.
+2. **Trùng lặp vị trí nút tạo bộ đề ("Tạo bộ đề mới" và "Tạo bộ đề ngay"):** 
+   - Hiện tại có 2 nút cùng kích hoạt chức năng mở form tạo phiên ở 2 vị trí khác nhau trên Dashboard (nút ở Header trang và nút ở khung Empty State khi chưa có dữ liệu hoặc khu vực thao tác), gây cảm giác dư thừa và chưa phân cấp hành vi hợp lý. Cần tối ưu lại layout để chỉ giữ một vị trí CTA chính mạch lạc.
+3. **Lựa chọn môn học chưa hợp lý:**
+   - Ứng dụng hiện tại có trọng tâm nghiệp vụ là **Đề Toán** (sinh đề trắc nghiệm đẳng cấu kèm thẩm định đại số tự động SymPy).
+   - Form tạo phiên hiện đang để trường nhập môn học tự do và có gợi ý các môn khác (Vật lý, Hóa học, Sinh học, Tiếng Anh) là chưa đúng với định hướng sản phẩm chuyên sâu cho Toán học của hệ thống. Cần cố định/mặc định là môn **Toán** (hoặc ẩn trường chọn môn không cần thiết để đơn giản hóa luồng tạo phiên).
