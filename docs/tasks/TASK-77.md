@@ -134,13 +134,21 @@ Chuẩn bị kế hoạch chi tiết, nhánh tính năng và Draft PR để ti�
 
 ---
 
-## 7. Ghi Chú Phản Hồi Trải Nghiệm & Điểm Chưa Hợp Lý Cần Điều Chỉnh (UX Feedback Notes)
+## 7. Xử Lý Phản Hồi Trải Nghiệm & Điểm Chưa Hợp Lý (UX Feedback & Aesthetic Polish)
 
-Qua quá trình rà soát trực quan trên giao diện thực tế, ghi nhận các điểm chưa hợp lý cần tinh chỉnh trong các lượt cập nhật tiếp theo:
+Đã hoàn thành xử lý triệt để 3 điểm phản hồi UX và nâng cấp thẩm mỹ Paper Canvas cao cấp theo kế hoạch đã phê duyệt tại commit `e87c171`:
 
-1. **Chưa có ảnh logo:** Khu vực thương hiệu và header trang hiện thiếu hình ảnh logo chính thức của ứng dụng (đang hiển thị icon thay thế hoặc chỉ có text). Cần bổ sung asset ảnh logo đồng bộ với nguyên mẫu thiết kế.
-2. **Trùng lặp vị trí nút tạo bộ đề ("Tạo bộ đề mới" và "Tạo bộ đề ngay"):** 
-   - Hiện tại có 2 nút cùng kích hoạt chức năng mở form tạo phiên ở 2 vị trí khác nhau trên Dashboard (nút ở Header trang và nút ở khung Empty State khi chưa có dữ liệu hoặc khu vực thao tác), gây cảm giác dư thừa và chưa phân cấp hành vi hợp lý. Cần tối ưu lại layout để chỉ giữ một vị trí CTA chính mạch lạc.
-3. **Lựa chọn môn học chưa hợp lý:**
-   - Ứng dụng hiện tại có trọng tâm nghiệp vụ là **Đề Toán** (sinh đề trắc nghiệm đẳng cấu kèm thẩm định đại số tự động SymPy).
-   - Form tạo phiên hiện đang để trường nhập môn học tự do và có gợi ý các môn khác (Vật lý, Hóa học, Sinh học, Tiếng Anh) là chưa đúng với định hướng sản phẩm chuyên sâu cho Toán học của hệ thống. Cần cố định/mặc định là môn **Toán** (hoặc ẩn trường chọn môn không cần thiết để đơn giản hóa luồng tạo phiên).
+1. **Bổ sung ảnh logo chính thức EXAM MIRROR:**
+   - Trích xuất và tối ưu asset đồ họa gốc `frontend/public/brand-logo.png` từ bản thiết kế mẫu `PREVIEW.html`.
+   - Tạo component chuẩn hóa `frontend/src/components/BrandLogo.jsx` với khả năng tự xử lý fallback và responsive.
+   - Tích hợp vào thanh điều hướng Header (`DashboardRoute.jsx`), trang Đăng nhập (`LoginPage.jsx`) và đồng bộ thương hiệu.
+2. **Khắc phục trùng lặp 2 nút Tạo bộ đề:**
+   - Trong `DashboardPage.jsx`, tự động ẩn nút ở Header khi danh sách đề thi đang trống (`items.length === 0`), dồn toàn bộ sự chú ý của người dùng vào thẻ Empty State trung tâm với nút *"Tạo bộ đề ngay"* nổi bật.
+   - Khi đã có đề thi (`items.length > 0`), nút *"Tạo bộ đề mới"* hiển thị cố định ở góc trên bên phải Header.
+3. **Chuẩn hóa trường môn học trong CreateSessionModal:**
+   - Thay thế ô nhập text tự do và các chip môn Vật lý, Hóa học, Sinh học, Tiếng Anh bằng huy hiệu cố định **“Môn học: Toán học”** (Read-only badge) kèm biểu tượng toán học ∑ và ghi chú *"Thẩm định đại số SymPy"*.
+   - Giữ nguyên payload API `subject: 'Toán'` để tương thích 100% với backend và toàn bộ test suite.
+4. **Kết quả kiểm định:**
+   - `npm --prefix frontend test`: **427/427 PASS** (0 fail).
+   - `npm --prefix frontend run lint`: **0 errors, 0 warnings**.
+   - `npm --prefix frontend run build`: **Vite build production thành công** (~9.3s).
