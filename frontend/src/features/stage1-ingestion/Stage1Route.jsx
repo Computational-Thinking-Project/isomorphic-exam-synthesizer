@@ -99,13 +99,14 @@ function SessionEntry({ sessionId, accountKey }) {
     setMetadata((previous) => ({ ...previous, [field]: value }));
 
   return (
-    <main
-      className={
-        isNew
-          ? 'min-h-screen bg-canvas flex flex-col items-center justify-center px-4 py-12'
-          : 'mx-auto flex h-dvh min-h-[42rem] max-w-7xl flex-col overflow-hidden px-4 py-4 sm:px-6'
-      }
-    >
+    <div className="min-h-screen bg-canvas text-ink flex flex-col">
+      <main
+        className={
+          isNew
+            ? 'min-h-screen flex flex-col items-center justify-center px-4 py-12'
+            : 'mx-auto flex h-dvh min-h-[42rem] max-w-7xl flex-1 flex-col overflow-hidden px-4 py-4 sm:px-6 w-full'
+        }
+      >
       {isNew ? (
         <div className="w-full max-w-xl">
           <Link
@@ -365,5 +366,6 @@ function SessionEntry({ sessionId, accountKey }) {
         </div>
       )}
     </main>
-  );
+  </div>
+);
 }

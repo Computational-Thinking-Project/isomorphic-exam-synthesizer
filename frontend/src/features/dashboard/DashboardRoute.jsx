@@ -139,7 +139,7 @@ function DashboardContent({ accountKey }) {
   }
 
   return (
-    <>
+    <div className="min-h-screen bg-canvas text-ink">
       <aside className="sticky top-0 z-30 border-b border-line bg-surface/90 backdrop-blur-sm shadow-soft">
         <div className="mx-auto max-w-6xl px-4 py-3 sm:py-3.5">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -275,13 +275,13 @@ function DashboardContent({ accountKey }) {
         <button
           type="button"
           disabled={!isPageReady || page >= totalPages}
-          onClick={() => { opener.cancel(); setPage((value) => value - 1); }}
+          onClick={() => { opener.cancel(); setPage((value) => value + 1); }}
           className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-surface px-4 py-2 text-xs font-semibold text-strong shadow-soft transition-all hover:bg-rail disabled:cursor-not-allowed disabled:opacity-40"
         >
           <span>Sau</span>
           <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
       </nav>
-    </>
+    </div>
   );
 }

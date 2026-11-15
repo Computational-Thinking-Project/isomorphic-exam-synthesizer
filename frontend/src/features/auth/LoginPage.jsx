@@ -86,7 +86,7 @@ export default function LoginPage({ profileState }) {
     status === 'reauth_required';
 
   return (
-    <main className="min-h-screen bg-canvas flex flex-col items-center justify-center px-4 py-12">
+    <main className="min-h-screen bg-canvas text-ink flex flex-col items-center justify-center px-4 py-12">
       <div className="w-full max-w-md">
         {/* Paper Canvas Card */}
         <section

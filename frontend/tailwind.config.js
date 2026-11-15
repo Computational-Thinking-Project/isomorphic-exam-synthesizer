@@ -11,6 +11,9 @@ export default {
         surface: '#ffffff',
         rail: '#f4f4f5',
         line: '#e4e4e7',
+        ink: '#3f3f46',
+        strong: '#27272a',
+        muted: '#6b6b74',
         'control-border': '#85858f',
         highlight: '#304c70',
         accent: {
