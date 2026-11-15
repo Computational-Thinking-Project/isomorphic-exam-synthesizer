@@ -1,3 +1,8 @@
+## OPS11/21 smoke tooling — 15/11/2026
+
+- Đạt bổ sung anonymous session/metrics probes trực tiếp và qua proxy vào `scripts/w4_ops.py smoke`: HTTP401 phải kèm Bearer challenge; không lưu response content/headers hoặc gửi credentials. JSON checks tăng4→8; schema_version vẫn1, cấu trúc từng check và acceptance không đổi. Consumer không nên cố định độ dài checks.
+- Runbook và bằng chứng local devc2ee9fd cập nhật cùng PR. Không đổi API/schema/Docker/auth policy, không kích hoạt export hoặc áp migration. Tooling chỉ chứng nhận các observations local, không tự nâng G0/G1/G2.
+
 ## OPS11/21 checkpoint — 13/11/2026
 
 - Đạt tiếp nối PR51 đã merge bằng nhánh OPS mới từ dev294c69a. Cập nhật task/input-handoff, runbook và migration checkpoint017/018 merged; 019 đã merge qua PR61 tại devb47e4fa; giữ historical inventory73583d7, không tạo applied ledger giả.

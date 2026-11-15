@@ -23,6 +23,12 @@ Owner: Trương Thành Đạt. Author mode, workflow v0.1 proposed. Đây là k�
 | Typst trong backend | 0.11.1 (786457e3) |
 | Bộ kiểm scripts/test_w4_ops.py | 6 passed, 6 subtests passed |
 
+### Bổ sung script smoke và kiểm restart local
+
+Đã đưa4 phép kiểm anonymous auth vào `scripts/w4_ops.py smoke` để dùng lại, nâng tổng số lên8 checks. Bộ kiểm sau thay đổi:9 passed,14 subtests passed; Ruff PASS. Chạy script mới trên đúng runtime Docker nêu trên:8/8PASS. Evidence local: `smoke-auth-automated.json` và `smoke-after-restart.json` trong cùng thư mục ignored.
+
+Đã restart riêng backend test rồi chờ cả hai containers healthy và chạy lại8 checks. Đây chỉ là phục hồi process/health/proxy không có job/DB thật; không chứng minh durable recovery hoặc giữ quota/committed slots. Stack test được dừng đúng project sau kiểm, ứng dụng Docker đang có giữ nguyên.
+
 Evidence máy Đạt (ignored, chưa là artifact nhóm đã nhận): `.artifacts/w4-ops-c2ee9fd/smoke.json` và `anonymous.json`. Smoke script ghi checkout tài liệu riêng với deployed SHA được operator truyền vào; không đồng nhất hai SHA này.
 
 Build Vite có cảnh báo JS chunk lớn hơn500kB; build vẫn thành công. Chưa có phép đo hiệu năng browser nên không nhận là lỗi chức năng. Không chạy lại full product suite trong lượt OPS này.

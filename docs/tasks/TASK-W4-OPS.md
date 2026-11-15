@@ -4,6 +4,8 @@
 
 Đã build và kiểm Docker local từ `dev@c2ee9fd`: hai containers healthy,4 smoke checks và4 anonymous auth checks PASS, Typst0.11.1; không dùng cloud credentials. Xem [kết quả và giới hạn](../w4-ops-local-c2ee9fd.md). Runtime này chưa chứa PR63/67; các checkpoint cũ bên dưới giữ làm lịch sử. Integrated smoke/G0 live/G1/G2 vẫn chưa được nghiệm thu.
 
+Đã bổ sung4 kiểm auth vào smoke dùng chung (tổng8), kiểm trên Docker trước/sau restart backend không có job;9 tests/14 subtests và Ruff PASS. Runbook có lệnh xuất JSON evidence; không cần chạy tay các auth probes nữa. Đây là phần tooling OPS hoàn thiện được độc lập với input cloud.
+
 ## Checkpoint hiện hành — 13/11/2026 (UTC+7)
 
 - Author OPS11/21: Đạt; workflow v0.1 proposed. Nhánh tiếp nối `docs/w4-ops-integration-checkpoint`, base ban đầu `dev@294c69a1a085ac6487d65b633e06a2f1112e2046`; đã sync devb47e4fa, gồm #54/018 và #60; đây là sync source/docs, không nhận đã build runtime mới, giữ nguyên SHA294c69a của runtime đã kiểm; không mở lại PR51 đã merge. Các checkpoint có ngày cũ phía dưới là lịch sử.
