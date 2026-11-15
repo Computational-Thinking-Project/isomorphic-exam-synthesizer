@@ -1,3 +1,8 @@
+## OPS11/21 smoke tooling — 15/11/2026
+
+- Đạt bổ sung anonymous session/metrics probes trực tiếp và qua proxy vào `scripts/w4_ops.py smoke`: HTTP401 phải kèm Bearer challenge; không lưu response content/headers hoặc gửi credentials. JSON checks tăng4→8; schema_version vẫn1, cấu trúc từng check và acceptance không đổi. Consumer không nên cố định độ dài checks.
+- Runbook và bằng chứng local devc2ee9fd cập nhật cùng PR. Không đổi API/schema/Docker/auth policy, không kích hoạt export hoặc áp migration. Tooling chỉ chứng nhận các observations local, không tự nâng G0/G1/G2.
+
 ## Issue #64 — C5 Python consumer cho migration 021 (Draft #67)
 
 - AI job ghi `CONFIRMED_SOURCE_FALLBACK` sau bốn lượt đủ điều kiện trong một lần chạy slot. Writer đối chiếu provenance và ghi `pending_review`. Worker phát `GENERATION_RETRIES_EXHAUSTED` và `question_done` sau khi xác nhận ghi.

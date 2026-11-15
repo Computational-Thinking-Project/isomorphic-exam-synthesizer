@@ -75,6 +75,16 @@ Hiện frontend http://localhost:3000, backend http://localhost:8000; thay theo 
 
 ## 4. Checklist smoke và owner nhận lỗi
 
+### Kiểm local tự động, không dùng token
+
+Sau khi stack sẵn sàng, chạy từ root checkout:
+
+```powershell
+python scripts/w4_ops.py smoke --backend http://localhost:8000 --frontend http://localhost:3000 --deployed-sha <FULL_RUNTIME_SHA> --output <NEW_REPORT_PATH.json>
+```
+
+Thay placeholders bằng SHA runtime thực và file báo cáo chưa tồn tại; đổi ports nếu dùng stack riêng. Script kiểm8 ca: health, frontend HTML, SPA/login, OpenAPI qua proxy, và anonymous session/metrics qua cả backend lẫn proxy. Bốn ca auth chỉ PASS khi HTTP401 có Bearer challenge; HTTP200/403 hoặc redirect đều FAIL. Không gửi token, không lưu body/headers hay theo redirect. `integrated_acceptance` vẫn `NOT_VERIFIED`; kiểm này không thay đăng nhập/ownership/job restart/Golden/Storage.
+
 | Kiểm | Kỳ vọng / bằng chứng cần ghi | Owner lỗi |
 |---|---|---|
 | Health/container | backend /health200, frontend HTTP200, Typst version; chưa chứng minh cloud | Đạt/module owner |
