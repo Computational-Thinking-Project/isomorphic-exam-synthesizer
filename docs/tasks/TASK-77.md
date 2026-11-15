@@ -18,7 +18,7 @@ Chuẩn bị kế hoạch chi tiết, nhánh tính năng và Draft PR để ti�
 3. **Khởi tạo phiên đề mới (Session Creation)**: `/session/new/stage1` & Modal tạo nhanh trên Dashboard
 4. **Giai đoạn 1: Tiếp nhận và xác nhận nguồn đề (Stage 1 / Source Ingestion & Review)**: `/session/:sessionId/stage1`
 
-Định hướng thiết kế: Chuyển đổi sang phong cách **Paper Canvas (Light Theme)** thanh lịch, chuyên nghiệp chuẩn theo nguyên mẫu `docs/ui-walkthrough/PREVIEW.html`.
+Định hướng thiết kế chính thức: Chuyển đổi sang phong cách **Paper Canvas (Light Theme)** thanh lịch, chuyên nghiệp chuẩn theo nguyên mẫu `docs/ui-walkthrough/PREVIEW.html`.
 
 ### 1.2. Tiêu chí đạt (Acceptance Criteria)
 - Giao diện đồng bộ theo bảng màu Paper Canvas của `PREVIEW.html`: Nền Canvas `#fafafa`, thẻ Surface `#ffffff`, viền Line `#e4e4e7`, màu thương hiệu Navy `#304c70`, điểm nhấn Gold `#f5ce58`, hỗ trợ Support blue-gray `#edf1f7`.
@@ -26,9 +26,10 @@ Chuẩn bị kế hoạch chi tiết, nhánh tính năng và Draft PR để ti�
 - Giữ nguyên 100% logic nghiệp vụ, các route, controller state, Supabase auth/session, và API contracts.
 - Đảm bảo hiển thị đáp ứng (responsive) trên màn hình máy tính (desktop) và thiết bị di động (mobile):
   - Stage 1 hiển thị 2 cột song song trên Desktop.
-  - Stage 1 hiển thị Segmented Tab chuyển đổi giữa "Bộ nạp" và "Bản đọc" trên Mobile (< 768px).
+  - Stage 1 hiển thị Segmented Tab chuyển đổi giữa "Bộ nạp" và "Bản đọc" trên Mobile (< 768px). State được lưu tại parent để việc đổi tab không làm mất text đã nhập hoặc reset trạng thái upload/preview.
 - Phương án mang đáp án đúng (`correct_key`) trong Bản đọc Stage 1 được làm nổi bật với nền `#edf1f7`, viền `#304c70` và gắn chip nhãn **"Đáp án"** chuẩn `PREVIEW.html`.
-- Bọc container tối cục bộ cho Stage 2 và Stage 3 để các màn hình chưa thiết kế lại không bị vỡ bố cục hay xung đột màu.
+- Bọc container tối cục bộ cho Stage 2 và Stage 3 để các màn hình chưa thiết kế lại không bị vỡ bố cục hay xung đột màu (đây là giải pháp tương thích hiển thị - backward-compatibility wrapper, không phải redesign Stage 2/3).
+- Modal tạo phiên nhanh trên Dashboard đóng vai trò lối vào UX tiện ích, tái sử dụng trực tiếp logic của `createSessionEntryController` nhằm bảo toàn kiểm tra xác thực và xử lý lỗi đồng nhất với route `/session/new/stage1`.
 - Toàn bộ 420 frontend tests hiện có tiếp tục vượt qua (`npm --prefix frontend test`).
 - Linter (`npm --prefix frontend run lint`) và build production (`npm --prefix frontend run build`) vượt qua không lỗi.
 - Cung cấp hình ảnh so sánh Before / After khi triển khai thực tế.
@@ -36,7 +37,7 @@ Chuẩn bị kế hoạch chi tiết, nhánh tính năng và Draft PR để ti�
 ### 1.3. Ngoài phạm vi (Out of Scope)
 - Không chỉnh sửa backend, database migrations, hoặc Supabase RPC/schema.
 - Không thay đổi thuật toán sinh đề AI hoặc bộ thẩm định SymPy.
-- Không chỉnh sửa luồng Stage 2 (cấu hình biến thể), Stage 3 (duyệt biến thể/preview), hoặc Export (được quản lý theo các task riêng).
+- Không chỉnh sửa luồng nghiệp vụ Stage 2 (cấu hình biến thể), Stage 3 (duyệt biến thể/preview), hoặc Export (được quản lý theo các task riêng).
 - Không đưa thêm các UI framework nặng (như Ant Design, MUI, Chakra) ngoài Tailwind CSS hiện hành.
 
 ---
@@ -46,9 +47,10 @@ Chuẩn bị kế hoạch chi tiết, nhánh tính năng và Draft PR để ti�
 | Màn hình | Route URL | File mã nguồn chính | Thành phần / Vai trò |
 |---|---|---|---|
 | **1. Đăng nhập** | `/login` | `frontend/src/features/auth/LoginPage.jsx`<br>`frontend/src/features/auth/UserAvatar.jsx` | Thẻ đăng nhập Paper Card, thương hiệu Exam Mirror, nút Google OAuth chuẩn, thông báo trạng thái/lỗi. |
-| **2. Dashboard** | `/dashboard` | `frontend/src/features/dashboard/DashboardRoute.jsx`<br>`frontend/src/features/dashboard/DashboardPage.jsx`<br>`frontend/src/features/dashboard/DashboardSessionCard.jsx`<br>`frontend/src/features/dashboard/CloneSessionModal.jsx`<br>`frontend/src/features/dashboard/CreateSessionModal.jsx` [NEW] | Header người dùng, danh sách thẻ phiên đề, phân trang, hộp thoại tạo nhanh, hộp thoại nhân bản, trạng thái rỗng và skeleton loading. |
+| **2. Dashboard** | `/dashboard` | `frontend/src/features/dashboard/DashboardRoute.jsx`<br>`frontend/src/features/dashboard/DashboardPage.jsx`<br>`frontend/src/features/dashboard/DashboardSessionCard.jsx`<br>`frontend/src/features/dashboard/CloneSessionModal.jsx`<br>`frontend/src/features/dashboard/CreateSessionModal.jsx` [NEW] | Header người dùng, danh sách thẻ phiên đề, phân trang, hộp thoại tạo nhanh (tái sử dụng controller), hộp thoại nhân bản, trạng thái rỗng và skeleton loading. |
 | **3. Tạo phiên mới** | `/session/new/stage1` | `frontend/src/features/stage1-ingestion/Stage1Route.jsx`<br>`frontend/src/features/stage1-ingestion/sessionEntry.js` | Form Paper Card nhập Tên phiên, Môn học, Khối lớp; nút hành động submit; breadcrumb quay về Dashboard. |
 | **4. Stage 1 Nguồn đề** | `/session/:sessionId/stage1` | `frontend/src/features/stage1-ingestion/Stage1Route.jsx`<br>`frontend/src/features/stage1-ingestion/Stage1SourcePanel.jsx`<br>`frontend/src/features/stage1-ingestion/SourceQuestionPreview.jsx`<br>`frontend/src/features/stage1-ingestion/IncompleteContentDialog.jsx`<br>`frontend/src/components/MathRenderer.jsx` | Bộ chuyển đổi tab (nhập text / kéo thả file), thanh tiến độ upload, panel xem trước câu hỏi nguồn kèm KaTeX và chip "Đáp án", banner trạng thái Blueprint & nút xác nhận đề nguồn. |
+| **Cấu hình & Tương thích** | N/A | `frontend/tailwind.config.js`<br>`frontend/src/index.css`<br>`Stage2ConfigPage.jsx`<br>`Stage3ReviewPage.jsx` | Bổ sung design tokens Paper Canvas và bọc container tối cục bộ cho Stage 2/3 để chống xung đột màu. |
 
 ---
 
@@ -89,7 +91,7 @@ Chuẩn bị kế hoạch chi tiết, nhánh tính năng và Draft PR để ti�
    ```bash
    npm --prefix frontend test
    ```
-   *Yêu cầu: 420/420 tests pass 100%.*
+   *Yêu cầu: 420/420 tests pass 100% (bảo toàn regression baseline).*
 
 3. **Kiểm tra Đóng gói Production:**
    ```bash
@@ -97,6 +99,9 @@ Chuẩn bị kế hoạch chi tiết, nhánh tính năng và Draft PR để ti�
    ```
    *Yêu cầu: Vite build thành công không lỗi.*
 
-4. **Kiểm tra Visual & Responsive:**
-   - Desktop và Mobile cho toàn bộ 4 trang.
+4. **Kiểm tra Chức năng & Ca Cạnh biên (Edge cases):**
+   - Luồng thất bại khi tạo phiên (lỗi mạng, validation rỗng).
+   - Bảo toàn dữ liệu khi chuyển qua lại giữa các tab trên mobile ở Stage 1.
+   - Redirect sau khi đăng nhập Google OAuth.
+   - Trạng thái hiển thị ổn định của Stage 2 và Stage 3 qua container tối tương thích.
    - Chụp ảnh Before / After đối với từng màn hình để đính kèm vào PR khi chuyển sang trạng thái Ready for Review.
