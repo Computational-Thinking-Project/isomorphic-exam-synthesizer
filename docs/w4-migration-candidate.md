@@ -142,3 +142,29 @@ backup/restore proof and DB-owner GO. No shared Supabase changes were performed.
   `test_stage3_schema`, `test_source_confirmation_revision` from migration tests.
   The historical worker probe requires a separately pinned PR30 checkout; this
   skip is not worker/PostgREST/live acceptance evidence.
+
+## Issue #75 ACL follow-up — proposed 19-step candidate
+
+Refs #75. Base: dev@72507c84019021deb42f3668ab893edfdce248c0.
+Production remains **NO-GO**. This patch is preparation, not deployment approval.
+The preceding 18 SQL blobs/checksums remain unchanged. Append step 19:
+`023_users_client_acl_hardening.sql` — SHA256 Git blob: **cac6973da49c9b5f5ca611b9eab2e794cb8c595b47bec812e88d2881b57c33a3**.
+Before approval recompute from the final Git blob bytes and compare the bytes
+actually submitted to PostgreSQL (do not hash a CRLF working copy).
+
+Exact order: 003b → 004 → 005 → 006 → 007 → 008 → 009 → 011 → 012 →
+013 → 014 → 015 → 016 → 017 → 018 → 019 → 021 → 022 → 023.
+010 stays empty/omitted; 020 remains outside this candidate.
+Only 023 is explicitly replayable; do not replay the entire chain.
+
+023 removes client TRUNCATE/TRIGGER/REFERENCES and, on PostgreSQL >=17,
+MAINTAIN. Effective table/column privilege postconditions fail atomically if
+PUBLIC, column grants or inheritance retain forbidden access. Required
+authenticated SELECT must already exist. No service_role, default ACL,
+membership, Auth trigger or RLS policy is changed.
+
+The Production observations are supplied evidence, not a fresh target audit.
+Exact PostgreSQL version, current runtime SHA, complete ledger/catalog,
+representative-copy rehearsal, backup/isolated restore and DB-owner GO remain
+pending. Supabase branch main is not Git main. Do not promote Git branches
+or infer the runtime SHA from this checkout.
