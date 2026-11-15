@@ -11,6 +11,7 @@ export default function CreateSessionModal({
   isOpen,
   onClose,
   onCreated,
+  onCheckSessions,
   accountKey,
 }) {
   const [metadata, setMetadata] = useState({
@@ -55,7 +56,10 @@ export default function CreateSessionModal({
       const timer = setTimeout(() => {
         inputRef.current?.focus();
       }, 50);
-      return () => clearTimeout(timer);
+      return () => {
+        clearTimeout(timer);
+        controller.cancel();
+      };
     }
     controller.cancel();
   }, [controller, isOpen]);
@@ -155,7 +159,17 @@ export default function CreateSessionModal({
             role="alert"
             className="mb-5 rounded-xl border border-danger-border bg-danger-soft p-3.5 text-xs text-danger"
           >
-            {state.error}
+            <p>{state.error}</p>
+
+            {state.createUncertain && (
+              <button
+                type="button"
+                onClick={onCheckSessions}
+                className="mt-3 rounded-lg border border-danger px-3 py-2 font-semibold hover:bg-danger/10 transition-colors"
+              >
+                Kiểm tra danh sách phiên
+              </button>
+            )}
           </div>
         )}
 
@@ -260,7 +274,7 @@ export default function CreateSessionModal({
 
             <button
               type="submit"
-              disabled={creating || !metadata.title.trim()}
+              disabled={creating || state.createUncertain || !metadata.title.trim()}
               className="inline-flex items-center justify-center gap-2 rounded-xl bg-highlight px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#253b57] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-highlight focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 transition-all"
             >
               {creating ? (

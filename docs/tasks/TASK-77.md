@@ -118,6 +118,16 @@ Chuẩn bị kế hoạch chi tiết, nhánh tính năng và Draft PR để ti�
   4. **Stage 1 Nguồn đề (`/session/:sessionId/stage1`):** Tab chuyển đổi trên mobile, dropzone nét đứt, textarea font chuẩn, banner trạng thái Blueprint kèm 4 trạng thái, xem trước câu hỏi với chip "Đáp án" (`.answer-key-label`), math formula qua `MathRenderer`.
   5. **Cách ly Stage 2 & 3:** Bọc container tối cục bộ (`bg-[#0f172a] text-[#f8fafc] dark`) chống xung đột màu.
 - **Kết quả kiểm thử tự động:**
-  - `npm --prefix frontend test`: **420/420 pass** (100% pass, 0 fail, 0 skipped).
+  - `npm --prefix frontend test`: **427/427 pass** (100% pass, 0 fail, 0 skipped; bao gồm 4 regression tests cho F02/F03 trong `CreateSessionModal.test.js` và 3 regression tests cho F01 trong `DashboardRoutePagination.test.js`).
   - `npm --prefix frontend run lint`: **0 errors, 0 warnings** (`--max-warnings 0`).
-  - `npm --prefix frontend run build`: **Vite production build thành công** (built in ~23s).
+  - `npm --prefix frontend run build`: **Vite production build thành công** (built in ~20s).
+
+---
+
+## 6. Xử Lý Các Findings Review (F01 - F04)
+
+- **F01 (P1 — Phân trang Dashboard):** Nút "Sau" ở `DashboardRoute.jsx` trước đó bị nhầm `value - 1` thành `value + 1`. Đã sửa và bổ sung 3 regression tests trong `DashboardRoutePagination.test.js` kiểm tra biên trang 1/2 và 2/2.
+- **F02 (P2 — Modal bị khóa sau lỗi tạo không xác định):** Cập nhật `CreateSessionModal.jsx` hiển thị nút "Kiểm tra danh sách phiên" khi `state.createUncertain` là true, đồng thời vô hiệu hóa nút submit để ngăn retry mù. Trong `DashboardRoute.jsx`, thêm `handleCheckCreatedSessions` tăng `refreshKey` giúp remount modal với controller mới sạch state. Đã kiểm thử qua `CreateSessionModal.test.js`.
+- **F03 (P2 — Hủy request khi modal unmount):** Cập nhật cleanup effect trong `CreateSessionModal.jsx` để gọi `controller.cancel()` khi unmount hoặc đóng modal lúc đang pending, hủy bỏ AbortController signal và ngăn ngừa callback `onCreated` điều hướng muộn. Đã kiểm thử qua `CreateSessionModal.test.js`.
+- **F04 (P3 — Thiếu token Tailwind):** Đã bổ sung các token `ink`, `strong`, `muted` vào `tailwind.config.js` đồng bộ với biến CSS trong `index.css`. Production build thành công và CSS generated đầy đủ.
+- **Lưu ý Stage 2/3:** Giữ nguyên wrapper container tối (`bg-[#0f172a] text-[#f8fafc] dark`) để bảo toàn tính tương thích hiển thị cho đến khi có task redesign Stage 2/3 riêng biệt.

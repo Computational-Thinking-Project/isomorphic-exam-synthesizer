@@ -104,6 +104,13 @@ function DashboardContent({ accountKey }) {
     setNotice(`Đã nhân bản thành công: ${newSession.title}.`);
   }
 
+  function handleCheckCreatedSessions() {
+    setIsCreateModalOpen(false);
+    setPageInfo(null);
+    setPage(1);
+    setRefreshKey((value) => value + 1);
+  }
+
   const displayName = user?.name?.trim() || user?.email || 'Tài khoản';
 
   const metadata =
@@ -235,8 +242,10 @@ function DashboardContent({ accountKey }) {
       />
 
       <CreateSessionModal
+        key={`${accountKey}:${refreshKey}`}
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
+        onCheckSessions={handleCheckCreatedSessions}
         onCreated={(newId) => {
           setIsCreateModalOpen(false);
           navigate(stage1Path(newId));
