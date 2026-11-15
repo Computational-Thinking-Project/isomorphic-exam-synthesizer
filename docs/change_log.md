@@ -968,3 +968,8 @@ chặn owner export mutations, giữ raw/source behavior. 900s còn provisional,
 chưa phải shared applied manifest. PostgreSQL15 isolated tests kiểm concurrency,
 response loss/recovery/rollback và ACL; [plan08](tasks/W4-MVP-08.md) giữ kết quả và
 giới hạn. Các chữ ký RPC và semantics hiện hành ở [contract08](api/private-export-contract.md).
+## DEC-TV7-W4-008-HTTP — Q10 implementation and checkpoint acknowledgments (14/11/2026)
+
+- Hùng triển khai synchronous worker-thread HTTP theo [Philip chấp nhận Q10](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6825618302): POST export200/202, GET read-only, POST download-url3600s/no-store. Runtime opt-in mặc định tắt, timeout từng IO phải cấu hình; không tự apply DDL/cloud.
+- Sửa Q09 review: chỉ structured NoSuchKey/404 cho restart missing, mọi404 chưa kết luận giữ checkpoint. RPC020 checkpoint trả token + persisted receipt, adapter xác minh exact trước upload. Đổi payload acknowledgment nội bộ cần Duy kiểm lại; không đổi chữ ký RPC/public JSON.
+- Trạng thái code local/test theo [plan08](tasks/W4-MVP-08.md); chưa live Storage/JWT/PostgREST, chưa xác nhận lease900s/proxy budget hoặc shared applied manifest.

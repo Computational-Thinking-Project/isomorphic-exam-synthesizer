@@ -16,6 +16,7 @@ from app.api.routes import (
     generation_snapshot,
     generation_stream,
     health,
+    private_export,
     review,
     sessions,
     source_artifacts,
@@ -222,3 +223,4 @@ app.include_router(
 app.include_router(source_artifacts.router, prefix="/api/sessions", tags=["Sources"])
 app.include_router(review.router, prefix="/api/sessions", tags=["Review"])
 app.include_router(finalize.router, prefix="/api/sessions", tags=["Finalize"])
+app.include_router(private_export.router, prefix="/api/sessions", tags=["Export"])

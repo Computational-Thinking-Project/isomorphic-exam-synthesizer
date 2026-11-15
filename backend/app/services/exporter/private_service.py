@@ -1,7 +1,7 @@
 """Synchronous export workflow. Run the WHOLE call in a worker thread from async HTTP.
 
-RPC020 implements the accepted Q09 decision. Public routes remain gated on Q10
-and OPS handoff. Durable ports are mandatory; no in-memory production fallback.
+RPC020 implements Q09 and the HTTP adapter follows accepted Q10. Runtime remains
+opt-in pending OPS handoff. Durable ports have no in-memory production fallback.
 """
 
 import hashlib

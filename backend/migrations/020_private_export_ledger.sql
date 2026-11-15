@@ -156,7 +156,8 @@ BEGIN
   END IF;
   result_state:=coalesce(result_state,CASE WHEN r.state='preparing' THEN 'pending' ELSE r.state END);
   RETURN jsonb_build_object('state',result_state,'token',r.token,'receipt',
-    CASE WHEN result_state IN ('ready','recovering') THEN r.expected ELSE NULL END,
+    CASE WHEN result_state IN ('ready','recovering') OR p_action='checkpoint'
+      THEN r.expected ELSE NULL END,
     'error_code',r.error_code);
 END $$;
 REVOKE ALL ON FUNCTION public.private_export_ledger_command(uuid,uuid,jsonb,text,uuid,jsonb,text)

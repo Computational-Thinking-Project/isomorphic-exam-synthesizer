@@ -54,7 +54,7 @@ class SupabaseExportLedger:
                 raise ValueError("Invalid state")
             token_value = UUID(data["token"]) if data.get("token") else None
             result = None
-            if state in {"ready", "recovering"}:
+            if state in {"ready", "recovering"} or (action == "checkpoint" and state == "pending"):
                 raw = data["receipt"]
                 if (
                     not isinstance(raw, dict)
@@ -85,12 +85,16 @@ class SupabaseExportLedger:
 
     def record_built(self, artifact: ReadyExport, token: UUID) -> None:
         result = self._call(artifact.identity, "checkpoint", token, artifact)
-        if result.state not in {"pending", "ready"}:
+        if (
+            result.state not in {"pending", "ready"}
+            or result.token != token
+            or result.artifact != artifact
+        ):
             raise ExportFailure("ERR_EXPORT_METADATA_INVALID")
 
     def complete(self, artifact: ReadyExport, token: UUID) -> ReadyExport:
         result = self._call(artifact.identity, "complete", token, artifact)
-        if result.state != "ready" or result.artifact != artifact:
+        if result.state != "ready" or result.token != token or result.artifact != artifact:
             raise ExportFailure("ERR_EXPORT_METADATA_INVALID")
         return artifact
 

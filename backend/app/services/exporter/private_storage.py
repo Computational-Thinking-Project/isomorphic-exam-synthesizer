@@ -35,7 +35,10 @@ class SupabasePrivateExportStore:
         try:
             data = self.bucket.download(artifact.object_path)
         except StorageApiError as exc:
-            if str(exc.status) == "404":
+            # A bucket/config/access 404 is inconclusive. Only the structured
+            # object-specific code establishes that this checkpoint is missing.
+            # Older servers/SDKs returning generic not_found remain conservative.
+            if str(exc.status) == "404" and exc.code == "NoSuchKey":
                 raise ExportFailure("ERR_EXPORT_OBJECT_NOT_FOUND") from None
             raise
         if (

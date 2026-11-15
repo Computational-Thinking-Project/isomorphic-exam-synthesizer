@@ -1,5 +1,96 @@
 # W4-MVP-08 — Private export: plan và bàn giao
 
+## Publication checkpoint 15/11/2026
+
+- Đồng bộ `dev@c2ee9fd` (PR59, migration021/PR68) qua dependency07 tại
+  `d84263d` đã push. Merge local08 tại `60bd5f0`; khôi phục nguyên các bản sửa
+  Q09/HTTP đã được review14/11, conflict chỉ là dòng README liệt kê migrations.
+- PostgreSQL15 disposable + exporter/HTTP: **276 passed, 2 skipped, 21 subtests**
+  trên snapshot có021. Kiểm cả fresh chain019→020→021 và populated upgrade
+  đã có021 rồi bổ sung020. Blob fake/SQL transport; không chứng minh shared DB
+  đã apply hoặc công cụ migration môi trường đích chấp nhận backfill theo số.
+- Trên cùng snapshot code: Ruff app/scripts và các tests thay đổi pass; mypy
+  pass127 files; API+exporter **676 passed, 1 skipped**, sáu warning deprecated
+  API như lượt trước. Các skip/giới hạn live vẫn giữ nguyên. Diff check pass.
+- Giữ020 là migration export do Hùng bàn giao; không sửa/đổi số021 hoặc migration
+  Q01 tiếp theo của BE2. Duy/Đạt cần đối chiếu approved/applied manifest và cách
+  triển khai đúng môi trường, không tự suy trạng thái DB từ Git merge.
+- Kết quả CI, head đã push, phản hồi Q09 và đầu vào OPS được công bố qua M3/M5
+  tại PR63. PR vẫn Draft, runtime mặc định tắt; không sửa PR/issue descriptions.
+  Gói14/11 bên dưới là bằng chứng lịch sử; review agent không thay Duy xác minh.
+
+## Checkpoint 14/11/2026 — phần đã chốt
+
+- Đồng bộ local với `dev@4c2d424` qua nhánh07 tại `2976c07`; merge local vào08
+  tại `3f67706`. Không push/merge GitHub trong lượt này. Duy/Tâm đã Approve07
+  tại `8e2941a`, không tự coi approval đó xác minh bản đồng bộ mới.
+- [Philip đã xác nhận Q10](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6825618302):
+  synchronous POST trong worker thread,200 ready/202 live claim; GET read-only;
+  POST download-url, TTL3600/no-store; reconcile GET trước retry khi mất response.
+  Không còn chờ lựa chọn sync/async. Bảng input bên dưới giữ trạng thái hiện hành.
+- Sửa hai finding trong [Q09 re-review của Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6831140214):
+  chỉ structured `NoSuchKey`/404 chứng minh object mất; bucket/access/generic404
+  giữ checkpoint. RPC020 checkpoint trả persisted receipt cùng token; adapter
+  yêu cầu exact token/receipt trước upload, fail closed khi ack sai/mất.
+- Đã code ba routes/worker runtime theo Q10. Mặc định
+  `PRIVATE_EXPORT_ENABLED=false`; không tạo privileged client khi thiếu cấu hình
+  timeout/bucket/credentials. Client privileged sống/đóng trong worker; không
+  đóng theo request disconnect. Không tự apply migration, đổi ACL hay cấp access.
+- OPS đã bàn giao [inventory một phần](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6840314999):
+  chưa có actual private flag/ACL, MIME/size limits, applied manifest và tổng
+  runtime/proxy/stop-grace budget. Timeout từng IO không chứng minh lease900s đủ.
+  Các mục đó còn chặn bật luồng thật/nghiệm thu, không chặn code độc lập.
+- Những mục evidence dưới đây có ngày12/11 là lịch sử, không thay kết quả của
+  bản14/11. Kết quả và review độc lập mới sẽ được ghi riêng sau kiểm thực tế.
+
+### Author checks 14/11
+
+- Docker local image `export07-backend-check:20261112`, Python3.11; network-none
+  cho unit/API, internal network PostgreSQL15 disposable cho SQL, không secrets,
+  cloud hoặc Docker socket. Runtime enable chỉ được giả lập trong tests.
+- `ruff check backend/app scripts/blueprint` và các test Python thay đổi: pass;
+  `mypy backend/app --ignore-missing-imports`: pass127 source files. Ruff format
+  cho các file Python mới/sửa: pass; `git diff --check`: pass ở diff riêng08.
+- `pytest backend/tests/api backend/tests/exporter -q --tb=short`:
+  **676 passed, 1 skipped**. Một skip XeLaTeX; sáu warning Starlette/FastAPI
+  deprecated API hiện có. Có tests vòng đời/tách client và timeout7/11 giả lập.
+- SQL transport harness trên chain002–019→020, chạy exporter và
+  `test_export_snapshot_pg.py`, `test_private_export_pg.py`:
+  **274 passed, 2 skipped, 21 subtests**. Snapshot lượt này trước hai unit tests
+  vòng đời client cuối cùng (hai tests đó thuộc lượt676 trên). Skip XeLaTeX và
+  PR49 parity chưa tích hợp; warning anyio harness + Starlette TestClient.
+- Regression mới: bucket404 giữ checkpoint/build count; durable checkpoint sai
+  ack dừng trước upload và recover sau expiry; HTTP→service→SQL owner/foreign,
+  repeated POST, GET không build/sign; request body không được giả owner/revision;
+  upload mất response không complete/double upload, download trước ready409.
+- Đây là **author checks**. Hai Q09 findings hiện **author claimed_fixed**,
+  chưa được Duy xác minh lại. Chưa GitHub Approve,
+  chưa push code mới, chưa live DB/Storage/JWT/PostgREST hay Golden E2E.
+
+### Review độc lập 14/11 — gpt-6.1-sol high
+
+Đúng một subagent review read-only toàn bộ08 và tích hợp07 tại local `3f67706`
+cộng working-tree/untracked code mới; không sửa source hoặc đăng GitHub.
+**Không có finding mới đủ bằng chứng**; hai bản sửa Q09 đạt các combined-service
+probes, chưa thay xác minh của Duy/GitHub Approve.
+
+- Tự chạy fresh PostgreSQL15 harness: **276 passed, 2 skipped, 21 subtests**,
+  bao gồm hai unit tests vòng đời client cuối cùng. Skip/warning như author run.
+- **29 independent unexpected probes passed**:12 body variants;5 method guards;
+  query không giả owner/revision; actual SDK service headers, rpc7s/storage11s,
+  immutable multipart ZIP upload và signerTTL3600; cancellation giữ client tới
+  worker kết thúc;5 lỗi Storage qua SDK thật giữ checkpoint;4 malformed RPC acks
+  qua SDK thật trả outcome-unknown và không upload/mutation tiếp.
+- SDK hiện cài có thể bỏ JSON `code` mới và giữ legacy `error` trong exception.
+  Khi không có object-specific code đáng tin, recovery giữ checkpoint thay vì
+  tự restart; không nhận đã nhận diện object mất trong trường hợp đó. Giới hạn
+  này cần đối chiếu trên Storage đích, không dùng free-text404 để đoán missing.
+- Report/probes/logs local tại `scratch/review-w408-http-unexpected/`; không
+  commit raw artifacts. Chỉ module docstring private_service sửa trong lúc review
+  để ghi Q10 đã accepted; reviewer đã đối chiếu, không đổi hành vi sau tests.
+- Shared applied manifest, private ACL/limits, live JWT/PostgREST/Storage, expiry
+  và production budget vẫn UNRUN; không có quyền deploy phát sinh từ review.
+
 - Author: Hùng; Duy review DB/RPC theo [phân công W4](W4_TASK_DETAIL.md).
 - Workflow v0.1 proposed + INPUT-20261109; baseline tài liệu `dev@21887c1`.
 - Nhánh: `feat/w4-mvp-08-private-export`; [Draft PR #63](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63); kế thừa `dev` và dependency 07 tại
@@ -14,7 +105,7 @@
    orchestration qua interface ledger/Storage, kiểm checksum sau upload,
    không complete/exported khi compile/upload/verification thất bại.
 3. Sau khi code phần đủ đầu vào: gửi lựa chọn cụ thể cho Duy, Đạt, Philip.
-   Q09 đã có quyết định; Q10/OPS vẫn chờ. Interface hiện hành theo bảng dưới.
+  Q09/Q10 đã có quyết định; OPS bàn giao một phần. Interface hiện hành theo bảng dưới.
 4. Nối RPC, HTTP và Storage thật sau khi nhận/đối chiếu input; kiểm retry,
    concurrent requests, recovery, owner auth, private ACL, signed URL 3600s.
    Sau phần thực hiện được, gọi reviewer `gpt-6.1-sol high`, sửa finding có căn cứ.
@@ -26,11 +117,11 @@ Không đưa implementation ledger RAM vào production; không giả kết quả
 
 | ID / yêu cầu | Cung cấp → nhận | Mục đích / điều kiện đủ dùng | Trạng thái / bằng chứng | Còn thiếu / bước tiếp |
 |---|---|---|---|---|
-| I08-07 | Hùng/07 → Hùng/08 | ApprovedExportSnapshot từ user RLS, revision SHA256, immutable approved data | Delivered tại `305f38d`, [#58](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58); Duy đã chốt read/revision, chưa GitHub Approve/merge | Nối synchronous reader+builder trong worker thread, không truyền coroutine vào to_thread |
+| I08-07 | Hùng/07 → Hùng/08 | ApprovedExportSnapshot từ user RLS, revision SHA256, immutable approved data | Accepted/Integrated local; Duy/Tâm Approve07 tại `8e2941a`; đồng bộ dev local `2976c07`, chưa merge GitHub | Kiểm lại bản đồng bộ và integrated parity khi PR49 merge; synchronous reader+builder đã nối trong worker |
 | I08-COMPILER | Compiler/bundler hiện có → 08 | build_compiled_bundle, BundleArtifact; đầy đủ 2N+1 PDF và TeX/MD | Accepted/Integrated cục bộ tại `45b2e5b`: snapshot 07 → Typst thật → ZIP/manifest, 5 PDF cho 2 mã; không phải deployed proof | Thêm manifest tại lớp 08; không đổi output contract của bundler W3 |
 | I08-Q09 | Hùng đề xuất; Duy review/đồng bộ DB → 08 | Claim/fencing/complete atomic, metadata, recovery; migration slot và RPC contract | Decided/Delivered/Accepted theo [quyết định Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6819045971); Integrated cục bộ: RPC020 + recovery, PostgreSQL15 thực. Không phải shared DB applied hay PR approval | 020 chưa thấy dùng ở PR mở khi kiểm; 019 thuộc PR61. Lease900s còn provisional chờ OPS budget; final manifest/live proof và review implementation vẫn cần |
 | I08-11S | Đạt (`Thanhdat3010`), Duy điều phối → 08 | Private bucket interface/limits, safe secret channel, authorized environment | Duy yêu cầu backend-only export writes: 020 đã code targeted policy và kiểm trên PostgreSQL giả lập Storage schema. Bucket/access/limits/timeout chưa được OPS giao; [Issue #53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53) vẫn thiếu access | Đạt review policy/approved applied manifest và giao bucket private, MIME/size limits, test access/IO budget. Không tự áp DDL hay sửa cloud; ETA chưa xác nhận |
-| I08-Q10 | Hùng đề xuất; Philip (`philip-kkk`) → 09/08 | POST export, GET status, POST download URL, bounded polling/errors | Requested theo Q10; [#60](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/60) xác nhận chưa có contract export hoàn chỉnh | Đề xuất cụ thể sau code độc lập; không bật public routes chưa chốt |
+| I08-Q10 | Hùng đề xuất; Philip (`philip-kkk`) → 09/08 | POST export, GET status, POST download URL, bounded polling/errors | Decided/Delivered/Accepted theo [Philip](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6825618302); routes/runtime Integrated local theo contract | Không hỏi lại sync/async; OPS budget/live validation còn riêng. Mặc định tắt runtime |
 
 Input Delivered không tự là Accepted/Integrated. Không lặp lại quyết định đã có:
 export thiếu solution fail-closed; snapshot revision SHA256, không dùng updated_at.

@@ -14,7 +14,7 @@ python -m unittest discover -s backend/tests/migrations -p test_export_snapshot_
 Set `DOCKER_BIN` to the absolute CLI path if outside PATH. The suite owns a
 random disposable PostgreSQL15 container (`--network none`, no published ports).
 Each case creates a fresh DB, installs schema and all ordered migrations present
-in its checkout (including019/021 on this task07 branch), supplies
+in its checkout (including019/020/021 on the current task08 branch), supplies
 Supabase base grants **before** migrations narrow them, seeds a historical
 reviewed 3×2 exam, then executes actual shuffle/approval RPCs. No cloud keys,
 shared DB, Gemini or complete W2 producer are involved.
@@ -37,6 +37,7 @@ same DB before approval with export after approval. This does not verify HTTP,
 JWT/PostgREST deployment. Pure/stub suite: `python -m pytest backend/tests/exporter -q`
 with `backend` on `PYTHONPATH`. The PostgreSQL adapter suite needs backend
 dependencies, unlike stdlib-only schema tests; it does not certify PDF/Storage.
+
 ### W4-MVP-01 baseline rehearsal (no Production access)
 
 W4 config regression module (applies merged 002–018, then local 019):
@@ -603,9 +604,15 @@ python -m pytest backend/tests/exporter backend/tests/migrations/test_export_sna
 
 This command runs SQL through separate real connections. It covers concurrent
 claims, expiry/takeover, stale tokens, checkpoint/upload/complete/restart response
-loss, receipt/identity mismatches, read-back, rollback, RPC ACL/RLS and restrictive
+loss, receipt/identity mismatches, exact durable checkpoint acknowledgments,
+ambiguous bucket404 preservation, HTTP owner/foreign/replay, read-back, rollback,
+RPC ACL/RLS and restrictive
 export-bucket policies (including an extra permissive policy). Blob storage stays
-fake; HTTP/PostgREST/JWT validation and live Storage/URL expiry are not proven.
-The candidate019 from PR61 is not in this branch; any additional pinned019 probe
-is reported separately from baseline dev018→020. Do not infer a shared migration
+fake; HTTP handlers are exercised locally, while deployed PostgREST/JWT validation
+and live Storage/URL expiry are not proven. The current fresh chain includes
+merged019, local020, then merged021. The populated upgrade fixture also checks
+installing020 on an approved database already containing021. Neither test
+certifies a deployment tool's out-of-order migration policy. Earlier12/11 results
+used018→020 and a separate candidate019 probe;
+do not use those historical numbers for the current head. Do not infer a shared migration
 manifest or applied DB state from the test's local chain.

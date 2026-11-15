@@ -3,8 +3,10 @@
 Status: **Q09 architecture accepted with mandatory requirements by Duy** in
 [PR63 decision](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6819045971).
 RPC/ledger/recovery and forward migration020 are implemented for isolated testing.
-Shared DB application, Q10 HTTP/UI execution and OPS handoff remain gated.
-No public route or cloud resource is enabled. Input status: [task plan](../tasks/W4-MVP-08.md).
+Q10 HTTP/UI contract is accepted by [Philip](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6825618302).
+Routes are registered; export runtime defaults to disabled. Shared DB application
+and the OPS handoff remain gated. No cloud resource is configured by this code.
+Input status: [task plan](../tasks/W4-MVP-08.md).
 Depends on [snapshot 07](export-snapshot-contract.md) / PR #58.
 
 ## Implemented boundary
@@ -45,8 +47,12 @@ ready artifact is intentionally reused without recompiling.
 ## Q09 — accepted architecture / implemented RPC020
 
 Duy accepted the architecture; implementation still requires independent review
-and deployment acceptance. Migration020 has no dependency on unmerged019 DDL.
-Never skip019 in a shared manifest; coordinate the approved order with Duy/OPS.
+and deployment acceptance. Migration020 has no dependency on019/021 DDL; both
+are now merged in dev. Fresh manifests must retain019→020→021. Isolated tests
+also verify adding020 to a populated approved database already containing021.
+For such environments, Duy/OPS must verify the applied ledger and the deployment
+tool's backfill procedure before execution. Do not renumber an existing migration
+or infer applied DB state from Git. No shared migration is applied here.
 
 - Separate export ledger, not new values in `session_status`. Unique current
   identity `(session_id, packaging_key)`; key is SHA256 of
@@ -104,7 +110,7 @@ are intentionally different after takeover.
 |---|---|
 | read / read | idle, pending, ready or failed; no DML or locks |
 | claim / claim | claimed/new build authority; pending/live lease; ready/reuse; recovering/expired receipt with new authority |
-| checkpoint / record_built | Persist expected receipt before upload; exact replay accepted, changed receipt rejected |
+| checkpoint / record_built | Persist expected receipt before upload; return the persisted receipt and current token in pending/ready acknowledgments; backend requires both to match, otherwise no upload. Exact replay accepted, changed receipt rejected |
 | complete / complete | ready metadata and approved→exported in one transaction; exact replay accepted |
 | fail / fail | Only build failures before checkpoint; fenced, cannot clear unknown uploads or ready |
 | restart / restart | Only recovery with matching receipt and backend-attested missing/checksum_mismatch; clear unusable receipt and grant another new build token/path |
@@ -114,9 +120,12 @@ requests. Mutation checks token and live lease; ready completion/checkpoint repl
 is allowed after expiry only for identical committed receipt/token. Backend receipt
 attests successful Storage verification; SQL cannot inspect Storage bytes.
 
-Verification errors `ERR_EXPORT_OBJECT_NOT_FOUND` (SDK 404) or
+Verification errors `ERR_EXPORT_OBJECT_NOT_FOUND` (structured Storage `NoSuchKey`
+with status404) or
 `ERR_EXPORT_CHECKSUM_MISMATCH` allow a fenced restart. Permission errors, timeouts,
-5xx and unknown responses preserve receipt and return unknown outcome. Objects
+5xx, generic/legacy404, `NoSuchBucket`, `AccessDenied` and unknown responses
+preserve receipt and return unknown outcome. An SDK that cannot expose an
+object-specific code cannot authorize a missing-object restart. Objects
 are never deleted here. If restart commits but its response is lost, the caller
 also returns unknown; a later explicit request waits for/reclaims the lease.
 
@@ -148,17 +157,16 @@ An already-issued URL is a bearer credential for up to 3600s. Cross-owner API
 issuance must be blocked; direct opening of an existing URL does not re-check
 owner JWT. No claim of per-click auth or revocation without actual Storage proof.
 
-## Q10 — proposed HTTP/UI handoff (Philip)
+## Q10 — accepted HTTP/UI handoff (Philip)
 
-Preferred first integration: synchronous POST in a worker thread, avoiding a new
-job broker while existing 07/compiler code is synchronous. It can take multiple
-compiler calls (up to 9 × 30s) plus Storage IO; Philip/Đạt must confirm browser and
-proxy timeout budget. If async 202 is chosen, claim must commit before accepting
-the request and scheduling work; the current full-operation method must be split
-at that durable boundary. Do not use an unclaimed in-memory BackgroundTask as
-proof of acceptance or survival across restart.
+Confirmed implementation: synchronous POST via `asyncio.to_thread`, with200 ready
+or202 only for an already-live claim. It can take multiple compiler calls (up to
+9 × 30s) plus Storage IO; the production browser/proxy/worker/lease budget still
+requires OPS confirmation. No in-memory background job broker is introduced.
+Cancellation/disconnect does not stop or roll back a running thread. Clients
+reconcile through GET before a manual POST retry.
 
-Proposed routes under `/api/sessions/{session_id}`:
+Implemented routes under `/api/sessions/{session_id}`:
 
 | Endpoint | Preferred behavior |
 |---|---|
@@ -166,18 +174,40 @@ Proposed routes under `/api/sessions/{session_id}`:
 | `GET /export` | 200 state idle/preparing/ready/failed; safe fixed error code on failed; no automatic build, signed URL or state mutation |
 | `POST /export/download-url` | 200 `{url, expires_at, expires_in:3600, filename}` only after authorized ready check; no-store |
 
-Service uses `pending` internally, mapped to public `preparing` by the eventual
+Service uses `pending` internally, mapped to public `preparing` by the
 HTTP adapter. `idle` means no attempt; `failed` requires explicit retry. Default
-proposal: poll every 2s, stop after 120s and show explicit refresh; stop on ready,
+accepted UI behavior: poll every 2s, stop after 120s and show explicit refresh; stop on ready,
 failed, auth/conflict or unmount. Stopping polls does not cancel a backend attempt.
 Disable duplicate clicks; use GET before retry after network/503 outcome-unknown.
 Never infer download readiness from session status alone or auto-POST on F5.
 
-Existing auth errors 401/403/404 and snapshot 400/409 remain. Proposed mappings:
+Existing auth errors 401/403/404 and snapshot 400/409 remain. Accepted mappings:
 422 `ERR_EXPORT_BUILD_FAILED`, 503 compiler/storage/transport unavailable or
 outcome-unknown, 409 download-not-ready. DB/Storage availability must not become
-409 invalid content. Exact routes/status/error choices and whether to use async
-POST remain Philip/Duy discussion inputs, not accepted frontend requirements.
+409 invalid content. Nonempty request bodies are rejected with400
+`ERR_EXPORT_REQUEST_BODY_NOT_ALLOWED`; owner/revision/content are derived on the
+server, never from client JSON. URL/status/artifact responses use no-store.
+
+### Runtime opt-in and IO lifecycle
+
+`PRIVATE_EXPORT_ENABLED=false` is the safe default. To enable in an authorized
+environment, OPS must first verify the ordered migration manifest, private bucket
+ACL and size/MIME limits, then explicitly configure:
+
+- `PRIVATE_EXPORT_ENABLED=true`
+- `PRIVATE_EXPORT_BUCKET=exam-export-bundles` (fixed by policy020; other values fail closed)
+- `PRIVATE_EXPORT_RPC_TIMEOUT_SECONDS` (integer1–120)
+- `PRIVATE_EXPORT_STORAGE_TIMEOUT_SECONDS` (integer1–300)
+
+Timeouts have no implicit production value. Missing settings return503
+`ERR_EXPORT_UNAVAILABLE` without creating privileged clients. Service credentials
+stay backend-only in existing configuration. The authenticated user/RLS reader
+is still supplied through `get_user_db`; its installed SDK default PostgREST IO
+timeout is120s. Dedicated privileged RPC/Storage HTTP clients use the configured
+per-IO timeouts, with no application retry. Their lifecycle is entirely inside the
+worker so a disconnected request cannot close its in-flight Storage/RPC client.
+These are IO inactivity limits, not a total runtime deadline; they do not prove
+lease900s or proxy budgets sufficient. No shared migration is applied by startup.
 
 Download filename is `exam_bundle_<session_id>.zip`. Use a user gesture with the
 fresh signed URL; the server asks Storage for Content-Disposition download. Test
@@ -189,6 +219,7 @@ API. Responses containing a URL must use `Cache-Control: no-store` and not log i
 
 Tests include compiler/manifest, fake-port failure injection and real isolated
 PostgreSQL020 RPC/locking/recovery/policy probes. Exact results live in the task
-plan. SQL test transport replaces HTTP only; blob storage is still fake. Public
-HTTP endpoint, deployed Supabase/JWT/PostgREST/Storage ACL/URL expiry and full W2
-→ export remain unverified. These gates must pass before 08 Done.
+plan. SQL test transport replaces PostgREST only; blob storage is still fake.
+Local HTTP transport tests do not establish deployed Supabase/JWT/PostgREST,
+Storage ACL/URL expiry or full W2→export. These remain unverified and must pass
+before08 Done.

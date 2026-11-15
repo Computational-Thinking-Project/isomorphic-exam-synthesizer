@@ -12,10 +12,6 @@ from threading import Barrier
 from types import SimpleNamespace
 from uuid import uuid4
 
-from app.services.exporter.bundle_models import BundleArtifact
-from app.services.exporter.private_models import ExportFailure
-from app.services.exporter.private_repository import SupabaseExportLedger, receipt
-from app.services.exporter.private_service import PrivateExportService, user_snapshot_loader
 from test_export_snapshot_pg import (
     BOOTSTRAP,
     OTHER,
@@ -28,6 +24,10 @@ from test_export_snapshot_pg import (
 )
 
 from app.models.schemas import ReviewDomainException
+from app.services.exporter.bundle_models import BundleArtifact
+from app.services.exporter.private_models import ExportFailure
+from app.services.exporter.private_repository import SupabaseExportLedger, receipt
+from app.services.exporter.private_service import PrivateExportService, user_snapshot_loader
 
 MIGRATION = ROOT / "backend/migrations/020_private_export_ledger.sql"
 
@@ -81,6 +81,9 @@ class BlobStore:
         data = self.objects[artifact.object_path]
         if len(data) != artifact.size_bytes or hashlib.sha256(data).hexdigest() != artifact.sha256:
             raise ExportFailure("ERR_EXPORT_CHECKSUM_MISMATCH")
+
+    def sign(self, artifact):
+        return "https://storage.example/test-only-signed-url"
 
 
 class PrivateExportPostgresTests(ExportSnapshotPostgresFixture):
@@ -163,6 +166,110 @@ class PrivateExportPostgresTests(ExportSnapshotPostgresFixture):
 
     def run_export(self):
         return self.service.export(self.sid, OWNER)
+
+    def test_checkpoint_ack_attests_persisted_receipt_and_token(self):
+        self.run_export()
+        ready = self.ledger.read(self.identity)
+        params = self.params("checkpoint", ready.token, ready.artifact)
+        replay = json.loads(self.command(params).stdout.strip().splitlines()[-1])
+        self.assertEqual(replay["receipt"], receipt(ready.artifact))
+        self.assertEqual(replay["token"], str(ready.token))
+
+    def test_malformed_checkpoint_ack_prevents_upload_and_recovers_from_db(self):
+        original = self.client.rpc
+
+        def rpc(name, params):
+            request = original(name, params)
+            if params["p_action"] != "checkpoint":
+                return request
+
+            def execute():
+                response = request.execute()  # SQL has durably committed.
+                response.data["token"] = str(uuid4())
+                return response
+
+            return SimpleNamespace(execute=execute)
+
+        self.client.rpc = rpc
+        with self.assertRaisesRegex(ExportFailure, "ERR_EXPORT_OUTCOME_UNKNOWN"):
+            self.run_export()
+        self.assertEqual(self.store.uploads, 0)
+        self.assertEqual(self.ledger.read(self.identity).state, "pending")
+        self.client.rpc = original
+        self.expire()
+        self.assertEqual(self.run_export().state, "ready")
+        self.assertEqual(self.store.uploads, 1)
+
+    def test_ambiguous_storage_404_retains_checkpoint_without_rebuild(self):
+        from unittest.mock import Mock
+
+        from storage3.exceptions import StorageApiError
+
+        from app.services.exporter.private_storage import SupabasePrivateExportStore
+
+        self.store.lose = True
+        with self.assertRaises(ExportFailure):
+            self.run_export()
+        before = self.sql("SELECT expected::text FROM private_export_ledger").stdout.strip()
+        self.expire()
+        sdk = Mock()
+        sdk.storage.from_.return_value.download.side_effect = StorageApiError(
+            "Bucket unavailable", "NoSuchBucket", 404
+        )
+        self.service.store = SupabasePrivateExportStore(sdk, "exam-export-bundles")
+        with self.assertRaisesRegex(ExportFailure, "ERR_EXPORT_STORAGE_OUTCOME_UNKNOWN"):
+            self.run_export()
+        self.assertEqual(self.builds, 1)
+        self.assertEqual(self.ledger.read(self.identity).state, "pending")
+        self.assertEqual(
+            self.sql("SELECT expected::text FROM private_export_ledger").stdout.strip(), before
+        )
+        self.assertEqual(self.store.uploads, 1)
+
+    def test_http_sql_owner_and_replay_boundary(self):
+        from unittest.mock import patch
+
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.api.dependencies import get_current_user, get_user_db
+        from app.api.routes import private_export
+        from app.models.schemas import CurrentUser
+
+        app = FastAPI()
+        app.include_router(private_export.router, prefix="/api/sessions")
+        db = SqlReadClient(self)
+        app.dependency_overrides[get_user_db] = lambda: db
+        app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+            id=OWNER, email="owner@example.test", access_token="test-only"
+        )
+
+        def run(operation, sid, uid, user_db):
+            service = PrivateExportService(
+                user_snapshot_loader(user_db), self.ledger, self.store, build=self.service.build
+            )
+            return getattr(service, operation)(sid, uid)
+
+        with patch.object(private_export, "run_private_export", run), TestClient(app) as client:
+            path = f"/api/sessions/{self.sid}/export"
+            self.assertEqual(client.get(path).json(), {"state": "idle"})
+            for _ in range(2):
+                self.assertEqual(client.post(path).status_code, 200)
+            response = client.post(path + "/download-url")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["cache-control"], "no-store")
+            app.dependency_overrides[get_user_db] = lambda: SqlReadClient(self, OTHER)
+            app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+                id=OTHER, email="other@example.test", access_token="test-only-foreign"
+            )
+            for method, target in [
+                (client.get, path),
+                (client.post, path),
+                (client.post, path + "/download-url"),
+            ]:
+                self.assertEqual(method(target).status_code, 404)
+        self.assertEqual(self.builds, 1)
+        self.assertEqual(self.store.uploads, 1)
 
     def test_concurrent_claims_have_one_identity_and_build_authority(self):
         barrier = Barrier(2)
