@@ -91,3 +91,54 @@ Rehearsal trên môi trường giả lập (synthetic 5-table fixture) đã hoà
 3. DB owner ký duyệt (GO decision) cho kế hoạch chạy manifest tuần tự này.
 
 **Trạng thái hiện tại: Shared Supabase = NO-GO.** Không được phép thực thi DDL hoặc migration trực tiếp trên Supabase chia sẻ khi chưa có xác nhận từ Gate 1, 2 và 3.
+
+## PR76 remediation checkpoint — 15/11/2026
+
+This checkpoint supersedes earlier "100% technical readiness" claims for F01/F03.
+Original suite at eec31148: independently rerun 9/9 PASS (31.885s), but it did not
+execute Stage 2 save and T08 inserted as postgres. Those counts are historical.
+The five-table fixture models repository schema, not verified production DDL.
+
+F01 adds a real confirmation → canonical publication → snapshot → owner config
+save/reload/resave regression on the partial upgrade. With the original enum,
+it fails at save_generation_config with invalid enum value `configured`.
+Fixture enum now follows schema.sql (including configured, excluding exporting).
+F03 performs T08 inserts under SET LOCAL ROLE service_role and asserts current_user
+in the insertion transaction, both after 003b and the complete chain. Since the
+fixture service role has BYPASSRLS, this verifies its grants, not the INSERT policy
+expression in isolation. SQL migration bytes and the 18-step manifest are unchanged.
+
+F02 remains UNVERIFIED; use the read-only catalog handoff in the staging runbook.
+Earlier PR audit comment claiming target catalog PASS is superseded by this status
+and Issue75's later UNVERIFIED update. Do not treat table/function presence as an
+applied ledger. Correct PR snapshot head is eec3114887c384b6be2a87abc88711e3ddded5b6;
+the different eec3114-prefixed SHA in the old PR body is incorrect.
+
+Code can be reviewed after focused/regression checks; live deployment stays NO-GO
+pending catalog reconciliation, any reviewed delta, representative-copy rehearsal,
+backup/restore proof and DB-owner GO. No shared Supabase changes were performed.
+
+### Local author validation (15/11/2026, working tree based on eec31148)
+
+- F01 RED: new T13 reached real canonical readiness, then failed with
+  `invalid input value for enum session_status: "configured"` on the old fixture.
+- Focused suite after F01/F03: **10/10 PASS**, 43.969s. Final T13 recheck after
+  encoding/import cleanup: **1 PASS**, 10.727s. Network-none PostgreSQL15 containers.
+- API session/confirm-source: **186 PASS**, 2.67s, mock environment; Windows Python
+  3.14, pytest plugin autoload disabled, pytest_asyncio explicitly loaded. The
+  default-plugin attempt was stopped without a result; it is not counted as PASS.
+- Ruff (application, blueprint scripts and changed test), mypy (114 application
+  files), and git diff --check: PASS.
+- Runbook catalog SQL: executed successfully as a read-only transaction against
+  local PostgreSQL's postgres database. This checks query syntax, not target
+  Supabase metadata or visibility.
+- No remote push, PR status change, GitHub approval or live deployment is claimed.
+  F01/F03 are author-tested; independent reviewer verification is still pending.
+
+- Migration regressions (baseline chain, source readiness/config, Stage3 schema,
+  source confirmation): **63 run, 62 PASS / 1 optional worker SKIP**, 287.581s.
+  Command: `RUN_POSTGRES_MIGRATION_TESTS=1`, `PYTHONPATH=backend`, Python unittest
+  loading `test_w4_baseline_chain`, `test_w4_source_readiness_config`,
+  `test_stage3_schema`, `test_source_confirmation_revision` from migration tests.
+  The historical worker probe requires a separately pinned PR30 checkout; this
+  skip is not worker/PostgREST/live acceptance evidence.

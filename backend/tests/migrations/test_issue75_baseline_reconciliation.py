@@ -10,6 +10,7 @@ Verifies:
 - T07: Forbidden direct writes after hardening (direct DML denied, RPC allowed).
 - T08: Security events isolation (owner read, trusted insert, untrusted write blocked).
 - T12: get_session_source_preview contract and authorization on partial upgrade path.
+- T13: Real canonical-ready config save, reload, resave and cross-user denial.
 
 Opt in with RUN_POSTGRES_MIGRATION_TESTS=1.
 """
@@ -97,11 +98,11 @@ class Issue75BaselineReconciliationTests(PostgresCase):
         return self.sql(script, check=False)
 
     def seed_five_table_baseline(self):
-        """Build the verified 5-table schema baseline with historical 002 & 003 applied."""
+        """Build a synthetic 5-table schema baseline with historical 002 & 003 applied."""
         self.sql("""
             CREATE TYPE public.session_status AS ENUM (
-                'draft', 'blueprinted', 'generating', 'generated', 'partial_generated',
-                'reviewed', 'approved', 'exporting', 'exported', 'failed'
+                'draft', 'blueprinted', 'configured', 'generating', 'partial_generated',
+                'generated', 'reviewed', 'approved', 'exported', 'failed'
             );
 
             CREATE TABLE public.users (
@@ -479,29 +480,102 @@ class Issue75BaselineReconciliationTests(PostgresCase):
         self.seed_five_table_baseline()
         self.apply_migration("003b_reconcile_baseline.sql")
 
-        # 1. Trusted service_role can insert security events
-        self.sql(f"""
-            INSERT INTO public.security_events (session_id, user_id, event_type, severity, sanitized_detail)
-            VALUES
-                ('{SESSION_A}', '{USER_A}', 'PROMPT_INJECTION_DETECTED', 'WARN', '{{"detail":"test A"}}'),
-                ('{SESSION_B}', '{USER_B}', 'RATE_LIMIT_EXCEEDED', 'INFO', '{{"detail":"test B"}}');
-        """)
+        for stage in range(2):
+            if stage:
+                for migration in CANDIDATE_CHAIN[1:]:
+                    self.apply_migration(migration)
+            with self.subTest(stage="full_chain" if stage else "003b"):
+                # 1. Trusted service_role can insert security events
+                role_seen = self.as_role("service_role", "", f"""
+                    SELECT current_user;
+                    INSERT INTO public.security_events (session_id, user_id, event_type, severity, sanitized_detail)
+                    VALUES
+                        ('{SESSION_A}', '{USER_A}', 'PROMPT_INJECTION_DETECTED', 'WARN', '{{"detail":"test A"}}'),
+                        ('{SESSION_B}', '{USER_B}', 'RATE_LIMIT_EXCEEDED', 'INFO', '{{"detail":"test B"}}');
+                """)
 
-        # 2. User A can SELECT own security events
-        events_a = self.as_role("authenticated", USER_A, "SELECT count(*) FROM public.security_events")
-        self.assertEqual(events_a, "1", "User A should see only their own security events")
+                self.assertEqual(role_seen, "service_role")
 
-        # 3. User A cannot see User B's events
-        user_seen = self.as_role("authenticated", USER_A, "SELECT user_id FROM public.security_events")
-        self.assertEqual(user_seen, USER_A)
+                # BYPASSRLS proves role grants, not the INSERT policy expression.
+                # 2. User A can SELECT own security events
+                events_a = self.as_role("authenticated", USER_A, "SELECT count(*) FROM public.security_events")
+                self.assertEqual(events_a, str(stage + 1), "User A should see only their own security events")
 
-        # 4. Untrusted authenticated INSERT is denied
-        insert_res = self.as_role_fail(
-            "authenticated", USER_A,
-            f"INSERT INTO public.security_events (user_id, event_type, sanitized_detail) VALUES ('{USER_A}', 'FORGED_EVENT', '{{}}')"
+                # 3. User A cannot see User B's events
+                user_seen = self.as_role("authenticated", USER_A, "SELECT DISTINCT user_id FROM public.security_events")
+                self.assertEqual(user_seen, USER_A)
+
+                # 4. Untrusted authenticated INSERT is denied
+                insert_res = self.as_role_fail(
+                    "authenticated", USER_A,
+                    f"INSERT INTO public.security_events (user_id, event_type, sanitized_detail) VALUES ('{USER_A}', 'FORGED_EVENT', '{{}}')"
+                )
+                self.assertNotEqual(insert_res.returncode, 0)
+                self.assertIn("permission denied for table security_events", insert_res.stderr)
+
+    def test_t13_partial_upgrade_saves_configured_and_reloads(self):
+        """Exercise Stage 2, not merely RPC existence, on the partial upgrade."""
+        from test_review_rpcs import literal
+
+        from app.models.schemas import SourceQuestion
+        from app.services.blueprint.adapters import source_to_item
+        from app.services.blueprint.artifacts import (
+            prepare_blueprint_artifact,
+            prepare_source_artifacts,
         )
-        self.assertNotEqual(insert_res.returncode, 0)
-        self.assertIn("permission denied for table security_events", insert_res.stderr)
+
+        self.seed_five_table_baseline()
+        for migration in CANDIDATE_CHAIN:
+            self.apply_migration(migration)
+        sid = str(uuid4())
+        self.sql(f"INSERT INTO exam_sessions(id,user_id,title) VALUES ('{sid}','{USER_A}','Config regression')")
+        fixture = json.loads((ROOT / "backend/tests/fixtures/ai_pipeline.json").read_text(encoding="utf-8"))
+        original = SourceQuestion.model_validate(fixture["source"])
+        source = original.model_copy(update={"id": str(uuid4())})
+        blueprint = json.loads(json.dumps(fixture["blueprint"]).replace(
+            source_to_item(original)["source"]["question_id"],
+            source_to_item(source)["source"]["question_id"],
+        ))
+        row = dict(id=source.id, session_id=sid, question_no=1,
+                   raw_content=source.question_text, options=source.options,
+                   correct_key=source.correct_answer, solution_md=source.solution)
+        self.sql(f"""
+            INSERT INTO source_questions(id,session_id,question_no,raw_content,options,correct_key,solution_md)
+            VALUES ('{source.id}','{sid}',1,{literal(source.question_text)},
+                    {literal(json.dumps(source.options))}::jsonb,{literal(source.correct_answer)},
+                    {literal(source.solution)});
+        """)
+        def rpc(name, args, role="service_role", actor=USER_A):
+            return json.loads(self.as_role(role, actor, f"SELECT public.{name}({args})"))
+
+        sources = prepare_source_artifacts(sid, [row])
+        revision = self.value(f"SELECT source_content_revision FROM exam_sessions WHERE id='{sid}'")
+        rpc("confirm_source_artifacts", f"p_session_id=>'{sid}',p_actor_id=>'{USER_A}',p_confirmation_id=>'{uuid4()}',p_expected_source_revision=>'{revision}',p_sources=>{literal(json.dumps(sources))}::jsonb")
+        publication = prepare_blueprint_artifact(sources[0], blueprint)
+        job = str(uuid4())
+        publication["producer_job_id"] = job
+        rpc("claim_source_production", f"'{sid}','{sources[0]['source_revision_id']}','{job}'")
+        rpc("publish_canonical_blueprint", f"'{sid}',{literal(json.dumps(publication))}::jsonb")
+        snapshot = rpc("get_generation_source_snapshot", f"'{sid}'", role="authenticated")
+        self.assertTrue(snapshot["ready"], snapshot)
+        args = (f"'{sid}',2,'[]'::jsonb,'{{\"shuffle_questions\":false,\"shuffle_options\":false}}'::jsonb,"
+                f"{literal(json.dumps(snapshot['manifest']))}::jsonb")
+        saved = rpc("save_generation_config", args, role="authenticated")
+        self.assertEqual(saved["status"], "configured")
+        self.assertEqual(self.value(f"SELECT status FROM exam_sessions WHERE id='{sid}'"), "configured")
+        config = json.loads(self.as_role("authenticated", USER_A,
+            f"SELECT to_jsonb(c) FROM generation_configs c WHERE session_id='{sid}'"))
+        self.assertEqual(config["n_versions"], 2)
+        self.assertEqual(config["source_manifest"], snapshot["manifest"])
+        self.assertEqual(config["ordering_preferences"], {"shuffle_questions": False, "shuffle_options": False})
+        again = rpc("save_generation_config", args, role="authenticated")
+        self.assertEqual(again["config_id"], saved["config_id"])
+        self.assertEqual(self.value(f"SELECT count(*) FROM generation_configs WHERE session_id='{sid}'"), "1")
+        before = self.value(f"SELECT to_jsonb(c) FROM generation_configs c WHERE session_id='{sid}'")
+        denied = self.as_role_fail("authenticated", USER_B, f"SELECT public.save_generation_config({args})")
+        self.assertNotEqual(denied.returncode, 0)
+        self.assertIn("Access denied", denied.stderr)
+        self.assertEqual(self.value(f"SELECT to_jsonb(c) FROM generation_configs c WHERE session_id='{sid}'"), before)
 
     def test_t12_get_session_source_preview_contract_and_authorization(self):
         """T12: get_session_source_preview works for owner with revision, denies non-owner."""

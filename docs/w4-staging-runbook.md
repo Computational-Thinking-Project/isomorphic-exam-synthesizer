@@ -99,7 +99,7 @@ Hiện frontend http://localhost:3000, backend http://localhost:8000; thay theo 
 ### 3.3. Sau khi Triển khai (Post-deployment Smoke & Receipt)
 Operator thực hiện kiểm tra và lập Deployment Receipt (tuyệt đối không lưu secret, JWT hay dữ liệu bài thi thật vào báo cáo):
 - **S01 RPC:** Kiểm tra `to_regprocedure('public.get_session_source_preview(uuid)') IS NOT NULL`, cùng các RPC `save_generation_config`, `confirm_source_artifacts`, `get_review_current_snapshot`.
-- **S02 Session API:** Chủ sở hữu gọi `GET /api/sessions/{sessionId}` trả về 200 OK với `source_content_revision` và `source_questions`; không còn lỗi HTTP 503 (`PGRST202`).
+- **S02 Session API:** Chủ sở hữu gọi `GET /api/sessions/{sessionId}` trả về 200 OK với `source_revision` và `source_questions`; không còn lỗi HTTP 503 (`PGRST202`).
 - **S03 Giao diện Web:** Truy cập `/session/{sessionId}/stage1` tải bình thường và hiển thị đúng sau khi F5.
 - **S04 Xác nhận Đề nguồn:** Kiểm tra luồng xác nhận nguồn (`confirm_source_artifacts`) trên session thử nghiệm.
 - **S05 Phân lập Tài khoản:** Xác minh User B không thể truy cập session hoặc configuration của User A (HTTP 403/404).
@@ -194,3 +194,87 @@ Exit 0 chỉ khi tất cả probes PASS; exit 1 khi FAIL/BLOCKED. Preflight khô
 6. Ghi DEPLOYED_PRIVATE_BETA riêng với URL không token, SHA/images, config/prompt/model, ledger, real service smoke, access-control proof và primary/backup. Sau đó chạy G0/G1/G2 cùng deployed candidate theo mục4/5; public release chỉ khi P0 security/reliability resolved và quyết định PUBLIC_GO rõ ràng. G2 PASS không tự đồng nghĩa mở public.
 
 Merge docs/preflight PR51 chỉ hoàn tất preparation review, không chứng nhận các gate trên. Lịch W4 là target: 09/11 manifest,10/11 online khi đủ inputs,12/11 G0,14/11 G1,15/11 G2; ETA/availability do từng owner xác nhận. ENV0 hiện TOPOLOGY=DECIDED, HOST/DEPLOY_ACCESS/ROSTER=BLOCKED.
+
+## PR76 remediation — F02 catalog handoff (15/11/2026)
+
+F01/F03 code review may proceed independently; deployment remains **NO-GO**.
+DB owner Duy/Hùng runs the following in the target project's SQL editor and
+returns filtered metadata, project alias and capture time. Do not include keys,
+JWTs, connection strings, user records or exam content. This transaction reads
+catalogs only; it creates no RPC, table or permission. Review function definitions
+for embedded sensitive constants before sharing.
+
+```sql
+BEGIN TRANSACTION READ ONLY;
+SELECT current_database(), current_user, version(), now() AS captured_at;
+SELECT n.nspname, c.relname, c.relrowsecurity, c.relforcerowsecurity
+FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+WHERE n.nspname='public' AND c.relkind IN ('r','p') ORDER BY c.relname;
+SELECT table_name, column_name, ordinal_position, data_type, udt_name,
+       is_nullable, column_default, is_identity, is_generated
+FROM information_schema.columns WHERE table_schema='public'
+ORDER BY table_name, ordinal_position;
+SELECT t.typname, e.enumlabel, e.enumsortorder
+FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
+JOIN pg_enum e ON e.enumtypid=t.oid WHERE n.nspname='public'
+ORDER BY t.typname,e.enumsortorder;
+SELECT c.relname, con.conname, con.contype, con.convalidated,
+       pg_get_constraintdef(con.oid) AS definition
+FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid
+JOIN pg_namespace n ON n.oid=c.relnamespace
+WHERE n.nspname='public' ORDER BY c.relname,con.conname;
+SELECT tablename,indexname,indexdef FROM pg_indexes
+WHERE schemaname='public' ORDER BY tablename,indexname;
+SELECT n.nspname,c.relname,t.tgname,t.tgenabled,
+       pg_get_triggerdef(t.oid) AS definition, p.oid::regprocedure AS function
+FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
+JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_proc p ON p.oid=t.tgfoid
+WHERE NOT t.tgisinternal AND (n.nspname='public' OR (n.nspname='auth' AND c.relname='users'))
+ORDER BY n.nspname,c.relname,t.tgname;
+SELECT p.oid::regprocedure, p.prosecdef,p.proconfig,p.proacl,
+       pg_get_functiondef(p.oid) AS definition
+FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+WHERE n.nspname='public' AND p.proname='handle_new_user';
+SELECT * FROM pg_policies WHERE schemaname='public' ORDER BY tablename,policyname;
+SELECT grantor,grantee,table_name,privilege_type,is_grantable
+FROM information_schema.table_privileges WHERE table_schema='public'
+ORDER BY table_name,grantee,privilege_type;
+SELECT grantee,table_name,column_name,privilege_type
+FROM information_schema.column_privileges WHERE table_schema='public'
+ORDER BY table_name,column_name,grantee;
+SELECT nspname,nspacl FROM pg_namespace WHERE nspname IN ('public','auth');
+SELECT rolname,rolsuper,rolinherit,rolbypassrls FROM pg_roles
+WHERE rolname IN ('anon','authenticated','service_role');
+SELECT parent.rolname AS granted_role,member.rolname AS member
+FROM pg_auth_members m JOIN pg_roles parent ON parent.oid=m.roleid
+JOIN pg_roles member ON member.oid=m.member;
+SELECT defaclrole::regrole,defaclnamespace::regnamespace,defaclobjtype,defaclacl
+FROM pg_default_acl;
+SELECT to_regclass('supabase_migrations.schema_migrations') AS migration_ledger;
+COMMIT;
+```
+
+If the ledger exists, separately export only its `version` and `name` columns
+(after inspecting its columns); omit stored statements. If absent or inaccessible,
+mark history **Unknown**, not "002–003 applied" inferred from function presence.
+Catalog grants can be visibility-filtered: owner must use an account with enough
+metadata visibility and record omissions explicitly.
+
+Compare five baseline tables and all present affected objects with application
+requirements. Check `configured`, enabled Auth-to-public user sync, owner INSERT
+policy and column grants for session creation, owner-only reads and trusted-role
+permissions. Classify each item Compatible / Missing / Incompatible / Unknown.
+Unknown or incompatible required objects keep deployment NO-GO. Any confirmed
+repair needs a minimal reviewed delta and representative rehearsal before deploy;
+do not blanket-run schema.sql or remove extra production enum labels.
+
+Before GO record backup reference, isolated restore proof, representative-copy
+rehearsal, runtime SHA, Git-blob checksums, independent approval and DB-owner GO.
+Stop on the first migration error and use the tested recovery procedure; record
+each successful step rather than replaying the whole manifest blindly.
+
+Add post-deployment smoke to S01–S07: test Google login/profile sync and session
+creation with approved test identities; save Stage 2 to `configured`, reload the
+same config, reject cross-user access, and verify trusted audit insertion. HTTP
+session detail exposes `source_revision`; `source_content_revision` is the DB
+column. Do not close F00 from local tests or code approval alone.
