@@ -136,7 +136,7 @@ Chuẩn bị kế hoạch chi tiết, nhánh tính năng và Draft PR để ti�
 
 ## 7. Xử Lý Phản Hồi Trải Nghiệm & Điểm Chưa Hợp Lý (UX Feedback & Aesthetic Polish)
 
-Đã hoàn thành xử lý triệt để 3 điểm phản hồi UX và nâng cấp thẩm mỹ Paper Canvas cao cấp theo kế hoạch đã phê duyệt tại commit `e87c171`:
+Đã hoàn thành xử lý triệt để 3 điểm phản hồi UX và nâng cấp thẩm mỹ Paper Canvas cao cấp theo kế hoạch đã phê duyệt tại commit `3053cb6`:
 
 1. **Bổ sung ảnh logo chính thức EXAM MIRROR:**
    - Trích xuất và tối ưu asset đồ họa gốc `frontend/public/brand-logo.png` từ bản thiết kế mẫu `PREVIEW.html`.
