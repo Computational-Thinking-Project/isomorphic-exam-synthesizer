@@ -13,7 +13,8 @@ python -m unittest discover -s backend/tests/migrations -p test_export_snapshot_
 
 Set `DOCKER_BIN` to the absolute CLI path if outside PATH. The suite owns a
 random disposable PostgreSQL15 container (`--network none`, no published ports).
-Each case creates a fresh DB, installs schema and migrations002–018, supplies
+Each case creates a fresh DB, installs schema and all ordered migrations present
+in its checkout (including019/021 on this task07 branch), supplies
 Supabase base grants **before** migrations narrow them, seeds a historical
 reviewed 3×2 exam, then executes actual shuffle/approval RPCs. No cloud keys,
 shared DB, Gemini or complete W2 producer are involved.

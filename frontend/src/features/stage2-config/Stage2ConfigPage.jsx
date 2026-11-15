@@ -72,6 +72,7 @@ export default function Stage2ConfigPage({
   const retryOperationRef = useRef(0);
   const sessionOpRef = useRef(0);
   const resyncOpRef = useRef(0);
+  const sseErrorOpRef = useRef(0);
   const isMountedRef = useRef(true);
   const activeSessionIdRef = useRef(sessionId);
 
@@ -81,6 +82,7 @@ export default function Stage2ConfigPage({
     activeSessionIdRef.current = sessionId;
     const thisOp = ++sessionOpRef.current;
     resyncOpRef.current += 1;
+    sseErrorOpRef.current += 1;
     let active = true;
 
     // Vô hiệu hóa mọi lượt submit và retry đang chờ của phiên trước
@@ -146,6 +148,9 @@ export default function Stage2ConfigPage({
               if (snapStatus) {
                 data.status = snapStatus;
               }
+              if (snap.generation_error_code) {
+                data.generation_error_code = snap.generation_error_code;
+              }
               if (snap.stream_epoch) {
                 data.stream_epoch = snap.stream_epoch;
               }
@@ -194,12 +199,13 @@ export default function Stage2ConfigPage({
       isMountedRef.current = false;
       submitOperationRef.current += 1;
       retryOperationRef.current += 1;
+      sseErrorOpRef.current += 1;
       setIsSubmittingConfig(false);
       setIsRetryingGeneration(false);
     };
   }, [sessionId, loadSession, fetchGenSnapshot]);
 
-  // F04 / F06: Callback tải lại snapshot phiên khi mất lịch sử SSE / nhận tín hiệu resync
+  // F04 / F06 / P2: Callback tải lại snapshot phiên khi mất lịch sử SSE / nhận tín hiệu resync
   const handleResyncSnapshot = useCallback(
     async (sid) => {
       const thisSessionOp = sessionOpRef.current;
@@ -224,12 +230,22 @@ export default function Stage2ConfigPage({
           data?.progress?.session_status ||
           data?.progress?.status;
 
+        const errCode =
+          data?.generation_error_code ||
+          data?.error_code ||
+          data?.progress?.generation_error_code ||
+          data?.progress?.error_code ||
+          null;
+
+        const isFailed = String(snapStatus || '').trim().toLowerCase() === 'failed';
+
         if (data?.progress) {
           setSession((prev) =>
             prev
               ? {
                   ...prev,
                   status: snapStatus || prev.status,
+                  generation_error_code: errCode ?? prev.generation_error_code ?? null,
                   progress: data.progress,
                   question_statuses: {
                     ...(prev.question_statuses || {}),
@@ -244,14 +260,148 @@ export default function Stage2ConfigPage({
               : prev,
           );
         } else if (data) {
-          setSession(data);
+          setSession((prev) => ({
+            ...(prev || {}),
+            ...data,
+            status: snapStatus || data.status || prev?.status,
+            generation_error_code:
+              errCode ?? data.generation_error_code ?? prev?.generation_error_code ?? null,
+          }));
         }
+
+        // P2 (Duy): Giải phóng các cờ đang chạy khi snapshot xác nhận trạng thái terminal failed
+        if (isFailed) {
+          setIsGenerating(false);
+          setIsNewRunActive(false);
+        }
+
         return data;
       }
       return null;
     },
     [fetchGenSnapshot, loadSession],
   );
+
+  // P1 & P2 (Duy): Đối soát trạng thái chính thống khi kết nối SSE nhận lỗi
+  const handleSSEError = useCallback(
+    async (err) => {
+      const targetSessionId = sessionId;
+      const thisSessionOp = sessionOpRef.current;
+      const thisErrorOp = ++sseErrorOpRef.current;
+
+      const isCurrent = () =>
+        Boolean(
+          isMountedRef.current &&
+          activeSessionIdRef.current === targetSessionId &&
+          sessionOpRef.current === thisSessionOp &&
+          sseErrorOpRef.current === thisErrorOp,
+        );
+
+      if (!isCurrent()) return;
+
+      const errCode =
+        err?.generation_error_code ||
+        err?.error_code ||
+        err?.code ||
+        null;
+
+      // 1. Thử đối soát với snapshot chính thống từ backend
+      let authoritativeFailed = false;
+      let confirmedErrorCode = errCode;
+      let confirmedProgress = null;
+
+      try {
+        const snap = await fetchGenSnapshot(targetSessionId);
+        if (!isCurrent()) return;
+
+        const snapStatus = String(
+          snap?.status ||
+          snap?.session_status ||
+          snap?.progress?.session_status ||
+          snap?.progress?.status ||
+          '',
+        ).trim().toLowerCase();
+
+        if (snapStatus === 'failed') {
+          authoritativeFailed = true;
+          confirmedErrorCode = snap?.generation_error_code || errCode;
+          confirmedProgress = snap?.progress;
+        } else if (
+          snapStatus === 'generating' ||
+          snapStatus === 'partial_generated' ||
+          snapStatus === 'generated'
+        ) {
+          // Backend vẫn đang chạy hoặc đã hoàn thành -> lỗi SSE chỉ là transport mạng tạm thời.
+          // Giữ nguyên giao diện để người dùng tiếp tục theo dõi và có thể kết nối lại; KHÔNG ép sang failed!
+          return;
+        }
+      } catch {
+        if (!isCurrent()) return;
+
+        // Fallback kiểm tra qua loadSession nếu fetchGenSnapshot không khả dụng
+        try {
+          const latest = await loadSession(targetSessionId);
+          if (!isCurrent()) return;
+
+          const latestStatus = String(latest?.status || '').trim().toLowerCase();
+          if (latestStatus === 'failed') {
+            authoritativeFailed = true;
+            confirmedErrorCode = latest?.generation_error_code || errCode;
+          } else if (
+            latestStatus === 'generating' ||
+            latestStatus === 'partial_generated' ||
+            latestStatus === 'generated'
+          ) {
+            return;
+          }
+        } catch {
+          // Bỏ qua lỗi mạng trong fallback
+        }
+      }
+
+      // Kiểm tra lại trước nhánh cập nhật cuối
+      if (!isCurrent()) return;
+
+      // 2. Chỉ chuyển session sang failed khi backend xác nhận authoritative failed,
+      // HOẶC khi payload từ server là explicit terminal job error (không phải network/transport error)
+      const isExplicitJobError = Boolean(
+        err?.is_job_error === true ||
+        err?.event === 'job_error' ||
+        err?.event === 'failed' ||
+        (errCode && [
+          'ERR_MODEL_TIMEOUT',
+          'ERR_GENERATION_FAILED',
+          'ERR_GENERATION_INTERRUPTED',
+          'ERR_WORKER_CRASHED',
+          'ERR_CONFIG_INVALID',
+        ].includes(errCode)),
+      );
+
+      if (authoritativeFailed || isExplicitJobError) {
+        setSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: 'failed',
+                generation_error_code: confirmedErrorCode || prev.generation_error_code || null,
+                ...(confirmedProgress ? { progress: confirmedProgress } : {}),
+              }
+            : prev,
+        );
+        setIsGenerating(false);
+        setIsNewRunActive(false);
+      }
+    },
+    [fetchGenSnapshot, loadSession, sessionId],
+  );
+
+  // P2: Đồng bộ dọn dẹp cờ tiến trình sinh khi session chuyển sang failed từ bất kỳ nguồn dữ liệu nào
+  useEffect(() => {
+    if (session?.status === 'failed' && (isGenerating || isNewRunActive)) {
+      setIsGenerating(false);
+      setIsNewRunActive(false);
+    }
+  }, [session?.status, isGenerating, isNewRunActive]);
 
   // Hook SSE kết nối khi ở trạng thái isGenerating
   const sseState = useSSEHook(sessionId, {
@@ -263,6 +413,7 @@ export default function Stage2ConfigPage({
     initialStreamEpoch:
       session?.stream_epoch ?? session?.progress?.stream_epoch ?? null,
     onResync: handleResyncSnapshot,
+    onError: handleSSEError,
   });
 
   // Xử lý nộp form cấu hình
@@ -366,6 +517,15 @@ export default function Stage2ConfigPage({
       ) {
         return;
       }
+      setSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: 'generating',
+              generation_error_code: null,
+            }
+          : prev,
+      );
       setIsNewRunActive(true);
       setIsGenerating(true);
       sseState.reconnect();
@@ -546,6 +706,65 @@ export default function Stage2ConfigPage({
               className="rounded-xl bg-amber-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-amber-600/30 hover:bg-amber-500"
             >
               Đến Giai đoạn 1 (Xác nhận đề gốc)
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/dashboard')}
+              className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+            >
+              Về Dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Kiểm tra trạng thái phiên: nếu phiên sinh đề bị thất bại (failed)
+  if (session?.status === 'failed' && !isGenerating && !isNewRunActive) {
+    const errorCode =
+      session?.generation_error_code ||
+      session?.error_code ||
+      session?.progress?.generation_error_code ||
+      session?.progress?.error_code;
+
+    return (
+      <div className="mx-auto max-w-2xl p-6">
+        <div
+          role="alert"
+          className="rounded-2xl border border-rose-500/40 bg-rose-950/30 p-8 text-center shadow-xl"
+        >
+          <AlertCircle className="mx-auto h-12 w-12 text-rose-400" />
+          <h2 className="mt-4 text-xl font-bold text-white">
+            Tiến trình sinh đề thi bị gián đoạn hoặc thất bại
+          </h2>
+          <p className="mt-2 text-sm text-slate-300">
+            Phiên sinh đề gặp sự cố trong quá trình xử lý. Bạn có thể kích hoạt thử lại để tiếp tục tiến trình sinh đề mà không mất cấu hình đã thiết lập.
+          </p>
+          {errorCode && (
+            <div className="mt-4 inline-flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-900/50 px-3.5 py-1.5 text-xs font-mono font-medium text-rose-200">
+              <span>Mã lỗi:</span>
+              <strong className="text-white">{errorCode}</strong>
+            </div>
+          )}
+          {retryError && (
+            <div className="mt-3 text-xs text-rose-300" role="status">
+              {retryError}
+            </div>
+          )}
+          <div className="mt-6 flex justify-center gap-3">
+            <button
+              type="button"
+              onClick={handleRetryGeneration}
+              disabled={isRetryingGeneration}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-rose-600/30 hover:bg-rose-500 disabled:opacity-50"
+            >
+              {isRetryingGeneration ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+              {isRetryingGeneration ? 'Đang kích hoạt lại…' : 'Thử lại tiến trình sinh đề'}
             </button>
             <button
               type="button"
