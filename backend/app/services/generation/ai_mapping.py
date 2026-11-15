@@ -87,6 +87,7 @@ class PreparedAIResult:
     target: QuestionTarget
     draft: GeneratedDraft | None
     raw_result: QuestionResult
+    exhausted_attempts: bool = False
 
 
 def prepare_question_result(result: QuestionResult, plan: GenerationPlan) -> PreparedAIResult:
@@ -115,7 +116,7 @@ def prepare_question_result(result: QuestionResult, plan: GenerationPlan) -> Pre
     _text(checked.request_fingerprint)
     candidate = checked.candidate
     if candidate is None:
-        return PreparedAIResult(target, None, checked)
+        return PreparedAIResult(target, None, checked, result.exhausted_attempts)
     report = checked.validation
     if (
         checked.error_code is not None

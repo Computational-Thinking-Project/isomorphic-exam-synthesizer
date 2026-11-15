@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from app.models.schemas import GeneratedVariant
 from app.services.validator.base import CheckResult
@@ -89,6 +89,8 @@ class GeneratedQuestion(CandidatePayload):
 
 
 class QuestionResult(BaseModel):
+    _exhausted_attempts: bool = PrivateAttr(default=False)
+
     version_index: int = Field(ge=1, le=4)
     source_question_id: str
     request_fingerprint: str
@@ -96,6 +98,10 @@ class QuestionResult(BaseModel):
     validation: ValidationReport | None = None
     error_code: str | None = None
     attempts: int = 0
+
+    @property
+    def exhausted_attempts(self) -> bool:
+        return self._exhausted_attempts
 
 
 class BatchResult(BaseModel):
