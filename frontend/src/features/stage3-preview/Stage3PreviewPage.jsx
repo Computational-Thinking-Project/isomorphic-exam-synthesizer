@@ -37,6 +37,7 @@ export default function Stage3PreviewPage() {
   const [approveError, setApproveError] = useState(null);
   const [toast, setToast] = useState(null);
   const isMountedRef = useRef(true);
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -44,6 +45,14 @@ export default function Stage3PreviewPage() {
       isMountedRef.current = false;
     };
   }, []);
+
+  // F05: Reset trạng thái khi sessionId thay đổi để tránh stale data giữa 2 phiên
+  useEffect(() => {
+    setPreviewData(null);
+    setSelectedTab('');
+    setError(null);
+    setNeedsShuffle(false);
+  }, [sessionId]);
 
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
@@ -54,23 +63,25 @@ export default function Stage3PreviewPage() {
     }, 4000);
   };
 
+  // F04 & F05: loadData chỉ phụ thuộc vào sessionId, dùng requestIdRef để loại bỏ race condition
   const loadData = useCallback(async () => {
     if (!sessionId) return;
+    const currentRequestId = ++requestIdRef.current;
     setLoading(true);
     setError(null);
 
     try {
       const data = await fetchFinalizePreview(sessionId);
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return;
       setPreviewData(data);
       setNeedsShuffle(!data.is_finalized);
-      if (data.versions?.length > 0 && !selectedTab) {
-        setSelectedTab(data.versions[0].version_code);
+      if (data.versions?.length > 0) {
+        setSelectedTab((prev) => prev || data.versions[0].version_code);
       }
     } catch (err) {
-      if (!isMountedRef.current) return;
-      // 409 ERR_SHUFFLE_REQUIRED: Session ở trạng thái reviewed nhưng chưa shuffle
-      if (err.status === 409 || err.errorCode === 'ERR_SHUFFLE_REQUIRED') {
+      if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return;
+      // F03: Chỉ kích hoạt needsShuffle khi mã lỗi là ERR_SHUFFLE_REQUIRED
+      if (err.errorCode === 'ERR_SHUFFLE_REQUIRED' || err.data?.error_code === 'ERR_SHUFFLE_REQUIRED') {
         setNeedsShuffle(true);
         setError(null);
       } else if (err.status === 423) {
@@ -80,22 +91,15 @@ export default function Stage3PreviewPage() {
         setError(err.message || 'Không thể tải bản xem trước đề thi.');
       }
     } finally {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && currentRequestId === requestIdRef.current) {
         setLoading(false);
       }
     }
-  }, [sessionId, selectedTab]);
+  }, [sessionId]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
-
-  // Tự động chọn tab đầu tiên khi có dữ liệu versions
-  useEffect(() => {
-    if (previewData?.versions?.length > 0 && !selectedTab) {
-      setSelectedTab(previewData.versions[0].version_code);
-    }
-  }, [previewData, selectedTab]);
 
   // Xử lý bấm nút duy nhất: Xáo trộn mã đề
   const handleShuffle = async () => {
@@ -116,8 +120,24 @@ export default function Stage3PreviewPage() {
     }
   };
 
+  const isLocked = previewData?.status === 'approved' || previewData?.status === 'exported';
+
+  // F02: Chỉ cho phép phê duyệt khi previewData đã tải hoàn tất, hợp lệ và đã finalized
+  const canApprove =
+    !loading &&
+    !error &&
+    !needsShuffle &&
+    !isLocked &&
+    previewData?.session_id === sessionId &&
+    previewData?.status === 'reviewed' &&
+    previewData?.is_finalized === true;
+
   // Xử lý Phê duyệt cuối cùng & Khóa đề (HTTP 423)
   const handleApprove = async () => {
+    if (!canApprove) {
+      setApproveError('Dữ liệu xem trước chưa sẵn sàng hoặc không hợp lệ để phê duyệt.');
+      return;
+    }
     setApproving(true);
     setApproveError(null);
     try {
@@ -137,7 +157,6 @@ export default function Stage3PreviewPage() {
     }
   };
 
-  const isLocked = previewData?.status === 'approved' || previewData?.status === 'exported';
   const currentVersion = previewData?.versions?.find((v) => v.version_code === selectedTab);
 
   return (
@@ -198,7 +217,7 @@ export default function Stage3PreviewPage() {
                 <Sparkles className="w-3.5 h-3.5" />
                 Chờ xáo trộn mã đề
               </span>
-            ) : (
+            ) : canApprove ? (
               <span
                 data-testid="badge-status-ready"
                 className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-sky-500/10 text-sky-400 border border-sky-500/30"
@@ -206,33 +225,20 @@ export default function Stage3PreviewPage() {
                 <Check className="w-3.5 h-3.5" />
                 Đã xáo trộn · Sẵn sàng duyệt
               </span>
-            )}
+            ) : null}
 
-            {/* Header Action Buttons */}
-            {!isLocked && !needsShuffle && (
-              <>
-                <button
-                  type="button"
-                  data-testid="btn-reshuffle"
-                  onClick={handleShuffle}
-                  disabled={shuffling}
-                  className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-300 font-medium text-sm transition-colors disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-4 h-4 ${shuffling ? 'animate-spin' : ''}`} />
-                  <span>{shuffling ? 'Đang xáo trộn...' : 'Xáo trộn lại'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  data-testid="btn-open-approve"
-                  onClick={() => setIsApproveModalOpen(true)}
-                  disabled={shuffling}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-sm transition-colors shadow-sm disabled:opacity-50"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Phê duyệt & Khóa đề</span>
-                </button>
-              </>
+            {/* Header Action Buttons: F01 bỏ reshuffle; F02 chỉ render khi canApprove */}
+            {canApprove && (
+              <button
+                type="button"
+                data-testid="btn-open-approve"
+                onClick={() => setIsApproveModalOpen(true)}
+                disabled={shuffling || approving}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-sm transition-colors shadow-sm disabled:opacity-50"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Phê duyệt & Khóa đề</span>
+              </button>
             )}
 
             {isLocked && (
@@ -588,7 +594,7 @@ export default function Stage3PreviewPage() {
               <button
                 type="button"
                 data-testid="btn-confirm-approve"
-                disabled={approving}
+                disabled={approving || !canApprove}
                 onClick={handleApprove}
                 className="inline-flex items-center gap-2 px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold transition-colors shadow-md disabled:opacity-50"
               >

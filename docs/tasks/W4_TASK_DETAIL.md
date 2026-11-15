@@ -209,11 +209,11 @@ flowchart TD
 
 **Input:** fully reviewed session, API update-preferences (PR #61), `POST /finalize/shuffle`, GET pre-approval projection `05`, `POST /finalize/approve`, authoritative `status`/error response.
 
-**Xử lý/Output:** Bám sát nguyên mẫu thiết kế `docs/ui-walkthrough/PREVIEW.html` (Màn hình S07 - `Wm`), giao diện loại bỏ 2 checkbox/toggle riêng lẻ và gom thành duy nhất 1 nút hành động **"Xáo trộn mã đề"** (tự động áp dụng cả `shuffle_questions: true, shuffle_options: true`). Bản xem trước hiển thị tất cả versions + keys/solutions, bảng ma trận đối soát đáp án chéo, nút "Xáo trộn lại" và modal xác nhận phê duyệt (HTTP 423 Content Lock); sau khi lock chuyển sang chế độ View-Only / điều hướng Export route.
+**Xử lý/Output:** Bám sát nguyên mẫu thiết kế `docs/ui-walkthrough/PREVIEW.html` (Màn hình S07 - `Wm`), giao diện loại bỏ 2 checkbox/toggle riêng lẻ và gom thành duy nhất 1 nút hành động **"Xáo trộn mã đề"** (tự động áp dụng cả `shuffle_questions: true, shuffle_options: true`). Bản xem trước hiển thị tất cả versions + keys/solutions, bảng ma trận đối soát đáp án chéo và modal xác nhận phê duyệt (HTTP 423 Content Lock); sau khi lock chuyển sang chế độ View-Only / điều hướng Export route.
 
 **DoD:** [x] Session partial/generating/failed hoặc còn pending/rejected không approve; [x] POST shuffle đúng config (gửi đồng thời `true`/`true`), không nhận permutation từ browser; [x] preview từ 05, không tự re-shuffle phía client; [x] confirm approval và locked state (HTTP 423); [x] 403/409/423/retry/refresh test; [x] locked state sau F5; [x] props/routes giao Philip (`I-W4MVP10-FE2`).
 
-**Vướng mắc / Chốt UX:** Đã giải quyết theo Q07 & `PREVIEW.html`: Giao diện tinh gọn với 1 nút "Xáo trộn mã đề" duy nhất và 1 nút "Xáo trộn lại" (re-shuffle) trước khi chốt duyệt, loại bỏ sự phức tạp và rủi ro lệch cấu hình của 2 checkbox độc lập.
+**Vướng mắc / Chốt UX:** Đã giải quyết theo Q07 & `PREVIEW.html`: Giao diện tinh gọn với 1 nút "Xáo trộn mã đề" duy nhất trước khi chốt duyệt, loại bỏ sự phức tạp và rủi ro lệch cấu hình của 2 checkbox độc lập.
 
 ### W4-MVP-07 — DB adapter tạo `ApprovedExportSnapshot` từ dữ liệu đã khóa
 

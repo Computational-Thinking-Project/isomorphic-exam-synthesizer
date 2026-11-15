@@ -129,7 +129,7 @@ test('Stage3PreviewPage: Bấm "Xáo trộn mã đề" gọi PATCH preferences t
       error.response = { status: 409, data: { error_code: 'ERR_SHUFFLE_REQUIRED' } };
       throw error;
     }
-    return { data: GOLDEN_PREVIEW_FIXTURE };
+    return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'session-123' } };
   };
 
   api.patch = async (url, payload) => {
@@ -279,7 +279,7 @@ test('Stage3PreviewPage: Bấm Tab "Ma trận đáp án đối soát" hiển th�
 
 test('Stage3PreviewPage: Bấm "Phê duyệt & Khóa đề" mở modal xác nhận với cảnh báo HTTP 423 Content Lock', async () => {
   const originalGet = api.get;
-  api.get = async () => ({ data: GOLDEN_PREVIEW_FIXTURE });
+  api.get = async () => ({ data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'sess-approve-modal' } });
 
   const harness = renderPreviewPage('sess-approve-modal');
   try {
@@ -319,7 +319,7 @@ test('Stage3PreviewPage: Xác nhận phê duyệt trong modal gọi POST /finali
   const originalPost = api.post;
 
   let capturedPost = null;
-  api.get = async () => ({ data: GOLDEN_PREVIEW_FIXTURE });
+  api.get = async () => ({ data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'sess-approved' } });
   api.post = async (url, payload) => {
     capturedPost = { url, payload };
     return {
@@ -424,6 +424,214 @@ test('Stage3PreviewPage: Hiển thị thông báo lỗi mạng và nút "Thử l
 
     // Sau khi thử lại thành công
     assert.match(harness.container.textContent, /Bản in Đề thi — Mã đề 101/);
+  } finally {
+    api.get = originalGet;
+    await harness.unmount();
+  }
+});
+
+// =========================================================================
+// BỘ TESTS KIỂM CHỨNG THEO REVIEW DUY (F01 - F05)
+// =========================================================================
+
+test('F01 & F02: Không render nút "Xáo trộn lại" và chỉ cho phép approve khi preview đã tải thành công', async () => {
+  const originalGet = api.get;
+  let resolveGet;
+  api.get = () =>
+    new Promise((resolve) => {
+      resolveGet = resolve;
+    });
+
+  const harness = renderPreviewPage('sess-f01-f02');
+  try {
+    // 1. Khi GET đang pending: loading = true
+    await harness.render();
+    assert.equal(
+      harness.container.querySelector('[data-testid="btn-open-approve"]'),
+      null,
+      'Khi GET pending, nút approve không được hiển thị',
+    );
+    assert.equal(
+      harness.container.querySelector('[data-testid="btn-reshuffle"]'),
+      null,
+      'Nút reshuffle không được tồn tại',
+    );
+
+    // 2. Khi GET hoàn tất thành công
+    await act(async () => {
+      resolveGet({ data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'sess-f01-f02' } });
+    });
+
+    // Lúc này canApprove = true -> nút approve hiển thị, nhưng nút reshuffle vẫn không có
+    assert.ok(
+      harness.container.querySelector('[data-testid="btn-open-approve"]'),
+      'Nút approve phải hiển thị khi preview đã tải thành công',
+    );
+    assert.equal(
+      harness.container.querySelector('[data-testid="btn-reshuffle"]'),
+      null,
+      'Nút reshuffle không được tồn tại trên MVP',
+    );
+  } finally {
+    api.get = originalGet;
+    await harness.unmount();
+  }
+});
+
+test('F02: Khi GET preview lỗi (ví dụ lỗi mạng), nút approve không được hiển thị', async () => {
+  const originalGet = api.get;
+  api.get = async () => {
+    throw new Error('Lỗi tải dữ liệu 500');
+  };
+
+  const harness = renderPreviewPage('sess-f02-err');
+  try {
+    await harness.render();
+    assert.equal(
+      harness.container.querySelector('[data-testid="btn-open-approve"]'),
+      null,
+      'Khi GET lỗi, không được hiển thị nút approve',
+    );
+  } finally {
+    api.get = originalGet;
+    await harness.unmount();
+  }
+});
+
+test('F03: Khi GET preview trả HTTP 409 khác mã ERR_SHUFFLE_REQUIRED, không kích hoạt needsShuffle', async () => {
+  const originalGet = api.get;
+  api.get = async () => {
+    const error = new Error('Session chưa ở trạng thái reviewed');
+    error.response = {
+      status: 409,
+      data: {
+        error_code: 'ERR_INVALID_SESSION_STATE',
+        detail: 'Session chưa ở trạng thái reviewed',
+      },
+    };
+    throw error;
+  };
+
+  const harness = renderPreviewPage('sess-f03-409');
+  try {
+    await harness.render();
+    // Không được hiển thị màn hình chờ xáo trộn và nút shuffle
+    assert.equal(harness.container.querySelector('[data-testid="btn-shuffle"]'), null);
+    assert.equal(harness.container.querySelector('[data-testid="badge-status-pending"]'), null);
+
+    // Phải hiển thị thông báo lỗi và nút Thử lại
+    assert.match(harness.container.textContent, /Không thể tải bản xem trước/);
+    assert.match(harness.container.textContent, /Session chưa ở trạng thái reviewed/);
+    assert.ok(harness.container.querySelector('[data-testid="btn-retry"]'));
+  } finally {
+    api.get = originalGet;
+    await harness.unmount();
+  }
+});
+
+test('F04: Chuyển đổi giữa các tab không gọi lại API GET preview', async () => {
+  const originalGet = api.get;
+  let getCallCount = 0;
+  api.get = async () => {
+    getCallCount += 1;
+    return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'sess-f04-tabs' } };
+  };
+
+  const harness = renderPreviewPage('sess-f04-tabs');
+  try {
+    await harness.render();
+    assert.equal(getCallCount, 1, 'Lần đầu tải trang chỉ gọi GET đúng 1 lần');
+
+    // Chuyển sang tab 102
+    const tab102Btn = harness.container.querySelector('[data-testid="tab-version-102"]');
+    assert.ok(tab102Btn);
+    await act(async () => {
+      tab102Btn.click();
+    });
+
+    assert.equal(getCallCount, 1, 'Chuyển sang tab 102 không được gọi lại GET');
+
+    // Chuyển sang tab matrix
+    const tabMatrixBtn = harness.container.querySelector('[data-testid="tab-matrix"]');
+    assert.ok(tabMatrixBtn);
+    await act(async () => {
+      tabMatrixBtn.click();
+    });
+
+    assert.equal(getCallCount, 1, 'Chuyển sang tab matrix không được gọi lại GET');
+  } finally {
+    api.get = originalGet;
+    await harness.unmount();
+  }
+});
+
+test('F05: Đổi sessionId từ A sang B, response trả về muộn của A không ghi đè dữ liệu của B', async () => {
+  const originalGet = api.get;
+  let resolveA;
+
+  api.get = async (url) => {
+    if (url.includes('session-A')) {
+      return new Promise((resolve) => {
+        resolveA = resolve;
+      });
+    }
+    if (url.includes('session-B')) {
+      return {
+        data: {
+          ...GOLDEN_PREVIEW_FIXTURE,
+          session_id: 'session-B',
+          versions: [
+            {
+              ...GOLDEN_PREVIEW_FIXTURE.versions[0],
+              questions: [
+                {
+                  ...GOLDEN_PREVIEW_FIXTURE.versions[0].questions[0],
+                  content: 'Nội dung câu hỏi của Session B',
+                },
+              ],
+            },
+          ],
+        },
+      };
+    }
+    return { data: GOLDEN_PREVIEW_FIXTURE };
+  };
+
+  const harness = renderPreviewPage('session-A');
+  try {
+    // 1. Tải session A (đang pending)
+    await harness.render();
+
+    // 2. Chuyển sang session B trên cùng component
+    await harness.navigate('/session/session-B/stage3/preview');
+
+    // Session B đã tải xong và hiển thị
+    assert.match(harness.container.textContent, /Nội dung câu hỏi của Session B/);
+
+    // 3. Bây giờ session A mới trả về (muộn)
+    await act(async () => {
+      resolveA({
+        data: {
+          ...GOLDEN_PREVIEW_FIXTURE,
+          session_id: 'session-A',
+          versions: [
+            {
+              ...GOLDEN_PREVIEW_FIXTURE.versions[0],
+              questions: [
+                {
+                  ...GOLDEN_PREVIEW_FIXTURE.versions[0].questions[0],
+                  content: 'Nội dung câu hỏi của Session A CŨ KỸ',
+                },
+              ],
+            },
+          ],
+        },
+      });
+    });
+
+    // Đảm bảo nội dung của session B vẫn được bảo toàn, không bị session A ghi đè
+    assert.match(harness.container.textContent, /Nội dung câu hỏi của Session B/);
+    assert.doesNotMatch(harness.container.textContent, /Nội dung câu hỏi của Session A CŨ KỸ/);
   } finally {
     api.get = originalGet;
     await harness.unmount();

@@ -31,7 +31,7 @@ Trong luồng làm việc tạo đề thi hoán vị (Isomorphic Exam Synthesize
 - **Cơ chế hoạt động:**
   - **Trạng thái chưa xáo trộn (`needsShuffle = true` / 409 `ERR_SHUFFLE_REQUIRED`):** Giao diện hiển thị thẻ thông báo nổi bật kèm **DUY NHẤT 1 NÚT HÀNH ĐỘNG: "Xáo trộn mã đề"** (`data-testid="btn-shuffle"`).
   - Khi giáo viên nhấn nút này, hệ thống tự động đồng bộ cấu hình xáo trộn toàn diện (`shuffle_questions: true, shuffle_options: true`) qua `PATCH /api/sessions/{session_id}/ordering-preferences`, sau đó gọi `POST /api/sessions/{session_id}/finalize/shuffle` để kích hoạt thuật toán Fisher-Yates xác định trên máy chủ.
-  - **Trạng thái đã xáo trộn (`needsShuffle = false`):** Giao diện cung cấp nút **"Xáo trộn lại"** (`data-testid="btn-reshuffle"`) cho phép giáo viên sinh lại hoán vị nếu muốn, song song với nút **"Phê duyệt & Khóa đề"** (`data-testid="btn-open-approve"`).
+  - **Trạng thái đã xáo trộn (`needsShuffle = false`):** Giao diện hiển thị bản chiếu hoàn chỉnh của các mã đề kèm bảng ma trận đáp án đối soát, kích hoạt nút **"Phê duyệt & Khóa đề"** (`data-testid="btn-open-approve"`). Thuật toán xáo trộn deterministic sử dụng seed cố định (`session_id + version_code`) theo TASK-303 và migration 019 khóa sửa preferences sau khi finalized; vì vậy cho MVP, tác vụ xáo trộn được thực hiện một lần duy nhất trước khi tiến hành phê duyệt và khóa nội dung.
 
 - **Mục tiêu của W4-MVP-06 (Màn hình S07):**
   1. Hiển thị trạng thái khởi tạo rõ ràng: nếu chưa xáo trộn (nhận `409 ERR_SHUFFLE_REQUIRED`), hiển thị lời kêu gọi CTA với nút duy nhất **"Xáo trộn mã đề"**.
