@@ -112,15 +112,17 @@ export default function DashboardPage({
             </p>
           </div>
 
-          <button
-            type="button"
-            disabled={!onCreate}
-            onClick={onCreate}
-            className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-highlight px-5 py-3 text-sm font-semibold text-white shadow-md transition-all hover:bg-[#253b57] hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-highlight focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            <span>Tạo bộ đề mới</span>
-          </button>
+          {items && items.length > 0 && (
+            <button
+              type="button"
+              disabled={!onCreate}
+              onClick={onCreate}
+              className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-highlight px-5 py-3 text-sm font-semibold text-white shadow-md transition-all hover:bg-[#253b57] hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-highlight focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              <span>Tạo bộ đề mới</span>
+            </button>
+          )}
         </div>
       </header>
 

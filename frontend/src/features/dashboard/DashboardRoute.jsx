@@ -10,6 +10,7 @@ import CreateSessionModal from './CreateSessionModal.jsx';
 import { cloneSessionForDashboard } from './cloneSessionForDashboard.js';
 import { getSupabase } from '../../services/supabase.js';
 import UserAvatar from '../auth/UserAvatar.jsx';
+import BrandLogo from '../../components/BrandLogo.jsx';
 import { ChevronLeft, ChevronRight, Loader2, LogOut } from 'lucide-react';
 
 export default function DashboardRoute() {
@@ -148,35 +149,41 @@ function DashboardContent({ accountKey }) {
   return (
     <div className="min-h-screen bg-canvas text-ink">
       <aside className="sticky top-0 z-30 border-b border-line bg-surface/90 backdrop-blur-sm shadow-soft">
-        <div className="mx-auto max-w-6xl px-4 py-3 sm:py-3.5">
+        <div className="mx-auto max-w-6xl px-4 py-2.5 sm:py-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-3">
-              <UserAvatar
-                key={`${user?.id}:${sessionVersion}:${avatarUrl}`}
-                src={avatarUrl}
-                name={displayName}
-              />
+            <BrandLogo size="md" />
 
-              <div className="min-w-0">
-                <p className="truncate text-sm font-bold text-strong">
-                  {displayName}
-                </p>
-                <p className="text-[11px] text-muted flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                  Đang hoạt động
-                </p>
+            <div className="flex items-center gap-3 sm:gap-4">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <UserAvatar
+                  key={`${user?.id}:${sessionVersion}:${avatarUrl}`}
+                  src={avatarUrl}
+                  name={displayName}
+                />
+
+                <div className="hidden sm:block min-w-0">
+                  <p className="truncate text-xs font-bold text-strong max-w-[150px]">
+                    {displayName}
+                  </p>
+                  <p className="text-[10px] text-muted flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                    Đang hoạt động
+                  </p>
+                </div>
               </div>
-            </div>
 
-            <button
-              type="button"
-              onClick={handleSignOut}
-              disabled={isSigningOut}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-surface px-3.5 py-1.5 text-xs font-semibold text-strong hover:bg-rail transition-all disabled:opacity-50"
-            >
-              <LogOut className="h-3.5 w-3.5 text-muted" aria-hidden="true" />
-              <span>{isSigningOut ? 'Đang đăng xuất…' : 'Đăng xuất'}</span>
-            </button>
+              <div className="hidden sm:block h-4 w-px bg-line" aria-hidden="true" />
+
+              <button
+                type="button"
+                onClick={handleSignOut}
+                disabled={isSigningOut}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-strong hover:bg-rail transition-all disabled:opacity-50"
+              >
+                <LogOut className="h-3.5 w-3.5 text-muted" aria-hidden="true" />
+                <span>{isSigningOut ? 'Đang đăng xuất…' : 'Đăng xuất'}</span>
+              </button>
+            </div>
           </div>
 
           {signOutError && (

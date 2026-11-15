@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { AlertCircle, AlertTriangle, BookOpen, Loader2, LogOut, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Loader2, LogOut, RefreshCw, ShieldCheck } from 'lucide-react';
 import { getSupabase } from '../../services/supabase.js';
 import { useAuthStore } from './authStore.js';
+import BrandLogo from '../../components/BrandLogo.jsx';
 
 export default function LoginPage({ profileState }) {
   const [notice, setNotice] = useState('');
@@ -93,19 +94,16 @@ export default function LoginPage({ profileState }) {
           aria-labelledby="login-title"
           className="rounded-2xl border border-line bg-surface p-8 sm:p-10 shadow-paper"
         >
-          {/* Brand Identity Header */}
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-support-line bg-support-bg px-3 py-1 text-xs font-bold uppercase tracking-wider text-highlight">
-              <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
-              Exam Mirror
-            </span>
-            <span className="inline-flex items-center gap-1 text-xs text-muted">
+          {/* Brand Identity Header with Logo */}
+          <div className="flex items-center justify-between gap-3 mb-6">
+            <BrandLogo size="lg" />
+            <span className="inline-flex items-center gap-1 rounded-full border border-support-line bg-support-bg px-2.5 py-1 text-[11px] font-semibold text-highlight">
               <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
               Bảo mật
             </span>
           </div>
 
-          <h1 id="login-title" className="mt-4 text-2xl sm:text-3xl font-bold tracking-tight text-strong">
+          <h1 id="login-title" className="text-2xl sm:text-3xl font-extrabold tracking-tight text-strong">
             Đăng nhập
           </h1>
 
