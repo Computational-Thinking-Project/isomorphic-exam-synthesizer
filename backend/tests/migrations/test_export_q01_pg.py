@@ -29,7 +29,8 @@ class ExportQ01PostgresTests(ExportSnapshotPostgresFixture):
         for version in self.expected["versions"]:
             for question in version["questions"]:
                 question["solution_md"] = ""
-        super().seed()
+        # Also reused as a seed by the private-export fixture in TASK-08.
+        ExportSnapshotPostgresFixture.seed(self)
         clone = "clone" in self._testMethodName
         if "on_on" in self._testMethodName:
             self.sql(
