@@ -1,3 +1,18 @@
+## DEC-TV7-W4-007-Q01: Verified empty fallback/clone solutions — 16/11/2026
+
+- Hùng áp dụng Q01 revised của Duy tại PR74#issuecomment-6904736595, thay guard solution bắt buộc tuyệt đối. AI/regenerated giữ strict validation; fallback/Original Clone rỗng chỉ qua receipt/snapshot hợp lệ. Không tự thêm placeholder hoặc autoapprove.
+- Nội dung và ownership vẫn dùng user RLS. Service client tùy chọn chỉ đọc provenance của session/question đã authorize; missing/invalid evidence fail closed. Không thay API JSON, revision/hash payload hoặc migration. Capability nội bộ giữ ngoại lệ qua compiler/bundler revalidation; dump JSON không tự mang quyền đó.
+- Ảnh hưởng: snapshot reader/builder/models, pipeline revalidation, tests và export-snapshot contract; task08 nối client, task12 kiểm regression. Đã kiểm cục bộ được ghi tại plan07; không coi là producer/deployment/Golden PASS.
+
+## DEC-TV7-W4-007: Approved export snapshot adapter
+
+- Ngày/người: 12/11/2026 — Hùng; áp dụng [quyết định của Duy trên PR58](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58#issuecomment-6801792075). Chưa là GitHub approval hay nghiệm thu tích hợp.
+- Bối cảnh: task08 cần model export từ nội dung đã lưu và khóa; timestamp thay đổi khi approve nên không định danh đúng artifact.
+- Quyết định: SHA-256 ID + title chuẩn hóa + versions đã validate; không status/timestamps. Giữ table reads qua user RLS, kiểm session trước/sau, không thêm RPC/migration. Giữ409 cho dữ liệu sai (`ERR_EXPORT_SNAPSHOT_INVALID`), không đổi network/SDK errors thành409.
+- Sửa F01 sau review độc lập: chỉ display slots phải1..M; canonical giữ số câu nguồn nguyên dương/không trùng (ví dụ3,8,9). Mapping với nguồn vẫn do shuffle/approval xác thực; adapter giữ kiểm source coverage và key/canonical khớp nhau, không renumber dữ liệu nguồn. Bổ sung positive/negative regressions và PostgreSQL thật.
+- Ảnh hưởng: package exporter, fixtures/tests, [contract](api/export-snapshot-contract.md), [plan/input07](tasks/W4-MVP-07.md). Chờ Tâm xác nhận fixture/đồng bộ docs preview. Export thiếu solution đã chốt fail-closed trên issue46; gate upstream Q01 còn riêng, không hỏi lại quyết định export.
+- Kiểm: unit/stub và PostgreSQL15 dùng một lần với chain002–018; actual shuffle/approval, RLS, lock/fencing, concurrency và parity6slot với PR49 pinned. Chưa deployed Supabase/JWT/PostgREST, fullW2, PDF/Storage hay E2E08. Code test không cấp quyền cloud hoặc merge.
+
 ## OPS11/21 smoke tooling — 15/11/2026
 
 - Đạt bổ sung anonymous session/metrics probes trực tiếp và qua proxy vào `scripts/w4_ops.py smoke`: HTTP401 phải kèm Bearer challenge; không lưu response content/headers hoặc gửi credentials. JSON checks tăng4→8; schema_version vẫn1, cấu trúc từng check và acceptance không đổi. Consumer không nên cố định độ dài checks.

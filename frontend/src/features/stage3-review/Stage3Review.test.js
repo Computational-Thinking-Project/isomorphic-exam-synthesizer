@@ -13,7 +13,7 @@ const { default: Stage3ReviewPage } = await import('./Stage3ReviewPage.jsx');
 
 function renderStage3Page(
   sessionId,
-  { loadSession, retryGen, acceptQuestionFn, regenerateQuestionFn } = {},
+  { loadSession, loadSessionDetail, retryGen, acceptQuestionFn, regenerateQuestionFn } = {},
 ) {
   const container = document.createElement('div');
   const root = createRoot(container);
@@ -46,6 +46,7 @@ function renderStage3Page(
                 path: '/session/:sessionId/stage3',
                 element: React.createElement(Stage3ReviewPage, {
                   loadSession,
+                  loadSessionDetail,
                   retryGen,
                   acceptQuestionFn,
                   regenerateQuestionFn,
@@ -58,6 +59,10 @@ function renderStage3Page(
               React.createElement(Route, {
                 path: '/session/:sessionId/stage3/preview',
                 element: React.createElement('div', null, 'Trang Stage 3 Preview Rà Bộ Đề'),
+              }),
+              React.createElement(Route, {
+                path: '/session/:sessionId/export',
+                element: React.createElement('div', null, 'Trang Stage 4 Export'),
               }),
             ),
           ),
@@ -1722,6 +1727,240 @@ test('PR #54 Contract: Missing slot (candidate: null) hiển thị trạng thái
     true,
     'Nút Rà bộ đề phải bị vô hiệu hóa khi còn missing slot'
   );
+
+  await harness.unmount();
+});
+
+test('W4-MVP-10: Deep-link Stage 3 khi phiên ở trạng thái approved/exported khóa thao tác duyệt/tạo lại và điều hướng tới Export', async () => {
+  for (const status of ['approved', 'exported']) {
+    let acceptCalls = 0;
+    let regenerateCalls = 0;
+    let retryCalls = 0;
+
+    const harness = renderStage3Page('sess-locked-s3', {
+      loadSession: async () => ({
+        session_id: 'sess-locked-s3',
+        session_status: status,
+        title: 'Đề đã phê duyệt',
+        sources: [{ source_question_id: 'src-1', question_no: 1, content: 'Câu nguồn 1', options: ['1', '2', '3', '4'], correct_key: 'A' }],
+        versions: [
+          {
+            version_index: 1,
+            version_code: '101',
+            slots: [
+              {
+                source_question_id: 'src-1',
+                question_no: 1,
+                candidate: {
+                  candidate_id: 'cand-1',
+                  content: 'Câu 1 đã khóa',
+                  options: ['1', '2', '3', '4'],
+                  correct_key: 'A',
+                  solution_md: 'Lời giải',
+                  status: 'pending_review',
+                },
+              },
+            ],
+          },
+        ],
+      }),
+      acceptQuestionFn: async () => { acceptCalls += 1; },
+      regenerateQuestionFn: async () => { regenerateCalls += 1; },
+      retryGen: async () => { retryCalls += 1; },
+    });
+
+    await harness.render();
+    assert.ok(harness.container.querySelector('[data-testid="stage3-banner-locked"]'));
+    assert.match(harness.container.textContent, /khóa nội dung vĩnh viễn \(HTTP 423\)/);
+
+    const inspectBtn = harness.container.querySelector('[data-review-inspect="true"]');
+    assert.ok(inspectBtn);
+    await act(async () => {
+      inspectBtn.click();
+    });
+
+    const regenBtn = harness.container.querySelector('[data-review-regenerate="true"]');
+    const approveBtn = harness.container.querySelector('[data-review-approve="true"]');
+    assert.ok(regenBtn);
+    assert.ok(approveBtn);
+    assert.notEqual(regenBtn.getAttribute('disabled'), null);
+    assert.notEqual(approveBtn.getAttribute('disabled'), null);
+
+    await act(async () => {
+      regenBtn.click();
+      approveBtn.click();
+    });
+    assert.equal(regenerateCalls, 0);
+    assert.equal(acceptCalls, 0);
+    assert.equal(retryCalls, 0);
+
+    const exportBtn = harness.container.querySelector('[data-testid="stage3-btn-goto-export"]');
+    assert.ok(exportBtn);
+    await act(async () => {
+      exportBtn.click();
+    });
+    assert.equal(harness.getLocation(), '/session/sess-locked-s3/export');
+
+    await harness.unmount();
+  }
+});
+
+test('F01: Deep-link Stage 3 nhận HTTP 423 ERR_SESSION_LOCKED xác nhận qua getSessionDetail và mở đường tới Export cho approved/exported', async () => {
+  for (const status of ['approved', 'exported']) {
+    let detailCalls = 0;
+    const err423 = Object.assign(new Error('Request failed with status code 423'), {
+      response: {
+        status: 423,
+        data: {
+          error_code: 'ERR_SESSION_LOCKED',
+          detail: 'Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn',
+        },
+      },
+    });
+
+    const harness = renderStage3Page('sess-locked-423', {
+      loadSession: async () => {
+        throw err423;
+      },
+      loadSessionDetail: async (id) => {
+        detailCalls += 1;
+        return {
+          id,
+          status,
+          title: `Đề đã khóa (${status})`,
+          subject: 'Toán',
+          grade: 12,
+          source_questions: [],
+          exam_versions: [],
+        };
+      },
+    });
+
+    await harness.render();
+    assert.equal(detailCalls, 1);
+    assert.equal(harness.container.textContent.includes('Không thể tải đề thi'), false);
+    assert.ok(harness.container.querySelector('[data-testid="stage3-banner-locked"]'));
+    assert.match(harness.container.textContent, /khóa nội dung vĩnh viễn \(HTTP 423\)/);
+    assert.match(harness.container.textContent, new RegExp(`Đề đã khóa \\(${status}\\)`));
+    assert.equal(harness.container.querySelector('[data-review-inspect="true"]'), null);
+
+    const exportBtn = harness.container.querySelector('[data-testid="stage3-btn-goto-export"]');
+    assert.ok(exportBtn);
+    await act(async () => {
+      exportBtn.click();
+    });
+    assert.equal(harness.getLocation(), '/session/sess-locked-423/export');
+
+    await harness.unmount();
+  }
+});
+
+test('F01: Khi review/snapshot trả 423 nhưng getSessionDetail lỗi hoặc không phải approved/exported thì fallback về màn lỗi an toàn', async () => {
+  const err423 = {
+    response: {
+      status: 423,
+      data: {
+        error_code: 'ERR_SESSION_LOCKED',
+        detail: 'Phiên đề đã được phê duyệt và khóa bất biến vĩnh viễn',
+      },
+    },
+  };
+
+  for (const loadSessionDetail of [
+    async () => {
+      throw new Error('Không thể đọc chi tiết phiên');
+    },
+    async (id) => ({
+      id,
+      status: 'generated',
+      title: 'Trạng thái lệch',
+      source_questions: [],
+      exam_versions: [],
+    }),
+  ]) {
+    const harness = renderStage3Page('sess-423-fallback', {
+      loadSession: async () => {
+        throw err423;
+      },
+      loadSessionDetail,
+    });
+
+    await harness.render();
+    assert.equal(harness.container.querySelector('[data-testid="stage3-banner-locked"]'), null);
+    assert.equal(harness.container.querySelector('[data-testid="stage3-btn-goto-export"]'), null);
+    assert.match(harness.container.textContent, /Không thể tải đề thi/);
+
+    await harness.unmount();
+  }
+});
+
+test('F01: Response 423/getSessionDetail chậm của phiên A không ghi đè trạng thái khóa lên phiên B', async () => {
+  let resolveDetailA;
+  const detailAPromise = new Promise((resolve) => {
+    resolveDetailA = resolve;
+  });
+
+  const harness = renderStage3Page('sess-A-423', {
+    loadSession: async (id) => {
+      if (id === 'sess-A-423') {
+        throw {
+          response: {
+            status: 423,
+            data: { error_code: 'ERR_SESSION_LOCKED', detail: 'Locked' },
+          },
+        };
+      }
+      return {
+        session_id: 'sess-B-active',
+        session_status: 'generated',
+        title: 'Phiên B đang duyệt',
+        sources: [{ source_question_id: 'src-b1', question_no: 1, content: 'Câu nguồn B', options: ['1', '2', '3', '4'], correct_key: 'A' }],
+        versions: [
+          {
+            version_index: 1,
+            version_code: '101',
+            slots: [
+              {
+                source_question_id: 'src-b1',
+                question_no: 1,
+                candidate: {
+                  candidate_id: 'cand-b1',
+                  content: 'Biến thể phiên B',
+                  options: ['1', '2', '3', '4'],
+                  correct_key: 'A',
+                  solution_md: 'Lời giải B',
+                  status: 'pending_review',
+                },
+              },
+            ],
+          },
+        ],
+      };
+    },
+    loadSessionDetail: async (id) => {
+      if (id === 'sess-A-423') {
+        return await detailAPromise;
+      }
+      return { id, status: 'generated' };
+    },
+  });
+
+  await harness.render();
+  await harness.navigate('sess-B-active');
+
+  await act(async () => {
+    resolveDetailA({
+      id: 'sess-A-423',
+      status: 'approved',
+      title: 'Phiên A đã khóa',
+      source_questions: [],
+      exam_versions: [],
+    });
+    await detailAPromise;
+  });
+
+  assert.equal(harness.container.querySelector('[data-testid="stage3-banner-locked"]'), null);
+  assert.match(harness.container.textContent, /Biến thể phiên B/);
 
   await harness.unmount();
 });

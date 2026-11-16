@@ -20,7 +20,7 @@ import {
   executeFinalizeShuffle,
   triggerFinalizeApprove,
 } from '../../services/stage3PreviewService.js';
-import { stage3Path } from '../../sessionPaths.js';
+import { stage3Path, exportPath } from '../../sessionPaths.js';
 
 export default function Stage3PreviewPage() {
   const { sessionId } = useParams();
@@ -145,7 +145,7 @@ export default function Stage3PreviewPage() {
     previewData?.status === 'reviewed' &&
     previewData?.is_finalized === true;
 
-  // Xử lý Phê duyệt cuối cùng & Khóa đề (HTTP 423) - F01 (Phương án A) & F02
+  // Xử lý Phê duyệt cuối cùng & Khóa đề (HTTP 423) - F02
   const handleApprove = async () => {
     const targetSessionId = sessionId;
     if (!canApprove || activeSessionIdRef.current !== targetSessionId) {
@@ -158,10 +158,8 @@ export default function Stage3PreviewPage() {
       await triggerFinalizeApprove(targetSessionId);
       if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
       setIsApproveModalOpen(false);
-      showToast('Đã phê duyệt và khóa đề thi thành công! Đề thi đã chuyển sang chế độ chỉ xem.', 'success');
-      // F01 (Phương án A): Tải lại dữ liệu để chuyển sang chế độ View-Only đã khóa (HTTP 423)
-      // thay vì navigate sang exportPath (tránh bị redirect về /login do EXPORT_ROUTE chưa mount trong App.jsx)
-      await loadData();
+      showToast('Đã phê duyệt và khóa đề thi thành công!', 'success');
+      navigate(exportPath(targetSessionId));
     } catch (err) {
       if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
       setApproveError(err.message || 'Có lỗi xảy ra khi phê duyệt đề thi.');
@@ -260,12 +258,11 @@ export default function Stage3PreviewPage() {
               <button
                 type="button"
                 data-testid="btn-goto-export"
-                disabled
-                title="Màn hình Xuất bản sẽ khả dụng khi hoàn tất tích hợp W4-MVP-10"
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 text-slate-400 font-medium text-sm border border-slate-700 cursor-not-allowed opacity-75 shadow-sm"
+                onClick={() => navigate(exportPath(sessionId))}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium text-sm transition-colors shadow-sm"
               >
                 <FileText className="w-4 h-4" />
-                <span>Chuyển sang màn hình Xuất bản (Chờ tích hợp)</span>
+                <span>Chuyển sang màn hình Xuất bản</span>
               </button>
             )}
           </div>
@@ -367,11 +364,10 @@ export default function Stage3PreviewPage() {
                 <button
                   type="button"
                   data-testid="banner-btn-goto-export"
-                  disabled
-                  title="Màn hình Xuất bản sẽ khả dụng khi hoàn tất tích hợp W4-MVP-10"
-                  className="px-3.5 py-1.5 rounded-lg bg-slate-800 text-slate-400 text-xs font-medium border border-slate-700 cursor-not-allowed opacity-75 shrink-0 ml-4"
+                  onClick={() => navigate(exportPath(sessionId))}
+                  className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors shrink-0 ml-4"
                 >
-                  Tới màn hình Xuất bản (Chờ tích hợp)
+                  Tới màn hình Xuất bản
                 </button>
               </div>
             )}
