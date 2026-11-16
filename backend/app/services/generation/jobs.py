@@ -15,11 +15,15 @@ from app.services.generation.ai_batch_adapter import AIBatchAdapter, AIBatchInpu
 from app.services.generation.ai_mapping import PreparedAIResult
 from app.services.generation.events import EventBufferLease, GenerationEventBroker
 from app.services.generation.job_contracts import (
+    FALLBACK_WARNING,
+    SOURCE_SOLUTION_REQUIRED,
+    ConfirmedSourceFallback,
     GeneratedDraft,
     GenerationJobError,
     GenerationJobStore,
     GenerationPlan,
     GenerationQuotaExceeded,
+    IncompleteGenerationSource,
     QuestionTarget,
 )
 from app.services.generation.job_repository import CloneJobInputs
@@ -194,6 +198,7 @@ class GenerationJobRunner:
         code: str | None = None
         cancelled = False
         fatal = False
+        saving_fallback = False
         handle = None
         try:
             handle = self._registry.begin_job(plan.session_id)
@@ -210,8 +215,39 @@ class GenerationJobRunner:
                 elif isinstance(plan.inputs, AIBatchInputs):
                     if self._batch is None:
                         raise RuntimeError("AI batch service is unavailable.")
+                    missing_sources = {
+                        target.source_question_id for target in plan.targets if target not in completed
+                    }
+                    if plan.inputs.frozen_sources and any(
+                        UUID(source.id) in missing_sources and not source.solution.strip()
+                        for source in plan.inputs.sources
+                    ):
+                        raise IncompleteGenerationSource(
+                            "Frozen AI source is missing a solution.", code=SOURCE_SOLUTION_REQUIRED,
+                        )
 
                     async def on_result(result: PreparedAIResult) -> None:
+                        nonlocal saving_fallback
+                        raw = result.raw_result
+                        if (
+                            result.exhausted_attempts and result.draft is None
+                            and raw.attempts == 4 and raw.error_code is not None
+                        ):
+                            saving_fallback = True
+                            await store.save_fallback(plan, ConfirmedSourceFallback(
+                                result.target, raw.request_fingerprint, raw.error_code,
+                            ))
+                            saving_fallback = False
+                            completed.add(result.target)
+                            await self._emit(
+                                plan, "warning", len(completed), target=result.target,
+                                code=FALLBACK_WARNING, retry_count=3,
+                            )
+                            await self._emit(
+                                plan, "question_done", len(completed), target=result.target, retry_count=3,
+                            )
+                            await self._emit(plan, "progress", len(completed))
+                            return
                         # The full result, including failures and provenance, is
                         # committed before any browser progress is published.
                         await store.save_result(plan, result)
@@ -286,10 +322,18 @@ class GenerationJobRunner:
         except GenerationQuotaExceeded:
             code = "ERR_GEMINI_QUOTA_EXHAUSTED"
         except TimeoutError:
-            code = "ERR_GENERATION_TIMEOUT"
+            code = "ERR_GENERATION_STORAGE_FAILURE" if saving_fallback else "ERR_GENERATION_TIMEOUT"
+            fatal = saving_fallback
         except asyncio.CancelledError:
-            code = "ERR_GENERATION_INTERRUPTED"
+            code = "ERR_GENERATION_STORAGE_FAILURE" if saving_fallback else "ERR_GENERATION_INTERRUPTED"
             cancelled = True
+            fatal = saving_fallback
+        except IncompleteGenerationSource as exc:
+            code = exc.code
+            fatal = True
+        except GenerationJobError as exc:
+            code = exc.code if exc.code == "ERR_GENERATION_STORAGE_FAILURE" else "ERR_GENERATION_FAILED"
+            fatal = True
         except Exception:
             code = "ERR_GENERATION_FAILED"
             fatal = True
@@ -376,6 +420,7 @@ class GenerationJobRunner:
         draft: GeneratedDraft | None = None,
         code: str | None = None,
         outcome: SessionOutcome | None = None,
+        retry_count: int = 0,
     ) -> None:
         messages = {
             "progress": "Generating exam questions.",
@@ -400,7 +445,7 @@ class GenerationJobRunner:
                 if event in {"done", "question_done"}
                 else "generating",
                 percent_complete=completed * 100 / len(plan.targets),
-                retry_count=draft.retry_count if draft else 0,
+                retry_count=draft.retry_count if draft else retry_count,
                 error_code=code,
                 error_message="Generation could not complete this operation." if code else None,
                 session_status=outcome,
