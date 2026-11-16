@@ -126,10 +126,11 @@ async def finalize_preview_endpoint(
     session_id: str = Depends(validate_session_uuid),
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
+    provenance_db: Client = Depends(get_service_db),
 ) -> PreviewSnapshotResponse:
     """Retrieve the post-shuffle display preview projection across all versions."""
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
     response.headers["Cache-Control"] = "no-store"
 
-    service = FinalizeService(db)
+    service = FinalizeService(db, provenance_db=provenance_db)
     return await service.get_preview_snapshot(session_id, current_user.id)

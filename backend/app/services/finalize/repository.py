@@ -21,6 +21,106 @@ from app.services.shuffler.service import generate_deterministic_seed, sync_solu
 logger = logging.getLogger(__name__)
 
 VERSION_CODE_REGEX = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$")
+CLONE_FINGERPRINT_REGEX = re.compile(r"^[a-f0-9]{64}$")
+MAX_TEXT_LEN = 16000
+
+
+def _is_empty_text(value: Any) -> bool:
+    """Return True when value is None or blank whitespace text."""
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _is_original_clone_config(config_row: Dict[str, Any]) -> bool:
+    """Return True when config explicitly pins W4 Original Clone empty modes/dimensions."""
+    modes = config_row.get("active_variation_modes")
+    dims = config_row.get("canonical_dimensions")
+    return (
+        isinstance(modes, list)
+        and len(modes) == 0
+        and isinstance(dims, list)
+        and len(dims) == 0
+    )
+
+
+def _has_fallback_validation_report(question_row: Dict[str, Any]) -> bool:
+    """Return True when row matches migration 021 CONFIRMED_SOURCE_FALLBACK metadata."""
+    if question_row.get("has_warning") is not True:
+        return False
+    report = question_row.get("validation_report")
+    if not isinstance(report, dict):
+        return False
+    if (
+        report.get("fallback_source") is not True
+        or report.get("reason") != "GENERATION_RETRIES_EXHAUSTED"
+        or report.get("validation_status") != "not_validated"
+    ):
+        return False
+    attempts = report.get("attempts")
+    if type(attempts) is not int or attempts < 1:
+        return False
+    for key in ("source_revision_id", "source_fingerprint", "confirmed_source_hash"):
+        val = report.get(key)
+        if not isinstance(val, str) or not val.strip():
+            return False
+    return True
+
+
+def _classify_empty_solution_kind(
+    question_row: Dict[str, Any],
+    config_row: Dict[str, Any],
+) -> Optional[str]:
+    """Identify allowed empty-solution origin ('CONFIRMED_SOURCE_FALLBACK' or 'ORIGINAL_CLONE').
+
+    Regenerated candidates (regenerated_from_id set) and standard AI-generated rows
+    return None so empty solutions continue to fail closed.
+    """
+    if question_row.get("regenerated_from_id") is not None:
+        return None
+    if _has_fallback_validation_report(question_row):
+        return "CONFIRMED_SOURCE_FALLBACK"
+    report = question_row.get("validation_report")
+    if (
+        _is_original_clone_config(config_row)
+        and question_row.get("has_warning") is False
+        and (report is None or report == {})
+    ):
+        return "ORIGINAL_CLONE"
+    return None
+
+
+def _is_valid_ledger_entry(
+    expected_kind: str,
+    question_row: Dict[str, Any],
+    session_id: str,
+    source_id: str,
+    ledger_by_qid: Dict[str, Dict[str, Any]],
+    snapshots_by_id: Dict[str, Dict[str, Any]],
+) -> bool:
+    """Cross-check empty-solution provenance against generation_target_results ledger."""
+    qid = str(question_row.get("id", ""))
+    entry = ledger_by_qid.get(qid)
+    if not entry:
+        return False
+    if (
+        entry.get("is_success") is not True
+        or str(entry.get("session_id", "")) != session_id
+        or str(entry.get("source_question_id", "")) != source_id
+        or entry.get("result_kind") != expected_kind
+    ):
+        return False
+    if expected_kind == "ORIGINAL_CLONE":
+        clone_fp = entry.get("clone_fingerprint")
+        if not isinstance(clone_fp, str) or not CLONE_FINGERPRINT_REGEX.fullmatch(clone_fp):
+            return False
+        snapshot = snapshots_by_id.get(str(entry.get("snapshot_id", "")))
+        if (
+            not snapshot
+            or str(snapshot.get("session_id", "")) != session_id
+            or snapshot.get("public_modes") != []
+            or snapshot.get("canonical_dimensions") != []
+        ):
+            return False
+    return True
 
 
 def _now_iso() -> str:
@@ -50,8 +150,57 @@ def _get_rows(res: Any) -> List[Dict[str, Any]]:
 class FinalizeRepository:
     """Encapsulates Supabase queries for the exam session finalize lifecycle."""
 
-    def __init__(self, db: Client) -> None:
+    def __init__(self, db: Client, *, provenance_db: Optional[Client] = None) -> None:
         self.db = db
+        self.provenance_db = provenance_db
+
+    def _fetch_provenance_ledger(
+        self, session_id: str, question_ids: List[str]
+    ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+        """Load generation ledger entries and clone snapshots for empty-solution provenance checks."""
+        if self.provenance_db is None or not question_ids:
+            return {}, {}
+        target_rows = _get_rows(
+            self.provenance_db.table("generation_target_results")
+            .select(
+                "version_question_id, snapshot_id, session_id, "
+                "source_question_id, is_success, result_kind, clone_fingerprint"
+            )
+            .eq("session_id", session_id)
+            .in_("version_question_id", question_ids)
+            .execute()
+        )
+        ledger_by_qid: Dict[str, Dict[str, Any]] = {}
+        clone_snapshot_ids: set[str] = set()
+        for row in target_rows:
+            qid = str(row.get("version_question_id", ""))
+            if not qid:
+                continue
+            if qid in ledger_by_qid:
+                raise ReviewDomainException(
+                    409,
+                    "ERR_INCONSISTENT_ANSWER_KEYS",
+                    "Phát hiện trùng lặp biên nhận sinh đề cho câu hỏi xem trước",
+                )
+            ledger_by_qid[qid] = row
+            if row.get("result_kind") == "ORIGINAL_CLONE" and row.get("snapshot_id"):
+                clone_snapshot_ids.add(str(row["snapshot_id"]))
+
+        snapshots_by_id: Dict[str, Dict[str, Any]] = {}
+        if clone_snapshot_ids:
+            snap_rows = _get_rows(
+                self.provenance_db.table("generation_job_snapshots")
+                .select("id, session_id, public_modes, canonical_dimensions")
+                .eq("session_id", session_id)
+                .in_("id", sorted(clone_snapshot_ids))
+                .execute()
+            )
+            for snap in snap_rows:
+                sid = str(snap.get("id", ""))
+                if sid:
+                    snapshots_by_id[sid] = snap
+
+        return ledger_by_qid, snapshots_by_id
 
     async def get_session_meta(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Fetch session metadata including current status and approval timestamp."""
@@ -564,9 +713,11 @@ class FinalizeRepository:
         4. Validated shuffle provenance and permutation metadata (permutations JSON).
         5. Source questions count M in range 1..20.
         6. Complete set of approved, current questions for each version with contiguous question_no (1..M).
-        7. Strict parity with exporter DisplayQuestion invariants:
+        7. Strict parity with exporter DisplayQuestion invariants and Q01 policy:
            - Non-empty, non-whitespace content (1..16000 chars)
-           - Non-empty, non-whitespace solution_md (1..16000 chars)
+           - Non-empty, non-whitespace solution_md (1..16000 chars) for AI/regenerated questions;
+             empty solution_md normalized to "" ONLY for CONFIRMED_SOURCE_FALLBACK or ORIGINAL_CLONE
+             with valid provenance
            - Exactly 4 options distinct after normalized_text
            - Question status == 'approved'
            - Display correct_key in ('A', 'B', 'C', 'D')
@@ -597,13 +748,14 @@ class FinalizeRepository:
         # Step 2: Generation config
         configs = _get_rows(
             self.db.table("generation_configs")
-            .select("n_versions")
+            .select("*")
             .eq("session_id", session_id)
             .execute()
         )
         if len(configs) != 1:
             raise inconsistent("Cấu hình sinh đề không hợp lệ")
-        n = configs[0].get("n_versions")
+        config_row = configs[0]
+        n = config_row.get("n_versions")
         if not isinstance(n, int) or isinstance(n, bool) or not (1 <= n <= 4):
             raise inconsistent("Số lượng phiên bản đề trong cấu hình không hợp lệ")
 
@@ -674,11 +826,21 @@ class FinalizeRepository:
             .select(
                 "id, version_id, source_question_id, question_no, content, options, "
                 "correct_key, solution_md, canonical_question_no, canonical_options, "
-                "canonical_correct_key, canonical_solution_md, status, is_current"
+                "canonical_correct_key, canonical_solution_md, status, is_current, "
+                "has_warning, is_reverted, regenerated_from_id, validation_report"
             )
             .in_("version_id", ids)
             .eq("is_current", True)
             .execute()
+        )
+
+        empty_solution_qids = [
+            str(q["id"])
+            for q in raw_questions
+            if q.get("id") and _is_empty_text(q.get("solution_md"))
+        ]
+        ledger_by_qid, snapshots_by_id = self._fetch_provenance_ledger(
+            session_id, empty_solution_qids
         )
 
         questions_by_version: Dict[str, List[Dict[str, Any]]] = {vid: [] for vid in ids}
@@ -849,9 +1011,36 @@ class FinalizeRepository:
                 if not isinstance(content, str) or not (1 <= len(content.strip()) <= 16000):
                     raise inconsistent(f"Đề bài câu {q_no} trong phiên bản {v_code} bị rỗng hoặc không hợp lệ")
 
-                # Exporter DisplayQuestion Invariant: Solution non-empty
-                if not isinstance(solution_md, str) or not (1 <= len(solution_md.strip()) <= 16000):
-                    raise inconsistent(f"Lời giải câu {q_no} trong phiên bản {v_code} bị rỗng hoặc thiếu")
+                # Exporter DisplayQuestion Invariant: Solution policy (Q01)
+                if solution_md is not None and not isinstance(solution_md, str):
+                    raise inconsistent(f"Lời giải câu {q_no} trong phiên bản {v_code} không hợp lệ")
+                if isinstance(solution_md, str) and len(solution_md.strip()) > MAX_TEXT_LEN:
+                    raise inconsistent(f"Lời giải câu {q_no} trong phiên bản {v_code} vượt quá giới hạn 16,000 ký tự")
+                if canonical_solution_md is not None and not isinstance(canonical_solution_md, str):
+                    raise inconsistent(f"Lời giải gốc câu {q_no} trong phiên bản {v_code} không hợp lệ")
+
+                has_display_solution = not _is_empty_text(solution_md)
+                has_canonical_solution = not _is_empty_text(canonical_solution_md)
+
+                if has_display_solution:
+                    if not has_canonical_solution:
+                        raise inconsistent(
+                            f"Lời giải câu {q_no} trong phiên bản {v_code} không khớp dữ liệu gốc"
+                        )
+                    normalized_solution = cast(str, solution_md).strip()
+                else:
+                    if has_canonical_solution:
+                        raise inconsistent(f"Lời giải câu {q_no} trong phiên bản {v_code} bị rỗng hoặc thiếu")
+                    expected_kind = _classify_empty_solution_kind(q, config_row)
+                    if expected_kind is None:
+                        raise inconsistent(f"Lời giải câu {q_no} trong phiên bản {v_code} bị rỗng hoặc thiếu")
+                    if self.provenance_db is not None and not _is_valid_ledger_entry(
+                        expected_kind, q, session_id, src_id, ledger_by_qid, snapshots_by_id
+                    ):
+                        raise inconsistent(
+                            f"Lời giải câu {q_no} trong phiên bản {v_code} thiếu provenance fallback/clone hợp lệ"
+                        )
+                    normalized_solution = ""
 
                 # Exporter DisplayQuestion Invariant: Options 4 distinct after normalization, each 1..16000 chars
                 if (
@@ -906,13 +1095,13 @@ class FinalizeRepository:
                         raise inconsistent(f"Nội dung phương án hiển thị '{mapped_label}' không khớp phương án gốc '{label}' cho câu {q_no} trong phiên bản {v_code}")
 
                 # Solution synchronization check
-                if canonical_solution_md:
+                if has_canonical_solution:
                     expected_solution = sync_solution_text(
-                        canonical_solution_md,
+                        cast(str, canonical_solution_md),
                         canonical_key=canonical_correct_key,
                         display_key=correct_key,
                     )
-                    if solution_md.strip() != expected_solution.strip():
+                    if normalized_solution != expected_solution.strip():
                         raise inconsistent(f"Lời giải câu {q_no} trong phiên bản {v_code} không khớp lời giải sau đồng bộ hoán vị")
 
                 # Answer key consistency
@@ -930,7 +1119,7 @@ class FinalizeRepository:
                     "content": content.strip(),
                     "options": options,
                     "correct_key": correct_key,
-                    "solution_md": solution_md.strip(),
+                    "solution_md": normalized_solution,
                     "status": "approved",
                 })
 

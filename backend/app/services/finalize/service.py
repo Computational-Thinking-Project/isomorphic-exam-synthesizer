@@ -40,9 +40,10 @@ class FinalizeService:
         repo: Optional[FinalizeRepository] = None,
         *,
         writer_repo: Optional[FinalizeRepository] = None,
+        provenance_db: Optional[Client] = None,
     ) -> None:
         self.db = db
-        self.repo = repo or FinalizeRepository(db)
+        self.repo = repo or FinalizeRepository(db, provenance_db=provenance_db)
         self.writer_repo = writer_repo
 
     async def shuffle_session(self, session_id: str, user_id: str) -> FinalizeShuffleResponse:

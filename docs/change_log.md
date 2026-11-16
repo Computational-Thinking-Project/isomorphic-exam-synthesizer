@@ -12,6 +12,12 @@ normalized distinct options, status='approved'), complete answer-key integrity c
 and finalized shuffle provenance verification. Resolves Decision Q06. See the
 [preview projection contract](api/preview-projection-contract.md).
 
+### Review Round 2 & Q01 Revised Policy Alignment (`16/11/2026`):
+- **Q01 Revised Policy (`W4-MVP-05` Preview Provenance Exception):** Aligned `FinalizeRepository.fetch_preview_snapshot()` and `GET /api/sessions/{session_id}/finalize/preview` with Duy's updated `Q01` decision on PR `#74` (`16/11/2026`):
+  - AI-generated candidates and Stage 3 regenerated candidates (`regenerated_from_id` set) continue to fail closed (`409 ERR_INCONSISTENT_ANSWER_KEYS`) when `solution_md` is empty or missing.
+  - Empty `solution_md` (normalized to `""` when `canonical_solution_md` is also empty) is permitted **strictly** for slots with verified `CONFIRMED_SOURCE_FALLBACK` provenance (migration `021` fallback report and `has_warning=True`) or `ORIGINAL_CLONE` provenance (explicit empty `active_variation_modes` and `canonical_dimensions`, non-warning empty report), including Stage 3 reverts back to those root rows.
+  - On HTTP `GET /api/sessions/{session_id}/finalize/preview`, when empty solutions are present, `generation_target_results` (`result_kind`) and `generation_job_snapshots` are cross-checked read-only after owner-RLS verification (`get_user_db`), failing closed on missing or mismatched worker ledger provenance.
+
 ### Review Round 2 Findings (F01–F04) Resolution:
 - **F01 (Real PostgreSQL integration & fixture):** Fixed `reviewed_exam_session` fixture
   schema compliance by populating `canonical_question_no` on `answer_keys` and valid

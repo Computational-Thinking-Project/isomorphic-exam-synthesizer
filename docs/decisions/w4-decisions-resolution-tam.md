@@ -1,6 +1,6 @@
 # Week 4 Decision Register Alignment Proposals (Q01, Q06, Q07, Q14)
 
-> **Document Status:** PROPOSAL FOR WEEK 4 DECISION ALIGNMENT (TAM PROPOSAL)  
+> **Document Status:** ALIGNED WITH REVISED W4 DECISIONS (Q01 REVISED + Q14 APPROVED 16/11/2026)
 > **Author:** Pham Khanh Tam (`@AI-WFox`)  
 > **Consulted Stakeholders:** Duy (`@johannguyen015`), Hung (`@benalexx007`), Boi Anh (`@htbaax`), Quynh (`@nhatquynh1107`)  
 
@@ -8,23 +8,23 @@
 
 ## 1. Resolution Summary Table
 
-| Decision ID | Topic | Proposed Consensus / Technical Policy | Impacted Code / Docs |
+| Decision ID | Topic | Consensus / Technical Policy | Impacted Code / Docs |
 |---|---|---|---|
-| **Q01** | Source solutions optional vs required | **Mandatory for Golden Demo (Fail-Closed); Optional in long-term product.** Source questions in the Golden Demo must provide complete solutions to prevent broken Typst/DOCX export bundles. `description.md` optional solutions remain the target for post-MVP. | `backend/app/api/routes/sessions.py`, `backend/app/services/exporter/` |
+| **Q01** | Source solutions optional vs required | **Revised Policy Applied (`16/11/2026`).** Source `solution_md` is optional across ingest/confirm/config/generation. Successful AI-generated & regenerated candidates strictly require valid synchronized `solution_md`. `CONFIRMED_SOURCE_FALLBACK` and `ORIGINAL_CLONE` may carry empty `solution_md` (normalized to `""` in Preview projection) only with verified provenance. | `backend/app/services/finalize/repository.py`, `docs/api/preview-projection-contract.md` |
 | **Q06** | Pre-approval preview projection API | **Implemented in `W4-MVP-05`.** Endpoint `GET /api/sessions/{session_id}/finalize/preview` returns `PreviewSnapshotResponse` with full display projection, synchronized solutions, and cross-version answer matrix. | `backend/app/api/routes/finalize.py`, `docs/api/preview-projection-contract.md` |
 | **Q07** | Shuffle preferences editing semantics | **Editable before shuffle; Re-shuffle required if changed post-shuffle; Locked upon approve.** Stage 3 allows updating preferences before finalize shuffle. Once approved, HTTP 423 locks all changes. | `backend/app/services/finalize/service.py`, `backend/migrations/008_finalize_persist_shuffle_rpc.sql` |
-| **Q14** | Golden 3-question Markdown oracle & fallback | **3-Question Math Corpus Locked.** Verified with golden fixture `w4_preview_snapshot_fixture.json`. Deterministic 4-attempt fallback uses recorded permits to safeguard quota. | `backend/tests/fixtures/w4_preview_snapshot_fixture.json` |
+| **Q14** | Golden 3-question Markdown oracle & fallback | **Approved (`16/11/2026`).** Synthetic 3-question Math Corpus (`69f995a`) and oracle `S1=A, S2=C, S3=D` approved by lead (`PR #74`) and accepted by `W4-MVP-13` for preparation. | `backend/tests/fixtures/w4_preview_snapshot_fixture.json` |
 
 ---
 
 ## 2. Detailed Technical Rationales
 
-### Q01: Source Solutions Policy
-- **Problem Statement:** `docs/description.md` notes that source solutions are optional, whereas the downstream export compiler (`ApprovedExportSnapshot`) strictly requires non-empty `solution_md: Text` (1..16000 chars) for every approved question to render the Teacher's Answer & Solution Guide.
-- **Proposed Technical Policy:**
-  - For the Week 4 Golden Demo (15/11), all source questions must provide complete solutions.
-  - Confirmation of source without solutions fails closed for the demo run to prevent downstream export failure.
-  - Long-term feature: Automated AI solution synthesis will be introduced post-MVP to fulfill the optional solution vision in `description.md`.
+### Q01: Source Solutions Policy (Revised 16/11/2026)
+- **Context:** Stage 1 parsers produce `solution_md=None` and lead policy on PR `#74` established that teacher-supplied source solutions are optional.
+- **Technical Policy Implemented in `W4-MVP-05`:**
+  - Successful AI-generated candidates (Stage 2 `AI_RESULT` and Stage 3 `regenerated` rows with `regenerated_from_id` set) fail closed with HTTP `409 ERR_INCONSISTENT_ANSWER_KEYS` if `solution_md` is empty or missing.
+  - Rows from `CONFIRMED_SOURCE_FALLBACK` or `ORIGINAL_CLONE` (including Stage 3 reverts back to such root rows) may have empty `solution_md` (normalized to `""`) **only** when persisted provenance and generation-config/ledger checks verify their exact origin and `canonical_solution_md` is also empty.
+  - Export adapters (`W4-MVP-07`/`08`) retain strict non-empty enforcement for AI candidates while allowing empty solution sections (keeping question headings intact, with blank body and zero placeholders) strictly for validated fallback/clone provenance.
 
 ### Q06: Post-Shuffle Pre-Approval Preview Projection Contract
 - **Problem Statement:** The existing `GET /api/sessions/{session_id}/finalize/matrix` was locked behind `status in ('approved', 'exported')` and omitted question stems, permuted choices, and explanations. Frontend needed an authoritative pre-approval view.

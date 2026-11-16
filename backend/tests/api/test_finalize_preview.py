@@ -39,7 +39,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from app.api.dependencies import get_current_user, get_user_db
+from app.api.dependencies import get_current_user, get_service_db, get_user_db
 from app.main import app
 from app.models.schemas import (
     CurrentUser,
@@ -1176,4 +1176,331 @@ def test_preview_version_item_total_questions_bounds():
     # Invalid: 21
     with pytest.raises(ValidationError):
         PreviewVersionItem.model_validate({**valid_payload, "total_questions": 21})
+
+
+# ==============================================================================
+# 6. Q01 Revised Policy: Fallback & Original Clone Provenance Regression Tests
+# ==============================================================================
+
+
+def _build_q01_fallback_preview_state() -> Dict[str, Any]:
+    """Build valid AI state where canonical Q1 across both versions fell back to sourceless source."""
+    db_state = _build_valid_preview_db_state()
+    db_state["generation_configs"][0].update(
+        {
+            "active_variation_modes": ["NUMERICAL", "parameter_variation"],
+            "canonical_dimensions": ["values"],
+        }
+    )
+    fallback_report = {
+        "fallback_source": True,
+        "reason": "GENERATION_RETRIES_EXHAUSTED",
+        "attempts": 4,
+        "validation_status": "not_validated",
+        "source_revision_id": "33333333-0000-0000-0000-000000000001",
+        "source_fingerprint": "a" * 64,
+        "confirmed_source_hash": "b" * 64,
+    }
+    snap_id = str(uuid4())
+    db_state["generation_job_snapshots"] = [
+        {
+            "id": snap_id,
+            "session_id": MOCK_SESSION_ID,
+            "public_modes": ["NUMERICAL", "parameter_variation"],
+            "canonical_dimensions": ["values"],
+        }
+    ]
+    ledger_rows = []
+    for row in db_state["version_questions"]:
+        is_fallback_slot = row["question_no"] == 1
+        if is_fallback_slot:
+            row["solution_md"] = None
+            row["canonical_solution_md"] = None
+            row["has_warning"] = True
+            row["regenerated_from_id"] = None
+            row["is_reverted"] = False
+            row["validation_report"] = dict(fallback_report)
+        else:
+            row["has_warning"] = False
+            row["regenerated_from_id"] = None
+            row["is_reverted"] = False
+            row["validation_report"] = {"checks": []}
+        ledger_rows.append(
+            {
+                "version_question_id": row["id"],
+                "snapshot_id": snap_id,
+                "session_id": MOCK_SESSION_ID,
+                "source_question_id": row["source_question_id"],
+                "is_success": True,
+                "result_kind": "CONFIRMED_SOURCE_FALLBACK" if is_fallback_slot else "AI_RESULT",
+                "clone_fingerprint": None,
+            }
+        )
+    db_state["generation_target_results"] = ledger_rows
+    return db_state
+
+
+def _build_q01_original_clone_preview_state() -> Dict[str, Any]:
+    """Build valid Original Clone state with empty solutions across all 6 slots."""
+    db_state = _build_valid_preview_db_state()
+    db_state["generation_configs"][0].update(
+        {
+            "active_variation_modes": [],
+            "canonical_dimensions": [],
+        }
+    )
+    snap_id = str(uuid4())
+    db_state["generation_job_snapshots"] = [
+        {
+            "id": snap_id,
+            "session_id": MOCK_SESSION_ID,
+            "public_modes": [],
+            "canonical_dimensions": [],
+        }
+    ]
+    ledger_rows = []
+    for row in db_state["version_questions"]:
+        row["solution_md"] = ""
+        row["canonical_solution_md"] = None
+        row["has_warning"] = False
+        row["regenerated_from_id"] = None
+        row["is_reverted"] = False
+        row["validation_report"] = {}
+        ledger_rows.append(
+            {
+                "version_question_id": row["id"],
+                "snapshot_id": snap_id,
+                "session_id": MOCK_SESSION_ID,
+                "source_question_id": row["source_question_id"],
+                "is_success": True,
+                "result_kind": "ORIGINAL_CLONE",
+                "clone_fingerprint": "c" * 64,
+            }
+        )
+    db_state["generation_target_results"] = ledger_rows
+    return db_state
+
+
+@pytest.mark.asyncio
+async def test_preview_allows_empty_solution_for_confirmed_source_fallback():
+    """Q01: Permits empty solution_md only for fallback rows while keeping AI solutions strict."""
+    db_state = _build_q01_fallback_preview_state()
+    user_client = MockSupabaseClient(db_state)
+    ledger_client = MockSupabaseClient(db_state)
+    service = FinalizeService(user_client, provenance_db=ledger_client)
+
+    res = await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert res.total_questions == 3
+    for version in res.versions:
+        assert version.questions[0].solution_md == ""
+        assert version.questions[1].solution_md != ""
+        assert version.questions[2].solution_md != ""
+
+
+@pytest.mark.asyncio
+async def test_preview_allows_empty_solution_for_original_clone():
+    """Q01: Permits empty solution_md across Original Clone slots with empty modes/dimensions."""
+    db_state = _build_q01_original_clone_preview_state()
+    user_client = MockSupabaseClient(db_state)
+    ledger_client = MockSupabaseClient(db_state)
+    service = FinalizeService(user_client, provenance_db=ledger_client)
+
+    res = await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert res.total_questions == 3
+    for version in res.versions:
+        assert [q.solution_md for q in version.questions] == ["", "", ""]
+
+
+@pytest.mark.asyncio
+async def test_preview_allows_empty_solution_when_reverted_to_fallback_root():
+    """Q01: Reverted slot pointing back to CONFIRMED_SOURCE_FALLBACK root preserves empty exception."""
+    db_state = _build_q01_fallback_preview_state()
+    db_state["version_questions"][0]["is_reverted"] = True
+    db_state["version_questions"][0]["regenerated_from_id"] = None
+    user_client = MockSupabaseClient(db_state)
+    ledger_client = MockSupabaseClient(db_state)
+    service = FinalizeService(user_client, provenance_db=ledger_client)
+
+    res = await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert res.versions[0].questions[0].solution_md == ""
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_empty_solution_on_ai_warning_without_fallback_provenance():
+    """Q01: has_warning=True on an AI candidate does NOT grant empty-solution exemption."""
+    db_state = _build_q01_fallback_preview_state()
+    # Convert Q2 (AI_RESULT) to empty solution with generic warning report
+    db_state["version_questions"][1]["solution_md"] = ""
+    db_state["version_questions"][1]["canonical_solution_md"] = None
+    db_state["version_questions"][1]["has_warning"] = True
+    db_state["version_questions"][1]["validation_report"] = {"checks": [], "has_warning": True}
+
+    service = FinalizeService(
+        MockSupabaseClient(db_state), provenance_db=MockSupabaseClient(db_state)
+    )
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_empty_solution_on_regenerated_candidate():
+    """Q01: Stage 3 regenerated AI candidates MUST fail closed if solution_md is empty."""
+    db_state = _build_q01_original_clone_preview_state()
+    db_state["version_questions"][0]["regenerated_from_id"] = str(uuid4())
+
+    service = FinalizeService(
+        MockSupabaseClient(db_state), provenance_db=MockSupabaseClient(db_state)
+    )
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_empty_solution_when_ledger_reports_ai_result():
+    """Q01: Rejects empty solution when generation_target_results ledger denies fallback/clone kind."""
+    db_state = _build_q01_fallback_preview_state()
+    # Metadata claims fallback, but tamper-proof ledger records AI_RESULT
+    db_state["generation_target_results"][0]["result_kind"] = "AI_RESULT"
+
+    service = FinalizeService(
+        MockSupabaseClient(db_state), provenance_db=MockSupabaseClient(db_state)
+    )
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_empty_solution_when_canonical_solution_is_nonempty():
+    """Q01: Even on fallback/clone rows, display solution_md cannot drop a non-empty canonical solution."""
+    db_state = _build_q01_fallback_preview_state()
+    db_state["version_questions"][0]["canonical_solution_md"] = "Lời giải gốc đã có sẵn."
+    db_state["version_questions"][0]["solution_md"] = ""
+
+    service = FinalizeService(
+        MockSupabaseClient(db_state), provenance_db=MockSupabaseClient(db_state)
+    )
+    with pytest.raises(ReviewDomainException) as exc_info:
+        await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+
+
+def test_preview_router_q01_fallback_and_ai_rejection(
+    client: TestClient, mock_current_user: CurrentUser, auth_headers: dict
+):
+    """HTTP router enforces Q01 ledger check: 200 on verified fallback, 409 on AI_RESULT mismatch."""
+    db_state = _build_q01_fallback_preview_state()
+    mock_user_db = MockSupabaseClient(db_state)
+    mock_service_db = MockSupabaseClient(db_state)
+
+    app.dependency_overrides[get_current_user] = lambda: mock_current_user
+    app.dependency_overrides[get_user_db] = lambda: mock_user_db
+    app.dependency_overrides[get_service_db] = lambda: mock_service_db
+
+    try:
+        with patch("app.api.routes.finalize.assert_ownership"):
+            ok_res = client.get(
+                f"/api/sessions/{MOCK_SESSION_ID}/finalize/preview",
+                headers=auth_headers,
+            )
+            assert ok_res.status_code == 200, ok_res.text
+            assert ok_res.headers.get("Cache-Control") == "no-store"
+            payload = ok_res.json()
+            assert payload["versions"][0]["questions"][0]["solution_md"] == ""
+            assert payload["versions"][0]["questions"][1]["solution_md"] != ""
+
+            # Mutate ledger to AI_RESULT -> HTTP router must reject 409
+            db_state["generation_target_results"][0]["result_kind"] = "AI_RESULT"
+            bad_res = client.get(
+                f"/api/sessions/{MOCK_SESSION_ID}/finalize/preview",
+                headers=auth_headers,
+            )
+            assert bad_res.status_code == 409
+            assert bad_res.json().get("error_code") == "ERR_INCONSISTENT_ANSWER_KEYS"
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_preview_shuffler_to_preview_on_on_empty_solution_fallback():
+    """End-to-end shuffler -> preview with ON/ON shuffle on empty-solution fallback slots."""
+    from app.services.shuffler.service import shuffle_exam_version
+
+    db_state = _build_q01_fallback_preview_state()
+    raw_q1_v1 = db_state["version_questions"][0]
+    raw_q1_v1["canonical_solution_md"] = None
+    shuffled = shuffle_exam_version(
+        MOCK_SESSION_ID,
+        1,
+        [
+            {
+                "id": raw_q1_v1["id"],
+                "source_question_id": raw_q1_v1["source_question_id"],
+                "question_no": 1,
+                "canonical_question_no": 1,
+                "content": raw_q1_v1["content"],
+                "options": raw_q1_v1["canonical_options"],
+                "canonical_options": raw_q1_v1["canonical_options"],
+                "canonical_correct_key": raw_q1_v1["canonical_correct_key"],
+                "canonical_solution_md": "",
+                "status": "approved",
+                "is_current": True,
+            },
+            *[
+                {
+                    "id": q["id"],
+                    "source_question_id": q["source_question_id"],
+                    "question_no": q["question_no"],
+                    "canonical_question_no": q["canonical_question_no"],
+                    "content": q["content"],
+                    "options": q["canonical_options"],
+                    "canonical_options": q["canonical_options"],
+                    "canonical_correct_key": q["canonical_correct_key"],
+                    "canonical_solution_md": q["canonical_solution_md"],
+                    "status": "approved",
+                    "is_current": True,
+                }
+                for q in db_state["version_questions"][1:3]
+            ],
+        ],
+        {"shuffle_questions": True, "shuffle_options": True},
+        version_code="101",
+        version_id=db_state["exam_versions"][0]["id"],
+    )
+    db_state["exam_versions"][0]["permutations"] = shuffled.permutations
+    by_id = {q.id: q for q in shuffled.questions}
+    for row in db_state["version_questions"][:3]:
+        sq = by_id[row["id"]]
+        row["question_no"] = sq.display_no
+        row["options"] = list(sq.options)
+        row["correct_key"] = sq.display_correct_key
+        row["solution_md"] = sq.solution_md
+    v1_id = db_state["exam_versions"][0]["id"]
+    db_state["answer_keys"] = [
+        ak for ak in db_state["answer_keys"] if ak["version_id"] != v1_id
+    ] + [
+        {
+            "version_id": v1_id,
+            "question_no": ak.display_no,
+            "correct_option": ak.display_correct_key,
+            "display_no": ak.display_no,
+            "display_correct_key": ak.display_correct_key,
+            "canonical_question_no": ak.canonical_question_no,
+        }
+        for ak in shuffled.answer_keys
+    ]
+
+    service = FinalizeService(
+        MockSupabaseClient(db_state), provenance_db=MockSupabaseClient(db_state)
+    )
+    res = await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+    fallback_out = next(q for q in res.versions[0].questions if q.canonical_question_no == 1)
+    assert fallback_out.solution_md == ""
+    assert fallback_out.correct_key == by_id[raw_q1_v1["id"]].display_correct_key
 
