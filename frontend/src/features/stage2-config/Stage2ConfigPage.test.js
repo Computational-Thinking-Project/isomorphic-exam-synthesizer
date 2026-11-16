@@ -1807,3 +1807,28 @@ test('W4-MVP-10: Deep-link Stage 2 khi phiên ở trạng thái reviewed/approve
     await harness.unmount();
   }
 });
+
+test('Issue 80: saved config survives startup error with backend details', async () => {
+  let saves = 0;
+  const harness = renderPage('source-no-solution', {
+    loadSession: async () => ({ id: 'source-no-solution', status: 'blueprinted',
+      source_questions: [{ id: 'q1', question_no: 1 }],
+      blueprint_summary: { is_ready: true, total_questions: 1, supported_modes: [] } }),
+    saveConfig: async () => { saves++; },
+    startGen: async () => { throw { response: { data: { detail: {
+      code: 'ERR_SOURCE_SOLUTION_REQUIRED', message: 'Backend startup message', question_numbers: [1, 3],
+    } } } }; },
+  });
+  await harness.render();
+  await act(async () => {
+    harness.container.querySelector('form').dispatchEvent({ type: 'submit', bubbles: true,
+      cancelable: true, preventDefault() {} });
+  });
+  assert.equal(saves, 1);
+  const text = harness.container.textContent;
+  assert.match(text, /Đã lưu cấu hình/);
+  assert.match(text, /Backend startup message/);
+  assert.match(text, /ERR_SOURCE_SOLUTION_REQUIRED/);
+  assert.match(text, /1, 3/);
+  await harness.unmount();
+});

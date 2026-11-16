@@ -7,9 +7,10 @@ Exposes:
 """
 
 import logging
+from typing import cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from supabase import Client
 
 from app.api.dependencies import assert_ownership, get_current_user, get_service_db, get_user_db
@@ -17,6 +18,7 @@ from app.models.schemas import (
     AnswersMatrixResponse,
     CurrentUser,
     FinalizeApproveResponse,
+    PreviewSnapshotResponse,
     ReviewDomainException,
 )
 from app.services.finalize.repository import FinalizeRepository
@@ -96,12 +98,46 @@ async def finalize_approve_endpoint(
     ),
 )
 async def finalize_matrix_endpoint(
+    response: Response,
     session_id: str = Depends(validate_session_uuid),
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
 ) -> AnswersMatrixResponse:
     """Retrieve the answers matrix across all exam versions."""
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
+    response.headers["Cache-Control"] = "no-store"
 
     service = FinalizeService(db)
     return await service.get_answers_matrix(session_id, current_user.id)
+
+
+@router.get(
+    "/{session_id}/finalize/preview",
+    response_model=PreviewSnapshotResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get post-shuffle pre-approval preview projection (W4-MVP-05)",
+    description=(
+        "Truy xuất ảnh chiếu xem trước toàn bộ các phiên bản đề thi sau hoán vị trước khi phê duyệt. "
+        "Bao gồm thứ tự câu hiển thị (1..M), thứ tự phương án A-D sau xáo trộn, đáp án đúng hiển thị, "
+        "lời giải chi tiết đã đồng bộ nhãn đáp án, và ma trận đối soát đáp án chéo giữa các mã đề."
+    ),
+)
+async def finalize_preview_endpoint(
+    request: Request,
+    response: Response,
+    session_id: str = Depends(validate_session_uuid),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_user_db),
+) -> PreviewSnapshotResponse:
+    """Retrieve the post-shuffle display preview projection across all versions."""
+    assert_ownership("exam_sessions", session_id, current_user.id, db=db)
+    response.headers["Cache-Control"] = "no-store"
+
+    def _get_provenance_db() -> Client:
+        override = request.app.dependency_overrides.get(get_service_db)
+        if override is not None:
+            return cast(Client, override())
+        return get_service_db()
+
+    service = FinalizeService(db, provenance_db_provider=_get_provenance_db)
+    return await service.get_preview_snapshot(session_id, current_user.id)
