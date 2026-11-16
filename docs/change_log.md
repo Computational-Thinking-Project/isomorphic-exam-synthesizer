@@ -999,3 +999,12 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
 - Context: on-access stale recovery and an in-memory SSE broker could not independently recover an abandoned job or retain its error after restart. The public metrics stub did not report the shared worker's live activity.
 - Decision: consume Duy's PR #52 migration 017 RPC contract for cursor-paged stale scanning, token-fenced failure and durable error read-back. Start one scanner on startup/every 30 seconds, retain terminal buffers for at least 15 minutes, clean every 60 seconds and hold a broker lease for issued SSE tickets. Use PR #32 admin dependency and the existing Gemini observer/collector for protected metrics.
 - Impact: generation repository/runner/recovery, snapshot/SSE/ticket/broker, validator adapter, app lifespan and metrics route. The follow-up patch aligns dev and Docker smoke with metrics Auth (anonymous 401 + Bearer challenge) and fixes the CI test fixture for collector 503. PR #52 later merged into dev; applied DB ledger, one-worker deployment and live FE/DB/proxy acceptance remain pending. No migration, AI generator, validator aggregator or FE owner code is changed here.
+
+
+## DEC-ISSUE80 — Optional source explanations
+
+- Date: 2026-11-16; authority: Issue #80 product decision.
+- Migration 024 replaces the Q01 claim guard and source-reuse projection; no schema or RPC signature changes.
+- AI validation remains required. Clone/fallback/Revert use the agreed missing-solution disclosure.
+- New Revert actions restore frozen sources pending teacher review; historical receipts remain immutable.
+- Deploy with workers drained and matched backend; use forward fixes rather than replaying historical migrations.
