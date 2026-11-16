@@ -1,0 +1,322 @@
+"""Fail-closed tests for the pure approved export snapshot builder (W4-MVP-07)."""
+
+import json
+from pathlib import Path
+
+import pytest
+from snapshot_fixtures import (
+    SESSION_ID,
+    VERSION_IDS,
+    golden_rows,
+    key_row,
+    mutated,
+    question,
+    to_rows,
+)
+
+from app.models.schemas import ReviewDomainException
+from app.services.exporter.bundle_models import ApprovedExportSnapshot
+from app.services.exporter.snapshot_builder import build_approved_snapshot, snapshot_identity
+
+INVALID = ("ERR_EXPORT_SNAPSHOT_INVALID", 409)
+KEYS = ("ERR_INCONSISTENT_ANSWER_KEYS", 409)
+STATE = ("ERR_INVALID_SESSION_STATE", 409)
+
+
+def _fail(rows):
+    with pytest.raises(ReviewDomainException) as caught:
+        build_approved_snapshot(rows)
+    return caught.value
+
+
+def test_golden_snapshot_matches_persisted_display_order_and_keys():
+    snapshot = build_approved_snapshot(to_rows(golden_rows()))
+    assert isinstance(snapshot, ApprovedExportSnapshot)
+    assert [v.code for v in snapshot.versions] == ["101", "102"]
+    assert str(snapshot.session_id) == SESSION_ID
+    assert snapshot.status == "approved"
+    keys = {v.code: [q.correct_key for q in v.questions] for v in snapshot.versions}
+    assert keys == {"101": ["A", "B", "C"], "102": ["B", "D", "A"]}
+    assert [q.question_no for q in snapshot.versions[1].questions] == [1, 2, 3]
+    # Version 102 slot 1 is canonical source question 3 with permuted options.
+    first = snapshot.versions[1].questions[0]
+    assert "Câu nguồn 3" in first.content
+    assert first.options == ("12", "9", "11", "10")
+
+
+def test_revision_is_stable_and_not_changed_by_exported_status():
+    approved = build_approved_snapshot(to_rows(golden_rows()))
+    again = build_approved_snapshot(to_rows(golden_rows()))
+    exported = build_approved_snapshot(
+        mutated(lambda d: d["session"].update(status="exported", updated_at="2026-11-11T01:00:00Z"))
+    )
+    assert approved.revision == again.revision == exported.revision
+    assert approved.revision.startswith("sha256:")
+    assert exported.status == "exported"
+
+
+def test_revision_changes_when_approved_content_changes():
+    changed = mutated(lambda d: question(d, "101", 1).update(content="Nội dung khác."))
+    assert (
+        build_approved_snapshot(changed).revision
+        != build_approved_snapshot(to_rows(golden_rows())).revision
+    )
+
+
+def test_revision_source_is_a_single_replaceable_seam():
+    seen = {}
+
+    def source(session, versions):
+        seen["versions"] = len(versions)
+        return "approved_at:" + session["approved_at"]
+
+    snapshot = build_approved_snapshot(to_rows(golden_rows()), revision_of=source)
+    assert snapshot.revision == "approved_at:2026-11-10T03:00:00+00:00"
+    assert seen["versions"] == 2
+
+
+def test_revision_includes_normalized_artifact_title():
+    base = build_approved_snapshot(to_rows(golden_rows()))
+    changed = build_approved_snapshot(mutated(lambda d: d["session"].update(title="New title")))
+    padded = build_approved_snapshot(
+        mutated(lambda d: d["session"].update(title="  " + d["session"]["title"] + "\n"))
+    )
+    assert changed.revision != base.revision
+    assert padded.title == base.title and padded.revision == base.revision
+
+
+def non_contiguous_source_rows():
+    data = golden_rows()
+    source_numbers = {1: 3, 2: 8, 3: 9}
+    for row in data["questions"] + data["answer_keys"]:
+        row["canonical_question_no"] = source_numbers[row["canonical_question_no"]]
+    return data
+
+
+def test_source_labels_need_not_match_contiguous_display_positions():
+    data = non_contiguous_source_rows()
+    snapshot = build_approved_snapshot(to_rows(data))
+    assert snapshot == build_approved_snapshot(to_rows(golden_rows()))
+    assert {q["canonical_question_no"] for q in data["questions"]} == {3, 8, 9}
+
+
+@pytest.mark.parametrize("bad_number", [0, -1, True, 3.0, "3", None, {}, []])
+def test_invalid_canonical_labels_fail_closed(bad_number):
+    data = non_contiguous_source_rows()
+    question(data, "101", 1)["canonical_question_no"] = bad_number
+    assert _fail(to_rows(data)).error_code == INVALID[0]
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "missing_source",
+        "duplicate_source",
+        "missing_key",
+        "wrong_key_canonical",
+        "duplicate_canonical",
+    ],
+)
+def test_non_contiguous_labels_do_not_relax_source_or_key_integrity(corruption):
+    data = non_contiguous_source_rows()
+    if corruption == "missing_source":
+        data["questions"].remove(question(data, "101", 1))
+    elif corruption == "duplicate_source":
+        question(data, "101", 2)["source_question_id"] = question(data, "101", 1)[
+            "source_question_id"
+        ]
+    elif corruption == "missing_key":
+        data["answer_keys"].remove(key_row(data, "101", 1))
+    elif corruption == "wrong_key_canonical":
+        key_row(data, "101", 1)["canonical_question_no"] = 8
+    else:
+        question(data, "101", 2)["canonical_question_no"] = 3
+    expected = KEYS if corruption in ("missing_key", "wrong_key_canonical") else INVALID
+    assert _fail(to_rows(data)).error_code == expected[0]
+
+
+def test_identity_is_sanitized():
+    identity = snapshot_identity(build_approved_snapshot(to_rows(golden_rows())))
+    assert set(identity) == {
+        "session_id",
+        "revision",
+        "status",
+        "versions",
+        "questions_per_version",
+    }
+    assert identity["questions_per_version"] == 3
+    assert "Câu nguồn" not in str(identity) and "Lời giải" not in str(identity)
+
+
+def _status(d, value):
+    d["session"]["status"] = value
+
+
+CASES = {
+    "session_generated": (lambda d: _status(d, "generated"), STATE),
+    "session_reviewed": (lambda d: _status(d, "reviewed"), STATE),
+    "missing_approved_at": (lambda d: d["session"].update(approved_at=None), INVALID),
+    "bad_approved_at": (lambda d: d["session"].update(approved_at="yesterday"), INVALID),
+    "blank_title": (lambda d: d["session"].update(title="  "), INVALID),
+    "bad_session_id": (lambda d: d["session"].update(id="nope"), INVALID),
+    "n_versions_mismatch": (lambda d: d.update(n_versions=3), INVALID),
+    "n_versions_bool": (lambda d: d.update(n_versions=True), INVALID),
+    "n_versions_zero": (lambda d: d.update(n_versions=0), INVALID),
+    "no_sources": (lambda d: d.update(source_question_ids=[]), INVALID),
+    "version_not_finalized": (lambda d: d["versions"][0].update(is_finalized=False), INVALID),
+    "version_missing_seed": (lambda d: d["versions"][0].update(shuffle_seed=None), INVALID),
+    "version_missing_permutations": (lambda d: d["versions"][1].update(permutations=None), INVALID),
+    "duplicate_version_code": (lambda d: d["versions"][1].update(version_code="101"), INVALID),
+    "empty_solution": (lambda d: question(d, "101", 1).update(solution_md=""), INVALID),
+    "blank_solution": (lambda d: question(d, "101", 1).update(solution_md="   \n"), INVALID),
+    "null_solution": (lambda d: question(d, "102", 2).update(solution_md=None), INVALID),
+    "empty_content": (lambda d: question(d, "101", 2).update(content=" "), INVALID),
+    "duplicate_options": (
+        lambda d: question(d, "101", 1).update(options=["1", "2", " 2 ", "4"]),
+        INVALID,
+    ),
+    "three_options": (lambda d: question(d, "101", 1).update(options=["1", "2", "3"]), INVALID),
+    "pending_status": (lambda d: question(d, "101", 3).update(status="pending_review"), INVALID),
+    "not_current": (lambda d: question(d, "101", 3).update(is_current=False), INVALID),
+    "missing_slot": (lambda d: d["questions"].remove(question(d, "102", 3)), INVALID),
+    "extra_question": (
+        lambda d: d["questions"].append(
+            {**question(d, "102", 1), "id": "6" * 8 + "-6666-4666-8666-666666666666"}
+        ),
+        INVALID,
+    ),
+    "duplicate_source_in_version": (
+        lambda d: question(d, "102", 2).update(
+            source_question_id=question(d, "102", 1)["source_question_id"]
+        ),
+        INVALID,
+    ),
+    "gap_in_question_no": (lambda d: question(d, "101", 3).update(question_no=5), INVALID),
+    "question_no_not_int": (lambda d: question(d, "101", 3).update(question_no="3"), INVALID),
+    "duplicate_canonical_number": (
+        lambda d: question(d, "101", 3).update(canonical_question_no=1),
+        INVALID,
+    ),
+    "question_in_unknown_version": (
+        lambda d: question(d, "101", 1).update(version_id="7" * 8 + "-7777-4777-8777-777777777777"),
+        INVALID,
+    ),
+    "key_correct_option_differs": (lambda d: key_row(d, "101", 1).update(correct_option="B"), KEYS),
+    "key_display_key_differs": (
+        lambda d: key_row(d, "102", 2).update(display_correct_key="A"),
+        KEYS,
+    ),
+    "key_display_no_differs": (lambda d: key_row(d, "101", 2).update(display_no=3), KEYS),
+    "key_canonical_differs": (lambda d: key_row(d, "102", 1).update(canonical_question_no=1), KEYS),
+    "key_missing": (lambda d: d["answer_keys"].remove(key_row(d, "101", 2)), KEYS),
+    "key_duplicate": (lambda d: d["answer_keys"].append(dict(key_row(d, "101", 1))), KEYS),
+    "key_extra_slot": (
+        lambda d: d["answer_keys"].append(
+            {**key_row(d, "101", 1), "question_no": 99, "display_no": 99}
+        ),
+        KEYS,
+    ),
+    "key_for_unknown_version": (
+        lambda d: key_row(d, "101", 1).update(version_id="8" * 8 + "-8888-4888-8888-888888888888"),
+        KEYS,
+    ),
+    "key_question_no_not_int": (lambda d: key_row(d, "101", 1).update(question_no="1"), KEYS),
+    "version_code_unicode_digit": (lambda d: d["versions"][1].update(version_code="²"), INVALID),
+    "version_code_huge_digits": (
+        lambda d: d["versions"][1].update(version_code="9" * 5000),
+        INVALID,
+    ),
+    "version_code_leading_space": (lambda d: d["versions"][1].update(version_code=" 102"), INVALID),
+    "version_code_not_text": (lambda d: d["versions"][1].update(version_code=102), INVALID),
+    "is_finalized_truthy_string": (lambda d: d["versions"][0].update(is_finalized="yes"), INVALID),
+    "options_is_a_string": (lambda d: question(d, "101", 1).update(options="wxyz"), INVALID),
+    "key_display_no_bool": (lambda d: key_row(d, "101", 1).update(display_no=True), KEYS),
+    "key_display_no_float": (lambda d: key_row(d, "101", 2).update(display_no=2.0), KEYS),
+    "key_canonical_float": (lambda d: key_row(d, "101", 1).update(canonical_question_no=1.0), KEYS),
+    "key_canonical_bool": (lambda d: key_row(d, "101", 1).update(canonical_question_no=True), KEYS),
+    "key_row_for_extra_unknown_version": (
+        lambda d: d["answer_keys"].append(
+            {**key_row(d, "101", 1), "version_id": "8" * 8 + "-8888-4888-8888-888888888888"}
+        ),
+        KEYS,
+    ),
+    "question_key_not_abcd": (lambda d: question(d, "101", 1).update(correct_key="E"), KEYS),
+}
+
+
+@pytest.mark.parametrize("name", sorted(CASES))
+def test_invalid_persisted_data_fails_closed(name):
+    change, (code, status) = CASES[name]
+    error = _fail(mutated(change))
+    assert (error.error_code, error.status_code) == (code, status), name
+
+
+def test_error_messages_never_leak_content_solutions_or_raw_values():
+    secret = "SECRET-CONTENT-9137"
+
+    def leak(d):
+        q = question(d, "101", 1)
+        q.update(content=secret, solution_md=secret, options=[secret, secret, "x", "y"])
+
+    error = _fail(mutated(leak))
+    assert secret not in str(error.detail)
+    assert error.error_code == "ERR_EXPORT_SNAPSHOT_INVALID"
+    assert "options" in error.detail  # field names only
+    # the ID of an unknown version row is not echoed either
+    other = "9" * 8 + "-9999-4999-8999-999999999999"
+    error = _fail(mutated(lambda d: question(d, "101", 1).update(version_id=other)))
+    assert other not in str(error.detail)
+
+
+def test_duplicate_current_rows_in_database_are_rejected_by_the_builder():
+    """The DB partial unique index normally forbids this; the builder must still refuse it."""
+
+    def duplicate(d):
+        copy = {
+            **question(d, "101", 1),
+            "id": "a" * 8 + "-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            "question_no": 2,
+        }
+        d["questions"].append(copy)
+
+    assert _fail(mutated(duplicate)).error_code == "ERR_EXPORT_SNAPSHOT_INVALID"
+
+
+def test_other_version_rows_do_not_satisfy_this_versions_slots():
+    def swap(d):
+        question(d, "101", 1).update(version_id=VERSION_IDS["102"])
+
+    assert _fail(mutated(swap)).error_code == "ERR_EXPORT_SNAPSHOT_INVALID"
+
+
+def test_golden_json_fixture_matches_builder_and_loads_into_the_export_model():
+    """Regenerate with the snippet in docs/api/export-snapshot-contract.md if this fails."""
+    path = Path(__file__).parents[1] / "fixtures" / "export_snapshot_golden.json"
+    expected = json.loads(path.read_text(encoding="utf-8"))
+    built = build_approved_snapshot(to_rows(golden_rows()))
+    assert built.model_dump(mode="json") == expected
+    assert ApprovedExportSnapshot.model_validate(expected) == built
+
+
+def test_title_is_stripped():
+    snapshot = build_approved_snapshot(
+        mutated(lambda d: d["session"].update(title="  Đề kiểm tra  "))
+    )
+    assert snapshot.title == "Đề kiểm tra"
+
+
+def test_numeric_version_codes_sort_numerically():
+    def codes(d):
+        d["versions"][0].update(version_code="10")
+        d["versions"][1].update(version_code="9")
+
+    snapshot = build_approved_snapshot(mutated(codes))
+    assert [v.code for v in snapshot.versions] == ["9", "10"]
+
+
+def test_errors_do_not_chain_the_cause_that_embeds_raw_values():
+    secret = "SECRET-CHAIN-5521"
+    error = _fail(mutated(lambda d: question(d, "101", 1).update(content=" ", solution_md=secret)))
+    assert error.__cause__ is None and error.__suppress_context__
+    error = _fail(mutated(lambda d: d["session"].update(id=secret)))
+    assert error.__cause__ is None and secret not in str(error.detail)
