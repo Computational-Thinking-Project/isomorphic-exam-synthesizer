@@ -55,6 +55,14 @@ function renderPage(sessionId = 'session-123', customProps = {}) {
                 path: '/session/:id/stage3',
                 element: React.createElement('div', null, 'Trang Stage 3 Đã Chuyển Hướng'),
               }),
+              React.createElement(Route, {
+                path: '/session/:id/stage3/preview',
+                element: React.createElement('div', null, 'Trang Stage 3 Preview Đã Chuyển Hướng'),
+              }),
+              React.createElement(Route, {
+                path: '/session/:id/export',
+                element: React.createElement('div', null, 'Trang Export Đã Chuyển Hướng'),
+              }),
             ),
           ),
         );
@@ -1759,4 +1767,43 @@ test('P2: lỗi kết nối SSE transport khi snapshot vẫn generating không �
   );
 
   await harness.unmount();
+});
+
+test('W4-MVP-10: Deep-link Stage 2 khi phiên ở trạng thái reviewed/approved/exported khóa cấu hình và chuyển đúng đích', async () => {
+  for (const [status, expectedPath, expectedHeading] of [
+    ['reviewed', '/session/locked-s2/stage3/preview', /Phiên đã hoàn tất duyệt từng câu/],
+    ['approved', '/session/locked-s2/export', /khóa cấu hình \(HTTP 423\)/],
+    ['exported', '/session/locked-s2/export', /khóa cấu hình \(HTTP 423\)/],
+  ]) {
+    let saveCalls = 0;
+    let startCalls = 0;
+    let retryCalls = 0;
+    const harness = renderPage('locked-s2', {
+      loadSession: async () => ({
+        id: 'locked-s2',
+        title: 'Đề đã khóa',
+        status,
+        blueprint_summary: { is_ready: true, supported_modes: ['numeric_substitution'] },
+      }),
+      saveConfig: async () => { saveCalls += 1; },
+      startGen: async () => { startCalls += 1; },
+      retryGen: async () => { retryCalls += 1; },
+    });
+
+    await harness.render();
+    assert.match(harness.container.textContent, expectedHeading);
+    assert.equal(harness.container.querySelector('form'), null, 'Không được render form cấu hình khi phiên đã khóa');
+
+    const gotoBtn = harness.container.querySelector('[data-testid="stage2-btn-goto-locked-target"]');
+    assert.ok(gotoBtn);
+    await act(async () => {
+      gotoBtn.click();
+    });
+
+    assert.equal(harness.getLocation(), expectedPath);
+    assert.equal(saveCalls, 0);
+    assert.equal(startCalls, 0);
+    assert.equal(retryCalls, 0);
+    await harness.unmount();
+  }
 });

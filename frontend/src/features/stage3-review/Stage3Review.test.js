@@ -59,6 +59,10 @@ function renderStage3Page(
                 path: '/session/:sessionId/stage3/preview',
                 element: React.createElement('div', null, 'Trang Stage 3 Preview Rà Bộ Đề'),
               }),
+              React.createElement(Route, {
+                path: '/session/:sessionId/export',
+                element: React.createElement('div', null, 'Trang Stage 4 Export'),
+              }),
             ),
           ),
         );
@@ -1724,4 +1728,78 @@ test('PR #54 Contract: Missing slot (candidate: null) hiển thị trạng thái
   );
 
   await harness.unmount();
+});
+
+test('W4-MVP-10: Deep-link Stage 3 khi phiên ở trạng thái approved/exported khóa thao tác duyệt/tạo lại và điều hướng tới Export', async () => {
+  for (const status of ['approved', 'exported']) {
+    let acceptCalls = 0;
+    let regenerateCalls = 0;
+    let retryCalls = 0;
+
+    const harness = renderStage3Page('sess-locked-s3', {
+      loadSession: async () => ({
+        session_id: 'sess-locked-s3',
+        session_status: status,
+        title: 'Đề đã phê duyệt',
+        sources: [{ source_question_id: 'src-1', question_no: 1, content: 'Câu nguồn 1', options: ['1', '2', '3', '4'], correct_key: 'A' }],
+        versions: [
+          {
+            version_index: 1,
+            version_code: '101',
+            slots: [
+              {
+                source_question_id: 'src-1',
+                question_no: 1,
+                candidate: {
+                  candidate_id: 'cand-1',
+                  content: 'Câu 1 đã khóa',
+                  options: ['1', '2', '3', '4'],
+                  correct_key: 'A',
+                  solution_md: 'Lời giải',
+                  status: 'pending_review',
+                },
+              },
+            ],
+          },
+        ],
+      }),
+      acceptQuestionFn: async () => { acceptCalls += 1; },
+      regenerateQuestionFn: async () => { regenerateCalls += 1; },
+      retryGen: async () => { retryCalls += 1; },
+    });
+
+    await harness.render();
+    assert.ok(harness.container.querySelector('[data-testid="stage3-banner-locked"]'));
+    assert.match(harness.container.textContent, /khóa nội dung vĩnh viễn \(HTTP 423\)/);
+
+    const inspectBtn = harness.container.querySelector('[data-review-inspect="true"]');
+    assert.ok(inspectBtn);
+    await act(async () => {
+      inspectBtn.click();
+    });
+
+    const regenBtn = harness.container.querySelector('[data-review-regenerate="true"]');
+    const approveBtn = harness.container.querySelector('[data-review-approve="true"]');
+    assert.ok(regenBtn);
+    assert.ok(approveBtn);
+    assert.notEqual(regenBtn.getAttribute('disabled'), null);
+    assert.notEqual(approveBtn.getAttribute('disabled'), null);
+
+    await act(async () => {
+      regenBtn.click();
+      approveBtn.click();
+    });
+    assert.equal(regenerateCalls, 0);
+    assert.equal(acceptCalls, 0);
+    assert.equal(retryCalls, 0);
+
+    const exportBtn = harness.container.querySelector('[data-testid="stage3-btn-goto-export"]');
+    assert.ok(exportBtn);
+    await act(async () => {
+      exportBtn.click();
+    });
+    assert.equal(harness.getLocation(), '/session/sess-locked-s3/export');
+
+    await harness.unmount();
+  }
 });

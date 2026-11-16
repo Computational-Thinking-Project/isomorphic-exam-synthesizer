@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { stage2Path, stage3PreviewPath } from '../../sessionPaths.js';
+import { exportPath, stage2Path, stage3PreviewPath } from '../../sessionPaths.js';
 import {
   AlertCircle,
   AlertTriangle,
@@ -14,6 +14,7 @@ import {
   FileCheck,
   Info,
   Loader2,
+  Lock,
   RefreshCw,
   Sparkles,
   X,
@@ -356,9 +357,11 @@ export default function Stage3ReviewPage({
     setSelectedSolution(null);
   }, [isRegeneratingSingle, isApprovingSingle]);
 
+  const isContentLocked = ['approved', 'exported'].includes(session?.status);
+
   // Xử lý Tạo lại câu hỏi trong SolutionDialog (Reject & Targeted Regeneration)
   const handleRegenerateSingle = useCallback(async () => {
-    if (!selectedSolution?.variant || isRegeneratingSingle) return;
+    if (!selectedSolution?.variant || isRegeneratingSingle || isContentLocked) return;
     const { variant, qNo, versionIndex } = selectedSolution;
     const targetQId = variant.candidate_id || variant.id || variant.question_id || `var-${versionIndex}-${qNo}`;
 
@@ -527,11 +530,11 @@ export default function Stage3ReviewPage({
         setIsRegeneratingSingle(false);
       }
     }
-  }, [selectedSolution, isRegeneratingSingle, regenerateQuestionFn, sessionId, updateVariantInSession, loadSession]);
+  }, [selectedSolution, isRegeneratingSingle, isContentLocked, regenerateQuestionFn, sessionId, updateVariantInSession, loadSession]);
 
   // Xử lý Duyệt biến thể trong SolutionDialog
   const handleApproveSingle = useCallback(async () => {
-    if (!selectedSolution?.variant || isApprovingSingle) return;
+    if (!selectedSolution?.variant || isApprovingSingle || isContentLocked) return;
     const { variant, qNo, versionIndex } = selectedSolution;
     const targetQId = variant.candidate_id || variant.id || variant.question_id || `var-${versionIndex}-${qNo}`;
 
@@ -648,10 +651,11 @@ export default function Stage3ReviewPage({
         setIsApprovingSingle(false);
       }
     }
-  }, [selectedSolution, isApprovingSingle, acceptQuestionFn, sessionId, updateVariantInSession, loadSession]);
+  }, [selectedSolution, isApprovingSingle, isContentLocked, acceptQuestionFn, sessionId, updateVariantInSession, loadSession]);
 
   // Xử lý sinh bù câu thiếu (retry partial generation)
   const handleRetryMissingQuestion = async (versionIndex, questionNo) => {
+    if (isContentLocked) return;
     const regKey = `${versionIndex}-${questionNo}`;
     const currentOp = ++retryOperationRef.current;
     const targetSessionId = sessionId;
@@ -697,6 +701,7 @@ export default function Stage3ReviewPage({
   };
 
   const handleRetryAllMissing = async () => {
+    if (isContentLocked) return;
     const currentOp = ++retryOperationRef.current;
     const targetSessionId = sessionId;
 
@@ -861,7 +866,17 @@ export default function Stage3ReviewPage({
 
         {/* Nút xuất bản / phê duyệt header */}
         <div className="flex items-center gap-2">
-          {isPartial ? (
+          {isContentLocked ? (
+            <button
+              type="button"
+              data-testid="stage3-btn-goto-export"
+              onClick={() => navigate(exportPath(sessionId))}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-emerald-600/30 hover:bg-emerald-500"
+            >
+              <Lock className="h-3.5 w-3.5" />
+              Tới màn hình Xuất bản
+            </button>
+          ) : isPartial ? (
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -911,6 +926,34 @@ export default function Stage3ReviewPage({
           }`}
         >
           {actionMessage.text}
+        </div>
+      )}
+
+      {/* Cảnh báo phiên đã khóa nội dung (approved / exported) */}
+      {isContentLocked && (
+        <div
+          role="status"
+          data-testid="stage3-banner-locked"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-500/40 bg-emerald-950/30 p-4 text-emerald-200"
+        >
+          <div className="flex items-center gap-3">
+            <Lock className="h-5 w-5 shrink-0 text-emerald-400" />
+            <div>
+              <h3 className="text-sm font-semibold text-white">
+                Đề thi đã được phê duyệt và khóa nội dung vĩnh viễn (HTTP 423)
+              </h3>
+              <p className="text-xs text-emerald-200/80">
+                Mọi thao tác duyệt hoặc tạo lại biến thể đã bị khóa ở chế độ chỉ xem.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate(exportPath(sessionId))}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
+          >
+            Tới màn hình Xuất bản
+          </button>
         </div>
       )}
 
@@ -1009,7 +1052,7 @@ export default function Stage3ReviewPage({
                   <button
                     type="button"
                     onClick={() => handleRetryMissingQuestion(activeVersionTab, qNo)}
-                    disabled={isRegenerating}
+                    disabled={isRegenerating || isContentLocked}
                     className="inline-flex items-center gap-1.5 rounded-xl border border-rose-500/40 bg-rose-900/40 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-rose-900/60 disabled:opacity-50"
                   >
                     {isRegenerating ? (
@@ -1367,7 +1410,7 @@ export default function Stage3ReviewPage({
               <button
                 type="button"
                 data-review-regenerate={true}
-                disabled={isRegeneratingSingle || isApprovingSingle}
+                disabled={isRegeneratingSingle || isApprovingSingle || isContentLocked}
                 onClick={handleRegenerateSingle}
                 className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 hover:text-white disabled:opacity-50"
               >
@@ -1388,7 +1431,7 @@ export default function Stage3ReviewPage({
               <button
                 type="button"
                 data-review-approve={true}
-                disabled={isRegeneratingSingle || isApprovingSingle || isSelectedVariantApproved}
+                disabled={isRegeneratingSingle || isApprovingSingle || isSelectedVariantApproved || isContentLocked}
                 onClick={handleApproveSingle}
                 className={`inline-flex items-center gap-1.5 rounded-xl px-5 py-2.5 text-xs font-semibold shadow-lg transition-all ${
                   isSelectedVariantApproved

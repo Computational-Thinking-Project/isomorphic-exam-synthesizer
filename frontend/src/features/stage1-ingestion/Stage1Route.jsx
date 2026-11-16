@@ -93,7 +93,7 @@ function SessionEntry({ sessionId, accountKey }) {
               {state.detail.status === 'draft' || state.detail.status === 'blueprinted' ? (
                 <Stage1SourcePanel detail={state.detail} isCurrent={isCurrent} onConfirmed={openConfirmed} />
               ) : (
-                <p role="status" className="mt-4 text-slate-300">Phiên không còn ở trạng thái nháp. Quay về Dashboard để xem trạng thái mới; màn tiếp tục tương ứng chưa được kết nối.</p>
+                <Stage1NonDraftStatus detail={state.detail} />
               )}
             </>
           )}
@@ -102,5 +102,26 @@ function SessionEntry({ sessionId, accountKey }) {
       )}
       {state.error && <p role="alert" className="mt-4 text-rose-300">{state.error}</p>}
     </main>
+  );
+}
+
+function Stage1NonDraftStatus({ detail }) {
+  const destination = sessionDestination(detail);
+  const isLocked = ['approved', 'exported'].includes(detail.status);
+  const linkLabel = isLocked ? 'Mở màn hình Xuất bản' : 'Đi tới bước hiện tại';
+
+  return (
+    <div role="status" className="mt-4 space-y-3 rounded-xl border border-slate-700 bg-slate-900/60 p-4 text-slate-200">
+      <p>
+        {isLocked
+          ? 'Phiên không còn ở trạng thái nháp. Đề thi đã được phê duyệt và khóa chỉnh sửa đề nguồn (HTTP 423).'
+          : 'Phiên không còn ở trạng thái nháp. Bạn có thể quay về Dashboard hoặc chuyển tới bước tiếp theo của phiên.'}
+      </p>
+      {destination.path && (
+        <Link to={destination.path} className="inline-block text-sky-300 underline">
+          {linkLabel}
+        </Link>
+      )}
+    </div>
   );
 }
