@@ -9,6 +9,29 @@ and the OPS handoff remain gated. No cloud resource is configured by this code.
 Input status: [task plan](../tasks/W4-MVP-08.md).
 Depends on [snapshot 07](export-snapshot-contract.md) / PR #58.
 
+## Current source-reuse policy — Issue #80
+
+[Issue #80](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/80)
+supersedes the earlier blanket source-solution prerequisite. New confirmed-source
+fallback/Original Clone/Revert rows without an explanation must carry exactly
+`Không có lời giải cho câu hỏi này.`. This is a disclosure, not a validated
+mathematical explanation. Existing real solutions remain unchanged, AI candidates
+still require their normal validated explanations, and teacher approval remains
+mandatory.
+
+The notice is nonempty and uses the existing snapshot/bundle path; preserve it
+verbatim, including after question/option shuffle. It needs no new public field,
+renderer placeholder or exporter-side AI call. The verified-empty capability below
+remains for eligible historical rows; it is not the producer policy for new rows.
+Producer implementation/migration024 is proposed in PR #81 and is not integrated
+or accepted by this document. Full producer-to-export compatibility still needs
+verification on a common candidate, including real PDF/private Storage/download.
+
+The original database synchronization incident #75 has reported production
+acceptance evidence. That does not certify migration020 or this export runtime:
+their actual ledger, private bucket/access and runtime budget gates remain in the
+task08 input registry. Ready for code review does not authorize activation.
+
 ## Implemented boundary
 
 `PrivateExportService` is synchronous. Bind `user_snapshot_loader(get_user_db)` to
