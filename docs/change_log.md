@@ -6,6 +6,23 @@
 - Sửa F01 sau review độc lập: chỉ display slots phải1..M; canonical giữ số câu nguồn nguyên dương/không trùng (ví dụ3,8,9). Mapping với nguồn vẫn do shuffle/approval xác thực; adapter giữ kiểm source coverage và key/canonical khớp nhau, không renumber dữ liệu nguồn. Bổ sung positive/negative regressions và PostgreSQL thật.
 - Ảnh hưởng: package exporter, fixtures/tests, [contract](api/export-snapshot-contract.md), [plan/input07](tasks/W4-MVP-07.md). Chờ Tâm xác nhận fixture/đồng bộ docs preview. Export thiếu solution đã chốt fail-closed trên issue46; gate upstream Q01 còn riêng, không hỏi lại quyết định export.
 - Kiểm: unit/stub và PostgreSQL15 dùng một lần với chain002–018; actual shuffle/approval, RLS, lock/fencing, concurrency và parity6slot với PR49 pinned. Chưa deployed Supabase/JWT/PostgREST, fullW2, PDF/Storage hay E2E08. Code test không cấp quyền cloud hoặc merge.
+
+## OPS11/21 smoke tooling — 15/11/2026
+
+- Đạt bổ sung anonymous session/metrics probes trực tiếp và qua proxy vào `scripts/w4_ops.py smoke`: HTTP401 phải kèm Bearer challenge; không lưu response content/headers hoặc gửi credentials. JSON checks tăng4→8; schema_version vẫn1, cấu trúc từng check và acceptance không đổi. Consumer không nên cố định độ dài checks.
+- Runbook và bằng chứng local devc2ee9fd cập nhật cùng PR. Không đổi API/schema/Docker/auth policy, không kích hoạt export hoặc áp migration. Tooling chỉ chứng nhận các observations local, không tự nâng G0/G1/G2.
+
+## Issue #64 — C5 Python consumer cho migration 021 (Draft #67)
+
+- AI job ghi `CONFIRMED_SOURCE_FALLBACK` sau bốn lượt đủ điều kiện trong một lần chạy slot. Writer đối chiếu provenance và ghi `pending_review`. Worker phát `GENERATION_RETRIES_EXHAUSTED` và `question_done` sau khi xác nhận ghi.
+- Retry bỏ qua fallback hiện hành đã commit và giữ các receipt lịch sử ngoài tập completed và cache AI. Nếu mất phản hồi ghi, consumer đối chiếu record hiện hành và job token qua read-back.
+- Q01 dùng migration 022 để kiểm lời giải trên cùng snapshot và khóa session của claim. SQLSTATE `22023` cung cấp `question_numbers` cho HTTP `422`. Lỗi phát hiện muộn vẫn kết thúc fatal và giữ slot đã commit. [Checkpoint C5](tasks/W4-MVP-02_IMPLEMENTATION_PLAN.md#bàn-giao--ghi-theo-bằng-chứng-thực-tế)
+
+## 13/11/2026 — Issue #64: Python generation adapter cho migration 019 (Draft #67)
+
+- `POST /api/sessions/{session_id}/config` nhận `n_versions` nguyên 1–4, modes bỏ qua hoặc `[]` và cờ shuffle mặc định OFF/OFF. RPC 019 suy ra modes từ canonical Blueprint của nguồn đã xác nhận. API trả cấu hình DB đã lưu cùng manifest. [Contract config](api/generation-config-endpoint.md)
+- Claim đối chiếu receipt 015–017 với frozen config/context, manifest và các slot đã commit trước khi dispatch. Frozen dimensions hợp lệ chọn AI. Modes và dimensions cùng rỗng chọn Original Clone với 0 lượt Gemini. Retry giữ snapshot và slot đã commit, kể cả alias `1.0` đã lưu từ W2.
+- Receipt sai trả `503 ERR_GENERATION_STORAGE_FAILURE` trước khi chạy worker. Nếu DB đã commit claim, recovery 017 xử lý job stale và chặn token cũ. [Bằng chứng và phần chờ trong M2](tasks/W4-MVP-02_IMPLEMENTATION_PLAN.md#bàn-giao--ghi-theo-bằng-chứng-thực-tế)
 ## OPS11/21 checkpoint — 13/11/2026
 
 - Đạt tiếp nối PR51 đã merge bằng nhánh OPS mới từ dev294c69a. Cập nhật task/input-handoff, runbook và migration checkpoint017/018 merged; 019 đã merge qua PR61 tại devb47e4fa; giữ historical inventory73583d7, không tạo applied ledger giả.

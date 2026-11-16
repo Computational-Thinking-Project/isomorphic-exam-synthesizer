@@ -30,8 +30,12 @@ class SnapshotDB:
             "session_id": str(self.session_id),
             "snapshot_id": str(self.snapshot_id),
             "context": {"n_versions": 2, "confirmed_sources": [{"question_no": 1}]},
-            "completed": [{"version_index": 1, "question_no": 1, "is_success": True}],
+            "completed": [{
+                "version_index": 1, "question_no": 1, "is_success": True,
+                "result_kind": "CONFIRMED_SOURCE_FALLBACK",
+            }],
             "failures": [{"version_index": 2, "question_no": 1, "is_success": False}],
+            "fallback_receipts": [{"version_index": 2, "question_no": 1}],
             "generation_error_code": "ERR_GENERATION_INCOMPLETE",
         }
 
