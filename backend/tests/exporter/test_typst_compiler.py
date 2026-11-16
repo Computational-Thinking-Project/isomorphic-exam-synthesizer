@@ -732,3 +732,30 @@ class TestGoldenAndExtendedMathConverter:
         assert "0.5(x+1)" in decimal_out
         assert "integral_(0)^(1)" in decimal_out
         assert "d x" in decimal_out
+
+    def test_alignedat_consumes_alignment_count_argument_f82_01(self):
+        # Regression for F82-01: \begin{alignedat}{n} mandatory {n} argument must be consumed
+        # and must not leak into the generated Typst equations as stray numbers.
+        raw = r"\begin{alignedat}{2}x&=1 & y&=2\\z&=3 & t&=4\end{alignedat}"
+        converted = latex_math_to_typst(raw)
+        assert converted == r"x & =1 & y & =2 \ z & =3 & t & =4"
+        assert "{2}" not in converted
+        # Ensure '2' only appears as the value assigned to y, not at the beginning of x
+        assert converted.startswith("x")
+
+        # Test with spaces and different column counts
+        raw_spaces = r"\begin{alignedat} { 3 } a &= 10 & b &= 20 & c &= 30 \\ d &= 40 & e &= 50 & f &= 60 \end{alignedat}"
+        converted_spaces = latex_math_to_typst(raw_spaces)
+        assert "{ 3 }" not in converted_spaces
+        assert "{3}" not in converted_spaces
+        assert "3 " not in converted_spaces.split("&")[0]
+        assert converted_spaces.startswith("a")
+        assert "\\" in converted_spaces
+
+        # Test with optional [t] / [b] / [c] specifier
+        raw_valign = r"\begin{alignedat}[t]{2} u &= v \\ w &= z \end{alignedat}"
+        converted_valign = latex_math_to_typst(raw_valign)
+        assert converted_valign == r"u & = v \ w & = z"
+        assert "[t]" not in converted_valign
+        assert "{2}" not in converted_valign
+

@@ -424,9 +424,65 @@ def _transform_outside_quotes(text: str, transform: Callable[[str], str]) -> str
     return "".join(parts)
 
 
+def _extract_balanced_braces(text: str, start_idx: int) -> Tuple[str, int]:
+    """
+    Extract content inside balanced curly braces starting at start_idx.
+    Returns (inner_content, end_idx) where end_idx is the index after the closing '}'.
+    """
+    if start_idx >= len(text) or text[start_idx] != "{":
+        return "", start_idx
+
+    depth = 0
+    inner_chars: List[str] = []
+    i = start_idx
+
+    while i < len(text):
+        c = text[i]
+        if c == "\\":
+            if i + 1 < len(text) and text[i + 1] in "{}":
+                inner_chars.append(text[i : i + 2])
+                i += 2
+                continue
+            inner_chars.append(c)
+            i += 1
+            continue
+        if c == "{":
+            depth += 1
+            if depth > 1:
+                inner_chars.append(c)
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return "".join(inner_chars), i + 1
+            inner_chars.append(c)
+        else:
+            inner_chars.append(c)
+        i += 1
+
+    return "".join(inner_chars), i
+
+
 def _convert_env(name: str, body: str) -> str:
     """Convert a LaTeX math environment body to Typst syntax."""
-    rows = _ROW_SPLIT_RE.split(body.strip())
+    body_clean = body.strip()
+
+    # Handle optional alignment / placement specifier [t|b|c] for alignment environments
+    if name in {"aligned", "alignedat", "gathered", "split"}:
+        if body_clean.startswith("["):
+            bracket_end = body_clean.find("]")
+            if bracket_end != -1:
+                body_clean = body_clean[bracket_end + 1 :].strip()
+
+        # F82-01: alignedat requires a mandatory column-count argument {n} (e.g. {2})
+        # which is LaTeX layout metadata and must not be printed into Typst math output.
+        if name == "alignedat":
+            if body_clean.startswith("{"):
+                _, end_idx = _extract_balanced_braces(body_clean, 0)
+                body_clean = body_clean[end_idx:].strip()
+            elif re.match(r"^\d+", body_clean):
+                body_clean = re.sub(r"^\d+\s*", "", body_clean)
+
+    rows = _ROW_SPLIT_RE.split(body_clean)
     if rows and not rows[-1].strip():
         rows = rows[:-1]
 
@@ -504,44 +560,6 @@ def _finalize_math_segment(segment: str) -> str:
     segment = re.sub(r"(?<=[A-Za-z0-9)\]|\"'])[ \t]+(?=[_^])", "", segment)
     segment = re.sub(r"([_^])[ \t]+", r"\1", segment)
     return _split_multiletter_segment(segment)
-
-
-def _extract_balanced_braces(text: str, start_idx: int) -> Tuple[str, int]:
-    """
-    Extract content inside balanced curly braces starting at start_idx.
-    Returns (inner_content, end_idx) where end_idx is the index after the closing '}'.
-    """
-    if start_idx >= len(text) or text[start_idx] != "{":
-        return "", start_idx
-
-    depth = 0
-    inner_chars: List[str] = []
-    i = start_idx
-
-    while i < len(text):
-        c = text[i]
-        if c == "\\":
-            if i + 1 < len(text) and text[i + 1] in "{}":
-                inner_chars.append(text[i : i + 2])
-                i += 2
-                continue
-            inner_chars.append(c)
-            i += 1
-            continue
-        if c == "{":
-            depth += 1
-            if depth > 1:
-                inner_chars.append(c)
-        elif c == "}":
-            depth -= 1
-            if depth == 0:
-                return "".join(inner_chars), i + 1
-            inner_chars.append(c)
-        else:
-            inner_chars.append(c)
-        i += 1
-
-    return "".join(inner_chars), i
 
 
 def latex_math_to_typst(math_str: str) -> str:

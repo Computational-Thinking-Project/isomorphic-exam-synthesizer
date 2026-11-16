@@ -1,12 +1,28 @@
 ## TASK-306 / RENDER12-01: Typst math converter integral & multi-letter variable fix — 16/11/2026
 
 - Fixed `latex_math_to_typst()` in `backend/app/services/exporter/typst_converter.py` so real Golden math fixtures (`\int_{0}^{1}`, `dx`, `Oxyz`) compile cleanly under Typst `v0.11.1`:
-  - Added Typst math mappings for integrals/big operators (`\int`, `\iint`, `\iiint`, `\oint`, `\sum`, `\prod`), remaining `_MATH_COMMANDS` symbols/functions/Greek letters/style & accent wrappers (`\mathbb`, `\overline`, `\vec`, `\hat`, `\bar`, `\ddot`, etc.), spacing escapes, and math environments (`cases`, matrices, `aligned`).
+  - Added Typst math mappings for integrals/big operators (`\int`, `\iint`, `\iiint`, `\oint`, `\sum`, `\prod`), remaining `_MATH_COMMANDS` symbols/functions/Greek letters/style & accent wrappers (`\mathbb`, `\overline`, `\vec`, `\hat`, `\bar`, `\ddot`, etc.), spacing escapes, and math environments (`cases`, matrices, `aligned`, `alignedat`, `gathered`, `split`).
   - Normalized script attachment around `_` and `^` (e.g. `\int_{0}^{1}` -> `integral_(0)^(1)` instead of stray `\i`+`nt` escape).
   - Added quote-safe and case-sensitive `_split_multiletter_segment` logic separating adjacent LaTeX single-letter variables (`dx` -> `d x`, `Oxyz` -> `O x y z`, `IN` -> `I N`) while preserving Typst math identifiers/dot-symbols, `"..."` literals, `#`/`.method(`/`panic|eval|assert` security neutralization (`F03`), and decimal coefficients (`0.5(x+1)`, `F06`).
+  - Resolved review finding F82-01: consume and validate mandatory alignment column-count arguments in `alignedat` (`\begin{alignedat}{n}`) and optional placement specifiers (`[t|b|c]`), preventing stray `{n}` metadata from corrupting exported formulas while keeping equations and row boundaries intact.
 - Added unit tests and `TestRealTypstIntegration` Golden snapshot & extended math tests in `backend/tests/exporter/test_typst_compiler.py`.
 
 ---
+
+## DEC-TV7-W4-007-Q01: Verified empty fallback/clone solutions — 16/11/2026
+
+- Hùng áp dụng Q01 revised của Duy tại PR74#issuecomment-6904736595, thay guard solution bắt buộc tuyệt đối. AI/regenerated giữ strict validation; fallback/Original Clone rỗng chỉ qua receipt/snapshot hợp lệ. Không tự thêm placeholder hoặc autoapprove.
+- Nội dung và ownership vẫn dùng user RLS. Service client tùy chọn chỉ đọc provenance của session/question đã authorize; missing/invalid evidence fail closed. Không thay API JSON, revision/hash payload hoặc migration. Capability nội bộ giữ ngoại lệ qua compiler/bundler revalidation; dump JSON không tự mang quyền đó.
+- Ảnh hưởng: snapshot reader/builder/models, pipeline revalidation, tests và export-snapshot contract; task08 nối client, task12 kiểm regression. Đã kiểm cục bộ được ghi tại plan07; không coi là producer/deployment/Golden PASS.
+
+## DEC-TV7-W4-007: Approved export snapshot adapter
+
+- Ngày/người: 12/11/2026 — Hùng; áp dụng [quyết định của Duy trên PR58](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58#issuecomment-6801792075). Chưa là GitHub approval hay nghiệm thu tích hợp.
+- Bối cảnh: task08 cần model export từ nội dung đã lưu và khóa; timestamp thay đổi khi approve nên không định danh đúng artifact.
+- Quyết định: SHA-256 ID + title chuẩn hóa + versions đã validate; không status/timestamps. Giữ table reads qua user RLS, kiểm session trước/sau, không thêm RPC/migration. Giữ409 cho dữ liệu sai (`ERR_EXPORT_SNAPSHOT_INVALID`), không đổi network/SDK errors thành409.
+- Sửa F01 sau review độc lập: chỉ display slots phải1..M; canonical giữ số câu nguồn nguyên dương/không trùng (ví dụ3,8,9). Mapping với nguồn vẫn do shuffle/approval xác thực; adapter giữ kiểm source coverage và key/canonical khớp nhau, không renumber dữ liệu nguồn. Bổ sung positive/negative regressions và PostgreSQL thật.
+- Ảnh hưởng: package exporter, fixtures/tests, [contract](api/export-snapshot-contract.md), [plan/input07](tasks/W4-MVP-07.md). Chờ Tâm xác nhận fixture/đồng bộ docs preview. Export thiếu solution đã chốt fail-closed trên issue46; gate upstream Q01 còn riêng, không hỏi lại quyết định export.
+- Kiểm: unit/stub và PostgreSQL15 dùng một lần với chain002–018; actual shuffle/approval, RLS, lock/fencing, concurrency và parity6slot với PR49 pinned. Chưa deployed Supabase/JWT/PostgREST, fullW2, PDF/Storage hay E2E08. Code test không cấp quyền cloud hoặc merge.
 
 ## OPS11/21 smoke tooling — 15/11/2026
 
@@ -1009,3 +1025,12 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
 - Context: on-access stale recovery and an in-memory SSE broker could not independently recover an abandoned job or retain its error after restart. The public metrics stub did not report the shared worker's live activity.
 - Decision: consume Duy's PR #52 migration 017 RPC contract for cursor-paged stale scanning, token-fenced failure and durable error read-back. Start one scanner on startup/every 30 seconds, retain terminal buffers for at least 15 minutes, clean every 60 seconds and hold a broker lease for issued SSE tickets. Use PR #32 admin dependency and the existing Gemini observer/collector for protected metrics.
 - Impact: generation repository/runner/recovery, snapshot/SSE/ticket/broker, validator adapter, app lifespan and metrics route. The follow-up patch aligns dev and Docker smoke with metrics Auth (anonymous 401 + Bearer challenge) and fixes the CI test fixture for collector 503. PR #52 later merged into dev; applied DB ledger, one-worker deployment and live FE/DB/proxy acceptance remain pending. No migration, AI generator, validator aggregator or FE owner code is changed here.
+
+
+## DEC-ISSUE80 — Optional source explanations
+
+- Date: 2026-11-16; authority: Issue #80 product decision.
+- Migration 024 replaces the Q01 claim guard and source-reuse projection; no schema or RPC signature changes.
+- AI validation remains required. Clone/fallback/Revert use the agreed missing-solution disclosure.
+- New Revert actions restore frozen sources pending teacher review; historical receipts remain immutable.
+- Deploy with workers drained and matched backend; use forward fixes rather than replaying historical migrations.

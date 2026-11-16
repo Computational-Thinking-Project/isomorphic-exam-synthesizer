@@ -436,8 +436,10 @@ export default function Stage2ConfigPage({
     setIsSubmittingConfig(true);
     setConfigError(null);
 
+    let configSaved = false;
     try {
       await saveConfig(targetSessionId, payload);
+      configSaved = true;
       if (
         !isMountedRef.current ||
         submitOperationRef.current !== thisOpId ||
@@ -468,12 +470,13 @@ export default function Stage2ConfigPage({
       const resData = err?.response?.data;
       const errorCode = resData?.code || resData?.detail?.code || err?.code;
       const errorDetail =
+        resData?.detail?.message ||
         resData?.error_message ||
         resData?.detail ||
         resData?.message ||
         err?.message;
 
-      if (errorCode === 'ERR_CONFIG_CONFLICT') {
+      if (!configSaved && errorCode === 'ERR_CONFIG_CONFLICT') {
         setConfigError(
           `Cấu hình xung đột với Blueprint của đề bài (ERR_CONFIG_CONFLICT): ${
             typeof errorDetail === 'string'
@@ -482,10 +485,11 @@ export default function Stage2ConfigPage({
           }`,
         );
       } else {
+        const message = typeof errorDetail === 'string' ? errorDetail : 'Đã xảy ra lỗi. Vui lòng thử lại.';
+        const numbers = resData?.detail?.question_numbers;
+        const affected = Array.isArray(numbers) ? ` Câu: ${numbers.join(', ')}.` : '';
         setConfigError(
-          typeof errorDetail === 'string'
-            ? errorDetail
-            : 'Không thể lưu cấu hình hoặc khởi động tiến trình sinh đề.',
+          `${configSaved ? 'Đã lưu cấu hình. Không thể bắt đầu sinh đề: ' : 'Không thể lưu cấu hình: '}${message}${errorCode ? ` (${errorCode})` : ''}${affected}`,
         );
       }
     } finally {

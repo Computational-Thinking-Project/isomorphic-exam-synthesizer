@@ -1,7 +1,7 @@
 """Compile and package one locked display snapshot, without database or cloud access."""
 
 from .bundle_builder import build_bundle
-from .bundle_models import ApprovedExportSnapshot, BundleArtifact
+from .bundle_models import ApprovedExportSnapshot, BundleArtifact, revalidate_snapshot
 from .typst_compiler import TypstCompiler, generate_pdf_filename
 
 
@@ -16,7 +16,7 @@ def build_compiled_bundle(
     asyncio.to_thread. The caller owns authorization and the locked DB snapshot.
     Compiler/bundler errors propagate; no partial archive is returned or uploaded.
     """
-    snapshot = ApprovedExportSnapshot.model_validate(snapshot.model_dump())
+    snapshot = revalidate_snapshot(snapshot)
     compiler = compiler if compiler is not None else TypstCompiler()
     pdfs: dict[str, bytes] = {}
     matrix: list[dict[str, object]] = []
