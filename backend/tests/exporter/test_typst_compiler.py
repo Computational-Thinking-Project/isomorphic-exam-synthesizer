@@ -22,17 +22,26 @@ Verifies:
 7. Real CLI compilation integration test (conditionally executed if typst binary is present).
 """
 
+import json
 import os
 import subprocess
+from pathlib import Path
 from unittest.mock import patch
+from zipfile import ZipFile
 
 import pytest
 
+from app.services.exporter.bundle_models import (
+    ApprovedExportSnapshot,
+    DisplayQuestion,
+    DisplayVersion,
+)
 from app.services.exporter.exceptions import (
     TypstCompilationError,
     TypstNotFoundError,
     TypstTimeoutError,
 )
+from app.services.exporter.export_pipeline import build_compiled_bundle
 from app.services.exporter.typst_compiler import (
     PDF_MAGIC_BYTES,
     TypstCompiler,
@@ -582,3 +591,144 @@ class TestRealTypstIntegration:
         )
         pdf_bytes = compiler.compile_document(source, "f06_test.pdf")
         assert pdf_bytes.startswith(PDF_MAGIC_BYTES)
+
+    def test_real_typst_compile_golden_snapshot_bundle(self):
+        compiler = TypstCompiler()
+        if not compiler.is_available():
+            pytest.skip("Typst CLI is not installed on host PATH; skipping real compile test.")
+
+        fixture_path = (
+            Path(__file__).resolve().parents[1] / "fixtures" / "w4_preview_snapshot_fixture.json"
+        )
+        raw = json.loads(fixture_path.read_text(encoding="utf-8"))
+        snapshot = ApprovedExportSnapshot(
+            session_id=raw["session_id"],
+            revision="golden-rev-1",
+            title="Golden Renderer Regression Exam",
+            status="approved",
+            versions=tuple(
+                DisplayVersion(
+                    code=ver["version_code"],
+                    questions=tuple(
+                        DisplayQuestion(
+                            id=q["id"],
+                            question_no=q["question_no"],
+                            content=q["content"],
+                            options=tuple(q["options"]),
+                            correct_key=q["correct_key"],
+                            solution_md=q["solution_md"],
+                            status=q["status"],
+                        )
+                        for q in ver["questions"]
+                    ),
+                )
+                for ver in raw["versions"]
+            ),
+        )
+
+        bundle = build_compiled_bundle(snapshot, compiler=compiler)
+        assert bundle.size_bytes > 0
+        from io import BytesIO
+
+        with ZipFile(BytesIO(bundle.data), "r") as zf:
+            names = set(zf.namelist())
+            root = f"exam_bundle_{snapshot.session_id}"
+            for expected_pdf in (
+                f"{root}/pdf/exam_101.pdf",
+                f"{root}/pdf/exam_102.pdf",
+                f"{root}/pdf/solutions_101.pdf",
+                f"{root}/pdf/solutions_102.pdf",
+                f"{root}/pdf/answers_matrix.pdf",
+            ):
+                assert expected_pdf in names
+                data = zf.read(expected_pdf)
+                assert data.startswith(PDF_MAGIC_BYTES)
+
+    def test_real_typst_compile_golden_empty_solutions_and_extended_math(self):
+        compiler = TypstCompiler()
+        if not compiler.is_available():
+            pytest.skip("Typst CLI is not installed on host PATH; skipping real compile test.")
+
+        fixture_path = (
+            Path(__file__).resolve().parents[1] / "fixtures" / "w4_preview_snapshot_fixture.json"
+        )
+        raw = json.loads(fixture_path.read_text(encoding="utf-8"))
+        empty_questions = [
+            {
+                "question_no": q["question_no"],
+                "correct_key": q["correct_key"],
+                "content": q["content"],
+                "options": q["options"],
+                "solution_md": "",
+            }
+            for q in raw["versions"][0]["questions"]
+        ]
+        sol_empty_src = compiler.render_solution_document("101", empty_questions)
+        sol_empty_pdf = compiler.compile_document(sol_empty_src, "golden_solutions_empty.pdf")
+        assert sol_empty_pdf.startswith(PDF_MAGIC_BYTES)
+
+        extended_payload = "\n\n".join(
+            [
+                r"Tich phan: $I = \int_{0}^{1} (3x^2 + 2x) dx + \iint_{D} f(x,y)\,dx\,dy$.",
+                r"Toa do: $Oxyz$, doan $AB$, diem $IN$, khoang cach $\overline{AB}$, $\vec{CD}$, $\hat{x}$, $\bar{y}$, $\ddot{z}$.",
+                r"Tong va gioi han: $\sum_{k=1}^{n} k^2$, $\prod_{i=1}^{n} a_i$, $\lim_{x \to 0} \frac{\sin x}{x} = 1$, $\sin^2 x + \cos^2 x = 1$.",
+                r"Tap hop va ky hieu: $x \in \mathbb{R} \setminus \{0\}$, $A \subseteq B$, $A \cong B$, $A \sim B$, $a \propto b$, $90^\circ$, $\angle ABC$, $\triangle ABC$, $d \perp \Delta$, $d \parallel d'$, $\langle u, v \rangle$, $\lVert u \rVert$, $\cdots$, $\vdots$, $\ddots$, $\text{don vi } 5\,\text{cm}$.",
+                r"He phuong trinh va ma tran: $\begin{cases} x + y = 1 \\ x - y = 3 \end{cases}$ va $\begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix}$.",
+                r"Fallback unknown macro: $\unknownmacro + x$.",
+            ]
+        )
+        ext_src = (
+            '#set page(paper: "a4")\n'
+            "= Extended Math Coverage\n"
+            f"{convert_markdown_to_typst(extended_payload)}\n"
+        )
+        ext_pdf = compiler.compile_document(ext_src, "extended_math.pdf")
+        assert ext_pdf.startswith(PDF_MAGIC_BYTES)
+
+
+class TestGoldenAndExtendedMathConverter:
+    def test_golden_integral_and_differential_conversion(self):
+        out = latex_math_to_typst(r"I = \int_{0}^{1} (3x^2 + 2x) dx")
+        assert out == "I = integral_(0)^(1) (3x^2 + 2x) d x"
+        assert r"\int" not in out
+        assert "dx" not in out
+
+    def test_golden_multiletter_geometry_coordinates_split_cleanly(self):
+        assert latex_math_to_typst("Oxyz") == "O x y z"
+        assert latex_math_to_typst("ABC") == "A B C"
+        # Case sensitivity prevents colliding uppercase point names with Typst lowercase keywords.
+        assert latex_math_to_typst("IN") == "I N"
+        assert latex_math_to_typst("AND") == "A N D"
+        assert latex_math_to_typst(r"x \in \mathbb{R} \setminus \{0\}") == r"x in bb(R) without \{0\}"
+
+    def test_big_operators_trig_powers_and_limits(self):
+        assert latex_math_to_typst(r"\iint_{D} f(x, y)\,dx\,dy") == "integral.double_(D) f(x, y) d x d y"
+        assert latex_math_to_typst(r"\sum_{k=1}^{n} k^2") == "sum_(k=1)^(n) k^2"
+        assert latex_math_to_typst(r"\prod_{i=1}^{n} a_i") == "product_(i=1)^(n) a_i"
+        assert latex_math_to_typst(r"\lim_{x \to 0} \frac{\sin x}{x} = 1") == "lim_(x -> 0) ((sin x)/(x)) = 1"
+        assert latex_math_to_typst(r"\sin^2 x + \cos^2 x = 1") == "sin^2 x + cos^2 x = 1"
+
+    def test_accents_environments_text_escaping_and_unknown_fallback(self):
+        assert (
+            latex_math_to_typst(r"\overline{AB} + \vec{CD} + \hat{x} + \bar{y} + \ddot{z}")
+            == "overline(A B) + arrow(C D) + hat(x) + macron(y) + dot.double(z)"
+        )
+        assert latex_math_to_typst(r"\begin{cases} x + y = 1 \\ x - y = 3 \end{cases}") == "cases(x + y = 1, x - y = 3)"
+        assert latex_math_to_typst(r"\begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix}") == "mat(1, 2; 3, 4)"
+        assert latex_math_to_typst(r"\text{khi } dx > 0") == '"khi " d x > 0'
+        assert latex_math_to_typst(r'\text{a "b"}') == r'"a \"b\""'
+        assert latex_math_to_typst(r"\unknownmacro + x") == '"unknownmacro" + x'
+
+    def test_security_and_decimal_invariants_preserved_with_integrals(self):
+        malicious = latex_math_to_typst(r'\int_{0}^{1} \#.replace("", panic("REVIEW_MARKER")) dx')
+        assert "#" not in malicious
+        assert "panic" not in malicious
+        assert ".replace" not in malicious
+        assert "integral_(0)^(1)" in malicious
+        assert "hash" in malicious
+        assert "d x" in malicious
+
+        decimal_out = latex_math_to_typst(r"\int_{0}^{1} 0.5(x+1) dx")
+        assert "0.5(x+1)" in decimal_out
+        assert "integral_(0)^(1)" in decimal_out
+        assert "d x" in decimal_out

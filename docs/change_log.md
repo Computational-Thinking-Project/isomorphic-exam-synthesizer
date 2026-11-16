@@ -1,3 +1,13 @@
+## TASK-306 / RENDER12-01: Typst math converter integral & multi-letter variable fix — 16/11/2026
+
+- Fixed `latex_math_to_typst()` in `backend/app/services/exporter/typst_converter.py` so real Golden math fixtures (`\int_{0}^{1}`, `dx`, `Oxyz`) compile cleanly under Typst `v0.11.1`:
+  - Added Typst math mappings for integrals/big operators (`\int`, `\iint`, `\iiint`, `\oint`, `\sum`, `\prod`), remaining `_MATH_COMMANDS` symbols/functions/Greek letters/style & accent wrappers (`\mathbb`, `\overline`, `\vec`, `\hat`, `\bar`, `\ddot`, etc.), spacing escapes, and math environments (`cases`, matrices, `aligned`).
+  - Normalized script attachment around `_` and `^` (e.g. `\int_{0}^{1}` -> `integral_(0)^(1)` instead of stray `\i`+`nt` escape).
+  - Added quote-safe and case-sensitive `_split_multiletter_segment` logic separating adjacent LaTeX single-letter variables (`dx` -> `d x`, `Oxyz` -> `O x y z`, `IN` -> `I N`) while preserving Typst math identifiers/dot-symbols, `"..."` literals, `#`/`.method(`/`panic|eval|assert` security neutralization (`F03`), and decimal coefficients (`0.5(x+1)`, `F06`).
+- Added unit tests and `TestRealTypstIntegration` Golden snapshot & extended math tests in `backend/tests/exporter/test_typst_compiler.py`.
+
+---
+
 ## OPS11/21 smoke tooling — 15/11/2026
 
 - Đạt bổ sung anonymous session/metrics probes trực tiếp và qua proxy vào `scripts/w4_ops.py smoke`: HTTP401 phải kèm Bearer challenge; không lưu response content/headers hoặc gửi credentials. JSON checks tăng4→8; schema_version vẫn1, cấu trúc từng check và acceptance không đổi. Consumer không nên cố định độ dài checks.
