@@ -55,6 +55,7 @@ CANDIDATE_CHAIN = [
     "019_w4_source_readiness_config.sql",
     "021_w4_confirmed_source_fallback.sql",
     "022_w4_generation_solution_guard.sql",
+    "023_users_client_acl_hardening.sql",
 ]
 
 
@@ -614,3 +615,122 @@ class Issue75BaselineReconciliationTests(PostgresCase):
             self.value("SELECT has_function_privilege('anon', 'public.get_session_source_preview(uuid)', 'EXECUTE');"),
             "f"
         )
+
+    def seed_unsafe_users_acl(self):
+        self.sql("""
+            GRANT TRUNCATE, TRIGGER, REFERENCES ON public.users TO anon, authenticated;
+            GRANT SELECT ON public.users TO authenticated;
+        """)
+        if int(self.value("SHOW server_version_num")) >= 170000:
+            self.sql("GRANT MAINTAIN ON public.users TO anon, authenticated")
+        self.assertEqual(self.value(
+            "SELECT has_table_privilege('anon','public.users','TRUNCATE')"), "t")
+
+    def assert_users_acl_hardened(self):
+        privileges = ["TRUNCATE", "TRIGGER", "REFERENCES"]
+        if int(self.value("SHOW server_version_num")) >= 170000:
+            privileges.append("MAINTAIN")
+        for role in ("anon", "authenticated"):
+            for privilege in privileges:
+                self.assertEqual(self.value(
+                    f"SELECT has_table_privilege('{role}','public.users','{privilege}')"), "f")
+            self.assertEqual(self.value(
+                f"SELECT has_any_column_privilege('{role}','public.users','REFERENCES')"), "f")
+        self.assertEqual(self.value(
+            "SELECT has_table_privilege('authenticated','public.users','SELECT')"), "t")
+
+    def test_t14_users_acl_chain_replay_and_trusted_role(self):
+        before = self.seed_five_table_baseline()
+        self.seed_unsafe_users_acl()
+        trusted = self.value(
+            "SELECT relacl::text FROM pg_class WHERE oid='public.users'::regclass")
+        # Capture service_role rights independently of client ACL ordering.
+        service_before = self.value("""
+            SELECT string_agg(privilege_type,',' ORDER BY privilege_type)
+            FROM information_schema.table_privileges
+            WHERE table_schema='public' AND table_name='users' AND grantee='service_role'
+        """)
+        self.assertTrue(trusted)
+        for migration in CANDIDATE_CHAIN:
+            self.apply_migration(migration)
+        for migration in ("023_users_client_acl_hardening.sql",
+                          "023_users_client_acl_hardening.sql",
+                          "003b_reconcile_baseline.sql"):
+            self.apply_migration(migration)
+            self.assert_users_acl_hardened()
+        self.assertEqual(self.snapshot_5_tables()["users"], before["users"])
+        self.assertEqual(service_before, self.value("""
+            SELECT string_agg(privilege_type,',' ORDER BY privilege_type)
+            FROM information_schema.table_privileges
+            WHERE table_schema='public' AND table_name='users' AND grantee='service_role'
+        """))
+        self.assertEqual(self.as_role("authenticated", USER_A,
+            "SELECT current_user"), "authenticated")
+        self.assertEqual(self.as_role("authenticated", USER_A,
+            "SELECT count(*) FROM public.users"), "1")
+        self.assertEqual(self.as_role("authenticated", USER_B,
+            f"SELECT count(*) FROM public.users WHERE id='{USER_A}'"), "0")
+        self.assertEqual(self.as_role("authenticated", USER_B,
+            f"SELECT count(*) FROM public.exam_sessions WHERE id='{SESSION_A}'"), "0")
+        denied_write = self.as_role_fail("authenticated", USER_B,
+            f"UPDATE public.users SET name='forged' WHERE id='{USER_A}'")
+        self.assertNotEqual(denied_write.returncode, 0)
+        self.assertEqual(self.snapshot_5_tables()["users"], before["users"])
+        denied = self.as_role_fail("anon", USER_A, "SELECT * FROM public.users")
+        self.assertNotEqual(denied.returncode, 0)
+        preview = json.loads(self.as_role("authenticated", USER_A,
+            f"SELECT public.get_session_source_preview('{SESSION_A}')"))
+        self.assertEqual(preview["session"]["id"], SESSION_A)
+
+    def test_t15_users_acl_residual_grants_rollback(self):
+        self.seed_five_table_baseline()
+        self.seed_unsafe_users_acl()
+        for grant, revoke in (
+            ("GRANT TRUNCATE ON public.users TO PUBLIC",
+             "REVOKE TRUNCATE ON public.users FROM PUBLIC"),
+            ("GRANT REFERENCES (id) ON public.users TO PUBLIC",
+             "REVOKE REFERENCES (id) ON public.users FROM PUBLIC"),
+            ("GRANT TRIGGER ON public.users TO service_role; GRANT service_role TO authenticated",
+             "REVOKE service_role FROM authenticated"),
+        ):
+            with self.subTest(grant=grant):
+                self.sql(grant)
+                before = self.value(
+                    "SELECT relacl::text FROM pg_class WHERE oid='public.users'::regclass")
+                result = self.sql((ROOT / "backend/migrations/023_users_client_acl_hardening.sql").read_text(
+                    encoding="utf-8"), check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("023:", result.stderr)
+                self.assertEqual(before, self.value(
+                    "SELECT relacl::text FROM pg_class WHERE oid='public.users'::regclass"))
+                self.sql(revoke)
+
+    def test_t16_users_acl_auth_trigger_and_profile_read(self):
+        # Exercise the actual repository Auth setup in this disposable database.
+        self.sql("ALTER TABLE auth.users ADD COLUMN created_at timestamptz DEFAULT now()")
+        self.sql((ROOT / "backend/scripts/setup_auth_profiles.sql").read_text(encoding="utf-8"))
+        self.seed_unsafe_users_acl()
+        self.apply_migration("023_users_client_acl_hardening.sql")
+        self.sql(f"INSERT INTO auth.users(id,email,raw_user_meta_data) VALUES "
+                 f"('{USER_A}','acl@example.invalid','{{\"full_name\":\"ACL test\"}}')")
+        self.assertEqual(self.value(
+            f"SELECT name FROM public.users WHERE id='{USER_A}'"), "ACL test")
+        self.assertEqual(self.as_role("authenticated", USER_A,
+            "SELECT name FROM public.users"), "ACL test")
+        self.assert_users_acl_hardened()
+
+    def test_t17_column_grant_removed_and_missing_select_rolls_back(self):
+        self.seed_five_table_baseline()
+        self.seed_unsafe_users_acl()
+        self.sql("GRANT REFERENCES (id) ON public.users TO authenticated")
+        self.apply_migration("023_users_client_acl_hardening.sql")
+        self.assert_users_acl_hardened()
+        self.seed_unsafe_users_acl()
+        self.sql("REVOKE SELECT ON public.users FROM authenticated")
+        before = self.value("SELECT relacl::text FROM pg_class WHERE oid='public.users'::regclass")
+        result = self.sql((ROOT / "backend/migrations/023_users_client_acl_hardening.sql").read_text(
+            encoding="utf-8"), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("required authenticated SELECT", result.stderr)
+        self.assertEqual(before, self.value(
+            "SELECT relacl::text FROM pg_class WHERE oid='public.users'::regclass"))

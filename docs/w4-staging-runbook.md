@@ -75,7 +75,7 @@ Hiện frontend http://localhost:3000, backend http://localhost:8000; thay theo 
 2. **Đối chiếu Ledger & DDL mục tiêu:**
    - Đối chiếu danh sách bảng, cột, constraints, enums, triggers và migration ledger thực tế trên target DB để xác nhận baseline 5 bảng tương thích.
 3. **Phê duyệt Manifest & Checksums:**
-   - Đối chiếu 18 bước tuần tự trong manifest (`003b` ➔ `004`–`022`, bỏ qua `010` rỗng) cùng các mã băm SHA-256 Git blob tương ứng.
+   - Đối chiếu 19 bước tuần tự đề xuất trong manifest (`003b` ➔ `004`–`022`, bỏ qua `010` rỗng) cùng các mã băm SHA-256 Git blob tương ứng.
 4. **Backup & Phục hồi Độc lập (Mandatory GO/NO-GO Gate):**
    - DB owner (Duy / Hùng) thực hiện backup/snapshot đầy đủ trên dashboard Supabase (PITR / pg_dump).
    - Xác nhận reference backup, người phụ trách và đã kiểm tra phục hồi (restore verification) trên một DB cô lập.
@@ -87,7 +87,7 @@ Hiện frontend http://localhost:3000, backend http://localhost:8000; thay theo 
 1. **Kiểm tra Checksum:** Operator kiểm tra tính toàn vẹn của từng file SQL trước khi nạp.
 2. **Thực thi Tuần tự:**
    - Áp dụng `003b_reconcile_baseline.sql` để thiết lập các bảng, enum, policy owner-read và quyền tối thiểu.
-   - Lần lượt áp dụng chuỗi `004` đến `022` (bỏ qua `010` rỗng; không áp dụng `020` chưa merge).
+   - Lần lượt áp dụng chuỗi `004` đến `022`, sau đó `023` (bỏ qua `010` rỗng; không áp dụng `020` chưa merge).
    - Ghi lại nhật ký thực thi: thời gian UTC, người chạy, kết quả từng bước (SUCCESS/FAILURE). Dừng ngay lập tức nếu có bước lỗi.
 3. **Tải lại Cache Schema PostgREST:**
    - Sau khi các migrations hoàn tất thành công, bắt buộc thực thi lệnh reload cache trên Supabase:
@@ -278,3 +278,59 @@ creation with approved test identities; save Stage 2 to `configured`, reload the
 same config, reject cross-user access, and verify trusted audit insertion. HTTP
 session detail exposes `source_revision`; `source_content_revision` is the DB
 column. Do not close F00 from local tests or code approval alone.
+
+## Issue #75 — 023 operator supplement (not authorized to execute yet)
+
+Use the 19-step candidate in w4-migration-candidate.md. Preserve all three gates:
+G1 technical/catalog/data/runtime/checksum/rehearsal; G2 backup plus isolated
+restore proof; G3 independent review plus approved manifest/operator and explicit
+Duy/Hùng DB-owner GO. No Production DDL or data writes before all three pass.
+
+### Additional read-only preflight (DB owner)
+Capture project alias luorfxpmvczsuvulkfcx, Supabase branch main, capture time,
+version() and current_setting('server_version_num'). Export the actual migration
+ledger or mark Unknown. Inspect users relacl, column grants, effective privileges
+for anon/authenticated, PUBLIC grants, role memberships (including pg_maintain
+where available), owner and default ACL for the actual object creator.
+Only query MAINTAIN on >=170000. Confirm authenticated SELECT and enabled RLS.
+Default grants affect future objects; they do not repair existing users ACL.
+Do not automatically change default grants, membership or service_role privileges.
+
+Compare actual baseline columns/enums/constraints/Auth trigger to the candidate.
+Check duplicate exam_versions(session_id,version_code), quota range and status/job
+rows affected by 005 backfills. Unknown/incompatible prerequisites are NO-GO.
+Use a representative isolated restore with the target major PostgreSQL version;
+synthetic PostgreSQL15/17 tests are compatibility checks, not Production readiness.
+
+### Execution and transaction boundaries
+Record a verified running backend SHA/image and test compatibility with this SQL.
+A compatible existing runtime need not be redeployed. Git main is not the Supabase
+branch; this procedure does not authorize dev→main promotion.
+Pause business writes/workers in the approved window. Verify all 19 SQL checksums.
+Execute one file at a time with psql -X -v ON_ERROR_STOP=1.
+Keep explicit BEGIN/COMMIT in files; for 004,005,007,008 use psql --single-transaction
+per file and rehearse those exact commands first. In particular commit 007 before
+calling code using its added enum value. Never wrap the whole chain in one transaction.
+Record each committed step/checksum/time/operator and stop on the first error.
+Run 023 last, then NOTIFY pgrst, 'reload schema'; and verify RPC dispatch.
+
+### Acceptance and recovery
+Require owner GET /api/sessions/{id}=200 with source_revision/source_questions,
+original failure case free of 503/PGRST202, Stage1 load/F5, source confirmation,
+configured save/reload, B denial against A and anonymous denial.
+Check exact required RPC signatures and service/client EXECUTE boundaries including
+disabled legacy overloads. Verify unsafe users privileges false and SELECT intact.
+Google login must work; inspect the actual approved test identity's profile row,
+since /api/users/me can fall back to JWT claims and conceal a broken sync trigger.
+Keep JWTs, keys, personal data and exam content out of evidence.
+
+Receipt: SQL source SHA/checksums, applied steps, runtime SHA/image, PostgreSQL
+version, backup reference, isolated restore/rehearsal proof, timestamp, operator,
+reviewer and each smoke result. Missing evidence is BLOCKED/UNVERIFIED, never PASS.
+Keep Issue75 open; no automatic close on merge.
+
+On error roll back the current transaction; earlier commits remain applied.
+Do not restart the manifest blindly. DB owner selects the rehearsed forward-fix
+or restore procedure and reconciles receipts first. Never restore unsafe grants
+as a down migration. Application rollback requires compatibility with the schema
+actually reached. Resume traffic only after acceptance.
