@@ -1,6 +1,38 @@
 # W4-MVP-12 — Security/negative baseline và regression tích hợp
 
-## Q01 và checkpoint tích hợp 16/11/2026
+## Current integration checkpoint — 16/11/2026
+
+- Author, workflow v0.1 proposed + INPUT-20261109 (`7b7387f`). Đã đồng bộ
+  dependency08 `ad87643`, gồm `dev@26af798`: PR49 Preview và PR81/migration024
+  đã merge. PR58/PR63 chưa merge; PR73 tiếp tục Draft/stacked trên08.
+- Policy hiện hành là [Issue80](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/80):
+  nguồn tái sử dụng thiếu lời giải dùng `Không có lời giải cho câu hỏi này.`;
+  AI vẫn phải có lời giải validated, mọi câu vẫn cần teacher approval. Ngoại lệ
+  empty có provenance của07/08 chỉ còn cần cho dữ liệu lịch sử.
+- [Incident75 đã có báo nghiệm thu](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/75#issuecomment-6907435471).
+  Không giữ NO-GO cũ làm blocker chung; vẫn chưa có bằng chứng applied020/024,
+  private bucket và export runtime của cùng candidate để thay I-W412-01/02/03.
+- **RENDER12-01:** overlay riêng converter PR82 `7965b29` lên TASK12 giữ nguyên
+  fixture và strict marker: **2 XPASS(strict)** với Typst0.11.1. Cả hai bundle
+  đã tạo thành công; đây là prospective compiler proof, không phải PASS của
+  nhánh hiện tại hoặc Golden E2E. Không thay fixture, không sửa nhánh Tâm.
+- [Review PR82](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/82#pullrequestreview-5920320208)
+  yêu cầu sửa F82-01: `alignedat` đưa tham số số cột vào công thức. Giữ nguyên
+  hai strict XFAIL ở12 đến khi bản compiler được chấp nhận/tích hợp; sau đó rerun
+  và gỡ marker. Runtime vẫn disabled; chưa nghiệm thu toàn luồng hay retarget `dev`.
+- Checkpoint phía dưới là lịch sử trước tích hợp; trạng thái producer/incident
+  hiện hành theo mục này. Không suy GitHub approval trên head cũ thành xác minh
+  head mới; không sửa PR/issue descriptions hoặc apply shared DB/cloud.
+- Kiểm lại combined tree: Ruff PASS, mypy **128 files PASS**;
+  `pytest backend/tests/security backend/tests/api backend/tests/services backend/tests/exporter`
+  với Typst thật: **1286 passed, 3 skipped, 2 xfailed**, 8 cảnh báo hiện có.
+  Skip: hai module asyncpg không có dependency trong image, XeLaTeX. Hai XFAIL
+  vẫn đúng lỗi compiler hiện tại; không phải Golden PASS. SEC12-08 trên PostgreSQL15
+  áp chain đến024: **1 passed, 10 deselected**, 2 cảnh báo; cả ba route trước
+  approval không claim/build/upload/sign. Không có thay đổi testcase/product code
+  trong lượt đồng bộ này.
+
+## Q01 và checkpoint tích hợp — lịch sử trước dev integration, 16/11/2026
 
 - Author mode, workflow v0.1 proposed + INPUT-20261109 (docs `7b7387f`).
   Baseline hiện tại: merge `2329eaf`, dependency08 `1d61406`, dependency07 `1c01ad3`,
