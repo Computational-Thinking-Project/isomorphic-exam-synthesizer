@@ -20,6 +20,7 @@ from app.services.blueprint.adapters import source_to_item
 from app.services.blueprint.service import source_fingerprint
 from app.services.generation.targeted_service import TargetedRegenerator
 from app.services.review import service as service_module
+from app.services.review.repository import ReviewRepository
 from app.services.review.service import ReviewService
 from app.services.review.validation import frozen_inputs
 
@@ -79,9 +80,14 @@ class State:
             self.qid: dict(
                 id=self.qid,
                 version_id=self.vid,
+                question_no=1,
                 status="pending_review",
                 is_current=True,
                 is_reverted=False,
+                content="Previous candidate",
+                options=["1", "2", "3", "4"],
+                correct_key="A",
+                solution_md="Subtract one: x=1.",
                 updated_at="2026-11-04T00:00:00Z",
                 exam_versions={"session_id": self.sid},
             )
@@ -242,19 +248,62 @@ class State:
                 return deepcopy(old_result) | {"replayed": True}
             if self.status in ("approved", "exported") or self.approved_at is not None:
                 raise RuntimeError("REVIEW_LOCKED")
-            self.rows[self.qid].update(
-                status="approved", is_reverted=name == "review_revert_question"
-            )
-            result = dict(
-                session_id=self.sid,
-                session_status="reviewed",
-                replayed=False,
-                previous_question_id=self.qid,
-                question_id=self.qid,
-                question_status="approved",
-                invalidated_version_ids=[],
-                progress=counts(1),
-            )
+            target_qid = params["p_question_id"]
+            row = self.rows.get(target_qid)
+            if row is None:
+                raise RuntimeError("REVIEW_NOT_FOUND")
+            if not row.get("is_current"):
+                raise RuntimeError("REVIEW_STALE")
+
+            now_iso = datetime.now(timezone.utc).isoformat()
+            if name == "review_accept_question":
+                row["status"] = "approved"
+                row["updated_at"] = now_iso
+                approved_count = sum(
+                    1
+                    for r in self.rows.values()
+                    if r.get("is_current") and r.get("status") == "approved"
+                )
+                self.status = "reviewed" if approved_count == 1 else "generated"
+                result = dict(
+                    session_id=self.sid,
+                    session_status=self.status,
+                    replayed=False,
+                    previous_question_id=target_qid,
+                    question_id=target_qid,
+                    question_status="approved",
+                    invalidated_version_ids=[],
+                    progress=counts(approved_count),
+                )
+            else:
+                row["is_current"] = False
+                row["updated_at"] = now_iso
+                new_qid = str(uuid4())
+                self.rows[new_qid] = dict(
+                    id=new_qid,
+                    version_id=row.get("version_id", self.vid),
+                    question_no=row.get("question_no", 1),
+                    status="pending_review",
+                    is_current=True,
+                    is_reverted=True,
+                    content=row.get("content", "Previous candidate"),
+                    options=deepcopy(row.get("options", ["1", "2", "3", "4"])),
+                    correct_key=row.get("correct_key", "A"),
+                    solution_md=row.get("solution_md", "Subtract one: x=1."),
+                    updated_at=now_iso,
+                    exam_versions={"session_id": self.sid},
+                )
+                self.status = "generated"
+                result = dict(
+                    session_id=self.sid,
+                    session_status="generated",
+                    replayed=False,
+                    previous_question_id=target_qid,
+                    question_id=new_qid,
+                    question_status="pending_review",
+                    invalidated_version_ids=[self.vid],
+                    progress=counts(0),
+                )
             self.actions[key] = (name, deepcopy(params), deepcopy(result))
             return result
         if name == "review_recover_session":
@@ -683,12 +732,74 @@ def test_cancellation_is_preserved_after_settlement(state):
 def test_action_replay_uses_same_key_even_after_session_is_locked(state, action):
     key = str(uuid4())
     first = immediate(getattr(state.service(), action)(state.sid, state.qid, "owner", key))
+    if action == "revert_question":
+        assert first.question_id != state.qid
+        assert first.status == "pending_review"
+    else:
+        assert first.question_id == state.qid
+        assert first.status == "approved"
+    rows_before = len(state.rows)
     state.status = "approved"
     replay = immediate(getattr(state.service(), action)(state.sid, state.qid, "owner", key))
     assert first == replay and len(state.actions) == 1
+    assert len(state.rows) == rows_before
     with pytest.raises(ReviewDomainException) as error:
         immediate(getattr(state.service(), action)(state.sid, state.qid, "owner", str(uuid4())))
     assert error.value.status_code == 423
+
+
+def test_historical_revert_receipt_with_approved_status_replays_successfully(state):
+    key = uuid4()
+    historical_receipt = dict(
+        session_id=state.sid,
+        session_status="reviewed",
+        replayed=True,
+        previous_question_id=state.qid,
+        question_id=state.qid,
+        question_status="approved",
+        invalidated_version_ids=[],
+        progress=counts(1),
+    )
+    repo = ReviewRepository(
+        SimpleNamespace(
+            rpc=lambda *_: SimpleNamespace(execute=lambda: SimpleNamespace(data=historical_receipt)),
+            table=state.owner.table,
+        )
+    )
+    result = immediate(repo.perform_action("revert", state.sid, state.qid, key))
+    assert result["id"] == state.qid
+
+
+def test_newly_executed_revert_returning_approved_fails_receipt_validation(state):
+    key = uuid4()
+    bad_receipt = dict(
+        session_id=state.sid,
+        session_status="reviewed",
+        replayed=False,
+        previous_question_id=state.qid,
+        question_id=state.qid,
+        question_status="approved",
+        invalidated_version_ids=[],
+        progress=counts(1),
+    )
+    repo = ReviewRepository(
+        SimpleNamespace(
+            rpc=lambda *_: SimpleNamespace(execute=lambda: SimpleNamespace(data=bad_receipt)),
+            table=state.owner.table,
+        )
+    )
+    with pytest.raises(ReviewDomainException) as exc:
+        immediate(repo.perform_action("revert", state.sid, state.qid, key))
+    assert exc.value.error_code == "ERR_ACTION_UNCERTAIN"
+
+
+def test_new_action_against_archived_candidate_is_rejected_as_stale(state):
+    immediate(state.service().revert_question(state.sid, state.qid, "owner", str(uuid4())))
+    assert state.rows[state.qid]["is_current"] is False
+
+    with pytest.raises(ReviewDomainException) as error:
+        immediate(state.service().accept_question(state.sid, state.qid, "owner", str(uuid4())))
+    assert error.value.status_code == 409
 
 
 def test_action_key_cannot_be_rebound_to_another_action(state):
@@ -765,7 +876,10 @@ def test_action_handlers_forward_header_to_actual_rpc(state, monkeypatch, action
             db=state.owner,
         )
     )
-    assert result.question_id == state.qid
+    if action == "accept":
+        assert result.question_id == state.qid
+    else:
+        assert result.question_id != state.qid
     assert state.calls[-1][2]["p_action_id"] == key
 
 
