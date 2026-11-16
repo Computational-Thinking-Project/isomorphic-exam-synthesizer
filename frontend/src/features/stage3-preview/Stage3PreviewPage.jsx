@@ -17,7 +17,7 @@ import {
 import MathRenderer from '../../components/MathRenderer.jsx';
 import {
   fetchFinalizePreview,
-  executeFullShuffle,
+  executeFinalizeShuffle,
   triggerFinalizeApprove,
 } from '../../services/stage3PreviewService.js';
 import { stage3Path } from '../../sessionPaths.js';
@@ -107,19 +107,25 @@ export default function Stage3PreviewPage() {
     loadData();
   }, [loadData]);
 
-  // Xử lý bấm nút duy nhất: Xáo trộn mã đề (F02: cô lập targetSessionId)
-  const handleShuffle = async () => {
+  // Xử lý hoàn tất sắp xếp / xáo trộn mã đề (F02: cô lập targetSessionId; hỗ trợ cả OFF/OFF và ON/ON)
+  const handleShuffle = async (preferences = { shuffle_questions: true, shuffle_options: true }) => {
     const targetSessionId = sessionId;
     setShuffling(true);
     setError(null);
     try {
-      await executeFullShuffle(targetSessionId);
+      await executeFinalizeShuffle(targetSessionId, preferences);
       if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
-      showToast('Đã xáo trộn các mã đề và cập nhật đáp án thành công!', 'success');
+      const isOff = !preferences.shuffle_questions && !preferences.shuffle_options;
+      showToast(
+        isOff
+          ? 'Đã chốt thứ tự gốc thành công (OFF/OFF)!'
+          : 'Đã xáo trộn các mã đề và cập nhật đáp án thành công (ON/ON)!',
+        'success'
+      );
       await loadData();
     } catch (err) {
       if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
-      showToast(err.message || 'Không thể thực hiện xáo trộn đề thi.', 'error');
+      showToast(err.message || 'Không thể thực hiện hoàn tất sắp xếp đề thi.', 'error');
     } finally {
       if (isMountedRef.current && activeSessionIdRef.current === targetSessionId) {
         setShuffling(false);
@@ -289,7 +295,7 @@ export default function Stage3PreviewPage() {
             </button>
           </div>
         ) : needsShuffle ? (
-          /* Trạng thái chưa xáo trộn: Thẻ hướng dẫn và NÚT DUY NHẤT "Xáo trộn mã đề" */
+          /* Trạng thái chưa chốt thứ tự: Hỗ trợ cả OFF/OFF (Golden Baseline) và ON/ON (Trộn lại mã) */
           <div className="max-w-xl mx-auto my-16 p-8 rounded-2xl bg-slate-950/60 border border-slate-800 text-center shadow-xl">
             <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mx-auto mb-5">
               <Sparkles className="w-8 h-8" />
@@ -299,28 +305,44 @@ export default function Stage3PreviewPage() {
             </h2>
             <p className="text-sm text-slate-400 leading-relaxed mb-6">
               Tất cả các câu hỏi biến thể của các mã đề đã được thẩm định đạt yêu cầu.
-              Nhấn nút bên dưới để hệ thống thực hiện xáo trộn ngẫu nhiên thứ tự các câu hỏi
-              và các phương án A, B, C, D cho toàn bộ các mã đề thi.
+              Bạn có thể chốt giữ nguyên thứ tự gốc đã duyệt ở S06 (OFF/OFF), hoặc thực hiện xáo trộn ngẫu nhiên toàn bộ mã đề (ON/ON) trước khi xem bản chiếu và phê duyệt.
             </p>
-            <button
-              type="button"
-              data-testid="btn-shuffle"
-              onClick={handleShuffle}
-              disabled={shuffling}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-base transition-all shadow-md hover:shadow-amber-500/20 disabled:opacity-50"
-            >
-              {shuffling ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Đang xáo trộn các mã đề...</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-5 h-5" />
-                  <span>Xáo trộn mã đề</span>
-                </>
-              )}
-            </button>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+              <button
+                type="button"
+                data-testid="btn-finalize-off"
+                onClick={() => handleShuffle({ shuffle_questions: false, shuffle_options: false })}
+                disabled={shuffling}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-sm border border-slate-700 transition-all shadow-md disabled:opacity-50"
+              >
+                {shuffling ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Check className="w-4 h-4 text-emerald-400" />
+                )}
+                <span>Chốt thứ tự gốc S06 (OFF/OFF)</span>
+              </button>
+
+              <button
+                type="button"
+                data-testid="btn-shuffle"
+                onClick={() => handleShuffle({ shuffle_questions: true, shuffle_options: true })}
+                disabled={shuffling}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-sm transition-all shadow-md hover:shadow-amber-500/20 disabled:opacity-50"
+              >
+                {shuffling ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Đang hoàn tất...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    <span>Trộn lại mã đề (ON/ON)</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         ) : (
           /* Bản xem trước hoàn chỉnh khi đã xáo trộn */

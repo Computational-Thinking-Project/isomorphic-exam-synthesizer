@@ -5,6 +5,7 @@ import {
   fetchFinalizePreview,
   updateOrderingPreferences,
   triggerFinalizeShuffle,
+  executeFinalizeShuffle,
   executeFullShuffle,
   triggerFinalizeApprove,
   adaptPreviewSnapshot,
@@ -206,6 +207,42 @@ test('executeFullShuffle: gọi PATCH preferences true/true trước rồi gọi
     });
     assert.equal(callSequence[1].type, 'post');
     assert.equal(callSequence[1].url, '/sessions/session-123/finalize/shuffle');
+    assert.equal(res.is_finalized, true);
+  } finally {
+    api.patch = originalPatch;
+    api.post = originalPost;
+  }
+});
+
+test('executeFinalizeShuffle: gọi PATCH preferences false/false cho luồng OFF/OFF baseline rồi gọi POST shuffle', async () => {
+  const callSequence = [];
+  const originalPatch = api.patch;
+  const originalPost = api.post;
+
+  api.patch = async (url, payload) => {
+    callSequence.push({ type: 'patch', url, payload });
+    return { data: { success: true } };
+  };
+
+  api.post = async (url, payload) => {
+    callSequence.push({ type: 'post', url, payload });
+    return { data: { session_id: 'session-off-off', is_finalized: true } };
+  };
+
+  try {
+    const res = await executeFinalizeShuffle('session-off-off', {
+      shuffle_questions: false,
+      shuffle_options: false,
+    });
+    assert.equal(callSequence.length, 2);
+    assert.equal(callSequence[0].type, 'patch');
+    assert.equal(callSequence[0].url, '/sessions/session-off-off/ordering-preferences');
+    assert.deepEqual(callSequence[0].payload, {
+      shuffle_questions: false,
+      shuffle_options: false,
+    });
+    assert.equal(callSequence[1].type, 'post');
+    assert.equal(callSequence[1].url, '/sessions/session-off-off/finalize/shuffle');
     assert.equal(res.is_finalized, true);
   } finally {
     api.patch = originalPatch;

@@ -282,19 +282,38 @@ export async function triggerFinalizeShuffle(sessionId, config = {}) {
 }
 
 /**
- * Thực hiện chuỗi xáo trộn hoàn chỉnh: Tự động lưu preferences true/true và kích hoạt Shuffle
+ * Thực hiện chuỗi xáo trộn / chốt thứ tự hoàn chỉnh: Lưu preferences và kích hoạt Shuffle RPC
+ * @param {string} sessionId
+ * @param {object} preferences - { shuffle_questions: boolean, shuffle_options: boolean }
+ * @param {object} config
+ * @returns {Promise<object>}
+ */
+export async function executeFinalizeShuffle(
+  sessionId,
+  preferences = { shuffle_questions: true, shuffle_options: true },
+  config = {}
+) {
+  const payload = {
+    shuffle_questions: Boolean(preferences.shuffle_questions),
+    shuffle_options: Boolean(preferences.shuffle_options),
+  };
+
+  await updateOrderingPreferences(sessionId, payload, config);
+  return await triggerFinalizeShuffle(sessionId, config);
+}
+
+/**
+ * Thực hiện chuỗi xáo trộn hoàn chỉnh ON/ON: Tự động lưu preferences true/true và kích hoạt Shuffle
  * @param {string} sessionId
  * @param {object} config
  * @returns {Promise<object>}
  */
 export async function executeFullShuffle(sessionId, config = {}) {
-  await updateOrderingPreferences(
+  return await executeFinalizeShuffle(
     sessionId,
     { shuffle_questions: true, shuffle_options: true },
     config
   );
-
-  return await triggerFinalizeShuffle(sessionId, config);
 }
 
 /**

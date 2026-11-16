@@ -107,9 +107,66 @@ test('Stage3PreviewPage: Xử lý lỗi 409 ERR_SHUFFLE_REQUIRED hiển thị th
     assert.match(harness.container.textContent, /Chờ xáo trộn mã đề/);
     const shuffleBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
     assert.ok(shuffleBtn, 'Nút Xáo trộn mã đề phải hiển thị');
-    assert.match(shuffleBtn.textContent, /Xáo trộn mã đề/);
+    assert.match(shuffleBtn.textContent, /mã đề/);
+    const finalizeOffBtn = harness.container.querySelector('[data-testid="btn-finalize-off"]');
+    assert.ok(finalizeOffBtn, 'Nút Chốt thứ tự gốc S06 (OFF/OFF) phải hiển thị');
+    assert.match(finalizeOffBtn.textContent, /Chốt thứ tự gốc S06 \(OFF\/OFF\)/);
   } finally {
     api.get = originalGet;
+    await harness.unmount();
+  }
+});
+
+test('Stage3PreviewPage: Bấm "Chốt thứ tự gốc S06 (OFF/OFF)" gọi PATCH preferences false/false và POST shuffle, sau đó nạp lại bản xem trước (Golden Baseline)', async () => {
+  const originalGet = api.get;
+  const originalPatch = api.patch;
+  const originalPost = api.post;
+
+  let getCalls = 0;
+  const calls = [];
+
+  api.get = async () => {
+    getCalls += 1;
+    if (getCalls === 1) {
+      const error = new Error('Shuffle required');
+      error.response = { status: 409, data: { error_code: 'ERR_SHUFFLE_REQUIRED' } };
+      throw error;
+    }
+    return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'session-off-test' } };
+  };
+
+  api.patch = async (url, payload) => {
+    calls.push({ type: 'patch', url, payload });
+    return { data: { success: true } };
+  };
+
+  api.post = async (url, payload) => {
+    calls.push({ type: 'post', url, payload });
+    return { data: { session_id: 'session-off-test', is_finalized: true } };
+  };
+
+  const harness = renderPreviewPage('session-off-test');
+  try {
+    await harness.render();
+    const finalizeOffBtn = harness.container.querySelector('[data-testid="btn-finalize-off"]');
+    assert.ok(finalizeOffBtn, 'Nút Chốt thứ tự gốc S06 (OFF/OFF) phải hiển thị');
+
+    await act(async () => {
+      finalizeOffBtn.click();
+    });
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].type, 'patch');
+    assert.deepEqual(calls[0].payload, { shuffle_questions: false, shuffle_options: false });
+    assert.equal(calls[1].type, 'post');
+    assert.equal(calls[1].url, '/sessions/session-off-test/finalize/shuffle');
+
+    // Sau khi chốt thứ tự gốc, màn hình nạp lại dữ liệu xem trước
+    assert.match(harness.container.textContent, /Bản in Đề thi — Mã đề 101/);
+  } finally {
+    api.get = originalGet;
+    api.patch = originalPatch;
+    api.post = originalPost;
     await harness.unmount();
   }
 });
