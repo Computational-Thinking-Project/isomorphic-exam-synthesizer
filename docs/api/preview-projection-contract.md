@@ -219,7 +219,7 @@ snapshot = ApprovedExportSnapshot(
 
 1. **Authorization & Row Level Security:** The endpoint enforces user ownership via `assert_ownership("exam_sessions", session_id, current_user.id)`. Any attempt by another user to view the preview receives HTTP 403 `ERR_UNAUTHORIZED` (or HTTP 404 `ERR_SESSION_NOT_FOUND` if filtered at the RLS database query level). Both paths fail closed securely.
 2. **Determinism:** Repeated `GET` calls return identical data with zero side effects, zero background mutations, and zero state changes.
-3. **Automated Verification:** 49 automated unit and integration tests are verified in `backend/tests/api/test_finalize_preview.py` covering:
+3. **Automated Verification:** 50 automated unit and integration tests are verified in `backend/tests/api/test_finalize_preview.py` covering:
    - 401 unauthenticated
    - 400 invalid UUID representation
    - 403 cross-user access
@@ -227,7 +227,7 @@ snapshot = ApprovedExportSnapshot(
    - 409 generating state
    - 409 shuffle required
    - 409 inconsistent answer keys (missing AI/regenerated solutions, AI warning without fallback provenance, missing/mismatched `generation_target_results` ledger provenance, non-empty canonical solution with empty display solution, empty content, normalized duplicate options, unapproved questions, corrupted permutations, mismatched canonical mappings, duplicate keys, > 20 questions)
-   - 200 OK Q01 verified `CONFIRMED_SOURCE_FALLBACK`, `ORIGINAL_CLONE`, reverted fallback root, and ON/ON shuffler-to-preview empty-solution cases
+   - 200 OK Q01 verified `CONFIRMED_SOURCE_FALLBACK`, `ORIGINAL_CLONE`, reverted fallback root, ON/ON shuffler-to-preview empty-solution cases, and lazy provenance DB resolution (invoked only when empty-solution slots exist, failing closed when unconfigured)
    - 200 OK Golden 3-question x 2-version OFF/OFF fixture
    - 200 OK ON/ON shuffled case
    - 200 OK approved preview

@@ -10,7 +10,7 @@ Provides data access methods for:
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple, cast
+from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 
 from supabase import Client
 
@@ -150,18 +150,34 @@ def _get_rows(res: Any) -> List[Dict[str, Any]]:
 class FinalizeRepository:
     """Encapsulates Supabase queries for the exam session finalize lifecycle."""
 
-    def __init__(self, db: Client, *, provenance_db: Optional[Client] = None) -> None:
+    def __init__(
+        self,
+        db: Client,
+        *,
+        provenance_db: Optional[Client] = None,
+        provenance_db_provider: Optional[Callable[[], Client]] = None,
+    ) -> None:
         self.db = db
         self.provenance_db = provenance_db
+        self.provenance_db_provider = provenance_db_provider
+
+    def _resolve_provenance_db(self) -> Optional[Client]:
+        """Resolve provenance DB client lazily when empty-solution verification runs."""
+        if self.provenance_db is None and self.provenance_db_provider is not None:
+            self.provenance_db = self.provenance_db_provider()
+        return self.provenance_db
 
     def _fetch_provenance_ledger(
         self, session_id: str, question_ids: List[str]
     ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
         """Load generation ledger entries and clone snapshots for empty-solution provenance checks."""
-        if self.provenance_db is None or not question_ids:
+        if not question_ids:
+            return {}, {}
+        provenance_db = self._resolve_provenance_db()
+        if provenance_db is None:
             return {}, {}
         target_rows = _get_rows(
-            self.provenance_db.table("generation_target_results")
+            provenance_db.table("generation_target_results")
             .select(
                 "version_question_id, snapshot_id, session_id, "
                 "source_question_id, is_success, result_kind, clone_fingerprint"
@@ -189,7 +205,7 @@ class FinalizeRepository:
         snapshots_by_id: Dict[str, Dict[str, Any]] = {}
         if clone_snapshot_ids:
             snap_rows = _get_rows(
-                self.provenance_db.table("generation_job_snapshots")
+                provenance_db.table("generation_job_snapshots")
                 .select("id, session_id, public_modes, canonical_dimensions")
                 .eq("session_id", session_id)
                 .in_("id", sorted(clone_snapshot_ids))
@@ -1034,7 +1050,7 @@ class FinalizeRepository:
                     expected_kind = _classify_empty_solution_kind(q, config_row)
                     if expected_kind is None:
                         raise inconsistent(f"Lời giải câu {q_no} trong phiên bản {v_code} bị rỗng hoặc thiếu")
-                    if self.provenance_db is not None and not _is_valid_ledger_entry(
+                    if self._resolve_provenance_db() is not None and not _is_valid_ledger_entry(
                         expected_kind, q, session_id, src_id, ledger_by_qid, snapshots_by_id
                     ):
                         raise inconsistent(

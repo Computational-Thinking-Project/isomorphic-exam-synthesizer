@@ -10,7 +10,7 @@ Coordinates:
 
 import logging
 from collections import defaultdict
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 from uuid import UUID
 
 from supabase import Client
@@ -41,9 +41,14 @@ class FinalizeService:
         *,
         writer_repo: Optional[FinalizeRepository] = None,
         provenance_db: Optional[Client] = None,
+        provenance_db_provider: Optional[Callable[[], Client]] = None,
     ) -> None:
         self.db = db
-        self.repo = repo or FinalizeRepository(db, provenance_db=provenance_db)
+        self.repo = repo or FinalizeRepository(
+            db,
+            provenance_db=provenance_db,
+            provenance_db_provider=provenance_db_provider,
+        )
         self.writer_repo = writer_repo
 
     async def shuffle_session(self, session_id: str, user_id: str) -> FinalizeShuffleResponse:

@@ -1504,3 +1504,38 @@ async def test_preview_shuffler_to_preview_on_on_empty_solution_fallback():
     assert fallback_out.solution_md == ""
     assert fallback_out.correct_key == by_id[raw_q1_v1["id"]].display_correct_key
 
+
+def test_preview_router_lazy_provenance_db_resolution(
+    client: TestClient, mock_current_user: CurrentUser, auth_headers: dict
+):
+    """Non-empty previews avoid get_service_db completely; empty solutions resolve it lazily and fail closed."""
+    db_state_full = _build_valid_preview_db_state()
+    app.dependency_overrides[get_current_user] = lambda: mock_current_user
+    app.dependency_overrides[get_user_db] = lambda: MockSupabaseClient(db_state_full)
+
+    try:
+        with (
+            patch("app.api.routes.finalize.assert_ownership"),
+            patch(
+                "app.api.routes.finalize.get_service_db",
+                side_effect=RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be configured"),
+            ) as mock_service_db_fn,
+        ):
+            res = client.get(
+                f"/api/sessions/{MOCK_SESSION_ID}/finalize/preview",
+                headers=auth_headers,
+            )
+            assert res.status_code == 200
+            mock_service_db_fn.assert_not_called()
+
+            db_state_fallback = _build_q01_fallback_preview_state()
+            app.dependency_overrides[get_user_db] = lambda: MockSupabaseClient(db_state_fallback)
+            with pytest.raises(RuntimeError, match="SUPABASE_SERVICE_ROLE_KEY"):
+                client.get(
+                    f"/api/sessions/{MOCK_SESSION_ID}/finalize/preview",
+                    headers=auth_headers,
+                )
+            mock_service_db_fn.assert_called_once()
+    finally:
+        app.dependency_overrides.clear()
+

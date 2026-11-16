@@ -7,9 +7,10 @@ Exposes:
 """
 
 import logging
+from typing import cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from supabase import Client
 
 from app.api.dependencies import assert_ownership, get_current_user, get_service_db, get_user_db
@@ -122,15 +123,21 @@ async def finalize_matrix_endpoint(
     ),
 )
 async def finalize_preview_endpoint(
+    request: Request,
     response: Response,
     session_id: str = Depends(validate_session_uuid),
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
-    provenance_db: Client = Depends(get_service_db),
 ) -> PreviewSnapshotResponse:
     """Retrieve the post-shuffle display preview projection across all versions."""
     assert_ownership("exam_sessions", session_id, current_user.id, db=db)
     response.headers["Cache-Control"] = "no-store"
 
-    service = FinalizeService(db, provenance_db=provenance_db)
+    def _get_provenance_db() -> Client:
+        override = request.app.dependency_overrides.get(get_service_db)
+        if override is not None:
+            return cast(Client, override())
+        return get_service_db()
+
+    service = FinalizeService(db, provenance_db_provider=_get_provenance_db)
     return await service.get_preview_snapshot(session_id, current_user.id)
