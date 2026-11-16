@@ -1,10 +1,44 @@
 # W4-MVP-12 — Security/negative baseline và regression tích hợp
 
+## Q01 và checkpoint tích hợp 16/11/2026
+
+- Author mode, workflow v0.1 proposed + INPUT-20261109 (docs `7b7387f`).
+  Baseline hiện tại: merge `2329eaf`, dependency08 `1d61406`, dependency07 `1c01ad3`,
+  đồng bộ `dev@a379ec1`. PR73 vẫn Draft/stacked trên nhánh08; không sửa description.
+- Q01 của Duy đã chốt; matrix SEC12-17 theo ngoại lệ provenance của07/08, không
+  yêu cầu solution cho mọi câu nữa. AI/regenerated vẫn phải có solution; fallback/
+  Original Clone chỉ rỗng khi được xác minh. Human approval vẫn bắt buộc.
+- Q20 đã chốt local `.artifacts/<run-id>/` ignored; Docker local được dùng cho
+  Golden. Không đợi shared evidence store hoặc HTTPS. I-W412-01/02/03 đã Requested;
+  runtime/config, actual ledger, controlled principals, private bucket/fault scope
+  và producer SSE còn thiếu cho tích hợp thật, không hỏi lại quyết định Q01/Q20.
+- **RENDER12-01 / TASK-306 — BLOCKED Golden:** fixture gốc có `\int` hiện gây
+  Typst `unknown variable: nt`, cả khi solution đầy đủ và khi rỗng. Đây là lỗi
+  đã tái hiện, khác với thiếu input. Converter thuộc Tâm; không sửa nguồn ngoài
+  ownership. Test `security/test_golden_renderer_regression.py` giữ nguyên math,
+  dùng compiler thật và strict expected failure chỉ cho lỗi này. Lỗi khác FAIL;
+  compiler được sửa sẽ XPASS(strict) để yêu cầu kiểm lại và gỡ marker.
+- Probe độc lập chỉ trong bộ nhớ: đổi control-word integral thì tiếp tục lỗi
+  `dx`, rồi `Oxyz`; sau chuyển cả hai nhóm chữ theo cú pháp Typst thì compile được.
+  Đây là chẩn đoán, không đề xuất hard-code thay nội dung đề. Owner cần giải pháp
+  xử lý cú pháp có nguyên tắc và regression cho cả hai biến thể Golden.
+- Chỉ các fixtures HTTP nhỏ ở08 đã kiểm Typst thành công; test private PG dùng
+  PDF/Storage double và source ZIP/manifest thật. Không gọi chúng là Golden PASS.
+- Review độc lập gpt-6.1-sol high trên `2329eaf` + delta12: **307 passed,
+  2 xfailed**, 3 cảnh báo; không có actionable finding mới trong phần 07/08/12.
+  Hai XFAIL đúng RENDER12-01, không phải PASS. PostgreSQL SEC12-08 rerun **1 passed**
+  (10 deselected, 2 cảnh báo): unapproved cả ba routes không claim/build/upload/sign.
+  Author full security/API/services/exporter: **1.223 passed, 3 skipped, 2 xfailed**,
+  8 cảnh báo. Skip: hai module asyncpg không có dependency trong image này và
+  XeLaTeX; không suy thành kiểm DB/renderer đã đạt. Ruff pass, mypy128 pass.
+  TASK12 chưa Done,
+  không apply DB chung (Issue75 NO-GO), không bật runtime hoặc merge PR.
+
 ## Phạm vi và kế hoạch (M2)
 
 - Owner: Hùng. Chế độ author; workflow v0.1 proposed + INPUT-20261109.
 - Nguồn: [phân công W4](W4_ASSIGNMENT.md), [chi tiết task 12](W4_TASK_DETAIL.md#w4-mvp-12--securitynegative-smoke--frozen-head-regression).
-- Baseline code: `f74e34c74cfbc2b24f7fb28da02fad02458f896e` + các thay đổi test TASK-12 trong working tree; ngày kiểm 15/11/2026 (UTC+7).
+- Baseline lịch sử 15/11: `f74e34c74cfbc2b24f7fb28da02fad02458f896e` + các thay đổi test TASK-12 trong working tree; ngày kiểm 15/11/2026 (UTC+7).
 - Nhánh `test/w4-mvp-12-security-baseline` tách từ head task08 trên, **có dependency PR58/PR63 chưa merge**. Draft PR tạm base vào `feat/w4-mvp-08-private-export` để diff chỉ chứa TASK-12; chuyển base về `dev` sau khi dependency merge và kiểm lại phạm vi ảnh hưởng. Không trình bày kết quả này như kiểm `dev` hay deployed head.
 - Được làm: thêm test, chạy local/DB tạm, lập bằng chứng và danh sách đầu vào. Không thay product contract, migration, cloud hoặc description PR/issue.
 - Thứ tự: đối chiếu coverage → bổ sung khoảng trống HTTP/DB đã có contract → chạy baseline → khi có môi trường, chạy integrated smoke → rerun trên frozen head và giao task13/21.
@@ -12,16 +46,16 @@
 
 ## Đầu vào và bàn giao
 
-Bảng này là nơi tổng hợp input TASK-12. Các ID dưới đây là ID theo dõi local mới, **chưa phải yêu cầu đã gửi/được người cung cấp nhận**. ETA chưa được xác nhận.
+Bảng này là nơi tổng hợp input TASK-12. Các ID dưới đây đã **Requested** tại [PR73](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/73#issuecomment-6890215490). Requested không đồng nghĩa Delivered/Accepted; ETA và input cụ thể chưa được xác nhận đầy đủ.
 
 | ID | Người cung cấp / nhận | Điều kiện đủ dùng | Hiện có / còn thiếu |
 |---|---|---|---|
-| I-W412-01 | Duy + Đạt → Hùng | Candidate/frozen deployed SHA, manifest migrations thực áp, config/runtime export và môi trường được phép test | Có code local; chưa xác nhận deployment cho baseline này. ETA TBD. Cần trước integrated run. |
-| I-W412-02 | Đạt hỗ trợ OPS, Duy auth/RPC → Hùng | Hai tài khoản kiểm soát được, session riêng của A/B; approved/unapproved/partial fixtures; private bucket và cách gây lỗi an toàn | Local có synthetic identities và DB tạm; chưa có bộ input live được xác nhận cho run này. ETA TBD. |
+| I-W412-01 | Duy + Đạt → Hùng | Candidate/frozen FE/BE SHA, manifest migrations thực áp, config/runtime export và môi trường Docker local hoặc deployed được phép test | Có code và DB disposable local; chưa có manifest/config của cùng runtime đầy đủ cho integrated run. ETA TBD. Cần trước integrated run. |
+| I-W412-02 | Đạt hỗ trợ OPS, Duy auth/RPC → Hùng | Hai tài khoản kiểm soát được, session riêng của A/B; approved/unapproved/partial fixtures; private bucket và cách gây lỗi an toàn | Local có synthetic identities và DB tạm; chưa có bộ input Supabase/Storage thật được xác nhận trên cùng runtime cho run này. ETA TBD. |
 | I-W412-03 | Quỳnh SSE, Hùng consumer | Đường SSE triển khai, fixture reconnect/retry/fallback và kết quả kỳ vọng theo contract | Có tests SSE local; kiểm qua proxy/browser và producer thật còn thiếu. ETA TBD. |
-| Q13 / Q20 (ID gốc W4_TASK_DETAIL) | Hùng + Duy + Đạt; người nghiệm thu theo phân công | Chốt nơi lưu, quyền xem, retention/consent và hình thức evidence sanitized | Đề xuất của Hùng: commit matrix/tóm tắt và testcase synthetic; raw log/video chỉ ở nơi hạn chế quyền do OPS xác nhận; không lưu token/link còn hạn. Chưa coi đề xuất là quyết định chung. |
+| Q13 / Q20 (ID gốc W4_TASK_DETAIL) | Hùng + Duy + Đạt; người nghiệm thu theo phân công | Chốt nơi lưu, quyền xem, retention/consent và hình thức evidence sanitized | Q20 **Decided/Accepted** theo [Duy 16/11](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/74#issuecomment-6904736595): raw ở `.artifacts/<run-id>/` ignored local, commit testcase synthetic và summary sanitized; không cần shared evidence store/HTTPS để chạy Golden local. Không lưu token/link còn hạn; private bucket thật vẫn cần khi kiểm Storage. |
 
-Đầu ra: matrix + kết quả/giới hạn cho Quỳnh (13) và Đạt (21); Duy review auth/RPC. Baseline cần reviewer độc lập ký theo DoD; tự kiểm của author chưa thay xác minh/Approve.
+Đầu ra: matrix + kết quả/giới hạn cho Quỳnh (13) và Đạt (21); Duy review auth/RPC. Đạt đã có [review độc lập COMMENT](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/73#pullrequestreview-5910075363) trên baseline cũ; đây không phải GitHub Approve hoặc xác minh head mới. Cần rerun/xác minh phạm vi thay đổi trước DoD.
 
 ## Ma trận baseline
 
@@ -45,8 +79,8 @@ Bảng này là nơi tổng hợp input TASK-12. Các ID dưới đây là ID th
 | SEC12-14 | Client không gọi privileged RPC/ghi ledger/ghi đè object export được | `test_private_export_pg.py` RPC ACL/forged-role/ledger RLS + restrictive Storage mutation policy | PASS PG policy fixture; BLOCKED Supabase/PostgREST/Storage ACL thật |
 | SEC12-15 | Mỗi lần cấp link đều kiểm owner; TTL 3600, no-store; bucket private và URL hết hạn bị từ chối | Private service/HTTP tests kiểm reauthorize/TTL/header; SEC12-03 kiểm B không xin link | PASS local issuance; BLOCKED direct-object/TTL enforcement thật. URL đã cấp là bearer, không kiểm lại user khi mở |
 | SEC12-16 | SSE ticket single-use, owner thay đổi 403, stale/future cursor 409/resync, reconnect không leak stream | `api/test_generation_stream.py` | PASS fixture; BLOCKED proxy/browser/Supabase live |
-| SEC12-17 | Fallback/revert warning, provenance/flags và thiếu solution phải hiện đúng, không xuất đề sai | `api/test_review_snapshot.py` partial/regenerated/clone là coverage cục bộ; snapshot/export validator có guard dữ liệu | PARTIAL; chưa chứng minh fallback producer → review → preview → export. Cần input Quỳnh/Duy và oracle, không nhận PASS toàn case |
-
+| SEC12-17 | Fallback/revert warning, provenance/flags và thiếu solution phải hiện đúng, không xuất đề sai | `exporter/test_private_q01.py`, `migrations/test_export_q01_pg.py`, `migrations/test_private_export_q01_pg.py`: AI thiếu solution fail closed; fallback/clone rỗng chỉ khi provenance hợp lệ; giữ mục lời giải rỗng | PASS cục bộ cho consumer/SQL và Typst fixture nhỏ; **PARTIAL toàn case**: upstream migration022/producer Q01 chưa hoàn thiện trong phạm vi này. Chưa chứng minh toàn chuỗi producer → review → preview → export |
+| SEC12-18 / RENDER12-01 | Fixture Golden gốc phải tạo đủ PDF/TeX/MD/manifest cho cả solution đầy đủ/rỗng | `security/test_golden_renderer_regression.py` (Typst thật, strict xfail theo lỗi hiện tại) | **BLOCKED: lỗi product TASK-306 đã tái hiện**, không tính XFAIL là PASS; cần Tâm sửa/review trước Golden acceptance |
 ## Cách chạy lại
 
 Tại root, dùng môi trường backend đã cài dependencies; chỉ dùng test values, không cần API key thật:
@@ -56,7 +90,7 @@ $env:PYTHONPATH = "$PWD/backend;$PWD/backend/tests/migrations"
 $env:SUPABASE_URL = 'https://mock.supabase.co'
 $env:SUPABASE_ANON_KEY = 'mock-key'
 $env:SUPABASE_SERVICE_ROLE_KEY = 'mock-key'
-python -m ruff check backend/tests/security/test_w4_negative_baseline.py backend/tests/migrations/test_export_snapshot_pg.py
+python -m ruff check backend/tests/security backend/tests/migrations/test_export_snapshot_pg.py
 python -m pytest backend/tests/security backend/tests/api backend/tests/services backend/tests/exporter -q -rs
 $env:RUN_POSTGRES_MIGRATION_TESTS = '1'
 python -m pytest backend/tests/migrations/test_export_snapshot_pg.py backend/tests/migrations/test_private_export_pg.py -q -rs
@@ -73,6 +107,6 @@ Trên máy Hùng, baseline dùng Docker image local `export07-backend-check:2026
 - PostgreSQL + exporter sau khi thêm SEC12-08: **277 passed, 2 skipped, 21 subtests passed**; 2 cảnh báo harness/TestClient, log cục bộ ignored `scratch/w4-08-pg-harness/results.log`. Hai skip là XeLaTeX và preview repository chưa tích hợp; không nhận coverage cho chúng. Ca SEC12-08 mới đạt, không thay RPC/product code.
 - Ruff check hai file test đạt. Code sản phẩm không thay đổi nên không chạy lại mypy của app cho thay đổi chỉ test/docs.
 - Không commit raw log, signed URL, token, PII hoặc ZIP thật. Chưa có deployment test, Gemini thật, Golden E2E hoặc frozen-head sign-off.
-- Chưa có reviewer độc lập ký baseline. TASK-12 **chưa Done**, chưa đủ điều kiện xác nhận G0/G1.
+- Baseline này sau đó đã được Đạt kiểm độc lập COMMENT (link ở trên); không suy thành approval/head mới/deployed proof. TASK-12 **chưa Done**, chưa đủ điều kiện xác nhận G0/G1.
 
 Khi nhận đủ input: ghi SHA frontend/backend, manifest migration/config không chứa secret, thời điểm UTC+7 và case-id/request-id sanitized; chạy A positive trước B negative, so state/DB trước-sau. Ghi expected/actual/status cho từng case, lỗi có PR/owner và retest. Request-id dùng giá trị server thực cấp nếu có; không giả định header chưa có trong contract. Evidence có link tải phải xóa toàn bộ URL/query/token còn hiệu lực. Duy/Đạt xác nhận frozen candidate rồi rerun phạm vi liên quan trên đúng head; thay đổi sau đó phải kiểm lại.
