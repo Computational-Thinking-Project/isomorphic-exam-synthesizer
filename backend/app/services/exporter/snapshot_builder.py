@@ -23,6 +23,7 @@ from app.services.exporter.snapshot_common import (
     code_order,
     valid_timestamp,
 )
+from app.services.exporter.snapshot_provenance import is_empty, verified_empty_solution
 from app.services.exporter.snapshot_revision import snapshot_revision
 from app.services.exporter.snapshot_rows import RawSnapshotRows
 
@@ -138,7 +139,11 @@ def _index_keys(rows: RawSnapshotRows, version_ids: set[str]) -> dict[tuple[str,
 
 
 def _display_question(
-    question: Mapping[str, Any], key: Mapping[str, Any], code: str, number: int
+    question: Mapping[str, Any],
+    key: Mapping[str, Any],
+    code: str,
+    number: int,
+    rows: RawSnapshotRows,
 ) -> DisplayQuestion:
     correct = question.get("correct_key")
     if (
@@ -151,6 +156,13 @@ def _display_question(
     options = question.get("options")
     if not isinstance(options, list) or len(options) != 4:
         raise _invalid(f"Phương án câu {number} của mã đề {code} không hợp lệ")
+    solution = question.get("solution_md")
+    allow_empty = False
+    if is_empty(solution):
+        allow_empty = verified_empty_solution(rows, question)
+        if not allow_empty:
+            raise _invalid(f"Lời giải câu {number} của mã đề {code} thiếu provenance hợp lệ")
+        solution = ""
     try:
         return DisplayQuestion.model_validate(
             {
@@ -159,9 +171,14 @@ def _display_question(
                 "content": question.get("content"),
                 "options": tuple(options),
                 "correct_key": correct,
-                "solution_md": question.get("solution_md"),
+                "solution_md": solution,
                 "status": question.get("status"),
-            }
+            },
+            context={
+                "verified_empty_solution_ids": {UUID(_uuid(question.get("id"), "Mã câu hỏi"))}
+                if allow_empty
+                else set()
+            },
         )
     except ValidationError as exc:
         # ``from None``: the pydantic cause embeds input values (content, solutions).
@@ -174,6 +191,7 @@ def _build_version(
     sources: set[str],
     keys: dict[tuple[str, int], Mapping[str, Any]],
     version_id: str,
+    rows: RawSnapshotRows,
 ) -> DisplayVersion:
     m = len(sources)
     if len(questions) != m:
@@ -206,7 +224,7 @@ def _build_version(
             "canonical_question_no"
         ) != q.get("canonical_question_no"):
             raise _keys_invalid(f"Số thứ tự gốc lệch ở câu {number} của mã đề {code}")
-        display.append(_display_question(q, key, code, number))
+        display.append(_display_question(q, key, code, number, rows))
     try:
         return DisplayVersion(code=code, questions=tuple(display))
     except ValidationError as exc:
@@ -235,7 +253,8 @@ def build_approved_snapshot(
     grouped = _group_questions(rows, version_ids)
     keys = _index_keys(rows, version_ids)
     versions = tuple(
-        _build_version(code, grouped[vid], sources, keys, vid) for vid, code in ordered_versions
+        _build_version(code, grouped[vid], sources, keys, vid, rows)
+        for vid, code in ordered_versions
     )
     revision = revision_of(
         {**rows.session, "id": session_id, "title": title},

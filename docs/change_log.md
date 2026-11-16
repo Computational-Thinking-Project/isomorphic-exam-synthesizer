@@ -1,3 +1,9 @@
+## DEC-TV7-W4-007-Q01: Verified empty fallback/clone solutions — 16/11/2026
+
+- Hùng áp dụng Q01 revised của Duy tại PR74#issuecomment-6904736595, thay guard solution bắt buộc tuyệt đối. AI/regenerated giữ strict validation; fallback/Original Clone rỗng chỉ qua receipt/snapshot hợp lệ. Không tự thêm placeholder hoặc autoapprove.
+- Nội dung và ownership vẫn dùng user RLS. Service client tùy chọn chỉ đọc provenance của session/question đã authorize; missing/invalid evidence fail closed. Không thay API JSON, revision/hash payload hoặc migration. Capability nội bộ giữ ngoại lệ qua compiler/bundler revalidation; dump JSON không tự mang quyền đó.
+- Ảnh hưởng: snapshot reader/builder/models, pipeline revalidation, tests và export-snapshot contract; task08 nối client, task12 kiểm regression. Đã kiểm cục bộ được ghi tại plan07; không coi là producer/deployment/Golden PASS.
+
 ## DEC-TV7-W4-007: Approved export snapshot adapter
 
 - Ngày/người: 12/11/2026 — Hùng; áp dụng [quyết định của Duy trên PR58](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58#issuecomment-6801792075). Chưa là GitHub approval hay nghiệm thu tích hợp.
@@ -6,6 +12,23 @@
 - Sửa F01 sau review độc lập: chỉ display slots phải1..M; canonical giữ số câu nguồn nguyên dương/không trùng (ví dụ3,8,9). Mapping với nguồn vẫn do shuffle/approval xác thực; adapter giữ kiểm source coverage và key/canonical khớp nhau, không renumber dữ liệu nguồn. Bổ sung positive/negative regressions và PostgreSQL thật.
 - Ảnh hưởng: package exporter, fixtures/tests, [contract](api/export-snapshot-contract.md), [plan/input07](tasks/W4-MVP-07.md). Chờ Tâm xác nhận fixture/đồng bộ docs preview. Export thiếu solution đã chốt fail-closed trên issue46; gate upstream Q01 còn riêng, không hỏi lại quyết định export.
 - Kiểm: unit/stub và PostgreSQL15 dùng một lần với chain002–018; actual shuffle/approval, RLS, lock/fencing, concurrency và parity6slot với PR49 pinned. Chưa deployed Supabase/JWT/PostgREST, fullW2, PDF/Storage hay E2E08. Code test không cấp quyền cloud hoặc merge.
+
+## OPS11/21 smoke tooling — 15/11/2026
+
+- Đạt bổ sung anonymous session/metrics probes trực tiếp và qua proxy vào `scripts/w4_ops.py smoke`: HTTP401 phải kèm Bearer challenge; không lưu response content/headers hoặc gửi credentials. JSON checks tăng4→8; schema_version vẫn1, cấu trúc từng check và acceptance không đổi. Consumer không nên cố định độ dài checks.
+- Runbook và bằng chứng local devc2ee9fd cập nhật cùng PR. Không đổi API/schema/Docker/auth policy, không kích hoạt export hoặc áp migration. Tooling chỉ chứng nhận các observations local, không tự nâng G0/G1/G2.
+
+## Issue #64 — C5 Python consumer cho migration 021 (Draft #67)
+
+- AI job ghi `CONFIRMED_SOURCE_FALLBACK` sau bốn lượt đủ điều kiện trong một lần chạy slot. Writer đối chiếu provenance và ghi `pending_review`. Worker phát `GENERATION_RETRIES_EXHAUSTED` và `question_done` sau khi xác nhận ghi.
+- Retry bỏ qua fallback hiện hành đã commit và giữ các receipt lịch sử ngoài tập completed và cache AI. Nếu mất phản hồi ghi, consumer đối chiếu record hiện hành và job token qua read-back.
+- Q01 dùng migration 022 để kiểm lời giải trên cùng snapshot và khóa session của claim. SQLSTATE `22023` cung cấp `question_numbers` cho HTTP `422`. Lỗi phát hiện muộn vẫn kết thúc fatal và giữ slot đã commit. [Checkpoint C5](tasks/W4-MVP-02_IMPLEMENTATION_PLAN.md#bàn-giao--ghi-theo-bằng-chứng-thực-tế)
+
+## 13/11/2026 — Issue #64: Python generation adapter cho migration 019 (Draft #67)
+
+- `POST /api/sessions/{session_id}/config` nhận `n_versions` nguyên 1–4, modes bỏ qua hoặc `[]` và cờ shuffle mặc định OFF/OFF. RPC 019 suy ra modes từ canonical Blueprint của nguồn đã xác nhận. API trả cấu hình DB đã lưu cùng manifest. [Contract config](api/generation-config-endpoint.md)
+- Claim đối chiếu receipt 015–017 với frozen config/context, manifest và các slot đã commit trước khi dispatch. Frozen dimensions hợp lệ chọn AI. Modes và dimensions cùng rỗng chọn Original Clone với 0 lượt Gemini. Retry giữ snapshot và slot đã commit, kể cả alias `1.0` đã lưu từ W2.
+- Receipt sai trả `503 ERR_GENERATION_STORAGE_FAILURE` trước khi chạy worker. Nếu DB đã commit claim, recovery 017 xử lý job stale và chặn token cũ. [Bằng chứng và phần chờ trong M2](tasks/W4-MVP-02_IMPLEMENTATION_PLAN.md#bàn-giao--ghi-theo-bằng-chứng-thực-tế)
 ## OPS11/21 checkpoint — 13/11/2026
 
 - Đạt tiếp nối PR51 đã merge bằng nhánh OPS mới từ dev294c69a. Cập nhật task/input-handoff, runbook và migration checkpoint017/018 merged; 019 đã merge qua PR61 tại devb47e4fa; giữ historical inventory73583d7, không tạo applied ledger giả.
@@ -973,3 +996,11 @@ giới hạn. Các chữ ký RPC và semantics hiện hành ở [contract08](api
 - Hùng triển khai synchronous worker-thread HTTP theo [Philip chấp nhận Q10](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6825618302): POST export200/202, GET read-only, POST download-url3600s/no-store. Runtime opt-in mặc định tắt, timeout từng IO phải cấu hình; không tự apply DDL/cloud.
 - Sửa Q09 review: chỉ structured NoSuchKey/404 cho restart missing, mọi404 chưa kết luận giữ checkpoint. RPC020 checkpoint trả token + persisted receipt, adapter xác minh exact trước upload. Đổi payload acknowledgment nội bộ cần Duy kiểm lại; không đổi chữ ký RPC/public JSON.
 - Trạng thái code local/test theo [plan08](tasks/W4-MVP-08.md); chưa live Storage/JWT/PostgREST, chưa xác nhận lease900s/proxy budget hoặc shared applied manifest.
+# DEC-TV7-W4-008-Q01 — 16/11/2026
+
+- Theo Q01 sửa đổi của Duy tại PR74, runtime08 truyền worker RPC client có
+  timeout vào verifier provenance của07, sau owner/approval và chỉ scoped ledger.
+  Nội dung vẫn đọc bằng user RLS; empty AI/missing verifier fail closed trước claim.
+- Revalidation giữ capability nội bộ cho fallback/clone, không đổi JSON/hash
+  của snapshot cũ. Thêm HTTP/SQL/Typst regression; private Storage/live Golden
+  chưa được nghiệm thu. Không thay migration/API hay bật runtime.

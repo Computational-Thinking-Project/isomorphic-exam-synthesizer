@@ -4,11 +4,13 @@
 
 Consolidated forward-only migration 019 (`019_w4_source_readiness_config.sql`), following merged 002–018 (PR #52 lifecycle and PR #54 review snapshot).
 
-HTTP configuration remains a PR #30 integration dependency. At `66ad00c`, its
-router exposes `POST /api/sessions/{session_id}/config`; no `/configuration`
-route or alias is implemented here. Under `I-W4MVP01-BE2-01`, BE2/DB/FE2 still
-need to agree the public request schema, OFF/OFF defaults, neutral modes and
-server-derived receipt validation. This document does not change that router.
+The PR #30 route `POST /api/sessions/{session_id}/config` uses this contract in
+Draft #67 under `I-W4MVP01-BE2-01`. HTTP accepts an integer `n_versions` from
+1 to 4, an omitted or empty `active_variation_modes` array, and optional strict
+boolean ordering preferences with OFF/OFF defaults. The adapter sends `[]`
+and the confirmed source manifest to the RPC, then validates and returns the
+config stored by the database. The session detail endpoint exposes that saved
+config on reload. [Verification and deployment status](../tasks/W4-MVP-02_IMPLEMENTATION_PLAN.md)
 
 `save_generation_config(uuid,int,jsonb,jsonb,jsonb)` retains its identity and
 response envelope. It locks the session first, requires owner authorization,

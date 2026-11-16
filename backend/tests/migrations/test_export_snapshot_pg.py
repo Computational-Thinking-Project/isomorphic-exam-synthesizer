@@ -80,7 +80,7 @@ class SqlQuery:
         where = " AND ".join(self.filters) or "true"
         limit = f" LIMIT {self.row_limit}" if self.row_limit else ""
         result = self.client.case.value(
-            auth(self.client.actor)
+            auth(self.client.actor, self.client.role)
             + "SELECT coalesce(jsonb_agg(to_jsonb(t)),'[]') FROM "
             + f"(SELECT {self.columns} FROM public.{self.name} WHERE {where}{limit}) t;"
         )
@@ -88,8 +88,9 @@ class SqlQuery:
 
 
 class SqlReadClient:
-    def __init__(self, case, actor=OWNER):
+    def __init__(self, case, actor=OWNER, role="authenticated"):
         self.case, self.actor, self.calls = case, actor, []
+        self.role = role
 
     def table(self, name):
         return SqlQuery(self, name)

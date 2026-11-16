@@ -1,5 +1,39 @@
 # W4-MVP-08 — Private export: plan và bàn giao
 
+## Q01/F12 checkpoint 16/11/2026
+
+- Author mode, workflow v0.1 proposed + INPUT-20261109 (`7b7387f`). Đồng bộ
+  `dev@a379ec1` qua 07 `1c01ad3` (product `357ebaf`, bổ sung seed dùng chung); giữ migration020 và không sửa DDL owner khác.
+- Theo [Q01 của Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/74#issuecomment-6904736595),
+  runtime nối RPC client có timeout vào verifier provenance của 07. Nội dung
+  vẫn qua user RLS, quyền đọc ledger chỉ sau owner/approval và scoped session/ID.
+  Thiếu verifier/AI thiếu solution bị từ chối trước claim/build/upload/sign.
+- Private service giữ capability nội bộ khi revalidate, để fallback/clone rỗng
+  đi tới ZIP/manifest. Không đổi JSON/hash/packager cho snapshot cũ, không thêm
+  endpoint, background task hay cấu hình bật runtime. Q09/Q10 vẫn giữ quyết định.
+- Bổ sung HTTP test fallback/clone với Typst thật, replay/status/download;
+  negative cả ba routes (thiếu verifier, giả AI, foreign owner, lỗi transport).
+  Có test SQL approval/RPC020 + source ZIP/manifest thật; PDF và Storage là double
+  trong nhóm PG này, không chứng minh renderer/ACL. HTTP fixture nhỏ kiểm Typst thật.
+- Ruff app/scripts/test thay đổi pass; mypy **128 files**; API + exporter **720 passed,
+  1 skipped** (XeLaTeX), 6 cảnh báo deprecation hiện có.
+- PostgreSQL15 + exporter: **324 passed, 4 skipped, 21 subtests**; kiểm concurrency,
+  replay, recovery, rollback và Q01 private source ZIP. Skip: XeLaTeX và ba parity
+  cases cần PR49 chưa merge. Hai cảnh báo anyio/Starlette hiện có. SQL/RLS thật,
+  thay transport HTTP; PDF/Storage double cho private PG, không phải Golden E2E.
+- Review độc lập gpt-6.1-sol high: 21 tests (Typst thật), 4 SDK credential/scoping
+  probes và 30 unexpected ready-replay probes pass; không có actionable runtime finding.
+  Đây không phải GitHub Approve hay kiểm deployed transport.
+  Không apply DB chung (Issue75 NO-GO), không merge PR hoặc sửa descriptions.
+
+- **RENDER12-01:** fixture Golden gốc không biên dịch được ở TASK-306 do `\int`
+  và cách xử lý chuỗi chữ trong math (`dx`, `Oxyz`). Tái hiện cả nonempty và
+  empty solution; không phải lỗi provenance. Không sửa compiler của Tâm hoặc
+  đổi fixture để nhận PASS; TASK-12 giữ real-compiler regression có expected
+  failure hẹp/strict. Cần owner kiểm/sửa trước nghiệm thu Golden.
+Các checkpoint có ngày bên dưới là lịch sử; Q01 mới thay quy tắc solution bắt
+buộc tuyệt đối trước 16/11. Q10 đã accepted, không mở lại lựa chọn sync/async.
+
 ## Publication checkpoint 15/11/2026
 
 - Đồng bộ `dev@c2ee9fd` (PR59, migration021/PR68) qua dependency07 tại
@@ -124,7 +158,7 @@ Không đưa implementation ledger RAM vào production; không giả kết quả
 | I08-Q10 | Hùng đề xuất; Philip (`philip-kkk`) → 09/08 | POST export, GET status, POST download URL, bounded polling/errors | Decided/Delivered/Accepted theo [Philip](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6825618302); routes/runtime Integrated local theo contract | Không hỏi lại sync/async; OPS budget/live validation còn riêng. Mặc định tắt runtime |
 
 Input Delivered không tự là Accepted/Integrated. Không lặp lại quyết định đã có:
-export thiếu solution fail-closed; snapshot revision SHA256, không dùng updated_at.
+export thiếu solution fail-closed trừ fallback/clone có provenance được xác minh (Q01 16/11); snapshot revision SHA256, không dùng updated_at.
 
 ## Kế hoạch tự kiểm
 

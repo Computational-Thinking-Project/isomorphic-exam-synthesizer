@@ -21,6 +21,7 @@ from supabase import Client
 
 from app.models.schemas import ReviewDomainException
 from app.services.exporter.snapshot_common import LOCKED_STATUSES, valid_timestamp
+from app.services.exporter.snapshot_provenance import is_empty
 from app.services.exporter.snapshot_rows import RawSnapshotRows
 
 SESSION_COLUMNS = "id, user_id, title, status, approved_at, updated_at"
@@ -40,8 +41,9 @@ def _changed() -> ReviewDomainException:
 
 
 class ExportSnapshotReader:
-    def __init__(self, db: Client) -> None:
+    def __init__(self, db: Client, *, provenance_db: Client | None = None) -> None:
         self.db = db
+        self.provenance_db = provenance_db
 
     def _session(self, session_id: str) -> Dict[str, Any] | None:
         rows = _rows(
@@ -77,7 +79,7 @@ class ExportSnapshotReader:
 
         configs = _rows(
             self.db.table("generation_configs")
-            .select("n_versions")
+            .select("n_versions, active_variation_modes, canonical_dimensions")
             .eq("session_id", canonical_id)
             .execute()
         )
@@ -98,7 +100,8 @@ class ExportSnapshotReader:
                 self.db.table("version_questions")
                 .select(
                     "id, version_id, source_question_id, question_no, canonical_question_no, "
-                    "content, options, correct_key, solution_md, status, is_current"
+                    "content, options, correct_key, solution_md, status, is_current, "
+                    "canonical_solution_md, has_warning, regenerated_from_id, validation_report"
                 )
                 .in_("version_id", version_ids)
                 .eq("is_current", True)
@@ -114,6 +117,40 @@ class ExportSnapshotReader:
                 .execute()
             )
 
+        # All content and ownership reads above use the caller's RLS client.
+        # The optional privileged client is limited to provenance for those
+        # already-authorized question IDs; without it empty solutions fail closed.
+        results: List[Dict[str, Any]] = []
+        snapshots: List[Dict[str, Any]] = []
+        empty_ids = [
+            str(q["id"]) for q in questions if q.get("id") and is_empty(q.get("solution_md"))
+        ]
+        if empty_ids and self.provenance_db is not None:
+            results = _rows(
+                self.provenance_db.table("generation_target_results")
+                .select(
+                    "version_question_id, snapshot_id, session_id, source_question_id, "
+                    "is_success, result_kind, clone_fingerprint"
+                )
+                .eq("session_id", canonical_id)
+                .in_("version_question_id", empty_ids)
+                .execute()
+            )
+            snapshot_ids = sorted(
+                {
+                    str(r["snapshot_id"])
+                    for r in results
+                    if r.get("result_kind") == "ORIGINAL_CLONE" and r.get("snapshot_id")
+                }
+            )
+            if snapshot_ids:
+                snapshots = _rows(
+                    self.provenance_db.table("generation_job_snapshots")
+                    .select("id, session_id, public_modes, canonical_dimensions")
+                    .eq("session_id", canonical_id)
+                    .in_("id", snapshot_ids)
+                    .execute()
+                )
         second = self._session(canonical_id)
         if second is None or any(
             second.get(field) != first.get(field)
@@ -129,4 +166,7 @@ class ExportSnapshotReader:
             versions=tuple(versions),
             questions=tuple(questions),
             answer_keys=tuple(keys),
+            generation_config=configs[0] if len(configs) == 1 else {},
+            provenance_results=tuple(results),
+            provenance_snapshots=tuple(snapshots),
         )
