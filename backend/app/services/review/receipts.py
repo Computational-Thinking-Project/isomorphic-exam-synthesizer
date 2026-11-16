@@ -108,6 +108,7 @@ class ActionReceipt(BaseModel):
     question_status: Literal["approved", "pending_review"]
     invalidated_version_ids: list[UUID]
     progress: ProgressCounts
+    revert_contract: Literal["legacy_root", "w4_frozen"] | None = None
 
 
 class ProgressReceipt(BaseModel):

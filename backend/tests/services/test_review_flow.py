@@ -303,6 +303,7 @@ class State:
                     question_status="pending_review",
                     invalidated_version_ids=[self.vid],
                     progress=counts(0),
+                    revert_contract="w4_frozen",
                 )
             self.actions[key] = (name, deepcopy(params), deepcopy(result))
             return result
@@ -785,6 +786,53 @@ def test_newly_executed_revert_returning_approved_fails_receipt_validation(state
     repo = ReviewRepository(
         SimpleNamespace(
             rpc=lambda *_: SimpleNamespace(execute=lambda: SimpleNamespace(data=bad_receipt)),
+            table=state.owner.table,
+        )
+    )
+    with pytest.raises(ReviewDomainException) as exc:
+        immediate(repo.perform_action("revert", state.sid, state.qid, key))
+    assert exc.value.error_code == "ERR_ACTION_UNCERTAIN"
+
+
+def test_newly_executed_legacy_revert_receipt_with_approved_status_succeeds(state):
+    key = uuid4()
+    legacy_receipt = dict(
+        session_id=state.sid,
+        session_status="reviewed",
+        replayed=False,
+        previous_question_id=state.qid,
+        question_id=state.qid,
+        question_status="approved",
+        invalidated_version_ids=[],
+        progress=counts(1),
+        revert_contract="legacy_root",
+    )
+    repo = ReviewRepository(
+        SimpleNamespace(
+            rpc=lambda *_: SimpleNamespace(execute=lambda: SimpleNamespace(data=legacy_receipt)),
+            table=state.owner.table,
+        )
+    )
+    result = immediate(repo.perform_action("revert", state.sid, state.qid, key))
+    assert result["id"] == state.qid
+
+
+def test_newly_executed_legacy_revert_receipt_with_pending_status_fails(state):
+    key = uuid4()
+    bad_legacy_receipt = dict(
+        session_id=state.sid,
+        session_status="generated",
+        replayed=False,
+        previous_question_id=state.qid,
+        question_id=state.qid,
+        question_status="pending_review",
+        invalidated_version_ids=[],
+        progress=counts(0),
+        revert_contract="legacy_root",
+    )
+    repo = ReviewRepository(
+        SimpleNamespace(
+            rpc=lambda *_: SimpleNamespace(execute=lambda: SimpleNamespace(data=bad_legacy_receipt)),
             table=state.owner.table,
         )
     )

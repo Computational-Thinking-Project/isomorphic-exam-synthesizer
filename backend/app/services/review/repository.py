@@ -303,8 +303,14 @@ class ReviewRepository:
                 raise ValueError("Action identity mismatch")
             if action == "accept" and receipt.question_status != "approved":
                 raise ValueError("Accept did not approve candidate")
-            if action == "revert" and receipt.question_status != "pending_review" and not receipt.replayed:
-                raise ValueError("Revert did not require review")
+            if action == "revert":
+                if not receipt.replayed:
+                    if receipt.revert_contract == "legacy_root":
+                        if receipt.question_status != "approved":
+                            raise ValueError("Legacy revert did not approve root candidate")
+                    else:
+                        if receipt.question_status != "pending_review":
+                            raise ValueError("Revert did not require review")
             if action == "accept" and receipt.question_id != UUID(question_id):
                 raise ValueError("Accept replaced a candidate")
         except (ValueError, TypeError) as exc:

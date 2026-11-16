@@ -12,7 +12,8 @@
 | AI generation | Allowed from confirmed frozen sources | Existing structured solution/schema/key/validation checks; no validation relaxation |
 | Original Clone | No Gemini generation calls | Frozen stem/options/key, original solution or exact missing-solution notice; pending review |
 | Four-attempt fallback | Existing retry/quota conditions | Frozen source with warning, not_validated provenance and pending review; no fifth explanation call |
-| Revert | Exact source_question_id/revision from job snapshot | New source-derived current row, warning/audit, pending review; invalidate shuffle and keys |
+| Revert (W4 session) | Exact source_question_id/revision from job snapshot | New source-derived current row, warning/audit, pending review (`revert_contract='w4_frozen'`); invalidate shuffle and keys |
+| Revert (Legacy session) | Lineage tracing to root candidate (migration 006) | Reactivate root candidate as approved (`revert_contract='legacy_root'`); preserve legacy contract without W4 snapshot requirement |
 
 The exact notice is `Không có lời giải cho câu hỏi này.`. It is disclosure, not a mathematical explanation or AI validation evidence.
 Real nonblank source solutions remain verbatim. Wrong solution types fail closed.
@@ -24,17 +25,21 @@ Historical migrations, schema, signatures, owners, security modes and access gra
 Claim session locks, frozen manifests, job tokens, quota and committed-slot checks remain.
 Source-reuse projection does not change source inputs, hashes, revisions, seeds or AI result kinds.
 Old blank clone records replay against their original fingerprint/current projection without being rewritten.
-Historical Revert receipts replay unchanged; new Revert requires teacher approval again.
+Historical Revert receipts replay unchanged; new Revert requires teacher approval again for W4 sessions.
+Legacy sessions without confirmation or snapshot safely revert to root candidate with approved status, preserving migration 006 compatibility. Corrupted sessions (mismatched confirmation/snapshot existence) fail-closed.
 Approved/exported sessions stay locked. No production DB operations were performed.
 
 ## Verification findings addressed
 
-Code inspection found Revert assigning the canonical number to the display slot after shuffle.
+Code inspection and test execution addressed two findings before review:
+1. **F01 (Shared RPC test fixture alignment)**: Updated in-memory RPC test fixture and assertions in `test_review_flow.py`, `test_review_lifecycle.py`, and `test_review_rpc_http.py` to match Migration 024's new candidate ID generation and `pending_review` transition on Revert.
+2. **F02 (Legacy session Revert support)**: In `_review_apply_action()`, added session classification between W4 and legacy sessions. Legacy sessions without confirmation and without snapshot restore root candidate lineage as approved (`revert_contract='legacy_root'`), while W4 sessions require confirmed frozen snapshots (`revert_contract='w4_frozen'`). Corrupted sessions (confirmation present without snapshot, or snapshot present without confirmation) are rejected with `REVIEW_SOURCE_MISMATCH`. Backend `ActionReceipt` validates the matching contract conditionally, preventing unclassified/W4 reverts from returning approved while preserving backward compatibility.
+3. Code inspection also found Revert assigning the canonical number to the display slot after shuffle.
 The new row now retains the current slot's `question_no`, while canonical number/options/key/solution
 come from the frozen source. Regression starts from a separately inserted AI candidate with a
 different answer, reverts at display position 2/canonical position 1, checks restored key A,
-not_validated status, action replay/audit and subsequent Accept. Foreign-owner and corrupted
-frozen-revision attempts must leave the original current row/audit unchanged.
+not_validated status, action replay/audit and subsequent Accept. Foreign-owner, corrupted
+frozen-revision attempts, and corrupted session snapshot states must leave the original current row/audit unchanged.
 The strengthened fixture initially failed because it attempted authenticated access to the
 private receipt ledger, then because it tried to mutate immutable canonical fields; those
 fixture errors were corrected without loosening production permissions or triggers.

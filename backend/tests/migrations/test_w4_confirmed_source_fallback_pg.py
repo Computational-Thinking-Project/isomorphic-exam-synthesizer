@@ -1039,3 +1039,86 @@ class W4ConfirmedSourceFallbackPostgresCase(unittest.TestCase):
         after = self.sql("SELECT id FROM version_questions WHERE is_current").stdout.strip()
         self.assertEqual(after, current)
         self.assertEqual(self.sql("SELECT count(*) FROM review_logs WHERE action_type='REVERT'").stdout.strip(), '0')
+
+    def test_f02_legacy_session_revert(self):
+        legacy_session = str(uuid4())
+        legacy_ver = str(uuid4())
+        legacy_src = str(uuid4())
+        root_q = str(uuid4())
+        regen_q = str(uuid4())
+        action_id = str(uuid4())
+
+        self.sql(f"""
+        INSERT INTO public.exam_sessions(id, user_id, title, status)
+        VALUES ('{legacy_session}', '{FIXTURE_USER}', 'Legacy Math Exam', 'draft');
+
+        INSERT INTO public.source_questions(id, session_id, question_no, raw_content, options, correct_key, solution_md)
+        VALUES ('{legacy_src}', '{legacy_session}', 1, 'Legacy stem', '["A", "B", "C", "D"]'::jsonb, 'A', 'Legacy solution');
+
+        INSERT INTO public.question_blueprints(source_question_id, confirmed_at)
+        VALUES ('{legacy_src}', now());
+
+        INSERT INTO public.generation_configs(session_id, n_versions, active_variation_modes, mapping_version)
+        VALUES ('{legacy_session}', 1, '["NUMERICAL"]'::jsonb, '1.0');
+
+        UPDATE public.exam_sessions SET status='generated' WHERE id='{legacy_session}';
+
+        INSERT INTO public.exam_versions(id, session_id, version_code)
+        VALUES ('{legacy_ver}', '{legacy_session}', '101');
+
+        INSERT INTO public.version_questions(id, version_id, source_question_id, question_no, content, options, correct_key, solution_md, canonical_question_no, canonical_options, canonical_correct_key, canonical_solution_md, status, is_current, regenerated_from_id)
+        VALUES ('{root_q}', '{legacy_ver}', '{legacy_src}', 1, 'Root content', '["A", "B", "C", "D"]'::jsonb, 'A', 'Root solution', 1, '["A", "B", "C", "D"]'::jsonb, 'A', 'Root solution', 'approved', false, NULL);
+
+        INSERT INTO public.version_questions(id, version_id, source_question_id, question_no, content, options, correct_key, solution_md, canonical_question_no, canonical_options, canonical_correct_key, canonical_solution_md, status, is_current, regenerated_from_id)
+        VALUES ('{regen_q}', '{legacy_ver}', '{legacy_src}', 1, 'Regenerated content', '["A", "B", "C", "D"]'::jsonb, 'B', 'Regenerated solution', 1, '["A", "B", "C", "D"]'::jsonb, 'A', 'Root solution', 'pending_review', true, '{root_q}');
+        """)
+
+        res = self.sql(f"""
+        SET ROLE authenticated;
+        SELECT set_config('request.jwt.claim.sub','{FIXTURE_USER}',false);
+        SELECT set_config('request.jwt.claim.role','authenticated',false);
+        SELECT review_revert_question('{legacy_session}', '{regen_q}', '{action_id}');
+        RESET ROLE;
+        """, check=False)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn('"revert_contract": "legacy_root"', res.stdout)
+        self.assertIn('"question_status": "approved"', res.stdout)
+        self.assertIn(f'"question_id": "{root_q}"', res.stdout)
+        self.assertIn(f'"previous_question_id": "{regen_q}"', res.stdout)
+
+        # Confirm root_q is restored as approved, current and reverted
+        state_check = self.sql(f"""
+        SELECT id, status, is_current, is_reverted FROM version_questions WHERE id IN ('{root_q}', '{regen_q}') ORDER BY id='{root_q}' DESC;
+        SELECT count(*) FROM version_questions WHERE version_id='{legacy_ver}' AND is_current;
+        SELECT count(*) FROM review_logs WHERE session_id='{legacy_session}' AND action_type='REVERT';
+        """)
+        self.assertIn(f"{root_q}|approved|t|t", state_check.stdout)
+        self.assertIn(f"{regen_q}|pending_review|f|f", state_check.stdout)
+
+        # Confirm same-key replay returns original receipt without additional mutation
+        replay = self.sql(f"""
+        SET ROLE authenticated;
+        SELECT set_config('request.jwt.claim.sub','{FIXTURE_USER}',false);
+        SELECT set_config('request.jwt.claim.role','authenticated',false);
+        SELECT review_revert_question('{legacy_session}', '{regen_q}', '{action_id}');
+        RESET ROLE;
+        """)
+        self.assertIn('"replayed": true', replay.stdout)
+        self.assertEqual(self.sql(f"SELECT count(*) FROM review_logs WHERE session_id='{legacy_session}' AND action_type='REVERT'").stdout.strip(), '1')
+
+        # Confirm corrupted W4 session (confirmation present but no snapshot) fails-closed
+        bad_conf_id = str(uuid4())
+        self.sql(f"""
+        INSERT INTO public.source_artifact_confirmations(confirmation_id, session_id, actor_id, confirmed_at, result)
+        VALUES ('{bad_conf_id}', '{legacy_session}', '{FIXTURE_USER}', now(), '{{}}'::jsonb);
+        """)
+        bad_action = str(uuid4())
+        corrupt_revert = self.sql(f"""
+        SET ROLE authenticated;
+        SELECT set_config('request.jwt.claim.sub','{FIXTURE_USER}',false);
+        SELECT set_config('request.jwt.claim.role','authenticated',false);
+        SELECT review_revert_question('{legacy_session}', '{root_q}', '{bad_action}');
+        RESET ROLE;
+        """, check=False)
+        self.assertNotEqual(corrupt_revert.returncode, 0)
+        self.assertIn('REVIEW_SOURCE_MISMATCH', corrupt_revert.stderr)

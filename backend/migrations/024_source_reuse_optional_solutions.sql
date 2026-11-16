@@ -349,8 +349,9 @@ DECLARE s public.exam_sessions; q public.version_questions; root public.version_
   job public.generation_job_snapshots; src jsonb; idx int; input jsonb; item jsonb; src_fp text;
   conf_rec public.source_artifact_confirmations%ROWTYPE; rev_rec public.source_artifact_revisions%ROWTYPE;
   all_items jsonb; all_hash text; solution text;
- spaces text := U&'\0009-\000D\001C-\0020\0085\00A0\1680\2000-\200A\2028\2029\202F\205F\3000';
+  spaces text := U&'\0009-\000D\001C-\0020\0085\00A0\1680\2000-\200A\2028\2029\202F\205F\3000';
   kind TEXT; invalidated JSONB := '[]'::jsonb; progress JSONB; result JSONB; changed BOOLEAN;
+  has_conf BOOLEAN; has_job BOOLEAN; is_legacy BOOLEAN := false;
 BEGIN
   s := public._review_lock_session(p_session_id,true);
   IF p_action_id IS NULL THEN RAISE EXCEPTION 'REVIEW_INVALID_PAYLOAD' USING ERRCODE='22023'; END IF;
@@ -372,122 +373,155 @@ BEGIN
   IF q.status='regenerating' THEN RAISE EXCEPTION 'REVIEW_BUSY' USING ERRCODE='55000'; END IF;
   root := q;
   IF p_revert THEN
-    SELECT * INTO job FROM public.generation_job_snapshots WHERE session_id=s.id;
-    IF job.id IS NULL THEN RAISE EXCEPTION 'REVIEW_SOURCE_MISMATCH' USING ERRCODE='22023'; END IF;
-  SELECT x, ord::int - 1 INTO src, idx
-  FROM jsonb_array_elements(job.snapshot_payload->'confirmed_sources') WITH ORDINALITY a(x, ord)
-  WHERE (x->>'source_question_id')::uuid = q.source_question_id;
-
-  IF src IS NULL THEN
-    RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: source_question_id not found in frozen snapshot' USING ERRCODE = '22023';
-  END IF;
-  IF (SELECT count(*) FROM jsonb_array_elements(job.snapshot_payload->'confirmed_sources') x
-      WHERE (x->>'source_question_id')::uuid = q.source_question_id) <> 1 THEN
-    RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: non-unique source in frozen snapshot' USING ERRCODE = '22023';
-  END IF;
-
-  -- Bind snapshot confirmation to the same session
-  SELECT * INTO conf_rec FROM public.source_artifact_confirmations
-  WHERE confirmation_id = job.confirmation_id AND session_id = job.session_id;
-  IF conf_rec.confirmation_id IS NULL THEN
-    RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: confirmation missing or mismatched' USING ERRCODE = '22023';
-  END IF;
-
-  -- Bind source revision to that confirmation/source
-  SELECT * INTO rev_rec FROM public.source_artifact_revisions
-  WHERE confirmation_id = job.confirmation_id
-    AND source_question_id = q.source_question_id
-    AND source_revision_id = (src->>'source_revision_id')::uuid;
-  IF rev_rec.confirmation_id IS NULL THEN
-    RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: source revision not bound to confirmation' USING ERRCODE = '22023';
-  END IF;
-
-  -- Frozen confirmed_input must equal stored revision input
-  IF rev_rec.confirmed_input IS DISTINCT FROM src->'confirmed_input' THEN
-    RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: confirmed_input mismatch with stored revision' USING ERRCODE = '22023';
-  END IF;
-
-  -- Check blueprint revision binding
-  IF src->>'blueprint_revision_id' IS NULL THEN
-    RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: missing blueprint_revision_id' USING ERRCODE = '22023';
-  END IF;
-  IF NOT EXISTS (
-    SELECT 1 FROM public.canonical_blueprint_revisions b
-    WHERE b.blueprint_revision_id = (src->>'blueprint_revision_id')::uuid
-      AND b.source_revision_id = (src->>'source_revision_id')::uuid
-      AND b.source_question_id = q.source_question_id
-  ) THEN
-    RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: blueprint revision not bound to source' USING ERRCODE = '22023';
-  END IF;
-
-  -- Check source order if present
-  IF job.source_order IS NOT NULL AND jsonb_typeof(job.source_order) = 'array' THEN
-    IF (SELECT jsonb_agg((x->>'source_question_id')::text ORDER BY ord)
-        FROM jsonb_array_elements(job.snapshot_payload->'confirmed_sources') WITH ORDINALITY a(x, ord))
-       IS DISTINCT FROM job.source_order THEN
-      RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: source order mismatch' USING ERRCODE = '22023';
+    SELECT EXISTS(SELECT 1 FROM public.source_artifact_confirmations WHERE session_id=s.id) INTO has_conf;
+    SELECT EXISTS(SELECT 1 FROM public.generation_job_snapshots WHERE session_id=s.id) INTO has_job;
+    IF has_conf AND has_job THEN
+      is_legacy := false;
+    ELSIF (NOT has_conf) AND (NOT has_job) THEN
+      is_legacy := true;
+    ELSE
+      RAISE EXCEPTION 'REVIEW_SOURCE_MISMATCH' USING ERRCODE='22023';
     END IF;
-  END IF;
 
-  -- Recompute source fingerprint
-  item := public._generation_source_item(src->'confirmed_input');
-  src_fp := encode(sha256(convert_to(public._generation_json(jsonb_build_array(item)), 'UTF8')), 'hex');
-  IF src_fp IS DISTINCT FROM src->>'source_fingerprint' OR src_fp IS DISTINCT FROM rev_rec.source_fingerprint THEN
-    RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: source fingerprint mismatch' USING ERRCODE = '22023';
-  END IF;
+    IF is_legacy THEN
+      WITH RECURSIVE lineage AS (
+        SELECT id,regenerated_from_id,ARRAY[id] AS visited FROM public.version_questions WHERE id=q.id
+        UNION ALL
+        SELECT parent.id,parent.regenerated_from_id,l.visited||parent.id FROM lineage l
+        JOIN public.version_questions parent ON parent.id=l.regenerated_from_id
+        WHERE parent.version_id=q.version_id AND parent.source_question_id=q.source_question_id AND NOT parent.id=ANY(l.visited)
+      ) SELECT vq.* INTO root FROM lineage l JOIN public.version_questions vq ON vq.id=l.id WHERE l.regenerated_from_id IS NULL;
+      IF NOT FOUND THEN RAISE EXCEPTION 'REVIEW_SOURCE_MISMATCH' USING ERRCODE='22023'; END IF;
+      PERFORM 1 FROM public.version_questions WHERE id=root.id FOR UPDATE;
 
-  -- Recompute confirmed_source_hash across all confirmed sources
-  SELECT coalesce(jsonb_agg(public._generation_source_item(x->'confirmed_input') ORDER BY ord), '[]'::jsonb)
-  INTO all_items
-  FROM jsonb_array_elements(job.snapshot_payload->'confirmed_sources') WITH ORDINALITY a(x, ord);
+      changed := root.id<>q.id OR q.status<>'approved' OR NOT q.is_reverted;
+      IF root.id<>q.id THEN
+        UPDATE public.version_questions SET is_current=false,updated_at=clock_timestamp() WHERE id=q.id;
+        UPDATE public.version_questions SET is_current=true,status='approved',is_reverted=true,
+          question_no=q.question_no,updated_at=clock_timestamp() WHERE id=root.id;
+        invalidated := public._review_invalidate(s.id);
+      ELSE
+        UPDATE public.version_questions SET status='approved',is_reverted=true,updated_at=clock_timestamp()
+          WHERE id=q.id AND changed;
+      END IF;
+    ELSE
+      SELECT * INTO job FROM public.generation_job_snapshots WHERE session_id=s.id;
+      IF job.id IS NULL THEN RAISE EXCEPTION 'REVIEW_SOURCE_MISMATCH' USING ERRCODE='22023'; END IF;
+      SELECT x, ord::int - 1 INTO src, idx
+      FROM jsonb_array_elements(job.snapshot_payload->'confirmed_sources') WITH ORDINALITY a(x, ord)
+      WHERE (x->>'source_question_id')::uuid = q.source_question_id;
 
-  all_hash := encode(sha256(convert_to(public._generation_json(all_items), 'UTF8')), 'hex');
-  IF all_hash IS DISTINCT FROM job.confirmed_source_hash THEN
-    RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: confirmed source hash mismatch' USING ERRCODE = '22023';
-  END IF;
+      IF src IS NULL THEN
+        RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: source_question_id not found in frozen snapshot' USING ERRCODE = '22023';
+      END IF;
+      IF (SELECT count(*) FROM jsonb_array_elements(job.snapshot_payload->'confirmed_sources') x
+          WHERE (x->>'source_question_id')::uuid = q.source_question_id) <> 1 THEN
+        RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: non-unique source in frozen snapshot' USING ERRCODE = '22023';
+      END IF;
 
-  -- Validate confirmed_input content
-  input := src->'confirmed_input';
-  IF input IS NULL OR jsonb_typeof(input) IS DISTINCT FROM 'object' THEN
-    RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: missing or invalid confirmed_input' USING ERRCODE = '22023';
-  END IF;
+      -- Bind snapshot confirmation to the same session
+      SELECT * INTO conf_rec FROM public.source_artifact_confirmations
+      WHERE confirmation_id = job.confirmation_id AND session_id = job.session_id;
+      IF conf_rec.confirmation_id IS NULL THEN
+        RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: confirmation missing or mismatched' USING ERRCODE = '22023';
+      END IF;
 
-  -- Non-whitespace stem
-  IF jsonb_typeof(input->'question_text') IS DISTINCT FROM 'string'
-     OR coalesce(input->>'question_text', '') !~ ('[^' || spaces || ']') THEN
-    RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: missing or whitespace question_text' USING ERRCODE = '22023';
-  END IF;
+      -- Bind source revision to that confirmation/source
+      SELECT * INTO rev_rec FROM public.source_artifact_revisions
+      WHERE confirmation_id = job.confirmation_id
+        AND source_question_id = q.source_question_id
+        AND source_revision_id = (src->>'source_revision_id')::uuid;
+      IF rev_rec.confirmation_id IS NULL THEN
+        RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: source revision not bound to confirmation' USING ERRCODE = '22023';
+      END IF;
 
-  -- Four non-whitespace string options
-  IF jsonb_typeof(input->'options') IS DISTINCT FROM 'array'
-     OR jsonb_array_length(input->'options') <> 4
-     OR EXISTS (
-       SELECT 1 FROM jsonb_array_elements(input->'options') opt
-       WHERE jsonb_typeof(opt) IS DISTINCT FROM 'string'
-          OR coalesce(opt#>>'{}', '') !~ ('[^' || spaces || ']')
-     ) THEN
-    RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: invalid options array' USING ERRCODE = '22023';
-  END IF;
+      -- Frozen confirmed_input must equal stored revision input
+      IF rev_rec.confirmed_input IS DISTINCT FROM src->'confirmed_input' THEN
+        RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: confirmed_input mismatch with stored revision' USING ERRCODE = '22023';
+      END IF;
 
-  -- A-D key
-  IF input->>'correct_answer' NOT IN ('A', 'B', 'C', 'D') OR input->>'correct_answer' IS NULL THEN
-    RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: invalid correct_answer' USING ERRCODE = '22023';
-  END IF;
+      -- Check blueprint revision binding
+      IF src->>'blueprint_revision_id' IS NULL THEN
+        RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: missing blueprint_revision_id' USING ERRCODE = '22023';
+      END IF;
+      IF NOT EXISTS (
+        SELECT 1 FROM public.canonical_blueprint_revisions b
+        WHERE b.blueprint_revision_id = (src->>'blueprint_revision_id')::uuid
+          AND b.source_revision_id = (src->>'source_revision_id')::uuid
+          AND b.source_question_id = q.source_question_id
+      ) THEN
+        RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: blueprint revision not bound to source' USING ERRCODE = '22023';
+      END IF;
 
-  IF input->'solution' IS NOT NULL AND jsonb_typeof(input->'solution') NOT IN ('null','string') THEN
-    RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: malformed solution' USING ERRCODE='22023';
-  END IF;
-  solution := CASE WHEN coalesce(input->>'solution','') ~ ('[^' || spaces || ']')
-    THEN input->>'solution' ELSE 'Không có lời giải cho câu hỏi này.' END;
-    UPDATE public.version_questions SET is_current=false,updated_at=clock_timestamp() WHERE id=q.id;
-    INSERT INTO public.version_questions(version_id,source_question_id,question_no,content,options,correct_key,solution_md,
-      canonical_question_no,canonical_options,canonical_correct_key,canonical_solution_md,status,is_current,is_reverted,has_warning,validation_report)
-    VALUES(q.version_id,q.source_question_id,q.question_no,input->>'question_text',input->'options',input->>'correct_answer',solution,
-      (src->>'question_no')::int,input->'options',input->>'correct_answer',solution,'pending_review',true,true,true,
-      jsonb_build_object('reason','REVERT','validation_status','not_validated','source_revision_id',src->>'source_revision_id',
-        'source_fingerprint',src->>'source_fingerprint','confirmed_source_hash',job.confirmed_source_hash)) RETURNING * INTO root;
-    invalidated := public._review_invalidate(s.id);
-    changed := true;
+      -- Check source order if present
+      IF job.source_order IS NOT NULL AND jsonb_typeof(job.source_order) = 'array' THEN
+        IF (SELECT jsonb_agg((x->>'source_question_id')::text ORDER BY ord)
+            FROM jsonb_array_elements(job.snapshot_payload->'confirmed_sources') WITH ORDINALITY a(x, ord))
+           IS DISTINCT FROM job.source_order THEN
+          RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: source order mismatch' USING ERRCODE = '22023';
+        END IF;
+      END IF;
+
+      -- Recompute source fingerprint
+      item := public._generation_source_item(src->'confirmed_input');
+      src_fp := encode(sha256(convert_to(public._generation_json(jsonb_build_array(item)), 'UTF8')), 'hex');
+      IF src_fp IS DISTINCT FROM src->>'source_fingerprint' OR src_fp IS DISTINCT FROM rev_rec.source_fingerprint THEN
+        RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: source fingerprint mismatch' USING ERRCODE = '22023';
+      END IF;
+
+      -- Recompute confirmed_source_hash across all confirmed sources
+      SELECT coalesce(jsonb_agg(public._generation_source_item(x->'confirmed_input') ORDER BY ord), '[]'::jsonb)
+      INTO all_items
+      FROM jsonb_array_elements(job.snapshot_payload->'confirmed_sources') WITH ORDINALITY a(x, ord);
+
+      all_hash := encode(sha256(convert_to(public._generation_json(all_items), 'UTF8')), 'hex');
+      IF all_hash IS DISTINCT FROM job.confirmed_source_hash THEN
+        RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: confirmed source hash mismatch' USING ERRCODE = '22023';
+      END IF;
+
+      -- Validate confirmed_input content
+      input := src->'confirmed_input';
+      IF input IS NULL OR jsonb_typeof(input) IS DISTINCT FROM 'object' THEN
+        RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: missing or invalid confirmed_input' USING ERRCODE = '22023';
+      END IF;
+
+      -- Non-whitespace stem
+      IF jsonb_typeof(input->'question_text') IS DISTINCT FROM 'string'
+         OR coalesce(input->>'question_text', '') !~ ('[^' || spaces || ']') THEN
+        RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: missing or whitespace question_text' USING ERRCODE = '22023';
+      END IF;
+
+      -- Four non-whitespace string options
+      IF jsonb_typeof(input->'options') IS DISTINCT FROM 'array'
+         OR jsonb_array_length(input->'options') <> 4
+         OR EXISTS (
+           SELECT 1 FROM jsonb_array_elements(input->'options') opt
+           WHERE jsonb_typeof(opt) IS DISTINCT FROM 'string'
+              OR coalesce(opt#>>'{}', '') !~ ('[^' || spaces || ']')
+         ) THEN
+        RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: invalid options array' USING ERRCODE = '22023';
+      END IF;
+
+      -- A-D key
+      IF input->>'correct_answer' NOT IN ('A', 'B', 'C', 'D') OR input->>'correct_answer' IS NULL THEN
+        RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: invalid correct_answer' USING ERRCODE = '22023';
+      END IF;
+
+      IF input->'solution' IS NOT NULL AND jsonb_typeof(input->'solution') NOT IN ('null','string') THEN
+        RAISE EXCEPTION 'ERR_SOURCE_NOT_READY: malformed solution' USING ERRCODE='22023';
+      END IF;
+      solution := CASE WHEN coalesce(input->>'solution','') ~ ('[^' || spaces || ']')
+        THEN input->>'solution' ELSE 'Không có lời giải cho câu hỏi này.' END;
+      UPDATE public.version_questions SET is_current=false,updated_at=clock_timestamp() WHERE id=q.id;
+      INSERT INTO public.version_questions(version_id,source_question_id,question_no,content,options,correct_key,solution_md,
+        canonical_question_no,canonical_options,canonical_correct_key,canonical_solution_md,status,is_current,is_reverted,has_warning,validation_report)
+      VALUES(q.version_id,q.source_question_id,q.question_no,input->>'question_text',input->'options',input->>'correct_answer',solution,
+        (src->>'question_no')::int,input->'options',input->>'correct_answer',solution,'pending_review',true,true,true,
+        jsonb_build_object('reason','REVERT','validation_status','not_validated','source_revision_id',src->>'source_revision_id',
+          'source_fingerprint',src->>'source_fingerprint','confirmed_source_hash',job.confirmed_source_hash)) RETURNING * INTO root;
+      invalidated := public._review_invalidate(s.id);
+      changed := true;
+    END IF;
   ELSE
     changed := q.status<>'approved';
     UPDATE public.version_questions SET status='approved',updated_at=clock_timestamp() WHERE id=q.id AND changed;
@@ -500,7 +534,11 @@ BEGIN
   progress := public._review_recalculate(s.id);
   SELECT * INTO s FROM public.exam_sessions WHERE id=s.id;
   result := jsonb_build_object('session_id',s.id,'session_status',s.status,'replayed',false,'previous_question_id',q.id,
-    'question_id',root.id,'question_status',CASE WHEN p_revert THEN 'pending_review' ELSE 'approved' END,'invalidated_version_ids',invalidated,'progress',progress);
+    'question_id',root.id,'question_status',CASE WHEN p_revert AND NOT is_legacy THEN 'pending_review' ELSE 'approved' END,
+    'invalidated_version_ids',invalidated,'progress',progress);
+  IF p_revert THEN
+    result := result || jsonb_build_object('revert_contract', CASE WHEN is_legacy THEN 'legacy_root' ELSE 'w4_frozen' END);
+  END IF;
   INSERT INTO public.review_action_receipts(action_id,session_id,question_id,actor_id,action_type,result)
     VALUES(p_action_id,s.id,q.id,auth.uid(),kind,result);
   RETURN result;
