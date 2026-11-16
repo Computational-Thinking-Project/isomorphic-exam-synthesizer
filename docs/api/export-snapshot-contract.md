@@ -10,6 +10,10 @@ Consumer acceptance and GitHub approval remain separate. Outstanding inputs:
 ```python
 from app.services.exporter.snapshot_adapter import load_approved_export_snapshot
 snapshot = await load_approved_export_snapshot(db, session_id, user_id)
+# For Q01 fallback/clone slots with no solution:
+snapshot = await load_approved_export_snapshot(
+    db, session_id, user_id, provenance_db=provenance_db
+)
 ```
 
 Use the authenticated user's RLS client from `get_user_db`, with `user_id` from
@@ -17,6 +21,15 @@ verified authentication. Never use a service client to force 403 instead of an
 invisible resource's 404. No client question, solution, key or permutation is accepted.
 The coroutine uses synchronous Supabase reads; task08 must run the read/build
 operation in a worker thread when calling it from an async route.
+
+Q01 revision (16/11/2026): `db` remains the owner/RLS content reader. The optional
+`provenance_db` is a server-owned service client used **only** for read-only
+`generation_target_results` / `generation_job_snapshots` verification, scoped to
+the already-authorized session and empty-solution question IDs. It cannot supply
+content or substitute for ownership. Without this verifier, empty solutions fail
+closed; ordinary nonempty solutions never need ledger access. Availability errors
+still propagate to task08's sanitized error boundary. This narrow exception
+supersedes the previous unconditional ban on service-client reads.
 
 ## Output and revision
 
@@ -65,9 +78,23 @@ The builder requires:
   example 3, 8, 9), which need not be contiguous. No missing/extra source or slot.
 - Exactly one answer-key row per display slot; `correct_option = display_correct_key =
   version_questions.correct_key`; `display_no = question_no`; matching canonical number.
-- Non-blank stem/solution, four options distinct after normalization, key A–D.
-  Empty solutions fail closed under [Duy's issue46 decision](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/46#issuecomment-6745367064).
-  The unresolved upstream Q01 gate is separate from this export invariant.
+- Non-blank stem, four options distinct after normalization, key A–D.
+- Non-blank solution for AI/regenerated candidates. Under [Duy's revised Q01](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/74#issuecomment-6904736595),
+  normalize absent/blank display solution to `""` only if canonical solution is
+  also absent/blank, `regenerated_from_id` is null, and exactly one successful
+  generation receipt matches the question ID/session/source and permitted origin.
+  Fallback requires migration021 warning/report provenance. Original Clone requires
+  no warning, empty report, empty config modes/dimensions, a valid clone fingerprint
+  and the matching frozen empty-mode snapshot. Missing/mismatched/duplicate provenance
+  is `409 ERR_EXPORT_SNAPSHOT_INVALID`; a generic AI warning is insufficient.
+
+`DisplayQuestion` still rejects empty solutions on plain JSON construction. The
+builder grants an internal, nonserialized per-question validation capability after
+checking provenance. `revalidate_snapshot()` preserves that capability through the
+compiler/bundler/runtime's defensive revalidation. A JSON dump alone loses it and
+must not be treated as a trusted snapshot. No public field or hash payload changes.
+PDF/LaTeX/Markdown retain the question's solution heading and blank body; no
+placeholder, regeneration or reshuffle occurs during export.
 
 Canonical option/key permutation, solution label synchronization and source numbering
 are enforced by shuffle/approval, not recalculated here. PostgreSQL tests install

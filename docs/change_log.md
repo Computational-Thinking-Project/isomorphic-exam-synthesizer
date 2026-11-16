@@ -1,3 +1,9 @@
+## DEC-TV7-W4-007-Q01: Verified empty fallback/clone solutions — 16/11/2026
+
+- Hùng áp dụng Q01 revised của Duy tại PR74#issuecomment-6904736595, thay guard solution bắt buộc tuyệt đối. AI/regenerated giữ strict validation; fallback/Original Clone rỗng chỉ qua receipt/snapshot hợp lệ. Không tự thêm placeholder hoặc autoapprove.
+- Nội dung và ownership vẫn dùng user RLS. Service client tùy chọn chỉ đọc provenance của session/question đã authorize; missing/invalid evidence fail closed. Không thay API JSON, revision/hash payload hoặc migration. Capability nội bộ giữ ngoại lệ qua compiler/bundler revalidation; dump JSON không tự mang quyền đó.
+- Ảnh hưởng: snapshot reader/builder/models, pipeline revalidation, tests và export-snapshot contract; task08 nối client, task12 kiểm regression. Đã kiểm cục bộ được ghi tại plan07; không coi là producer/deployment/Golden PASS.
+
 ## DEC-TV7-W4-007: Approved export snapshot adapter
 
 - Ngày/người: 12/11/2026 — Hùng; áp dụng [quyết định của Duy trên PR58](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58#issuecomment-6801792075). Chưa là GitHub approval hay nghiệm thu tích hợp.

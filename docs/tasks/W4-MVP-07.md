@@ -1,5 +1,28 @@
 # W4-MVP-07 — Adapter DB tạo ApprovedExportSnapshot
 
+## Cập nhật Q01/F12 — 16/11/2026
+
+- Author mode; workflow v0.1 proposed + INPUT-20261109 (bộ docs `7b7387f`).
+  Bắt đầu từ #58 `d84263d`, đồng bộ `dev@a379ec1`; conflict changelog giữ cả hai
+  phần độc lập. Quyền hiện tại gồm sửa 07/08/12, kiểm và review độc lập; không
+  merge PR, đổi description hoặc apply DB chung.
+- [Q01 mới của Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/74#issuecomment-6904736595)
+  thay quyết định I07-05 cũ: AI/regenerated phải có lời giải; fallback/Original
+  Clone được rỗng chỉ khi xác minh provenance. Không thêm placeholder. F12 tại
+  #49 thuộc export; Preview đã được review tại `955748d`, chưa merge lúc cập nhật.
+- Reader giữ user RLS cho toàn bộ nội dung. Chỉ dùng service client được server
+  truyền vào để đọc ledger/snapshot của các câu rỗng trong session đã authorize;
+  thiếu verifier hoặc provenance sai thì fail closed. Không thêm migration/RPC.
+- Model giữ JSON/hash shape cũ. Capability nội bộ theo question ID chỉ được cấp
+  sau kiểm provenance và được giữ khi pipeline revalidate; JSON client không thể
+  tự bật ngoại lệ. Compiler/source renderer giữ mục lời giải rỗng đúng slot.
+- Unit/exporter gồm Typst thật: **225 passed, 1 skipped** (XeLaTeX); mypy121 và
+  Ruff pass. PostgreSQL và review độc lập sẽ ghi sau khi có kết quả; không suy
+  từ các kiểm cục bộ thành nghiệm thu upstream Q01 hoặc Golden E2E.
+
+Các checkpoint/giới hạn có ngày bên dưới là lịch sử; phần Q01 ở đây và contract
+chuẩn thay quy tắc solution bắt buộc tuyệt đối trước 16/11.
+
 - Nguồn: [W4_ASSIGNMENT](W4_ASSIGNMENT.md), [W4_TASK_DETAIL](W4_TASK_DETAIL.md), phần 07 của TASK-308.
 - Author: Hùng (`benalexx007`), [PR #58](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58), nhánh `feat/w4-mvp-07-export-adapter`.
 - Workflow v0.1 proposed, gồm INPUT-20261109 tại `dev@21887c1`. Base ban đầu `ed81acd`; đã merge `dev@21887c1` không conflict ngày 12/11/2026.
@@ -11,7 +34,7 @@
 Đọc session của user đã `approved`/`exported`, dựng model frozen
 `ApprovedExportSnapshot` từ DB cho 08. Không nhận câu/key/hoán vị từ client.
 Fail closed khi thiếu slot, trùng current, key sai mapping, receipt cũ, câu chưa
-approved, stem/solution trống hoặc options không phân biệt. Contract chuẩn:
+approved, stem trống, solution trống không có provenance hợp lệ hoặc options không phân biệt. Contract chuẩn:
 [export-snapshot-contract](../api/export-snapshot-contract.md).
 
 | Phần | Trách nhiệm | Kiểm |
@@ -38,7 +61,7 @@ Storage, ZIP/signed URL, writer approved→exported (08), API/docs preview (Tâm
 | I07-02 Duy → Hùng | Table reads với `get_user_db` có RLS; foreign có thể404 | **Decided, Delivered, Accepted, Integrated cục bộ**, cùng comment; PostgreSQL kiểm RLS/lock/concurrency | Không chờ read RPC/service client |
 | I07-03 Duy → Hùng | Giữ lỗi cũ +409 `ERR_EXPORT_SNAPSHOT_INVALID`; availability khác409 | **Decided, Delivered, Accepted, Integrated cục bộ**, cùng comment; timeout/connection/PostgREST tests | Không hỏi lại mã lỗi |
 | I07-04 Tâm (`AI-WFox`) → Hùng | Dùng fixture OFF/OFF PR49 tại SHA trên, preview trước duyệt bằng export sau duyệt từ cùng DB | **Decided, Delivered, Accepted, Integrated trong code07** theo [Tâm xác nhận](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58#issuecomment-6814323103): fixture đã ghim là bản bàn giao; §4.2 dùng SHA-256 gồm title, không đổi preview response. Contract đã đối chiếu tại PR49 `b9f1b7102c8b81d35513967d0dbd4b4c0751852d` | Kiểm lại parity khi PR49 được tích hợp; không còn chờ lựa chọn fixture/revision. Kết quả parity hiện có dùng repository tại SHA fixture đã ghim, không nhận đã chạy toàn PR49 mới nhất |
-| I07-05 Duy → Hùng; upstream: Duy, Quỳnh (`nhatquynh1107`), Tâm (`AI-WFox`) | Export thiếu solution phải fail-closed, không tự tạo solution/autoapprove | **Decided, Delivered, Accepted, Integrated cục bộ** theo [issue46](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/46#issuecomment-6745367064). Hùng bàn giao409 `ERR_EXPORT_SNAPSHOT_INVALID` khi solution trống | Gate confirm/config/generation của Q01 và chính sách ngoài Golden vẫn do các owner trên chốt; không là lựa chọn còn thiếu của adapter07 |
+| I07-05 / Q01 / F12 Duy → Hùng; upstream: Quỳnh, Tâm | AI/regenerated có solution; fallback/clone chỉ được rỗng với provenance hợp lệ, giữ mục lời giải rỗng | **Decided, Accepted** theo [Q01 revised](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/74#issuecomment-6904736595), supersede issue46. Đã code/test cục bộ theo checkpoint16/11 | Review bản sửa07/08 và producer→preview→export trên candidate tích hợp; không nhận Delivered qua GitHub trước push |
 
 Integrated ở bảng là áp dụng input trong code đã push tại `305f38d`, không phải task Done,
 GitHub Approve hay deploy. Đã hoàn thiện phần độc lập rồi đăng [follow-up trên #58](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58#issuecomment-6813431143):
