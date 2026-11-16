@@ -633,3 +633,31 @@ async def test_ai_result_seed_uses_frozen_source_ordinal_after_resume(
         assert params["p_source_question_id"] == str(second_source)
         assert params["p_is_success"] is is_success
         assert params["p_raw_result"] == raw.model_dump(mode="json")
+
+
+@pytest.mark.parametrize("solution", [None, "", " ", "\t\n", "\u00a0\u2003\u3000"])
+def test_source_reuse_notice(solution):
+    from app.services.generation.job_repository import _require_frozen_solution
+    assert _require_frozen_solution({"solution": solution}) == "Không có lời giải cho câu hỏi này."
+
+
+def test_source_reuse_preserves_real_solution_and_rejects_invalid_type():
+    from app.services.generation.job_contracts import IncompleteGenerationSource
+    from app.services.generation.job_repository import _require_frozen_solution
+    assert _require_frozen_solution({"solution": "  explanation\n"}) == "  explanation\n"
+    with pytest.raises(IncompleteGenerationSource):
+        _require_frozen_solution({"solution": 1})
+
+
+@pytest.mark.parametrize("canonical_key", list("ABCD"))
+@pytest.mark.parametrize("display_key", list("ABCD"))
+def test_source_notice_survives_shuffle_and_export_boundary(canonical_key, display_key):
+    from app.services.exporter.bundle_models import DisplayQuestion
+    from app.services.generation.job_repository import MISSING_SOURCE_SOLUTION
+    from app.services.shuffler.service import sync_solution_text
+    text = sync_solution_text(MISSING_SOURCE_SOLUTION, canonical_key, display_key)
+    assert text == MISSING_SOURCE_SOLUTION
+    question = DisplayQuestion(id=uuid4(), question_no=1, content="Question",
+        options=("one", "two", "three", "four"), correct_key=display_key,
+        solution_md=text, status="approved")
+    assert question.solution_md == MISSING_SOURCE_SOLUTION

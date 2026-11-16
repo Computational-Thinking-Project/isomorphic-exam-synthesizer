@@ -1,6 +1,27 @@
 # W4-MVP-08 — Private export: plan và bàn giao
 
-## Ready-for-review checkpoint — 16/11/2026
+## Dev integration checkpoint — 16/11/2026
+
+- Author, workflow v0.1 proposed + INPUT-20261109 (`7b7387f`). Đồng bộ
+  `dev@26af798` (PR49 Preview và PR81/migration024 đã merge) vào code08
+  `1d61406` + docs `0271384`. Chỉ conflict `docs/change_log.md`, giữ cả hai
+  mục quyết định; không sửa product code, contract API hoặc migration.
+- Ruff app/scripts PASS; mypy **128 files PASS**. API + exporter:
+  **772 passed, 1 skipped** (XeLaTeX), 6 cảnh báo deprecation hiện có.
+- PostgreSQL15 isolated + exporter: **327 passed, 1 skipped, 21 subtests**,
+  2 cảnh báo hiện có. Fixture áp toàn bộ migration đến024; ba Preview parity
+  cases trước đây skipped nay PASS. SQL/RLS/locks thật qua test transport;
+  private PG dùng PDF/Storage double, không phải deployed JWT/Storage proof.
+- Đạt đã [APPROVED `0271384`](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#pullrequestreview-5916250384).
+  Approval này không tự xác minh merge head mới; cần CI và reviewer kiểm delta.
+- PR82 `7965b29` sửa được Golden gốc trong phép kiểm overlay của TASK12
+  (hai `XPASS(strict)`), nhưng chưa merge. Review converter còn finding về
+  `alignedat`; giữ strict marker ở12 đến khi tích hợp bản compiler được chấp nhận.
+- Runtime vẫn disabled. I08-11S (actual ledger020, bucket/ACL, principals và
+  budgets) cùng Golden toàn luồng vẫn là gate riêng. Không apply DB/cloud,
+  không suy Task08 Integrated Done từ bộ kiểm local.
+
+## Ready-for-review checkpoint — lịch sử trước dev integration, 16/11/2026
 
 - Author/docs-only, workflow v0.1 proposed + INPUT-20261109 (`7b7387f`), code
   baseline `1d61406`, base `dev@a379ec1`. Không đổi product code, migration,
