@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { stage1Path, stage3Path } from '../../sessionPaths.js';
+import { exportPath, stage1Path, stage3Path, stage3PreviewPath } from '../../sessionPaths.js';
 import {
   AlertCircle,
   ArrowLeft,
+  ArrowRight,
   FileQuestion,
   Loader2,
+  Lock,
   RefreshCw,
 } from 'lucide-react';
 import Stage2ConfigCard from './Stage2ConfigCard.jsx';
@@ -416,9 +418,12 @@ export default function Stage2ConfigPage({
     onError: handleSSEError,
   });
 
+  const isPostStage2Locked = ['reviewed', 'approved', 'exported'].includes(session?.status);
+  const isFinalExportLocked = ['approved', 'exported'].includes(session?.status);
+
   // Xử lý nộp form cấu hình
   async function handleConfigSubmit(payload) {
-    if (isSubmittingConfig) return;
+    if (isSubmittingConfig || isPostStage2Locked) return;
 
     const isBlueprintReady = Boolean(
       session?.status !== 'draft' &&
@@ -504,7 +509,7 @@ export default function Stage2ConfigPage({
   }, [navigate, sessionId]);
 
   const handleRetryGeneration = useCallback(async () => {
-    if (isRetryingGeneration) return;
+    if (isRetryingGeneration || isPostStage2Locked) return;
 
     const thisRetryOp = ++retryOperationRef.current;
     const targetSessionId = sessionId;
@@ -551,7 +556,7 @@ export default function Stage2ConfigPage({
         setIsRetryingGeneration(false);
       }
     }
-  }, [isRetryingGeneration, retryGen, sessionId, sseState]);
+  }, [isPostStage2Locked, isRetryingGeneration, retryGen, sessionId, sseState]);
 
 
   // Trích xuất số lượng mã đề thật, không võ đoán mặc định 2 khi F5/reload
@@ -783,6 +788,47 @@ export default function Stage2ConfigPage({
     );
   }
 
+  // Khóa deep-link Stage 2 khi phiên đã sang Rà soát cuối hoặc đã phê duyệt/xuất bản
+  if (isPostStage2Locked && !isGenerating && !isNewRunActive) {
+    return (
+      <div className="mx-auto max-w-2xl p-6">
+        <div
+          role="status"
+          className="rounded-2xl border border-emerald-500/40 bg-emerald-950/30 p-8 text-center shadow-xl"
+        >
+          <Lock className="mx-auto h-12 w-12 text-emerald-400" />
+          <h2 className="mt-4 text-xl font-bold text-white">
+            {isFinalExportLocked
+              ? 'Đề thi đã được phê duyệt và khóa cấu hình (HTTP 423)'
+              : 'Phiên đã hoàn tất duyệt từng câu'}
+          </h2>
+          <p className="mt-2 text-sm text-slate-300">
+            {isFinalExportLocked
+              ? 'Phiên làm việc đã chốt ở bước phê duyệt cuối cùng. Không thể thay đổi cấu hình hay khởi chạy lại quá trình sinh đề.'
+              : 'Toàn bộ biến thể của phiên này đã được duyệt. Hãy chuyển sang màn hình Rà soát cuối để xáo trộn và phê duyệt đề.'}
+          </p>
+          <div className="mt-6 flex justify-center gap-3">
+            <button
+              type="button"
+              data-testid="stage2-btn-goto-locked-target"
+              onClick={() => navigate(isFinalExportLocked ? exportPath(sessionId) : stage3PreviewPath(sessionId))}
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-emerald-600/30 hover:bg-emerald-500"
+            >
+              <span>{isFinalExportLocked ? 'Tới màn hình Xuất bản' : 'Tới màn hình Rà soát cuối'}</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/dashboard')}
+              className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+            >
+              Về Dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">

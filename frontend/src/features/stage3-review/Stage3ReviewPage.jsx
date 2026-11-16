@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { exportPath, stage2Path, stage3PreviewPath } from '../../sessionPaths.js';
 import {
   AlertCircle,
   AlertTriangle,
@@ -13,11 +14,13 @@ import {
   FileCheck,
   Info,
   Loader2,
+  Lock,
   RefreshCw,
   Sparkles,
   X,
 } from 'lucide-react';
 import MathRenderer from '../../components/MathRenderer.jsx';
+import { getSessionDetail } from '../../services/sessions.js';
 import { retryGeneration } from '../../services/stage2Service.js';
 import {
   acceptQuestion,
@@ -167,6 +170,7 @@ function generateClientUUID() {
  */
 export default function Stage3ReviewPage({
   loadSession = fetchReviewSnapshot,
+  loadSessionDetail = getSessionDetail,
   retryGen = retryGeneration,
   acceptQuestionFn = acceptQuestion,
   regenerateQuestionFn = rejectAndRegenerateQuestion,
@@ -176,6 +180,7 @@ export default function Stage3ReviewPage({
   const navigate = useNavigate();
 
   const [session, setSession] = useState(null);
+  const [lockedDetail, setLockedDetail] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -212,6 +217,7 @@ export default function Stage3ReviewPage({
 
     setIsLoading(true);
     setError(null);
+    setLockedDetail(null);
 
     try {
       const rawData = await loadSession(targetSessionId);
@@ -224,6 +230,7 @@ export default function Stage3ReviewPage({
       }
       const data = adaptReviewSnapshot(rawData);
       setSession(data);
+      setLockedDetail(null);
 
       const initialApproved = extractApprovedIds(data);
       setApprovedVariantIds(initialApproved);
@@ -236,10 +243,52 @@ export default function Stage3ReviewPage({
       ) {
         return;
       }
+
+      const httpStatus = err?.response?.status ?? err?.status;
+      const errCode = err?.response?.data?.error_code || err?.response?.data?.code;
+      const isLocked423 = httpStatus === 423 || errCode === 'ERR_SESSION_LOCKED';
+
+      if (isLocked423) {
+        try {
+          const detail = await loadSessionDetail(targetSessionId);
+          if (
+            !isMountedRef.current ||
+            loadOperationRef.current !== currentOp ||
+            activeSessionIdRef.current !== targetSessionId
+          ) {
+            return;
+          }
+          if (['approved', 'exported'].includes(detail?.status)) {
+            setLockedDetail(detail);
+            setIsLoading(false);
+            return;
+          }
+          setError('Trạng thái phiên không khớp điều kiện khóa duyệt. Vui lòng thử lại hoặc về Dashboard.');
+          setIsLoading(false);
+          return;
+        } catch (detailErr) {
+          if (
+            !isMountedRef.current ||
+            loadOperationRef.current !== currentOp ||
+            activeSessionIdRef.current !== targetSessionId
+          ) {
+            return;
+          }
+          setError(
+            extractErrorString(
+              detailErr,
+              extractErrorString(err, 'Không thể tải chi tiết phiên làm việc.'),
+            ),
+          );
+          setIsLoading(false);
+          return;
+        }
+      }
+
       setError(extractErrorString(err, 'Không thể tải chi tiết phiên làm việc.'));
       setIsLoading(false);
     }
-  }, [sessionId, loadSession]);
+  }, [sessionId, loadSession, loadSessionDetail]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -255,6 +304,7 @@ export default function Stage3ReviewPage({
 
     // Reset sạch sẽ dữ liệu của phiên trước để tránh rò rỉ hoặc hiển thị nhầm khi đang tải phiên mới
     setSession(null);
+    setLockedDetail(null);
     setError(null);
     setActiveVersionTab(1);
     setRegeneratingQuestions({});
@@ -355,9 +405,11 @@ export default function Stage3ReviewPage({
     setSelectedSolution(null);
   }, [isRegeneratingSingle, isApprovingSingle]);
 
+  const isContentLocked = ['approved', 'exported'].includes(session?.status);
+
   // Xử lý Tạo lại câu hỏi trong SolutionDialog (Reject & Targeted Regeneration)
   const handleRegenerateSingle = useCallback(async () => {
-    if (!selectedSolution?.variant || isRegeneratingSingle) return;
+    if (!selectedSolution?.variant || isRegeneratingSingle || isContentLocked) return;
     const { variant, qNo, versionIndex } = selectedSolution;
     const targetQId = variant.candidate_id || variant.id || variant.question_id || `var-${versionIndex}-${qNo}`;
 
@@ -526,11 +578,11 @@ export default function Stage3ReviewPage({
         setIsRegeneratingSingle(false);
       }
     }
-  }, [selectedSolution, isRegeneratingSingle, regenerateQuestionFn, sessionId, updateVariantInSession, loadSession]);
+  }, [selectedSolution, isRegeneratingSingle, isContentLocked, regenerateQuestionFn, sessionId, updateVariantInSession, loadSession]);
 
   // Xử lý Duyệt biến thể trong SolutionDialog
   const handleApproveSingle = useCallback(async () => {
-    if (!selectedSolution?.variant || isApprovingSingle) return;
+    if (!selectedSolution?.variant || isApprovingSingle || isContentLocked) return;
     const { variant, qNo, versionIndex } = selectedSolution;
     const targetQId = variant.candidate_id || variant.id || variant.question_id || `var-${versionIndex}-${qNo}`;
 
@@ -647,10 +699,11 @@ export default function Stage3ReviewPage({
         setIsApprovingSingle(false);
       }
     }
-  }, [selectedSolution, isApprovingSingle, acceptQuestionFn, sessionId, updateVariantInSession, loadSession]);
+  }, [selectedSolution, isApprovingSingle, isContentLocked, acceptQuestionFn, sessionId, updateVariantInSession, loadSession]);
 
   // Xử lý sinh bù câu thiếu (retry partial generation)
   const handleRetryMissingQuestion = async (versionIndex, questionNo) => {
+    if (isContentLocked) return;
     const regKey = `${versionIndex}-${questionNo}`;
     const currentOp = ++retryOperationRef.current;
     const targetSessionId = sessionId;
@@ -696,6 +749,7 @@ export default function Stage3ReviewPage({
   };
 
   const handleRetryAllMissing = async () => {
+    if (isContentLocked) return;
     const currentOp = ++retryOperationRef.current;
     const targetSessionId = sessionId;
 
@@ -723,7 +777,7 @@ export default function Stage3ReviewPage({
           retryOperationRef.current === currentOp &&
           activeSessionIdRef.current === targetSessionId
         ) {
-          navigate(`/session/${targetSessionId}/stage2`);
+          navigate(stage2Path(targetSessionId));
         }
       }, 1200);
     } catch (err) {
@@ -802,6 +856,56 @@ export default function Stage3ReviewPage({
     );
   }
 
+  if (lockedDetail) {
+    return (
+      <div className="mx-auto max-w-2xl p-6">
+        <div
+          role="status"
+          data-testid="stage3-banner-locked"
+          className="rounded-2xl border border-emerald-500/40 bg-emerald-950/30 p-8 text-center shadow-xl"
+        >
+          <Lock className="mx-auto h-12 w-12 text-emerald-400" />
+          <h2 className="mt-4 text-xl font-bold text-white">
+            Đề thi đã được phê duyệt và khóa nội dung vĩnh viễn (HTTP 423)
+          </h2>
+          {lockedDetail.title && (
+            <p className="mt-2 text-sm font-medium text-emerald-200">{lockedDetail.title}</p>
+          )}
+          <p className="mt-2 text-sm text-slate-300">
+            Phiên làm việc đang ở trạng thái khóa duyệt ({lockedDetail.status}). Mọi thao tác duyệt hoặc tạo lại biến thể đã được khóa; bạn có thể chuyển sang màn hình Xuất bản để tải gói đề thi.
+          </p>
+          <div className="mt-6 flex flex-wrap justify-center gap-3">
+            <button
+              type="button"
+              data-testid="stage3-btn-goto-export"
+              onClick={() => navigate(exportPath(sessionId))}
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-emerald-600/30 hover:bg-emerald-500"
+            >
+              <span>Tới màn hình Xuất bản</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              data-testid="stage3-btn-goto-preview"
+              onClick={() => navigate(stage3PreviewPath(sessionId))}
+              className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 px-4 py-2 text-xs font-medium text-emerald-200 hover:bg-emerald-900/40"
+            >
+              Xem lại bản rà soát (chỉ đọc)
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/dashboard')}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Về Dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (error) {
     return (
       <div className="mx-auto max-w-xl p-6">
@@ -842,7 +946,7 @@ export default function Stage3ReviewPage({
         <div>
           <button
             type="button"
-            onClick={() => navigate(`/session/${sessionId}/stage2`)}
+            onClick={() => navigate(stage2Path(sessionId))}
             className="mb-2 inline-flex items-center gap-1.5 text-xs font-semibold text-sky-400 hover:text-sky-300"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
@@ -860,7 +964,17 @@ export default function Stage3ReviewPage({
 
         {/* Nút xuất bản / phê duyệt header */}
         <div className="flex items-center gap-2">
-          {isPartial ? (
+          {isContentLocked ? (
+            <button
+              type="button"
+              data-testid="stage3-btn-goto-export"
+              onClick={() => navigate(exportPath(sessionId))}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-emerald-600/30 hover:bg-emerald-500"
+            >
+              <Lock className="h-3.5 w-3.5" />
+              Tới màn hình Xuất bản
+            </button>
+          ) : isPartial ? (
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -910,6 +1024,34 @@ export default function Stage3ReviewPage({
           }`}
         >
           {actionMessage.text}
+        </div>
+      )}
+
+      {/* Cảnh báo phiên đã khóa nội dung (approved / exported) */}
+      {isContentLocked && (
+        <div
+          role="status"
+          data-testid="stage3-banner-locked"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-500/40 bg-emerald-950/30 p-4 text-emerald-200"
+        >
+          <div className="flex items-center gap-3">
+            <Lock className="h-5 w-5 shrink-0 text-emerald-400" />
+            <div>
+              <h3 className="text-sm font-semibold text-white">
+                Đề thi đã được phê duyệt và khóa nội dung vĩnh viễn (HTTP 423)
+              </h3>
+              <p className="text-xs text-emerald-200/80">
+                Mọi thao tác duyệt hoặc tạo lại biến thể đã bị khóa ở chế độ chỉ xem.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => navigate(exportPath(sessionId))}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
+          >
+            Tới màn hình Xuất bản
+          </button>
         </div>
       )}
 
@@ -1008,7 +1150,7 @@ export default function Stage3ReviewPage({
                   <button
                     type="button"
                     onClick={() => handleRetryMissingQuestion(activeVersionTab, qNo)}
-                    disabled={isRegenerating}
+                    disabled={isRegenerating || isContentLocked}
                     className="inline-flex items-center gap-1.5 rounded-xl border border-rose-500/40 bg-rose-900/40 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-rose-900/60 disabled:opacity-50"
                   >
                     {isRegenerating ? (
@@ -1211,7 +1353,7 @@ export default function Stage3ReviewPage({
               type="button"
               data-review-finalize={true}
               disabled={isFinalizeDisabled}
-              onClick={() => navigate(`/session/${sessionId}/stage3/preview`)}
+              onClick={() => navigate(stage3PreviewPath(sessionId))}
               className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-6 py-2.5 text-xs font-semibold text-white shadow-lg shadow-sky-600/30 hover:bg-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500 disabled:cursor-not-allowed disabled:opacity-50 transition-all"
             >
               Rà bộ đề
@@ -1366,7 +1508,7 @@ export default function Stage3ReviewPage({
               <button
                 type="button"
                 data-review-regenerate={true}
-                disabled={isRegeneratingSingle || isApprovingSingle}
+                disabled={isRegeneratingSingle || isApprovingSingle || isContentLocked}
                 onClick={handleRegenerateSingle}
                 className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2.5 text-xs font-semibold text-slate-200 hover:bg-slate-700 hover:text-white disabled:opacity-50"
               >
@@ -1387,7 +1529,7 @@ export default function Stage3ReviewPage({
               <button
                 type="button"
                 data-review-approve={true}
-                disabled={isRegeneratingSingle || isApprovingSingle || isSelectedVariantApproved}
+                disabled={isRegeneratingSingle || isApprovingSingle || isSelectedVariantApproved || isContentLocked}
                 onClick={handleApproveSingle}
                 className={`inline-flex items-center gap-1.5 rounded-xl px-5 py-2.5 text-xs font-semibold shadow-lg transition-all ${
                   isSelectedVariantApproved

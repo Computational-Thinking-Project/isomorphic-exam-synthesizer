@@ -371,25 +371,12 @@ test('Stage3PreviewPage: Bấm "Phê duyệt & Khóa đề" mở modal xác nh�
   }
 });
 
-test('Stage3PreviewPage: Xác nhận phê duyệt trong modal gọi POST /finalize/approve và chuyển sang chế độ View-Only đã khóa (F01 - Phương án A)', async () => {
+test('Stage3PreviewPage: Xác nhận phê duyệt trong modal gọi POST /finalize/approve và điều hướng sang /session/:id/export', async () => {
   const originalGet = api.get;
   const originalPost = api.post;
 
   let capturedPost = null;
-  let getCallCount = 0;
-  api.get = async () => {
-    getCallCount += 1;
-    if (getCallCount > 1) {
-      return {
-        data: {
-          ...GOLDEN_PREVIEW_FIXTURE,
-          session_id: 'sess-approved',
-          status: 'approved',
-        },
-      };
-    }
-    return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'sess-approved' } };
-  };
+  api.get = async () => ({ data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'sess-approved' } });
 
   api.post = async (url, payload) => {
     capturedPost = { url, payload };
@@ -420,10 +407,7 @@ test('Stage3PreviewPage: Xác nhận phê duyệt trong modal gọi POST /finali
 
     assert.ok(capturedPost);
     assert.equal(capturedPost.url, '/sessions/sess-approved/finalize/approve');
-    // F01 (Phương án A): Không navigate tới export khi route chưa mount (tránh redirect về /login),
-    // mà chuyển sang trạng thái đã khóa ngay trên màn hình hiện tại
-    assert.equal(harness.getLocation(), '/session/sess-approved/stage3/preview');
-    assert.ok(harness.container.querySelector('[data-testid="badge-status-locked"]'));
+    assert.equal(harness.getLocation(), '/session/sess-approved/export');
   } finally {
     api.get = originalGet;
     api.post = originalPost;
@@ -431,7 +415,7 @@ test('Stage3PreviewPage: Xác nhận phê duyệt trong modal gọi POST /finali
   }
 });
 
-test('Stage3PreviewPage: Khi tải phiên đã ở trạng thái approved hiển thị badge khóa, banner và nút tới Export bị vô hiệu (Phương án A)', async () => {
+test('Stage3PreviewPage: Khi tải phiên đã ở trạng thái approved hiển thị badge khóa, banner và mở khóa các nút tới Export', async () => {
   const originalGet = api.get;
   const lockedFixture = {
     ...GOLDEN_PREVIEW_FIXTURE,
@@ -456,13 +440,28 @@ test('Stage3PreviewPage: Khi tải phiên đã ở trạng thái approved hiển
     // Không hiển thị nút Phê duyệt
     assert.equal(harness.container.querySelector('[data-testid="btn-open-approve"]'), null);
 
-    // Nút chuyển sang màn hình Export bị disabled để tránh redirect về /login khi W4-MVP-10 chưa mount
+    // Hai nút chuyển sang màn hình Export đều được kích hoạt và điều hướng tới EXPORT_ROUTE
+    const bannerGotoExportBtn = harness.container.querySelector('[data-testid="banner-btn-goto-export"]');
+    assert.ok(bannerGotoExportBtn);
+    assert.ok(!bannerGotoExportBtn.disabled && bannerGotoExportBtn.getAttribute('disabled') === null);
+
     const gotoExportBtn = harness.container.querySelector('[data-testid="btn-goto-export"]');
     assert.ok(gotoExportBtn);
-    assert.ok(
-      gotoExportBtn.disabled === true || gotoExportBtn.getAttribute('disabled') !== null,
-      'Nút goto-export phải có thuộc tính disabled'
-    );
+    assert.ok(!gotoExportBtn.disabled && gotoExportBtn.getAttribute('disabled') === null);
+
+    await act(async () => {
+      gotoExportBtn.click();
+    });
+
+    assert.equal(harness.getLocation(), '/session/sess-already-locked/export');
+
+    await harness.navigate('/session/sess-already-locked/stage3/preview');
+    const bannerBtnAfterReturn = harness.container.querySelector('[data-testid="banner-btn-goto-export"]');
+    assert.ok(bannerBtnAfterReturn);
+    await act(async () => {
+      bannerBtnAfterReturn.click();
+    });
+    assert.equal(harness.getLocation(), '/session/sess-already-locked/export');
   } finally {
     api.get = originalGet;
     await harness.unmount();

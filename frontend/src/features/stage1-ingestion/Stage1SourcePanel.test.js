@@ -845,3 +845,29 @@ test('Phillip F04 & INT-03: Không render trùng nút Kiểm tra trạng thái v
 
   await app.unmount();
 });
+
+test('W4-MVP-10: Deep-link Stage 1 khi phiên ở trạng thái reviewed/approved/exported khóa sửa và hiện link tới bước hiện tại', async () => {
+  for (const [status, expectedHref, expectedText] of [
+    ['reviewed', `/session/${confirmSessionId}/stage3/preview`, /Đi tới bước hiện tại/],
+    ['approved', `/session/${confirmSessionId}/export`, /Mở màn hình Xuất bản/],
+    ['exported', `/session/${confirmSessionId}/export`, /Mở màn hình Xuất bản/],
+  ]) {
+    api.defaults.adapter = async (config) => {
+      assert.equal(config.method, 'get');
+      return response(config, confirmDetail(status));
+    };
+    const app = mount(confirmSessionId);
+    await app.render();
+    assert.match(app.container.textContent, /Phiên không còn ở trạng thái nháp/);
+    if (status === 'approved' || status === 'exported') {
+      assert.match(app.container.textContent, /khóa chỉnh sửa đề nguồn \(HTTP 423\)/);
+    }
+    assert.equal(app.container.querySelector('textarea'), null);
+    assert.equal(button(app.container, confirmLabel), undefined);
+    const links = Array.from(app.container.querySelectorAll('a'));
+    const nextLink = links.find((a) => expectedText.test(a.textContent));
+    assert.ok(nextLink, `Phải có link điều hướng cho trạng thái ${status}`);
+    assert.equal(nextLink.getAttribute('href'), expectedHref);
+    await app.unmount();
+  }
+});
