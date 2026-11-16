@@ -1539,3 +1539,30 @@ def test_preview_router_lazy_provenance_db_resolution(
     finally:
         app.dependency_overrides.clear()
 
+
+@pytest.mark.asyncio
+async def test_preview_rejects_empty_solution_when_provenance_verifier_unavailable():
+    """F13: Direct repository/service calls without a provenance verifier MUST fail closed (409)."""
+    for builder in (_build_q01_fallback_preview_state, _build_q01_original_clone_preview_state):
+        db_state = builder()
+        repo = FinalizeRepository(MockSupabaseClient(db_state))
+        with pytest.raises(ReviewDomainException) as repo_exc:
+            await repo.fetch_preview_snapshot(MOCK_SESSION_ID)
+        assert repo_exc.value.status_code == 409
+        assert repo_exc.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+
+        service = FinalizeService(MockSupabaseClient(db_state))
+        with pytest.raises(ReviewDomainException) as svc_exc:
+            await service.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+        assert svc_exc.value.status_code == 409
+        assert svc_exc.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+
+        service_null_provider = FinalizeService(
+            MockSupabaseClient(db_state),
+            provenance_db_provider=lambda: None,  # type: ignore[arg-type, return-value]
+        )
+        with pytest.raises(ReviewDomainException) as null_exc:
+            await service_null_provider.get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+        assert null_exc.value.status_code == 409
+        assert null_exc.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+

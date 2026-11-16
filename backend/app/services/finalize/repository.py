@@ -1050,7 +1050,7 @@ class FinalizeRepository:
                     expected_kind = _classify_empty_solution_kind(q, config_row)
                     if expected_kind is None:
                         raise inconsistent(f"Lời giải câu {q_no} trong phiên bản {v_code} bị rỗng hoặc thiếu")
-                    if self._resolve_provenance_db() is not None and not _is_valid_ledger_entry(
+                    if self._resolve_provenance_db() is None or not _is_valid_ledger_entry(
                         expected_kind, q, session_id, src_id, ledger_by_qid, snapshots_by_id
                     ):
                         raise inconsistent(

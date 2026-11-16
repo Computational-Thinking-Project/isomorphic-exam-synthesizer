@@ -124,7 +124,7 @@ classDiagram
 - `content` (`str`): Question stem text (LaTeX/Markdown).
 - `options` (`List[str]`, length 4): Exactly 4 choices rendered in shuffled display order corresponding to labels [A, B, C, D].
 - `correct_key` (`Literal["A", "B", "C", "D"]`): Display correct key corresponding to the permuted `options` array.
-- `solution_md` (`str`): Detailed solution text with answer labels synchronized to match `correct_key`. Non-empty (`1..16000` chars) is strictly enforced for AI-generated and Stage 3 regenerated candidates; empty string (`""`) is permitted **only** when both `solution_md` and `canonical_solution_md` are empty **and** persisted provenance verifies `CONFIRMED_SOURCE_FALLBACK` (migration `021` report metadata and matching `generation_target_results.result_kind = 'CONFIRMED_SOURCE_FALLBACK'` when ledger client is configured) or `ORIGINAL_CLONE` (empty `active_variation_modes`/`canonical_dimensions` with non-warning empty report and matching `generation_target_results.result_kind = 'ORIGINAL_CLONE'`), including Stage 3 reverts back to such a root row (Revised Decision `Q01`).
+- `solution_md` (`str`): Detailed solution text with answer labels synchronized to match `correct_key`. Non-empty (`1..16000` chars) is strictly enforced for AI-generated and Stage 3 regenerated candidates; empty string (`""`) is permitted **only** when both `solution_md` and `canonical_solution_md` are empty **and** persisted provenance plus `generation_target_results` ledger verification confirms `CONFIRMED_SOURCE_FALLBACK` (migration `021` report metadata and matching `result_kind = 'CONFIRMED_SOURCE_FALLBACK'`) or `ORIGINAL_CLONE` (empty `active_variation_modes`/`canonical_dimensions` with non-warning empty report and matching `result_kind = 'ORIGINAL_CLONE'`), including Stage 3 reverts back to such a root row (Revised Decision `Q01`). Missing/unavailable provenance verification fails closed with `409 ERR_INCONSISTENT_ANSWER_KEYS`.
 - `status` (`str`): Review status (typically `"approved"`).
 
 #### `MatrixItem`
@@ -219,14 +219,14 @@ snapshot = ApprovedExportSnapshot(
 
 1. **Authorization & Row Level Security:** The endpoint enforces user ownership via `assert_ownership("exam_sessions", session_id, current_user.id)`. Any attempt by another user to view the preview receives HTTP 403 `ERR_UNAUTHORIZED` (or HTTP 404 `ERR_SESSION_NOT_FOUND` if filtered at the RLS database query level). Both paths fail closed securely.
 2. **Determinism:** Repeated `GET` calls return identical data with zero side effects, zero background mutations, and zero state changes.
-3. **Automated Verification:** 50 automated unit and integration tests are verified in `backend/tests/api/test_finalize_preview.py` covering:
+3. **Automated Verification:** 51 automated unit and integration tests are verified in `backend/tests/api/test_finalize_preview.py` covering:
    - 401 unauthenticated
    - 400 invalid UUID representation
    - 403 cross-user access
    - 404 session not found
    - 409 generating state
    - 409 shuffle required
-   - 409 inconsistent answer keys (missing AI/regenerated solutions, AI warning without fallback provenance, missing/mismatched `generation_target_results` ledger provenance, non-empty canonical solution with empty display solution, empty content, normalized duplicate options, unapproved questions, corrupted permutations, mismatched canonical mappings, duplicate keys, > 20 questions)
+   - 409 inconsistent answer keys (missing AI/regenerated solutions, AI warning without fallback provenance, missing/unavailable provenance ledger verifier, missing/mismatched `generation_target_results` ledger provenance, non-empty canonical solution with empty display solution, empty content, normalized duplicate options, unapproved questions, corrupted permutations, mismatched canonical mappings, duplicate keys, > 20 questions)
    - 200 OK Q01 verified `CONFIRMED_SOURCE_FALLBACK`, `ORIGINAL_CLONE`, reverted fallback root, ON/ON shuffler-to-preview empty-solution cases, and lazy provenance DB resolution (invoked only when empty-solution slots exist, failing closed when unconfigured)
    - 200 OK Golden 3-question x 2-version OFF/OFF fixture
    - 200 OK ON/ON shuffled case
