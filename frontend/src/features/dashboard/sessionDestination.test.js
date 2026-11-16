@@ -50,7 +50,8 @@ test('resolver nối draft sang stage1, blueprinted ready hoặc configured/gene
   for (const status of ['partial_generated', 'generated']) {
     assert.deepEqual(sessionDestination({ id: 'a/b', status }), { path: '/session/a%2Fb/stage3', notice: '' });
   }
-  for (const status of ['reviewed', 'approved', 'exported', 'failed']) {
+  assert.deepEqual(sessionDestination({ id: 'saved', status: 'reviewed' }), { path: '/session/saved/stage3/preview', notice: '' });
+  for (const status of ['approved', 'exported', 'failed']) {
     const result = sessionDestination({ id: 'saved', status });
     assert.equal(result.path, null);
     assert.match(result.notice, /chưa được kết nối/);
