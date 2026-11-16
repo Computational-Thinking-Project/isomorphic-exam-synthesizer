@@ -269,11 +269,11 @@ async def generation_state(db):
     """, db.sid)
 
 
-async def publish_generation_fixture(db, *, clone, missing_solution=False):
+async def publish_generation_fixture(db, *, clone, missing_solution=False, missing_index=1):
     await migrate(db)
     await db.admin.execute(FALLBACK_SQL.read_text(encoding="utf-8-sig"))
     for index, row in enumerate(db.rows):
-        solution = "\t\u00a0" if missing_solution and index == 1 else "Count valid placements and multiply the probability by 3190."
+        solution = "\t\u00a0" if missing_solution and index == missing_index else "Count valid placements and multiply the probability by 3190."
         row["solution_md"] = solution
         source = SourceQuestion(
             id=row["id"], question_text=row["raw_content"], options=row["options"],
@@ -288,7 +288,7 @@ async def publish_generation_fixture(db, *, clone, missing_solution=False):
 
 async def run_generation_case(
     db, monkeypatch, *, clone, corrupt_claim=False, partial_first=False,
-    fallback_first=False, lost_response=False, missing_solution=False, retry_missing=False,
+    fallback_first=False, lost_response=False, missing_solution=False, retry_missing=False, optional_solution_policy=False,
 ):
     for name, types in (
         ("get_session_source_preview", ["uuid"]),
@@ -296,11 +296,14 @@ async def run_generation_case(
         ("finish_generation_job_with_error", ["uuid", "text", "uuid", "text"]),
     ):
         monkeypatch.setitem(TYPES, name, types)
-    snapshot = await publish_generation_fixture(db, clone=clone, missing_solution=missing_solution)
-    if missing_solution:
+    snapshot = await publish_generation_fixture(db, clone=clone, missing_solution=missing_solution,
+        missing_index=0 if optional_solution_policy and fallback_first else 1)
+    if missing_solution and not (optional_solution_policy and fallback_first):
         assert snapshot["confirmed_sources"][1]["confirmed_input"]["solution"].strip() == ""
     if not retry_missing:
         await db.admin.execute(SOLUTION_GUARD_SQL.read_text(encoding="utf-8-sig"))
+    if optional_solution_policy:
+        await db.admin.execute(SOLUTION_GUARD_SQL.with_name("024_source_reuse_optional_solutions.sql").read_text(encoding="utf-8"))
     loop = asyncio.get_running_loop()
     owner = SqlClient(db.owner, loop, db.sid)
     worker = SqlClient(db.worker, loop, db.sid)
@@ -400,11 +403,10 @@ async def run_generation_case(
             assert detail.json()["blueprint_summary"]["is_ready"] is True
             saved = detail.json()["generation_config"]
             assert all(saved[key] == value for key, value in config.items())
-            if missing_solution:
+            if missing_solution and not optional_solution_policy:
                 if retry_missing:
                     # Upgrade a session already frozen before 022. The old worker
                     # finishes fatal. Seed its valid first result before the retry.
-                    assert client.post(base + "/generate").status_code == 202
                     owner.execute_sql(prepare_q01_retry())
                 before = owner.execute_sql(generation_state(db)).data
                 assert (before["snapshot"] is not None) == retry_missing
@@ -451,17 +453,33 @@ async def run_generation_case(
                 assert stream.text.count("GENERATION_RETRIES_EXHAUSTED") == 1
 
     async def prepare_q01_retry():
+        # Historical snapshot fixture: seed the old worker outcome directly.
+        # The current worker intentionally no longer rejects missing explanations.
+        job = await rpc(db.owner, "claim_generation_job", db.sid, False)
         if not clone:
-            # AI validates all missing sources ahead of dispatch. Seed a valid
-            # committed slot via the real writer while a 021 retry owns the row.
-            job = await rpc(db.owner, "claim_generation_job", db.sid, True)
             await persist(db, job, result_for(db, job))
-            await rpc(db.worker, "finish_generation_job_with_error", db.sid, "failed", job["job_id"], SOURCE_SOLUTION_REQUIRED)
+        else:
+            context = job["context"]
+            source = context["confirmed_sources"][0]
+            confirmed = source["confirmed_input"]
+            record = {
+                "result_kind": "ORIGINAL_CLONE", "snapshot_id": job["snapshot_id"],
+                "version_index": 1, "source_question_id": source["source_question_id"],
+                "question_no": source["question_no"], "source_revision_id": source["source_revision_id"],
+                "source_fingerprint": source["source_fingerprint"],
+                "blueprint_revision_id": source["blueprint_revision_id"],
+                "confirmed_source_hash": context["confirmed_source_hash"],
+                "seed": context["base_seed"] + 1000,
+                "content": confirmed["question_text"], "options": confirmed["options"],
+                "correct_key": confirmed["correct_answer"], "solution_md": confirmed["solution"],
+            }
+            await rpc(db.worker, "persist_generation_clone", db.sid, job["job_id"], record)
+        await rpc(db.worker, "finish_generation_job_with_error", db.sid, "failed", job["job_id"], SOURCE_SOLUTION_REQUIRED)
         await db.admin.execute(SOLUTION_GUARD_SQL.read_text(encoding="utf-8-sig"))
 
     try:
         await asyncio.to_thread(exercise_http)
-        if missing_solution:
+        if missing_solution and not optional_solution_policy:
             assert not provider_calls
             snapshots = await db.admin.fetchval("SELECT count(*) FROM generation_job_snapshots")
             assert snapshots == int(retry_missing)
@@ -491,7 +509,10 @@ async def run_generation_case(
             assert [row["result_kind"] for row in persisted["completed"]] == expected_kinds
             if fallback_first:
                 assert len(persisted["fallback_receipts"]) == 1
-                assert persisted["fallback_receipts"][0]["raw_result"]["solution_md"] == db.rows[0]["solution_md"]
+                expected_solution = db.rows[0]["solution_md"]
+                if optional_solution_policy and not expected_solution.strip():
+                    expected_solution = "Không có lời giải cho câu hỏi này."
+                assert persisted["fallback_receipts"][0]["raw_result"]["solution_md"] == expected_solution
                 writes = [params for name, params in worker.calls if name == "persist_generation_result"]
                 assert len([p for p in writes if p["p_raw_result"].get("result_kind") == expected_kinds[0]]) == 1
             assert await db.admin.fetchval("SELECT count(*) FROM version_questions WHERE is_current") == 2
@@ -504,3 +525,18 @@ async def run_generation_case(
             ) == len(provider_calls)
     finally:
         await foreign_conn.close()
+
+
+@pytest.mark.parametrize("clone", [False, True])
+async def test_issue80_http_generation_accepts_missing_source_solution(db, monkeypatch, clone):
+    await run_generation_case(db, monkeypatch, clone=clone, missing_solution=True,
+                              optional_solution_policy=True)
+    if clone:
+        assert await db.admin.fetchval(
+            "SELECT count(*) FROM version_questions WHERE solution_md=$1 AND canonical_solution_md=$1",
+            "Không có lời giải cho câu hỏi này.") == 1
+
+
+async def test_issue80_http_four_attempt_fallback_missing_solution(db, monkeypatch):
+    await run_generation_case(db, monkeypatch, clone=False, missing_solution=True,
+                              optional_solution_policy=True, fallback_first=True, lost_response=True, partial_first=True)

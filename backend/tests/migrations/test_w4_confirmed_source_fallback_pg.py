@@ -93,7 +93,7 @@ class W4ConfirmedSourceFallbackPostgresCase(unittest.TestCase):
             "none",
             "-e",
             "POSTGRES_HOST_AUTH_METHOD=trust",
-            "postgres:15-alpine",
+            os.getenv("ISSUE80_POSTGRES_IMAGE", "postgres:15-alpine"),
         )
         for _ in range(40):
             ready = cls.run_docker(
@@ -287,6 +287,9 @@ class W4ConfirmedSourceFallbackPostgresCase(unittest.TestCase):
           )
         FROM items;
         """
+        if self._testMethodName.startswith("test_issue80"):
+            replacement = "NULL" if "null" in self._testMethodName else ("''" if "empty" in self._testMethodName else "' 	  　'")
+            seed_sql = seed_sql.replace("'Ta có 2x = -4 suy ra x = -2.'", replacement)
         self.sql(seed_sql)
 
     def _get_fallback_raw_result(self, version_index=1, source_idx=1, last_error="VALIDATION_FAILED"):
@@ -921,6 +924,118 @@ class W4ConfirmedSourceFallbackPostgresCase(unittest.TestCase):
         self.assertTrue(cand_snap["has_warning"])
         self.assertEqual(cand_snap["validation_report"]["validation_status"], "not_validated")
 
+    def test_issue80_notice_revert_and_replay(self):
+        raw = self._get_fallback_raw_result()
+        raw["solution_md"] = "Không có lời giải cho câu hỏi này."
+        result = self._call_persist_fallback(raw)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self._call_persist_fallback(raw)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        action = str(uuid4())
+        script = f"""
+        UPDATE exam_sessions SET status='generated',active_job_id=NULL WHERE id='{FIXTURE_SESSION}';
+        -- Simulate a display position different from the frozen canonical number.
+        UPDATE version_questions SET is_current=false WHERE is_current;
+        INSERT INTO version_questions(version_id,source_question_id,question_no,content,options,correct_key,solution_md,
+          canonical_question_no,canonical_options,canonical_correct_key,canonical_solution_md,status,is_current,regenerated_from_id)
+        SELECT version_id,source_question_id,2,'AI candidate',canonical_options,'B','AI explanation',
+          canonical_question_no,canonical_options,'B','AI explanation','pending_review',true,id
+          FROM version_questions;
 
-if __name__ == "__main__":
-    unittest.main()
+        SET ROLE authenticated;
+        SELECT set_config('request.jwt.claim.sub','{FIXTURE_USER}',false);
+        SELECT set_config('request.jwt.claim.role','authenticated',false);
+        SELECT review_revert_question('{FIXTURE_SESSION}',
+          (SELECT q.id FROM version_questions q JOIN exam_versions v ON v.id=q.version_id
+           WHERE v.session_id='{FIXTURE_SESSION}' AND q.is_current LIMIT 1),'{action}');
+        RESET ROLE;
+        SELECT status,solution_md,is_reverted,has_warning FROM version_questions WHERE is_current;
+        """
+        result = self.sql(script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('pending_review', result.stdout)
+        self.assertIn('Không có lời giải cho câu hỏi này.', result.stdout)
+        previous = self.sql(f"SELECT question_id FROM review_action_receipts WHERE action_id='{action}'").stdout.strip()
+        check = self.sql(f"""
+        SELECT question_no,canonical_question_no,correct_key,canonical_correct_key,
+          validation_report->>'validation_status' FROM version_questions WHERE is_current;
+        SELECT count(*) FROM review_logs WHERE action_type='REVERT';
+        SET ROLE authenticated;
+        SELECT set_config('request.jwt.claim.sub','{FIXTURE_USER}',false);
+        SELECT set_config('request.jwt.claim.role','authenticated',false);
+        SELECT review_revert_question('{FIXTURE_SESSION}',
+          '{previous}','{action}');
+        RESET ROLE;
+        SELECT count(*) FROM version_questions WHERE is_current;
+        """)
+        self.assertIn('2|1|A|A|not_validated', check.stdout)
+        self.assertIn('"replayed": true', check.stdout)
+        current = self.sql("SELECT id FROM version_questions WHERE is_current").stdout.strip()
+        accepted = self.sql(f"""
+        SET ROLE authenticated;
+        SELECT set_config('request.jwt.claim.sub','{FIXTURE_USER}',false);
+        SELECT set_config('request.jwt.claim.role','authenticated',false);
+        SELECT review_accept_question('{FIXTURE_SESSION}','{current}','{uuid4()}');
+        RESET ROLE;
+        SELECT status FROM version_questions WHERE is_current;
+        """)
+        self.assertIn('approved', accepted.stdout)
+
+    def test_issue80_clone_notice_and_legacy_replay(self):
+        raw = self._get_fallback_raw_result()
+        record = {k: v for k, v in raw.items() if k not in {
+            "confirmation_id", "request_fingerprint", "attempts", "error_code", "last_error_code", "has_warning"}}
+        record["result_kind"] = "ORIGINAL_CLONE"
+        record["solution_md"] = "Không có lời giải cho câu hỏi này."
+        setup = """
+        UPDATE generation_job_snapshots SET public_modes='[]',canonical_dimensions='[]',
+          snapshot_payload=snapshot_payload || '{"public_modes":[],"canonical_dimensions":[]}'::jsonb;
+        """
+        self.sql(setup)
+        def call(value):
+            return f"""SET ROLE service_role;
+          SELECT set_config('request.jwt.claim.role','service_role',false);
+          SELECT persist_generation_clone('{FIXTURE_SESSION}','{JOB_TOKEN}',
+            '{json.dumps(value, ensure_ascii=False).replace(chr(39), chr(39)*2)}'::jsonb);
+          RESET ROLE;"""
+        # Simulate a blank clone committed before 024; historical record must stay immutable.
+        old = (MIGRATIONS_DIR / '016_stage2_original_clone.sql').read_text(encoding='utf-8')
+        start = old.index('CREATE OR REPLACE FUNCTION public.persist_generation_clone')
+        end = old.index('TO service_role;', start) + len('TO service_role;')
+        self.sql(old[start:end])
+        legacy = {**record, "solution_md": " \t  　"}
+        self.sql(call(legacy))
+        self.sql((MIGRATIONS_DIR / '024_source_reuse_optional_solutions.sql').read_text(encoding='utf-8'))
+        result = self.sql(call(record))
+        self.assertIn('"replayed": true', result.stdout)
+        # New slot uses the notice and remains pending review; replay is identical.
+        record["version_index"] = 2
+        record["seed"] += 1000
+        self.sql(call(record))
+        result = self.sql(call(record))
+        self.assertIn('"replayed": true', result.stdout)
+        result = self.sql("SELECT solution_md,status FROM version_questions ORDER BY solution_md")
+        self.assertIn('Không có lời giải cho câu hỏi này.', result.stdout)
+        self.assertIn('pending_review', result.stdout)
+
+    test_issue80_null_notice_revert = test_issue80_notice_revert_and_replay
+    test_issue80_empty_notice_revert = test_issue80_notice_revert_and_replay
+
+    def test_issue80_revert_rejects_foreign_owner_and_bad_frozen_revision(self):
+        raw = self._get_fallback_raw_result()
+        raw["solution_md"] = "Không có lời giải cho câu hỏi này."
+        self._call_persist_fallback(raw)
+        current = self.sql("SELECT id FROM version_questions WHERE is_current").stdout.strip()
+        self.sql(f"UPDATE exam_sessions SET status='generated',active_job_id=NULL WHERE id='{FIXTURE_SESSION}'")
+        def revert(actor):
+            return self.sql(f"""SET ROLE authenticated;
+              SELECT set_config('request.jwt.claim.sub','{actor}',false);
+              SELECT set_config('request.jwt.claim.role','authenticated',false);
+              SELECT review_revert_question('{FIXTURE_SESSION}','{current}','{uuid4()}');""", check=False)
+        self.assertNotEqual(revert(FOREIGN_USER).returncode, 0)
+        self.sql("UPDATE generation_job_snapshots SET snapshot_payload=jsonb_set(snapshot_payload, "
+                 "'{confirmed_sources,0,source_revision_id}',to_jsonb('" + str(uuid4()) + "'::text))")
+        self.assertNotEqual(revert(FIXTURE_USER).returncode, 0)
+        after = self.sql("SELECT id FROM version_questions WHERE is_current").stdout.strip()
+        self.assertEqual(after, current)
+        self.assertEqual(self.sql("SELECT count(*) FROM review_logs WHERE action_type='REVERT'").stdout.strip(), '0')
