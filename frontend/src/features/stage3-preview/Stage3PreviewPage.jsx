@@ -20,7 +20,7 @@ import {
   executeFullShuffle,
   triggerFinalizeApprove,
 } from '../../services/stage3PreviewService.js';
-import { stage3Path, exportPath } from '../../sessionPaths.js';
+import { stage3Path } from '../../sessionPaths.js';
 
 export default function Stage3PreviewPage() {
   const { sessionId } = useParams();
@@ -38,6 +38,7 @@ export default function Stage3PreviewPage() {
   const [toast, setToast] = useState(null);
   const isMountedRef = useRef(true);
   const requestIdRef = useRef(0);
+  const activeSessionIdRef = useRef(sessionId);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -46,14 +47,17 @@ export default function Stage3PreviewPage() {
     };
   }, []);
 
-  // F05 & R1: Reset trạng thái và đóng modal khi sessionId thay đổi để tránh stale data và approve nhầm phiên
+  // F05, R1 & F02: Reset trạng thái, đóng modal và hủy cờ khi sessionId thay đổi để tránh stale data và approve/shuffle nhầm phiên
   useEffect(() => {
+    activeSessionIdRef.current = sessionId;
     setPreviewData(null);
     setSelectedTab('');
     setError(null);
     setNeedsShuffle(false);
     setIsApproveModalOpen(false);
     setApproveError(null);
+    setShuffling(false);
+    setApproving(false);
   }, [sessionId]);
 
   const showToast = (message, type = 'success') => {
@@ -103,20 +107,21 @@ export default function Stage3PreviewPage() {
     loadData();
   }, [loadData]);
 
-  // Xử lý bấm nút duy nhất: Xáo trộn mã đề
+  // Xử lý bấm nút duy nhất: Xáo trộn mã đề (F02: cô lập targetSessionId)
   const handleShuffle = async () => {
+    const targetSessionId = sessionId;
     setShuffling(true);
     setError(null);
     try {
-      await executeFullShuffle(sessionId);
-      if (!isMountedRef.current) return;
+      await executeFullShuffle(targetSessionId);
+      if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
       showToast('Đã xáo trộn các mã đề và cập nhật đáp án thành công!', 'success');
       await loadData();
     } catch (err) {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
       showToast(err.message || 'Không thể thực hiện xáo trộn đề thi.', 'error');
     } finally {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && activeSessionIdRef.current === targetSessionId) {
         setShuffling(false);
       }
     }
@@ -134,26 +139,28 @@ export default function Stage3PreviewPage() {
     previewData?.status === 'reviewed' &&
     previewData?.is_finalized === true;
 
-  // Xử lý Phê duyệt cuối cùng & Khóa đề (HTTP 423)
+  // Xử lý Phê duyệt cuối cùng & Khóa đề (HTTP 423) - F01 (Phương án A) & F02
   const handleApprove = async () => {
-    if (!canApprove) {
+    const targetSessionId = sessionId;
+    if (!canApprove || activeSessionIdRef.current !== targetSessionId) {
       setApproveError('Dữ liệu xem trước chưa sẵn sàng hoặc không hợp lệ để phê duyệt.');
       return;
     }
     setApproving(true);
     setApproveError(null);
     try {
-      await triggerFinalizeApprove(sessionId);
-      if (!isMountedRef.current) return;
+      await triggerFinalizeApprove(targetSessionId);
+      if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
       setIsApproveModalOpen(false);
-      showToast('Đã phê duyệt và khóa đề thi thành công!', 'success');
-      // Chuyển tiếp sang Stage 4 Export
-      navigate(exportPath(sessionId));
+      showToast('Đã phê duyệt và khóa đề thi thành công! Đề thi đã chuyển sang chế độ chỉ xem.', 'success');
+      // F01 (Phương án A): Tải lại dữ liệu để chuyển sang chế độ View-Only đã khóa (HTTP 423)
+      // thay vì navigate sang exportPath (tránh bị redirect về /login do EXPORT_ROUTE chưa mount trong App.jsx)
+      await loadData();
     } catch (err) {
-      if (!isMountedRef.current) return;
+      if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
       setApproveError(err.message || 'Có lỗi xảy ra khi phê duyệt đề thi.');
     } finally {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && activeSessionIdRef.current === targetSessionId) {
         setApproving(false);
       }
     }
@@ -247,11 +254,12 @@ export default function Stage3PreviewPage() {
               <button
                 type="button"
                 data-testid="btn-goto-export"
-                onClick={() => navigate(exportPath(sessionId))}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium text-sm transition-colors shadow-sm"
+                disabled
+                title="Màn hình Xuất bản sẽ khả dụng khi hoàn tất tích hợp W4-MVP-10"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-800 text-slate-400 font-medium text-sm border border-slate-700 cursor-not-allowed opacity-75 shadow-sm"
               >
                 <FileText className="w-4 h-4" />
-                <span>Chuyển sang màn hình Xuất bản</span>
+                <span>Chuyển sang màn hình Xuất bản (Chờ tích hợp)</span>
               </button>
             )}
           </div>
@@ -336,10 +344,12 @@ export default function Stage3PreviewPage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => navigate(exportPath(sessionId))}
-                  className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors shrink-0 ml-4"
+                  data-testid="banner-btn-goto-export"
+                  disabled
+                  title="Màn hình Xuất bản sẽ khả dụng khi hoàn tất tích hợp W4-MVP-10"
+                  className="px-3.5 py-1.5 rounded-lg bg-slate-800 text-slate-400 text-xs font-medium border border-slate-700 cursor-not-allowed opacity-75 shrink-0 ml-4"
                 >
-                  Tới màn hình Xuất bản
+                  Tới màn hình Xuất bản (Chờ tích hợp)
                 </button>
               </div>
             )}

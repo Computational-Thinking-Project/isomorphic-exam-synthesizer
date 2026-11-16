@@ -314,12 +314,26 @@ test('Stage3PreviewPage: Bấm "Phê duyệt & Khóa đề" mở modal xác nh�
   }
 });
 
-test('Stage3PreviewPage: Xác nhận phê duyệt trong modal gọi POST /finalize/approve và điều hướng sang /session/:id/export', async () => {
+test('Stage3PreviewPage: Xác nhận phê duyệt trong modal gọi POST /finalize/approve và chuyển sang chế độ View-Only đã khóa (F01 - Phương án A)', async () => {
   const originalGet = api.get;
   const originalPost = api.post;
 
   let capturedPost = null;
-  api.get = async () => ({ data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'sess-approved' } });
+  let getCallCount = 0;
+  api.get = async () => {
+    getCallCount += 1;
+    if (getCallCount > 1) {
+      return {
+        data: {
+          ...GOLDEN_PREVIEW_FIXTURE,
+          session_id: 'sess-approved',
+          status: 'approved',
+        },
+      };
+    }
+    return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'sess-approved' } };
+  };
+
   api.post = async (url, payload) => {
     capturedPost = { url, payload };
     return {
@@ -349,7 +363,10 @@ test('Stage3PreviewPage: Xác nhận phê duyệt trong modal gọi POST /finali
 
     assert.ok(capturedPost);
     assert.equal(capturedPost.url, '/sessions/sess-approved/finalize/approve');
-    assert.equal(harness.getLocation(), '/session/sess-approved/export', 'Phải điều hướng sang màn hình Export');
+    // F01 (Phương án A): Không navigate tới export khi route chưa mount (tránh redirect về /login),
+    // mà chuyển sang trạng thái đã khóa ngay trên màn hình hiện tại
+    assert.equal(harness.getLocation(), '/session/sess-approved/stage3/preview');
+    assert.ok(harness.container.querySelector('[data-testid="badge-status-locked"]'));
   } finally {
     api.get = originalGet;
     api.post = originalPost;
@@ -357,7 +374,7 @@ test('Stage3PreviewPage: Xác nhận phê duyệt trong modal gọi POST /finali
   }
 });
 
-test('Stage3PreviewPage: Khi tải phiên đã ở trạng thái approved hiển thị badge khóa, banner và nút tới Export', async () => {
+test('Stage3PreviewPage: Khi tải phiên đã ở trạng thái approved hiển thị badge khóa, banner và nút tới Export bị vô hiệu (Phương án A)', async () => {
   const originalGet = api.get;
   const lockedFixture = {
     ...GOLDEN_PREVIEW_FIXTURE,
@@ -382,15 +399,13 @@ test('Stage3PreviewPage: Khi tải phiên đã ở trạng thái approved hiển
     // Không hiển thị nút Phê duyệt
     assert.equal(harness.container.querySelector('[data-testid="btn-open-approve"]'), null);
 
-    // Nút chuyển sang màn hình Export
+    // Nút chuyển sang màn hình Export bị disabled để tránh redirect về /login khi W4-MVP-10 chưa mount
     const gotoExportBtn = harness.container.querySelector('[data-testid="btn-goto-export"]');
     assert.ok(gotoExportBtn);
-
-    await act(async () => {
-      gotoExportBtn.click();
-    });
-
-    assert.equal(harness.getLocation(), '/session/sess-already-locked/export');
+    assert.ok(
+      gotoExportBtn.disabled === true || gotoExportBtn.getAttribute('disabled') !== null,
+      'Nút goto-export phải có thuộc tính disabled'
+    );
   } finally {
     api.get = originalGet;
     await harness.unmount();
@@ -694,6 +709,68 @@ test('R1: Đổi sessionId từ A sang B khi modal phê duyệt đang mở, moda
     assert.equal(postCalls.length, 0, 'Không có lệnh POST nào được gửi khi chuyển route');
   } finally {
     api.get = originalGet;
+    api.post = originalPost;
+    await harness.unmount();
+  }
+});
+
+test('F02: Khi handleShuffle hoặc handleApprove của session A đang chạy dở, chuyển sang session B thì kết quả của A không tác động lên B', async () => {
+  const originalGet = api.get;
+  const originalPatch = api.patch;
+  const originalPost = api.post;
+
+  let resolveShuffleA;
+  const shuffleAPromise = new Promise((resolve) => {
+    resolveShuffleA = resolve;
+  });
+
+  api.get = async (url) => {
+    if (url.includes('session-A')) {
+      return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'session-A', is_finalized: false } };
+    }
+    if (url.includes('session-B')) {
+      return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'session-B', is_finalized: false } };
+    }
+    return { data: GOLDEN_PREVIEW_FIXTURE };
+  };
+
+  api.patch = async () => ({ data: { success: true } });
+  api.post = async (url) => {
+    if (url.includes('session-A')) {
+      await shuffleAPromise;
+      return { data: { success: true } };
+    }
+    return { data: { success: true } };
+  };
+
+  const harness = renderPreviewPage('session-A');
+  try {
+    await harness.render();
+
+    // 1. Session A cần shuffle, bấm nút shuffle
+    const shuffleBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
+    assert.ok(shuffleBtn);
+
+    // Bấm shuffle phiên A nhưng chưa resolve promise
+    let clickPromise;
+    await act(async () => {
+      clickPromise = shuffleBtn.click();
+    });
+
+    // 2. Chuyển sang session B ngay khi A đang chạy
+    await harness.navigate('/session/session-B/stage3/preview');
+
+    // 3. Resolve promise cho A
+    await act(async () => {
+      resolveShuffleA();
+      await clickPromise;
+    });
+
+    // 4. Session B vẫn phải giữ đúng dữ liệu của session B, không bị loadData của A ghi đè
+    assert.ok(harness.container.querySelector('[data-testid="btn-shuffle"]'), 'Session B vẫn phải ở trạng thái cần shuffle');
+  } finally {
+    api.get = originalGet;
+    api.patch = originalPatch;
     api.post = originalPost;
     await harness.unmount();
   }

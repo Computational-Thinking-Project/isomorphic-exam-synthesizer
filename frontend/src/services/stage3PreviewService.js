@@ -202,8 +202,10 @@ export async function fetchFinalizePreview(sessionId, config = {}) {
     throw new Error('Cần cung cấp sessionId hợp lệ.');
   }
 
+  const encodedId = encodeURIComponent(sessionId);
+
   try {
-    const response = await api.get(`/sessions/${sessionId}/finalize/preview`, {
+    const response = await api.get(`/sessions/${encodedId}/finalize/preview`, {
       ...config,
       headers: {
         'Cache-Control': 'no-store',
@@ -241,13 +243,14 @@ export async function updateOrderingPreferences(sessionId, preferences = {}, con
     throw new Error('Cần cung cấp sessionId hợp lệ.');
   }
 
+  const encodedId = encodeURIComponent(sessionId);
   const payload = {
     shuffle_questions: Boolean(preferences.shuffle_questions),
     shuffle_options: Boolean(preferences.shuffle_options),
   };
 
   const response = await api.patch(
-    `/sessions/${sessionId}/ordering-preferences`,
+    `/sessions/${encodedId}/ordering-preferences`,
     payload,
     config
   );
@@ -268,8 +271,9 @@ export async function triggerFinalizeShuffle(sessionId, config = {}) {
     throw new Error('Cần cung cấp sessionId hợp lệ.');
   }
 
+  const encodedId = encodeURIComponent(sessionId);
   const response = await api.post(
-    `/sessions/${sessionId}/finalize/shuffle`,
+    `/sessions/${encodedId}/finalize/shuffle`,
     null,
     config
   );
@@ -306,8 +310,9 @@ export async function triggerFinalizeApprove(sessionId, config = {}) {
     throw new Error('Cần cung cấp sessionId hợp lệ.');
   }
 
+  const encodedId = encodeURIComponent(sessionId);
   const response = await api.post(
-    `/sessions/${sessionId}/finalize/approve`,
+    `/sessions/${encodedId}/finalize/approve`,
     null,
     config
   );

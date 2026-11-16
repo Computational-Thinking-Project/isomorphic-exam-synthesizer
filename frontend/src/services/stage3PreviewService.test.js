@@ -305,3 +305,41 @@ test('adaptPreviewSnapshot: trả về null khi input rỗng', () => {
   assert.equal(adaptPreviewSnapshot(null), null);
   assert.equal(adaptPreviewSnapshot(undefined), null);
 });
+
+test('F03: encodeURIComponent cho sessionId trên toàn bộ các endpoints trong service', async () => {
+  const originalGet = api.get;
+  const originalPatch = api.patch;
+  const originalPost = api.post;
+
+  const capturedUrls = [];
+  api.get = async (url) => {
+    capturedUrls.push(url);
+    return { data: GOLDEN_PREVIEW_FIXTURE };
+  };
+  api.patch = async (url) => {
+    capturedUrls.push(url);
+    return { data: { success: true } };
+  };
+  api.post = async (url) => {
+    capturedUrls.push(url);
+    return { data: { success: true } };
+  };
+
+  try {
+    const complexSessionId = 'sess test/123?foo=bar';
+    await fetchFinalizePreview(complexSessionId);
+    await updateOrderingPreferences(complexSessionId, { shuffle_questions: true, shuffle_options: true });
+    await triggerFinalizeShuffle(complexSessionId);
+    await triggerFinalizeApprove(complexSessionId);
+
+    const encoded = encodeURIComponent(complexSessionId);
+    assert.equal(capturedUrls[0], `/sessions/${encoded}/finalize/preview`);
+    assert.equal(capturedUrls[1], `/sessions/${encoded}/ordering-preferences`);
+    assert.equal(capturedUrls[2], `/sessions/${encoded}/finalize/shuffle`);
+    assert.equal(capturedUrls[3], `/sessions/${encoded}/finalize/approve`);
+  } finally {
+    api.get = originalGet;
+    api.patch = originalPatch;
+    api.post = originalPost;
+  }
+});
