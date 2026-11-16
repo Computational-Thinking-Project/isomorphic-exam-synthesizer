@@ -20,6 +20,7 @@ import {
   X,
 } from 'lucide-react';
 import MathRenderer from '../../components/MathRenderer.jsx';
+import { getSessionDetail } from '../../services/sessions.js';
 import { retryGeneration } from '../../services/stage2Service.js';
 import {
   acceptQuestion,
@@ -169,6 +170,7 @@ function generateClientUUID() {
  */
 export default function Stage3ReviewPage({
   loadSession = fetchReviewSnapshot,
+  loadSessionDetail = getSessionDetail,
   retryGen = retryGeneration,
   acceptQuestionFn = acceptQuestion,
   regenerateQuestionFn = rejectAndRegenerateQuestion,
@@ -178,6 +180,7 @@ export default function Stage3ReviewPage({
   const navigate = useNavigate();
 
   const [session, setSession] = useState(null);
+  const [lockedDetail, setLockedDetail] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -214,6 +217,7 @@ export default function Stage3ReviewPage({
 
     setIsLoading(true);
     setError(null);
+    setLockedDetail(null);
 
     try {
       const rawData = await loadSession(targetSessionId);
@@ -226,6 +230,7 @@ export default function Stage3ReviewPage({
       }
       const data = adaptReviewSnapshot(rawData);
       setSession(data);
+      setLockedDetail(null);
 
       const initialApproved = extractApprovedIds(data);
       setApprovedVariantIds(initialApproved);
@@ -238,10 +243,52 @@ export default function Stage3ReviewPage({
       ) {
         return;
       }
+
+      const httpStatus = err?.response?.status ?? err?.status;
+      const errCode = err?.response?.data?.error_code || err?.response?.data?.code;
+      const isLocked423 = httpStatus === 423 || errCode === 'ERR_SESSION_LOCKED';
+
+      if (isLocked423) {
+        try {
+          const detail = await loadSessionDetail(targetSessionId);
+          if (
+            !isMountedRef.current ||
+            loadOperationRef.current !== currentOp ||
+            activeSessionIdRef.current !== targetSessionId
+          ) {
+            return;
+          }
+          if (['approved', 'exported'].includes(detail?.status)) {
+            setLockedDetail(detail);
+            setIsLoading(false);
+            return;
+          }
+          setError('Trạng thái phiên không khớp điều kiện khóa duyệt. Vui lòng thử lại hoặc về Dashboard.');
+          setIsLoading(false);
+          return;
+        } catch (detailErr) {
+          if (
+            !isMountedRef.current ||
+            loadOperationRef.current !== currentOp ||
+            activeSessionIdRef.current !== targetSessionId
+          ) {
+            return;
+          }
+          setError(
+            extractErrorString(
+              detailErr,
+              extractErrorString(err, 'Không thể tải chi tiết phiên làm việc.'),
+            ),
+          );
+          setIsLoading(false);
+          return;
+        }
+      }
+
       setError(extractErrorString(err, 'Không thể tải chi tiết phiên làm việc.'));
       setIsLoading(false);
     }
-  }, [sessionId, loadSession]);
+  }, [sessionId, loadSession, loadSessionDetail]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -257,6 +304,7 @@ export default function Stage3ReviewPage({
 
     // Reset sạch sẽ dữ liệu của phiên trước để tránh rò rỉ hoặc hiển thị nhầm khi đang tải phiên mới
     setSession(null);
+    setLockedDetail(null);
     setError(null);
     setActiveVersionTab(1);
     setRegeneratingQuestions({});
@@ -804,6 +852,56 @@ export default function Stage3ReviewPage({
       <div className="flex min-h-[400px] flex-col items-center justify-center gap-3 p-8">
         <Loader2 className="h-8 w-8 animate-spin text-sky-400" />
         <p className="text-xs text-slate-400">Đang tải chi tiết đề thi và các câu hỏi biến thể...</p>
+      </div>
+    );
+  }
+
+  if (lockedDetail) {
+    return (
+      <div className="mx-auto max-w-2xl p-6">
+        <div
+          role="status"
+          data-testid="stage3-banner-locked"
+          className="rounded-2xl border border-emerald-500/40 bg-emerald-950/30 p-8 text-center shadow-xl"
+        >
+          <Lock className="mx-auto h-12 w-12 text-emerald-400" />
+          <h2 className="mt-4 text-xl font-bold text-white">
+            Đề thi đã được phê duyệt và khóa nội dung vĩnh viễn (HTTP 423)
+          </h2>
+          {lockedDetail.title && (
+            <p className="mt-2 text-sm font-medium text-emerald-200">{lockedDetail.title}</p>
+          )}
+          <p className="mt-2 text-sm text-slate-300">
+            Phiên làm việc đang ở trạng thái khóa duyệt ({lockedDetail.status}). Mọi thao tác duyệt hoặc tạo lại biến thể đã được khóa; bạn có thể chuyển sang màn hình Xuất bản để tải gói đề thi.
+          </p>
+          <div className="mt-6 flex flex-wrap justify-center gap-3">
+            <button
+              type="button"
+              data-testid="stage3-btn-goto-export"
+              onClick={() => navigate(exportPath(sessionId))}
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-emerald-600/30 hover:bg-emerald-500"
+            >
+              <span>Tới màn hình Xuất bản</span>
+              <ArrowRight className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              data-testid="stage3-btn-goto-preview"
+              onClick={() => navigate(stage3PreviewPath(sessionId))}
+              className="inline-flex items-center gap-2 rounded-xl border border-emerald-500/40 px-4 py-2 text-xs font-medium text-emerald-200 hover:bg-emerald-900/40"
+            >
+              Xem lại bản rà soát (chỉ đọc)
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/dashboard')}
+              className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+              Về Dashboard
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
