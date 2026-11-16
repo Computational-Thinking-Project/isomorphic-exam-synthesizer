@@ -1,5 +1,30 @@
 # W4-MVP-08 — Private export: plan và bàn giao
 
+## Ready-for-review checkpoint — 16/11/2026
+
+- Author/docs-only, workflow v0.1 proposed + INPUT-20261109 (`7b7387f`), code
+  baseline `1d61406`, base `dev@a379ec1`. Không đổi product code, migration,
+  runtime flag hoặc PR/issue descriptions trong checkpoint này.
+- CI tại baseline code: 5/5 PASS. [Đạt xác minh đúng head](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#pullrequestreview-5915515468):
+  không có finding mới trong delta Q01/F12, hai Q09 cũ giữ disposition verified
+  trong scope đã ghi. COMMENT này không phải whole-PR Approve hoặc live acceptance.
+- [Issue #80](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/80)
+  là policy hiện hành: câu nguồn tái sử dụng thiếu lời giải dùng đúng thông báo
+  `Không có lời giải cho câu hỏi này.`. Không coi thông báo là lời giải AI đã
+  validate. Export dùng nhánh solution nonempty sẵn có; ngoại lệ empty có provenance
+  vẫn hỗ trợ dữ liệu lịch sử. Không thêm placeholder trong renderer hoặc gọi AI.
+  PR81/migration024 chưa merge; tương thích toàn luồng chưa được nghiệm thu.
+- [Duy đã báo nghiệm thu incident #75](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/75#issuecomment-6907435471):
+  schema/RPC, Stage1/confirm và config persistence đã có smoke evidence. Không tiếp
+  tục dùng trạng thái NO-GO cũ của incident đó làm blocker chung. Chưa suy rằng020,
+  private Storage hoặc export runtime đã apply/activate từ bằng chứng này.
+- Đủ sẵn sàng mời review code; không cần đợi Golden/activation mới chuyển Ready.
+  Còn gates riêng: reviewer approval trên head mới, dependency07/Preview tích hợp,
+  I08-11S actual ledger/bucket/principals/budgets, producer #81 và RENDER12-01 của
+  Tâm trước Golden acceptance. Runtime vẫn disabled; TASK08 chưa Integrated Done.
+- Checkpoint có ngày bên dưới giữ bằng chứng lịch sử. Phần policy/source reuse và
+  trạng thái #75 ở trên thay các nhận định cũ; không mở lại Q09/Q10 đã accepted.
+
 ## Q01/F12 checkpoint 16/11/2026
 
 - Author mode, workflow v0.1 proposed + INPUT-20261109 (`7b7387f`). Đồng bộ
@@ -24,7 +49,8 @@
 - Review độc lập gpt-6.1-sol high: 21 tests (Typst thật), 4 SDK credential/scoping
   probes và 30 unexpected ready-replay probes pass; không có actionable runtime finding.
   Đây không phải GitHub Approve hay kiểm deployed transport.
-  Không apply DB chung (Issue75 NO-GO), không merge PR hoặc sửa descriptions.
+  Lượt code đó không apply DB chung, merge PR hoặc sửa descriptions; trạng thái
+  #75 sau đó theo checkpoint hiện hành ở trên.
 
 - **RENDER12-01:** fixture Golden gốc không biên dịch được ở TASK-306 do `\int`
   và cách xử lý chuỗi chữ trong math (`dx`, `Oxyz`). Tái hiện cả nonempty và
@@ -151,14 +177,16 @@ Không đưa implementation ledger RAM vào production; không giả kết quả
 
 | ID / yêu cầu | Cung cấp → nhận | Mục đích / điều kiện đủ dùng | Trạng thái / bằng chứng | Còn thiếu / bước tiếp |
 |---|---|---|---|---|
-| I08-07 | Hùng/07 → Hùng/08 | ApprovedExportSnapshot từ user RLS, revision SHA256, immutable approved data | Accepted/Integrated local; Duy/Tâm Approve07 tại `8e2941a`; đồng bộ dev local `2976c07`, chưa merge GitHub | Kiểm lại bản đồng bộ và integrated parity khi PR49 merge; synchronous reader+builder đã nối trong worker |
-| I08-COMPILER | Compiler/bundler hiện có → 08 | build_compiled_bundle, BundleArtifact; đầy đủ 2N+1 PDF và TeX/MD | Accepted/Integrated cục bộ tại `45b2e5b`: snapshot 07 → Typst thật → ZIP/manifest, 5 PDF cho 2 mã; không phải deployed proof | Thêm manifest tại lớp 08; không đổi output contract của bundler W3 |
-| I08-Q09 | Hùng đề xuất; Duy review/đồng bộ DB → 08 | Claim/fencing/complete atomic, metadata, recovery; migration slot và RPC contract | Decided/Delivered/Accepted theo [quyết định Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6819045971); Integrated cục bộ: RPC020 + recovery, PostgreSQL15 thực. Không phải shared DB applied hay PR approval | 020 chưa thấy dùng ở PR mở khi kiểm; 019 thuộc PR61. Lease900s còn provisional chờ OPS budget; final manifest/live proof và review implementation vẫn cần |
-| I08-11S | Đạt (`Thanhdat3010`), Duy điều phối → 08 | Private bucket interface/limits, safe secret channel, authorized environment | Duy yêu cầu backend-only export writes: 020 đã code targeted policy và kiểm trên PostgreSQL giả lập Storage schema. Bucket/access/limits/timeout chưa được OPS giao; [Issue #53](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/53) vẫn thiếu access | Đạt review policy/approved applied manifest và giao bucket private, MIME/size limits, test access/IO budget. Không tự áp DDL hay sửa cloud; ETA chưa xác nhận |
+| I08-07 | Hùng/07 → Hùng/08 | ApprovedExportSnapshot từ user RLS, revision SHA256, immutable approved data | Delivered/Integrated local với 07 `1c01ad3`; CI xanh. Approvals Duy/Tâm trước thuộc head cũ, không thay xác minh delta Q01 hiện tại | 07 và PR49 chưa merge; cần xác minh head mới và parity trên cùng candidate |
+| I08-COMPILER | Tâm compiler / Đạt bundler → 08 | build_compiled_bundle, BundleArtifact; đầy đủ 2N+1 PDF và TeX/MD | Integrated cục bộ trên fixture nhỏ với Typst thật, source ZIP/manifest; Golden gốc bị RENDER12-01 đã báo ở PR73 | Tâm sửa converter, rerun Golden và strict regression; không coi PDF double trong private PG là renderer proof |
+| I08-Q09 | Hùng đề xuất; Duy review/đồng bộ DB → 08 | Claim/fencing/complete atomic, metadata, recovery; migration slot và RPC contract | Decided/Delivered/Accepted architecture theo [Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6819045971); RPC020/recovery kiểm PostgreSQL thật. Hai Q09 fixes được Đạt verified; chưa whole-PR Approve | Giữ020, không đổi migration owner khác; actual applied020/backfill phải đối chiếu target ledger. Lease900s còn cần OPS budget; final review/live proof vẫn riêng |
+| I08-11S | Đạt (`Thanhdat3010`), Duy điều phối → 08 | Private bucket interface/limits, safe secret channel, authorized environment | Accepted một phần: Git-byte020, candidate inventory và scoped OPS verification đã giao; [Đạt kiểm head `1d61406`](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#pullrequestreview-5915515468). Incident75 có acceptance riêng, không chứng minh export activation | Còn actual applied020, bucket private/ACL/MIME/size limits, controlled test access và end-to-end IO/proxy/shutdown budget. Không cần gửi lại inventory local; ETA còn thiếu TBD |
 | I08-Q10 | Hùng đề xuất; Philip (`philip-kkk`) → 09/08 | POST export, GET status, POST download URL, bounded polling/errors | Decided/Delivered/Accepted theo [Philip](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6825618302); routes/runtime Integrated local theo contract | Không hỏi lại sync/async; OPS budget/live validation còn riêng. Mặc định tắt runtime |
 
 Input Delivered không tự là Accepted/Integrated. Không lặp lại quyết định đã có:
-export thiếu solution fail-closed trừ fallback/clone có provenance được xác minh (Q01 16/11); snapshot revision SHA256, không dùng updated_at.
+Policy hiện hành theo Issue80 ở đầu file: source reuse mới dùng exact notice khi thiếu
+solution; empty lịch sử chỉ được phép với provenance đã xác minh. AI solution vẫn
+bắt buộc; snapshot revision SHA256, không dùng updated_at.
 
 ## Kế hoạch tự kiểm
 
