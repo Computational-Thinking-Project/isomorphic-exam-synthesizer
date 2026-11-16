@@ -23,8 +23,9 @@ The notice is nonempty and uses the existing snapshot/bundle path; preserve it
 verbatim, including after question/option shuffle. It needs no new public field,
 renderer placeholder or exporter-side AI call. The verified-empty capability below
 remains for eligible historical rows; it is not the producer policy for new rows.
-Producer implementation/migration024 is proposed in PR #81 and is not integrated
-or accepted by this document. Full producer-to-export compatibility still needs
+Producer implementation/migration024 merged through PR #81 (`dev@26af798`).
+The task08 integration tests apply that migration in disposable PostgreSQL;
+this does not certify its shared deployment. Full producer-to-export compatibility still needs
 verification on a common candidate, including real PDF/private Storage/download.
 
 The original database synchronization incident #75 has reported production

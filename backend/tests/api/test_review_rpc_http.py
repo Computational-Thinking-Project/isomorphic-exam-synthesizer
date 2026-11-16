@@ -101,9 +101,18 @@ def test_http_action_key_replays_after_lock_but_new_action_is_locked(http_review
     key = str(uuid4())
     first = client.post(action_url(state, action), headers={"Idempotency-Key": key})
     assert first.status_code == 200, first.text
+    first_body = first.json()
+    if action == "revert":
+        assert first_body["question_id"] != state.qid
+        assert first_body["status"] == "pending_review"
+        assert first_body["is_reverted"] is True
+    else:
+        assert first_body["question_id"] == state.qid
+        assert first_body["status"] == "approved"
     state.status = "approved"
     replay = client.post(action_url(state, action), headers={"Idempotency-Key": key})
     assert replay.status_code == 200, replay.text
+    assert replay.json() == first_body
     new = client.post(action_url(state, action), headers={"Idempotency-Key": str(uuid4())})
     assert new.status_code == 423, new.text
     assert len(state.actions) == 1
@@ -112,6 +121,7 @@ def test_http_action_key_replays_after_lock_but_new_action_is_locked(http_review
         for role, n, p in state.calls
         if n == f"review_{action}_question"
     )
+    assert sum(1 for r in state.rows.values() if r.get("is_current")) == 1
 
 
 @pytest.mark.parametrize("action", ["accept", "reject", "revert"])

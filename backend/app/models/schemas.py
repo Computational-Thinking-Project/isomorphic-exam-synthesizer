@@ -537,6 +537,73 @@ class AnswersMatrixResponse(BaseModel):
     )
 
 
+class PreviewQuestionItem(BaseModel):
+    """Chi tiết một câu hỏi sau hoán vị trong đề xem trước (W4-MVP-05)."""
+
+    id: str = Field(..., description="Mã định danh duy nhất của câu hỏi phiên bản (UUID)")
+    source_question_id: str = Field(..., description="Mã định danh câu hỏi nguồn tương ứng (UUID)")
+    question_no: int = Field(
+        ..., ge=1, le=20, description="Thứ tự hiển thị của câu hỏi sau hoán vị (1..N)"
+    )
+    canonical_question_no: int = Field(
+        ..., ge=1, description="Thứ tự gốc của câu hỏi trong đề nguồn"
+    )
+    content: str = Field(..., description="Nội dung đề bài câu hỏi")
+    options: List[str] = Field(
+        ...,
+        min_length=4,
+        max_length=4,
+        description="Danh sách 4 phương án hiển thị theo thứ tự [A, B, C, D]",
+    )
+    correct_key: Literal["A", "B", "C", "D"] = Field(
+        ..., description="Đáp án đúng hiển thị tương ứng với thứ tự options mới ('A'..'D')"
+    )
+    solution_md: str = Field(..., description="Lời giải chi tiết đã đồng bộ nhãn đáp án hiển thị")
+    status: str = Field(..., description="Trạng thái thẩm định của câu hỏi (thường là 'approved')")
+
+
+class PreviewVersionItem(BaseModel):
+    """Chi tiết một phiên bản đề thi sau hoán vị trong bản xem trước (W4-MVP-05)."""
+
+    id: str = Field(..., description="Mã phiên bản đề thi (UUID)")
+    version_code: str = Field(..., description="Mã đề thi (ví dụ: '101', '102')")
+    is_finalized: bool = Field(..., description="Đánh dấu phiên bản đã hoàn tất hoán vị chốt đề")
+    shuffle_seed: Optional[str] = Field(
+        None, description="Seed ngẫu nhiên xác định dùng cho hoán vị"
+    )
+    total_questions: int = Field(..., ge=1, le=20, description="Tổng số câu hỏi trong phiên bản đề")
+    questions: List[PreviewQuestionItem] = Field(
+        ...,
+        description="Danh sách câu hỏi theo đúng thứ tự in đề (question_no 1..N)",
+    )
+    answer_keys: Dict[str, str] = Field(
+        ...,
+        description="Bảng tra nhanh đáp án của phiên bản theo số thứ tự câu hiển thị (ví dụ: {'1': 'B', '2': 'A'})",
+    )
+
+
+class PreviewSnapshotResponse(BaseModel):
+    """Ảnh chiếu xem trước đề thi sau hoán vị trước khi phê duyệt khóa nội dung (W4-MVP-05)."""
+
+    session_id: str = Field(..., description="Mã phiên làm việc (UUID)")
+    status: str = Field(
+        ...,
+        description="Trạng thái hiện tại của phiên làm việc ('reviewed', 'approved', 'exported')",
+    )
+    is_finalized: bool = Field(
+        ..., description="Đánh dấu toàn bộ các phiên bản đề đã hoàn tất hoán vị"
+    )
+    n_versions: int = Field(..., ge=1, le=4, description="Số lượng mã đề thi được tạo")
+    total_questions: int = Field(..., ge=1, le=20, description="Số lượng câu hỏi trên mỗi đề")
+    versions: List[PreviewVersionItem] = Field(
+        ..., description="Danh sách chi tiết từng phiên bản đề đã sắp xếp theo mã đề"
+    )
+    matrix: List[MatrixItem] = Field(
+        ...,
+        description="Ma trận đối soát đáp án chéo giữa các mã đề theo thứ tự câu 1..N",
+    )
+
+
 class OrderingPreferencesPayload(BaseModel):
     shuffle_questions: StrictBool
     shuffle_options: StrictBool
@@ -695,6 +762,9 @@ __all__ = [
     "FinalizeApproveResponse",
     "MatrixItem",
     "AnswersMatrixResponse",
+    "PreviewQuestionItem",
+    "PreviewVersionItem",
+    "PreviewSnapshotResponse",
     "OrderingPreferencesPayload",
     "OrderingPreferencesResponse",
     "CheckResult",

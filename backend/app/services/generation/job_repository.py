@@ -193,13 +193,16 @@ def _fallback_record(
     }
 
 
+MISSING_SOURCE_SOLUTION = "Không có lời giải cho câu hỏi này."
+
+
 def _require_frozen_solution(confirmed: dict[str, Any]) -> str:
     solution = confirmed.get("solution")
-    if not isinstance(solution, str) or not solution.strip():
-        raise IncompleteGenerationSource(
-            "Frozen source is missing a solution.", code=SOURCE_SOLUTION_REQUIRED,
-        )
-    return solution
+    if solution is None:
+        return MISSING_SOURCE_SOLUTION
+    if not isinstance(solution, str):
+        raise IncompleteGenerationSource("Frozen source solution has invalid type.")
+    return solution if solution.strip() else MISSING_SOURCE_SOLUTION
 
 
 def _check_current_fallback(row: dict[str, Any], expected: dict[str, Any]) -> None:

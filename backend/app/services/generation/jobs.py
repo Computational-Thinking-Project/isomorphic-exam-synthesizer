@@ -16,7 +16,6 @@ from app.services.generation.ai_mapping import PreparedAIResult
 from app.services.generation.events import EventBufferLease, GenerationEventBroker
 from app.services.generation.job_contracts import (
     FALLBACK_WARNING,
-    SOURCE_SOLUTION_REQUIRED,
     ConfirmedSourceFallback,
     GeneratedDraft,
     GenerationJobError,
@@ -215,17 +214,6 @@ class GenerationJobRunner:
                 elif isinstance(plan.inputs, AIBatchInputs):
                     if self._batch is None:
                         raise RuntimeError("AI batch service is unavailable.")
-                    missing_sources = {
-                        target.source_question_id for target in plan.targets if target not in completed
-                    }
-                    if plan.inputs.frozen_sources and any(
-                        UUID(source.id) in missing_sources and not source.solution.strip()
-                        for source in plan.inputs.sources
-                    ):
-                        raise IncompleteGenerationSource(
-                            "Frozen AI source is missing a solution.", code=SOURCE_SOLUTION_REQUIRED,
-                        )
-
                     async def on_result(result: PreparedAIResult) -> None:
                         nonlocal saving_fallback
                         raw = result.raw_result

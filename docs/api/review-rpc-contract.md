@@ -409,3 +409,17 @@ retain their existing confirmation/readiness path; regeneration still requires v
 An invalid confirmation does not block settlement of an old operation.
 Historical action/settlement receipts keep their original progress JSON; clients
 needing current IDs must GET progress, never invent [] for an absent field.
+
+
+## Issue #80 — revised source-solution policy (supersedes blanket Q01)
+
+Confirmed source explanations are optional. AI candidates still require the existing
+validated explanation; their validation and four-attempt limit are unchanged.
+Original Clone, exhausted-attempt fallback, and Revert preserve the frozen source
+stem/options/key and any nonblank solution verbatim. Missing/null/whitespace-only
+solutions are displayed as exactly `Không có lời giải cho câu hỏi này.`.
+This is a disclosure, not mathematical validation; no extra Gemini call is made.
+Source inputs, revisions, hashes and historical committed receipts are immutable.
+New Revert actions restore the confirmed frozen source as `pending_review`, with
+warning/provenance and mandatory teacher reapproval. Accept remains `approved`.
+Historical action receipts replay unchanged. Approved/exported sessions stay locked.

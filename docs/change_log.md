@@ -18,6 +18,47 @@
 - Đạt bổ sung anonymous session/metrics probes trực tiếp và qua proxy vào `scripts/w4_ops.py smoke`: HTTP401 phải kèm Bearer challenge; không lưu response content/headers hoặc gửi credentials. JSON checks tăng4→8; schema_version vẫn1, cấu trúc từng check và acceptance không đổi. Consumer không nên cố định độ dài checks.
 - Runbook và bằng chứng local devc2ee9fd cập nhật cùng PR. Không đổi API/schema/Docker/auth policy, không kích hoạt export hoặc áp migration. Tooling chỉ chứng nhận các observations local, không tự nâng G0/G1/G2.
 
+## W4-MVP-05: Post-shuffle pre-approval preview projection API — 08/11/2026 (proposed)
+
+Introduces dedicated read-only endpoint `GET /api/sessions/{session_id}/finalize/preview`
+providing post-shuffle examination preview projection before final approval. Enforces
+full parity with exporter `DisplayQuestion` invariants (non-empty content/solution, 4
+normalized distinct options, status='approved'), complete answer-key integrity checks,
+and finalized shuffle provenance verification. Resolves Decision Q06. See the
+[preview projection contract](api/preview-projection-contract.md).
+
+### Review Round 2 & Q01 Revised Policy Alignment (`16/11/2026`):
+- **Q01 Revised Policy (`W4-MVP-05` Preview Provenance Exception):** Aligned `FinalizeRepository.fetch_preview_snapshot()` and `GET /api/sessions/{session_id}/finalize/preview` with Duy's updated `Q01` decision on PR `#74` (`16/11/2026`):
+  - AI-generated candidates and Stage 3 regenerated candidates (`regenerated_from_id` set) continue to fail closed (`409 ERR_INCONSISTENT_ANSWER_KEYS`) when `solution_md` is empty or missing.
+  - Empty `solution_md` (normalized to `""` when `canonical_solution_md` is also empty) is permitted **strictly** for slots with verified `CONFIRMED_SOURCE_FALLBACK` provenance (migration `021` fallback report and `has_warning=True`) or `ORIGINAL_CLONE` provenance (explicit empty `active_variation_modes` and `canonical_dimensions`, non-warning empty report), including Stage 3 reverts back to those root rows.
+  - On HTTP `GET /api/sessions/{session_id}/finalize/preview`, when empty solutions are present, `provenance_db` is resolved lazily after owner-RLS verification (`get_user_db`) and cross-checks `generation_target_results` (`result_kind`) and `generation_job_snapshots` read-only, failing closed with `409 ERR_INCONSISTENT_ANSWER_KEYS` whenever provenance verification is unavailable, missing, or mismatched (even for direct repository/service calls without a provenance client, per F13).
+
+### Review Round 2 Findings (F01–F04) Resolution:
+- **F01 (Real PostgreSQL integration & fixture):** Fixed `reviewed_exam_session` fixture
+  schema compliance by populating `canonical_question_no` on `answer_keys` and valid
+  `permutations` on `exam_versions`. Upgraded `test_preview_snapshot_on_real_pg` to exercise
+  the complete `prepare_shuffle` -> `finalize_persist_shuffle` transactional RPC -> `get_preview_snapshot`
+  pipeline on PostgreSQL, asserting slots, choices, answer keys, and canonical mappings.
+- **F02 (Persisted shuffle provenance validation):** Replicated migration 008 invariants in
+  `fetch_preview_snapshot()`: verified non-empty `shuffle_seed`, complete permutation map
+  bijections, exact match between displayed options and `canonical_options` under `option_permutations`,
+  `correct_key == perm_map[canonical_correct_key]`, and synchronized explanation markdown
+  against `canonical_solution_md`.
+- **F03 (Canonical & source lineage validation):** Enforced 1:1 set coverage of source questions
+  for each version and verified `source_by_id[source_question_id] == canonical_question_no`,
+  failing closed on swapped or omitted source references.
+- **F04 (Export title mapping & mock column projection):** Added `title` to `.select()` in
+  `FinalizeRepository.get_session_meta()` and updated `MockSupabaseClient` in `finalize_test_client.py`
+  to project selected columns, preventing false-positive tests on unqueried fields.
+- **F05 (Self-Review hardening & cache invariant alignment):**
+  - Enforced `Cache-Control: no-store` on `GET /{session_id}/finalize/preview` and `GET /{session_id}/finalize/matrix` to prevent intermediate caching of sensitive exam projections, aligning with PR #54 (`w4-mvp-03-review-snapshot`).
+  - Constrained `PreviewVersionItem.total_questions` to `ge=1, le=20` for strict parity with `PreviewSnapshotResponse.total_questions` and domain invariants ($1 \le M \le 20$).
+  - Enforced strict dictionary length validation (`len(c_to_d) == m`, `len(d_to_c) == m`, `len(opt_perms) == m`) in `fetch_preview_snapshot()`, immediately failing closed on incomplete or extraneous permutation maps with descriptive errors.
+  - Added session user ownership guard (`user_id` validation) in `FinalizeService.get_answers_matrix()`, aligning authorization defense-in-depth with `get_preview_snapshot()`.
+  - Added test coverage for `Cache-Control: no-store` headers, permutation dictionary bounds, matrix cross-user authorization, and Pydantic validation of version item bounds.
+
+---
+
 ## Issue #64 — C5 Python consumer cho migration 021 (Draft #67)
 
 - AI job ghi `CONFIRMED_SOURCE_FALLBACK` sau bốn lượt đủ điều kiện trong một lần chạy slot. Writer đối chiếu provenance và ghi `pending_review`. Worker phát `GENERATION_RETRIES_EXHAUSTED` và `question_done` sau khi xác nhận ghi.
@@ -29,6 +70,7 @@
 - `POST /api/sessions/{session_id}/config` nhận `n_versions` nguyên 1–4, modes bỏ qua hoặc `[]` và cờ shuffle mặc định OFF/OFF. RPC 019 suy ra modes từ canonical Blueprint của nguồn đã xác nhận. API trả cấu hình DB đã lưu cùng manifest. [Contract config](api/generation-config-endpoint.md)
 - Claim đối chiếu receipt 015–017 với frozen config/context, manifest và các slot đã commit trước khi dispatch. Frozen dimensions hợp lệ chọn AI. Modes và dimensions cùng rỗng chọn Original Clone với 0 lượt Gemini. Retry giữ snapshot và slot đã commit, kể cả alias `1.0` đã lưu từ W2.
 - Receipt sai trả `503 ERR_GENERATION_STORAGE_FAILURE` trước khi chạy worker. Nếu DB đã commit claim, recovery 017 xử lý job stale và chặn token cũ. [Bằng chứng và phần chờ trong M2](tasks/W4-MVP-02_IMPLEMENTATION_PLAN.md#bàn-giao--ghi-theo-bằng-chứng-thực-tế)
+
 ## OPS11/21 checkpoint — 13/11/2026
 
 - Đạt tiếp nối PR51 đã merge bằng nhánh OPS mới từ dev294c69a. Cập nhật task/input-handoff, runbook và migration checkpoint017/018 merged; 019 đã merge qua PR61 tại devb47e4fa; giữ historical inventory73583d7, không tạo applied ledger giả.
@@ -369,7 +411,7 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
 
 > Checkpoint tích hợp 26/10/2026: Auth PR #7 đã squash merge vào dev tại `bbb7c5e`. Nhánh TASK-103 đang ghép nền dev và giữ list/phân trang/Clone Modal thật; chưa lưu merge commit. Các mục DEC-TV1 bên dưới ghi đúng phạm vi lịch sử ở ngày thực hiện, không ghi đè bằng chứng hoặc nhận TASK-103 đã hoàn tất.
 
-> **Mục đích:** Tài liệu này dùng để lưu trữ các **quyết định kỹ thuật (Architecture Decision Records - ADR)**, các thay đổi công nghệ hoặc điều chỉnh quy trình phát triển phát sinh trong quá trình triển khai dự án so với tài liệu thiết kế ban đầu.  
+> **Mục đích:** Tài liệu này dùng để lưu trữ các **quyết định kỹ thuật (Architecture Decision Records - ADR)**, các thay đổi công nghệ hoặc điều chỉnh quy trình phát triển phát sinh trong quá trình triển khai dự án so với tài liệu thiết kế ban đầu.
 > Khi dự án triển khai, mọi thay đổi về stack, quy ước code, cấu trúc thư mục hoặc luồng phối hợp giữa các thành viên đều cần được ghi chép tại đây để đảm bảo tính minh bạch và thống nhất cho toàn đội.
 
 ---
@@ -608,7 +650,7 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
   3. Kịch bản kiểm thử quyền `anon` trong `verify_migration_003_permissions.sql` chạy trực tiếp dưới kết nối superuser `postgres`, khiến RPC tin cậy `session_user` và bỏ qua kiểm tra quyền, không xác thực được cơ chế cấm `EXECUTE` (SQLSTATE 42501).
 * **Quyết định:**
   1. **Phân loại ngoại lệ phân tán theo kiểu `isinstance`:** Xây dựng các helper `is_network_timeout`, `is_network_transport`, `is_database_rollback_evidence` kiểm tra cây ngoại lệ `__cause__`/`__context__`. Trả về HTTP 504 Gateway Timeout khi trạng thái commit chưa rõ ràng; chỉ trả về HTTP 500 khẳng định hoàn tác khi có bằng chứng từ `postgrest.exceptions.APIError`.
-  2. **Chuẩn hóa script kiểm quyền migration 003:** 
+  2. **Chuẩn hóa script kiểm quyền migration 003:**
      - Thêm preflight tạo mock users trong `auth.users` và `public.users`.
      - Giả lập caller PostgREST qua `SET SESSION AUTHORIZATION authenticator; SET ROLE anon / authenticated / service_role;`.
      - Xác thực role `anon` bị từ chối `EXECUTE` ở tầng PostgreSQL Engine (SQLSTATE 42501 / Least Privilege SEC-04).
@@ -1004,3 +1046,11 @@ giới hạn. Các chữ ký RPC và semantics hiện hành ở [contract08](api
 - Revalidation giữ capability nội bộ cho fallback/clone, không đổi JSON/hash
   của snapshot cũ. Thêm HTTP/SQL/Typst regression; private Storage/live Golden
   chưa được nghiệm thu. Không thay migration/API hay bật runtime.
+
+## DEC-ISSUE80 — Optional source explanations
+
+- Date: 2026-11-16; authority: Issue #80 product decision.
+- Migration 024 replaces the Q01 claim guard and source-reuse projection; no schema or RPC signature changes.
+- AI validation remains required. Clone/fallback/Revert use the agreed missing-solution disclosure.
+- New Revert actions restore frozen sources pending teacher review; historical receipts remain immutable.
+- Deploy with workers drained and matched backend; use forward fixes rather than replaying historical migrations.

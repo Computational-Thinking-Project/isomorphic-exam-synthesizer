@@ -105,9 +105,10 @@ class ActionReceipt(BaseModel):
     replayed: StrictBool
     previous_question_id: UUID
     question_id: UUID
-    question_status: Literal["approved"]
+    question_status: Literal["approved", "pending_review"]
     invalidated_version_ids: list[UUID]
     progress: ProgressCounts
+    revert_contract: Literal["legacy_root", "w4_frozen"] | None = None
 
 
 class ProgressReceipt(BaseModel):

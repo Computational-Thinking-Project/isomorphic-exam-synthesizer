@@ -14,8 +14,11 @@ class Query:
         self.state, self.name = state, name
         self.filters = []
         self.maximum = None
+        self.selected_columns = None
 
-    def select(self, *_args, **_kwargs):
+    def select(self, *args, **_kwargs):
+        if args and isinstance(args[0], str) and args[0].strip() != "*":
+            self.selected_columns = [c.strip() for c in args[0].split(",") if c.strip()]
         return self
 
     def eq(self, field, value):
@@ -53,7 +56,14 @@ class Query:
             return True
 
         rows = [deepcopy(row) for row in self.state.get(self.name, []) if matches(row)]
-        return SimpleNamespace(data=rows[: self.maximum] if self.maximum is not None else rows)
+        if self.maximum is not None:
+            rows = rows[: self.maximum]
+        if self.selected_columns is not None:
+            projected = []
+            for r in rows:
+                projected.append({col: r.get(col) for col in self.selected_columns})
+            rows = projected
+        return SimpleNamespace(data=rows)
 
 
 class MockSupabaseClient:
