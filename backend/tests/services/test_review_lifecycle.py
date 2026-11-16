@@ -150,13 +150,21 @@ def test_f03_completion_sends_new_candidates_own_answers(state):
 def test_first_candidate_can_be_reverted_per_owner_contract(state):
     assert not state.rows[state.qid].get("regenerated_from_id")
     result = immediate(state.service().revert_question(state.sid, state.qid, "owner", str(uuid4())))
-    assert result.question_id == state.qid and result.status == "approved" and result.is_reverted
-    assert len(state.rows) == 1
+    assert result.question_id != state.qid
+    assert result.status == "pending_review"
+    assert result.is_reverted is True
+    assert state.rows[state.qid]["is_current"] is False
+    assert state.rows[result.question_id]["is_current"] is True
+    assert state.rows[result.question_id]["status"] == "pending_review"
+    assert state.rows[result.question_id]["is_reverted"] is True
+    assert sum(1 for r in state.rows.values() if r.get("is_current")) == 1
 
 
 def test_revert_and_accept_do_not_create_another_review_budget(state):
-    immediate(state.service().revert_question(state.sid, state.qid, "owner", str(uuid4())))
-    immediate(state.service().accept_question(state.sid, state.qid, "owner", str(uuid4())))
+    revert_res = immediate(state.service().revert_question(state.sid, state.qid, "owner", str(uuid4())))
+    accept_res = immediate(state.service().accept_question(state.sid, revert_res.question_id, "owner", str(uuid4())))
+    assert accept_res.status == "approved"
+    assert state.rows[revert_res.question_id]["status"] == "approved"
     assert state.charges == 0 and not any(role == "worker" for role, _, _ in state.calls)
 
 
