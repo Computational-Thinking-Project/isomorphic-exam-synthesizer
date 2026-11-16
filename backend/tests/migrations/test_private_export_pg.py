@@ -570,6 +570,13 @@ class PrivateExportPostgresTests(ExportSnapshotPostgresFixture):
         self.sql(
             BOOTSTRAP + (ROOT / "backend/scripts/schema.sql").read_text(encoding="utf-8"), db=fresh
         )
+        # Supabase baseline grants precede the migration chain, as in setUp;
+        # migration023 explicitly verifies authenticated users retain SELECT.
+        self.sql(
+            "GRANT USAGE ON SCHEMA public,auth TO anon,authenticated,service_role; "
+            "GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated,service_role;",
+            db=fresh,
+        )
         for path in sorted((ROOT / "backend/migrations").glob("*.sql")):
             self.sql(path.read_text(encoding="utf-8"), db=fresh)
         self.assertEqual(

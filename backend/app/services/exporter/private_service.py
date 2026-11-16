@@ -15,7 +15,12 @@ from supabase import Client
 
 from app.models.schemas import ReviewDomainException
 
-from .bundle_models import ApprovedExportSnapshot, BundleArtifact, BundleBuildError
+from .bundle_models import (
+    ApprovedExportSnapshot,
+    BundleArtifact,
+    BundleBuildError,
+    revalidate_snapshot,
+)
 from .exceptions import TypstCompilationError, TypstNotFoundError, TypstTimeoutError
 from .manifest_bundle import build_private_bundle
 from .private_models import (
@@ -35,11 +40,13 @@ from .snapshot_builder import build_approved_snapshot
 from .snapshot_reader import ExportSnapshotReader
 
 
-def user_snapshot_loader(db: Client) -> SnapshotLoader:
-    """Bind a verified user/RLS client, never a service-role client."""
+def user_snapshot_loader(db: Client, *, provenance_db: Client | None = None) -> SnapshotLoader:
+    """Keep content under user RLS; privileged reads only verify scoped provenance."""
 
     def load(session_id: str, owner_id: str) -> ApprovedExportSnapshot:
-        return build_approved_snapshot(ExportSnapshotReader(db).load_rows(session_id, owner_id))
+        return build_approved_snapshot(
+            ExportSnapshotReader(db, provenance_db=provenance_db).load_rows(session_id, owner_id)
+        )
 
     return load
 
@@ -79,7 +86,7 @@ class PrivateExportService:
         except Exception:
             raise ExportFailure("ERR_EXPORT_UNAVAILABLE") from None
         try:
-            snapshot = ApprovedExportSnapshot.model_validate(snapshot.model_dump())
+            snapshot = revalidate_snapshot(snapshot)
         except ValidationError:
             raise ExportFailure("ERR_EXPORT_SNAPSHOT_INVALID", 409) from None
         if snapshot.session_id != requested_id or not re.fullmatch(

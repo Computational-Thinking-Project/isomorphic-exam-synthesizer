@@ -14,6 +14,15 @@ Depends on [snapshot 07](export-snapshot-contract.md) / PR #58.
 `PrivateExportService` is synchronous. Bind `user_snapshot_loader(get_user_db)` to
 the verified user's RLS client; never substitute a service-role reader. The HTTP
 adapter must derive owner ID from `get_current_user`, never JSON/query parameters.
+For revised Q01, bind `user_snapshot_loader(user_db, provenance_db=writer)`.
+The worker's RPC-timeout client verifies only session-scoped generation receipts
+and clone snapshots, after user ownership/approval checks; all exam content stays
+on the user/RLS client. Missing verifier or invalid provenance fails closed for
+empty solutions. Nonempty AI solutions remain mandatory. Verified fallback/clone
+roots can retain empty solution bodies and their headings in all exported formats.
+The private service preserves 07's internal validation capability; client JSON
+cannot grant this exception. Public JSON, revision identity and packager version
+are unchanged for previously supported nonempty snapshots.
 Run the whole service operation with `asyncio.to_thread` from async handlers.
 Do not pass the async `load_approved_export_snapshot` function to `to_thread`.
 

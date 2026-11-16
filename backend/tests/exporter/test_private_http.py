@@ -157,12 +157,15 @@ def test_runtime_separates_privileged_clients_and_closes_after_worker(fail, monk
     monkeypatch.setattr(settings, "SUPABASE_URL", "https://mock.supabase.co")
     monkeypatch.setattr(settings, "SUPABASE_SERVICE_ROLE_KEY", SecretStr("test-only"))
     clients = []
+    sdk_clients = []
     user_db = Mock()
 
     def create(url, key, *, options):
         assert key == "test-only"
         clients.append(options.httpx_client)
-        return Mock()
+        sdk = Mock()
+        sdk_clients.append(sdk)
+        return sdk
 
     monkeypatch.setattr(private_runtime, "create_client", create)
     loader = Mock()
@@ -187,5 +190,5 @@ def test_runtime_separates_privileged_clients_and_closes_after_worker(fail, monk
             private_runtime.run_private_export("status", "session", "owner", user_db).state
             == "idle"
         )
-    loader.assert_called_once_with(user_db)
+    loader.assert_called_once_with(user_db, provenance_db=sdk_clients[0])
     assert all(c.is_closed for c in clients)

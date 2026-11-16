@@ -55,7 +55,7 @@ def run_private_export(
             ),
         )
         service = PrivateExportService(
-            user_snapshot_loader(user_db),
+            user_snapshot_loader(user_db, provenance_db=writer),
             SupabaseExportLedger(writer),
             SupabasePrivateExportStore(storage, settings.PRIVATE_EXPORT_BUCKET),
         )

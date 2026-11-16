@@ -996,3 +996,11 @@ giới hạn. Các chữ ký RPC và semantics hiện hành ở [contract08](api
 - Hùng triển khai synchronous worker-thread HTTP theo [Philip chấp nhận Q10](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6825618302): POST export200/202, GET read-only, POST download-url3600s/no-store. Runtime opt-in mặc định tắt, timeout từng IO phải cấu hình; không tự apply DDL/cloud.
 - Sửa Q09 review: chỉ structured NoSuchKey/404 cho restart missing, mọi404 chưa kết luận giữ checkpoint. RPC020 checkpoint trả token + persisted receipt, adapter xác minh exact trước upload. Đổi payload acknowledgment nội bộ cần Duy kiểm lại; không đổi chữ ký RPC/public JSON.
 - Trạng thái code local/test theo [plan08](tasks/W4-MVP-08.md); chưa live Storage/JWT/PostgREST, chưa xác nhận lease900s/proxy budget hoặc shared applied manifest.
+# DEC-TV7-W4-008-Q01 — 16/11/2026
+
+- Theo Q01 sửa đổi của Duy tại PR74, runtime08 truyền worker RPC client có
+  timeout vào verifier provenance của07, sau owner/approval và chỉ scoped ledger.
+  Nội dung vẫn đọc bằng user RLS; empty AI/missing verifier fail closed trước claim.
+- Revalidation giữ capability nội bộ cho fallback/clone, không đổi JSON/hash
+  của snapshot cũ. Thêm HTTP/SQL/Typst regression; private Storage/live Golden
+  chưa được nghiệm thu. Không thay migration/API hay bật runtime.
