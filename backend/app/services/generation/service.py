@@ -150,6 +150,7 @@ class GenerationService:
                             candidate = parse_model_output(reply.text, CandidatePayload)
                     except (GatewayError, ProviderError) as exc:
                         last_code = exc.code
+                        result._exhausted_attempts = exc.retryable and attempt == self.MAX_ATTEMPTS
                         if not exc.retryable or attempt == self.MAX_ATTEMPTS:
                             break
                         repair_candidate = None
@@ -160,6 +161,7 @@ class GenerationService:
                         schema_failures += 1
                         feedback = [{"check": "output_schema", "code": exc.code}]
                         repair_candidate = None
+                        result._exhausted_attempts = attempt == self.MAX_ATTEMPTS
                         if schema_failures > 2:
                             break
                         continue
@@ -193,6 +195,7 @@ class GenerationService:
                     if duplicate:
                         feedback.append({"check": "duplicate_candidate", "code": "unchanged_question"})
                     last_code = "DUPLICATE_CANDIDATE" if duplicate else "VALIDATION_FAILED"
+                    result._exhausted_attempts = attempt == self.MAX_ATTEMPTS
                     solution_only = (
                         not duplicate and failures
                         and all(check.check_name in {"solution_consistency", "solution_latex"} for check in failures)
@@ -201,10 +204,12 @@ class GenerationService:
                     if repair_candidate:
                         solution_repairs += 1
         except TimeoutError:
+            result._exhausted_attempts = False
             last_code = "JOB_DEADLINE"
         except asyncio.CancelledError:
             raise
         except Exception:
+            result._exhausted_attempts = False
             last_code = "GENERATION_INTERNAL"
         result.error_code = last_code
         return result
@@ -260,6 +265,7 @@ class GenerationService:
         confirmed_source_hash: str, n_versions: int, context: RequestContext,
         base_seed: int = 100, variation_modes: list[str] | None = None,
         completed: list[QuestionResult] | None = None, on_result: ResultCallback | None = None,
+        committed_fallbacks: frozenset[tuple[int, str]] = frozenset(),
     ) -> BatchResult:
         sources = [source.model_copy(deep=True) for source in sources]
         blueprints = deepcopy(blueprints)
@@ -279,7 +285,12 @@ class GenerationService:
             for index, source in enumerate(sources)
         ]
         cached = {(r.version_index, r.source_question_id): r.model_copy(deep=True) for r in completed or []}
-        if len(cached) != len(completed or []) or not set(cached) <= {(v, s.id) for v, _, s, _ in slots}:
+        slot_keys = {(version, source.id) for version, _, source, _ in slots}
+        if (
+            len(cached) != len(completed or [])
+            or not (set(cached) | committed_fallbacks) <= slot_keys
+            or set(cached) & committed_fallbacks
+        ):
             raise ToolError("RESUME_MISMATCH", "Kết quả lưu không khớp các vị trí cần sinh.")
         seen: dict[str, set[str]] = {source.id: set() for source in sources}
         for version, index, source, seed in slots:
@@ -328,9 +339,11 @@ class GenerationService:
 
         async with asyncio.TaskGroup() as group:
             for position, slot in enumerate(slots):
-                group.create_task(one(position, *slot))
+                version, _, source, _ = slot
+                if (version, source.id) not in committed_fallbacks:
+                    group.create_task(one(position, *slot))
         ordered = [result for result in results if result is not None]
-        count = sum(result.candidate is not None for result in ordered)
+        count = len(committed_fallbacks) + sum(result.candidate is not None for result in ordered)
         status: Literal["generated", "partial_generated", "failed"] = (
             "generated" if count == len(slots) else "partial_generated" if count else "failed"
         )

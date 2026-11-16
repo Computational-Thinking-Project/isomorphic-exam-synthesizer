@@ -89,11 +89,30 @@ def probe(name, url, health=False, openapi=False):
         return {"name": name, "result": "FAIL"}
 
 
+def anonymous_auth_probe(name, url):
+    """Require the protected route challenge without retaining response content."""
+    try:
+        with build_opener(NoRedirect).open(Request(url), timeout=10) as response:
+            return {"name": name, "result": "FAIL", "http_status": response.status}
+    except HTTPError as error:
+        challenges = error.headers.get_all("WWW-Authenticate", []) if error.headers else []
+        bearer = any(re.search(r"(?:^|,)\s*Bearer(?:\s|,|$)", value, re.IGNORECASE)
+                     for value in challenges)
+        return {"name": name, "result": "PASS" if error.code == 401 and bearer else "FAIL",
+                "http_status": error.code}
+    except (OSError, URLError):
+        return {"name": name, "result": "FAIL"}
+
+
 def smoke(backend, frontend):
     return [probe("backend_health", backend + "/health", health=True),
             probe("frontend_html", frontend + "/"),
             probe("spa_login_deep_link", frontend + "/login"),
-            probe("backend_proxy_openapi", frontend + "/openapi.json", openapi=True)]
+            probe("backend_proxy_openapi", frontend + "/openapi.json", openapi=True),
+            anonymous_auth_probe("backend_sessions_anonymous", backend + "/api/sessions"),
+            anonymous_auth_probe("proxy_sessions_anonymous", frontend + "/api/sessions"),
+            anonymous_auth_probe("backend_metrics_anonymous", backend + "/api/health/metrics"),
+            anonymous_auth_probe("proxy_metrics_anonymous", frontend + "/api/health/metrics")]
 
 
 def report(action, checks, deployed_sha=None, zip_path=None):

@@ -1,7 +1,6 @@
 """Authenticated TASK-207a snapshot preflight and atomic configuration RPC adapter."""
 
 from copy import deepcopy
-from datetime import datetime
 from typing import Protocol, cast
 from uuid import UUID
 
@@ -11,13 +10,12 @@ from supabase import Client
 
 from app.models.generation_config import GenerationConfigRequest, GenerationConfigResponse
 from app.services.generation.config_service import (
-    BlueprintConfigContext,
     CanonicalBlueprintConfigContext,
     GenerationConfigContext,
     GenerationConfigError,
     SourceQuestionConfigContext,
 )
-from app.services.generation.mode_mapper import resolve_modes_to_canonical_dimensions
+from app.services.generation.mode_mapper import PUBLIC_TO_CANONICAL_DIMENSIONS
 
 
 class GenerationConfigStore(Protocol):
@@ -71,20 +69,6 @@ def _uuid(value: object) -> UUID:
     if isinstance(value, str):
         return UUID(value)
     raise ValueError("Expected a database UUID.")
-
-
-def _confirmed_at(value: object) -> datetime | None:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        timestamp = value
-    elif isinstance(value, str):
-        timestamp = datetime.fromisoformat(value)
-    else:
-        raise ValueError("Expected a database timestamp.")
-    if timestamp.tzinfo is None or timestamp.utcoffset() is None:
-        raise ValueError("Expected a timezone-aware database timestamp.")
-    return timestamp
 
 
 def _canonical_context(
@@ -160,7 +144,6 @@ def _canonical_context(
         session_id=session_id,
         status=status,
         source_questions=tuple(sources),
-        blueprints=(),
         approved=approved,
         snapshot_ready=True,
         snapshot_reason=None,
@@ -176,7 +159,7 @@ class GenerationConfigRepository:
         self._db = db
 
     def load_context(self, session_id: UUID) -> GenerationConfigContext | None:
-        """Read canonical evidence first; legacy reads require NO_CONFIRMATION."""
+        """Read canonical evidence for a new configuration save."""
         try:
             session_rows = _rows(
                 self._db.table("exam_sessions")
@@ -203,66 +186,12 @@ class GenerationConfigRepository:
                 return _canonical_context(session_id, status, approved, snapshot)
             if snapshot.get("ready") is not False or not isinstance(snapshot.get("reason"), str):
                 raise ValueError("Generation snapshot readiness is malformed.")
-            reason = snapshot["reason"]
-            if reason != "NO_CONFIRMATION":
-                return GenerationConfigContext(
-                    session_id=session_id,
-                    status=status,
-                    source_questions=(),
-                    blueprints=(),
-                    approved=approved,
-                    snapshot_reason=reason,
-                )
-
-            source_rows = _rows(
-                self._db.table("source_questions")
-                .select("id,session_id")
-                .eq("session_id", str(session_id))
-                .order("question_no")
-                .limit(21)
-                .execute()
-                .data
-            )
-            sources: list[SourceQuestionConfigContext] = []
-            for row in source_rows:
-                source = SourceQuestionConfigContext(
-                    id=_uuid(row["id"]), session_id=_uuid(row["session_id"])
-                )
-                if source.session_id != session_id:
-                    raise ValueError("Source response is outside the requested session.")
-                sources.append(source)
-
-            blueprints: list[BlueprintConfigContext] = []
-            if sources:
-                source_ids = {source.id for source in sources}
-                query_ids = list(dict.fromkeys(str(source.id) for source in sources))
-                blueprint_rows = _rows(
-                    self._db.table("question_blueprints")
-                    .select("source_question_id,variation_modes,confirmed_at")
-                    .in_("source_question_id", query_ids)
-                    .order("source_question_id")
-                    .limit(len(query_ids) + 1)
-                    .execute()
-                    .data
-                )
-                for row in blueprint_rows:
-                    source_question_id = _uuid(row["source_question_id"])
-                    if source_question_id not in source_ids:
-                        raise ValueError("Blueprint response is outside the requested sources.")
-                    blueprints.append(
-                        BlueprintConfigContext(
-                            source_question_id=source_question_id,
-                            variation_modes=row["variation_modes"],
-                            confirmed_at=_confirmed_at(row["confirmed_at"]),
-                        )
-                    )
-
             return GenerationConfigContext(
                 session_id=session_id,
                 status=status,
-                source_questions=tuple(sources),
-                blueprints=tuple(blueprints),
+                source_questions=(),
                 approved=approved,
+                snapshot_reason=snapshot["reason"],
             )
         except GenerationConfigError:
             raise
@@ -277,26 +206,40 @@ class GenerationConfigRepository:
         config: GenerationConfigRequest,
         expected_snapshot: dict[str, object] | None,
     ) -> GenerationConfigResponse:
+        if not isinstance(expected_snapshot, dict):
+            raise GenerationConfigError(
+                409, "ERR_CONFIG_CONFLICT", "The session or source changed; reload before saving."
+            )
         parameters = {
             "p_session_id": str(session_id),
             "p_n_versions": config.n_versions,
-            "p_active_variation_modes": list(config.active_variation_modes),
+            "p_active_variation_modes": [],
             "p_ordering_preferences": config.ordering_preferences.model_dump(),
             "p_expected_snapshot": deepcopy(expected_snapshot),
         }
         try:
             data = self._db.rpc("save_generation_config", parameters).execute().data
             result = GenerationConfigResponse.model_validate(data)
+            dimensions = result.config.canonical_dimensions
+            ordered_dimensions = [
+                dimension for dimension in ("values", "context") if dimension in dimensions
+            ]
+            ordered_modes = [
+                mode
+                for mode, dimension in PUBLIC_TO_CANONICAL_DIMENSIONS.items()
+                if dimension in dimensions
+            ]
             if (
                 result.session_id != session_id
                 or result.config.n_versions != config.n_versions
-                or result.config.active_variation_modes != config.active_variation_modes
+                or result.config.active_variation_modes != ordered_modes
                 or result.config.ordering_preferences != config.ordering_preferences
                 or result.config.source_manifest != expected_snapshot
-                or result.config.canonical_dimensions
-                != sorted(set(resolve_modes_to_canonical_dimensions(config.active_variation_modes)))
+                or dimensions != ordered_dimensions
             ):
-                raise ValueError("Saved configuration receipt differs from the request.")
+                raise ValueError(
+                    "Saved configuration receipt does not match the request and W4 contract."
+                )
             return result
         except GenerationConfigError:
             raise

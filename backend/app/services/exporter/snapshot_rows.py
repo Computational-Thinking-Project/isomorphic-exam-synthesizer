@@ -5,7 +5,7 @@ shape. The builder never touches the database, so changing how rows are read doe
 not change validation.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 
@@ -23,6 +23,9 @@ class RawSnapshotRows:
         correct_key, solution_md, status, is_current).
     answer_keys: ``answer_keys`` rows (version_id, question_no, display_no,
         correct_option, display_correct_key, canonical_question_no).
+    generation_config/provenance_results/provenance_snapshots: internal Q01
+        evidence, optional for nonempty solutions. Empty tuples fail closed for
+        empty solutions. These are never accepted from public HTTP request JSON.
     """
 
     session: Mapping[str, Any]
@@ -31,3 +34,6 @@ class RawSnapshotRows:
     versions: tuple[Mapping[str, Any], ...]
     questions: tuple[Mapping[str, Any], ...]
     answer_keys: tuple[Mapping[str, Any], ...]
+    generation_config: Mapping[str, Any] = field(default_factory=dict)
+    provenance_results: tuple[Mapping[str, Any], ...] = ()
+    provenance_snapshots: tuple[Mapping[str, Any], ...] = ()
