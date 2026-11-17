@@ -86,18 +86,21 @@ test('Stage3PreviewPage: Hiển thị trạng thái chờ khi đang tải dữ l
   }
 });
 
-test('Stage3PreviewPage: Xử lý lỗi 409 ERR_SHUFFLE_REQUIRED hiển thị thẻ Chờ xáo trộn và nút duy nhất "Xáo trộn mã đề"', async () => {
+test('Stage3PreviewPage: Xử lý lỗi 409 ERR_SHUFFLE_REQUIRED hiển thị thẻ Chờ chốt thứ tự, 2 checkbox độc lập mặc định OFF/OFF và nút "Áp dụng & Xem trước"', async () => {
   const originalGet = api.get;
-  api.get = async () => {
-    const error = new Error('Cần thực hiện xáo trộn đề trước khi xem bản chiếu');
-    error.response = {
-      status: 409,
-      data: {
-        error_code: 'ERR_SHUFFLE_REQUIRED',
-        detail: 'Cần thực hiện xáo trộn đề trước khi xem bản chiếu',
-      },
-    };
-    throw error;
+  api.get = async (url) => {
+    if (url.includes('/finalize/preview')) {
+      const error = new Error('Cần thực hiện xáo trộn đề trước khi xem bản chiếu');
+      error.response = {
+        status: 409,
+        data: {
+          error_code: 'ERR_SHUFFLE_REQUIRED',
+          detail: 'Cần thực hiện xáo trộn đề trước khi xem bản chiếu',
+        },
+      };
+      throw error;
+    }
+    return { data: { id: 'session-needs-shuffle', status: 'reviewed' } };
   };
 
   const harness = renderPreviewPage('session-needs-shuffle');
@@ -105,34 +108,44 @@ test('Stage3PreviewPage: Xử lý lỗi 409 ERR_SHUFFLE_REQUIRED hiển thị th
     await harness.render();
     assert.match(harness.container.textContent, /Toàn bộ câu hỏi đã được duyệt thành công/);
     assert.match(harness.container.textContent, /Chờ chốt thứ tự/);
+
+    // 2 checkbox độc lập theo Issue #45
+    const qCheckbox = harness.container.querySelector('#shuffle-questions-checkbox');
+    const optCheckbox = harness.container.querySelector('#shuffle-options-checkbox');
+    assert.ok(qCheckbox, 'Checkbox xáo trộn thứ tự câu hỏi phải hiển thị');
+    assert.ok(optCheckbox, 'Checkbox xáo trộn thứ tự đáp án phải hiển thị');
+    assert.equal(qCheckbox.checked, false, 'Checkbox câu hỏi mặc định OFF (false) theo Issue #45');
+    assert.equal(optCheckbox.checked, false, 'Checkbox đáp án mặc định OFF (false) theo Issue #45');
+
+    // Nút hành động duy nhất: "Áp dụng & Xem trước"
     const shuffleBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
-    assert.ok(shuffleBtn, 'Nút Xáo trộn mã đề phải hiển thị');
-    assert.match(shuffleBtn.textContent, /Xáo trộn câu hỏi và đáp án/);
-    const finalizeOffBtn = harness.container.querySelector('[data-testid="btn-finalize-off"]');
-    assert.ok(finalizeOffBtn, 'Nút Giữ nguyên thứ tự phải hiển thị');
-    assert.match(finalizeOffBtn.textContent, /Giữ nguyên thứ tự/);
+    assert.ok(shuffleBtn, 'Nút Áp dụng & Xem trước phải hiển thị');
+    assert.match(shuffleBtn.textContent, /Áp dụng & Xem trước/);
   } finally {
     api.get = originalGet;
     await harness.unmount();
   }
 });
 
-test('Stage3PreviewPage: Bấm "Giữ nguyên thứ tự" gọi PATCH preferences false/false và POST shuffle, sau đó nạp lại bản xem trước (Golden Baseline)', async () => {
+test('Stage3PreviewPage: Tổ hợp 1 (OFF/OFF) - Bấm "Áp dụng & Xem trước" với mặc định false/false gửi PATCH false/false và POST shuffle, sau đó nạp lại bản xem trước (Golden Baseline)', async () => {
   const originalGet = api.get;
   const originalPatch = api.patch;
   const originalPost = api.post;
 
-  let getCalls = 0;
+  let previewGetCalls = 0;
   const calls = [];
 
-  api.get = async () => {
-    getCalls += 1;
-    if (getCalls === 1) {
-      const error = new Error('Shuffle required');
-      error.response = { status: 409, data: { error_code: 'ERR_SHUFFLE_REQUIRED' } };
-      throw error;
+  api.get = async (url) => {
+    if (url.includes('/finalize/preview')) {
+      previewGetCalls += 1;
+      if (previewGetCalls === 1) {
+        const error = new Error('Shuffle required');
+        error.response = { status: 409, data: { error_code: 'ERR_SHUFFLE_REQUIRED' } };
+        throw error;
+      }
+      return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'session-off-test' } };
     }
-    return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'session-off-test' } };
+    return { data: { id: 'session-off-test', status: 'reviewed' } };
   };
 
   api.patch = async (url, payload) => {
@@ -148,11 +161,16 @@ test('Stage3PreviewPage: Bấm "Giữ nguyên thứ tự" gọi PATCH preference
   const harness = renderPreviewPage('session-off-test');
   try {
     await harness.render();
-    const finalizeOffBtn = harness.container.querySelector('[data-testid="btn-finalize-off"]');
-    assert.ok(finalizeOffBtn, 'Nút Giữ nguyên thứ tự phải hiển thị');
+    const qCheckbox = harness.container.querySelector('#shuffle-questions-checkbox');
+    const optCheckbox = harness.container.querySelector('#shuffle-options-checkbox');
+    assert.equal(qCheckbox.checked, false);
+    assert.equal(optCheckbox.checked, false);
+
+    const applyBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
+    assert.ok(applyBtn, 'Nút Áp dụng & Xem trước phải hiển thị');
 
     await act(async () => {
-      finalizeOffBtn.click();
+      applyBtn.click();
     });
 
     assert.equal(calls.length, 2);
@@ -171,22 +189,25 @@ test('Stage3PreviewPage: Bấm "Giữ nguyên thứ tự" gọi PATCH preference
   }
 });
 
-test('Stage3PreviewPage: Bấm "Xáo trộn mã đề" gọi PATCH preferences true/true và POST shuffle, sau đó nạp lại bản xem trước', async () => {
+test('Stage3PreviewPage: Tổ hợp 4 (ON/ON) - Bật cả 2 checkbox rồi bấm "Áp dụng & Xem trước" gửi PATCH true/true và POST shuffle, sau đó nạp lại bản xem trước', async () => {
   const originalGet = api.get;
   const originalPatch = api.patch;
   const originalPost = api.post;
 
-  let getCalls = 0;
+  let previewGetCalls = 0;
   const calls = [];
 
-  api.get = async () => {
-    getCalls += 1;
-    if (getCalls === 1) {
-      const error = new Error('Shuffle required');
-      error.response = { status: 409, data: { error_code: 'ERR_SHUFFLE_REQUIRED' } };
-      throw error;
+  api.get = async (url) => {
+    if (url.includes('/finalize/preview')) {
+      previewGetCalls += 1;
+      if (previewGetCalls === 1) {
+        const error = new Error('Shuffle required');
+        error.response = { status: 409, data: { error_code: 'ERR_SHUFFLE_REQUIRED' } };
+        throw error;
+      }
+      return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'session-123' } };
     }
-    return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'session-123' } };
+    return { data: { id: 'session-123', status: 'reviewed' } };
   };
 
   api.patch = async (url, payload) => {
@@ -202,11 +223,24 @@ test('Stage3PreviewPage: Bấm "Xáo trộn mã đề" gọi PATCH preferences t
   const harness = renderPreviewPage('session-123');
   try {
     await harness.render();
-    const shuffleBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
-    assert.ok(shuffleBtn);
+    const qCheckbox = harness.container.querySelector('#shuffle-questions-checkbox');
+    const optCheckbox = harness.container.querySelector('#shuffle-options-checkbox');
+
+    // Bật cả 2 checkbox
+    await act(async () => {
+      qCheckbox.click();
+    });
+    await act(async () => {
+      optCheckbox.click();
+    });
+    assert.equal(qCheckbox.checked, true);
+    assert.equal(optCheckbox.checked, true);
+
+    const applyBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
+    assert.ok(applyBtn);
 
     await act(async () => {
-      shuffleBtn.click();
+      applyBtn.click();
     });
 
     assert.equal(calls.length, 2);
@@ -222,6 +256,333 @@ test('Stage3PreviewPage: Bấm "Xáo trộn mã đề" gọi PATCH preferences t
     api.get = originalGet;
     api.patch = originalPatch;
     api.post = originalPost;
+    await harness.unmount();
+  }
+});
+
+test('Stage3PreviewPage: Tổ hợp 2 (ON/OFF) - Chỉ bật checkbox câu hỏi rồi bấm "Áp dụng & Xem trước" gửi PATCH true/false và POST shuffle', async () => {
+  const originalGet = api.get;
+  const originalPatch = api.patch;
+  const originalPost = api.post;
+
+  let previewGetCalls = 0;
+  const calls = [];
+
+  api.get = async (url) => {
+    if (url.includes('/finalize/preview')) {
+      previewGetCalls += 1;
+      if (previewGetCalls === 1) {
+        const error = new Error('Shuffle required');
+        error.response = { status: 409, data: { error_code: 'ERR_SHUFFLE_REQUIRED' } };
+        throw error;
+      }
+      return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'session-on-off' } };
+    }
+    return { data: { id: 'session-on-off', status: 'reviewed' } };
+  };
+
+  api.patch = async (url, payload) => {
+    calls.push({ type: 'patch', url, payload });
+    return { data: { success: true } };
+  };
+
+  api.post = async (url, payload) => {
+    calls.push({ type: 'post', url, payload });
+    return { data: { session_id: 'session-on-off', is_finalized: true } };
+  };
+
+  const harness = renderPreviewPage('session-on-off');
+  try {
+    await harness.render();
+    const qCheckbox = harness.container.querySelector('#shuffle-questions-checkbox');
+    const optCheckbox = harness.container.querySelector('#shuffle-options-checkbox');
+
+    // Chỉ bật câu hỏi (ON/OFF)
+    await act(async () => {
+      qCheckbox.click();
+    });
+    assert.equal(qCheckbox.checked, true);
+    assert.equal(optCheckbox.checked, false);
+
+    const applyBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
+    await act(async () => {
+      applyBtn.click();
+    });
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].type, 'patch');
+    assert.deepEqual(calls[0].payload, { shuffle_questions: true, shuffle_options: false });
+    assert.equal(calls[1].type, 'post');
+    assert.equal(calls[1].url, '/sessions/session-on-off/finalize/shuffle');
+  } finally {
+    api.get = originalGet;
+    api.patch = originalPatch;
+    api.post = originalPost;
+    await harness.unmount();
+  }
+});
+
+test('Stage3PreviewPage: Tổ hợp 3 (OFF/ON) - Chỉ bật checkbox đáp án rồi bấm "Áp dụng & Xem trước" gửi PATCH false/true và POST shuffle', async () => {
+  const originalGet = api.get;
+  const originalPatch = api.patch;
+  const originalPost = api.post;
+
+  let previewGetCalls = 0;
+  const calls = [];
+
+  api.get = async (url) => {
+    if (url.includes('/finalize/preview')) {
+      previewGetCalls += 1;
+      if (previewGetCalls === 1) {
+        const error = new Error('Shuffle required');
+        error.response = { status: 409, data: { error_code: 'ERR_SHUFFLE_REQUIRED' } };
+        throw error;
+      }
+      return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'session-off-on' } };
+    }
+    return { data: { id: 'session-off-on', status: 'reviewed' } };
+  };
+
+  api.patch = async (url, payload) => {
+    calls.push({ type: 'patch', url, payload });
+    return { data: { success: true } };
+  };
+
+  api.post = async (url, payload) => {
+    calls.push({ type: 'post', url, payload });
+    return { data: { session_id: 'session-off-on', is_finalized: true } };
+  };
+
+  const harness = renderPreviewPage('session-off-on');
+  try {
+    await harness.render();
+    const qCheckbox = harness.container.querySelector('#shuffle-questions-checkbox');
+    const optCheckbox = harness.container.querySelector('#shuffle-options-checkbox');
+
+    // Chỉ bật đáp án (OFF/ON)
+    await act(async () => {
+      optCheckbox.click();
+    });
+    assert.equal(qCheckbox.checked, false);
+    assert.equal(optCheckbox.checked, true);
+
+    const applyBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
+    await act(async () => {
+      applyBtn.click();
+    });
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].type, 'patch');
+    assert.deepEqual(calls[0].payload, { shuffle_questions: false, shuffle_options: true });
+    assert.equal(calls[1].type, 'post');
+    assert.equal(calls[1].url, '/sessions/session-off-on/finalize/shuffle');
+  } finally {
+    api.get = originalGet;
+    api.patch = originalPatch;
+    api.post = originalPost;
+    await harness.unmount();
+  }
+});
+
+test('Stage3PreviewPage: Khôi phục cấu hình ordering_preferences đã lưu ở backend (ví dụ ON/OFF)', async () => {
+  const originalGet = api.get;
+  const originalPatch = api.patch;
+  const originalPost = api.post;
+
+  let previewGetCalls = 0;
+  const calls = [];
+
+  api.get = async (url) => {
+    if (url.includes('/finalize/preview')) {
+      previewGetCalls += 1;
+      if (previewGetCalls === 1) {
+        const error = new Error('Shuffle required');
+        error.response = { status: 409, data: { error_code: 'ERR_SHUFFLE_REQUIRED' } };
+        throw error;
+      }
+      return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'session-restored' } };
+    }
+    // GET /sessions/:id trả cấu hình đã lưu
+    return {
+      data: {
+        id: 'session-restored',
+        status: 'reviewed',
+        generation_config: {
+          ordering_preferences: {
+            shuffle_questions: true,
+            shuffle_options: false,
+          },
+        },
+      },
+    };
+  };
+
+  api.patch = async (url, payload) => {
+    calls.push({ type: 'patch', url, payload });
+    return { data: { success: true } };
+  };
+
+  api.post = async (url, payload) => {
+    calls.push({ type: 'post', url, payload });
+    return { data: { session_id: 'session-restored', is_finalized: true } };
+  };
+
+  const harness = renderPreviewPage('session-restored');
+  try {
+    await harness.render();
+    const qCheckbox = harness.container.querySelector('#shuffle-questions-checkbox');
+    const optCheckbox = harness.container.querySelector('#shuffle-options-checkbox');
+
+    // Kiểm tra đã khôi phục đúng cấu hình đã lưu: true/false
+    assert.equal(qCheckbox.checked, true, 'shuffle_questions phải được khôi phục là true');
+    assert.equal(optCheckbox.checked, false, 'shuffle_options phải được khôi phục là false');
+
+    // Bấm Áp dụng mà không cần đổi gì sẽ giữ nguyên cấu hình đã lưu
+    const applyBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
+    await act(async () => {
+      applyBtn.click();
+    });
+
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].type, 'patch');
+    assert.deepEqual(calls[0].payload, { shuffle_questions: true, shuffle_options: false });
+  } finally {
+    api.get = originalGet;
+    api.patch = originalPatch;
+    api.post = originalPost;
+    await harness.unmount();
+  }
+});
+
+test('Stage3PreviewPage: Không ghi đè ngoài ý muốn - sửa 1 checkbox không ảnh hưởng checkbox còn lại', async () => {
+  const originalGet = api.get;
+  const originalPatch = api.patch;
+  const originalPost = api.post;
+
+  let previewGetCalls = 0;
+  const calls = [];
+
+  api.get = async (url) => {
+    if (url.includes('/finalize/preview')) {
+      previewGetCalls += 1;
+      if (previewGetCalls === 1) {
+        const error = new Error('Shuffle required');
+        error.response = { status: 409, data: { error_code: 'ERR_SHUFFLE_REQUIRED' } };
+        throw error;
+      }
+      return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'session-no-overwrite' } };
+    }
+    // Khôi phục ON/OFF từ backend
+    return {
+      data: {
+        id: 'session-no-overwrite',
+        status: 'reviewed',
+        generation_config: {
+          ordering_preferences: {
+            shuffle_questions: true,
+            shuffle_options: false,
+          },
+        },
+      },
+    };
+  };
+
+  api.patch = async (url, payload) => {
+    calls.push({ type: 'patch', url, payload });
+    return { data: { success: true } };
+  };
+
+  api.post = async (url, payload) => {
+    calls.push({ type: 'post', url, payload });
+    return { data: { session_id: 'session-no-overwrite', is_finalized: true } };
+  };
+
+  const harness = renderPreviewPage('session-no-overwrite');
+  try {
+    await harness.render();
+    const qCheckbox = harness.container.querySelector('#shuffle-questions-checkbox');
+    const optCheckbox = harness.container.querySelector('#shuffle-options-checkbox');
+
+    assert.equal(qCheckbox.checked, true);
+    assert.equal(optCheckbox.checked, false);
+
+    // Người dùng chỉ click bật checkbox đáp án
+    await act(async () => {
+      optCheckbox.click();
+    });
+
+    // Checkbox câu hỏi vẫn phải giữ nguyên là true (không bị reset về false)
+    assert.equal(qCheckbox.checked, true, 'Checkbox câu hỏi không bị ảnh hưởng khi toggle đáp án');
+    assert.equal(optCheckbox.checked, true, 'Checkbox đáp án đã chuyển thành true');
+
+    const applyBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
+    await act(async () => {
+      applyBtn.click();
+    });
+
+    // Payload gửi đi là true/true
+    assert.deepEqual(calls[0].payload, { shuffle_questions: true, shuffle_options: true });
+  } finally {
+    api.get = originalGet;
+    api.patch = originalPatch;
+    api.post = originalPost;
+    await harness.unmount();
+  }
+});
+
+test('Stage3PreviewPage: Khi phiên bị khóa (approved/exported), các tùy chọn xáo trộn và nút áp dụng đều bị vô hiệu hóa (disabled)', async () => {
+  const originalGet = api.get;
+
+  api.get = async (url) => {
+    if (url.includes('/finalize/preview')) {
+      return {
+        data: {
+          ...GOLDEN_PREVIEW_FIXTURE,
+          session_id: 'session-locked-pref',
+          status: 'approved',
+          is_finalized: false,
+        },
+      };
+    }
+    return {
+      data: {
+        id: 'session-locked-pref',
+        status: 'approved',
+        generation_config: {
+          ordering_preferences: {
+            shuffle_questions: true,
+            shuffle_options: false,
+          },
+        },
+      },
+    };
+  };
+
+  const harness = renderPreviewPage('session-locked-pref');
+  try {
+    await harness.render();
+    const qCheckbox = harness.container.querySelector('#shuffle-questions-checkbox');
+    const optCheckbox = harness.container.querySelector('#shuffle-options-checkbox');
+    const applyBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
+
+    assert.ok(qCheckbox, 'Checkbox câu hỏi phải tồn tại');
+    assert.ok(optCheckbox, 'Checkbox đáp án phải tồn tại');
+    assert.ok(applyBtn, 'Nút Áp dụng phải tồn tại');
+
+    assert.ok(
+      qCheckbox.getAttribute('disabled') !== null || Boolean(qCheckbox.disabled),
+      'Checkbox câu hỏi phải bị disable khi phiên đã approved'
+    );
+    assert.ok(
+      optCheckbox.getAttribute('disabled') !== null || Boolean(optCheckbox.disabled),
+      'Checkbox đáp án phải bị disable khi phiên đã approved'
+    );
+    assert.ok(
+      applyBtn.getAttribute('disabled') !== null || Boolean(applyBtn.disabled),
+      'Nút Áp dụng phải bị disable khi phiên đã approved'
+    );
+  } finally {
+    api.get = originalGet;
     await harness.unmount();
   }
 });

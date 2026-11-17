@@ -13,17 +13,22 @@ import {
   Sparkles,
   AlertCircle,
   AlertTriangle,
+  Shuffle,
   X,
 } from 'lucide-react';
 import MathRenderer from '../../components/MathRenderer.jsx';
 import {
   fetchFinalizePreview,
+  fetchOrderingPreferences,
   executeFinalizeShuffle,
   triggerFinalizeApprove,
 } from '../../services/stage3PreviewService.js';
 import { stage3Path, exportPath } from '../../sessionPaths.js';
 
-export default function Stage3PreviewPage() {
+export default function Stage3PreviewPage({
+  loadPreview = fetchFinalizePreview,
+  loadPreferences = fetchOrderingPreferences,
+} = {}) {
   const { sessionId } = useParams();
   const navigate = useNavigate();
 
@@ -37,6 +42,9 @@ export default function Stage3PreviewPage() {
   const [isApproveModalOpen, setIsApproveModalOpen] = useState(false);
   const [approveError, setApproveError] = useState(null);
   const [toast, setToast] = useState(null);
+  const [shuffleQuestions, setShuffleQuestions] = useState(false);
+  const [shuffleOptions, setShuffleOptions] = useState(false);
+  const [sessionStatus, setSessionStatus] = useState('reviewed');
   const isMountedRef = useRef(true);
   const requestIdRef = useRef(0);
   const activeSessionIdRef = useRef(sessionId);
@@ -59,6 +67,9 @@ export default function Stage3PreviewPage() {
     setApproveError(null);
     setShuffling(false);
     setApproving(false);
+    setShuffleQuestions(false);
+    setShuffleOptions(false);
+    setSessionStatus('reviewed');
   }, [sessionId]);
 
   const showToast = (message, type = 'success') => {
@@ -78,10 +89,17 @@ export default function Stage3PreviewPage() {
     setError(null);
 
     try {
-      const data = await fetchFinalizePreview(sessionId);
+      const data = await loadPreview(sessionId);
       if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return;
       setPreviewData(data);
       setNeedsShuffle(!data.is_finalized);
+      if (data.status) {
+        setSessionStatus(data.status);
+      }
+      if (data.ordering_preferences) {
+        setShuffleQuestions(Boolean(data.ordering_preferences.shuffle_questions ?? false));
+        setShuffleOptions(Boolean(data.ordering_preferences.shuffle_options ?? false));
+      }
       if (data.versions?.length > 0) {
         setSelectedTab((prev) => prev || data.versions[0].version_code);
       }
@@ -91,6 +109,27 @@ export default function Stage3PreviewPage() {
       if (err.errorCode === 'ERR_SHUFFLE_REQUIRED' || err.data?.error_code === 'ERR_SHUFFLE_REQUIRED') {
         setNeedsShuffle(true);
         setError(null);
+
+        // Khôi phục ordering_preferences đã lưu ở backend theo Issue #45
+        const errPrefs = err.response?.data?.ordering_preferences || err.data?.ordering_preferences;
+        if (errPrefs && typeof errPrefs === 'object') {
+          setShuffleQuestions(Boolean(errPrefs.shuffle_questions ?? false));
+          setShuffleOptions(Boolean(errPrefs.shuffle_options ?? false));
+        } else if (typeof loadPreferences === 'function') {
+          try {
+            const prefs = await loadPreferences(sessionId);
+            if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return;
+            if (prefs && typeof prefs === 'object') {
+              setShuffleQuestions(Boolean(prefs.shuffle_questions ?? false));
+              setShuffleOptions(Boolean(prefs.shuffle_options ?? false));
+              if (prefs.status) {
+                setSessionStatus(prefs.status);
+              }
+            }
+          } catch {
+            // Giữ mặc định false/false theo Issue #45
+          }
+        }
       } else if (err.status === 423) {
         // Đã khóa, cố nạp dữ liệu ở chế độ view-only
         setError('Phiên làm việc đã được phê duyệt và khóa nội dung.');
@@ -102,27 +141,35 @@ export default function Stage3PreviewPage() {
         setLoading(false);
       }
     }
-  }, [sessionId]);
+  }, [sessionId, loadPreview, loadPreferences]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  // Xử lý hoàn tất sắp xếp / xáo trộn mã đề (F02: cô lập targetSessionId; hỗ trợ cả OFF/OFF và ON/ON)
-  const handleShuffle = async (preferences = { shuffle_questions: true, shuffle_options: true }) => {
+  // Xử lý hoàn tất sắp xếp / xáo trộn mã đề (F02: cô lập targetSessionId; hỗ trợ cả 4 tổ hợp Boolean theo Issue #45)
+  const handleShuffle = async (preferences = { shuffle_questions: false, shuffle_options: false }) => {
     const targetSessionId = sessionId;
+    const sanitizedPrefs = {
+      shuffle_questions: Boolean(preferences.shuffle_questions),
+      shuffle_options: Boolean(preferences.shuffle_options),
+    };
     setShuffling(true);
     setError(null);
     try {
-      await executeFinalizeShuffle(targetSessionId, preferences);
+      await executeFinalizeShuffle(targetSessionId, sanitizedPrefs);
       if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
-      const isOff = !preferences.shuffle_questions && !preferences.shuffle_options;
-      showToast(
-        isOff
-          ? 'Đã giữ nguyên thứ tự câu hỏi và đáp án.'
-          : 'Đã xáo trộn câu hỏi và đáp án.',
-        'success'
-      );
+      let toastMsg = 'Đã áp dụng cấu hình xáo trộn đề thi.';
+      if (!sanitizedPrefs.shuffle_questions && !sanitizedPrefs.shuffle_options) {
+        toastMsg = 'Đã giữ nguyên thứ tự câu hỏi và đáp án.';
+      } else if (sanitizedPrefs.shuffle_questions && sanitizedPrefs.shuffle_options) {
+        toastMsg = 'Đã xáo trộn câu hỏi và đáp án.';
+      } else if (sanitizedPrefs.shuffle_questions && !sanitizedPrefs.shuffle_options) {
+        toastMsg = 'Đã xáo trộn thứ tự câu hỏi (giữ nguyên đáp án).';
+      } else if (!sanitizedPrefs.shuffle_questions && sanitizedPrefs.shuffle_options) {
+        toastMsg = 'Đã xáo trộn thứ tự đáp án (giữ nguyên câu hỏi).';
+      }
+      showToast(toastMsg, 'success');
       await loadData();
     } catch (err) {
       if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
@@ -134,7 +181,12 @@ export default function Stage3PreviewPage() {
     }
   };
 
-  const isLocked = previewData?.status === 'approved' || previewData?.status === 'exported';
+  const isLocked = Boolean(
+    previewData?.status === 'approved' ||
+    previewData?.status === 'exported' ||
+    sessionStatus === 'approved' ||
+    sessionStatus === 'exported'
+  );
 
   // F02: Chỉ cho phép phê duyệt khi previewData đã tải hoàn tất, hợp lệ và đã finalized
   const canApprove =
@@ -295,40 +347,85 @@ export default function Stage3PreviewPage() {
             </button>
           </div>
         ) : needsShuffle ? (
-          /* Trạng thái chưa chốt thứ tự: Hỗ trợ cả OFF/OFF (Golden Baseline) và ON/ON (Trộn lại mã) */
-          <div className="max-w-xl mx-auto my-16 p-8 rounded-2xl bg-surface border border-line text-center shadow-paper">
+          /* Trạng thái chưa chốt thứ tự: Hai tùy chọn xáo trộn độc lập theo Issue #45 */
+          <div className="max-w-xl mx-auto my-16 p-8 rounded-2xl bg-surface border border-line shadow-paper">
             <div className="w-16 h-16 rounded-2xl bg-accent-soft border border-accent-border text-accent-ink flex items-center justify-center mx-auto mb-5">
               <Sparkles className="w-8 h-8" />
             </div>
-            <h2 className="text-xl font-bold text-strong mb-2">
+            <h2 className="text-xl font-bold text-strong text-center mb-2">
               Toàn bộ câu hỏi đã được duyệt thành công
             </h2>
-            <p className="text-sm text-muted leading-relaxed mb-6">
-              Các câu hỏi đã được duyệt. Chọn giữ nguyên thứ tự hoặc xáo trộn câu hỏi
-              và đáp án để chuẩn bị bản xem trước.
+            <p className="text-sm text-muted text-center leading-relaxed mb-6">
+              Các câu hỏi đã được duyệt. Tùy chỉnh xáo trộn câu hỏi và đáp án để chuẩn bị bản xem trước.
             </p>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-              <button
-                type="button"
-                data-testid="btn-finalize-off"
-                onClick={() => handleShuffle({ shuffle_questions: false, shuffle_options: false })}
-                disabled={shuffling}
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-rail hover:bg-rail text-ink font-semibold text-sm border border-line transition-all shadow-md disabled:opacity-50"
-              >
-                {shuffling ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Check className="w-4 h-4 text-approved-ink" />
-                )}
-                <span>Giữ nguyên thứ tự</span>
-              </button>
 
+            {/* Hai tùy chọn xáo trộn độc lập theo Issue #45 */}
+            <div className="space-y-3 mb-6">
+              <div className="rounded-xl border border-line bg-rail p-4">
+                <label className="flex cursor-pointer items-start gap-3">
+                  <input
+                    type="checkbox"
+                    id="shuffle-questions-checkbox"
+                    data-testid="checkbox-shuffle-questions"
+                    checked={shuffleQuestions}
+                    disabled={shuffling || isLocked}
+                    onChange={(e) => setShuffleQuestions(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-line bg-surface text-highlight focus:ring-highlight focus:ring-offset-surface disabled:opacity-50"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-strong">
+                        Xáo trộn thứ tự câu hỏi giữa các mã đề
+                      </span>
+                      <Shuffle className="h-3.5 w-3.5 text-muted" />
+                    </div>
+                    <p className="mt-0.5 text-xs text-muted">
+                      Đổi vị trí câu hỏi giữa các mã đề thi độc lập.
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              <div className="rounded-xl border border-line bg-rail p-4">
+                <label className="flex cursor-pointer items-start gap-3">
+                  <input
+                    type="checkbox"
+                    id="shuffle-options-checkbox"
+                    data-testid="checkbox-shuffle-options"
+                    checked={shuffleOptions}
+                    disabled={shuffling || isLocked}
+                    onChange={(e) => setShuffleOptions(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-line bg-surface text-highlight focus:ring-highlight focus:ring-offset-surface disabled:opacity-50"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-strong">
+                        Xáo trộn thứ tự các đáp án A, B, C, D
+                      </span>
+                      <Shuffle className="h-3.5 w-3.5 text-highlight" />
+                    </div>
+                    <p className="mt-0.5 text-xs text-muted">
+                      Đổi vị trí 4 phương án; đáp án đúng được cập nhật tương ứng trên từng đề.
+                    </p>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            {/* Nút hành động duy nhất: Áp dụng & Xem trước */}
+            <div className="flex justify-center">
               <button
                 type="button"
+                id="btn-apply-shuffle"
                 data-testid="btn-shuffle"
-                onClick={() => handleShuffle({ shuffle_questions: true, shuffle_options: true })}
-                disabled={shuffling}
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-accent hover:bg-accent text-muted font-semibold text-sm transition-all shadow-md hover: disabled:opacity-50"
+                onClick={() =>
+                  handleShuffle({
+                    shuffle_questions: shuffleQuestions,
+                    shuffle_options: shuffleOptions,
+                  })
+                }
+                disabled={shuffling || isLocked}
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-3 rounded-xl bg-highlight hover:bg-highlight text-white font-semibold text-sm transition-all shadow-md disabled:opacity-50"
               >
                 {shuffling ? (
                   <>
@@ -338,7 +435,7 @@ export default function Stage3PreviewPage() {
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4" />
-                    <span>Xáo trộn câu hỏi và đáp án</span>
+                    <span>Áp dụng & Xem trước</span>
                   </>
                 )}
               </button>
