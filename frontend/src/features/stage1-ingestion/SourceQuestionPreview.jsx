@@ -51,16 +51,17 @@ export default function SourceQuestionPreview({ questions }) {
                     return (
                       <li
                         key={key}
+                        aria-label={isKey ? `Phương án ${key} đúng` : undefined}
                         className={`flex items-start justify-between gap-2 rounded-xl p-2.5 border transition-all ${
                           isKey
-                            ? 'border-support-line bg-support-bg text-strong font-semibold shadow-soft'
+                            ? 'border-approved-border bg-approved-bg text-approved-ink font-semibold shadow-soft'
                             : 'border-zinc-200/60 bg-white/60 text-ink hover:border-zinc-300'
                         }`}
                       >
                         <div className="flex items-start gap-2 min-w-0 flex-1">
                           <span
                             className={`text-xs font-bold ${
-                              isKey ? 'text-highlight' : 'text-muted'
+                              isKey ? 'text-approved-ink' : 'text-muted'
                             }`}
                           >
                             {key}.
@@ -77,12 +78,7 @@ export default function SourceQuestionPreview({ questions }) {
                           </div>
                         </div>
 
-                        {isKey && (
-                          <span className="answer-key-label inline-flex shrink-0 items-center gap-1 rounded-md bg-white border border-support-line px-2 py-0.5 text-[11px] font-semibold text-highlight shadow-soft">
-                            Đáp án: {key}
-                            <span className="sr-only"> theo nội dung đang xem</span>
-                          </span>
-                        )}
+
                       </li>
                     );
                   })}

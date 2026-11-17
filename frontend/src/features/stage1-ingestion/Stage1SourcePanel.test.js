@@ -271,7 +271,7 @@ test('route mount/F5 đọc nguồn qua GET, preview/count/key khớp và không
     await app.render();
     assert(app.container.textContent.includes('1 câu nguồn'));
     assert(app.container.textContent.includes('Nguồn qa'));
-    assert(app.container.textContent.includes('Đáp án: B'));
+    assert(app.container.querySelector('[aria-label="Phương án B đúng"]'));
     assert(!app.container.textContent.includes('PRIVATE_BLUEPRINT'));
     assert(app.container.querySelector('textarea'));
     await app.unmount();
@@ -418,8 +418,9 @@ test('preview read-only dùng MathRenderer cho stem/options, giữ điều kiệ
   const html = renderToStaticMarkup(React.createElement(SourceQuestionPreview, { questions: [question()] }));
   assert(html.includes('katex'));
   assert(html.includes('x\\ne3'));
-  assert(html.includes('Đáp án: B'));
-  assert.equal((html.match(/Đáp án:/g) ?? []).length, 1);
+  assert(html.includes('Phương án B đúng'));
+  assert(html.includes('bg-approved-bg text-approved-ink'));
+  assert.equal((html.match(/Đáp án:/g) ?? []).length, 0);
   assert(!html.includes('PRIVATE_BLUEPRINT'));
   assert(!html.includes('<textarea'));
   assert(!html.includes('<button'));
