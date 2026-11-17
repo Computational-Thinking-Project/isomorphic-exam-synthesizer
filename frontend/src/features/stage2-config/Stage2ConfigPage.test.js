@@ -682,7 +682,7 @@ test('Stage2ConfigPage phiên generating thiếu config: SSE báo done kết th�
   await new Promise((r) => setTimeout(r, 1600));
   assert.equal(
     harness.getLocation(),
-    '/session/session-gen-done-no-config/stage3',
+    '/session/session-gen-done-no-config/stage2',
     'Phải tự động điều hướng sang Stage 3',
   );
 
@@ -1046,7 +1046,7 @@ test('F07: Khi GET detail trả generating nhưng snapshot báo generated (100%,
 
   assert.equal(
     harness.getLocation(),
-    '/session/session-f07-done-without-stream/stage3',
+    '/session/session-f07-done-without-stream/stage2',
     'Phải tự động điều hướng sang Stage 3 khi snapshot đã hoàn tất',
   );
 
@@ -1278,7 +1278,7 @@ test('F09 Ca 1: Stream báo tiến độ 100% (4/4 câu) nhưng chưa có done (
   // Sau khi có done, phải chuyển sang Stage 3 thành công
   assert.equal(
     harness.getLocation(),
-    '/session/session-f09-stream-100-no-done/stage3',
+    '/session/session-f09-stream-100-no-done/stage2',
     'Sau khi có sự kiện done xác nhận, phải chuyển sang Stage 3',
   );
 

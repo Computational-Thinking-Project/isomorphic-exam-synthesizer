@@ -28,7 +28,7 @@ import {
  * 1. Tải thông tin phiên và trạng thái Blueprint từ API
  * 2. Hiển thị form cấu hình (Stage2ConfigCard)
  * 3. Kích hoạt sinh đề và hiển thị tiến trình SSE thời gian thực (GenerationProgressView)
- * 4. Tự động điều hướng sang Stage 3 khi hoàn tất
+ * 4. Người dùng chủ động chuyển sang Stage 3 khi hoàn tất
  */
 /**
  * Trích xuất chuỗi thông báo lỗi an toàn từ response HTTP (tránh lỗi React child khi response trả về object)
@@ -610,14 +610,6 @@ export default function Stage2ConfigPage({
     (normalizedSnapshotStatus === 'generated' ||
       String(session?.status || '').trim().toLowerCase() === 'generated');
 
-  const isStreamDone = Boolean(
-    sseState.isDone &&
-    !sseState.isPartial &&
-    String(sseState.progress?.session_status || '').trim().toLowerCase() !== 'partial_generated'
-  );
-
-  const isCompletedGenerated = Boolean(isBackendGenerated || isStreamDone);
-
   const isSnapshotFinished = Boolean(
     !isGeneratingStatus &&
     (isBackendGenerated ||
@@ -630,23 +622,6 @@ export default function Stage2ConfigPage({
   const effectiveIsDone = isNewRunActive
     ? sseState.isDone
     : (isSnapshotFinished || sseState.isDone);
-
-  // Tự động chuyển hướng khi hoàn tất ở cấp độ container độc lập — CHỈ KHI hoàn tất 100% (không partial_generated)
-  useEffect(() => {
-    if (isGenerating && isCompletedGenerated) {
-      const isPartial =
-        mergedProgress?.session_status === 'partial_generated' ||
-        Boolean(mergedProgress?.is_partial) ||
-        (mergedProgress?.percent !== undefined && mergedProgress.percent < 100);
-
-      if (!isPartial) {
-        const timer = setTimeout(() => {
-          handleCompleteRedirect();
-        }, 1500);
-        return () => clearTimeout(timer);
-      }
-    }
-  }, [isGenerating, isCompletedGenerated, mergedProgress, handleCompleteRedirect]);
 
   // Giao diện khi đang tải phiên
   if (isLoadingSession) {
@@ -850,6 +825,19 @@ export default function Stage2ConfigPage({
         </button>
       </div>
 
+      {['generated', 'partial_generated'].includes(session?.status) && !isNewRunActive && (
+        <section className="mx-auto mb-6 max-w-5xl rounded-2xl border border-line bg-surface p-6">
+          <h1 className="text-xl font-bold text-strong">Thông tin lần sinh</h1>
+          <p className="mt-2 text-sm text-muted">Cấu hình đã dùng cho bộ đề hiện tại · Chỉ đọc</p>
+          <dl className="mt-4 flex flex-wrap gap-6 text-sm">
+            <div><dt>Số mã đề</dt><dd className="font-semibold">{derivedNumVersions}</dd></div>
+            <div><dt>Số câu mỗi đề</dt><dd className="font-semibold">{session?.source_questions?.length ?? 'Chưa có dữ liệu'}</dd></div>
+            <div><dt>Xáo trộn câu hỏi</dt><dd>{session?.config?.ordering_preferences?.shuffle_questions ? 'Bật' : 'Tắt'}</dd></div>
+            <div><dt>Xáo trộn đáp án</dt><dd>{session?.config?.ordering_preferences?.shuffle_options ? 'Bật' : 'Tắt'}</dd></div>
+          </dl>
+          <button type="button" onClick={handleCompleteRedirect} className="mt-5 rounded-xl bg-highlight px-4 py-3 font-semibold text-white">Quay lại duyệt câu hỏi</button>
+        </section>
+      )}
       {isGenerating ? (
         <GenerationProgressView
           sessionId={sessionId}

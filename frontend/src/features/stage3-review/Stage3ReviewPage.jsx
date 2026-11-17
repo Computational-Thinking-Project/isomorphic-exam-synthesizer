@@ -1,4 +1,3 @@
-import useDialogFocus from '../../hooks/useDialogFocus.js';
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { exportPath, stage2Path, stage3PreviewPath } from '../../sessionPaths.js';
@@ -15,7 +14,6 @@ import {
   Loader2,
   Lock,
   RefreshCw,
-  X,
 } from 'lucide-react';
 import MathRenderer from '../../components/MathRenderer.jsx';
 import { getSessionDetail } from '../../services/sessions.js';
@@ -403,10 +401,7 @@ export default function Stage3ReviewPage({
     });
   }, [session]);
 
-  const handleCloseSolutionModal = useCallback(() => {
-    if (isRegeneratingSingle || isApprovingSingle) return;
-    setSelectedSolution(null);
-  }, [isRegeneratingSingle, isApprovingSingle]);
+
 
   const isContentLocked = ['approved', 'exported'].includes(session?.status);
 
@@ -802,6 +797,7 @@ export default function Stage3ReviewPage({
     }
   };
 
+  const [reviewFilter, setReviewFilter] = useState('all');
   const numVersions = session?.config?.n_versions || session?.exam_versions?.length || 1;
   const totalSourceQuestions = session?.source_questions?.length || 0;
   const totalLoadedVariants = countTotalLoadedVariants(session);
@@ -836,8 +832,51 @@ export default function Stage3ReviewPage({
     return count;
   }, [session, numVersions, totalSourceQuestions, approvedVariantIds]);
 
+  const goToNextUnreviewed = () => {
+    const start = selectedSolution ? (selectedSolution.versionIndex - 1) * totalSourceQuestions + selectedSolution.qNo : 0;
+    for (let offset = 0; offset < totalExpectedSlots; offset++) {
+      const position = (start + offset) % totalExpectedSlots;
+      const version = Math.floor(position / totalSourceQuestions) + 1;
+      const number = position % totalSourceQuestions + 1;
+      const candidate = findVariantInSession(session, version, number);
+      if (candidate && candidate.status !== 'approved' && !approvedVariantIds.has(`${version}-${number}`)) {
+        setReviewFilter('all');
+        setActiveVersionTab(version);
+        handleOpenSolutionModal(candidate, number, version);
+        setTimeout(() => document.getElementById(`review-${version}-${number}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 0);
+        return;
+      }
+    }
+    setActionMessage({type: 'success', text: 'Không còn câu chưa duyệt.'});
+  };
+
+  const restoredViewRef = useRef(null);
+  useEffect(() => {
+    if (!session || session.id !== sessionId || restoredViewRef.current === sessionId) return;
+    restoredViewRef.current = sessionId;
+    try {
+      const saved = JSON.parse(sessionStorage.getItem(`review-view:${sessionId}`) || 'null');
+      if (!saved) return;
+      const version = Math.min(numVersions, Math.max(1, saved.version || 1));
+      setActiveVersionTab(version);
+      setReviewFilter(['all','pending','warning','approved'].includes(saved.filter) ? saved.filter : 'all');
+      const candidate = findVariantInSession(session, version, saved.question);
+      if (candidate) handleOpenSolutionModal(candidate, saved.question, version);
+      requestAnimationFrame(() => window.scrollTo(0, saved.scroll || 0));
+    } catch { /* View restoration is optional; server data remains authoritative. */ }
+  }, [session, sessionId, numVersions, handleOpenSolutionModal]);
+  useEffect(() => {
+    if (restoredViewRef.current !== sessionId) return;
+    const save = () => {
+      try { sessionStorage.setItem(`review-view:${sessionId}`, JSON.stringify({version: activeVersionTab, filter: reviewFilter, question: selectedSolution?.qNo, scroll: window.scrollY})); }
+      catch { /* Storage may be unavailable. */ }
+    };
+    window.addEventListener('scroll', save, {passive:true});
+    return () => { save(); window.removeEventListener('scroll', save); };
+  }, [sessionId, activeVersionTab, reviewFilter, selectedSolution?.qNo]);
+
   const isFinalizeDisabled =
-    totalExpectedSlots === 0 || approvedCount < totalExpectedSlots || isPartial;
+    totalExpectedSlots === 0 || approvedCount < totalExpectedSlots || isPartial || isApprovingSingle || isRegeneratingSingle || isRetryingAll;
 
   const isSelectedVariantApproved = useMemo(() => {
     if (!selectedSolution?.variant) return false;
@@ -850,7 +889,7 @@ export default function Stage3ReviewPage({
     );
   }, [selectedSolution, approvedVariantIds]);
 
-  const solutionDialogRef = useDialogFocus(Boolean(selectedSolution), isRegeneratingSingle || isApprovingSingle, handleCloseSolutionModal);
+
 
   if (isLoading) {
     return (
@@ -956,7 +995,7 @@ export default function Stage3ReviewPage({
             className="mb-2 inline-flex items-center gap-1.5 text-xs font-semibold text-highlight hover:text-highlight"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
-            Quay lại cấu hình
+            Xem thông tin lần sinh
           </button>
           <h1 className="text-2xl font-bold tracking-tight text-strong">
             {session?.title || 'Xem & Duyệt Đề Thi Đẳng Cấu'}
@@ -1080,7 +1119,8 @@ export default function Stage3ReviewPage({
             <button
               key={vIdx}
               type="button"
-              onClick={() => setActiveVersionTab(vIdx)}
+              disabled={isApprovingSingle || isRegeneratingSingle}
+              onClick={() => {setActiveVersionTab(vIdx);setSelectedSolution(null);}}
               aria-pressed={isTabActive}
               className={`rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
                 isTabActive
@@ -1088,21 +1128,31 @@ export default function Stage3ReviewPage({
                   : 'border border-line bg-rail text-ink hover:bg-rail'
               }`}
             >
-              {versionLabel(session, vIdx)}
+              {versionLabel(session, vIdx)} · {Array.from({length: totalSourceQuestions}, (_, i) => i+1).filter(n => findVariantInSession(session,vIdx,n)?.status === 'approved' || approvedVariantIds.has(`${vIdx}-${n}`)).length}/{totalSourceQuestions}
             </button>
           );
         })}
       </div>
 
+      <div role="group" aria-label="Lọc câu hỏi" className="flex flex-wrap gap-2">
+        {[['all','Tất cả'],['pending','Chưa duyệt'],['warning','Có cảnh báo'],['approved','Đã duyệt']].map(([value,label]) => {
+          const count = Array.from({length:totalSourceQuestions},(_,i)=>findVariantInSession(session,activeVersionTab,i+1)).filter((v,i)=>{
+            const approved = v?.status === 'approved' || approvedVariantIds.has(`${activeVersionTab}-${i+1}`);
+            return value === 'all' || (value === 'pending' && !approved) || (value === 'approved' && approved) || (value === 'warning' && Boolean(v?.has_warning || v?.is_fallback || v?.source_fallback || v?.warning_flag || v?.warning_message));
+          }).length;
+          return <button type="button" key={value} aria-pressed={reviewFilter===value} disabled={isApprovingSingle || isRegeneratingSingle} onClick={()=>{setReviewFilter(value);setSelectedSolution(null);}} className="rounded-lg border border-line px-3 py-2 text-sm aria-pressed:bg-support-bg">{label} ({count})</button>;
+        })}
+      </div>
       {/* Danh sách các câu hỏi trong mã đề được chọn */}
       <div className="space-y-4">
         {Array.from({ length: totalSourceQuestions }, (_, i) => i + 1).map((qNo) => {
-          const variant = findVariantInSession(session, activeVersionTab, qNo);
+          const variant = selectedSolution?.qNo === qNo && selectedSolution?.versionIndex === activeVersionTab ? selectedSolution.variant : findVariantInSession(session, activeVersionTab, qNo);
           const isMissing = !variant;
           const regKey = `${activeVersionTab}-${qNo}`;
           const isRegenerating = regeneratingQuestions[regKey];
 
           if (isMissing) {
+            if (['approved', 'warning'].includes(reviewFilter)) return null;
             if (!hasLoadedAnyVariants) {
               return null;
             }
@@ -1110,6 +1160,8 @@ export default function Stage3ReviewPage({
             return (
               <div
                 key={qNo}
+              style={{scrollMarginTop: 24}} id={`review-${activeVersionTab}-${qNo}`}
+                style={{scrollMarginTop: 24}} id={`review-${activeVersionTab}-${qNo}`}
                 className="rounded-2xl border border-danger-border bg-danger-soft p-5 shadow-soft transition-all"
               >
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1175,9 +1227,12 @@ export default function Stage3ReviewPage({
             variant.validation_report?.message ||
             'Câu hỏi có cảnh báo nghiệm hoặc ràng buộc cần lưu ý.';
 
+          const pinned = selectedSolution?.qNo === qNo && selectedSolution?.versionIndex === activeVersionTab;
+          if (!pinned && ((reviewFilter === 'pending' && isApproved) || (reviewFilter === 'approved' && !isApproved) || (reviewFilter === 'warning' && !hasWarning && !isFallback))) return null;
           return (
             <div
               key={qNo}
+              style={{scrollMarginTop: 24}} id={`review-${activeVersionTab}-${qNo}`}
               className={`rounded-2xl border p-5 shadow-soft transition-all ${
                 isApproved
                   ? 'border-approved-border bg-surface'
@@ -1214,23 +1269,21 @@ export default function Stage3ReviewPage({
                       Cần thẩm định (Có cảnh báo)
                     </span>
                   )}
-                  {!isApproved && !hasWarning && (
-                    <span className="inline-flex items-center gap-1 rounded-full border border-approved-border bg-approved-bg px-2.5 py-0.5 text-[11px] font-medium text-approved-ink">
-                      <CheckCircle className="h-3 w-3" />
-                      Đạt chuẩn
-                    </span>
-                  )}
+
                 </div>
 
                 {/* Nút Kiểm tra đáp án (Mở modal SolutionDialog) */}
                 <button
                   type="button"
                   data-review-inspect={true}
-                  onClick={() => handleOpenSolutionModal(variant, qNo, activeVersionTab)}
+                  disabled={isRegeneratingSingle || isApprovingSingle}
+                  aria-expanded={selectedSolution?.qNo === qNo && selectedSolution?.versionIndex === activeVersionTab}
+                  aria-controls={`solution-${activeVersionTab}-${qNo}`}
+                  onClick={() => selectedSolution?.qNo === qNo && selectedSolution?.versionIndex === activeVersionTab ? setSelectedSolution(null) : handleOpenSolutionModal(variant, qNo, activeVersionTab)}
                   className="inline-flex items-center gap-1.5 rounded-xl border border-support-line bg-support-bg px-3 py-1.5 text-xs font-semibold text-highlight hover:bg-highlight hover:text-strong transition-all shadow-sm"
                 >
                   <Eye className="h-3.5 w-3.5" />
-                  Kiểm tra đáp án
+                  Xem lời giải
                 </button>
               </div>
 
@@ -1292,169 +1345,9 @@ export default function Stage3ReviewPage({
               )}
 
 
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Thanh trạng thái dưới cùng: Tiến độ duyệt & Nút Xem trước bộ đề (PREVIEW.html layout) */}
-      <div className="sticky bottom-0 z-30 mt-8 rounded-2xl border border-line bg-surface p-4 shadow-paper backdrop-blur-md">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <span
-              className={`flex h-2.5 w-2.5 rounded-full ${
-                approvedCount === totalExpectedSlots && totalExpectedSlots > 0
-                  ? 'bg-approved-ink'
-                  : 'bg-accent'
-              }`}
-            />
-            <span className="text-sm font-medium text-ink">
-              Đã duyệt{' '}
-              <strong className="font-bold text-strong">
-                {approvedCount}/{totalExpectedSlots}
-              </strong>{' '}
-              câu
-            </span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            {isFinalizeDisabled && (
-              <p className="text-sm text-muted" role="status">
-                {totalExpectedSlots === 0 ? 'Chưa có đủ dữ liệu câu hỏi.' : isPartial ? 'Cần sinh đủ câu và duyệt tất cả câu hỏi.' : `Còn ${Math.max(0, totalExpectedSlots - approvedCount)} câu chưa duyệt.`}
-              </p>
-            )}
-            <button
-              type="button"
-              data-review-finalize={true}
-              disabled={isFinalizeDisabled}
-              onClick={() => navigate(stage3PreviewPath(sessionId))}
-              className="inline-flex items-center gap-2 rounded-xl bg-highlight px-6 py-2.5 text-xs font-semibold text-white shadow-soft  hover:bg-highlight focus:outline-none focus:ring-2 focus:ring-highlight disabled:cursor-not-allowed disabled:opacity-50 transition-all"
-            >
-              Xem trước bộ đề
-              <ArrowRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Modal Kiểm tra đáp án (SolutionDialog) */}
-      {selectedSolution && (
-        <div
-          ref={solutionDialogRef}
-          tabIndex={-1}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="solution-dialog-title"
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6"
-        >
-          {/* Backdrop */}
-          <div
-            className="fixed inset-0 bg-black/40 backdrop-blur-sm transition-opacity"
-            onClick={isRegeneratingSingle || isApprovingSingle ? undefined : handleCloseSolutionModal}
-          />
-
-          {/* Dialog Container */}
-          <div className="solution-dialog relative z-10 flex max-h-[90vh] w-full max-w-5xl flex-col rounded-2xl border border-line bg-surface shadow-paper">
-            {/* Dialog Header */}
-            <div className="flex items-center justify-between border-b border-line px-6 py-4">
-              <div>
-                <h2
-                  id="solution-dialog-title"
-                  className="text-lg font-bold text-strong"
-                >
-                  Kiểm tra đáp án · Câu {selectedSolution.qNo} · {versionLabel(session, selectedSolution.versionIndex)}
-                </h2>
-                <p className="text-xs text-muted">
-                  Kiểm tra câu hỏi, đáp án và lời giải trước khi duyệt.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={handleCloseSolutionModal}
-                disabled={isRegeneratingSingle || isApprovingSingle}
-                className="rounded-lg p-1.5 text-muted hover:bg-rail hover:text-strong disabled:opacity-50"
-                aria-label="Đóng"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            {/* Dialog Body (2 Columns) */}
-            <div className="dialog-copy flex-1 overflow-y-auto p-6 space-y-4">
-              {/* Fallback warning trong modal nếu có */}
-              {(selectedSolution.variant.is_fallback ||
-                selectedSolution.variant.source_fallback ||
-                selectedSolution.variant.warning_flag === 'fallback' ||
-                (selectedSolution.variant.attempts >= 4 && selectedSolution.variant.is_fallback !== false)) && (
-                <div className="rounded-xl border border-accent-border bg-accent-soft p-3 text-xs font-semibold text-accent-ink flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4 shrink-0 text-accent-ink" />
-                  <span>Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc</span>
-                </div>
-              )}
-
-              <div className="solution-columns grid grid-cols-1 gap-6 lg:grid-cols-2">
-                {/* Column 1: Biến thể đang xem */}
-                <section className="rounded-xl border border-line bg-surface p-4">
-                  <div className="flex items-center justify-between border-b border-line pb-2.5">
-                    <h3 className="text-sm font-bold text-ink">
-                      Biến thể · Câu {selectedSolution.qNo} · {versionLabel(session, selectedSolution.versionIndex)}
-                    </h3>
-                    <span
-                      className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
-                        isSelectedVariantApproved
-                          ? 'bg-approved-bg text-approved-ink border border-approved-border'
-                          : 'bg-rail text-ink'
-                      }`}
-                    >
-                      {isSelectedVariantApproved ? 'Đã duyệt' : 'Chưa duyệt'}
-                    </span>
-                  </div>
-
-                  <div className="mt-3 text-sm text-strong">
-                    <MathRenderer
-                      content={
-                        selectedSolution.variant.content ||
-                        selectedSolution.variant.raw_content ||
-                        ''
-                      }
-                    />
-                  </div>
-
-                  {/* Danh sách options */}
-                  <div className="mt-4 space-y-2">
-                    {Object.entries(selectedSolution.variant.options || {}).map(([key, optVal]) => {
-                      const isCorrect =
-                        String(key).toUpperCase() ===
-                        String(selectedSolution.variant.correct_key || selectedSolution.variant.answer).toUpperCase();
-                      return (
-                        <div
-                          key={key}
-                          className={`flex items-start gap-2.5 rounded-xl border p-2.5 text-xs ${
-                            isCorrect
-                              ? 'border-approved-border bg-approved-bg text-approved-ink font-medium'
-                              : 'border-line bg-surface text-ink'
-                          }`}
-                        >
-                          <span
-                            className={`font-bold ${
-                              isCorrect ? 'text-approved-ink' : 'text-muted'
-                            }`}
-                          >
-                            {key}.
-                          </span>
-                          <div className="flex-1">
-                            <MathRenderer content={String(optVal)} inline />
-                          </div>
-                          {isCorrect && (
-                            <CheckCircle2 className="h-4 w-4 shrink-0 text-approved-ink" />
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </section>
-
-                {/* Column 2: Đáp án và lời giải chi tiết */}
+              {selectedSolution?.qNo === qNo && selectedSolution?.versionIndex === activeVersionTab && (
+                <div id={`solution-${activeVersionTab}-${qNo}`} role="region" aria-label="Lời giải và thao tác duyệt" className="solution-dialog mt-4 space-y-4 border-t border-line pt-4">
+                {actionMessage && <p role="status" className="text-sm">{actionMessage.text}</p>}
                 <section className="rounded-xl border border-line bg-surface p-4">
                   <div className="flex items-center justify-between border-b border-line pb-2.5">
                     <h3 className="text-sm font-bold text-highlight">
@@ -1475,17 +1368,14 @@ export default function Stage3ReviewPage({
                     )}
                   </div>
                 </section>
-              </div>
-            </div>
-
-            {/* Dialog Footer Actions: STRICTLY 2 Buttons (Tạo lại & Duyệt biến thể) */}
+                  {selectedSolution.originalQuestion && <details className="rounded-xl border border-line p-4 text-sm"><summary className="cursor-pointer font-semibold">Xem câu nguồn</summary><MathRenderer content={selectedSolution.originalQuestion.raw_content || selectedSolution.originalQuestion.content || ''} /></details>}
             {!isContentLocked && <div className="review-popup-actions flex flex-wrap items-center justify-end gap-3 border-t border-line bg-surface px-6 py-4">
               {/* Nút 1: Tạo lại (data-review-regenerate) */}
               <button
                 type="button"
                 data-review-regenerate={true}
                 disabled={isRegeneratingSingle || isApprovingSingle || isContentLocked}
-                onClick={handleRegenerateSingle}
+                onClick={() => { if (!isSelectedVariantApproved || window.confirm('Tạo lại sẽ thay nội dung và cần duyệt lại câu này. Tiếp tục?')) void handleRegenerateSingle(); }}
                 className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-rail px-4 py-2.5 text-xs font-semibold text-ink hover:bg-rail hover:text-strong disabled:opacity-50"
               >
                 {isRegeneratingSingle ? (
@@ -1531,9 +1421,55 @@ export default function Stage3ReviewPage({
                 )}
               </button>
             </div>}
+                  {isSelectedVariantApproved && <button type="button" className="rounded-lg border border-line px-4 py-2 text-sm" onClick={goToNextUnreviewed}>Đến câu chưa duyệt tiếp theo</button>}
+                </div>
+              )}
+
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Thanh trạng thái dưới cùng: Tiến độ duyệt & Nút Xem trước bộ đề (PREVIEW.html layout) */}
+      <div className="sticky bottom-0 z-30 mt-8 rounded-2xl border border-line bg-surface p-4 shadow-paper backdrop-blur-md">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <span
+              className={`flex h-2.5 w-2.5 rounded-full ${
+                approvedCount === totalExpectedSlots && totalExpectedSlots > 0
+                  ? 'bg-approved-ink'
+                  : 'bg-accent'
+              }`}
+            />
+            <span className="text-sm font-medium text-ink">
+              Đã duyệt{' '}
+              <strong className="font-bold text-strong">
+                {approvedCount}/{totalExpectedSlots}
+              </strong>{' '}
+              câu
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            {isFinalizeDisabled && (
+              <p className="text-sm text-muted" role="status">
+                {totalExpectedSlots === 0 ? 'Chưa có đủ dữ liệu câu hỏi.' : isPartial ? 'Cần sinh đủ câu và duyệt tất cả câu hỏi.' : `Còn ${Math.max(0, totalExpectedSlots - approvedCount)} câu chưa duyệt.`}
+              </p>
+            )}
+            <button
+              type="button"
+              data-review-finalize={true}
+              disabled={isFinalizeDisabled}
+              onClick={() => navigate(stage3PreviewPath(sessionId))}
+              className="inline-flex items-center gap-2 rounded-xl bg-highlight px-6 py-2.5 text-xs font-semibold text-white shadow-soft  hover:bg-highlight focus:outline-none focus:ring-2 focus:ring-highlight disabled:cursor-not-allowed disabled:opacity-50 transition-all"
+            >
+              Xem trước bộ đề
+              <ArrowRight className="h-4 w-4" />
+            </button>
           </div>
         </div>
-      )}
+      </div>
+
     </div>
   </div>
 );

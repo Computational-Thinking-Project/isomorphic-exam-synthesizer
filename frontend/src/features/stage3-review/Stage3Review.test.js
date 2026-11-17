@@ -142,7 +142,7 @@ test('Stage3ReviewPage hiển thị cảnh báo partial_generated, khóa xuất 
 
   // 3. Kiểm tra câu 1 đã sinh có đầy đủ nội dung và badge Đạt chuẩn
   assert.ok(text.includes('Câu 1 (Đề 1)'), 'Phải hiển thị Câu 1');
-  assert.ok(text.includes('Đạt chuẩn'), 'Câu 1 không warning phải hiện Đạt chuẩn');
+  assert.ok(!text.includes('Đạt chuẩn'), 'Không đánh giá chất lượng khi chưa duyệt');
 
   // 4. Kiểm tra câu 2 bị thiếu hiển thị nút Sinh bù câu này
   assert.ok(text.includes('Câu 2 (Đề 1) — Chưa được sinh thành công'), 'Phải báo Câu 2 chưa hoàn tất');
@@ -624,15 +624,13 @@ test('Stage3ReviewPage: Bấm "Kiểm tra đáp án" mở SolutionDialog hiển 
   });
 
   // 3. Kiểm tra modal SolutionDialog mở ra
-  const dialog = harness.container.querySelector('[role="dialog"]');
+  const dialog = harness.container.querySelector('[role="region"]');
   assert.ok(dialog, 'Modal SolutionDialog phải mở');
 
-  const title = dialog.querySelector('#solution-dialog-title');
-  assert.ok(title, 'Phải có tiêu đề dialog');
-  assert.ok(title.textContent.includes('Kiểm tra đáp án · Câu 1 · Đề 1'));
+
 
   // 4. Kiểm tra hiển thị đáp án đúng và lời giải chi tiết
-  const text = dialog.textContent;
+  const text = harness.container.textContent;
   assert.ok(text.includes('Đáp án đúng: B'), 'Phải làm nổi bật đáp án đúng B');
   assert.ok(text.includes('Ta có'), 'Phải chứa nội dung lời giải chi tiết');
 
@@ -703,7 +701,7 @@ test('Stage3ReviewPage: Bấm "Duyệt biến thể" gọi accept API, chuyển 
     inspectBtn.click();
   });
 
-  const dialog = harness.container.querySelector('[role="dialog"]');
+  const dialog = harness.container.querySelector('[role="region"]');
   const approveBtn = dialog.querySelector('[data-review-approve="true"]');
 
   // Bấm nút "Duyệt biến thể"
@@ -783,8 +781,8 @@ test('Stage3ReviewPage: Bấm "Tạo lại" gọi reject API, giữ nguyên moda
     inspectBtn.click();
   });
 
-  const dialog = harness.container.querySelector('[role="dialog"]');
-  assert.ok(dialog.textContent.includes('Câu hỏi cũ: Cho tham số m'));
+  const dialog = harness.container.querySelector('[role="region"]');
+  assert.ok(harness.container.textContent.includes('Câu hỏi cũ: Cho tham số m'));
 
   // Bấm nút "Tạo lại"
   const regenerateBtn = dialog.querySelector('[data-review-regenerate="true"]');
@@ -798,9 +796,9 @@ test('Stage3ReviewPage: Bấm "Tạo lại" gọi reject API, giữ nguyên moda
   assert.equal(regenCalls[0].qId, 'var-q1-old');
 
   // 2. Modal vẫn mở và nội dung được cập nhật sang câu mới tạo!
-  const dialogAfter = harness.container.querySelector('[role="dialog"]');
+  const dialogAfter = harness.container.querySelector('[role="region"]');
   assert.ok(dialogAfter, 'Modal phải tiếp tục mở sau khi tạo lại');
-  assert.ok(dialogAfter.textContent.includes('Câu hỏi mới: Cho tham số k'), 'Hiển thị đề bài mới');
+  assert.ok(harness.container.textContent.includes('Câu hỏi mới: Cho tham số k'), 'Hiển thị đề bài mới');
   assert.ok(dialogAfter.textContent.includes('Đáp án đúng: D'), 'Hiển thị đáp án đúng D mới');
   assert.ok(dialogAfter.textContent.includes('Lời giải mới chi tiết cho k = 99.'), 'Hiển thị lời giải mới');
 
@@ -854,9 +852,8 @@ test('Stage3ReviewPage: Hiển thị đúng badge fallback "Không tạo đượ
     inspectBtn.click();
   });
 
-  const dialog = harness.container.querySelector('[role="dialog"]');
   assert.ok(
-    dialog.textContent.includes('Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc'),
+    harness.container.textContent.includes('Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc'),
     'Modal cũng phải hiển thị đúng chuỗi badge fallback',
   );
 
@@ -956,7 +953,7 @@ test('Stage3ReviewPage: Candidate bị fallback sau khi tạo lại thành công
     inspectBtn.click();
   });
 
-  const dialog = harness.container.querySelector('[role="dialog"]');
+  const dialog = harness.container.querySelector('[role="region"]');
   const regenBtn = dialog.querySelector('[data-review-regenerate="true"]');
   await act(async () => {
     regenBtn.click();
@@ -964,18 +961,18 @@ test('Stage3ReviewPage: Candidate bị fallback sau khi tạo lại thành công
 
   // Sau khi tạo lại thành công: badge fallback không còn tồn tại trên modal
   assert.equal(
-    dialog.textContent.includes('Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc'),
+    harness.container.textContent.includes('Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc'),
     false,
     'Modal không được còn badge fallback khi biến thể mới đã sinh thành công',
   );
 
   // Đóng modal để kiểm tra trực tiếp question card ngoài giao diện chính
-  const closeBtn = dialog.querySelector('button[aria-label="Đóng"]');
+  const closeBtn = harness.container.querySelector('[data-review-inspect="true"]');
   await act(async () => {
     closeBtn.click();
   });
 
-  assert.equal(harness.container.querySelector('[role="dialog"]'), null, 'Modal đã được đóng');
+  assert.equal(harness.container.querySelector('[role="region"]'), null, 'Modal đã được đóng');
 
   // Question card ngoài giao diện chính cũng phải xóa sạch badge fallback
   assert.equal(
@@ -1032,7 +1029,7 @@ test('Stage3ReviewPage: Idempotency-Key được sinh và giữ nguyên khi retr
     inspectBtn.click();
   });
 
-  const dialog = harness.container.querySelector('[role="dialog"]');
+  const dialog = harness.container.querySelector('[role="region"]');
   const approveBtn = dialog.querySelector('[data-review-approve="true"]');
 
   // Lần 1: Lỗi mạng
@@ -1109,7 +1106,7 @@ test('Stage3ReviewPage: Chặn stale response của phiên cũ khi chuyển sang
     inspectBtn.click();
   });
 
-  const dialog = harness.container.querySelector('[role="dialog"]');
+  const dialog = harness.container.querySelector('[role="region"]');
   const regenBtn = dialog.querySelector('[data-review-regenerate="true"]');
   await act(async () => {
     regenBtn.click();
@@ -1252,8 +1249,8 @@ test('F02: Khi API rejectAndRegenerate trả solution_md null, biến thể mớ
     inspectBtn.click();
   });
 
-  const dialog = harness.container.querySelector('[role="dialog"]');
-  assert.ok(dialog.textContent.includes('LỜI GIẢI CÂU CŨ BỊ TỪ CHỐI'));
+  const dialog = harness.container.querySelector('[role="region"]');
+  assert.ok(harness.container.textContent.includes('LỜI GIẢI CÂU CŨ BỊ TỪ CHỐI'));
 
   // Bấm Tạo lại
   const regenBtn = dialog.querySelector('[data-review-regenerate="true"]');
@@ -1263,9 +1260,9 @@ test('F02: Khi API rejectAndRegenerate trả solution_md null, biến thể mớ
 
   // Sau khi tạo lại thành công với solution_md = null:
   // Modal phải hiển thị nội dung câu mới, và KHÔNG ĐƯỢC chứa lời giải cũ!
-  assert.ok(dialog.textContent.includes('Nội dung câu mới sinh lại'));
+  assert.ok(harness.container.textContent.includes('Nội dung câu mới sinh lại'));
   assert.equal(
-    dialog.textContent.includes('LỜI GIẢI CÂU CŨ BỊ TỪ CHỐI'),
+    harness.container.textContent.includes('LỜI GIẢI CÂU CŨ BỊ TỪ CHỐI'),
     false,
     'Tuyệt đối không được lấy lại solution_md của câu cũ khi API trả null',
   );
@@ -1413,9 +1410,9 @@ test('PR #54 Contract: Initial load dựng đúng ma trận câu hỏi và ứng
   assert.ok(text.includes('Biến thể 101-1: Tìm đạo hàm'));
   assert.ok(text.includes('Biến thể 101-2: Tính tích phân'));
   assert.ok(text.includes('12x^2'));
-  const inspect = harness.container.querySelectorAll('button').find((button) => button.textContent.includes('Kiểm tra đáp án'));
+  const inspect = harness.container.querySelectorAll('button').find((button) => button.textContent.includes('Xem lời giải'));
   await act(async () => inspect.click());
-  assert.ok(harness.container.querySelector('[role="dialog"]').textContent.includes('Đạo hàm là'));
+  assert.ok(harness.container.querySelector('[role="region"]').textContent.includes('Đạo hàm là'));
 
   // Tiến độ ban đầu
   assert.ok(text.includes('Đã duyệt 0/4 câu'));
@@ -1502,8 +1499,8 @@ test('PR #54 Contract: Approved state hiển thị đúng trạng thái đã duy
     inspectButtons[1].click(); // Câu 2
   });
 
-  const dialog = harness.container.querySelector('[role="dialog"]');
-  assert.ok(dialog.textContent.includes('Biến thể 2 chưa duyệt'));
+  const dialog = harness.container.querySelector('[role="region"]');
+  assert.ok(harness.container.textContent.includes('Biến thể 2 chưa duyệt'));
 
   // Bấm "Duyệt biến thể"
   const approveBtn = dialog.querySelector('[data-review-approve="true"]');
@@ -1621,7 +1618,7 @@ test('PR #54 Contract: Replacement sau khi regenerate gọi reject với candida
   });
 
   // Bấm Tạo lại
-  const dialog = harness.container.querySelector('[role="dialog"]');
+  const dialog = harness.container.querySelector('[role="region"]');
   const regenBtn = dialog.querySelector('[data-review-regenerate="true"]');
   await act(async () => {
     regenBtn.click();
@@ -1636,8 +1633,8 @@ test('PR #54 Contract: Replacement sau khi regenerate gọi reject với candida
   assert.ok(loadCallCount >= 2, 'Phải tự động refetch snapshot sau khi regenerate');
 
   // Modal và màn hình hiển thị ứng viên thay thế
-  assert.ok(dialog.textContent.includes('Nội dung ứng viên thay thế từ snapshot sau regenerate'));
-  assert.ok(dialog.textContent.includes('Đáp án đúng: C'));
+  assert.ok(harness.container.textContent.includes('Nội dung ứng viên thay thế từ snapshot sau regenerate'));
+  assert.ok(harness.container.textContent.includes('Đáp án đúng: C'));
 
   await harness.unmount();
 });

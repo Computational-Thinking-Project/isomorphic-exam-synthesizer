@@ -151,7 +151,9 @@ test('GenerationProgressView tự động gọi onComplete sau khi nhận isDone
     await new Promise((r) => setTimeout(r, 1600));
   });
 
-  assert.equal(completedCalled, true, 'onComplete phải được kích hoạt sau 1.5s');
+  assert.equal(completedCalled, false, 'Không tự chuyển trang');
+  await act(async () => harness.container.querySelectorAll('button').find(b => b.textContent.includes('Xem đề ngay')).click());
+  assert.equal(completedCalled, true);
 
   await harness.unmount();
 });

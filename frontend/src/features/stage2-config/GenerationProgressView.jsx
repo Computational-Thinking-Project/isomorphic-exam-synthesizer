@@ -106,16 +106,6 @@ export default function GenerationProgressView({
     Boolean(progress?.is_partial) ||
     (isDone && (progress?.percent ?? 100) < 100);
 
-  // Auto redirect sau khi hoàn tất 1.5 giây — CHỈ KHI sinh đủ 100% đề (không partial_generated)
-  useEffect(() => {
-    if (isDone && !isPartial && onComplete) {
-      const timer = setTimeout(() => {
-        onComplete();
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
-  }, [isDone, isPartial, onComplete]);
-
   // Đảm bảo tab mã đề luôn hợp lệ nếu số lượng mã đề thay đổi
   useEffect(() => {
     if (effectiveNumVersions && activeVersionTab > effectiveNumVersions) {

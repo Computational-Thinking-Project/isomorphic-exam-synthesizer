@@ -111,3 +111,13 @@ After confirmation, Stage 1 now polls the existing source-artifacts GET every 2 
 Preparation progress uses API completed_count / total_questions, stays below 100 until authoritative readiness, and is indeterminate if counts are missing. The configuration button remains visible and disabled until ready; completion fills the bar and enables the button without navigating automatically. Confirmed failure offers Retry. The manual status button and normal read-only source reload are removed; recovery reload remains available when needed.
 
 Checks: 491 frontend tests passed; lint, build and diff check passed. Build retains its existing chunk-size warning. Live API preparation and browser rendering were not checked in this follow-up.
+
+
+### Inline post-generation review follow-up
+
+- Removed both 1.5s automatic Stage 2 -> Stage 3 redirects. Completion now waits for explicit navigation. Review links back to read-only generation information, including saved count and ordering preferences.
+- Review retains version lists, adds per-version approval counts and state filters, removes unsupported quality claims, and expands one solution inside its question card. Existing guarded accept/regenerate operations are reused, including stable idempotency keys and stale-session fences.
+- The source question is expandable. Approved-question regeneration asks for confirmation. The reviewed question remains in place under the pending filter; moving to the next unreviewed question is explicit. View location/filter/version/expanded question are restored through optional session storage, with server-loaded approval data.
+- Mutation feedback is shown in the expanded card; final preview stays disabled during mutations. Locked sessions retain read-only solutions.
+- Verification: 491 frontend tests PASS; lint/build/diff check PASS (existing chunk-size warning). Local browser fixture verified expansion, acceptance and explicit next-question navigation. Screenshot: `docs/ui-walkthrough/pr78-polish/review-inline.png`.
+- Limits: live API/DB, actual 200% zoom, full mobile regression and browser Stage 2 round-trip remain unverified in this follow-up. Existing backend working-tree changes were excluded.
