@@ -467,7 +467,7 @@ function confirmedResponse(config) {
 }
 
 test('204: confirm pending ở lại Stage 1, sau khi ready bấm tiếp tục mới sang Stage 2', async () => {
-  let artifact = { session_id: confirmSessionId, ready: false, canonical_status: 'pending', supported_modes: null };
+  let artifact = { session_id: confirmSessionId, ready: false, canonical_status: 'pending', supported_modes: null, total_questions: 2, completed_count: 1 };
   api.defaults.adapter = async (config) => {
     calls.push(config.method);
     if (config.url.endsWith('/source-artifacts')) return response(config, artifact);
@@ -477,11 +477,13 @@ test('204: confirm pending ở lại Stage 1, sau khi ready bấm tiếp tục m
   await app.render();
   await act(async () => button(app.container, confirmLabel).click());
   assert.match(app.container.textContent, /Đang chờ chuẩn bị cấu trúc đề/);
-  assert.equal(button(app.container, 'Tiếp tục cấu hình'), undefined);
+  assert.notEqual(button(app.container, 'Tiếp tục cấu hình').getAttribute('disabled'), null);
 
   artifact = { session_id: confirmSessionId, ready: true, canonical_status: 'ready', supported_modes: [] };
-  await act(async () => button(app.container, 'Kiểm tra trạng thái').click());
+  await act(async () => new Promise(resolve => setTimeout(resolve, 2100)));
   assert.match(app.container.textContent, /Cấu trúc đề đã sẵn sàng/);
+  assert.equal(app.container.querySelector('progress[aria-label="Tiến độ chuẩn bị cấu trúc đề"]').getAttribute('value'), '100');
+  assert.equal(button(app.container, 'Đọc lại nguồn đã lưu'), undefined);
 
   const continueButtons = Array.from(app.container.querySelectorAll('button')).filter(
     (b) => b.textContent.includes('Tiếp tục cấu hình')
@@ -578,7 +580,7 @@ test('Issue 44: F5 với session blueprinted chưa ready ở lại Stage 1 read-
   assert.equal(app.container.querySelector('input[type="file"]'), null);
   assert.equal(button(app.container, 'Nạp nguồn'), undefined);
   assert.equal(button(app.container, confirmLabel), undefined);
-  assert.equal(button(app.container, 'Tiếp tục cấu hình'), undefined);
+  assert.notEqual(button(app.container, 'Tiếp tục cấu hình').getAttribute('disabled'), null);
   await app.unmount();
 });
 
@@ -599,7 +601,7 @@ test('Issue 44: canonical failed hiển thị nút thử lại, bấm thử lạ
   const app = mount(confirmSessionId);
   await app.render();
   assert.match(app.container.textContent, /Chưa chuẩn bị được cấu trúc đề/);
-  await act(async () => button(app.container, 'Thử chuẩn bị lại').click());
+  await act(async () => button(app.container, 'Thử lại').click());
   assert.match(app.container.textContent, /Đang chuẩn bị cấu trúc đề/);
   assert(methods.some((m) => m.includes('POST') && m.includes('/source-artifacts/retry')));
   await app.unmount();
@@ -864,7 +866,7 @@ test('Phillip F04 & INT-03: Không render trùng nút Kiểm tra trạng thái v
   await app.render();
 
   assert.match(app.container.textContent, /Chưa chuẩn bị được cấu trúc đề/);
-  const retryBtn = button(app.container, 'Thử chuẩn bị lại');
+  const retryBtn = button(app.container, 'Thử lại');
   assert.ok(retryBtn);
 
   // Click retry
@@ -872,13 +874,13 @@ test('Phillip F04 & INT-03: Không render trùng nút Kiểm tra trạng thái v
   assert.equal(retryCalls, 1);
   // While retryAccepted, the text is shown and button is hidden
   assert.match(app.container.textContent, /Đã tiếp nhận yêu cầu tạo lại/);
-  assert.equal(button(app.container, 'Thử chuẩn bị lại'), undefined, 'Nút thử tạo lại bị ẩn khi đã tiếp nhận');
+  assert.equal(button(app.container, 'Thử lại'), undefined, 'Nút thử tạo lại bị ẩn khi đã tiếp nhận');
 
   // Verify only 1 "Kiểm tra trạng thái" button
   const checkButtons = Array.from(app.container.querySelectorAll('button')).filter(
     (b) => b.textContent.includes('Kiểm tra trạng thái')
   );
-  assert.equal(checkButtons.length, 1, 'Chỉ có 1 nút Kiểm tra trạng thái');
+  assert.equal(checkButtons.length, 0, 'Tiến độ được cập nhật tự động');
 
   await app.unmount();
 });

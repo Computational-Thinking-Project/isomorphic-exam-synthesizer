@@ -40,6 +40,20 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
     pendingFocus.current = null;
     if (controller.canSubmit()) target?.focus();
   }, [controller, state.mode, dismissedCause]);
+  const preparing = state.detail.status === 'blueprinted' && !state.canonicalReady
+    && (!state.canonicalStatus || ['pending', 'running'].includes(state.canonicalStatus) || state.retryAccepted)
+    && !state.unavailable;
+  useEffect(() => {
+    if (!preparing) return;
+    // Controller guards prevent overlapping requests and stale account/session updates.
+    const timer = setInterval(() => void controller.checkCanonicalStatus(), 2000);
+    return () => clearInterval(timer);
+  }, [controller, preparing]);
+  const progress = state.canonicalProgress;
+  const measuredProgress = Number.isInteger(progress?.completed) && Number.isInteger(progress?.total)
+    && progress.total > 0 && progress.completed >= 0;
+  const progressPercent = state.canonicalReady ? 100 : measuredProgress
+    ? Math.min(99, Math.round(progress.completed / progress.total * 100)) : undefined;
   const busy = state.phase !== 'idle';
   const readOnly = state.detail.status !== 'draft';
   const inputDisabled = busy || readOnly || state.unavailable;
@@ -116,7 +130,7 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
           Phiên không còn ở trạng thái nháp. Bạn chỉ có thể đọc nguồn tại đây.
         </p>
       )}
-      {state.canonicalStatus && (
+      {state.detail.status === 'blueprinted' && (
         <div className="shrink-0 rounded-xl border border-line bg-surface p-4 shadow-soft">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-start sm:items-center gap-3">
@@ -136,20 +150,12 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
                 </p>
                 {state.retryAccepted && (
                   <p className="mt-1 text-xs font-medium text-highlight">
-                    Đã tiếp nhận yêu cầu tạo lại. Kiểm tra trạng thái để cập nhật.
+                    Đã tiếp nhận yêu cầu tạo lại. Tiến độ sẽ tự cập nhật.
                   </p>
                 )}
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                className={buttonClass}
-                disabled={busy}
-                onClick={() => void controller.checkCanonicalStatus()}
-              >
-                Kiểm tra trạng thái
-              </button>
               {state.canonicalStatus === 'failed' && !state.retryAccepted && (
                 <button
                   type="button"
@@ -157,14 +163,14 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
                   disabled={busy}
                   onClick={() => void controller.retryCanonical()}
                 >
-                  Thử chuẩn bị lại
+                  Thử lại
                 </button>
               )}
-              {state.canonicalReady && (
+              {(
                 <button
                   type="button"
                   className="rounded-lg bg-highlight px-4 py-2 text-sm font-semibold text-white shadow-soft hover:bg-[#253b57] disabled:opacity-50 transition-colors"
-                  disabled={busy}
+                  disabled={busy || !state.canonicalReady}
                   onClick={() => controller.proceedToStage2()}
                 >
                   Tiếp tục cấu hình
@@ -172,12 +178,22 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
               )}
             </div>
           </div>
+          <div className="mt-4 space-y-2">
+            <progress aria-label="Tiến độ chuẩn bị cấu trúc đề" max="100" value={state.canonicalStatus === 'failed' && !state.retryAccepted ? (progressPercent ?? 0) : progressPercent}
+              className="h-2 w-full overflow-hidden rounded-full accent-highlight [&::-webkit-progress-bar]:bg-rail [&::-webkit-progress-value]:bg-highlight [&::-moz-progress-bar]:bg-highlight" />
+            <p role="status" className="text-xs text-muted">
+              {state.canonicalReady ? 'Hoàn tất · 100%' : state.canonicalStatus === 'failed' && !state.retryAccepted
+                ? 'Chuẩn bị chưa thành công. Hãy thử lại.'
+                : measuredProgress ? `${Math.min(progress.completed, progress.total)}/${progress.total} câu đã chuẩn bị`
+                  : 'Đang chuẩn bị cấu trúc đề. Tiến độ sẽ tự cập nhật.'}
+            </p>
+          </div>
         </div>
       )}
       {state.canonicalError && (
         <div role="alert" className="shrink-0 rounded-xl border border-danger/30 bg-danger-soft p-3 text-sm text-danger flex items-center justify-between gap-3">
           <p className="font-medium">{state.canonicalError}</p>
-          {!state.canonicalStatus && (
+          {state.unavailable && (
             <button
               type="button"
               className={buttonClass}
@@ -340,9 +356,9 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
         >
           Nạp nguồn
         </button>)}
-        <button type="button" className={buttonClass} disabled={busy} onClick={() => void controller.reload()}>
+        {(!readOnly || state.uncertain || state.requiresReload || state.unavailable || state.confirmationPending || state.error || (!readOnly && questionCount > 0 && !isSourceUuid(state.detail.source_revision))) && <button type="button" className={buttonClass} disabled={busy} onClick={() => void controller.reload()}>
           {state.confirmationPending ? 'Đọc lại trạng thái phiên' : 'Đọc lại nguồn đã lưu'}
-        </button>
+        </button>}
         {!readOnly && questionCount > 0 && (
           <button
             type="button"

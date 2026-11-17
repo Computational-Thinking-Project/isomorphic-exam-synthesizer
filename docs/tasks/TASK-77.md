@@ -102,3 +102,12 @@ The owner expanded PR #78 through final preview and approval, stopping before Ex
 - Browser: mobile solution dialog inspected; approval dialog focuses its close control, Escape closes and restores focus to its trigger. Answer matrix rendered and inspected.
 - Screenshots: `docs/ui-walkthrough/pr78-polish/review-expanded.png` and `preview-expanded.png`. Fixtures and browser harness remain ignored under node_modules, never enabled in production.
 - Limits: no live OAuth/API/DB generation or actual export rendering checked in this follow-up. Actual browser 200% zoom and a complete accessibility audit remain unverified. Browser screenshots use fixtures, not production data. No independent approval, merge or deployment is claimed.
+
+
+### Source preparation UX follow-up
+
+After confirmation, Stage 1 now polls the existing source-artifacts GET every 2 seconds while pending/running (or retry acceptance is unresolved). The controller retains request/account/session guards; polling stops on readiness, confirmed failure, access errors or unmount. Network failures remain retryable reads and never resubmit confirmation.
+
+Preparation progress uses API completed_count / total_questions, stays below 100 until authoritative readiness, and is indeterminate if counts are missing. The configuration button remains visible and disabled until ready; completion fills the bar and enables the button without navigating automatically. Confirmed failure offers Retry. The manual status button and normal read-only source reload are removed; recovery reload remains available when needed.
+
+Checks: 491 frontend tests passed; lint, build and diff check passed. Build retains its existing chunk-size warning. Live API preparation and browser rendering were not checked in this follow-up.
