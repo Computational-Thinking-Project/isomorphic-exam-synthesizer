@@ -1,12 +1,26 @@
 # W4-MVP-11 / 21 — Plan OPS và bàn giao demo của Đạt
 
-## Bổ sung checkpoint 15/11/2026
+## Checkpoint hiện hành — 17/11/2026 (UTC+7)
+
+Checkpoint này thay các nhận định trạng thái cũ bên dưới; các mốc 07–15/11 giữ làm lịch sử. Owner OPS11/21: Đạt; workflow v0.1 proposed + INPUT-20261109. Không đổi người phụ trách module hoặc tiêu chí nghiệm thu.
+
+- **Runtime local:** đã pull `dev@1ff345cc4d1ca04d81abc75b6ca14db0f192c9db`, build lại Docker Compose; frontend/backend healthy, smoke **8/8 PASS**. Frontend ở `http://localhost:3000`, backend ở `http://localhost:8000`, chỉ bind loopback. Có #49 Preview, #58 snapshot adapter và #66 route/resume; App đã mount Preview và Export. Không còn chờ merge #58/#66.
+- **Cloud connectivity:** MCP/CLI đã truy cập được project nhóm; backend container thực tế gọi Supabase REST trả **HTTP 200**. Credentials chỉ lưu local, không đưa vào Git. Kết quả này chưa chứng nhận Auth A/B, RLS hoặc toàn bộ pipeline.
+- **DB0 / I08-11S:** đọc catalog shared DB ngày 17/11: chưa có `public.private_export_ledger`, RPC `public.private_export_ledger_command` và bucket `exam-export-bundles`. Không có bảng ledger chuẩn `supabase_migrations.schema_migrations`; chưa thể xác nhận applied manifest toàn bộ. Bốn thân hàm được sửa trong migration024 khớp bản repo sau chuẩn hóa whitespace; đây không phải xác nhận đầy đủ ACL/postconditions của024. Không replay024 chỉ vì thiếu ledger.
+- **An toàn triển khai:** chưa apply DDL, tạo bucket, seed/cleanup hoặc bật private export trên DB nhóm. #63 còn mở; #82 renderer cũng chưa merge tại checkpoint. Cần Duy/Hùng/DB owner chốt manifest upgrade có020, backup/restore và GO trước thay đổi shared DB; sau đó kiểm private bucket/ACL, size/MIME và quyền test A/B. Local/disposable DB vẫn là phương án Golden theo điều phối #74, không cần biến shared DB NO-GO thành blocker của mọi kiểm thử local.
+- **Timeout/lifecycle:** Nginx read timeout600s, backend một worker; Compose chưa đặt stop grace riêng (Docker mặc định10s). Chưa chứng minh tổng thời gian export và shutdown an toàn khi có job đang chạy. Không coi lease900s là timeout end-to-end đã đủ.
+- **ENV0/Q14/Q20:** lựa chọn local trên máy thuyết trình đã đủ cho chuẩn bị local; không yêu cầu lại host online như điều kiện của bước này. Q14/oracle theo handoff của #74, chỉ yêu cầu phần còn thiếu ở đúng revision. Q20 đủ dùng cho summary/synthetic evidence; raw evidence lưu local ignored, kho chung/retention/consent vẫn cần người giữ kho xác nhận. Không đăng token, signed URL hoặc dữ liệu thật.
+- **Bàn giao tiếp:** OPS cung cấp runtime/DB facts cho #73/#74; khi candidate tích hợp + DB/Storage/test scope đủ, chạy G0 trên đúng FE/BE SHA rồi giao Quỳnh Golden OFF/OFF N=2 (6 slots), ON/ON riêng, G2 và demo21. **G0/G1/G2: NOT_VERIFIED**; smoke8/8 và REST200 không thay nghiệm thu này. ETA phần phụ thuộc vẫn TBD, không cam kết thay owner.
+
+Evidence local ignored: `.artifacts/w4/ops-20261117-1ff345c-smoke.json`. Build từ checkout local có file demo untracked được giữ lại; chưa gọi đây là frozen release từ archive sạch. Chỉ bàn giao summary đã khử nhạy cảm qua Git.
+
+## Checkpoint lịch sử — 15/11/2026
 
 Đã build và kiểm Docker local từ `dev@c2ee9fd`: hai containers healthy,4 smoke checks và4 anonymous auth checks PASS, Typst0.11.1; không dùng cloud credentials. Xem [kết quả và giới hạn](../w4-ops-local-c2ee9fd.md). Runtime này chưa chứa PR63/67; các checkpoint cũ bên dưới giữ làm lịch sử. Integrated smoke/G0 live/G1/G2 vẫn chưa được nghiệm thu.
 
 Đã bổ sung4 kiểm auth vào smoke dùng chung (tổng8), kiểm trên Docker trước/sau restart backend không có job;9 tests/14 subtests và Ruff PASS. Runbook có lệnh xuất JSON evidence; không cần chạy tay các auth probes nữa. Đây là phần tooling OPS hoàn thiện được độc lập với input cloud.
 
-## Checkpoint hiện hành — 13/11/2026 (UTC+7)
+## Checkpoint lịch sử — 13/11/2026 (UTC+7)
 
 - Author OPS11/21: Đạt; workflow v0.1 proposed. Nhánh tiếp nối `docs/w4-ops-integration-checkpoint`, base ban đầu `dev@294c69a1a085ac6487d65b633e06a2f1112e2046`; đã sync devb47e4fa, gồm #54/018 và #60; đây là sync source/docs, không nhận đã build runtime mới, giữ nguyên SHA294c69a của runtime đã kiểm; không mở lại PR51 đã merge. Các checkpoint có ngày cũ phía dưới là lịch sử.
 - PR51 preparation đã merge. PR52 đã merge thành `294c69a`; Đạt Approve sau 23/23 test PostgreSQL17 thật. Không còn chờ F01–F04 của PR52; **chưa có applied ledger trên DB ứng dụng**.
@@ -44,7 +58,9 @@ Máy reviewer không có `docker` trong PATH ở lượt kiểm 07/11; chưa ch�
 
 <a id="input-handoff"></a>
 
-## Input cần trả lời trên Draft PR — nơi tổng hợp duy nhất
+## Input handoff — bảng lịch sử và checkpoint hiện hành
+
+**Cập nhật trạng thái 17/11:** đọc checkpoint đầu file trước; bảng dưới giữ nguồn yêu cầu và trạng thái tại 13/11, không mở lại các input đã Accepted sau đó. Không dùng các dòng “chưa merge” cũ thay trạng thái hiện hành.
 
 Áp dụng cách ghi đề xuất INPUT-20261109 tại [PR57@ef941be](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/57): không thay workflow/owner/gate hiện hành. Giữ ID cũ; ENV0 và quyết định quyền/roster vẫn có nguồn chuẩn Issue53, bảng này chỉ dẫn link và ghi phần đủ dùng cho task11/21. Mốc là need-by từ W4, ETA chưa có xác nhận ghi TBD.
 
