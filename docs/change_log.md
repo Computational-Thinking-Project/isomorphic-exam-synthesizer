@@ -5,6 +5,7 @@
   - Normalized script attachment around `_` and `^` (e.g. `\int_{0}^{1}` -> `integral_(0)^(1)` instead of stray `\i`+`nt` escape).
   - Added quote-safe and case-sensitive `_split_multiletter_segment` logic separating adjacent LaTeX single-letter variables (`dx` -> `d x`, `Oxyz` -> `O x y z`, `IN` -> `I N`) while preserving Typst math identifiers/dot-symbols, `"..."` literals, `#`/`.method(`/`panic|eval|assert` security neutralization (`F03`), and decimal coefficients (`0.5(x+1)`, `F06`).
   - Resolved review finding F82-01: consume and validate mandatory alignment column-count arguments in `alignedat` (`\begin{alignedat}{n}`) and optional placement specifiers (`[t|b|c]`), preventing stray `{n}` metadata from corrupting exported formulas while keeping equations and row boundaries intact.
+  - Resolved review finding F82-02: preserve `&` column separators inside `cases` (`\begin{cases}...\end{cases}`) instead of flattening expression/condition boundaries into spaces.
 - Added unit tests and `TestRealTypstIntegration` Golden snapshot & extended math tests in `backend/tests/exporter/test_typst_compiler.py`.
 
 ---

@@ -462,6 +462,12 @@ def _extract_balanced_braces(text: str, start_idx: int) -> Tuple[str, int]:
     return "".join(inner_chars), i
 
 
+def _convert_aligned_row(row: str) -> str:
+    """Convert one &-delimited row while preserving Typst column separators."""
+    cols = [latex_math_to_typst(col.strip()) for col in _COL_SPLIT_RE.split(row)]
+    return " & ".join(cols)
+
+
 def _convert_env(name: str, body: str) -> str:
     """Convert a LaTeX math environment body to Typst syntax."""
     body_clean = body.strip()
@@ -487,11 +493,8 @@ def _convert_env(name: str, body: str) -> str:
         rows = rows[:-1]
 
     if name == "cases":
-        converted_rows = [
-            latex_math_to_typst(_COL_SPLIT_RE.sub(" ", row).strip())
-            for row in rows
-            if row.strip()
-        ]
+        # F82-02: preserve '&' column separators inside Typst cases(...).
+        converted_rows = [_convert_aligned_row(row) for row in rows if row.strip()]
         return f"cases({', '.join(converted_rows)})"
 
     if name in _MATRIX_DELIMS:
@@ -514,8 +517,7 @@ def _convert_env(name: str, body: str) -> str:
         if not row.strip():
             continue
         if name in {"aligned", "alignedat", "split"}:
-            cols = [latex_math_to_typst(col.strip()) for col in _COL_SPLIT_RE.split(row)]
-            converted_lines.append(" & ".join(cols))
+            converted_lines.append(_convert_aligned_row(row))
         else:
             converted_lines.append(latex_math_to_typst(row.strip()))
     return r" \ ".join(converted_lines)

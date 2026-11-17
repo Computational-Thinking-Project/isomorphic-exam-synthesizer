@@ -673,7 +673,7 @@ class TestRealTypstIntegration:
                 r"Toa do: $Oxyz$, doan $AB$, diem $IN$, khoang cach $\overline{AB}$, $\vec{CD}$, $\hat{x}$, $\bar{y}$, $\ddot{z}$.",
                 r"Tong va gioi han: $\sum_{k=1}^{n} k^2$, $\prod_{i=1}^{n} a_i$, $\lim_{x \to 0} \frac{\sin x}{x} = 1$, $\sin^2 x + \cos^2 x = 1$.",
                 r"Tap hop va ky hieu: $x \in \mathbb{R} \setminus \{0\}$, $A \subseteq B$, $A \cong B$, $A \sim B$, $a \propto b$, $90^\circ$, $\angle ABC$, $\triangle ABC$, $d \perp \Delta$, $d \parallel d'$, $\langle u, v \rangle$, $\lVert u \rVert$, $\cdots$, $\vdots$, $\ddots$, $\text{don vi } 5\,\text{cm}$.",
-                r"He phuong trinh va ma tran: $\begin{cases} x + y = 1 \\ x - y = 3 \end{cases}$ va $\begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix}$.",
+                r"He phuong trinh va ma tran: $\begin{cases} x + y = 1 \\ x - y = 3 \end{cases}$, $\begin{cases}x^2 & x\ge 0\\-x & x<0\end{cases}$, $\begin{alignedat}{2}x&=1 & y&=2\\z&=3 & t&=4\end{alignedat}$ va $\begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix}$.",
                 r"Fallback unknown macro: $\unknownmacro + x$.",
             ]
         )
@@ -758,4 +758,21 @@ class TestGoldenAndExtendedMathConverter:
         assert converted_valign == r"u & = v \ w & = z"
         assert "[t]" not in converted_valign
         assert "{2}" not in converted_valign
+
+    def test_cases_preserves_column_separation_f82_02(self):
+        # Regression for F82-02: \begin{cases} must retain '&' alignment columns.
+        assert (
+            latex_math_to_typst(r"\begin{cases}x^2 & x\ge 0\\-x & x<0\end{cases}")
+            == "cases(x^2 & x >= 0, -x & x<0)"
+        )
+        assert (
+            latex_math_to_typst(
+                r"\begin{cases} x^2 + 1 & \text{if } x \ge 0 \\ -x & \text{if } x < 0 \end{cases}"
+            )
+            == 'cases(x^2 + 1 & "if " x >= 0, -x & "if " x < 0)'
+        )
+        assert (
+            latex_math_to_typst(r"\begin{cases} x + y = 1 \\ x - y = 3 \end{cases}")
+            == "cases(x + y = 1, x - y = 3)"
+        )
 
