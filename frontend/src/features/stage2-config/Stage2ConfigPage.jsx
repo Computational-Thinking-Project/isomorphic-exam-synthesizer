@@ -118,10 +118,10 @@ export default function Stage2ConfigPage({
           return;
         }
 
-        // F02 / F08: Khi mở lại phiên partial_generated hoặc generating mà chưa có snapshot progress, nạp snapshot
+        // F02 / F08 / C8: Khi mở lại phiên partial_generated, generating hoặc generated mà chưa có snapshot progress, nạp snapshot
         if (
           data &&
-          (data.status === 'generating' || data.status === 'partial_generated') &&
+          (data.status === 'generating' || data.status === 'partial_generated' || data.status === 'generated') &&
           !data.progress
         ) {
           try {
@@ -240,6 +240,8 @@ export default function Stage2ConfigPage({
           null;
 
         const isFailed = String(snapStatus || '').trim().toLowerCase() === 'failed';
+        const isGenerated = String(snapStatus || '').trim().toLowerCase() === 'generated';
+        const isPartial = String(snapStatus || '').trim().toLowerCase() === 'partial_generated';
 
         if (data?.progress) {
           setSession((prev) =>
@@ -247,7 +249,7 @@ export default function Stage2ConfigPage({
               ? {
                   ...prev,
                   status: snapStatus || prev.status,
-                  generation_error_code: errCode ?? prev.generation_error_code ?? null,
+                  generation_error_code: isGenerated ? null : (errCode ?? prev.generation_error_code ?? null),
                   progress: data.progress,
                   question_statuses: {
                     ...(prev.question_statuses || {}),
@@ -266,15 +268,19 @@ export default function Stage2ConfigPage({
             ...(prev || {}),
             ...data,
             status: snapStatus || data.status || prev?.status,
-            generation_error_code:
-              errCode ?? data.generation_error_code ?? prev?.generation_error_code ?? null,
+            generation_error_code: isGenerated
+              ? null
+              : (errCode ?? data.generation_error_code ?? prev?.generation_error_code ?? null),
           }));
         }
 
-        // P2 (Duy): Giải phóng các cờ đang chạy khi snapshot xác nhận trạng thái terminal failed
+        // P2 & C7: Giải phóng các cờ đang chạy khi snapshot xác nhận trạng thái terminal
         if (isFailed) {
           setIsGenerating(false);
           setIsNewRunActive(false);
+        } else if (isGenerated || isPartial) {
+          setIsNewRunActive(false);
+          setIsGenerating(true);
         }
 
         return data;
@@ -328,12 +334,63 @@ export default function Stage2ConfigPage({
           authoritativeFailed = true;
           confirmedErrorCode = snap?.generation_error_code || errCode;
           confirmedProgress = snap?.progress;
-        } else if (
-          snapStatus === 'generating' ||
-          snapStatus === 'partial_generated' ||
-          snapStatus === 'generated'
-        ) {
-          // Backend vẫn đang chạy hoặc đã hoàn thành -> lỗi SSE chỉ là transport mạng tạm thời.
+        } else if (snapStatus === 'generated') {
+          // C1: Backend đã hoàn thành toàn bộ (generated) -> Áp dụng terminal snapshot và trạng thái hoàn tất
+          setSession((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: 'generated',
+                  generation_error_code: null,
+                  ...(snap?.progress ? { progress: snap.progress } : {}),
+                  question_statuses: {
+                    ...(prev.question_statuses || {}),
+                    ...(snap?.question_statuses || {}),
+                  },
+                  stream_epoch: snap?.stream_epoch ?? prev.stream_epoch,
+                  resume_after_event_id:
+                    snap?.resume_after_event_id !== undefined
+                      ? snap.resume_after_event_id
+                      : prev.resume_after_event_id,
+                }
+              : prev,
+          );
+          setIsNewRunActive(false);
+          setIsGenerating(true);
+          return;
+        } else if (snapStatus === 'partial_generated') {
+          // C1: Backend đã hoàn thành một phần (partial_generated) -> Áp dụng terminal snapshot, giữ câu thiếu và khả năng retry
+          const errCodeFromSnap =
+            snap?.generation_error_code ||
+            snap?.error_code ||
+            snap?.progress?.generation_error_code ||
+            snap?.progress?.error_code ||
+            errCode ||
+            null;
+          setSession((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: 'partial_generated',
+                  generation_error_code: errCodeFromSnap ?? prev.generation_error_code ?? null,
+                  ...(snap?.progress ? { progress: snap.progress } : {}),
+                  question_statuses: {
+                    ...(prev.question_statuses || {}),
+                    ...(snap?.question_statuses || {}),
+                  },
+                  stream_epoch: snap?.stream_epoch ?? prev.stream_epoch,
+                  resume_after_event_id:
+                    snap?.resume_after_event_id !== undefined
+                      ? snap.resume_after_event_id
+                      : prev.resume_after_event_id,
+                }
+              : prev,
+          );
+          setIsNewRunActive(false);
+          setIsGenerating(true);
+          return;
+        } else if (snapStatus === 'generating') {
+          // Backend vẫn đang chạy -> lỗi SSE chỉ là transport mạng tạm thời.
           // Giữ nguyên giao diện để người dùng tiếp tục theo dõi và có thể kết nối lại; KHÔNG ép sang failed!
           return;
         }
@@ -349,11 +406,55 @@ export default function Stage2ConfigPage({
           if (latestStatus === 'failed') {
             authoritativeFailed = true;
             confirmedErrorCode = latest?.generation_error_code || errCode;
-          } else if (
-            latestStatus === 'generating' ||
-            latestStatus === 'partial_generated' ||
-            latestStatus === 'generated'
-          ) {
+          } else if (latestStatus === 'generated') {
+            setSession((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    status: 'generated',
+                    generation_error_code: null,
+                    ...(latest?.progress ? { progress: latest.progress } : {}),
+                    question_statuses: {
+                      ...(prev.question_statuses || {}),
+                      ...(latest?.question_statuses || {}),
+                    },
+                    stream_epoch: latest?.stream_epoch ?? prev.stream_epoch,
+                    resume_after_event_id:
+                      latest?.resume_after_event_id !== undefined
+                        ? latest.resume_after_event_id
+                        : prev.resume_after_event_id,
+                  }
+                : prev,
+            );
+            setIsNewRunActive(false);
+            setIsGenerating(true);
+            return;
+          } else if (latestStatus === 'partial_generated') {
+            const errCodeFromLatest =
+              latest?.generation_error_code || latest?.error_code || errCode || null;
+            setSession((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    status: 'partial_generated',
+                    generation_error_code: errCodeFromLatest ?? prev.generation_error_code ?? null,
+                    ...(latest?.progress ? { progress: latest.progress } : {}),
+                    question_statuses: {
+                      ...(prev.question_statuses || {}),
+                      ...(latest?.question_statuses || {}),
+                    },
+                    stream_epoch: latest?.stream_epoch ?? prev.stream_epoch,
+                    resume_after_event_id:
+                      latest?.resume_after_event_id !== undefined
+                        ? latest.resume_after_event_id
+                        : prev.resume_after_event_id,
+                  }
+                : prev,
+            );
+            setIsNewRunActive(false);
+            setIsGenerating(true);
+            return;
+          } else if (latestStatus === 'generating') {
             return;
           }
         } catch {
@@ -405,9 +506,19 @@ export default function Stage2ConfigPage({
     }
   }, [session?.status, isGenerating, isNewRunActive]);
 
-  // Hook SSE kết nối khi ở trạng thái isGenerating
+  const isTerminalSession = Boolean(
+    session?.status &&
+      ['generated', 'partial_generated', 'failed', 'reviewed', 'approved', 'exported'].includes(
+        session.status,
+      ),
+  );
+  const shouldConnectSSE = Boolean(
+    isGenerating && (isNewRunActive || !isTerminalSession),
+  );
+
+  // Hook SSE kết nối khi cần theo dõi tiến trình thực tế (C4)
   const sseState = useSSEHook(sessionId, {
-    enabled: isGenerating,
+    enabled: shouldConnectSSE,
     initialProgress: session?.progress,
     initialQuestionStatuses: session?.question_statuses,
     initialResumeAfterEventId:
@@ -463,6 +574,8 @@ export default function Stage2ConfigPage({
       ) {
         return;
       }
+      setSession((prev) => (prev ? { ...prev, status: 'generating' } : prev));
+      setIsNewRunActive(true);
       setIsGenerating(true);
     } catch (err) {
       if (
@@ -561,10 +674,22 @@ export default function Stage2ConfigPage({
 
   // Trích xuất số lượng mã đề thật, không võ đoán mặc định 2 khi F5/reload
   const restoredStatuses = session?.question_statuses || {};
-  const mergedStatuses = {
-    ...restoredStatuses,
-    ...(sseState.questionStatuses || {}),
-  };
+  const isConfirmedTerminalRun = Boolean(
+    session?.status &&
+      ['generated', 'partial_generated', 'reviewed', 'approved', 'exported'].includes(session.status) &&
+      !isNewRunActive,
+  );
+
+  const mergedStatuses =
+    isConfirmedTerminalRun && Object.keys(restoredStatuses).length > 0
+      ? {
+          ...(sseState.questionStatuses || {}),
+          ...restoredStatuses,
+        }
+      : {
+          ...restoredStatuses,
+          ...(sseState.questionStatuses || {}),
+        };
 
   const statusVersions = Object.keys(mergedStatuses).map((k) =>
     parseInt(k.split('-')[0], 10),
@@ -586,9 +711,11 @@ export default function Stage2ConfigPage({
     (maxVersionFromStatuses && maxVersionFromStatuses > 0 ? maxVersionFromStatuses : null);
 
   const mergedProgress =
-    (sseState.progress?.percent > 0 || sseState.progress?.completedCount > 0 || sseState.isDone)
-      ? sseState.progress
-      : session?.progress || (sseState.progress?.hasData ? sseState.progress : null);
+    isConfirmedTerminalRun && session?.progress
+      ? session.progress
+      : (sseState.progress?.percent > 0 || sseState.progress?.completedCount > 0 || sseState.isDone)
+        ? sseState.progress
+        : session?.progress || (sseState.progress?.hasData ? sseState.progress : null);
 
   // F03 / F07 / F09: Tách trạng thái kết thúc lượt sinh khỏi trạng thái kết nối SSE.
   // F09: Chỉ hoàn tất chuyển Stage 3 khi backend xác nhận 'generated' qua snapshot/detail HOẶC sự kiện kết thúc 'done' từ stream SSE.
@@ -854,9 +981,17 @@ export default function Stage2ConfigPage({
           }
           questionStatuses={mergedStatuses}
           warnings={sseState.warnings}
-          connectionState={sseState.connectionState}
+          connectionState={
+            isConfirmedTerminalRun && session?.status === 'generated'
+              ? 'completed'
+              : sseState.connectionState
+          }
           isDone={effectiveIsDone}
-          error={retryError || sseState.error}
+          error={
+            isConfirmedTerminalRun && session?.status === 'generated'
+              ? null
+              : retryError || sseState.error
+          }
           reconnectCount={sseState.reconnectCount}
           onReconnect={sseState.reconnect}
           onRetryGeneration={handleRetryGeneration}

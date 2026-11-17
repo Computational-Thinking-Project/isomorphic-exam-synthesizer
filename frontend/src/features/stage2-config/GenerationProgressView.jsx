@@ -270,7 +270,7 @@ export default function GenerationProgressView({
                     : 'Đã sinh xong tất cả các mã đề thi đẳng cấu!'}
                 </h4>
                 <p className="mt-0.5 text-xs text-approved-ink">
-                  Hệ thống đang tự động chuyển hướng sang trang xem và duyệt đề (Stage 3)...
+                  Chọn &quot;Xem đề ngay&quot; để chuyển sang màn hình xem và duyệt đề thi.
                 </p>
               </div>
             </div>

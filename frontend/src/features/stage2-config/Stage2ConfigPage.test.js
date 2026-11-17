@@ -1832,3 +1832,609 @@ test('Issue 80: saved config survives startup error with backend details', async
   assert.match(text, /1, 3/);
   await harness.unmount();
 });
+
+test('PR #78 D2 TC01 — SSE failure + snapshot generating: UI retains running state without error collapse', async () => {
+  let capturedErrorCb = null;
+  const mockUseSSE = (sid, options) => {
+    capturedErrorCb = options.onError;
+    return {
+      connectionState: 'connecting',
+      progress: { percent: 40, completedCount: 2, totalCount: 5, hasData: true },
+      questionStatuses: {},
+      warnings: [],
+      isDone: false,
+      isPartial: false,
+      error: null,
+      reconnectCount: 1,
+      reconnect: () => {},
+    };
+  };
+
+  const harness = renderPage('session-tc01', {
+    loadSession: async () => ({
+      id: 'session-tc01',
+      title: 'Đề TC01',
+      status: 'generating',
+      source_questions: [{ id: 'q1' }, { id: 'q2' }, { id: 'q3' }, { id: 'q4' }, { id: 'q5' }],
+      config: { num_versions: 1 },
+      progress: { percent: 40, completedCount: 2, totalCount: 5, hasData: true },
+    }),
+    fetchGenSnapshot: async () => ({
+      session_id: 'session-tc01',
+      session_status: 'generating',
+      progress: { percent: 40, completedCount: 2, totalCount: 5, hasData: true },
+    }),
+    useSSEHook: mockUseSSE,
+  });
+
+  await harness.render();
+  assert.ok(capturedErrorCb, 'Phải có capturedErrorCb');
+
+  await act(async () => {
+    await capturedErrorCb(new Error('503 Stream authorization is temporarily unavailable.'));
+  });
+
+  const text = harness.container.textContent;
+  assert.equal(text.includes('Tiến trình sinh đề thi bị gián đoạn hoặc thất bại'), false);
+  assert.equal(harness.container.querySelector('[role="alert"]'), null);
+  await harness.unmount();
+});
+
+test('PR #78 D2 TC02 — SSE failure + snapshot generated: UI recovers 100% completion with Stage 3 button', async () => {
+  let capturedErrorCb = null;
+  const mockUseSSE = (sid, options) => {
+    capturedErrorCb = options.onError;
+    return {
+      connectionState: 'disconnected',
+      progress: { percent: 60, completedCount: 3, totalCount: 5, hasData: true },
+      questionStatuses: { '1-1': { status: 'done' }, '1-2': { status: 'done' }, '1-3': { status: 'done' } },
+      warnings: [],
+      isDone: false,
+      isPartial: false,
+      error: 'Mất kết nối với máy chủ',
+      reconnectCount: 5,
+      reconnect: () => {},
+    };
+  };
+
+  const harness = renderPage('session-tc02', {
+    loadSession: async () => ({
+      id: 'session-tc02',
+      title: 'Đề TC02',
+      status: 'generating',
+      source_questions: [{ id: 'q1' }, { id: 'q2' }, { id: 'q3' }, { id: 'q4' }, { id: 'q5' }],
+      config: { num_versions: 1 },
+      progress: { percent: 60, completedCount: 3, totalCount: 5, hasData: true },
+    }),
+    fetchGenSnapshot: async () => ({
+      session_id: 'session-tc02',
+      session_status: 'generated',
+      generation_error_code: null,
+      progress: {
+        hasData: true,
+        completedCount: 5,
+        totalCount: 5,
+        percent: 100,
+        session_status: 'generated',
+        is_partial: false,
+      },
+      question_statuses: {
+        '1-1': { status: 'done' },
+        '1-2': { status: 'done' },
+        '1-3': { status: 'done' },
+        '1-4': { status: 'done' },
+        '1-5': { status: 'done' },
+      },
+    }),
+    useSSEHook: mockUseSSE,
+  });
+
+  await harness.render();
+  assert.ok(capturedErrorCb, 'Phải có capturedErrorCb');
+
+  await act(async () => {
+    await capturedErrorCb(new Error('503 Service Unavailable'));
+  });
+
+  const text = harness.container.textContent;
+  assert.match(text, /100%/);
+  assert.match(text, /5 \/ 5/);
+  assert.equal(text.includes('partial_generated'), false);
+  assert.ok(text.includes('Xem đề ngay') || text.includes('Quay lại duyệt câu hỏi'));
+  assert.equal(harness.getLocation(), '/session/session-tc02/stage2');
+  await harness.unmount();
+});
+
+test('PR #78 D2 TC03 — SSE failure + snapshot partial_generated: UI displays partial count and retains retry button', async () => {
+  let capturedErrorCb = null;
+  const mockUseSSE = (sid, options) => {
+    capturedErrorCb = options.onError;
+    return {
+      connectionState: 'disconnected',
+      progress: { percent: 40, completedCount: 2, totalCount: 5, hasData: true },
+      questionStatuses: {},
+      warnings: [],
+      isDone: false,
+      isPartial: false,
+      error: 'Mất kết nối',
+      reconnectCount: 5,
+      reconnect: () => {},
+    };
+  };
+
+  const harness = renderPage('session-tc03', {
+    loadSession: async () => ({
+      id: 'session-tc03',
+      title: 'Đề TC03',
+      status: 'generating',
+      source_questions: [{ id: 'q1' }, { id: 'q2' }, { id: 'q3' }, { id: 'q4' }, { id: 'q5' }],
+      config: { num_versions: 1 },
+      progress: { percent: 40, completedCount: 2, totalCount: 5, hasData: true },
+    }),
+    fetchGenSnapshot: async () => ({
+      session_id: 'session-tc03',
+      session_status: 'partial_generated',
+      generation_error_code: 'ERR_MODEL_TIMEOUT',
+      progress: {
+        hasData: true,
+        completedCount: 3,
+        totalCount: 5,
+        percent: 60,
+        session_status: 'partial_generated',
+        is_partial: true,
+      },
+      question_statuses: {
+        '1-1': { status: 'done' },
+        '1-2': { status: 'done' },
+        '1-3': { status: 'done' },
+      },
+    }),
+    useSSEHook: mockUseSSE,
+  });
+
+  await harness.render();
+  assert.ok(capturedErrorCb, 'Phải có capturedErrorCb');
+
+  await act(async () => {
+    await capturedErrorCb(new Error('503 Service Unavailable'));
+  });
+
+  const text = harness.container.textContent;
+  assert.match(text, /3 \/ 5/);
+  assert.equal(text.includes('100%'), false);
+  const buttons = Array.from(harness.container.querySelectorAll('button'));
+  const retryBtn = buttons.find((b) => b.textContent.includes('Sinh bù'));
+  assert.ok(retryBtn, 'Phải có nút Sinh bù cho partial_generated');
+  await harness.unmount();
+});
+
+test('PR #78 D2 TC04 — Snapshot failed: UI renders failed screen and error code', async () => {
+  let capturedErrorCb = null;
+  const mockUseSSE = (sid, options) => {
+    capturedErrorCb = options.onError;
+    return {
+      connectionState: 'connected',
+      progress: { percent: 20, completedCount: 1, totalCount: 5, hasData: true },
+      questionStatuses: {},
+      warnings: [],
+      isDone: false,
+      isPartial: false,
+      error: null,
+      reconnectCount: 0,
+      reconnect: () => {},
+    };
+  };
+
+  const harness = renderPage('session-tc04', {
+    loadSession: async () => ({
+      id: 'session-tc04',
+      title: 'Đề TC04',
+      status: 'generating',
+      source_questions: [{ id: 'q1' }, { id: 'q2' }, { id: 'q3' }, { id: 'q4' }, { id: 'q5' }],
+    }),
+    fetchGenSnapshot: async () => ({
+      session_id: 'session-tc04',
+      session_status: 'failed',
+      generation_error_code: 'ERR_WORKER_CRASHED',
+      progress: { hasData: true, completedCount: 1, totalCount: 5, percent: 20 },
+    }),
+    useSSEHook: mockUseSSE,
+  });
+
+  await harness.render();
+  assert.ok(capturedErrorCb, 'Phải có capturedErrorCb');
+
+  await act(async () => {
+    await capturedErrorCb(new Error('503 Service Unavailable'));
+  });
+
+  const text = harness.container.textContent;
+  assert.match(text, /Tiến trình sinh đề thi bị gián đoạn hoặc thất bại/);
+  assert.match(text, /ERR_WORKER_CRASHED/);
+  await harness.unmount();
+});
+
+test('PR #78 D2 TC05 — Snapshot GET fails, detail GET fallback succeeds with generated', async () => {
+  let capturedErrorCb = null;
+  const mockUseSSE = (sid, options) => {
+    capturedErrorCb = options.onError;
+    return {
+      connectionState: 'disconnected',
+      progress: { percent: 60, completedCount: 3, totalCount: 5, hasData: true },
+      questionStatuses: {},
+      warnings: [],
+      isDone: false,
+      isPartial: false,
+      error: 'Mất kết nối',
+      reconnectCount: 5,
+      reconnect: () => {},
+    };
+  };
+
+  let detailCallCount = 0;
+  const harness = renderPage('session-tc05', {
+    loadSession: async () => {
+      detailCallCount += 1;
+      if (detailCallCount === 1) {
+        return {
+          id: 'session-tc05',
+          title: 'Đề TC05',
+          status: 'generating',
+          source_questions: [{ id: 'q1' }, { id: 'q2' }, { id: 'q3' }, { id: 'q4' }, { id: 'q5' }],
+          config: { num_versions: 1 },
+        };
+      }
+      return {
+        id: 'session-tc05',
+        title: 'Đề TC05',
+        status: 'generated',
+        source_questions: [{ id: 'q1' }, { id: 'q2' }, { id: 'q3' }, { id: 'q4' }, { id: 'q5' }],
+        config: { num_versions: 1 },
+        progress: { hasData: true, completedCount: 5, totalCount: 5, percent: 100, session_status: 'generated' },
+        question_statuses: { '1-1': { status: 'done' }, '1-2': { status: 'done' }, '1-3': { status: 'done' }, '1-4': { status: 'done' }, '1-5': { status: 'done' } },
+      };
+    },
+    fetchGenSnapshot: async () => {
+      throw new Error('404 Snapshot Not Found');
+    },
+    useSSEHook: mockUseSSE,
+  });
+
+  await harness.render();
+  assert.ok(capturedErrorCb, 'Phải có capturedErrorCb');
+
+  await act(async () => {
+    await capturedErrorCb(new Error('503 Service Unavailable'));
+  });
+
+  const text = harness.container.textContent;
+  assert.match(text, /100%/);
+  assert.match(text, /5 \/ 5/);
+  await harness.unmount();
+});
+
+test('PR #78 D2 TC06 — Snapshot and detail both fail on SSE error: retains connection error without false failure', async () => {
+  let capturedErrorCb = null;
+  const mockUseSSE = (sid, options) => {
+    capturedErrorCb = options.onError;
+    return {
+      connectionState: 'disconnected',
+      progress: { percent: 40, completedCount: 2, totalCount: 5, hasData: true },
+      questionStatuses: {},
+      warnings: [],
+      isDone: false,
+      isPartial: false,
+      error: 'Mất kết nối với máy chủ',
+      reconnectCount: 5,
+      reconnect: () => {},
+    };
+  };
+
+  let detailCallCount = 0;
+  const harness = renderPage('session-tc06', {
+    loadSession: async () => {
+      detailCallCount += 1;
+      if (detailCallCount === 1) {
+        return {
+          id: 'session-tc06',
+          title: 'Đề TC06',
+          status: 'generating',
+          source_questions: [{ id: 'q1' }, { id: 'q2' }, { id: 'q3' }, { id: 'q4' }, { id: 'q5' }],
+          config: { num_versions: 1 },
+        };
+      }
+      throw new Error('500 Network Failed');
+    },
+    fetchGenSnapshot: async () => {
+      throw new Error('503 Service Unavailable');
+    },
+    useSSEHook: mockUseSSE,
+  });
+
+  await harness.render();
+  assert.ok(capturedErrorCb, 'Phải có capturedErrorCb');
+
+  await act(async () => {
+    await capturedErrorCb(new Error('Transport disconnected'));
+  });
+
+  const text = harness.container.textContent;
+  // Không suy ra hoàn tất và không chuyển session thành failed
+  assert.equal(text.includes('Tiến trình sinh đề thi bị gián đoạn hoặc thất bại'), false);
+  assert.equal(text.includes('100%'), false);
+  // Giữ lỗi kết nối từ SSE
+  assert.match(text, /Mất kết nối với máy chủ/);
+  await harness.unmount();
+});
+
+test('PR #78 D2 TC07 — Stale SSE 60% does not overwrite durable terminal snapshot 100%', async () => {
+  let capturedErrorCb = null;
+  const mockUseSSE = (sid, options) => {
+    capturedErrorCb = options.onError;
+    return {
+      connectionState: 'connected',
+      progress: { percent: 60, completedCount: 3, totalCount: 5, hasData: true },
+      questionStatuses: { '1-1': { status: 'done' }, '1-2': { status: 'done' }, '1-3': { status: 'done' } },
+      warnings: [],
+      isDone: false,
+      isPartial: false,
+      error: null,
+      reconnectCount: 0,
+      reconnect: () => {},
+    };
+  };
+
+  const harness = renderPage('session-tc07', {
+    loadSession: async () => ({
+      id: 'session-tc07',
+      title: 'Đề TC07',
+      status: 'generating',
+      source_questions: [{ id: 'q1' }, { id: 'q2' }, { id: 'q3' }, { id: 'q4' }, { id: 'q5' }],
+      config: { num_versions: 1 },
+      progress: { percent: 60, completedCount: 3, totalCount: 5, hasData: true },
+    }),
+    fetchGenSnapshot: async () => ({
+      session_id: 'session-tc07',
+      session_status: 'generated',
+      progress: {
+        hasData: true,
+        completedCount: 5,
+        totalCount: 5,
+        percent: 100,
+        session_status: 'generated',
+        is_partial: false,
+      },
+      question_statuses: {
+        '1-1': { status: 'done' },
+        '1-2': { status: 'done' },
+        '1-3': { status: 'done' },
+        '1-4': { status: 'done' },
+        '1-5': { status: 'done' },
+      },
+    }),
+    useSSEHook: mockUseSSE,
+  });
+
+  await harness.render();
+  assert.ok(capturedErrorCb);
+
+  await act(async () => {
+    await capturedErrorCb(new Error('503 Stream authorization unavailable'));
+  });
+
+  const text = harness.container.textContent;
+  assert.match(text, /100%/);
+  assert.match(text, /5 \/ 5/);
+  assert.equal(text.includes('60%'), false);
+  await harness.unmount();
+});
+
+test('PR #78 D2 TC08 — Late snapshot from session A does not overwrite session B', async () => {
+  let resolveSnapshotA;
+  const snapshotAPromise = new Promise((resolve) => {
+    resolveSnapshotA = resolve;
+  });
+
+  let snapshotCalls = 0;
+  const harness = renderPage('session-A-tc08', {
+    loadSession: async (sid) => ({
+      id: sid,
+      title: `Đề ${sid}`,
+      status: 'generating',
+      source_questions: [{ id: 'q1' }],
+      config: { num_versions: 1 },
+    }),
+    fetchGenSnapshot: async (sid) => {
+      snapshotCalls += 1;
+      if (sid === 'session-A-tc08') {
+        return await snapshotAPromise;
+      }
+      return {
+        session_id: sid,
+        session_status: 'generating',
+        progress: { percent: 10, completedCount: 1, totalCount: 10, hasData: true },
+      };
+    },
+    useSSEHook: (sid, options) => {
+      if (sid === 'session-A-tc08') {
+        setTimeout(() => {
+          options.onError?.(new Error('503'));
+        }, 10);
+      }
+      return {
+        connectionState: 'connected',
+        progress: { percent: 10, completedCount: 1, totalCount: 10, hasData: true },
+        questionStatuses: {},
+        warnings: [],
+        isDone: false,
+        isPartial: false,
+        error: null,
+        reconnectCount: 0,
+        reconnect: () => {},
+      };
+    },
+  });
+
+  await harness.render();
+
+  // Chuyển sang session B
+  await harness.navigate('session-B-tc08');
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+
+  // Snapshot A trả về muộn
+  await act(async () => {
+    resolveSnapshotA({
+      session_id: 'session-A-tc08',
+      session_status: 'generated',
+      progress: { percent: 100, completedCount: 5, totalCount: 5, hasData: true },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+  });
+
+  // Session B không bị ảnh hưởng bởi snapshot A
+  assert.ok(snapshotCalls >= 1);
+  const text = harness.container.textContent;
+  assert.equal(text.includes('Đề session-A-tc08'), false);
+  assert.match(text, /Đề session-B-tc08/);
+  await harness.unmount();
+});
+
+test('PR #78 D2 TC09 — Retry after partial generation: re-enables SSE and clears terminal lock', async () => {
+  let sseEnabled = null;
+  let retryCalls = 0;
+  const mockUseSSE = (sid, options) => {
+    sseEnabled = options.enabled;
+    return {
+      connectionState: options.enabled ? 'connecting' : 'idle',
+      progress: { percent: 60, completedCount: 3, totalCount: 5, hasData: true },
+      questionStatuses: {},
+      warnings: [],
+      isDone: false,
+      isPartial: true,
+      error: null,
+      reconnectCount: 0,
+      reconnect: () => {},
+    };
+  };
+
+  const harness = renderPage('session-tc09', {
+    loadSession: async () => ({
+      id: 'session-tc09',
+      title: 'Đề TC09',
+      status: 'partial_generated',
+      source_questions: [{ id: 'q1' }, { id: 'q2' }, { id: 'q3' }, { id: 'q4' }, { id: 'q5' }],
+      config: { num_versions: 1 },
+      progress: { percent: 60, completedCount: 3, totalCount: 5, hasData: true },
+    }),
+    retryGen: async () => {
+      retryCalls += 1;
+    },
+    useSSEHook: mockUseSSE,
+  });
+
+  await harness.render();
+  // Ở trạng thái partial_generated ban đầu (terminal), SSE không cần kết nối
+  assert.equal(sseEnabled, false, 'Ban đầu ở partial_generated thì SSE không kết nối');
+
+  const buttons = Array.from(harness.container.querySelectorAll('button'));
+  const retryBtn = buttons.find((b) => b.textContent.includes('Sinh bù'));
+  assert.ok(retryBtn, 'Phải có nút Sinh bù');
+
+  await act(async () => {
+    retryBtn.click();
+  });
+
+  assert.equal(retryCalls, 1);
+  assert.equal(sseEnabled, true, 'Sau khi bấm Sinh bù, SSE phải được kích hoạt lại');
+  await harness.unmount();
+});
+
+test('PR #78 D2 TC10 — F5 / initial load after generated: recovers completion without calling startGen or SSE', async () => {
+  let sseEnabled = null;
+  let startGenCalls = 0;
+  const mockUseSSE = (sid, options) => {
+    sseEnabled = options.enabled;
+    return {
+      connectionState: 'idle',
+      progress: null,
+      questionStatuses: {},
+      warnings: [],
+      isDone: false,
+      isPartial: false,
+      error: null,
+      reconnectCount: 0,
+      reconnect: () => {},
+    };
+  };
+
+  const harness = renderPage('session-tc10', {
+    loadSession: async () => ({
+      id: 'session-tc10',
+      title: 'Đề TC10 đã hoàn tất',
+      status: 'generated',
+      source_questions: [{ id: 'q1' }, { id: 'q2' }, { id: 'q3' }, { id: 'q4' }, { id: 'q5' }],
+      config: { num_versions: 1 },
+    }),
+    fetchGenSnapshot: async () => ({
+      session_id: 'session-tc10',
+      session_status: 'generated',
+      progress: {
+        hasData: true,
+        completedCount: 5,
+        totalCount: 5,
+        percent: 100,
+        session_status: 'generated',
+        is_partial: false,
+      },
+      question_statuses: { '1-1': { status: 'done' }, '1-2': { status: 'done' }, '1-3': { status: 'done' }, '1-4': { status: 'done' }, '1-5': { status: 'done' } },
+    }),
+    startGen: async () => {
+      startGenCalls += 1;
+    },
+    useSSEHook: mockUseSSE,
+  });
+
+  await harness.render();
+  const text = harness.container.textContent;
+  assert.match(text, /100%/);
+  assert.match(text, /5 \/ 5/);
+  assert.equal(startGenCalls, 0, 'Tuyệt đối không được gọi startGen khi mở phiên đã generated');
+  assert.equal(sseEnabled, false, 'SSE không được bật khi mở phiên đã generated');
+  assert.ok(text.includes('Xem đề ngay') || text.includes('Quay lại duyệt câu hỏi'));
+  await harness.unmount();
+});
+
+test('PR #78 D2 TC11 — 100% progress but backend status is generating: UI continues monitoring and does not mark completed', async () => {
+  const mockUseSSE = () => ({
+    connectionState: 'connected',
+    progress: { percent: 100, completedCount: 5, totalCount: 5, hasData: true, session_status: 'generating' },
+    questionStatuses: {},
+    warnings: [],
+    isDone: false,
+    isPartial: false,
+    error: null,
+    reconnectCount: 0,
+    reconnect: () => {},
+  });
+
+  const harness = renderPage('session-tc11', {
+    loadSession: async () => ({
+      id: 'session-tc11',
+      title: 'Đề TC11',
+      status: 'generating',
+      source_questions: [{ id: 'q1' }, { id: 'q2' }, { id: 'q3' }, { id: 'q4' }, { id: 'q5' }],
+      config: { num_versions: 1 },
+      progress: { percent: 100, completedCount: 5, totalCount: 5, hasData: true, session_status: 'generating' },
+    }),
+    useSSEHook: mockUseSSE,
+  });
+
+  await harness.render();
+  const text = harness.container.textContent;
+  // Backend chưa terminal -> không có thông báo hoàn thành tất cả các mã đề
+  assert.equal(text.includes('Đã sinh xong tất cả các mã đề thi đẳng cấu!'), false);
+  await harness.unmount();
+});
+
