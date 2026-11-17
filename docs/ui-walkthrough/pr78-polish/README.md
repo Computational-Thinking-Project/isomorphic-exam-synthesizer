@@ -23,3 +23,8 @@ Keyboard checks in the local fixture: selecting grade 1; Shift+Tab from title to
 Not verified here: production OAuth/API/DB, actual browser zoom at 200%, exhaustive screen-reader/contrast validation, deployed later-stage visuals. Automated regression results and the component inventory are in [TASK-77](../../tasks/TASK-77.md).
 
 The author inspected these images; this is not independent acceptance or GitHub Approve.
+
+
+## Expanded flow — 17 November 2026
+
+`review-expanded.png` and `preview-expanded.png` show the real Stage 3 components with local fixture API data after the expanded implementation. Configuration, generation progress, review and preview were measured at 375, 768, 1024 and 1440 px with no page overflow. These images demonstrate presentation; they do not establish live API/DB or Export behavior.

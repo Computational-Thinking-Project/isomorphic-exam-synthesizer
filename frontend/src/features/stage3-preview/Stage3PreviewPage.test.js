@@ -104,20 +104,20 @@ test('Stage3PreviewPage: Xử lý lỗi 409 ERR_SHUFFLE_REQUIRED hiển thị th
   try {
     await harness.render();
     assert.match(harness.container.textContent, /Toàn bộ câu hỏi đã được duyệt thành công/);
-    assert.match(harness.container.textContent, /Chờ xáo trộn mã đề/);
+    assert.match(harness.container.textContent, /Chờ chốt thứ tự/);
     const shuffleBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
     assert.ok(shuffleBtn, 'Nút Xáo trộn mã đề phải hiển thị');
-    assert.match(shuffleBtn.textContent, /mã đề/);
+    assert.match(shuffleBtn.textContent, /Xáo trộn câu hỏi và đáp án/);
     const finalizeOffBtn = harness.container.querySelector('[data-testid="btn-finalize-off"]');
-    assert.ok(finalizeOffBtn, 'Nút Chốt thứ tự gốc S06 (OFF/OFF) phải hiển thị');
-    assert.match(finalizeOffBtn.textContent, /Chốt thứ tự gốc S06 \(OFF\/OFF\)/);
+    assert.ok(finalizeOffBtn, 'Nút Giữ nguyên thứ tự phải hiển thị');
+    assert.match(finalizeOffBtn.textContent, /Giữ nguyên thứ tự/);
   } finally {
     api.get = originalGet;
     await harness.unmount();
   }
 });
 
-test('Stage3PreviewPage: Bấm "Chốt thứ tự gốc S06 (OFF/OFF)" gọi PATCH preferences false/false và POST shuffle, sau đó nạp lại bản xem trước (Golden Baseline)', async () => {
+test('Stage3PreviewPage: Bấm "Giữ nguyên thứ tự" gọi PATCH preferences false/false và POST shuffle, sau đó nạp lại bản xem trước (Golden Baseline)', async () => {
   const originalGet = api.get;
   const originalPatch = api.patch;
   const originalPost = api.post;
@@ -149,7 +149,7 @@ test('Stage3PreviewPage: Bấm "Chốt thứ tự gốc S06 (OFF/OFF)" gọi PAT
   try {
     await harness.render();
     const finalizeOffBtn = harness.container.querySelector('[data-testid="btn-finalize-off"]');
-    assert.ok(finalizeOffBtn, 'Nút Chốt thứ tự gốc S06 (OFF/OFF) phải hiển thị');
+    assert.ok(finalizeOffBtn, 'Nút Giữ nguyên thứ tự phải hiển thị');
 
     await act(async () => {
       finalizeOffBtn.click();
@@ -162,7 +162,7 @@ test('Stage3PreviewPage: Bấm "Chốt thứ tự gốc S06 (OFF/OFF)" gọi PAT
     assert.equal(calls[1].url, '/sessions/session-off-test/finalize/shuffle');
 
     // Sau khi chốt thứ tự gốc, màn hình nạp lại dữ liệu xem trước
-    assert.match(harness.container.textContent, /Bản in Đề thi — Mã đề 101/);
+    assert.match(harness.container.textContent, /Bản xem trước — Mã đề 101/);
   } finally {
     api.get = originalGet;
     api.patch = originalPatch;
@@ -216,8 +216,8 @@ test('Stage3PreviewPage: Bấm "Xáo trộn mã đề" gọi PATCH preferences t
     assert.equal(calls[1].url, '/sessions/session-123/finalize/shuffle');
 
     // Sau khi shuffle xong, màn hình hiển thị danh sách mã đề
-    assert.match(harness.container.textContent, /Bản in Đề thi — Mã đề 101/);
-    assert.match(harness.container.textContent, /Đã xáo trộn · Sẵn sàng duyệt/);
+    assert.match(harness.container.textContent, /Bản xem trước — Mã đề 101/);
+    assert.match(harness.container.textContent, /Sẵn sàng phê duyệt/);
   } finally {
     api.get = originalGet;
     api.patch = originalPatch;
@@ -299,7 +299,7 @@ test('Stage3PreviewPage: Chuyển đổi giữa các Tab mã đề hiển thị 
       tab102.click();
     });
 
-    assert.match(harness.container.textContent, /Bản in Đề thi — Mã đề 102/);
+    assert.match(harness.container.textContent, /Bản xem trước — Mã đề 102/);
   } finally {
     api.get = originalGet;
     await harness.unmount();
@@ -334,7 +334,7 @@ test('Stage3PreviewPage: Bấm Tab "Ma trận đáp án đối soát" hiển th�
   }
 });
 
-test('Stage3PreviewPage: Bấm "Phê duyệt & Khóa đề" mở modal xác nhận với cảnh báo HTTP 423 Content Lock', async () => {
+test('Stage3PreviewPage: Bấm "Phê duyệt & Khóa đề" mở modal xác nhận với cảnh báo Kiểm tra kỹ trước khi xác nhận.', async () => {
   const originalGet = api.get;
   api.get = async () => ({ data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'sess-approve-modal' } });
 
@@ -353,7 +353,7 @@ test('Stage3PreviewPage: Bấm "Phê duyệt & Khóa đề" mở modal xác nh�
     const modal = harness.container.querySelector('[role="dialog"]');
     assert.ok(modal, 'Modal phê duyệt phải mở');
     assert.match(modal.textContent, /Xác nhận phê duyệt & Khóa đề thi/);
-    assert.match(modal.textContent, /HTTP 423 Content Lock/);
+    assert.match(modal.textContent, /Kiểm tra kỹ trước khi xác nhận./);
     assert.match(modal.textContent, /Hành động này không thể hoàn tác/);
 
     // Bấm nút Hủy bỏ đóng modal
@@ -430,7 +430,7 @@ test('Stage3PreviewPage: Khi tải phiên đã ở trạng thái approved hiển
     // Badge trạng thái khóa
     const lockedBadge = harness.container.querySelector('[data-testid="badge-status-locked"]');
     assert.ok(lockedBadge);
-    assert.match(lockedBadge.textContent, /Đã phê duyệt & Khóa đề \(HTTP 423\)/);
+    assert.match(lockedBadge.textContent, /Đã phê duyệt & Khóa đề/);
 
     // Banner đã khóa
     const lockedBanner = harness.container.querySelector('[data-testid="banner-locked"]');
@@ -440,10 +440,7 @@ test('Stage3PreviewPage: Khi tải phiên đã ở trạng thái approved hiển
     // Không hiển thị nút Phê duyệt
     assert.equal(harness.container.querySelector('[data-testid="btn-open-approve"]'), null);
 
-    // Hai nút chuyển sang màn hình Export đều được kích hoạt và điều hướng tới EXPORT_ROUTE
-    const bannerGotoExportBtn = harness.container.querySelector('[data-testid="banner-btn-goto-export"]');
-    assert.ok(bannerGotoExportBtn);
-    assert.ok(!bannerGotoExportBtn.disabled && bannerGotoExportBtn.getAttribute('disabled') === null);
+    assert.equal(harness.container.querySelector('[data-testid="banner-btn-goto-export"]'), null, 'Không lặp lại nút xuất đề');
 
     const gotoExportBtn = harness.container.querySelector('[data-testid="btn-goto-export"]');
     assert.ok(gotoExportBtn);
@@ -456,7 +453,7 @@ test('Stage3PreviewPage: Khi tải phiên đã ở trạng thái approved hiển
     assert.equal(harness.getLocation(), '/session/sess-already-locked/export');
 
     await harness.navigate('/session/sess-already-locked/stage3/preview');
-    const bannerBtnAfterReturn = harness.container.querySelector('[data-testid="banner-btn-goto-export"]');
+    const bannerBtnAfterReturn = harness.container.querySelector('[data-testid="btn-goto-export"]');
     assert.ok(bannerBtnAfterReturn);
     await act(async () => {
       bannerBtnAfterReturn.click();
@@ -494,7 +491,7 @@ test('Stage3PreviewPage: Hiển thị thông báo lỗi mạng và nút "Thử l
     });
 
     // Sau khi thử lại thành công
-    assert.match(harness.container.textContent, /Bản in Đề thi — Mã đề 101/);
+    assert.match(harness.container.textContent, /Bản xem trước — Mã đề 101/);
   } finally {
     api.get = originalGet;
     await harness.unmount();

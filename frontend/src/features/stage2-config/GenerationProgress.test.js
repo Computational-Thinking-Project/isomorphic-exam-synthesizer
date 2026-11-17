@@ -219,7 +219,7 @@ test('F02: GenerationProgressView hiển thị Chưa có dữ liệu tiến đ�
   const text = harness.container.textContent;
   assert.ok(text.includes('Chưa có dữ liệu tiến độ'), 'Phải báo Chưa có dữ liệu tiến độ khi thiếu snapshot');
   assert.equal(/0\s*\/\s*4/.test(text), false, 'Tuyệt đối không được hiển thị 0 / 4 khi chưa có snapshot');
-  assert.ok(text.includes('--%'), 'Hiển thị --% thay vì 0%');
+  assert.ok(text.includes('Đang cập nhật'), 'Hiển thị --% thay vì 0%');
 
   await harness.unmount();
 });

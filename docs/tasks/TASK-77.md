@@ -1,4 +1,4 @@
-# TASK-77 — Initial pages UI redesign and polish
+# TASK-77 — Paper Canvas UI through final preview and approval
 
 - Task: [Issue #77](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/77); [PR #78](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/78).
 - Mode: **Author**. No new member or reviewer assignments.
@@ -9,9 +9,9 @@
 
 ## Goal and boundaries
 
-Keep the Paper Canvas direction from `docs/ui-walkthrough/PREVIEW.html`, with the existing logo, artwork and semantic palette. Simplify Login, Dashboard, both session-creation entry points and Stage 1 for teachers. Remove misleading affordances and redundant information, while preserving actual operations and recovery paths.
+Keep the Paper Canvas direction from `docs/ui-walkthrough/PREVIEW.html`, with the existing logo, artwork and semantic palette. Simplify Login, Dashboard, both session-creation entry points, Stage 1, configuration/generation, question review and final preview/approval for teachers. Remove misleading affordances and redundant information, while preserving actual operations and recovery paths.
 
-The user selected **remove Dashboard search/filter** and **retain the reference style while simplifying it**. Existing Issue #77 scope remains: frontend presentation and relevant regression tests, with this task document and visual evidence. No API/schema/auth-controller changes, new production routes, backend work, Stage 2/3/Export redesign, deployment or merge.
+The user selected **remove Dashboard search/filter** and **retain the reference style while simplifying it**. Existing Issue #77 scope remains: frontend presentation and relevant regression tests, with this task document and visual evidence. No API/schema/auth-controller changes, new production routes, backend work, Export redesign, deployment or merge.
 
 W4 assignment remains the integration context: `docs/tasks/W4_ASSIGNMENT.md`. Issue #77 is the specific UI assignment; this follow-up does not change weekly ownership, deferred KPI work, or deadlines.
 
@@ -78,3 +78,27 @@ No public API, wire shape, route or schema changes. The new internal component t
 - Actual browser 200% zoom, full screen-reader testing and a complete WCAG AA audit remain unverified; screenshots and width measurements are not accessibility certification.
 - Temporary comparison source/fixture code lives only in ignored local cache, outside production entry points. Its authentication bypass and mock adapter are not product changes.
 - Previously documented F01–F04 are **author-checked**, not independent reviewer verification or GitHub Approve. PR remains under its existing review/approval process; remote body/check status has not been updated by this follow-up.
+
+## Expanded scope — owner-approved 17/11/2026
+
+The owner expanded PR #78 through final preview and approval, stopping before Export, and selected a list of questions under version tabs for post-generation review. Implementation starts at `5920989`; earlier verification above describes the initial-page snapshot only.
+
+| Surface / controls | Implemented decision and condition |
+|---|---|
+| Configuration | 1–4 versions, real ordering checkboxes, saved preferences and original readiness guard; remove automatic-mode catalog and technical labels. Submit keeps the existing payload. |
+| Generation | Paper Canvas surfaces, actual progress snapshot, unknown-data label, truthful partial-completion badge; reconnect/retry/view use existing handlers. No invented cancel operation. |
+| Review | Version tabs and question list, official code when supplied or a neutral version index; solution only in detail dialog. Remove permanently disabled export/coming-soon actions. |
+| Review continuation | One preview action with missing/unapproved explanation. Bulk retry appears only when loaded data confirms missing slots. Locked sessions hide mutation actions. |
+| Final preview | Keep original-order and full-shuffle operations with plain labels; remove unconditional shuffled claims. Version tabs and answer matrix retain real data. |
+| Approval | Existing canApprove and session fences retained; labeled, scrollable confirmation dialog with focus containment, Escape and trigger restoration. Pending approval cannot close the dialog. Successful approval keeps the existing Export destination. |
+| Shared presentation | Light semantic surfaces throughout loading/error/locked/dialog states; scoped control sizing and local display-math scrolling. Export is outside the visual changes. |
+
+### Author checks for expanded implementation
+
+- Frontend tests: **491 passed**, 0 failed/skipped/cancelled; includes payload, SSE recovery, partial generation, accept/regenerate, ordering, approval, locked-state and stale-session regression coverage.
+- `npm --prefix frontend run lint`: PASS, 0 warnings.
+- `npm --prefix frontend run build`: PASS; existing large-chunk warning remains.
+- Real React components with local fixture responses: config, progress, review and preview at 375/768/1024/1440 px, **16 measurements without document horizontal overflow**.
+- Browser: mobile solution dialog inspected; approval dialog focuses its close control, Escape closes and restores focus to its trigger. Answer matrix rendered and inspected.
+- Screenshots: `docs/ui-walkthrough/pr78-polish/review-expanded.png` and `preview-expanded.png`. Fixtures and browser harness remain ignored under node_modules, never enabled in production.
+- Limits: no live OAuth/API/DB generation or actual export rendering checked in this follow-up. Actual browser 200% zoom and a complete accessibility audit remain unverified. Browser screenshots use fixtures, not production data. No independent approval, merge or deployment is claimed.

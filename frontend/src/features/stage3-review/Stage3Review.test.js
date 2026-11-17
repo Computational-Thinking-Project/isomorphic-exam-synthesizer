@@ -131,22 +131,21 @@ test('Stage3ReviewPage hiển thị cảnh báo partial_generated, khóa xuất 
 
   const text = harness.container.textContent;
   // 1. Kiểm tra banner partial_generated
-  assert.ok(text.includes('partial_generated'), 'Phải hiển thị nhãn cảnh báo partial_generated');
-  assert.ok(text.includes('Cảnh báo: Đề thi có câu hỏi chưa hoàn tất'), 'Phải có nội dung giải thích lỗi');
+  assert.ok(text.includes('Đề thi còn thiếu câu hỏi'), 'Phải hiển thị nhãn cảnh báo partial_generated');
+  assert.ok(text.includes('Đề thi còn thiếu câu hỏi'), 'Phải có nội dung giải thích lỗi');
 
   // 2. Kiểm tra nút Xuất bản file bị vô hiệu hóa / khóa
   const exportBtn = Array.from(harness.container.querySelectorAll('button')).find(
     (b) => b.textContent.includes('Xuất bản file'),
   );
-  assert.ok(exportBtn, 'Phải có nút Xuất bản file');
-  assert.equal(exportBtn.getAttribute('disabled') !== null, true, 'Nút Xuất bản file phải bị disabled khi partial_generated');
+  assert.equal(exportBtn, undefined, 'Không hiển thị nút xuất bản giả');
 
   // 3. Kiểm tra câu 1 đã sinh có đầy đủ nội dung và badge Đạt chuẩn
-  assert.ok(text.includes('Câu 1 (Mã đề #101)'), 'Phải hiển thị Câu 1');
+  assert.ok(text.includes('Câu 1 (Đề 1)'), 'Phải hiển thị Câu 1');
   assert.ok(text.includes('Đạt chuẩn'), 'Câu 1 không warning phải hiện Đạt chuẩn');
 
   // 4. Kiểm tra câu 2 bị thiếu hiển thị nút Sinh bù câu này
-  assert.ok(text.includes('Câu 2 (Mã đề #101) — Chưa được sinh thành công'), 'Phải báo Câu 2 chưa hoàn tất');
+  assert.ok(text.includes('Câu 2 (Đề 1) — Chưa được sinh thành công'), 'Phải báo Câu 2 chưa hoàn tất');
   const retryBtn = Array.from(harness.container.querySelectorAll('button')).find(
     (b) => b.textContent.includes('Sinh bù câu này'),
   );
@@ -229,7 +228,7 @@ test('Stage3ReviewPage hiển thị trạng thái chờ đồng bộ khi phiên 
   const text = harness.container.textContent;
   // Không được vội kết luận là câu hỏi "Chưa được sinh thành công"
   assert.equal(text.includes('Chưa được sinh thành công'), false, 'Không được kết luận câu thiếu khi dữ liệu đang chờ đồng bộ');
-  assert.ok(text.includes('Đang đồng bộ dữ liệu chi tiết các mã đề từ Backend'), 'Phải hiển thị thẻ thông báo đang đồng bộ');
+  assert.ok(text.includes('Đang tải nội dung các mã đề'), 'Phải hiển thị thẻ thông báo đang đồng bộ');
 
   await harness.unmount();
 });
@@ -259,7 +258,7 @@ test('Stage3ReviewPage đối với phiên partial_generated nhưng API chưa n�
   const text = harness.container.textContent;
   // Không được kết luận bừa các câu là "Chưa được sinh thành công"
   assert.equal(text.includes('Chưa được sinh thành công'), false, 'Không được kết luận câu thiếu khi API chưa nạp mảng variants');
-  assert.ok(text.includes('Đang đồng bộ dữ liệu chi tiết các mã đề từ Backend'), 'Phải hiển thị thẻ thông báo đang đồng bộ');
+  assert.ok(text.includes('Đang tải nội dung các mã đề'), 'Phải hiển thị thẻ thông báo đang đồng bộ');
 
   await harness.unmount();
 });
@@ -290,9 +289,9 @@ test('Stage3ReviewPage nút Phê duyệt & Xuất bản đề bị khóa khi phi
   const approveBtn = Array.from(harness.container.querySelectorAll('button')).find(
     (b) => b.textContent.includes('Phê duyệt & Xuất bản đề'),
   );
-  assert.ok(approveBtn, 'Phải có nút Phê duyệt & Xuất bản đề');
-  assert.equal(approveBtn.getAttribute('disabled') !== null, true, 'Nút Phê duyệt & Xuất bản đề phải bị disabled');
-  assert.ok(approveBtn.textContent.includes('Chờ Stage 3'), 'Nút phải ghi rõ Chờ Stage 3');
+  assert.equal(approveBtn, undefined, 'Không hiện nút chưa triển khai');
+  assert.ok(harness.container.querySelector('[data-review-finalize]'), 'Có nút xem trước thực tế');
+  assert.notEqual(harness.container.querySelector('[data-review-finalize]').getAttribute('disabled'), null, 'Chưa duyệt đủ câu thì chưa thể xem trước');
 
   await harness.unmount();
 });
@@ -412,7 +411,7 @@ test('Stage3ReviewPage: retry A thành công rồi chuyển B trước khi hết
     grade: 12,
     config: { n_versions: 2 },
     source_questions: [{ id: 'q1', question_no: 1 }],
-    exam_versions: [{ version_index: 1, questions: [] }],
+    exam_versions: [{ version_index: 1, questions: [{question_no: 1, content: 'Đã tạo'}] }],
   });
 
   const retryCalls = [];
@@ -467,7 +466,7 @@ test('Stage3ReviewPage: retry A thành công rồi chuyển A -> B -> A trước
     grade: 12,
     config: { n_versions: 2 },
     source_questions: [{ id: 'q1', question_no: 1 }],
-    exam_versions: [{ version_index: 1, questions: [] }],
+    exam_versions: [{ version_index: 1, questions: [{question_no: 1, content: 'Đã tạo'}] }],
   });
 
   const retryCalls = [];
@@ -519,7 +518,7 @@ test('Stage3ReviewPage: retry A thành công rồi unmount trước khi timer ch
     grade: 12,
     config: { n_versions: 2 },
     source_questions: [{ id: 'q1', question_no: 1 }],
-    exam_versions: [{ version_index: 1, questions: [] }],
+    exam_versions: [{ version_index: 1, questions: [{question_no: 1, content: 'Đã tạo'}] }],
   });
 
   const mockRetryGen = async () => ({ ok: true });
@@ -554,7 +553,7 @@ test('Stage3ReviewPage: retry thông thường ở A không đổi phiên sẽ t
     grade: 12,
     config: { n_versions: 2 },
     source_questions: [{ id: 'q1', question_no: 1 }],
-    exam_versions: [{ version_index: 1, questions: [] }],
+    exam_versions: [{ version_index: 1, questions: [{question_no: 1, content: 'Đã tạo'}] }],
   });
 
   const mockRetryGen = async () => ({ ok: true });
@@ -630,7 +629,7 @@ test('Stage3ReviewPage: Bấm "Kiểm tra đáp án" mở SolutionDialog hiển 
 
   const title = dialog.querySelector('#solution-dialog-title');
   assert.ok(title, 'Phải có tiêu đề dialog');
-  assert.ok(title.textContent.includes('Kiểm tra đáp án · Câu 1 · Mã 101'));
+  assert.ok(title.textContent.includes('Kiểm tra đáp án · Câu 1 · Đề 1'));
 
   // 4. Kiểm tra hiển thị đáp án đúng và lời giải chi tiết
   const text = dialog.textContent;
@@ -687,15 +686,15 @@ test('Stage3ReviewPage: Bấm "Duyệt biến thể" gọi accept API, chuyển 
 
   await harness.render();
 
-  // Ban đầu: chưa duyệt câu nào (0/1 câu), nút "Rà bộ đề" bị disable
+  // Ban đầu: chưa duyệt câu nào (0/1 câu), nút "Xem trước bộ đề" bị disable
   let bottomBarText = harness.container.textContent;
   assert.ok(bottomBarText.includes('Đã duyệt 0/1 câu'), 'Ban đầu là Đã duyệt 0/1 câu');
   const finalizeBtn = harness.container.querySelector('[data-review-finalize="true"]');
-  assert.ok(finalizeBtn, 'Phải có nút Rà bộ đề');
+  assert.ok(finalizeBtn, 'Phải có nút Xem trước bộ đề');
   assert.equal(
     finalizeBtn.getAttribute('disabled') !== null,
     true,
-    'Nút Rà bộ đề phải bị disable khi chưa duyệt đủ 100%',
+    'Nút Xem trước bộ đề phải bị disable khi chưa duyệt đủ 100%',
   );
 
   // Mở modal Kiểm tra đáp án
@@ -725,11 +724,11 @@ test('Stage3ReviewPage: Bấm "Duyệt biến thể" gọi accept API, chuyển 
   bottomBarText = harness.container.textContent;
   assert.ok(bottomBarText.includes('Đã duyệt 1/1 câu'), 'Tiến độ phải cập nhật thành Đã duyệt 1/1 câu');
 
-  // Nút "Rà bộ đề" được mở khóa (enabled) khi đủ 100%
+  // Nút "Xem trước bộ đề" được mở khóa (enabled) khi đủ 100%
   assert.equal(
     finalizeBtn.getAttribute('disabled'),
     null,
-    'Nút Rà bộ đề phải được kích hoạt khi duyệt đủ 100%',
+    'Nút Xem trước bộ đề phải được kích hoạt khi duyệt đủ 100%',
   );
 
   await harness.unmount();
@@ -864,7 +863,7 @@ test('Stage3ReviewPage: Hiển thị đúng badge fallback "Không tạo đượ
   await harness.unmount();
 });
 
-test('Stage3ReviewPage: Bấm "Rà bộ đề" khi duyệt đủ 100% điều hướng tới /session/:id/stage3/preview', async () => {
+test('Stage3ReviewPage: Bấm "Xem trước bộ đề" khi duyệt đủ 100% điều hướng tới /session/:id/stage3/preview', async () => {
   const approvedVariant = {
     id: 'var-q1-appr',
     question_no: 1,
@@ -893,7 +892,7 @@ test('Stage3ReviewPage: Bấm "Rà bộ đề" khi duyệt đủ 100% điều h�
 
   const finalizeBtn = harness.container.querySelector('[data-review-finalize="true"]');
   assert.ok(finalizeBtn);
-  assert.equal(finalizeBtn.getAttribute('disabled'), null, 'Duyệt 1/1 câu thì nút Rà bộ đề phải enabled');
+  assert.equal(finalizeBtn.getAttribute('disabled'), null, 'Duyệt 1/1 câu thì nút Xem trước bộ đề phải enabled');
 
   await act(async () => {
     finalizeBtn.click();
@@ -902,7 +901,7 @@ test('Stage3ReviewPage: Bấm "Rà bộ đề" khi duyệt đủ 100% điều h�
   assert.equal(
     harness.getLocation(),
     '/session/session-finalize-nav/stage3/preview',
-    'Phải điều hướng tới màn hình Rà bộ đề (/stage3/preview)',
+    'Phải điều hướng tới màn hình Xem trước bộ đề (/stage3/preview)',
   );
 
   await harness.unmount();
@@ -1187,7 +1186,7 @@ test('F01: Stage3ReviewPage tự động reset activeVersionTab về 1 khi chuy�
 
   // Bấm chọn tab mã đề 3
   const tabButtons = Array.from(harness.container.querySelectorAll('button')).filter((b) =>
-    b.textContent.includes('Mã đề #103'),
+    b.textContent.includes('Đề 3'),
   );
   assert.ok(tabButtons.length > 0, 'Phải có tab Mã đề #103');
   await act(async () => {
@@ -1414,7 +1413,9 @@ test('PR #54 Contract: Initial load dựng đúng ma trận câu hỏi và ứng
   assert.ok(text.includes('Biến thể 101-1: Tìm đạo hàm'));
   assert.ok(text.includes('Biến thể 101-2: Tính tích phân'));
   assert.ok(text.includes('12x^2'));
-  assert.ok(text.includes('Đạo hàm là'));
+  const inspect = harness.container.querySelectorAll('button').find((button) => button.textContent.includes('Kiểm tra đáp án'));
+  await act(async () => inspect.click());
+  assert.ok(harness.container.querySelector('[role="dialog"]').textContent.includes('Đạo hàm là'));
 
   // Tiến độ ban đầu
   assert.ok(text.includes('Đã duyệt 0/4 câu'));
@@ -1720,12 +1721,12 @@ test('PR #54 Contract: Missing slot (candidate: null) hiển thị trạng thái
   // 3. Approved count: chỉ tính 1/2 câu (slot missing KHÔNG ĐƯỢC tính vào approvedCount)
   assert.ok(text.includes('Đã duyệt 1/2 câu'), 'Missing slot tuyệt đối không được tính là approved');
 
-  // 4. Nút Rà bộ đề bị disabled
+  // 4. Nút Xem trước bộ đề bị disabled
   const finalizeBtn = harness.container.querySelector('[data-review-finalize="true"]');
   assert.equal(
     finalizeBtn.getAttribute('disabled') !== null,
     true,
-    'Nút Rà bộ đề phải bị vô hiệu hóa khi còn missing slot'
+    'Nút Xem trước bộ đề phải bị vô hiệu hóa khi còn missing slot'
   );
 
   await harness.unmount();
@@ -1771,7 +1772,7 @@ test('W4-MVP-10: Deep-link Stage 3 khi phiên ở trạng thái approved/exporte
 
     await harness.render();
     assert.ok(harness.container.querySelector('[data-testid="stage3-banner-locked"]'));
-    assert.match(harness.container.textContent, /khóa nội dung vĩnh viễn \(HTTP 423\)/);
+    assert.match(harness.container.textContent, /khóa nội dung vĩnh viễn/);
 
     const inspectBtn = harness.container.querySelector('[data-review-inspect="true"]');
     assert.ok(inspectBtn);
@@ -1781,15 +1782,8 @@ test('W4-MVP-10: Deep-link Stage 3 khi phiên ở trạng thái approved/exporte
 
     const regenBtn = harness.container.querySelector('[data-review-regenerate="true"]');
     const approveBtn = harness.container.querySelector('[data-review-approve="true"]');
-    assert.ok(regenBtn);
-    assert.ok(approveBtn);
-    assert.notEqual(regenBtn.getAttribute('disabled'), null);
-    assert.notEqual(approveBtn.getAttribute('disabled'), null);
-
-    await act(async () => {
-      regenBtn.click();
-      approveBtn.click();
-    });
+    assert.equal(regenBtn, null, 'Ẩn tạo lại khi đã khóa');
+    assert.equal(approveBtn, null, 'Ẩn duyệt khi đã khóa');
     assert.equal(regenerateCalls, 0);
     assert.equal(acceptCalls, 0);
     assert.equal(retryCalls, 0);
@@ -1840,7 +1834,7 @@ test('F01: Deep-link Stage 3 nhận HTTP 423 ERR_SESSION_LOCKED xác nhận qua 
     assert.equal(detailCalls, 1);
     assert.equal(harness.container.textContent.includes('Không thể tải đề thi'), false);
     assert.ok(harness.container.querySelector('[data-testid="stage3-banner-locked"]'));
-    assert.match(harness.container.textContent, /khóa nội dung vĩnh viễn \(HTTP 423\)/);
+    assert.match(harness.container.textContent, /khóa nội dung vĩnh viễn/);
     assert.match(harness.container.textContent, new RegExp(`Đề đã khóa \\(${status}\\)`));
     assert.equal(harness.container.querySelector('[data-review-inspect="true"]'), null);
 

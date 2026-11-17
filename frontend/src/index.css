@@ -58,7 +58,7 @@ body {
   white-space: nowrap;
 }
 
-/* Scoped to Paper Canvas screens; later stages retain their existing controls. */
+/* Scoped to Paper Canvas screens; Export retains its existing controls. */
 @layer base {
   .paper-ui :where(button, a, input:not([type="file"]), select) {
     min-height: 2.75rem;
@@ -83,4 +83,19 @@ body {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* Long mathematical expressions scroll locally instead of widening the page. */
+.paper-ui .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 0.25rem;
+}
+.paper-ui .solution-columns > *, .paper-ui .dialog-copy {
+  min-width: 0;
+}
+.paper-ui input[type="checkbox"] {
+  min-height: 1.25rem;
+  min-width: 1.25rem;
 }

@@ -652,8 +652,8 @@ export default function Stage2ConfigPage({
   if (isLoadingSession) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center p-6 text-center">
-        <Loader2 className="h-10 w-10 animate-spin text-sky-400" />
-        <p className="mt-4 text-sm font-medium text-slate-300">
+        <Loader2 className="h-10 w-10 animate-spin text-highlight" />
+        <p className="mt-4 text-sm font-medium text-ink">
           Đang tải thông tin đề thi và cấu trúc Blueprint...
         </p>
       </div>
@@ -663,22 +663,22 @@ export default function Stage2ConfigPage({
   // Giao diện khi tải phiên thất bại
   if (sessionError) {
     return (
-      <div className="min-h-screen bg-[#0f172a] text-[#f8fafc] dark p-6">
+      <div className="paper-ui min-h-screen bg-canvas text-ink p-6">
         <div className="mx-auto max-w-xl">
           <div
             role="alert"
-            className="rounded-2xl border border-rose-500/40 bg-rose-950/40 p-6 text-center shadow-xl"
+            className="rounded-2xl border border-danger-border bg-danger-soft p-6 text-center shadow-paper"
           >
-            <AlertCircle className="mx-auto h-10 w-10 text-rose-400" />
-            <h2 className="mt-3 text-lg font-bold text-white">
+            <AlertCircle className="mx-auto h-10 w-10 text-danger" />
+            <h2 className="mt-3 text-lg font-bold text-strong">
               Không thể tải phiên làm việc
             </h2>
-            <p className="mt-1 text-sm text-rose-200">{sessionError}</p>
+            <p className="mt-1 text-sm text-danger">{sessionError}</p>
             <div className="mt-6 flex justify-center gap-3">
               <button
                 type="button"
                 onClick={() => window.location.reload()}
-                className="inline-flex items-center gap-2 rounded-xl bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+                className="inline-flex items-center gap-2 rounded-xl bg-rail px-4 py-2 text-xs font-semibold text-ink hover:bg-rail"
               >
                 <RefreshCw className="h-3.5 w-3.5" />
                 Thử lại
@@ -686,7 +686,7 @@ export default function Stage2ConfigPage({
               <button
                 type="button"
                 onClick={() => navigate('/dashboard')}
-                className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800"
+                className="inline-flex items-center gap-2 rounded-xl border border-line px-4 py-2 text-xs font-semibold text-ink hover:bg-rail"
               >
                 <ArrowLeft className="h-3.5 w-3.5" />
                 Về Dashboard
@@ -701,28 +701,28 @@ export default function Stage2ConfigPage({
   // Kiểm tra trạng thái phiên: nếu chưa xong Stage 1 (draft)
   if (session?.status === 'draft') {
     return (
-      <div className="min-h-screen bg-[#0f172a] text-[#f8fafc] dark p-6">
+      <div className="paper-ui min-h-screen bg-canvas text-ink p-6">
         <div className="mx-auto max-w-2xl">
-          <div className="rounded-2xl border border-amber-500/40 bg-amber-950/30 p-8 text-center shadow-xl">
-            <FileQuestion className="mx-auto h-12 w-12 text-amber-400" />
-            <h2 className="mt-4 text-xl font-bold text-white">
+          <div className="rounded-2xl border border-accent-border bg-accent-soft p-8 text-center shadow-paper">
+            <FileQuestion className="mx-auto h-12 w-12 text-accent-ink" />
+            <h2 className="mt-4 text-xl font-bold text-strong">
               Đề nguồn chưa được xác nhận (Giai đoạn 1)
             </h2>
-            <p className="mt-2 text-sm text-slate-300">
-              Phiên làm việc này đang ở trạng thái bản thảo (<code>draft</code>). Bạn cần xác nhận nội dung đề nguồn ở Giai đoạn 1 để hệ thống tự động bóc tách Blueprint trước khi sang cấu hình sinh đề.
+            <p className="mt-2 text-sm text-ink">
+              Xác nhận nội dung đề nguồn và chờ phân tích cấu trúc đề trước khi tạo mã đề.
             </p>
             <div className="mt-6 flex justify-center gap-3">
               <button
                 type="button"
                 onClick={() => navigate(stage1Path(sessionId))}
-                className="rounded-xl bg-amber-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-amber-600/30 hover:bg-amber-500"
+                className="rounded-xl bg-accent px-5 py-2.5 text-xs font-semibold text-strong shadow-soft  hover:bg-accent"
               >
                 Đến Giai đoạn 1 (Xác nhận đề gốc)
               </button>
               <button
                 type="button"
                 onClick={() => navigate('/dashboard')}
-                className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+                className="rounded-xl border border-line px-4 py-2 text-xs font-medium text-ink hover:bg-rail"
               >
                 Về Dashboard
               </button>
@@ -742,27 +742,27 @@ export default function Stage2ConfigPage({
       session?.progress?.error_code;
 
     return (
-      <div className="min-h-screen bg-[#0f172a] text-[#f8fafc] dark p-6">
+      <div className="paper-ui min-h-screen bg-canvas text-ink p-6">
         <div className="mx-auto max-w-2xl">
           <div
             role="alert"
-            className="rounded-2xl border border-rose-500/40 bg-rose-950/30 p-8 text-center shadow-xl"
+            className="rounded-2xl border border-danger-border bg-danger-soft p-8 text-center shadow-paper"
           >
-            <AlertCircle className="mx-auto h-12 w-12 text-rose-400" />
-            <h2 className="mt-4 text-xl font-bold text-white">
+            <AlertCircle className="mx-auto h-12 w-12 text-danger" />
+            <h2 className="mt-4 text-xl font-bold text-strong">
               Tiến trình sinh đề thi bị gián đoạn hoặc thất bại
             </h2>
-            <p className="mt-2 text-sm text-slate-300">
+            <p className="mt-2 text-sm text-ink">
               Phiên sinh đề gặp sự cố trong quá trình xử lý. Bạn có thể kích hoạt thử lại để tiếp tục tiến trình sinh đề mà không mất cấu hình đã thiết lập.
             </p>
             {errorCode && (
-              <div className="mt-4 inline-flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-900/50 px-3.5 py-1.5 text-xs font-mono font-medium text-rose-200">
+              <div className="mt-4 inline-flex items-center gap-2 rounded-lg border border-danger-border bg-danger-soft px-3.5 py-1.5 text-xs font-mono font-medium text-danger">
                 <span>Mã lỗi:</span>
-                <strong className="text-white">{errorCode}</strong>
+                <strong className="text-strong">{errorCode}</strong>
               </div>
             )}
             {retryError && (
-              <div className="mt-3 text-xs text-rose-300" role="status">
+              <div className="mt-3 text-xs text-danger" role="status">
                 {retryError}
               </div>
             )}
@@ -771,7 +771,7 @@ export default function Stage2ConfigPage({
                 type="button"
                 onClick={handleRetryGeneration}
                 disabled={isRetryingGeneration}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-rose-600/30 hover:bg-rose-500 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-danger px-5 py-2.5 text-xs font-semibold text-white shadow-soft  hover:bg-danger disabled:opacity-50"
               >
                 {isRetryingGeneration ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -783,7 +783,7 @@ export default function Stage2ConfigPage({
               <button
                 type="button"
                 onClick={() => navigate('/dashboard')}
-                className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+                className="rounded-xl border border-line px-4 py-2 text-xs font-medium text-ink hover:bg-rail"
               >
                 Về Dashboard
               </button>
@@ -797,18 +797,18 @@ export default function Stage2ConfigPage({
   // Khóa deep-link Stage 2 khi phiên đã sang Rà soát cuối hoặc đã phê duyệt/xuất bản
   if (isPostStage2Locked && !isGenerating && !isNewRunActive) {
     return (
-      <div className="mx-auto max-w-2xl p-6">
+      <div className="paper-ui mx-auto max-w-2xl p-6">
         <div
           role="status"
-          className="rounded-2xl border border-emerald-500/40 bg-emerald-950/30 p-8 text-center shadow-xl"
+          className="rounded-2xl border border-approved-border bg-approved-bg p-8 text-center shadow-paper"
         >
-          <Lock className="mx-auto h-12 w-12 text-emerald-400" />
-          <h2 className="mt-4 text-xl font-bold text-white">
+          <Lock className="mx-auto h-12 w-12 text-approved-ink" />
+          <h2 className="mt-4 text-xl font-bold text-strong">
             {isFinalExportLocked
-              ? 'Đề thi đã được phê duyệt và khóa cấu hình (HTTP 423)'
+              ? 'Đề thi đã được phê duyệt và khóa cấu hình'
               : 'Phiên đã hoàn tất duyệt từng câu'}
           </h2>
-          <p className="mt-2 text-sm text-slate-300">
+          <p className="mt-2 text-sm text-ink">
             {isFinalExportLocked
               ? 'Phiên làm việc đã chốt ở bước phê duyệt cuối cùng. Không thể thay đổi cấu hình hay khởi chạy lại quá trình sinh đề.'
               : 'Toàn bộ biến thể của phiên này đã được duyệt. Hãy chuyển sang màn hình Rà soát cuối để xáo trộn và phê duyệt đề.'}
@@ -818,7 +818,7 @@ export default function Stage2ConfigPage({
               type="button"
               data-testid="stage2-btn-goto-locked-target"
               onClick={() => navigate(isFinalExportLocked ? exportPath(sessionId) : stage3PreviewPath(sessionId))}
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-emerald-600/30 hover:bg-emerald-500"
+              className="inline-flex items-center gap-2 rounded-xl bg-approved-ink px-5 py-2.5 text-xs font-semibold text-white shadow-soft  hover:bg-approved-ink"
             >
               <span>{isFinalExportLocked ? 'Tới màn hình Xuất bản' : 'Tới màn hình Rà soát cuối'}</span>
               <ArrowRight className="h-3.5 w-3.5" />
@@ -826,7 +826,7 @@ export default function Stage2ConfigPage({
             <button
               type="button"
               onClick={() => navigate('/dashboard')}
-              className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+              className="rounded-xl border border-line px-4 py-2 text-xs font-medium text-ink hover:bg-rail"
             >
               Về Dashboard
             </button>
@@ -837,13 +837,13 @@ export default function Stage2ConfigPage({
   }
 
   return (
-    <div className="min-h-screen bg-[#0f172a] text-[#f8fafc] dark px-4 py-8 sm:px-6 lg:px-8">
+    <div className="paper-ui min-h-screen bg-canvas text-ink px-4 py-8 sm:px-6 lg:px-8">
       {/* Nút điều hướng phụ trên cùng */}
       <div className="mx-auto mb-6 max-w-5xl">
         <button
           type="button"
           onClick={() => navigate('/dashboard')}
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-400 hover:text-white"
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-muted hover:text-strong"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Quay lại Bảng điều khiển (Dashboard)

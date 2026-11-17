@@ -90,20 +90,12 @@ test('Stage2ConfigCard hiển thị đầy đủ thông tin đề nguồn và 4 
   await harness.unmount();
 });
 
-test('Stage2ConfigCard hiển thị đúng danh sách chế độ biến thể và vô hiệu hóa chế độ không khả dụng', async () => {
+test('Stage2ConfigCard không hiển thị chế độ tự động như tùy chọn chỉnh sửa', async () => {
   const harness = renderCard({ session: sampleSession });
   await harness.render();
-
-  const text = harness.container.textContent;
-  assert.ok(text.includes('Thay đổi số liệu / tham số'));
-  assert.ok(text.includes('Đổi ngữ cảnh thực tế'));
-  assert.ok(text.includes('Hoán đổi ẩn số'));
-  assert.ok(text.includes('Chưa đủ điều kiện cho đề này'), 'Phải nêu lý do không khả dụng');
-
-  const inversionBadge = harness.container.querySelector('#mode-badge-variable_inversion');
-  assert.ok(inversionBadge, 'Phải có badge cho variable_inversion');
-  assert.ok(inversionBadge.textContent.includes('Không khả dụng'), 'variable_inversion phải đánh dấu không khả dụng');
-
+  assert.equal(harness.container.querySelector('#mode-badge-variable_inversion'), null);
+  assert.ok(!harness.container.textContent.includes('Hoán đổi ẩn số'));
+  assert.equal(harness.container.querySelectorAll('input[type="checkbox"]').length, 2);
   await harness.unmount();
 });
 
@@ -112,8 +104,8 @@ test('Stage2ConfigCard cung cấp cả hai tùy chọn shuffle_questions và shu
   await harness.render();
 
   const text = harness.container.textContent;
-  assert.ok(text.includes('shuffle_questions'), 'Phải có tùy chọn shuffle_questions');
-  assert.ok(text.includes('shuffle_options'), 'Phải có tùy chọn shuffle_options theo yêu cầu');
+  assert.ok(text.includes('Xáo trộn thứ tự câu hỏi'), 'Phải có tùy chọn shuffle_questions');
+  assert.ok(text.includes('Xáo trộn thứ tự các đáp án'), 'Phải có tùy chọn shuffle_options theo yêu cầu');
 
   const shuffleCb = harness.container.querySelector('#shuffle-questions-checkbox');
   assert.ok(shuffleCb, 'Phải có checkbox id shuffle-questions-checkbox');
@@ -240,7 +232,7 @@ test('Stage2ConfigCard giữ nguyên lựa chọn rỗng đã lưu (active_varia
   await harness.render();
 
   const text = harness.container.textContent;
-  assert.ok(text.includes('Tự động tối ưu biến thể'), 'Hiển thị thẻ tóm tắt phù hợp');
+  assert.ok(text.includes('Giữ cấu trúc đề nguồn'), 'Hiển thị thẻ tóm tắt phù hợp');
 
   // Nộp form khi cấu hình rỗng
   const form = harness.container.querySelector('form');
@@ -341,7 +333,7 @@ test('Stage2ConfigCard hiển thị thông báo chờ và vô hiệu hóa nút s
   await harness.render();
 
   const text = harness.container.textContent;
-  assert.ok(text.includes('Chưa có thông tin Blueprint khả dụng'), 'Phải hiển thị thông báo chưa có Blueprint');
+  assert.ok(text.includes('Chưa có thông tin cấu trúc đề khả dụng'), 'Phải hiển thị thông báo chưa có Blueprint');
 
   const submitBtn = harness.container.querySelector('button[type="submit"]');
   assert.equal(submitBtn.getAttribute('disabled') !== null, true, 'Nút submit phải bị vô hiệu hóa');
@@ -376,7 +368,7 @@ test('Stage2ConfigCard chỉ hiển thị chế độ thật mà Blueprint hỗ 
   await harness.render();
 
   const text = harness.container.textContent;
-  assert.ok(text.includes('Thay đổi số liệu / tham số'));
+  assert.ok(!text.includes('Thay đổi số liệu / tham số'));
   assert.equal(text.includes('Đổi ngữ cảnh thực tế'), false, 'Không được tự bịa chế độ Đổi ngữ cảnh');
   assert.equal(text.includes('Hoán đổi ẩn số'), false, 'Không được tự bịa chế độ Hoán đổi ẩn số');
 
@@ -441,8 +433,8 @@ test('Stage2ConfigCard cho phép gửi active_variation_modes: [] khi Blueprint 
   await harness.render();
 
   const text = harness.container.textContent;
-  assert.ok(text.includes('Đề nguồn giữ nguyên bài toán gốc'), 'Phải thông báo đề giữ nguyên nội dung gốc');
-  assert.equal(text.includes('Chưa có thông tin Blueprint khả dụng'), false, 'Không được báo thiếu Blueprint');
+  assert.ok(text.includes('Giữ cấu trúc đề nguồn'), 'Phải thông báo đề giữ nguyên nội dung gốc');
+  assert.equal(text.includes('Chưa có thông tin cấu trúc đề khả dụng'), false, 'Không được báo thiếu Blueprint');
 
   const submitBtn = harness.container.querySelector('button[type="submit"]');
   assert.equal(submitBtn.getAttribute('disabled'), null, 'Nút submit không được bị disabled');
@@ -528,7 +520,7 @@ test('F04: Stage2ConfigCard hiển thị đúng Hỗ trợ 0/N câu khi mode.que
 
   const text = harness.container.textContent;
   assert.ok(
-    text.includes('Hỗ trợ 0/5 câu'),
+    !text.includes('Hỗ trợ 5/5 câu'),
     'Phải hiển thị Hỗ trợ 0/5 câu thay vì fallback về 5/5 câu',
   );
 
@@ -551,7 +543,7 @@ test('Stage2ConfigCard khóa submit và hiển thị cảnh báo khi blueprint_s
   await harness.render();
 
   const text = harness.container.textContent;
-  assert.ok(text.includes('Chưa có thông tin Blueprint khả dụng'), 'Phải cảnh báo Blueprint chưa sẵn sàng');
+  assert.ok(text.includes('Chưa có thông tin cấu trúc đề khả dụng'), 'Phải cảnh báo Blueprint chưa sẵn sàng');
 
   const submitBtn = harness.container.querySelector('button[type="submit"]');
   assert.equal(submitBtn.getAttribute('disabled') !== null, true, 'Nút submit phải bị vô hiệu hóa khi thiếu is_ready');

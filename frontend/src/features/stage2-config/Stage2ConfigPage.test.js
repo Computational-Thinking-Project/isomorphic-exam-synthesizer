@@ -125,8 +125,8 @@ test('Issue 44: Direct Stage 2 URL khi blueprinted chưa ready: form bị vô hi
   await harness.render();
 
   const text = harness.container.textContent;
-  assert.ok(text.includes('Chưa có thông tin Blueprint khả dụng'));
-  assert.ok(text.includes('Đề nguồn chưa hoàn tất phân tích Blueprint'));
+  assert.ok(text.includes('Chưa có thông tin cấu trúc đề khả dụng'));
+  assert.ok(text.includes('Đề nguồn chưa hoàn tất phân tích cấu trúc đề'));
   assert.ok(text.includes('Quay về Giai đoạn 1'));
 
   const submitBtn = harness.container.querySelector('button[type="submit"]');
@@ -391,7 +391,7 @@ test('Stage2ConfigPage cô lập trạng thái: chuyển từ phiên A đang gen
   // 1. Tải phiên A: trạng thái generating có config -> hiển thị màn tiến độ
   await harness.render();
   let text = harness.container.textContent;
-  assert.ok(text.includes('Tiến trình sinh đề AI') || text.includes('Đang tạo các biến thể đề thi'));
+  assert.ok(text.includes('Đang tạo mã đề') || text.includes('Đang tạo các biến thể đề thi'));
 
   // 2. Chuyển sang phiên B: trạng thái blueprinted -> phải lập tức reset isGenerating và hiển thị lại form
   await harness.navigate('session-B');
@@ -1544,7 +1544,7 @@ test('P2: generating → SSE onResync(failed) → recovery view with error code 
   await harness.render();
   let text = harness.container.textContent;
   assert.ok(
-    text.includes('Tiến trình sinh đề AI') || text.includes('Đang tạo các biến thể đề thi'),
+    text.includes('Đang tạo mã đề') || text.includes('Đang tạo các biến thể đề thi'),
     'Giao diện ban đầu phải hiển thị màn hình tiến độ sinh đề',
   );
   assert.equal(
@@ -1653,7 +1653,7 @@ test('P1: stale SSE error của session A resolve muộn sau khi chuyển sang s
   // 1. Tải phiên A đang sinh
   await harness.render();
   let text = harness.container.textContent;
-  assert.ok(text.includes('Tiến trình sinh đề AI') || text.includes('Đang tạo các biến thể đề thi'));
+  assert.ok(text.includes('Đang tạo mã đề') || text.includes('Đang tạo các biến thể đề thi'));
   assert.ok(typeof capturedErrorA === 'function', 'Phải nhận được onError của phiên A');
 
   // 2. Kích hoạt onError của A nhưng promise fetch snapshot của A chưa resolve
@@ -1740,7 +1740,7 @@ test('P2: lỗi kết nối SSE transport khi snapshot vẫn generating không �
   await harness.render();
   let text = harness.container.textContent;
   assert.ok(
-    text.includes('Tiến trình sinh đề AI') || text.includes('Đang tạo các biến thể đề thi'),
+    text.includes('Đang tạo mã đề') || text.includes('Đang tạo các biến thể đề thi'),
     'Giao diện ban đầu hiển thị tiến độ',
   );
   assert.ok(typeof capturedError === 'function', 'Phải nhận được callback onError');
@@ -1762,7 +1762,7 @@ test('P2: lỗi kết nối SSE transport khi snapshot vẫn generating không �
     'Tuyệt đối không mở Recovery View khi lỗi chỉ là transport và snapshot vẫn generating',
   );
   assert.ok(
-    text.includes('Tiến trình sinh đề AI') || text.includes('Đang tạo các biến thể đề thi'),
+    text.includes('Đang tạo mã đề') || text.includes('Đang tạo các biến thể đề thi'),
     'Vẫn tiếp tục duy trì giao diện theo dõi tiến độ để người dùng kết nối lại',
   );
 
@@ -1772,8 +1772,8 @@ test('P2: lỗi kết nối SSE transport khi snapshot vẫn generating không �
 test('W4-MVP-10: Deep-link Stage 2 khi phiên ở trạng thái reviewed/approved/exported khóa cấu hình và chuyển đúng đích', async () => {
   for (const [status, expectedPath, expectedHeading] of [
     ['reviewed', '/session/locked-s2/stage3/preview', /Phiên đã hoàn tất duyệt từng câu/],
-    ['approved', '/session/locked-s2/export', /khóa cấu hình \(HTTP 423\)/],
-    ['exported', '/session/locked-s2/export', /khóa cấu hình \(HTTP 423\)/],
+    ['approved', '/session/locked-s2/export', /khóa cấu hình/],
+    ['exported', '/session/locked-s2/export', /khóa cấu hình/],
   ]) {
     let saveCalls = 0;
     let startCalls = 0;
