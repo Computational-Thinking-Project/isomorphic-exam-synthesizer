@@ -26,6 +26,25 @@ import {
   normalizeOptions,
 } from '../../services/stage3Service.js';
 
+function getVariantWarningFlags(variant) {
+  const isFallback = Boolean(
+    variant?.is_fallback ||
+    variant?.source_fallback ||
+    variant?.warning_flag === 'fallback' ||
+    (variant?.attempts >= 4 && variant?.is_fallback !== false)
+  );
+
+  const hasWarning = Boolean(
+    variant?.has_warning ||
+    variant?.warning_flag ||
+    variant?.status === 'warning' ||
+    variant?.status === 'needs_review' ||
+    variant?.warning_message ||
+    (variant?.validation_report && variant?.validation_report.is_valid === false)
+  );
+  return { isFallback, hasWarning };
+}
+
 /**
  * Trích xuất an toàn chuỗi thông báo lỗi từ response HTTP
  */
@@ -1137,8 +1156,9 @@ export default function Stage3ReviewPage({
       <div role="group" aria-label="Lọc câu hỏi" className="flex flex-wrap gap-2">
         {[['all','Tất cả'],['pending','Chưa duyệt'],['warning','Có cảnh báo'],['approved','Đã duyệt']].map(([value,label]) => {
           const count = Array.from({length:totalSourceQuestions},(_,i)=>findVariantInSession(session,activeVersionTab,i+1)).filter((v,i)=>{
+            const { hasWarning, isFallback } = getVariantWarningFlags(v);
             const approved = v?.status === 'approved' || approvedVariantIds.has(`${activeVersionTab}-${i+1}`);
-            return value === 'all' || (value === 'pending' && !approved) || (value === 'approved' && approved) || (value === 'warning' && Boolean(v?.has_warning || v?.is_fallback || v?.source_fallback || v?.warning_flag || v?.warning_message));
+            return value === 'all' || (value === 'pending' && !approved) || (value === 'approved' && approved) || (value === 'warning' && (hasWarning || isFallback));
           }).length;
           return <button type="button" key={value} aria-pressed={reviewFilter===value} disabled={isApprovingSingle || isRegeneratingSingle} onClick={()=>{setReviewFilter(value);setSelectedSolution(null);}} className="rounded-lg border border-line px-3 py-2 text-sm aria-pressed:bg-support-bg">{label} ({count})</button>;
         })}
@@ -1206,20 +1226,7 @@ export default function Stage3ReviewPage({
             (variant.id && approvedVariantIds.has(variant.id)) ||
             approvedVariantIds.has(slotKey);
 
-          const isFallback = Boolean(
-            variant.is_fallback ||
-            variant.source_fallback ||
-            variant.warning_flag === 'fallback' ||
-            (variant.attempts >= 4 && variant.is_fallback !== false)
-          );
-
-          const hasWarning = Boolean(
-            variant.has_warning ||
-            variant.status === 'warning' ||
-            variant.status === 'needs_review' ||
-            variant.warning_message ||
-            (variant.validation_report && variant.validation_report.is_valid === false)
-          );
+          const { isFallback, hasWarning } = getVariantWarningFlags(variant);
 
           const warningMsg =
             variant.warning_message ||

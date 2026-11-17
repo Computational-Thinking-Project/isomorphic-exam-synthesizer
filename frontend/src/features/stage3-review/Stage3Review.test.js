@@ -1955,3 +1955,68 @@ test('F01: Response 423/getSessionDetail chậm của phiên A không ghi đè t
 
   await harness.unmount();
 });
+
+test('R78-02: warning counts, cards and indicators share classification across versions', async () => {
+  const flags = [
+    { has_warning: true }, { status: 'needs_review' }, { status: 'warning' },
+    { validation_report: { is_valid: false } }, { is_fallback: true },
+    { source_fallback: true }, { warning_flag: 'fallback' }, { attempts: 4 },
+    { warning_flag: 'validation_warning' }, { warning_message: 'Check answer' },
+    {}, { attempts: 4, is_fallback: false },
+  ];
+  const session = {
+    id: 'warning-rules', status: 'generated', config: { n_versions: 2 },
+    source_questions: Array.from({ length: 13 }, (_, i) => ({ question_no: i + 1 })),
+    exam_versions: [
+      { version_index: 1, questions: flags.map((flag, i) => ({
+        id: `variant-${i}`, question_no: i + 1, content: `Content ${i + 1}`,
+        options: { A: '1' }, correct_key: 'A', ...flag,
+      })) },
+      { version_index: 2, questions: [{ question_no: 1, content: 'Second version warning', has_warning: true }] },
+    ],
+  };
+  const harness = renderStage3Page(session.id, { loadSession: async () => session });
+  const buttons = () => Array.from(harness.container.querySelectorAll('button'));
+  const warningButton = () => buttons().find(b => b.textContent.startsWith('Có cảnh báo'));
+  const cards = () => Array.from(harness.container.querySelectorAll('div')).filter(el => el.id?.startsWith('review-1-'));
+  try {
+    await harness.render();
+    assert.equal(warningButton().textContent, 'Có cảnh báo (10)');
+    assert.equal(cards().length, 13, 'All filter includes missing placeholder');
+    await act(async () => { warningButton().click(); });
+    assert.equal(cards().length, 10);
+    for (let i = 1; i <= 10; i++) assert.ok(harness.container.querySelector(`#review-1-${i}`));
+    for (let i = 11; i <= 13; i++) assert.equal(harness.container.querySelector(`#review-1-${i}`), null);
+    assert.match(harness.container.querySelector('#review-1-9').textContent, /Có cảnh báo/);
+    await act(async () => { buttons().find(b => b.textContent.startsWith('Đề 2')).click(); });
+    assert.equal(warningButton().textContent, 'Có cảnh báo (1)');
+    assert.equal(Array.from(harness.container.querySelectorAll('div')).filter(el => el.id?.startsWith('review-2-')).length, 1);
+    await act(async () => { buttons().find(b => b.textContent.startsWith('Đã duyệt (')).click(); });
+    assert.equal(Array.from(harness.container.querySelectorAll('div')).filter(el => el.id?.startsWith('review-2-')).length, 0);
+    await act(async () => { buttons().find(b => b.textContent.startsWith('Chưa duyệt (')).click(); });
+    assert.equal(Array.from(harness.container.querySelectorAll('div')).filter(el => el.id?.startsWith('review-2-')).length, 13);
+  } finally { await harness.unmount(); }
+});
+
+test('R78-02: accepting an expanded pending card preserves pinned visibility without inflating counts', async () => {
+  const harness = renderStage3Page('pinned-filter', {
+    loadSession: async () => ({ id: 'pinned-filter', status: 'generated', config: { n_versions: 1 },
+      source_questions: [{ question_no: 1 }], exam_versions: [{ version_index: 1,
+        questions: [{ id: 'pinned-candidate', question_no: 1, content: 'Pinned content',
+          options: { A: '1' }, correct_key: 'A', solution_md: 'Solution' }],
+      }],
+    }),
+    acceptQuestionFn: async () => ({ question_id: 'pinned-candidate', question_status: 'approved' }),
+  });
+  const buttons = () => Array.from(harness.container.querySelectorAll('button'));
+  try {
+    await harness.render();
+    await act(async () => { buttons().find(b => b.textContent.startsWith('Chưa duyệt (')).click(); });
+    await act(async () => { harness.container.querySelector('[data-review-inspect="true"]').click(); });
+    await act(async () => { harness.container.querySelector('[data-review-approve="true"]').click(); });
+    assert.equal(buttons().find(b => b.textContent.startsWith('Chưa duyệt (')).textContent, 'Chưa duyệt (0)');
+    assert.ok(harness.container.querySelector('#review-1-1'), 'Expanded approved card remains pinned');
+    await act(async () => { harness.container.querySelector('[data-review-inspect="true"]').click(); });
+    assert.equal(harness.container.querySelector('#review-1-1'), null);
+  } finally { await harness.unmount(); }
+});

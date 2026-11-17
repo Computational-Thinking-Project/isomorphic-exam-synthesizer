@@ -127,7 +127,9 @@ export default function Stage3PreviewPage({
               }
             }
           } catch {
-            // Giữ mặc định false/false theo Issue #45
+            if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return;
+            setNeedsShuffle(false);
+            setError('Không thể tải cấu hình xáo trộn đã lưu. Vui lòng thử lại.');
           }
         }
       } else if (err.status === 423) {

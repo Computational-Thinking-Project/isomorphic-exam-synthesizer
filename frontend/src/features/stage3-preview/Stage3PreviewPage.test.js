@@ -1189,3 +1189,118 @@ test('F02: Khi handleShuffle hoặc handleApprove của session A đang chạy d
     await harness.unmount();
   }
 });
+
+for (const network of [false, true]) {
+  test(`R78-01: ${network ? 'network' : 'HTTP 500'} preference failure blocks writes; retry restores ON/OFF`, async () => {
+    const original = { get: api.get, patch: api.patch, post: api.post };
+    const writes = [];
+    let failed = true;
+    let finalized = false;
+    api.get = async url => {
+      if (url.endsWith('/finalize/preview')) {
+        if (finalized) return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'recovery' } };
+        const err = new Error('Shuffle required');
+        err.response = { status: 409, data: { error_code: 'ERR_SHUFFLE_REQUIRED' } };
+        throw err;
+      }
+      if (failed) {
+        const err = new Error('Read failed');
+        if (!network) err.response = { status: 500 };
+        throw err;
+      }
+      return { data: { status: 'reviewed', generation_config: {
+        ordering_preferences: { shuffle_questions: true, shuffle_options: false },
+      } } };
+    };
+    api.patch = async (url, payload) => { writes.push({ type: 'patch', payload }); return { data: {} }; };
+    api.post = async () => { writes.push({ type: 'post' }); finalized = true; return { data: {} }; };
+    const harness = renderPreviewPage('recovery');
+    try {
+      await harness.render();
+      assert.match(harness.container.textContent, /Không thể tải cấu hình xáo trộn đã lưu/);
+      assert.equal(harness.container.querySelector('[data-testid="btn-shuffle"]'), null);
+      assert.equal(harness.container.querySelector('#shuffle-questions-checkbox'), null);
+      assert.deepEqual(writes, []);
+      failed = false;
+      await act(async () => { harness.container.querySelector('[data-testid="btn-retry"]').click(); });
+      assert.equal(harness.container.querySelector('#shuffle-questions-checkbox').checked, true);
+      assert.equal(harness.container.querySelector('#shuffle-options-checkbox').checked, false);
+      await act(async () => { harness.container.querySelector('[data-testid="btn-shuffle"]').click(); });
+      assert.deepEqual(writes, [
+        { type: 'patch', payload: { shuffle_questions: true, shuffle_options: false } },
+        { type: 'post' },
+      ]);
+    } finally { Object.assign(api, original); await harness.unmount(); }
+  });
+}
+
+for (const rejectLate of [false, true]) {
+  test(`R78-01: late preference ${rejectLate ? 'rejection' : 'response'} from A cannot change B`, async () => {
+    const originalGet = api.get;
+    let settleA;
+    api.get = async url => {
+      if (url.includes('session-B')) return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'session-B' } };
+      if (url.endsWith('/finalize/preview')) {
+        const err = new Error('Shuffle required');
+        err.response = { status: 409, data: { error_code: 'ERR_SHUFFLE_REQUIRED' } };
+        throw err;
+      }
+      return new Promise((resolve, reject) => {
+        settleA = () => rejectLate ? reject(new Error('Stale read')) : resolve({ data: {
+          status: 'reviewed', ordering_preferences: { shuffle_questions: true, shuffle_options: true },
+        } });
+      });
+    };
+    const harness = renderPreviewPage('session-A');
+    try {
+      await harness.render();
+      assert.equal(typeof settleA, 'function');
+      await harness.navigate('/session/session-B/stage3/preview');
+      await act(async () => { settleA(); });
+      assert.ok(harness.container.querySelector('[data-testid="btn-open-approve"]'));
+      assert.equal(harness.container.querySelector('[data-testid="btn-retry"]'), null);
+      assert.equal(harness.container.querySelector('[data-testid="btn-shuffle"]'), null);
+    } finally { api.get = originalGet; await harness.unmount(); }
+  });
+}
+
+test('R78-01: authoritative preferences in shuffle-required response avoid another GET', async () => {
+  const originalGet = api.get;
+  const calls = [];
+  api.get = async url => {
+    calls.push(url);
+    const err = new Error('Shuffle required');
+    err.response = { status: 409, data: { error_code: 'ERR_SHUFFLE_REQUIRED',
+      ordering_preferences: { shuffle_questions: false, shuffle_options: true },
+    } };
+    throw err;
+  };
+  const harness = renderPreviewPage('inline-prefs');
+  try {
+    await harness.render();
+    assert.equal(calls.length, 1);
+    assert.equal(harness.container.querySelector('#shuffle-questions-checkbox').checked, false);
+    assert.equal(harness.container.querySelector('#shuffle-options-checkbox').checked, true);
+  } finally { api.get = originalGet; await harness.unmount(); }
+});
+
+test('R78-01: preference rejection after unmount is ignored', async () => {
+  const originalGet = api.get;
+  let rejectPreferences;
+  api.get = async url => {
+    if (url.endsWith('/finalize/preview')) {
+      const err = new Error('Shuffle required');
+      err.response = { status: 409, data: { error_code: 'ERR_SHUFFLE_REQUIRED' } };
+      throw err;
+    }
+    return new Promise((resolve, reject) => { rejectPreferences = reject; });
+  };
+  const harness = renderPreviewPage('unmount-prefs');
+  try {
+    await harness.render();
+    assert.equal(typeof rejectPreferences, 'function');
+    await harness.unmount();
+    await act(async () => { rejectPreferences(new Error('Late failure')); });
+    assert.equal(harness.container.textContent, '');
+  } finally { api.get = originalGet; }
+});

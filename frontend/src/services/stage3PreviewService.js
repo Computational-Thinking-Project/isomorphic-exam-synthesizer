@@ -248,31 +248,25 @@ export async function fetchOrderingPreferences(sessionId, config = {}) {
   }
 
   const encodedId = encodeURIComponent(sessionId);
-  try {
-    const response = await api.get(`/sessions/${encodedId}`, config);
-    const data = response?.data;
-    const rawPrefs =
-      data?.generation_config?.ordering_preferences ||
-      data?.config?.ordering_preferences ||
-      data?.ordering_preferences;
+  const response = await api.get(`/sessions/${encodedId}`, config);
+  const data = response?.data;
+  const rawPrefs =
+    data?.generation_config?.ordering_preferences ||
+    data?.config?.ordering_preferences ||
+    data?.ordering_preferences;
 
-    if (rawPrefs && typeof rawPrefs === 'object') {
-      return {
-        shuffle_questions: Boolean(rawPrefs.shuffle_questions ?? false),
-        shuffle_options: Boolean(rawPrefs.shuffle_options ?? false),
-        status: data?.status || 'reviewed',
-      };
-    }
+  if (rawPrefs && typeof rawPrefs === 'object') {
     return {
-      shuffle_questions: false,
-      shuffle_options: false,
-      status: data?.status || 'reviewed',
+      shuffle_questions: Boolean(rawPrefs.shuffle_questions ?? false),
+      shuffle_options: Boolean(rawPrefs.shuffle_options ?? false),
+      status: data?.status,
     };
-  } catch {
-    // Khi lỗi mạng hoặc chưa có cấu hình, fallback về mặc định false/false theo Issue #45
   }
-
-  return { shuffle_questions: false, shuffle_options: false, status: 'reviewed' };
+  return {
+    shuffle_questions: false,
+    shuffle_options: false,
+    status: data?.status,
+  };
 }
 
 /**

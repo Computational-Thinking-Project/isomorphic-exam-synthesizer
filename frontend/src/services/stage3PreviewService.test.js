@@ -164,6 +164,7 @@ test('fetchOrderingPreferences: gọi đúng GET /sessions/:id và trả về or
     return {
       data: {
         id: 'session-pref-1',
+        status: 'reviewed',
         generation_config: {
           ordering_preferences: {
             shuffle_questions: true,
@@ -187,11 +188,11 @@ test('fetchOrderingPreferences: gọi đúng GET /sessions/:id và trả về or
   }
 });
 
-test('fetchOrderingPreferences: fallback false/false khi session không có ordering_preferences hoặc khi lỗi', async () => {
+test('fetchOrderingPreferences: defaults OFF/OFF only after successful GET without preferences', async () => {
   const originalGet = api.get;
 
   api.get = async () => ({
-    data: { id: 'session-no-pref' },
+    data: { id: 'session-no-pref', status: 'reviewed' },
   });
 
   try {
@@ -205,20 +206,6 @@ test('fetchOrderingPreferences: fallback false/false khi session không có orde
     api.get = originalGet;
   }
 
-  api.get = async () => {
-    throw new Error('500 Server Error');
-  };
-
-  try {
-    const prefs = await fetchOrderingPreferences('session-err');
-    assert.deepEqual(prefs, {
-      shuffle_questions: false,
-      shuffle_options: false,
-      status: 'reviewed',
-    });
-  } finally {
-    api.get = originalGet;
-  }
 });
 
 test('fetchOrderingPreferences: ném lỗi nếu không truyền sessionId', async () => {
@@ -459,4 +446,28 @@ test('F03: encodeURIComponent cho sessionId trên toàn bộ các endpoints tron
     api.patch = originalPatch;
     api.post = originalPost;
   }
+});
+
+for (const status of [500, undefined]) {
+  test(`fetchOrderingPreferences: preserves original ${status || 'network'} error`, async () => {
+    const originalGet = api.get;
+    const failure = new Error('Read failed');
+    if (status) failure.response = { status, data: { detail: 'Unavailable' } };
+    api.get = async () => { throw failure; };
+    try {
+      await assert.rejects(fetchOrderingPreferences('session-error'), err => err === failure);
+    } finally { api.get = originalGet; }
+  });
+}
+
+test('fetchOrderingPreferences: restores OFF/ON and authoritative session status', async () => {
+  const originalGet = api.get;
+  api.get = async () => ({ data: { status: 'exported', generation_config: {
+    ordering_preferences: { shuffle_questions: false, shuffle_options: true },
+  } } });
+  try {
+    assert.deepEqual(await fetchOrderingPreferences('session-off-on'), {
+      shuffle_questions: false, shuffle_options: true, status: 'exported',
+    });
+  } finally { api.get = originalGet; }
 });

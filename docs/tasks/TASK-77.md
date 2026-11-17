@@ -121,3 +121,11 @@ Checks: 491 frontend tests passed; lint, build and diff check passed. Build reta
 - Mutation feedback is shown in the expanded card; final preview stays disabled during mutations. Locked sessions retain read-only solutions.
 - Verification: 491 frontend tests PASS; lint/build/diff check PASS (existing chunk-size warning). Local browser fixture verified expansion, acceptance and explicit next-question navigation. Screenshot: `docs/ui-walkthrough/pr78-polish/review-inline.png`.
 - Limits: live API/DB, actual 200% zoom, full mobile regression and browser Stage 2 round-trip remain unverified in this follow-up. Existing backend working-tree changes were excluded.
+
+## PR #78 scope clarification and review fixes — 18/11/2026
+
+Earlier frontend-only boundaries and test counts above describe historical snapshots. The current PR also contains `backend/migrations/025_service_role_exam_sessions_select.sql` (SELECT on `public.exam_sessions` for `service_role` session reads), `backend/tests/api/test_generation_stream.py` and `backend/tests/migrations/test_issue75_baseline_reconciliation.py`. These existing integration additions are part of the PR; this correction does not modify them or introduce a new API/schema change.
+
+Author follow-up on head `0399bc80`: R78-01 propagates failed ordering-preference reads and enters the existing error/retry screen, preserving authoritative preferences, independent flags and stale-request fences. R78-02 shares warning/fallback classification across counts, filtering and indicators; non-fallback warning flags remain warnings, with existing attempt inference, missing slots and pinned visibility preserved. R78-03 aligns direct Node setup with Vite's root environment directory.
+
+Local Windows/PowerShell verification: targeted service/preview/review tests **81 passed**; full frontend **522 passed**, 0 failed/skipped/cancelled; lint PASS (0 warnings), build PASS (existing large-chunk warning), `git diff --check` PASS. API calls are mocked in the DOM harness; no new browser or live OAuth/API/DB/Gemini checks were run. Export redesign remains outside scope. These are author checks, not independent acceptance. Final commit, base/head and CI evidence are recorded in the live PR description after push; PR remains Draft.
