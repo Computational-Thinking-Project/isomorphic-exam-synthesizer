@@ -523,20 +523,20 @@ def _convert_env(name: str, body: str) -> str:
     return r" \ ".join(converted_lines)
 
 
-def _split_multiletter_segment(segment: str) -> str:
-    """Split adjacent single-letter variables such as dx or Oxyz into d x / O x y z."""
+def _split_multiletter_segment(segment: str, *, quote_unknown: bool = False) -> str:
+    """Handle multi-letter tokens: split math variables or quote upright labels."""
 
     def _replace_tok(match: re.Match[str]) -> str:
         tok = match.group(0)
         if tok.startswith('"') or tok in _TYPST_DOT_SYMBOLS or tok in _TYPST_MATH_IDENTIFIERS:
             return tok
-        return " ".join(tok)
+        return f'"{tok}"' if quote_unknown else " ".join(tok)
 
     return _SPLIT_TOKEN_RE.sub(_replace_tok, segment)
 
 
-def _finalize_math_segment(segment: str) -> str:
-    """Convert LaTeX control words, attach scripts, and separate adjacent variables."""
+def _finalize_math_segment(segment: str, *, quote_unknown: bool = False) -> str:
+    """Convert LaTeX control words, attach scripts, and process multi-letter tokens."""
 
     def _replace_cmd(match: re.Match[str]) -> str:
         cmd = match.group(1)
@@ -561,7 +561,15 @@ def _finalize_math_segment(segment: str) -> str:
     segment = re.sub(r"[ \t]+", " ", segment)
     segment = re.sub(r"(?<=[A-Za-z0-9)\]|\"'])[ \t]+(?=[_^])", "", segment)
     segment = re.sub(r"([_^])[ \t]+", r"\1", segment)
-    return _split_multiletter_segment(segment)
+    return _split_multiletter_segment(segment, quote_unknown=quote_unknown)
+
+
+def _convert_mathrm(inner: str) -> str:
+    """Convert \\mathrm{...} while preserving unit/text labels such as cm or kg (F82-03)."""
+    if not re.search(r'[\\^_{}"]', inner):
+        return f'upright("{inner}")'
+    converted_inner = _latex_math_to_typst_impl(inner, quote_unknown=True)
+    return f"upright({converted_inner})"
 
 
 def latex_math_to_typst(math_str: str) -> str:
@@ -571,7 +579,7 @@ def latex_math_to_typst(math_str: str) -> str:
     Transformations:
     - \\frac{A}{B}, \\dfrac{A}{B}, \\tfrac{A}{B} -> ((A)/(B)); \\binom{n}{k} -> binom(n, k)
     - \\sqrt{A} -> sqrt(A); \\sqrt[n]{A} -> root(n, A)
-    - \\text{A} and text-style wrappers -> "A"
+    - \\text{A} and text-style wrappers -> "A"; \\mathrm{unit} -> upright("unit")
     - \\mathbb, \\mathbf, \\overline, \\vec, \\hat, \\bar, etc. -> Typst style/accent calls
     - \\begin{cases}/matrices/aligned environments -> Typst cases(...)/mat(...)/linebreaks
     - \\left, \\right delimiters -> standard brackets
@@ -580,6 +588,11 @@ def latex_math_to_typst(math_str: str) -> str:
     - Grouped superscripts / subscripts: ^{...} -> ^(...), _{...} -> _(...)
     - Security: neutralizes '#' and control triggers in math mode to prevent Typst code injection
     """
+    return _latex_math_to_typst_impl(math_str, quote_unknown=False)
+
+
+def _latex_math_to_typst_impl(math_str: str, *, quote_unknown: bool = False) -> str:
+    """Internal implementation parameterizing multi-letter identifier splitting vs quoting."""
     if not math_str or not math_str.strip():
         return ""
 
@@ -655,10 +668,15 @@ def latex_math_to_typst(math_str: str) -> str:
         m = _SINGLE_ARG_WRAPPER_RE.search(s)
         if not m:
             break
-        typst_fn = _SINGLE_ARG_WRAPPERS[m.group(1)]
+        cmd = m.group(1)
+        typst_fn = _SINGLE_ARG_WRAPPERS[cmd]
         inner, end_idx = _extract_balanced_braces(s, m.end() - 1)
-        conv_inner = latex_math_to_typst(inner)
-        s = s[: m.start()] + f"{typst_fn}({conv_inner})" + s[end_idx:]
+        if cmd == "mathrm":
+            replacement = _convert_mathrm(inner)
+        else:
+            conv_inner = latex_math_to_typst(inner)
+            replacement = f"{typst_fn}({conv_inner})"
+        s = s[: m.start()] + replacement + s[end_idx:]
 
     s = _transform_outside_quotes(
         s,
@@ -690,7 +708,10 @@ def latex_math_to_typst(math_str: str) -> str:
         s = s[: m.start()] + f"_({latex_math_to_typst(inner)})" + s[end_idx:]
 
     # 8. Symbols, Greek letters, functions, script attachment, and adjacent variable splitting
-    s = _transform_outside_quotes(s, _finalize_math_segment)
+    s = _transform_outside_quotes(
+        s,
+        lambda seg: _finalize_math_segment(seg, quote_unknown=quote_unknown),
+    )
 
     return s.strip()
 

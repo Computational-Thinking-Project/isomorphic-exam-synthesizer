@@ -672,7 +672,7 @@ class TestRealTypstIntegration:
                 r"Tich phan: $I = \int_{0}^{1} (3x^2 + 2x) dx + \iint_{D} f(x,y)\,dx\,dy$.",
                 r"Toa do: $Oxyz$, doan $AB$, diem $IN$, khoang cach $\overline{AB}$, $\vec{CD}$, $\hat{x}$, $\bar{y}$, $\ddot{z}$.",
                 r"Tong va gioi han: $\sum_{k=1}^{n} k^2$, $\prod_{i=1}^{n} a_i$, $\lim_{x \to 0} \frac{\sin x}{x} = 1$, $\sin^2 x + \cos^2 x = 1$.",
-                r"Tap hop va ky hieu: $x \in \mathbb{R} \setminus \{0\}$, $A \subseteq B$, $A \cong B$, $A \sim B$, $a \propto b$, $90^\circ$, $\angle ABC$, $\triangle ABC$, $d \perp \Delta$, $d \parallel d'$, $\langle u, v \rangle$, $\lVert u \rVert$, $\cdots$, $\vdots$, $\ddots$, $\text{don vi } 5\,\text{cm}$.",
+                r"Tap hop va ky hieu: $x \in \mathbb{R} \setminus \{0\}$, $A \subseteq B$, $A \cong B$, $A \sim B$, $a \propto b$, $90^\circ$, $\angle ABC$, $\triangle ABC$, $d \perp \Delta$, $d \parallel d'$, $\langle u, v \rangle$, $\lVert u \rVert$, $\cdots$, $\vdots$, $\ddots$, $5\,\mathrm{cm} + 2\,\mathrm{kg} + 3\,\mathrm{km} + \mathrm{cm}^2 + \mathrm{cm^2}$, $\text{don vi } 5\,\text{cm}$.",
                 r"He phuong trinh va ma tran: $\begin{cases} x + y = 1 \\ x - y = 3 \end{cases}$, $\begin{cases}x^2 & x\ge 0\\-x & x<0\end{cases}$, $\begin{alignedat}{2}x&=1 & y&=2\\z&=3 & t&=4\end{alignedat}$ va $\begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix}$.",
                 r"Fallback unknown macro: $\unknownmacro + x$.",
             ]
@@ -775,4 +775,14 @@ class TestGoldenAndExtendedMathConverter:
             latex_math_to_typst(r"\begin{cases} x + y = 1 \\ x - y = 3 \end{cases}")
             == "cases(x + y = 1, x - y = 3)"
         )
+
+    def test_mathrm_preserves_unit_labels_f82_03(self):
+        # Regression for F82-03: \mathrm{...} must preserve unit/text labels without splitting letters.
+        assert latex_math_to_typst(r"\mathrm{cm}") == 'upright("cm")'
+        assert latex_math_to_typst(r"\mathrm{kg}") == 'upright("kg")'
+        assert latex_math_to_typst(r"\mathrm{km}") == 'upright("km")'
+        assert latex_math_to_typst(r"5\,\mathrm{cm} + 2\,\mathrm{kg}") == '5 upright("cm") + 2 upright("kg")'
+        assert latex_math_to_typst(r"\mathrm{cm}^2") == 'upright("cm")^2'
+        assert latex_math_to_typst(r"\mathrm{cm^2}") == 'upright("cm"^2)'
+        assert latex_math_to_typst(r"\mathrm{kg \cdot m/s^2}") == 'upright("kg" dot m/s^2)'
 
