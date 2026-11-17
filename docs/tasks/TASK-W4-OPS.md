@@ -157,3 +157,63 @@ Giữ nguyên env; không áp migration/cloud, không gọi Gemini, chưa kiểm
 ## Khép preparation và review 09/11
 
 Đã sync dev ed81acd (PR42/50), giữ cả OPS/W4 decision logs khi xử lý conflict changelog. PR30@b6b6422 F02 reviewer verified trong thread gốc:705pass/1skip, Ruff PASS; phần AI/OPS đã kiểm không còn finding bắt buộc, chưa integrated/live acceptance toàn Draft. PR51 còn chờ independent review/CI; các input còn thiếu giữ ở bảng input-handoff, không yêu cầu lại phần đã nhận.
+
+
+## Gói chuẩn bị Golden local — 17/11/2026
+
+OPS author Đạt, tiếp nối PR83; không sửa module DB/export của owner khác. Candidate dưới đây là **nguồn SQL để rehearsal**, chưa phải manifest được DB owner phê duyệt cho shared DB. Không tự ghép hai PR chưa merge thành release.
+
+### Catalog có thể chạy lại
+
+Chạy `scripts/w4_export_catalog.sql` bằng operator trên đúng DB alias. Query chỉ đọc metadata bảng/RPC/bucket, không đọc câu hỏi, identities, token hay object URL. Kết quả ngày17/11 trên DB nhóm: export ledger=false, history chuẩn=false, RPC=[], bucket=[]. Không có history chuẩn không có nghĩa mọi migration đều chưa áp; cần catalog/postconditions và ledger được owner đối chiếu.
+
+### Cấu hình cần xác nhận trước activation
+
+| Input | Giá trị/giới hạn từ source | Trạng thái |
+|---|---|---|
+| Flag | `PRIVATE_EXPORT_ENABLED=false` cho tới khi đủ gate | Giữ disabled |
+| Bucket | `exam-export-bundles`, private; upload `application/zip`, upsert=false | Chưa tồn tại trên shared DB; limits/ACL chưa nghiệm thu |
+| RPC timeout | `PRIVATE_EXPORT_RPC_TIMEOUT_SECONDS`, bắt buộc khi bật, 1–120s | Chưa chọn budget cuối |
+| Storage timeout | `PRIVATE_EXPORT_STORAGE_TIMEOUT_SECONDS`, bắt buộc khi bật, 1–300s | Chưa chọn budget cuối |
+| Proxy/process | Nginx600s; Docker stop grace mặc định10s | Cần thử in-flight export/shutdown, không suy tổng bound từ từng IO timeout |
+| Principals/seed | A/B qua kênh an toàn, nguồn synthetic, quyền seed/cleanup và quota test | Chưa có handoff đủ để chạy ownership + full Golden |
+
+### Git-byte inventory cho rehearsal
+
+Nguồn `ad87643b6ac26d6a05bd4935edd7b27014610741` (#63), gồm producer024 nhưng chưa chứa #82 renderer hoặc route integration #66. Thứ tự lexical dưới đây giống fixture migration hiện có; dùng bootstrap riêng của fixture khi test PostgreSQL, không chạy mù trên shared DB. `schema.sql` của fixture không phải bootstrap Supabase production. File010 rỗng giữ làm lịch sử.
+
+| File | SHA256 Git blob |
+|---|---|
+| `002_replace_source_questions_rpc.sql` | `8dae5f4d5b5cd05d098faa5cfa8b13ff34e40d31b60de2f545b6407eabf6d0d0` |
+| `003_confirm_exam_source_rpc.sql` | `9d410a002820d8b5b49bca02f0e9882fa3182f553a295a57a8d1f003dbb34093` |
+| `003b_reconcile_baseline.sql` | `b8d9497ee4683708be121738e9103bf87039272382d6f882b27f52ace8932b44` |
+| `004_save_generation_config_rpc.sql` | `c66a1416b875ee407f0663301d841120cf9b5b5c16480ea07aea4435583aba25` |
+| `005_generation_job_operations_rpc.sql` | `55d3d51d1608ad4ec6c57d542428af728d6cdec28373846d0752018da4f1ea65` |
+| `006_stage3_review_and_shuffle.sql` | `c6a50d885f0382c791db2ad7dcd1450c4f766e58d2884dbae615a8028daa27c5` |
+| `007_finalize_approve_session_rpc.sql` | `bd2ccc61b9ce14e1661c50c5671fc2e4da2baf4a681b52a4c5d13cf60acca78e` |
+| `008_finalize_persist_shuffle_rpc.sql` | `f32935cbf48a27d2c8c988ba8dfc1accefdb48300b9e273c094710b63d18d63f` |
+| `009_finalize_security_boundary.sql` | `b4516597de80f8678381968678b46748ff92a4d7c7b4ad581fc3378cb6ac4bef` |
+| `010_source_artifact_supported_modes.sql` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `011_source_confirmation_revision.sql` | `e450637bac39ff47c3677de497d84bc42aba948dac656f6c4009f67135a8f0cf` |
+| `012_source_artifact_supported_modes.sql` | `dd58de9603cf36fefd794dcbd5904c52c9216d10014fdd13edc63691218ef54d` |
+| `013_source_freeze_guard.sql` | `1a04b5ff975a68605cd8eed9b1fc579a33f1b3f5897b738863a41989413e39ff` |
+| `014_disable_legacy_source_confirmation.sql` | `9f408a274739b82ae94803aff1bee594ab4a0111273bdfb08410366ea59a4113` |
+| `015_stage2_canonical_w2_integration.sql` | `63b18dc6b541ec48c55ee3e4d5371cb8f84bc96c429b85f052feeb260521dc1b` |
+| `016_stage2_original_clone.sql` | `539f929112eb1803fb0f4d1e5464155a07808e6640ecd6ce2bf42dca1a823427` |
+| `017_generation_lifecycle_recovery.sql` | `76544a154a9230529cbb385958784e32dcfb93bcc17f358622f5b82ef721fdff` |
+| `018_review_current_snapshot.sql` | `4e36271d5254343c228132f22e765dfe76b09a518e06a8f898d36701ea14012d` |
+| `019_w4_source_readiness_config.sql` | `5ca0464ddaac534caa0f85c615cc31dee187bee32e5ee7a19609b976dd2ce6ba` |
+| `020_private_export_ledger.sql` | `39884715f67eacd07468d909ff17cbc9871ca1a724f84e7d87890e2a40fadf82` |
+| `021_w4_confirmed_source_fallback.sql` | `6730db5f18be9e18463f8ffcc08ede4ec6af7552810aa7412f8a924981665c67` |
+| `022_w4_generation_solution_guard.sql` | `ef9c8ce310ad1a7c60576df80d3ce08e5c41a8f643e747d3a2b2fef5cdab682e` |
+| `023_users_client_acl_hardening.sql` | `cac6973da49c9b5f5ca611b9eab2e794cb8c595b47bec812e88d2881b57c33a3` |
+| `024_source_reuse_optional_solutions.sql` | `f1de510f8ad2bbcfd5f2e1a711b934995001c7b981c523de75d7541e71f68c9e` |
+
+### Thứ tự khép task
+
+1. Duy/Hùng khép #63 và renderer #82; lấy một dev SHA chung đã merge. Tính lại inventory từ SHA đó, không gọi inventory này là frozen candidate.
+2. Dựng DB/Storage test local hoặc môi trường được phép; ghi DB alias, thực tế bootstrap/applied manifest/checksum, private bucket limits/ACL và test scope. Duy/DB owner xác nhận trước thao tác shared DB.
+3. Kiểm catalog, PostgREST/ownership A-B và quota; chỉ bật export sau khi cấu hình/timeout đủ. Không tạo broad Storage policy để vượt test.
+4. Build đúng FE/BE SHA; OPS chạy G0 UI→API→DB→Gemini→Typst→private Storage, ghi từng PASS/FAIL/BLOCKED, rồi giao Quỳnh Golden6slots và demo21. API/SQL fixture, hash hoặc smoke200 không thay E2E.
+
+Evidence SQL/checksum được xác minh17/11; không có DDL, seed, bucket write hoặc export activation trong bước chuẩn bị này.
