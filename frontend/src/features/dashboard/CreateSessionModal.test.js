@@ -138,6 +138,34 @@ describe('CreateSessionModal (F02 & F03)', () => {
     };
   }
 
+  it('Shared metadata: all grades are available and selecting grade 1 sends Mathematics metadata', async () => {
+    api.defaults.adapter = async (config) => {
+      postCalls.push(config);
+      return { status: 201, data: {
+        id: 'grade-one', user_id: 'account-a', title: 'Toán lớp 1', subject: 'Toán', grade: 1,
+        status: 'draft', created_at: '2026-11-17T00:00:00Z', updated_at: '2026-11-17T00:00:00Z',
+      }, headers: {}, config };
+    };
+    const modal = await mountModal();
+    try {
+      const grade = modal.container.querySelector('select');
+      assert.equal(grade.options.length, 12);
+      assert.equal(grade.options.find((option) => option.value === '12').selected, true);
+      assert(modal.container.textContent.includes('Toán học'));
+      assert(!modal.container.textContent.includes('THPT'));
+      await modal.changeTitle('Toán lớp 1');
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(DOMElement.prototype, 'value').set.call(grade, '1');
+        grade.dispatchEvent({ type: 'change', bubbles: true });
+      });
+      await modal.submitForm();
+      assert.equal(postCalls.length, 1);
+      assert.deepEqual(JSON.parse(postCalls[0].data), { title: 'Toán lớp 1', subject: 'Toán', grade: 1 });
+    } finally {
+      await modal.unmount();
+    }
+  });
+
   it('F02: HTTP 500 hiển thị nút "Kiểm tra danh sách phiên" và disable nút tạo', async () => {
     api.defaults.adapter = async (config) => {
       postCalls.push(config);

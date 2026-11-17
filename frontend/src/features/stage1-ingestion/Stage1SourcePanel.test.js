@@ -377,17 +377,49 @@ test('POST đang chờ khi đổi route: hủy signal, input mới rỗng, respo
 test('new chỉ hiện metadata, không GET detail/POST hoặc mount input nguồn', async () => {
   const app = mount('new');
   await app.render();
-  assert(app.container.textContent.includes('Tạo phiên đề mới'));
+  assert(app.container.textContent.includes('Tạo bộ đề mới'));
   assert.equal(app.container.querySelector('textarea'), null);
   assert.deepEqual(calls, []);
   await app.unmount();
+});
+
+test('direct creation uses the shared Mathematics fields and preserves the selected grade in its POST', async () => {
+  let posted;
+  api.defaults.adapter = async (config) => {
+    if (config.method === 'post') {
+      posted = JSON.parse(config.data);
+      return response(config, { ...detail(), ...posted });
+    }
+    return response(config, detail());
+  };
+  const app = mount('new');
+  await app.render();
+  try {
+    assert.equal(app.container.querySelectorAll('input').length, 1);
+    const grade = app.container.querySelector('select');
+    assert.equal(grade.options.length, 12);
+    await act(async () => {
+      const title = app.container.querySelector('input');
+      const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(title), 'value').set;
+      setter.call(title, 'Toán lớp 1');
+      title.dispatchEvent({ type: 'input', bubbles: true });
+      setter.call(grade, '1');
+      grade.dispatchEvent({ type: 'change', bubbles: true });
+    });
+    await act(async () => submit(app.container));
+    assert.deepEqual(posted, { title: 'Toán lớp 1', subject: 'Toán', grade: 1 });
+    assert(app.container.textContent.includes('Nguồn qa'));
+  } finally {
+    await app.unmount();
+  }
 });
 
 test('preview read-only dùng MathRenderer cho stem/options, giữ điều kiện/key và ẩn Blueprint', () => {
   const html = renderToStaticMarkup(React.createElement(SourceQuestionPreview, { questions: [question()] }));
   assert(html.includes('katex'));
   assert(html.includes('x\\ne3'));
-  assert(html.includes('Đáp án: <strong>B</strong>'));
+  assert(html.includes('Đáp án: B'));
+  assert.equal((html.match(/Đáp án:/g) ?? []).length, 1);
   assert(!html.includes('PRIVATE_BLUEPRINT'));
   assert(!html.includes('<textarea'));
   assert(!html.includes('<button'));
@@ -443,19 +475,19 @@ test('204: confirm pending ở lại Stage 1, sau khi ready bấm tiếp tục m
   const app = mount(confirmSessionId);
   await app.render();
   await act(async () => button(app.container, confirmLabel).click());
-  assert.match(app.container.textContent, /Đang chờ tạo Blueprint/);
-  assert.equal(button(app.container, 'Tiếp tục Stage 2'), undefined);
+  assert.match(app.container.textContent, /Đang chờ chuẩn bị cấu trúc đề/);
+  assert.equal(button(app.container, 'Tiếp tục cấu hình'), undefined);
 
   artifact = { session_id: confirmSessionId, ready: true, canonical_status: 'ready', supported_modes: [] };
   await act(async () => button(app.container, 'Kiểm tra trạng thái').click());
-  assert.match(app.container.textContent, /Blueprint đã sẵn sàng/);
+  assert.match(app.container.textContent, /Cấu trúc đề đã sẵn sàng/);
 
   const continueButtons = Array.from(app.container.querySelectorAll('button')).filter(
-    (b) => b.textContent.includes('Tiếp tục Stage 2')
+    (b) => b.textContent.includes('Tiếp tục cấu hình')
   );
-  assert.equal(continueButtons.length, 1, 'Chỉ có đúng 1 nút Tiếp tục Stage 2, không bị render trùng (Phillip F04)');
+  assert.equal(continueButtons.length, 1, 'Chỉ có đúng 1 nút Tiếp tục cấu hình, không bị render trùng (Phillip F04)');
 
-  await act(async () => button(app.container, 'Tiếp tục Stage 2').click());
+  await act(async () => button(app.container, 'Tiếp tục cấu hình').click());
   assert.equal(app.container.textContent, `Stage 2 · ${confirmSessionId}`);
   await app.back();
   assert.equal(app.container.textContent, 'Dashboard fixture');
@@ -508,7 +540,7 @@ test('204: F5 còn nháp, chỉ thao tác retry mới POST với đúng key cũ'
   await refreshed.render();
   assert.equal(keys.length, 1);
   await act(async () => button(refreshed.container, 'Thử xác nhận lại').click());
-  assert.match(refreshed.container.textContent, /Đang chờ tạo Blueprint/);
+  assert.match(refreshed.container.textContent, /Đang chờ chuẩn bị cấu trúc đề/);
   assert.deepEqual(keys, [keys[0], keys[0]]);
   await refreshed.unmount();
 });
@@ -540,8 +572,12 @@ test('Issue 44: F5 với session blueprinted chưa ready ở lại Stage 1 read-
   const app = mount(confirmSessionId);
   await app.render();
   assert.match(app.container.textContent, /Phiên không còn ở trạng thái nháp/);
-  assert.match(app.container.textContent, /Đang tạo Blueprint/);
-  assert.equal(button(app.container, 'Tiếp tục Stage 2'), undefined);
+  assert.match(app.container.textContent, /Đang chuẩn bị cấu trúc đề/);
+  assert.equal(app.container.querySelector('textarea'), null);
+  assert.equal(app.container.querySelector('input[type="file"]'), null);
+  assert.equal(button(app.container, 'Nạp nguồn'), undefined);
+  assert.equal(button(app.container, confirmLabel), undefined);
+  assert.equal(button(app.container, 'Tiếp tục cấu hình'), undefined);
   await app.unmount();
 });
 
@@ -561,9 +597,9 @@ test('Issue 44: canonical failed hiển thị nút thử lại, bấm thử lạ
   };
   const app = mount(confirmSessionId);
   await app.render();
-  assert.match(app.container.textContent, /Tạo Blueprint thất bại/);
-  await act(async () => button(app.container, 'Thử tạo lại Blueprint').click());
-  assert.match(app.container.textContent, /Đang tạo Blueprint/);
+  assert.match(app.container.textContent, /Chưa chuẩn bị được cấu trúc đề/);
+  await act(async () => button(app.container, 'Thử chuẩn bị lại').click());
+  assert.match(app.container.textContent, /Đang chuẩn bị cấu trúc đề/);
   assert(methods.some((m) => m.includes('POST') && m.includes('/source-artifacts/retry')));
   await app.unmount();
 });
@@ -826,8 +862,8 @@ test('Phillip F04 & INT-03: Không render trùng nút Kiểm tra trạng thái v
   const app = mount(confirmSessionId);
   await app.render();
 
-  assert.match(app.container.textContent, /Tạo Blueprint thất bại/);
-  const retryBtn = button(app.container, 'Thử tạo lại Blueprint');
+  assert.match(app.container.textContent, /Chưa chuẩn bị được cấu trúc đề/);
+  const retryBtn = button(app.container, 'Thử chuẩn bị lại');
   assert.ok(retryBtn);
 
   // Click retry
@@ -835,7 +871,7 @@ test('Phillip F04 & INT-03: Không render trùng nút Kiểm tra trạng thái v
   assert.equal(retryCalls, 1);
   // While retryAccepted, the text is shown and button is hidden
   assert.match(app.container.textContent, /Đã tiếp nhận yêu cầu tạo lại/);
-  assert.equal(button(app.container, 'Thử tạo lại Blueprint'), undefined, 'Nút thử tạo lại bị ẩn khi đã tiếp nhận');
+  assert.equal(button(app.container, 'Thử chuẩn bị lại'), undefined, 'Nút thử tạo lại bị ẩn khi đã tiếp nhận');
 
   // Verify only 1 "Kiểm tra trạng thái" button
   const checkButtons = Array.from(app.container.querySelectorAll('button')).filter(
@@ -860,7 +896,7 @@ test('W4-MVP-10: Deep-link Stage 1 khi phiên ở trạng thái reviewed/approve
     await app.render();
     assert.match(app.container.textContent, /Phiên không còn ở trạng thái nháp/);
     if (status === 'approved' || status === 'exported') {
-      assert.match(app.container.textContent, /khóa chỉnh sửa đề nguồn \(HTTP 423\)/);
+      assert.match(app.container.textContent, /khóa chỉnh sửa đề nguồn/);
     }
     assert.equal(app.container.querySelector('textarea'), null);
     assert.equal(button(app.container, confirmLabel), undefined);

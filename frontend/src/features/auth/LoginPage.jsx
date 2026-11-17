@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Navigate } from 'react-router-dom';
-import { AlertCircle, AlertTriangle, Loader2, LogOut, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Loader2, LogOut, RefreshCw, Info } from 'lucide-react';
 import { getSupabase } from '../../services/supabase.js';
 import { useAuthStore } from './authStore.js';
 import BrandLogo from '../../components/BrandLogo.jsx';
 
 export default function LoginPage({ profileState }) {
   const [notice, setNotice] = useState('');
+  const [noticeIsError, setNoticeIsError] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [signOutError, setSignOutError] = useState('');
@@ -26,6 +27,7 @@ export default function LoginPage({ profileState }) {
     if (isSubmitting || isSigningOut) return;
 
     setSignOutError('');
+    setNoticeIsError(false);
     setIsSubmitting(true);
     setNotice('Đang chuyển đến Google…');
 
@@ -39,6 +41,7 @@ export default function LoginPage({ profileState }) {
 
       if (error) throw error;
     } catch (cause) {
+      setNoticeIsError(true);
       setNotice(
         cause instanceof Error
           ? cause.message
@@ -55,6 +58,7 @@ export default function LoginPage({ profileState }) {
     setIsSigningOut(true);
     setSignOutError('');
     setNotice('');
+    setNoticeIsError(false);
 
     try {
       const { error } = await getSupabase().auth.signOut({
@@ -87,7 +91,7 @@ export default function LoginPage({ profileState }) {
     status === 'reauth_required';
 
   return (
-    <main className="min-h-screen bg-canvas text-ink flex flex-col justify-center px-4 sm:px-8 py-10 sm:py-12">
+    <main className="paper-ui min-h-screen bg-canvas text-ink flex flex-col justify-center px-4 sm:px-8 py-10 sm:py-12">
       <div className="w-full max-w-[1160px] mx-auto grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_420px] items-center gap-10 lg:gap-16">
         {/* Left Column: Brand Story & Artwork matching PREVIEW.html */}
         <section aria-labelledby="intro-heading" className="flex flex-col items-start justify-center">
@@ -102,7 +106,7 @@ export default function LoginPage({ profileState }) {
           </h1>
 
           <p className="mt-4 text-base sm:text-lg text-muted max-w-lg leading-relaxed">
-            Không gian làm việc dành cho giáo viên toán quản lý, bóc tách cấu trúc và sinh các bộ đề thi đẳng cấu với thẩm định đại số tự động bằng SymPy.
+            Không gian dành cho giáo viên Toán: quản lý đề gốc và biên soạn nhiều mã đề trong cùng một quy trình.
           </p>
 
           <div className="mt-8 hidden lg:block">
@@ -119,22 +123,14 @@ export default function LoginPage({ profileState }) {
         <div className="w-full max-w-md mx-auto lg:max-w-none">
           <section
             aria-labelledby="login-title"
-            className="rounded-2xl border border-line bg-surface p-8 sm:p-10 shadow-paper"
+            className="rounded-2xl border border-line bg-surface p-6 sm:p-8 shadow-paper"
           >
-            <div className="flex items-center justify-between gap-3 mb-4">
-              <span className="inline-flex items-center gap-1 rounded-full border border-support-line bg-support-bg px-2.5 py-1 text-[11px] font-semibold text-highlight">
-                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
-                Bảo mật hệ thống
-              </span>
-              <span className="text-xs text-muted">Google OAuth</span>
-            </div>
-
             <h2 id="login-title" className="text-2xl sm:text-3xl font-extrabold tracking-tight text-strong">
               Đăng nhập
             </h2>
 
             <p className="mt-2 text-sm text-muted leading-relaxed">
-              Dành cho giáo viên đăng nhập để quản lý và biên soạn các mã đề thi đẳng cấu.
+              Sử dụng tài khoản Google để mở thư viện đề của bạn.
             </p>
 
             {/* Google Sign-in Action */}
@@ -191,11 +187,14 @@ export default function LoginPage({ profileState }) {
             {/* Feedback & Session Notices */}
             {(sessionNotice || notice) && (
               <div
-                role="status"
-                aria-live="polite"
-                className="mt-6 flex items-start gap-2.5 rounded-xl border border-support-line bg-support-bg p-3.5 text-xs text-support-text"
+                role={noticeIsError ? 'alert' : 'status'}
+                aria-live={noticeIsError ? 'assertive' : 'polite'}
+                className={`mt-6 flex items-start gap-2.5 rounded-xl border p-3.5 text-sm ${noticeIsError ? 'border-danger-border bg-danger-soft text-danger' : 'border-support-line bg-support-bg text-support-text'}`}
               >
-                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-highlight mt-0.5" aria-hidden="true" />
+                {noticeIsError ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  : (isSubmitting || isSigningOut || status === 'checking' || profileState?.isLoading)
+                    ? <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
+                    : <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />}
                 <p className="min-w-0 flex-1">{sessionNotice || notice}</p>
               </div>
             )}

@@ -154,14 +154,18 @@ describe('DashboardRoute Pagination (F01 Regression Tests)', () => {
     };
   }
 
-  it('Chỉ có 1 trang (<= 20 phiên): cả hai nút Trước và Sau đều bị vô hiệu hóa', async () => {
-    const dashboard = await mountDashboard(10);
-    const pagination = dashboard.getPaginationElements();
-
-    assert.equal(pagination.isPrevDisabled, true, 'Nút Trước phải bị disable ở trang 1');
-    assert.equal(pagination.isNextDisabled, true, 'Nút Sau phải bị disable khi chỉ có 1 trang');
-    assert.match(pagination.pageInfoText, /Trang 1 \/ 1/);
-    await dashboard.unmount();
+  it('Ẩn phân trang cho danh sách rỗng và một trang; chỉ có một CTA tạo bộ đề', async () => {
+    for (const total of [0, 1, 20]) {
+      const dashboard = await mountDashboard(total);
+      assert.equal(dashboard.getPaginationElements().nav, null);
+      const createButtons = dashboard.container.querySelectorAll('button').filter(
+        (element) => /Tạo bộ đề/.test(element.textContent),
+      );
+      assert.equal(createButtons.length, 1);
+      assert.equal(dashboard.container.querySelector('select'), null);
+      assert.equal(dashboard.container.querySelector('input'), null);
+      await dashboard.unmount();
+    }
   });
 
   it('F01: Có 2 trang — Trang 1 bấm Sau chuyển sang Trang 2; Trang 2 bấm Trước quay về Trang 1', async () => {

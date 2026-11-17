@@ -1,6 +1,6 @@
 import MathRenderer from '../../components/MathRenderer.jsx';
 
-export default function SourceQuestionPreview({ questions, versionCount = 0 }) {
+export default function SourceQuestionPreview({ questions }) {
   return (
     <section
       aria-label="Nguồn đề đã lưu"
@@ -9,7 +9,6 @@ export default function SourceQuestionPreview({ questions, versionCount = 0 }) {
       <header className="border-b border-line bg-surface px-5 py-3.5">
         <h3 className="text-sm font-bold text-strong flex items-center justify-between">
           <span>Bản đọc đề nguồn · {questions.length} câu nguồn</span>
-          <span className="text-xs font-normal text-muted">{versionCount} bản đề</span>
         </h3>
       </header>
 
@@ -24,7 +23,7 @@ export default function SourceQuestionPreview({ questions, versionCount = 0 }) {
             {questions.map((question) => (
               <li
                 key={question.id}
-                className="rounded-xl border border-line bg-surface p-4 sm:p-5 shadow-card space-y-3"
+                className="min-w-0 space-y-3 border-b border-line pb-6 last:border-b-0 last:pb-0"
               >
                 <div className="flex items-center gap-2 border-b border-line/60 pb-2.5">
                   <span className="rounded-lg bg-support-bg px-2.5 py-0.5 text-xs font-bold text-highlight border border-support-line">
@@ -35,7 +34,7 @@ export default function SourceQuestionPreview({ questions, versionCount = 0 }) {
                   <span className="text-xs text-muted">Đề gốc</span>
                 </div>
 
-                <div className="text-sm text-strong leading-relaxed">
+                <div className="min-w-0 overflow-x-auto overflow-y-hidden py-2 text-sm text-strong leading-relaxed">
                   <MathRenderer
                     content={
                       typeof question.raw_content === 'string'
@@ -66,7 +65,7 @@ export default function SourceQuestionPreview({ questions, versionCount = 0 }) {
                           >
                             {key}.
                           </span>
-                          <div className={isKey ? 'keyed-content' : ''}>
+                          <div className={`min-w-0 overflow-x-auto overflow-y-hidden py-1 ${isKey ? 'keyed-content' : ''}`}>
                             <MathRenderer
                               inline
                               content={
@@ -79,8 +78,8 @@ export default function SourceQuestionPreview({ questions, versionCount = 0 }) {
                         </div>
 
                         {isKey && (
-                          <span className="answer-key-label inline-flex items-center gap-1 rounded-md bg-white border border-support-line px-2 py-0.5 text-[11px] font-semibold text-highlight shadow-soft">
-                            Đáp án
+                          <span className="answer-key-label inline-flex shrink-0 items-center gap-1 rounded-md bg-white border border-support-line px-2 py-0.5 text-[11px] font-semibold text-highlight shadow-soft">
+                            Đáp án: {key}
                             <span className="sr-only"> theo nội dung đang xem</span>
                           </span>
                         )}
@@ -89,9 +88,9 @@ export default function SourceQuestionPreview({ questions, versionCount = 0 }) {
                   })}
                 </ol>
 
-                <p className="text-xs text-muted pt-1">
-                  Đáp án: <strong>{['A', 'B', 'C', 'D'].includes(question.correct_key) ? question.correct_key : 'Chưa xác định'}</strong>
-                </p>
+                {!['A', 'B', 'C', 'D'].includes(question.correct_key) && (
+                  <p className="pt-1 text-xs text-muted">Đáp án: Chưa xác định</p>
+                )}
               </li>
             ))}
           </ol>

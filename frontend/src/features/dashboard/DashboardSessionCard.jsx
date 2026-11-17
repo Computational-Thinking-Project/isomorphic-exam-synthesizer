@@ -51,8 +51,8 @@ export default function DashboardSessionCard({
   const isCurrentOpening = openingSessionId === session.id;
 
   return (
-    <article className="group relative border-b border-line bg-surface hover:bg-rail/60 transition-colors p-4 sm:px-6 sm:py-4.5 last:border-b-0">
-      <div className="flex flex-col md:grid md:grid-cols-[minmax(240px,1fr)_140px_110px_180px] md:items-center gap-3.5 md:gap-4">
+    <article className="group relative bg-surface hover:bg-rail/60 transition-colors p-4 sm:px-6 sm:py-4">
+      <div className="flex flex-col lg:grid lg:grid-cols-[minmax(240px,1fr)_140px_110px_220px] lg:items-center gap-3.5 lg:gap-4">
         {/* Column 1: Document icon & Title copy */}
         <div className="flex items-start sm:items-center gap-3.5 min-w-0">
           <div
@@ -68,7 +68,7 @@ export default function DashboardSessionCard({
           </div>
 
           <div className="min-w-0 flex-1">
-            <h2 className="truncate text-sm sm:text-base font-bold text-strong group-hover:text-highlight transition-colors leading-snug">
+            <h2 className="break-words text-sm sm:text-base font-bold text-strong group-hover:text-highlight transition-colors leading-snug">
               {session.title || 'Đề chưa đặt tên'}
             </h2>
             <div className="flex items-center gap-1.5 text-xs text-muted mt-0.5 truncate flex-wrap">
@@ -79,8 +79,7 @@ export default function DashboardSessionCard({
                   <span>K{session.grade}</span>
                 </>
               )}
-              <span className="h-1 w-1 rounded-full bg-muted/40" aria-hidden="true" />
-              <span>{isReadOnly ? 'Bản đã chốt · chỉ xem' : 'Bản nháp · có thể chỉnh sửa'}</span>
+              {isReadOnly && <span>· Chỉ xem</span>}
             </div>
           </div>
         </div>
@@ -99,18 +98,18 @@ export default function DashboardSessionCard({
 
         {/* Column 3: Created date */}
         <div className="flex items-center gap-1.5 text-xs text-muted">
-          <Calendar className="h-3.5 w-3.5 text-muted/70 md:hidden" aria-hidden="true" />
+          <Calendar className="h-3.5 w-3.5 text-muted/70 lg:hidden" aria-hidden="true" />
           <time dateTime={session.created_at}>{formatCreatedAt(session.created_at)}</time>
         </div>
 
         {/* Column 4: Actions */}
-        <div className="flex items-center gap-2 justify-end pt-2 md:pt-0 border-t md:border-t-0 border-line/40">
+        <div className="flex items-center gap-2 justify-end pt-2 lg:pt-0 border-t lg:border-t-0 border-line/40">
           <button
             type="button"
             disabled={!onClone}
             onClick={() => onClone(session)}
             title="Nhân bản phiên này"
-            className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-semibold text-strong hover:bg-rail hover:border-zinc-300 transition-all disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-semibold text-strong hover:bg-rail hover:border-zinc-300 transition-all disabled:opacity-50"
           >
             <Copy className="h-3.5 w-3.5 text-muted" aria-hidden="true" />
             <span>Nhân bản</span>
@@ -120,7 +119,7 @@ export default function DashboardSessionCard({
             type="button"
             disabled={!onOpen || openingSessionId !== null}
             onClick={() => onOpen(session)}
-            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-highlight px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-[#253b57] transition-all disabled:opacity-50 min-w-[88px]"
+            className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-highlight px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-[#253b57] transition-all disabled:opacity-50 min-w-[88px]"
           >
             {isCurrentOpening ? (
               <>

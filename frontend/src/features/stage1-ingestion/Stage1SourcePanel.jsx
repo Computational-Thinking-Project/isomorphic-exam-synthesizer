@@ -59,12 +59,13 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
   return (
     <section aria-label="Nhập nguồn đề" className="mt-4 flex min-h-0 flex-1 flex-col gap-3">
       {/* Mobile Tab Switcher */}
-      <div className="flex md:hidden rounded-xl border border-line bg-surface p-1 shadow-soft shrink-0">
+      {!readOnly && (<div className="flex md:hidden rounded-xl border border-line bg-surface p-1 shrink-0" role="group" aria-label="Vùng làm việc">
         <button
           type="button"
           className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-colors ${
             mobileTab === 'input' ? 'bg-highlight text-white shadow-sm' : 'text-muted hover:text-ink'
           }`}
+          aria-pressed={mobileTab === 'input'}
           onClick={() => setMobileTab('input')}
         >
           Bộ nạp nguồn
@@ -74,11 +75,12 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
           className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-colors ${
             mobileTab === 'preview' ? 'bg-highlight text-white shadow-sm' : 'text-muted hover:text-ink'
           }`}
+          aria-pressed={mobileTab === 'preview'}
           onClick={() => setMobileTab('preview')}
         >
           {`Bản đọc (${questionCount} câu)`}
         </button>
-      </div>
+      </div>)}
 
       {state.error && (
         <p role="alert" aria-hidden={dialogOpen || undefined} id={`${inputId}-error`} className="shrink-0 rounded-xl border border-danger/30 bg-danger-soft p-3 text-sm font-medium text-danger">
@@ -98,8 +100,8 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
           : state.phase === 'reloading' ? 'Đang đọc lại nguồn đã lưu…'
             : state.phase === 'confirming' ? 'Đang xác nhận đề nguồn…'
               : state.phase === 'reconciling' ? 'Đang kiểm tra kết quả xác nhận…'
-                : state.phase === 'checking_status' ? 'Đang kiểm tra trạng thái Blueprint…'
-                  : state.phase === 'retrying_canonical' ? 'Đang yêu cầu tạo lại Blueprint…' : state.message}
+                : state.phase === 'checking_status' ? 'Đang kiểm tra cấu trúc đề…'
+                  : state.phase === 'retrying_canonical' ? 'Đang yêu cầu chuẩn bị lại cấu trúc đề…' : state.message}
       </p>
       {state.upload && (
         <progress
@@ -125,12 +127,12 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
                 {state.canonicalStatus === 'failed' && <AlertTriangle className="w-5 h-5 text-danger" />}
               </div>
               <div>
-                <p className="text-xs font-medium text-muted">Trạng thái Blueprint:</p>
+                <p className="text-xs font-medium text-muted">Chuẩn bị cấu trúc đề</p>
                 <p className="text-base font-semibold text-strong" data-testid="canonical-status-text">
-                  {state.canonicalStatus === 'pending' && 'Đang chờ tạo Blueprint'}
-                  {state.canonicalStatus === 'running' && 'Đang tạo Blueprint'}
-                  {state.canonicalStatus === 'ready' && 'Blueprint đã sẵn sàng'}
-                  {state.canonicalStatus === 'failed' && 'Tạo Blueprint thất bại'}
+                  {state.canonicalStatus === 'pending' && 'Đang chờ chuẩn bị cấu trúc đề'}
+                  {state.canonicalStatus === 'running' && 'Đang chuẩn bị cấu trúc đề'}
+                  {state.canonicalStatus === 'ready' && 'Cấu trúc đề đã sẵn sàng'}
+                  {state.canonicalStatus === 'failed' && 'Chưa chuẩn bị được cấu trúc đề'}
                 </p>
                 {state.retryAccepted && (
                   <p className="mt-1 text-xs font-medium text-highlight">
@@ -155,7 +157,7 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
                   disabled={busy}
                   onClick={() => void controller.retryCanonical()}
                 >
-                  Thử tạo lại Blueprint
+                  Thử chuẩn bị lại
                 </button>
               )}
               {state.canonicalReady && (
@@ -165,7 +167,7 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
                   disabled={busy}
                   onClick={() => controller.proceedToStage2()}
                 >
-                  Tiếp tục Stage 2
+                  Tiếp tục cấu hình
                 </button>
               )}
             </div>
@@ -187,8 +189,8 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
           )}
         </div>
       )}
-      <div className="grid min-h-0 flex-1 gap-4 md:grid-cols-2 md:grid-rows-1">
-        <form
+      <div className={`grid min-h-0 flex-1 gap-4 md:grid-rows-1 ${readOnly ? 'grid-cols-1' : 'md:grid-cols-2'}`}>
+        {!readOnly && (<form
           id={`${inputId}-form`}
           aria-label="Nhập nguồn"
           className={`min-h-0 flex-col gap-3 overflow-auto rounded-xl border border-line bg-surface p-4 shadow-soft ${
@@ -246,7 +248,7 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
                 aria-describedby={`${inputId}-help${state.error ? ` ${inputId}-error` : ''}`}
                 aria-invalid={state.cause?.code === 'ERR_INGEST_INPUT'}
                 placeholder="Nhập nội dung đề thi nguồn tại đây..."
-                className="min-h-[10rem] flex-1 resize-y rounded-xl border border-line bg-white p-3.5 text-sm text-strong font-mono focus:border-highlight focus:ring-2 focus:ring-highlight/20 transition-all"
+                className="min-h-[10rem] flex-1 resize-y rounded-xl border border-line bg-white p-3.5 text-sm text-strong leading-relaxed focus:outline-none focus:border-highlight focus:ring-2 focus:ring-highlight/20 transition-all"
               />
             </>
           )}
@@ -275,7 +277,7 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
               type="file"
               accept=".docx,.tex,.md"
               disabled={inputDisabled}
-              className="w-full min-w-0 text-sm text-muted file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border file:border-line file:bg-surface file:text-sm file:font-medium file:text-ink hover:file:bg-rail cursor-pointer"
+              className="w-full min-w-0 text-sm text-muted file:mr-3 file:min-h-11 file:py-1.5 file:px-3 file:rounded-lg file:border file:border-line file:bg-surface file:text-sm file:font-medium file:text-ink hover:file:bg-rail cursor-pointer"
               aria-describedby={`${inputId}-file-help${state.error ? ` ${inputId}-error` : ''}`}
               aria-invalid={state.cause?.code === 'ERR_INGEST_INPUT'}
               onChange={(event) => {
@@ -301,25 +303,25 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
               </button>
             )}
           </div>
-        </form>
+        </form>)}
         <div className={`min-h-0 flex-1 flex-col overflow-auto ${
-          mobileTab === 'preview' ? 'flex' : 'hidden md:flex'
+          readOnly || mobileTab === 'preview' ? 'flex' : 'hidden md:flex'
         }`}>
           {state.unavailable ? (
             <p className="rounded-xl border border-line bg-surface p-6 text-sm text-muted shadow-soft">
               Chưa thể hiển thị nguồn. Hãy kiểm tra lại quyền truy cập phiên.
             </p>
           ) : (
-            <SourceQuestionPreview questions={state.detail.source_questions} versionCount={state.detail.exam_versions?.length ?? 0} />
+            <SourceQuestionPreview questions={state.detail.source_questions} />
           )}
         </div>
       </div>
-      <p id={`${inputId}-confirm-help`} className="shrink-0 text-xs text-muted">
+      {!readOnly && (<p id={`${inputId}-confirm-help`} className="shrink-0 text-xs text-muted">
         {state.retryConfirmation ? 'Chưa thấy kết quả xác nhận. Bạn có thể thử lại lần xác nhận trước.'
           : !readOnly && state.detail.source_questions.length > 0 && !isSourceUuid(state.detail.source_revision)
             ? 'Bản đề này chưa thể xác nhận. Hãy đọc lại nguồn đã lưu.'
             : 'Xác nhận bản đề đang hiển thị. Nếu đã sửa nội dung nhập, hãy nạp lại trước khi xác nhận.'}
-      </p>
+      </p>)}
       <div className="flex shrink-0 flex-wrap items-center gap-2 pt-2 border-t border-line">
         {controller.canRecoverStorage() && (
           <button
@@ -330,18 +332,18 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
             Khôi phục thông tin xác nhận
           </button>
         )}
-        <button
+        {!readOnly && (<button
           type="submit"
           form={`${inputId}-form`}
-          className="rounded-lg bg-highlight px-4 py-2 text-sm font-semibold text-white shadow-soft hover:bg-[#253b57] disabled:opacity-50 transition-colors"
+          className={questionCount > 0 ? buttonClass : 'rounded-xl bg-highlight px-4 py-2 text-sm font-semibold text-white hover:bg-[#253b57] disabled:opacity-50'}
           disabled={!controller.canSubmit()}
         >
           Nạp nguồn
-        </button>
+        </button>)}
         <button type="button" className={buttonClass} disabled={busy} onClick={() => void controller.reload()}>
           {state.confirmationPending ? 'Đọc lại trạng thái phiên' : 'Đọc lại nguồn đã lưu'}
         </button>
-        {!readOnly && (
+        {!readOnly && questionCount > 0 && (
           <button
             type="button"
             className={state.retryConfirmation

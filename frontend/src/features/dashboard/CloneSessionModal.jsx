@@ -277,7 +277,7 @@ export default function CloneSessionModal({
     >
       <div
         ref={modalBoxRef}
-        className="w-full max-w-md rounded-2xl border border-line bg-surface p-6 sm:p-8 shadow-2xl"
+        className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-surface p-6 sm:p-8 shadow-2xl"
       >
         <header className="mb-4">
           <h2 id="clone-modal-title" className="text-xl font-bold text-strong">
@@ -325,7 +325,7 @@ export default function CloneSessionModal({
             />
           </div>
 
-          <footer className="mt-6 flex flex-wrap justify-end gap-3">
+          <footer className="mt-6 flex flex-wrap justify-end gap-3 border-t border-line pt-4">
             <button
               type="button"
               className={secondaryButtonClass}

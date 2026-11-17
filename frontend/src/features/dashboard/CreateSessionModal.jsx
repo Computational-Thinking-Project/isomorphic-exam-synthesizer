@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { BookOpen, GraduationCap, Loader2, Plus, Sparkles, X } from 'lucide-react';
+import { Loader2, Plus, X } from 'lucide-react';
 import { createSession } from '../../services/sessions.js';
 import { createSessionEntryController } from '../stage1-ingestion/sessionEntry.js';
 import { useAuthStore } from '../auth/authStore.js';
 
-const QUICK_GRADES = [10, 11, 12];
+import SessionMetadataFields from '../stage1-ingestion/SessionMetadataFields.jsx';
 
 export default function CreateSessionModal({
   isOpen,
@@ -51,6 +51,7 @@ export default function CreateSessionModal({
   // Focus input when modal opens
   useEffect(() => {
     if (isOpen) {
+      const trigger = document.activeElement;
       setMetadata({ title: '', subject: 'Toán', grade: 12 });
       const timer = setTimeout(() => {
         inputRef.current?.focus();
@@ -58,6 +59,7 @@ export default function CreateSessionModal({
       return () => {
         clearTimeout(timer);
         controller.cancel();
+        if (trigger?.isConnected) trigger.focus();
       };
     }
     controller.cancel();
@@ -80,7 +82,11 @@ export default function CreateSessionModal({
         const focusable = modalBoxRef.current.querySelectorAll(
           'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
         );
-        if (focusable.length === 0) return;
+        if (focusable.length === 0) {
+          event.preventDefault();
+          modalBoxRef.current.focus();
+          return;
+        }
 
         const first = focusable[0];
         const last = focusable[focusable.length - 1];
@@ -125,19 +131,17 @@ export default function CreateSessionModal({
     >
       <div
         ref={modalBoxRef}
-        className="w-full max-w-lg rounded-2xl border border-line bg-surface p-6 sm:p-8 shadow-2xl"
+        tabIndex={-1}
+        className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-line bg-surface p-6 sm:p-8 shadow-2xl"
       >
         <div className="flex items-start justify-between gap-3 mb-5">
           <div className="flex items-center gap-2">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-support-bg text-highlight border border-support-line">
-              <Sparkles className="h-4 w-4" aria-hidden="true" />
-            </span>
             <div>
               <h2 id="create-modal-title" className="text-xl font-bold text-strong">
-                Tạo phiên đề thi mới
+                Tạo bộ đề mới
               </h2>
               <p className="text-xs text-muted">
-                Khởi tạo phiên làm việc để nạp nguồn và bóc tách ma trận đề.
+                Đặt tên bộ đề. Bạn sẽ thêm đề gốc ở bước tiếp theo.
               </p>
             </div>
           </div>
@@ -173,82 +177,12 @@ export default function CreateSessionModal({
         )}
 
         <form onSubmit={handleSubmit} className="space-y-5">
-          {/* Tên phiên */}
-          <div>
-            <label
-              htmlFor="create-session-title"
-              className="block text-sm font-semibold text-strong mb-1.5"
-            >
-              Tên phiên đề thi <span className="text-danger">*</span>
-            </label>
-            <input
-              ref={inputRef}
-              id="create-session-title"
-              type="text"
-              required
-              disabled={creating}
-              value={metadata.title}
-              onChange={(e) => update('title', e.target.value)}
-              placeholder="Ví dụ: Đề kiểm tra Giữa kỳ I Toán 12..."
-              className="w-full rounded-xl border border-zinc-300 bg-white px-3.5 py-2.5 text-sm text-strong placeholder-muted focus:border-highlight focus:outline-none focus:ring-2 focus:ring-highlight/20 transition-all disabled:opacity-50"
-            />
-          </div>
-
-          {/* Môn học: Khóa cố định Toán học */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label
-                className="text-sm font-semibold text-strong inline-flex items-center gap-1.5"
-              >
-                <BookOpen className="h-3.5 w-3.5 text-highlight" aria-hidden="true" />
-                Môn học
-              </label>
-              <span className="text-xs text-muted">Thẩm định đại số SymPy</span>
-            </div>
-
-            <div className="flex items-center justify-between rounded-xl border border-line bg-rail/60 px-4 py-2.5">
-              <div className="flex items-center gap-2.5">
-                <span className="flex h-6 w-6 items-center justify-center rounded-md bg-highlight text-white text-xs font-bold font-mono">
-                  ∑
-                </span>
-                <span className="text-sm font-bold text-strong">
-                  Toán học
-                </span>
-                <span className="rounded-full bg-support-bg border border-support-line px-2 py-0.5 text-[11px] font-semibold text-highlight">
-                  Mặc định hệ thống
-                </span>
-              </div>
-              <span className="text-xs text-muted font-medium">
-                Chuẩn THPT
-              </span>
-            </div>
-          </div>
-
-          {/* Khối lớp */}
-          <div>
-            <label className="text-sm font-semibold text-strong inline-flex items-center gap-1.5 mb-1.5">
-              <GraduationCap className="h-3.5 w-3.5 text-highlight" aria-hidden="true" />
-              Khối lớp
-            </label>
-
-            <div className="grid grid-cols-3 gap-2">
-              {QUICK_GRADES.map((grade) => (
-                <button
-                  key={grade}
-                  type="button"
-                  disabled={creating}
-                  onClick={() => update('grade', grade)}
-                  className={`rounded-xl border py-2 text-center text-sm font-semibold transition-all ${
-                    metadata.grade === grade
-                      ? 'border-highlight bg-support-bg text-highlight shadow-sm ring-1 ring-highlight'
-                      : 'border-zinc-200 bg-white text-muted hover:border-zinc-300 hover:text-strong'
-                  }`}
-                >
-                  Lớp {grade}
-                </button>
-              ))}
-            </div>
-          </div>
+          <SessionMetadataFields
+            metadata={metadata}
+            onChange={update}
+            disabled={creating || state.createUncertain}
+            titleRef={inputRef}
+          />
 
           <footer className="mt-6 flex flex-wrap justify-end gap-3 pt-2 border-t border-line">
             <button
@@ -273,7 +207,7 @@ export default function CreateSessionModal({
               ) : (
                 <>
                   <Plus className="h-4 w-4" aria-hidden="true" />
-                  Tạo phiên ngay
+                  Tạo bộ đề
                 </>
               )}
             </button>

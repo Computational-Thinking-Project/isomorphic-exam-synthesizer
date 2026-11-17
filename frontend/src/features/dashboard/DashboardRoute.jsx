@@ -147,7 +147,7 @@ function DashboardContent({ accountKey }) {
   }
 
   return (
-    <div className="min-h-screen bg-canvas text-ink">
+    <div className="paper-ui min-h-screen bg-canvas text-ink">
       <aside className="sticky top-0 z-30 border-b border-line bg-surface/90 backdrop-blur-sm shadow-soft">
         <div className="mx-auto max-w-[1160px] px-4 sm:px-8 py-3">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -165,10 +165,7 @@ function DashboardContent({ accountKey }) {
                   <p className="truncate text-xs font-bold text-strong max-w-[150px]">
                     {displayName}
                   </p>
-                  <p className="text-[10px] text-muted flex items-center gap-1">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                    Đang hoạt động
-                  </p>
+
                 </div>
               </div>
 
@@ -268,7 +265,7 @@ function DashboardContent({ accountKey }) {
         cloneFn={cloneSessionForDashboard}
       />
 
-      <nav
+      {isPageReady && totalPages > 1 && (<nav
         aria-label="Phân trang phiên đề"
         className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 pt-4 pb-12"
       >
@@ -297,7 +294,7 @@ function DashboardContent({ accountKey }) {
           <span>Sau</span>
           <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
-      </nav>
+      </nav>)}
     </div>
   );
 }
