@@ -304,9 +304,10 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       const isReady = artifact.ready === true && artifact.canonical_status === 'ready';
       let nextPendingCycles = 0;
 
-      if (artifact.canonical_status === 'pending' && (state.retryAccepted || state.retryOutcomeUnknown)) {
-        const cycles = state.retryPendingCycles + 1;
-        // Keep the retry action hidden through five pending polls.
+      if (['pending', 'failed'].includes(artifact.canonical_status)
+          && (state.retryAccepted || state.retryOutcomeUnknown)) {
+        const cycles = (state.retryPendingCycles ?? 0) + 1;
+        // The previous attempt can still report failed before the new producer starts.
         if (cycles <= 5) nextPendingCycles = cycles;
       }
 

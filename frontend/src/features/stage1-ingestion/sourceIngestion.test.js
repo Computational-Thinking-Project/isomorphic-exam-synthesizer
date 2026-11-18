@@ -768,7 +768,7 @@ test('Phillip F03: recovery when canonical GET fails shows uncertainty error, no
   assert.match(controller.getSnapshot().canonicalError, /Không xác định được trạng thái Blueprint/);
 });
 
-test('INT-03: POST retry returns 202 but immediate GET is still failed -> preserves retryAccepted and does not claim failure', async () => {
+test('F91-R06: accepted retry survives stale failed polls before running and ready', async () => {
   let retryCalls = 0;
   let artifactState = { session_id: 'session-a', ready: false, canonical_status: 'failed' };
   const { controller } = confirmationFixture({
@@ -789,12 +789,64 @@ test('INT-03: POST retry returns 202 but immediate GET is still failed -> preser
   assert.equal(controller.getSnapshot().retryAccepted, true, 'retryAccepted must be true after 202');
   assert.equal(controller.getSnapshot().canonicalError, '', 'Must not report error when retry was accepted');
 
-  // Now subsequent GET returns running
+  for (let cycle = 1; cycle <= 2; cycle++) {
+    await controller.checkCanonicalStatus();
+    assert.equal(controller.getSnapshot().canonicalStatus, 'failed');
+    assert.equal(controller.getSnapshot().retryAccepted, true, `Keep waiting on failed poll ${cycle}`);
+    assert.equal(controller.getSnapshot().retryPendingCycles, cycle);
+    await controller.retryCanonical();
+  }
+  assert.equal(retryCalls, 1);
+
   artifactState = { session_id: 'session-a', ready: false, canonical_status: 'running' };
   await controller.checkCanonicalStatus();
   assert.equal(controller.getSnapshot().canonicalStatus, 'running');
   assert.equal(controller.getSnapshot().retryAccepted, false, 'Cleared on running');
+  assert.equal(controller.getSnapshot().retryPendingCycles, 0);
+  assert.equal(controller.getSnapshot().canonicalReady, false);
+
+  artifactState = { session_id: 'session-a', ready: true, canonical_status: 'ready' };
+  await controller.checkCanonicalStatus();
+  assert.equal(controller.getSnapshot().canonicalReady, true);
 });
+
+for (const responseLost of [false, true]) {
+  const retryFlag = responseLost ? 'retryOutcomeUnknown' : 'retryAccepted';
+  test(`F91-R06: ${retryFlag} expires on the sixth unresolved poll`, async () => {
+    let posts = 0;
+    let status = 'failed';
+    const { controller } = confirmationFixture({
+      initialDetail: detail({ status: 'blueprinted', source_revision: revA }),
+      readArtifacts: async () => ({ session_id: 'session-a', canonical_status: status, ready: false }),
+      retryArtifacts: async () => {
+        posts++;
+        if (responseLost) throw new Error('Retry response lost');
+        return { session_id: 'session-a', canonical_status: 'failed', ready: false };
+      },
+    });
+
+    await controller.checkCanonicalStatus();
+    await controller.retryCanonical();
+    assert.equal(controller.getSnapshot()[retryFlag], true);
+    assert.equal(controller.getSnapshot().retryPendingCycles, 0);
+
+    for (let cycle = 1; cycle <= 5; cycle++) {
+      status = responseLost && cycle % 2 === 0 ? 'pending' : 'failed';
+      await controller.checkCanonicalStatus();
+      assert.equal(controller.getSnapshot()[retryFlag], true, `Keep waiting on ${status} poll ${cycle}`);
+      assert.equal(controller.getSnapshot().retryPendingCycles, cycle);
+      await controller.retryCanonical();
+    }
+
+    await controller.checkCanonicalStatus();
+    assert.equal(controller.getSnapshot().retryAccepted, false);
+    assert.equal(controller.getSnapshot().retryOutcomeUnknown, false);
+    assert.equal(controller.getSnapshot().retryPendingCycles, 0);
+    assert.equal(posts, 1);
+    await controller.retryCanonical();
+    assert.equal(posts, 2);
+  });
+}
 
 test('INT-03: POST retry succeeds but subsequent GET throws 503 -> preserves accepted state and reports status check error', async () => {
   let readAttempts = 0;
