@@ -271,9 +271,14 @@ export default function Stage3ReviewPage({
       }
 
       const httpStatus = err?.response?.status ?? err?.status;
-      const errCode = err?.response?.data?.error_code || err?.response?.data?.code;
+      const errCode =
+        err?.response?.data?.error_code ??
+        err?.response?.data?.code ??
+        err?.errorCode;
       const isLocked423 = httpStatus === 423 || errCode === 'ERR_SESSION_LOCKED';
-      const isShuffle409 = httpStatus === 409 || errCode === 'ERR_SHUFFLE_REQUIRED' || errCode === 'ERR_STAGE_FINALIZING';
+      const isShuffle409 =
+        httpStatus === 409 &&
+        ['ERR_SHUFFLE_REQUIRED', 'ERR_STAGE_FINALIZING'].includes(errCode);
 
       if (isShuffle409) {
         setIsShuffle409(true);
@@ -440,11 +445,13 @@ export default function Stage3ReviewPage({
     });
   }, [session]);
 
-  const isContentLocked = ['approved', 'exported'].includes(session?.status) || Boolean(session?.read_only);
+  const isFinalLocked = ['approved', 'exported'].includes(session?.status);
+  const isReviewReadOnly = isFinalLocked || Boolean(session?.read_only);
+  const canRetryPartial = session?.status === 'partial_generated' && !isFinalLocked;
 
   // Xử lý Tạo lại câu hỏi trong SolutionDialog (Reject & Targeted Regeneration)
   const handleRegenerateSingle = useCallback(async () => {
-    if (!selectedSolution?.variant || isRegeneratingSingle || isContentLocked) return;
+    if (!selectedSolution?.variant || isRegeneratingSingle || isReviewReadOnly) return;
     const { variant, qNo, versionIndex } = selectedSolution;
     const targetQId = variant.candidate_id || variant.id || variant.question_id;
     if (!targetQId) {
@@ -620,11 +627,11 @@ export default function Stage3ReviewPage({
         setIsRegeneratingSingle(false);
       }
     }
-  }, [selectedSolution, isRegeneratingSingle, isContentLocked, regenerateQuestionFn, sessionId, updateVariantInSession, loadSession]);
+  }, [selectedSolution, isRegeneratingSingle, isReviewReadOnly, regenerateQuestionFn, sessionId, updateVariantInSession, loadSession]);
 
   // Xử lý Duyệt biến thể trong SolutionDialog
   const handleApproveSingle = useCallback(async () => {
-    if (!selectedSolution?.variant || isApprovingSingle || isContentLocked) return;
+    if (!selectedSolution?.variant || isApprovingSingle || isReviewReadOnly) return;
     const { variant, qNo, versionIndex } = selectedSolution;
     const targetQId = variant.candidate_id || variant.id || variant.question_id;
     if (!targetQId) {
@@ -749,11 +756,11 @@ export default function Stage3ReviewPage({
     setIsRevertingSingle(false);
       }
     }
-  }, [selectedSolution, isApprovingSingle, isContentLocked, acceptQuestionFn, sessionId, updateVariantInSession, loadSession]);
+  }, [selectedSolution, isApprovingSingle, isReviewReadOnly, acceptQuestionFn, sessionId, updateVariantInSession, loadSession]);
 
   // Xử lý Khôi phục đề gốc (Revert candidate)
   const handleRevertSingle = useCallback(async () => {
-    if (!selectedSolution?.variant || isRevertingSingle || isContentLocked) return;
+    if (!selectedSolution?.variant || isRevertingSingle || isReviewReadOnly) return;
     const { variant, qNo, versionIndex } = selectedSolution;
     const targetQId = variant.candidate_id || variant.id || variant.question_id;
     if (!targetQId) {
@@ -900,10 +907,10 @@ export default function Stage3ReviewPage({
         setIsRevertingSingle(false);
       }
     }
-  }, [selectedSolution, isRevertingSingle, isContentLocked, revertQuestionFn, sessionId, session, updateVariantInSession, loadSession]);
+  }, [selectedSolution, isRevertingSingle, isReviewReadOnly, revertQuestionFn, sessionId, session, updateVariantInSession, loadSession]);
 
   const handleRetryAllMissing = async () => {
-    if (isContentLocked) return;
+    if (!canRetryPartial || isRetryingAll) return;
     const currentOp = ++retryOperationRef.current;
     const targetSessionId = sessionId;
 
@@ -1032,7 +1039,7 @@ export default function Stage3ReviewPage({
   }, [sessionId, activeVersionTab, reviewFilter, selectedSolution?.qNo]);
 
   const isFinalizeDisabled =
-    totalExpectedSlots === 0 || approvedCount < totalExpectedSlots || isPartial || isApprovingSingle || isRegeneratingSingle || isRetryingAll;
+    totalExpectedSlots === 0 || approvedCount < totalExpectedSlots || isPartial || isReviewReadOnly || isApprovingSingle || isRegeneratingSingle || isRetryingAll;
 
   const isSelectedVariantApproved = useMemo(() => {
     if (!selectedSolution?.variant) return false;
@@ -1177,7 +1184,7 @@ export default function Stage3ReviewPage({
 
         {/* Nút xuất bản / phê duyệt header */}
         <div className="flex items-center gap-2">
-          {isContentLocked ? (
+          {isFinalLocked ? (
             <button
               type="button"
               data-testid="stage3-btn-goto-export"
@@ -1187,7 +1194,7 @@ export default function Stage3ReviewPage({
               <Lock className="h-3.5 w-3.5" />
               Tới màn hình Xuất bản
             </button>
-          ) : isPartial && hasLoadedAnyVariants && totalLoadedVariants < totalExpectedSlots ? (
+          ) : canRetryPartial && hasLoadedAnyVariants && totalLoadedVariants < totalExpectedSlots ? (
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -1222,7 +1229,7 @@ export default function Stage3ReviewPage({
       )}
 
       {/* Cảnh báo phiên đã khóa nội dung (approved / exported) */}
-      {isContentLocked && (
+      {isFinalLocked && (
         <div
           role="status"
           data-testid="stage3-banner-locked"
@@ -1395,7 +1402,7 @@ export default function Stage3ReviewPage({
                   <button
                     type="button"
                     onClick={handleRetryAllMissing}
-                    disabled={isRetryingAll || isContentLocked}
+                    disabled={isRetryingAll || !canRetryPartial}
                     className="inline-flex items-center gap-1.5 rounded-xl border border-accent-border bg-accent-soft px-3.5 py-1.5 text-xs font-semibold text-strong hover:bg-accent disabled:opacity-50 transition-colors"
                   >
                     {isRetryingAll ? (
@@ -1657,14 +1664,14 @@ export default function Stage3ReviewPage({
                     </section>
                   </div>
 
-                  {!isContentLocked && (
+                  {!isReviewReadOnly && (
                     <div className="review-popup-actions flex flex-wrap items-center justify-end gap-3 border-t border-line bg-surface px-6 py-4">
                       {/* Nút Khôi phục đề gốc (data-review-revert) */}
                       {Boolean(session?.confirmation_id && session?.job_snapshot_id && (selectedSolution?.variant?.candidate_id || selectedSolution?.variant?.id || selectedSolution?.variant?.question_id)) && (
                         <button
                           type="button"
                           data-review-revert={true}
-                          disabled={isRegeneratingSingle || isApprovingSingle || isRevertingSingle || isContentLocked}
+                          disabled={isRegeneratingSingle || isApprovingSingle || isRevertingSingle || isReviewReadOnly}
                           onClick={handleRevertSingle}
                           className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-rail px-4 py-2.5 text-xs font-semibold text-ink hover:bg-support-bg hover:text-strong disabled:opacity-50"
                         >
@@ -1686,7 +1693,7 @@ export default function Stage3ReviewPage({
                       <button
                         type="button"
                         data-review-regenerate={true}
-                        disabled={isRegeneratingSingle || isApprovingSingle || isRevertingSingle || isContentLocked || !(selectedSolution?.variant?.candidate_id || selectedSolution?.variant?.id || selectedSolution?.variant?.question_id)}
+                        disabled={isRegeneratingSingle || isApprovingSingle || isRevertingSingle || isReviewReadOnly || !(selectedSolution?.variant?.candidate_id || selectedSolution?.variant?.id || selectedSolution?.variant?.question_id)}
                         onClick={() => { if (!isSelectedVariantApproved || window.confirm('Tạo lại sẽ thay nội dung và cần duyệt lại câu này. Tiếp tục?')) void handleRegenerateSingle(); }}
                         className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-rail px-4 py-2.5 text-xs font-semibold text-ink hover:bg-rail hover:text-strong disabled:opacity-50"
                       >
@@ -1707,7 +1714,7 @@ export default function Stage3ReviewPage({
                       <button
                         type="button"
                         data-review-approve={true}
-                        disabled={isRegeneratingSingle || isApprovingSingle || isRevertingSingle || isSelectedVariantApproved || isContentLocked || !(selectedSolution?.variant?.candidate_id || selectedSolution?.variant?.id || selectedSolution?.variant?.question_id)}
+                        disabled={isRegeneratingSingle || isApprovingSingle || isRevertingSingle || isSelectedVariantApproved || isReviewReadOnly || !(selectedSolution?.variant?.candidate_id || selectedSolution?.variant?.id || selectedSolution?.variant?.question_id)}
                         onClick={handleApproveSingle}
                         className={`inline-flex items-center gap-1.5 rounded-xl px-5 py-2.5 text-xs font-semibold shadow-soft transition-all ${
                           isSelectedVariantApproved
@@ -1768,7 +1775,7 @@ export default function Stage3ReviewPage({
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {isPartial && !isContentLocked && (
+            {canRetryPartial && (
               <button
                 type="button"
                 disabled={isRetryingAll}
