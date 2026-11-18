@@ -1878,17 +1878,17 @@ test('F91-04 / S86-C: POST trả lỗi, GET đối soát xác nhận 409 ERR_SHU
   }
 });
 
-test('F91-04 / S86-D: late GET/POST response sau khi đổi session không cập nhật session mới', async () => {
+test('F91-04 / S86-D: late shuffle POST for session A leaves session B unchanged', async () => {
   const originalGet = api.get;
   const originalPatch = api.patch;
   const originalPost = api.post;
 
-  let resolvePostA;
-  const pendingPostA = new Promise((resolve) => {
-    resolvePostA = resolve;
-  });
+  const postStarted = Promise.withResolvers();
+  const postResponse = Promise.withResolvers();
+  const previewReads = [];
 
   api.get = async (url) => {
+    previewReads.push(url);
     if (url.includes('session-A')) {
       return {
         data: {
@@ -1911,12 +1911,9 @@ test('F91-04 / S86-D: late GET/POST response sau khi đổi session không cập
 
   api.patch = async () => ({ data: { success: true } });
 
-  api.post = async (url) => {
-    if (url.includes('session-A')) {
-      await pendingPostA;
-      return { data: { session_id: 'session-A', is_finalized: true } };
-    }
-    return { data: {} };
+  api.post = (url) => {
+    postStarted.resolve(url);
+    return postResponse.promise;
   };
 
   const harness = renderPreviewPage('session-A');
@@ -1926,21 +1923,28 @@ test('F91-04 / S86-D: late GET/POST response sau khi đổi session không cập
     const applyBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
     assert.ok(applyBtn);
 
-    // Kích hoạt shuffle cho session A (đang pending)
-    let shufflePromise;
     await act(async () => {
-      shufflePromise = applyBtn.click();
+      applyBtn.click();
+    });
+    assert.equal(await postStarted.promise, '/sessions/session-A/finalize/shuffle');
+
+    await harness.navigate('/session/session-B/stage3/preview');
+    const sessionBView = harness.container.textContent;
+    assert.ok(harness.container.querySelector('[data-testid="btn-shuffle"]'));
+
+    // Resolve and flush the response inside act so its async handler can run.
+    await act(async () => {
+      postResponse.resolve({ data: { session_id: 'session-A', is_finalized: true } });
+      await postResponse.promise;
     });
 
-    // Chuyển sang session B
-    await harness.navigate('/session/session-B/stage3/preview');
-
-    // Bây giờ cho request A hoàn thành
-    resolvePostA();
-    await shufflePromise;
-
-    // Session B không được hiển thị là finalized của A
-    assert.equal(harness.container.textContent.includes('Bản xem trước — Mã đề 101'), false);
+    assert.equal(harness.getLocation(), '/session/session-B/stage3/preview');
+    assert.equal(harness.container.textContent, sessionBView);
+    assert.equal(harness.container.querySelector('[data-testid="btn-shuffle"]').getAttribute('disabled'), null);
+    assert.deepEqual(previewReads, [
+      '/sessions/session-A/finalize/preview',
+      '/sessions/session-B/finalize/preview',
+    ]);
   } finally {
     api.get = originalGet;
     api.patch = originalPatch;

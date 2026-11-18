@@ -40,8 +40,9 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
     pendingFocus.current = null;
     if (controller.canSubmit()) target?.focus();
   }, [controller, state.mode, dismissedCause]);
+  const retryInProgress = state.retryAccepted || state.retryOutcomeUnknown;
   const preparing = state.detail.status === 'blueprinted' && !state.canonicalReady
-    && (!state.canonicalStatus || ['pending', 'running'].includes(state.canonicalStatus) || state.retryAccepted)
+    && (!state.canonicalStatus || ['pending', 'running'].includes(state.canonicalStatus) || retryInProgress)
     && !state.unavailable;
   useEffect(() => {
     if (!preparing) return;
@@ -148,15 +149,17 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
                   {state.canonicalStatus === 'ready' && 'Cấu trúc đề đã sẵn sàng'}
                   {state.canonicalStatus === 'failed' && 'Chưa chuẩn bị được cấu trúc đề'}
                 </p>
-                {state.retryAccepted && (
+                {retryInProgress && (
                   <p className="mt-1 text-xs font-medium text-highlight">
-                    Đã tiếp nhận yêu cầu tạo lại. Tiến độ sẽ tự cập nhật.
+                    {state.retryOutcomeUnknown
+                      ? 'Đang kiểm tra kết quả yêu cầu tạo lại. Tiến độ sẽ tự cập nhật.'
+                      : 'Đã tiếp nhận yêu cầu tạo lại. Tiến độ sẽ tự cập nhật.'}
                   </p>
                 )}
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {((state.canonicalStatus === 'failed') || (state.canonicalStatus === 'pending' && !state.canonicalReady)) && !state.retryAccepted && (
+              {((state.canonicalStatus === 'failed') || (state.canonicalStatus === 'pending' && !state.canonicalReady)) && !retryInProgress && (
                 <button
                   type="button"
                   className={`${buttonClass} border-danger/30 text-danger hover:bg-danger-soft`}
@@ -179,10 +182,10 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
             </div>
           </div>
           <div className="mt-4 space-y-2">
-            <progress aria-label="Tiến độ chuẩn bị cấu trúc đề" max="100" value={state.canonicalStatus === 'failed' && !state.retryAccepted ? (progressPercent ?? 0) : progressPercent}
+            <progress aria-label="Tiến độ chuẩn bị cấu trúc đề" max="100" value={state.canonicalStatus === 'failed' && !retryInProgress ? (progressPercent ?? 0) : progressPercent}
               className="h-2 w-full overflow-hidden rounded-full accent-highlight [&::-webkit-progress-bar]:bg-rail [&::-webkit-progress-value]:bg-highlight [&::-moz-progress-bar]:bg-highlight" />
             <p role="status" className="text-xs text-muted">
-              {state.canonicalReady ? 'Hoàn tất · 100%' : state.canonicalStatus === 'failed' && !state.retryAccepted
+              {state.canonicalReady ? 'Hoàn tất · 100%' : state.canonicalStatus === 'failed' && !retryInProgress
                 ? 'Chuẩn bị chưa thành công. Hãy thử lại.'
                 : measuredProgress ? `${Math.min(progress.completed, progress.total)}/${progress.total} câu đã chuẩn bị`
                   : 'Đang chuẩn bị cấu trúc đề. Tiến độ sẽ tự cập nhật.'}

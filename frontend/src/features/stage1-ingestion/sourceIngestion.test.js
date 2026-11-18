@@ -813,16 +813,24 @@ test('INT-03: POST retry succeeds but subsequent GET throws 503 -> preserves acc
   assert.match(controller.getSnapshot().canonicalError, /Đã tiếp nhận yêu cầu tạo lại nhưng chưa đọc được trạng thái/);
 });
 
-test('INT-03: POST retry throws 503 -> does not claim acceptance', async () => {
+test('F91-R01: HTTP rejection leaves retry available without outcome-unknown polling', async () => {
+  let reads = 0;
   const { controller } = confirmationFixture({
     initialDetail: detail({ status: 'blueprinted', source_revision: revA }),
-    readArtifacts: async () => ({ session_id: 'session-a', ready: false, canonical_status: 'failed' }),
+    readArtifacts: async () => {
+      reads++;
+      return { session_id: 'session-a', ready: false, canonical_status: 'pending' };
+    },
     retryArtifacts: async () => {
       throw Object.assign(new Error('Service Unavailable'), { response: { status: 503 } });
     },
   });
+  await controller.checkCanonicalStatus();
   await controller.retryCanonical();
+  assert.equal(reads, 1);
+  assert.equal(controller.getSnapshot().canonicalStatus, 'pending');
   assert.equal(controller.getSnapshot().retryAccepted, false);
+  assert.equal(controller.getSnapshot().retryOutcomeUnknown, false);
   assert.match(controller.getSnapshot().canonicalError, /Không thể thử lại tạo Blueprint/);
 });
 
@@ -838,6 +846,71 @@ test('F91-03 / S87-E: POST retry gặp network error nhưng server-side đã run
   assert.equal(controller.getSnapshot().canonicalStatus, 'running');
   assert.equal(controller.getSnapshot().canonicalError, '');
   assert.equal(controller.getSnapshot().retryAccepted, false);
+});
+
+test('F91-R01: timed-out retry stays hidden through pending polls, then running and ready reconcile', async () => {
+  let status = 'pending';
+  let posts = 0;
+  const { controller } = confirmationFixture({
+    initialDetail: detail({ status: 'blueprinted', source_revision: revA }),
+    retryArtifacts: async () => {
+      posts++;
+      throw new Error('POST retry timed out');
+    },
+    readArtifacts: async () => ({
+      canonical_status: status,
+      ready: status === 'ready',
+      completed_count: status === 'ready' ? 3 : 0,
+      total_questions: 3,
+      supported_modes: status === 'ready' ? ['NUMERICAL'] : null,
+    }),
+  });
+
+  await controller.checkCanonicalStatus();
+  await controller.retryCanonical();
+  assert.equal(controller.getSnapshot().canonicalStatus, 'pending');
+  assert.equal(controller.getSnapshot().retryAccepted, false);
+  assert.equal(controller.getSnapshot().retryOutcomeUnknown, true);
+  assert.equal(controller.getSnapshot().canonicalError, '');
+  for (let cycle = 1; cycle <= 4; cycle++) {
+    await controller.checkCanonicalStatus();
+    assert.equal(controller.getSnapshot().retryOutcomeUnknown, true);
+    await controller.retryCanonical();
+  }
+  assert.equal(posts, 1);
+
+  status = 'running';
+  await controller.checkCanonicalStatus();
+  assert.equal(controller.getSnapshot().canonicalStatus, 'running');
+  assert.equal(controller.getSnapshot().retryOutcomeUnknown, false);
+  status = 'ready';
+  await controller.checkCanonicalStatus();
+  assert.equal(controller.getSnapshot().canonicalReady, true);
+  assert.deepEqual(controller.getSnapshot().detail.blueprint_summary.supported_modes, ['NUMERICAL']);
+});
+
+test('F91-R01: timed-out retry becomes available on the sixth pending poll', async () => {
+  let posts = 0;
+  const { controller } = confirmationFixture({
+    initialDetail: detail({ status: 'blueprinted', source_revision: revA }),
+    retryArtifacts: async () => {
+      posts++;
+      throw new Error('POST retry timed out');
+    },
+    readArtifacts: async () => ({ canonical_status: 'pending', ready: false }),
+  });
+
+  await controller.checkCanonicalStatus();
+  await controller.retryCanonical();
+  for (let cycle = 1; cycle <= 5; cycle++) {
+    await controller.checkCanonicalStatus();
+    assert.equal(controller.getSnapshot().retryOutcomeUnknown, true);
+  }
+  await controller.checkCanonicalStatus();
+  assert.equal(controller.getSnapshot().retryOutcomeUnknown, false);
+  assert.equal(controller.getSnapshot().canonicalStatus, 'pending');
+  await controller.retryCanonical();
+  assert.equal(posts, 2);
 });
 
 test('F91-03 / S87-A: Retry khi pending -> 3-5 lần GET tiếp vẫn pending: retryAccepted vẫn giữ true, không reset về false ngay', async () => {

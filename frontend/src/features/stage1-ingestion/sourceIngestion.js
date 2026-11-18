@@ -52,6 +52,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     canonicalError: '',
     canonicalProgress: null,
     retryAccepted: false,
+    retryOutcomeUnknown: false,
     isInputDirty: false,
   };
   const listeners = new Set();
@@ -127,6 +128,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       canonicalReady,
       canonicalError,
       retryAccepted: false,
+      retryOutcomeUnknown: false,
     });
   }
 
@@ -300,22 +302,12 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       const artifact = await readArtifacts(id, { signal: operation.signal });
       if (!operation.current()) return;
       const isReady = artifact.ready === true && artifact.canonical_status === 'ready';
-      let nextRetryAccepted = false;
       let nextPendingCycles = 0;
 
-      if (artifact.canonical_status === 'pending') {
-        if (state.retryAccepted) {
-          const cycles = (state.retryPendingCycles || 0) + 1;
-          // F91-03 / S87-A: Giữ retryAccepted trong số chu kỳ polling hữu hạn (tối đa 5 chu kỳ ~ 10s)
-          if (cycles <= 5) {
-            nextRetryAccepted = true;
-            nextPendingCycles = cycles;
-          } else {
-            // S87-C: Quá 5 chu kỳ pending không đổi trạng thái -> cho phép người dùng thử lại
-            nextRetryAccepted = false;
-            nextPendingCycles = 0;
-          }
-        }
+      if (artifact.canonical_status === 'pending' && (state.retryAccepted || state.retryOutcomeUnknown)) {
+        const cycles = state.retryPendingCycles + 1;
+        // Keep the retry action hidden through five pending polls.
+        if (cycles <= 5) nextPendingCycles = cycles;
       }
 
       publish({
@@ -324,7 +316,8 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
         canonicalProgress: { completed: artifact.completed_count, total: artifact.total_questions },
         canonicalReady: isReady,
         canonicalError: '',
-        retryAccepted: nextRetryAccepted,
+        retryAccepted: nextPendingCycles > 0 && state.retryAccepted,
+        retryOutcomeUnknown: nextPendingCycles > 0 && state.retryOutcomeUnknown,
         retryPendingCycles: nextPendingCycles,
         ...(isReady ? {
           detail: {
@@ -350,92 +343,62 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
   }
 
   async function retryCanonical() {
-    if (busy() || !isCurrent() || !retryArtifacts) return;
+    if (busy() || !isCurrent() || !retryArtifacts || state.retryAccepted || state.retryOutcomeUnknown) return;
     const operation = begin();
     publish({ phase: 'retrying_canonical', canonicalError: '' });
+    let outcomeUnknown = false;
     try {
       await retryArtifacts(id, { signal: operation.signal });
+    } catch (cause) {
       if (!operation.current()) return;
-      let retryAccepted = true;
-      let cStatus = state.canonicalStatus;
-      let cReady = false;
-      let cError = '';
-      let updatedDetail = state.detail;
-      if (readArtifacts) {
-        try {
-          const artifact = await readArtifacts(id, { signal: operation.signal });
-          if (!operation.current()) return;
-          if (artifact.canonical_status === 'running') {
-            retryAccepted = false;
-            cStatus = 'running';
-          } else if (artifact.canonical_status === 'ready' && artifact.ready === true) {
-            retryAccepted = false;
-            cStatus = 'ready';
-            cReady = true;
-            updatedDetail = {
-              ...state.detail,
-              blueprint_summary: {
-                ...(state.detail.blueprint_summary || {}),
-                is_ready: true,
-                supported_modes: artifact.supported_modes,
-                total_questions: artifact.total_questions,
-              },
-            };
-          } else if (artifact.canonical_status === 'failed') {
-            retryAccepted = true;
-            cStatus = 'failed';
-          } else if (artifact.canonical_status === 'pending') {
-            retryAccepted = true;
-            cStatus = 'pending';
-          }
-        } catch {
-          if (!operation.current()) return;
-          retryAccepted = true;
-          cError = 'Đã tiếp nhận yêu cầu tạo lại nhưng chưa đọc được trạng thái. Vui lòng kiểm tra lại.';
-        }
+      if (cause?.response?.status) {
+        publish({
+          phase: 'idle',
+          canonicalError: 'Không thể thử lại tạo Blueprint. Vui lòng kiểm tra lại.',
+        });
+        return;
       }
-      publish({
-        phase: 'idle',
-        canonicalStatus: cStatus,
-        canonicalReady: cReady,
-        canonicalError: cError,
-        retryAccepted,
-        retryPendingCycles: 0,
-        message: retryAccepted ? 'Đã tiếp nhận yêu cầu tạo lại Blueprint.' : state.message,
-        detail: updatedDetail,
-      });
-    } catch {
-      if (!operation.current()) return;
-      // S87-E: POST retry network error or failure - attempt read-only reconciliation before declaring failure
-      if (readArtifacts) {
-        try {
-          const artifact = await readArtifacts(id, { signal: operation.signal });
-          if (operation.current() && artifact) {
-            const isReady = artifact.ready === true && artifact.canonical_status === 'ready';
-            if (artifact.canonical_status === 'running' || isReady) {
-              publish({
-                phase: 'idle',
-                canonicalStatus: artifact.canonical_status,
-                canonicalProgress: { completed: artifact.completed_count, total: artifact.total_questions },
-                canonicalReady: isReady,
-                canonicalError: '',
-                retryAccepted: false,
-                retryPendingCycles: 0,
-              });
-              return;
-            }
-          }
-        } catch {
-          // both retry and read failed
-        }
-      }
-      publish({
-        phase: 'idle',
-        retryAccepted: false,
-        retryPendingCycles: 0,
-        canonicalError: 'Không thể thử lại tạo Blueprint. Vui lòng kiểm tra lại.',
-      });
+      outcomeUnknown = true;
     }
+    if (!operation.current()) return;
+    let artifact;
+    let canonicalError = '';
+    if (readArtifacts) {
+      try {
+        artifact = await readArtifacts(id, { signal: operation.signal });
+      } catch {
+        canonicalError = outcomeUnknown
+          ? 'Chưa đọc được trạng thái chuẩn bị đề. Hệ thống sẽ tự kết nối lại.'
+          : 'Đã tiếp nhận yêu cầu tạo lại nhưng chưa đọc được trạng thái. Vui lòng kiểm tra lại.';
+      }
+    }
+    if (!operation.current()) return;
+    const isReady = artifact?.canonical_status === 'ready' && artifact.ready === true;
+    const awaitingProducer = artifact?.canonical_status !== 'running' && !isReady;
+    publish({
+      phase: 'idle',
+      canonicalStatus: artifact?.canonical_status ?? state.canonicalStatus,
+      canonicalReady: isReady,
+      canonicalError,
+      retryAccepted: awaitingProducer && !outcomeUnknown,
+      retryOutcomeUnknown: awaitingProducer && outcomeUnknown,
+      retryPendingCycles: 0,
+      ...(awaitingProducer && !outcomeUnknown ? { message: 'Đã tiếp nhận yêu cầu tạo lại Blueprint.' } : {}),
+      ...(artifact ? {
+        canonicalProgress: { completed: artifact.completed_count, total: artifact.total_questions },
+      } : {}),
+      ...(isReady ? {
+        detail: {
+          ...state.detail,
+          blueprint_summary: {
+            ...(state.detail.blueprint_summary || {}),
+            is_ready: true,
+            supported_modes: artifact.supported_modes,
+            total_questions: artifact.total_questions,
+          },
+        },
+      } : {}),
+    });
   }
 
   function proceedToStage2() {
