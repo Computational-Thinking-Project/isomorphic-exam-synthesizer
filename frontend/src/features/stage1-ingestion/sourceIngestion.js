@@ -50,6 +50,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     canonicalStatus: initialCanonicalStatus,
     canonicalReady: initialCanonicalReady,
     canonicalError: '',
+    canonicalProgress: null,
     retryAccepted: false,
   };
   const listeners = new Set();
@@ -287,6 +288,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       publish({
         phase: 'idle',
         canonicalStatus: artifact.canonical_status,
+        canonicalProgress: { completed: artifact.completed_count, total: artifact.total_questions },
         canonicalReady: isReady,
         canonicalError: '',
         retryAccepted: false,
@@ -302,12 +304,13 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
           },
         } : {}),
       });
-    } catch {
+    } catch (cause) {
       if (!operation.current()) return;
       publish({
         phase: 'idle',
         canonicalReady: false,
-        canonicalError: 'Không xác định được trạng thái Blueprint. Vui lòng kiểm tra lại.',
+        unavailable: isUnavailable(cause?.response?.status),
+        canonicalError: 'Chưa cập nhật được tiến độ. Hệ thống sẽ tự kết nối lại.',
       });
     }
   }

@@ -23,48 +23,47 @@ import {
 const STATUS_CONFIGS = {
   analyzing: {
     label: 'Đang phân tích',
-    badgeClass: 'bg-purple-950/60 text-purple-300 border-purple-700/60',
+    badgeClass: 'bg-support-bg text-highlight border-support-line',
     icon: Search,
   },
   generating: {
     label: 'Đang soạn nội dung',
-    badgeClass: 'bg-sky-950/60 text-sky-300 border-sky-700/60',
+    badgeClass: 'bg-support-bg text-highlight border-support-line',
     icon: Loader2,
     spin: true,
   },
   validating: {
     label: 'Đang kiểm tra',
-    badgeClass: 'bg-amber-950/60 text-amber-300 border-amber-700/60',
+    badgeClass: 'bg-accent-soft text-accent-ink border-accent-border',
     icon: Search,
   },
   retrying: {
     label: 'Đang tinh chỉnh',
-    badgeClass: 'bg-orange-950/60 text-orange-300 border-orange-700/60',
+    badgeClass: 'bg-accent-soft text-accent-ink border-accent-border',
     icon: RefreshCw,
     spin: true,
   },
   done: {
     label: 'Hoàn thành',
-    badgeClass: 'bg-emerald-950/60 text-emerald-300 border-emerald-700/60',
+    badgeClass: 'bg-approved-bg text-approved-ink border-approved-border',
     icon: CheckCircle,
   },
   missing: {
     label: 'Chưa sinh',
-    badgeClass: 'bg-rose-950/60 text-rose-300 border-rose-700/60',
+    badgeClass: 'bg-danger-soft text-danger border-danger-border',
     icon: AlertCircle,
   },
   pending: {
     label: 'Chờ xử lý',
-    badgeClass: 'bg-slate-800/80 text-slate-400 border-slate-700',
+    badgeClass: 'bg-rail text-muted border-line',
     icon: Clock,
   },
 };
 
 export default function GenerationProgressView({
-  sessionId,
   sessionTitle = '',
   numVersions = null,
-  totalSourceQuestions = 10,
+  totalSourceQuestions = null,
   progress = null,
   questionStatuses = {},
   warnings = [],
@@ -89,7 +88,7 @@ export default function GenerationProgressView({
     numVersions || (maxVersionFromStatuses && maxVersionFromStatuses > 0 ? maxVersionFromStatuses : null);
 
   const [activeVersionTab, setActiveVersionTab] = useState(1);
-  const totalVariants = effectiveNumVersions ? effectiveNumVersions * totalSourceQuestions : null;
+  const totalVariants = effectiveNumVersions && totalSourceQuestions ? effectiveNumVersions * totalSourceQuestions : null;
 
   // F02: Phân biệt rõ ràng giữa "Chưa có dữ liệu snapshot" và "Đã xác nhận chưa lưu câu nào (0/4)"
   const hasSnapshotData = Boolean(
@@ -107,16 +106,6 @@ export default function GenerationProgressView({
     Boolean(progress?.is_partial) ||
     (isDone && (progress?.percent ?? 100) < 100);
 
-  // Auto redirect sau khi hoàn tất 1.5 giây — CHỈ KHI sinh đủ 100% đề (không partial_generated)
-  useEffect(() => {
-    if (isDone && !isPartial && onComplete) {
-      const timer = setTimeout(() => {
-        onComplete();
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
-  }, [isDone, isPartial, onComplete]);
-
   // Đảm bảo tab mã đề luôn hợp lệ nếu số lượng mã đề thay đổi
   useEffect(() => {
     if (effectiveNumVersions && activeVersionTab > effectiveNumVersions) {
@@ -125,20 +114,17 @@ export default function GenerationProgressView({
   }, [effectiveNumVersions, activeVersionTab]);
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="paper-ui mx-auto max-w-5xl space-y-6">
       {/* Khối Header trạng thái kết nối & tiến độ tổng quát */}
-      <div className="rounded-2xl border border-slate-700 bg-slate-900/90 p-6 shadow-xl backdrop-blur-sm sm:p-8">
+      <div className="rounded-2xl border border-line bg-surface p-6 shadow-paper backdrop-blur-sm sm:p-8">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
-              <span className="rounded-full bg-sky-500/20 px-3 py-1 text-xs font-semibold text-sky-300">
-                Giai đoạn 2: Tiến trình sinh đề AI
-              </span>
-              <span className="text-xs text-slate-400">
-                Mã phiên: {sessionId}
+              <span className="rounded-full bg-support-bg px-3 py-1 text-xs font-semibold text-highlight">
+                Bước 2 · Đang tạo mã đề
               </span>
             </div>
-            <h2 className="mt-2 text-2xl font-bold tracking-tight text-white">
+            <h2 className="mt-2 text-2xl font-bold tracking-tight text-strong">
               {sessionTitle || 'Đang tạo các biến thể đề thi'}
             </h2>
           </div>
@@ -146,26 +132,26 @@ export default function GenerationProgressView({
           {/* Badge trạng thái kết nối thời gian thực SSE */}
           <div className="flex items-center gap-2">
             {connectionState === 'connected' && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-950/40 px-3 py-1 text-xs font-medium text-emerald-300">
-                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-approved-border bg-approved-bg px-3 py-1 text-xs font-medium text-approved-ink">
+                <span className="h-2 w-2 rounded-full bg-approved-ink animate-pulse" />
                 Kết nối thời gian thực
               </span>
             )}
             {connectionState === 'reconnecting' && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-950/40 px-3 py-1 text-xs font-medium text-amber-300">
-                <Loader2 className="h-3 w-3 animate-spin text-amber-400" />
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-accent-border bg-accent-soft px-3 py-1 text-xs font-medium text-accent-ink">
+                <Loader2 className="h-3 w-3 animate-spin text-accent-ink" />
                 Đang kết nối lại ({reconnectCount})
               </span>
             )}
             {(connectionState === 'disconnected' || connectionState === 'failed') && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-500/40 bg-rose-950/40 px-3 py-1 text-xs font-medium text-rose-300">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-danger-border bg-danger-soft px-3 py-1 text-xs font-medium text-danger">
                 <WifiOff className="h-3 w-3" />
                 Mất kết nối
               </span>
             )}
-            {isDone && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-950/40 px-3 py-1 text-xs font-medium text-emerald-300">
-                <CheckCircle className="h-3.5 w-3.5 text-emerald-400" />
+            {isDone && !isPartial && (
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-approved-border bg-approved-bg px-3 py-1 text-xs font-medium text-approved-ink">
+                <CheckCircle className="h-3.5 w-3.5 text-approved-ink" />
                 Đã hoàn tất
               </span>
             )}
@@ -175,11 +161,11 @@ export default function GenerationProgressView({
         {/* Thanh tiến trình lớn */}
         <div className="mt-6">
           <div className="flex items-baseline justify-between">
-            <span className="text-3xl font-extrabold text-white">
-              {hasSnapshotData ? `${percent}%` : '--%'}
+            <span className="text-3xl font-extrabold text-strong">
+              {hasSnapshotData ? `${percent}%` : 'Đang cập nhật'}
             </span>
-            <div className="text-right text-xs text-slate-400">
-              <span className="font-semibold text-slate-200">
+            <div className="text-right text-xs text-muted">
+              <span className="font-semibold text-ink">
                 {hasSnapshotData
                   ? (totalVariants ? `${completedCount} / ${totalVariants}` : `${completedCount} câu`)
                   : 'Chưa có dữ liệu tiến độ'}
@@ -189,28 +175,28 @@ export default function GenerationProgressView({
           </div>
 
           {/* Progress bar line */}
-          <div className="mt-3 h-3.5 w-full overflow-hidden rounded-full bg-slate-800">
+          <div className="mt-3 h-3.5 w-full overflow-hidden rounded-full bg-rail">
             <div
               className={`h-full transition-all duration-500 ease-out ${
                 isDone
-                  ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                  : 'bg-gradient-to-r from-sky-500 via-indigo-500 to-sky-400'
+                  ? 'bg-gradient-to-r from-approved-ink to-approved-ink'
+                  : 'bg-gradient-to-r from-highlight via-highlight to-highlight'
               }`}
               style={{ width: `${hasSnapshotData ? percent : 0}%` }}
             />
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
             <p className="flex items-center gap-1.5">
-              <Sparkles className="h-3.5 w-3.5 text-sky-400" />
+              <Sparkles className="h-3.5 w-3.5 text-highlight" />
               {hasSnapshotData
-                ? (progress?.message || (isDone ? 'Hoàn thành sinh tất cả các mã đề.' : 'Đang xử lý song song các mã đề...'))
+                ? (progress?.message || (isDone ? (isPartial ? 'Còn câu hỏi cần sinh bổ sung.' : 'Hoàn thành sinh tất cả các mã đề.') : 'Đang xử lý song song các mã đề...'))
                 : 'Chưa có dữ liệu tiến độ cho phiên làm việc này.'}
             </p>
 
             {hasSnapshotData && progress?.estimatedSeconds !== null && progress?.estimatedSeconds !== undefined && !isDone && (
-              <p className="flex items-center gap-1 text-slate-300">
-                <Clock className="h-3.5 w-3.5 text-slate-400" />
+              <p className="flex items-center gap-1 text-ink">
+                <Clock className="h-3.5 w-3.5 text-muted" />
                 Thời gian ước tính: ~{progress.estimatedSeconds}s
               </p>
             )}
@@ -221,17 +207,17 @@ export default function GenerationProgressView({
         {error && (
           <div
             role="alert"
-            className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-500/40 bg-rose-950/40 p-4 text-rose-200"
+            className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-danger-border bg-danger-soft p-4 text-danger"
           >
             <div className="flex items-center gap-2 text-sm">
-              <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
+              <AlertCircle className="h-4 w-4 shrink-0 text-danger" />
               <span>{error}</span>
             </div>
             {onReconnect && (
               <button
                 type="button"
                 onClick={onReconnect}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-rose-400/40 bg-rose-900/40 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-900/60"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-danger-border bg-danger-soft px-3 py-1.5 text-xs font-semibold text-strong hover:bg-danger-soft"
               >
                 <RefreshCw className="h-3.5 w-3.5" />
                 Kết nối lại
@@ -244,13 +230,13 @@ export default function GenerationProgressView({
         {warnings && warnings.length > 0 && (
           <div
             role="status"
-            className="mt-6 rounded-xl border border-amber-500/40 bg-amber-950/30 p-4 text-xs text-amber-200"
+            className="mt-6 rounded-xl border border-accent-border bg-accent-soft p-4 text-xs text-accent-ink"
           >
-            <div className="flex items-center gap-2 font-semibold text-amber-300">
-              <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+            <div className="flex items-center gap-2 font-semibold text-accent-ink">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-accent-ink" />
               <span>Có {warnings.length} cảnh báo trong quá trình sinh đề (tiến trình vẫn đang tiếp tục):</span>
             </div>
-            <ul className="mt-2 list-disc pl-5 space-y-1 text-amber-200/90">
+            <ul className="mt-2 list-disc pl-5 space-y-1 text-accent-ink">
               {warnings.map((w, idx) => {
                 const prefix =
                   w?.version_index && w?.question_no
@@ -274,17 +260,17 @@ export default function GenerationProgressView({
 
         {/* Thông báo kết thúc tiến trình: Phân biệt sinh đủ 100% với hoàn thành một phần (partial_generated) */}
         {isDone && !isPartial && (
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-emerald-500/40 bg-emerald-950/30 p-5 text-emerald-200">
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-approved-border bg-approved-bg p-5 text-approved-ink">
             <div className="flex items-center gap-3">
-              <CheckCircle className="h-6 w-6 shrink-0 text-emerald-400" />
+              <CheckCircle className="h-6 w-6 shrink-0 text-approved-ink" />
               <div>
-                <h4 className="text-sm font-bold text-white">
+                <h4 className="text-sm font-bold text-strong">
                   {effectiveNumVersions
                     ? `Đã sinh xong ${effectiveNumVersions} mã đề thi đẳng cấu!`
                     : 'Đã sinh xong tất cả các mã đề thi đẳng cấu!'}
                 </h4>
-                <p className="mt-0.5 text-xs text-emerald-300/90">
-                  Hệ thống đang tự động chuyển hướng sang trang xem và duyệt đề (Stage 3)...
+                <p className="mt-0.5 text-xs text-approved-ink">
+                  Chọn &quot;Xem đề ngay&quot; để chuyển sang màn hình xem và duyệt đề thi.
                 </p>
               </div>
             </div>
@@ -293,7 +279,7 @@ export default function GenerationProgressView({
               <button
                 type="button"
                 onClick={onComplete}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-emerald-700/30 hover:bg-emerald-500"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-approved-ink px-4 py-2 text-xs font-semibold text-white shadow-soft  hover:bg-approved-ink"
               >
                 Xem đề ngay
                 <ArrowRight className="h-3.5 w-3.5" />
@@ -305,19 +291,19 @@ export default function GenerationProgressView({
         {isDone && isPartial && (
           <div
             role="status"
-            className="mt-6 rounded-xl border border-amber-500/50 bg-amber-950/40 p-5 text-amber-200"
+            className="mt-6 rounded-xl border border-accent-border bg-accent-soft p-5 text-accent-ink"
           >
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div className="flex items-start gap-3">
-                <AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-amber-400" />
+                <AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-accent-ink" />
                 <div>
-                  <h4 className="text-sm font-bold text-white">
+                  <h4 className="text-sm font-bold text-strong">
                     Tiến trình hoàn thành một phần (<code>partial_generated</code>)
                   </h4>
-                  <p className="mt-1 text-xs text-amber-200/90">
+                  <p className="mt-1 text-xs text-accent-ink">
                     {hasSnapshotData ? (
                       <>
-                        Đã tạo được <strong className="text-white">{completedCount}</strong>
+                        Đã tạo được <strong className="text-strong">{completedCount}</strong>
                         {totalVariants ? ` / ${totalVariants}` : ''} câu hỏi ({percent}%).
                         {totalVariants && completedCount < totalVariants
                           ? ` Còn thiếu ${totalVariants - completedCount} câu do gặp lỗi hoặc hạn mức sinh đề.`
@@ -336,7 +322,7 @@ export default function GenerationProgressView({
                     type="button"
                     onClick={onRetryGeneration}
                     disabled={isRetrying}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/50 bg-amber-600 px-3.5 py-2 text-xs font-semibold text-white shadow-lg shadow-amber-600/30 hover:bg-amber-500 disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-accent-border bg-accent px-3.5 py-2 text-xs font-semibold text-strong shadow-soft  hover:bg-accent disabled:opacity-50"
                   >
                     {isRetrying ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -350,9 +336,9 @@ export default function GenerationProgressView({
                   <button
                     type="button"
                     onClick={onComplete}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-rail px-4 py-2 text-xs font-semibold text-strong hover:bg-rail"
                   >
-                    Đến Stage 3 xem các câu đã sinh
+                    Duyệt các câu đã tạo
                     <ArrowRight className="h-3.5 w-3.5" />
                   </button>
                 )}
@@ -363,20 +349,20 @@ export default function GenerationProgressView({
       </div>
 
       {/* Lưới câu hỏi thời gian thực: Tabs theo từng mã đề */}
-      <div className="rounded-2xl border border-slate-700 bg-slate-900/90 p-6 shadow-xl backdrop-blur-sm sm:p-8">
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+      <div className="rounded-2xl border border-line bg-surface p-6 shadow-paper backdrop-blur-sm sm:p-8">
+        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-line pb-4">
           <div>
-            <h3 className="text-lg font-bold text-white">
+            <h3 className="text-lg font-bold text-strong">
               Chi tiết trạng thái từng câu hỏi
             </h3>
-            <p className="mt-0.5 text-xs text-slate-400">
-              Mọi bước kiểm tra và tinh chỉnh đều được hệ thống tự động hoàn thiện.
+            <p className="mt-0.5 text-xs text-muted">
+              Theo dõi các câu đã tạo trước khi chuyển sang duyệt.
             </p>
           </div>
 
           {/* Version tabs: Đề 1, Đề 2, ... */}
           {effectiveNumVersions ? (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {Array.from({ length: effectiveNumVersions }, (_, i) => i + 1).map((vIdx) => {
                 const isTabActive = activeVersionTab === vIdx;
                 return (
@@ -384,13 +370,14 @@ export default function GenerationProgressView({
                     key={vIdx}
                     type="button"
                     onClick={() => setActiveVersionTab(vIdx)}
+                    aria-pressed={isTabActive}
                     className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all ${
                       isTabActive
-                        ? 'bg-sky-600 text-white shadow-md shadow-sky-600/30'
-                        : 'border border-slate-700 bg-slate-800/60 text-slate-300 hover:bg-slate-800'
+                        ? 'bg-highlight text-white shadow-md '
+                        : 'border border-line bg-rail text-ink hover:bg-rail'
                     }`}
                   >
-                    Mã đề #{vIdx}
+                    Đề {vIdx}
                   </button>
                 );
               })}
@@ -432,37 +419,37 @@ export default function GenerationProgressView({
                   key={key}
                   className={`flex items-center justify-between rounded-xl border p-3.5 transition-all ${
                     isMissing
-                      ? 'border-rose-500/40 bg-rose-950/20 hover:border-rose-400'
+                      ? 'border-danger-border bg-danger-soft hover:border-danger-border'
                       : qWarning
-                      ? 'border-amber-500/60 bg-amber-950/20 hover:border-amber-400'
-                      : 'border-slate-800 bg-slate-800/50 hover:border-slate-700'
+                      ? 'border-accent-border bg-accent-soft hover:border-accent-border'
+                      : 'border-line bg-rail hover:border-line'
                   }`}
                 >
                   <div className="flex items-center gap-2.5">
                     <span
                       className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
                         isMissing
-                          ? 'bg-rose-900/60 text-rose-200'
-                          : 'bg-slate-700/80 text-slate-200'
+                          ? 'bg-danger-soft text-danger'
+                          : 'bg-rail text-ink'
                       }`}
                     >
                       {qNo}
                     </span>
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <p className="text-xs font-semibold text-white">
+                        <p className="text-xs font-semibold text-strong">
                           Câu {qNo} (Đề {activeVersionTab})
                         </p>
                         {qWarning && (
                           <span
                             title={qWarning.message || 'Có cảnh báo'}
-                            className="inline-flex items-center text-amber-400"
+                            className="inline-flex items-center text-accent-ink"
                           >
                             <AlertTriangle className="h-3 w-3" />
                           </span>
                         )}
                       </div>
-                      <p className="text-[11px] text-slate-400 truncate max-w-[140px]">
+                      <p className="text-[11px] text-muted truncate max-w-[140px]">
                         {qWarning?.message ||
                           item?.message ||
                           (statusKey === 'done'
@@ -485,18 +472,18 @@ export default function GenerationProgressView({
             })}
           </div>
         ) : (
-          <div className="mt-6 rounded-xl border border-slate-800 bg-slate-800/30 p-8 text-center">
-            <Loader2 className="mx-auto h-7 w-7 animate-spin text-sky-400" />
-            <h4 className="mt-3 text-sm font-semibold text-white">
+          <div className="mt-6 rounded-xl border border-line bg-rail p-8 text-center">
+            <Loader2 className="mx-auto h-7 w-7 animate-spin text-highlight" />
+            <h4 className="mt-3 text-sm font-semibold text-strong">
               Đang đồng bộ cấu hình số lượng mã đề từ máy chủ...
             </h4>
-            <p className="mt-1 text-xs text-slate-400">
+            <p className="mt-1 text-xs text-muted">
               Tiến trình sinh đề AI vẫn đang chạy bình thường ở trên. Lưới chi tiết từng câu hỏi sẽ xuất hiện ngay khi cấu hình được nhận diện.
             </p>
           </div>
         )}
 
-        <div className="mt-6 rounded-xl border border-slate-800 bg-slate-800/30 p-3 text-center text-xs text-slate-400">
+        <div className="mt-6 rounded-xl border border-line bg-rail p-3 text-center text-xs text-muted">
           💡 <em>Lưu ý: Bạn không cần can thiệp trong quá trình sinh. Sau khi hoàn tất, bạn có thể xem lại và bấm "Tạo lại câu này" cho từng câu cụ thể ở Bước 3.</em>
         </div>
       </div>

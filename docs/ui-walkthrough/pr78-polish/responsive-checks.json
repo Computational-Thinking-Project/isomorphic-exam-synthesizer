@@ -1,0 +1,102 @@
+[
+  {
+    "screen": "login",
+    "scrollWidth": 375,
+    "width": 375
+  },
+  {
+    "screen": "create",
+    "scrollWidth": 375,
+    "width": 375
+  },
+  {
+    "screen": "dashboard",
+    "scrollWidth": 375,
+    "width": 375
+  },
+  {
+    "screen": "stage1",
+    "scrollWidth": 375,
+    "width": 375
+  },
+  {
+    "screen": "readonly",
+    "scrollWidth": 375,
+    "width": 375
+  },
+  {
+    "screen": "login",
+    "scrollWidth": 768,
+    "width": 768
+  },
+  {
+    "screen": "create",
+    "scrollWidth": 768,
+    "width": 768
+  },
+  {
+    "screen": "dashboard",
+    "scrollWidth": 768,
+    "width": 768
+  },
+  {
+    "screen": "stage1",
+    "scrollWidth": 768,
+    "width": 768
+  },
+  {
+    "screen": "readonly",
+    "scrollWidth": 768,
+    "width": 768
+  },
+  {
+    "screen": "login",
+    "scrollWidth": 1024,
+    "width": 1024
+  },
+  {
+    "screen": "create",
+    "scrollWidth": 1024,
+    "width": 1024
+  },
+  {
+    "screen": "dashboard",
+    "scrollWidth": 1024,
+    "width": 1024
+  },
+  {
+    "screen": "stage1",
+    "scrollWidth": 1024,
+    "width": 1024
+  },
+  {
+    "screen": "readonly",
+    "scrollWidth": 1024,
+    "width": 1024
+  },
+  {
+    "screen": "login",
+    "scrollWidth": 1440,
+    "width": 1440
+  },
+  {
+    "screen": "create",
+    "scrollWidth": 1440,
+    "width": 1440
+  },
+  {
+    "screen": "dashboard",
+    "scrollWidth": 1440,
+    "width": 1440
+  },
+  {
+    "screen": "stage1",
+    "scrollWidth": 1440,
+    "width": 1440
+  },
+  {
+    "screen": "readonly",
+    "scrollWidth": 1440,
+    "width": 1440
+  }
+]
