@@ -13,7 +13,7 @@ export default function UserAvatar({ src, name }) {
   return (
     <span
       aria-hidden="true"
-      className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-700 text-sm font-semibold text-slate-100"
+      className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-support-bg text-sm font-semibold text-highlight border border-support-line shadow-soft"
     >
       {src && !failed ? (
         <img

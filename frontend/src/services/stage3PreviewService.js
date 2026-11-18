@@ -186,6 +186,11 @@ export function adaptPreviewSnapshot(raw) {
     total_questions: raw.total_questions || (versions[0]?.questions?.length ?? 0),
     versions,
     matrix: Array.isArray(raw.matrix) ? raw.matrix : [],
+    ordering_preferences:
+      raw.ordering_preferences ||
+      raw.generation_config?.ordering_preferences ||
+      raw.config?.ordering_preferences ||
+      null,
   };
 }
 
@@ -227,6 +232,41 @@ export async function fetchFinalizePreview(sessionId, config = {}) {
     error.response = err.response;
     throw error;
   }
+}
+
+/**
+ * Lấy cấu hình xáo trộn ordering_preferences đã lưu từ backend (Issue #45)
+ * GET /api/sessions/{session_id}
+ *
+ * @param {string} sessionId
+ * @param {object} config
+ * @returns {Promise<{ shuffle_questions: boolean, shuffle_options: boolean }>}
+ */
+export async function fetchOrderingPreferences(sessionId, config = {}) {
+  if (!sessionId) {
+    throw new Error('Cần cung cấp sessionId hợp lệ.');
+  }
+
+  const encodedId = encodeURIComponent(sessionId);
+  const response = await api.get(`/sessions/${encodedId}`, config);
+  const data = response?.data;
+  const rawPrefs =
+    data?.generation_config?.ordering_preferences ||
+    data?.config?.ordering_preferences ||
+    data?.ordering_preferences;
+
+  if (rawPrefs && typeof rawPrefs === 'object') {
+    return {
+      shuffle_questions: Boolean(rawPrefs.shuffle_questions ?? false),
+      shuffle_options: Boolean(rawPrefs.shuffle_options ?? false),
+      status: data?.status,
+    };
+  }
+  return {
+    shuffle_questions: false,
+    shuffle_options: false,
+    status: data?.status,
+  };
 }
 
 /**
@@ -290,7 +330,7 @@ export async function triggerFinalizeShuffle(sessionId, config = {}) {
  */
 export async function executeFinalizeShuffle(
   sessionId,
-  preferences = { shuffle_questions: true, shuffle_options: true },
+  preferences = { shuffle_questions: false, shuffle_options: false },
   config = {}
 ) {
   const payload = {
