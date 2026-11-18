@@ -300,13 +300,32 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       const artifact = await readArtifacts(id, { signal: operation.signal });
       if (!operation.current()) return;
       const isReady = artifact.ready === true && artifact.canonical_status === 'ready';
+      let nextRetryAccepted = false;
+      let nextPendingCycles = 0;
+
+      if (artifact.canonical_status === 'pending') {
+        if (state.retryAccepted) {
+          const cycles = (state.retryPendingCycles || 0) + 1;
+          // F91-03 / S87-A: Giữ retryAccepted trong số chu kỳ polling hữu hạn (tối đa 5 chu kỳ ~ 10s)
+          if (cycles <= 5) {
+            nextRetryAccepted = true;
+            nextPendingCycles = cycles;
+          } else {
+            // S87-C: Quá 5 chu kỳ pending không đổi trạng thái -> cho phép người dùng thử lại
+            nextRetryAccepted = false;
+            nextPendingCycles = 0;
+          }
+        }
+      }
+
       publish({
         phase: 'idle',
         canonicalStatus: artifact.canonical_status,
         canonicalProgress: { completed: artifact.completed_count, total: artifact.total_questions },
         canonicalReady: isReady,
         canonicalError: '',
-        retryAccepted: false,
+        retryAccepted: nextRetryAccepted,
+        retryPendingCycles: nextPendingCycles,
         ...(isReady ? {
           detail: {
             ...state.detail,
@@ -381,14 +400,39 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
         canonicalReady: cReady,
         canonicalError: cError,
         retryAccepted,
+        retryPendingCycles: 0,
         message: retryAccepted ? 'Đã tiếp nhận yêu cầu tạo lại Blueprint.' : state.message,
         detail: updatedDetail,
       });
     } catch {
       if (!operation.current()) return;
+      // S87-E: POST retry network error or failure - attempt read-only reconciliation before declaring failure
+      if (readArtifacts) {
+        try {
+          const artifact = await readArtifacts(id, { signal: operation.signal });
+          if (operation.current() && artifact) {
+            const isReady = artifact.ready === true && artifact.canonical_status === 'ready';
+            if (artifact.canonical_status === 'running' || isReady) {
+              publish({
+                phase: 'idle',
+                canonicalStatus: artifact.canonical_status,
+                canonicalProgress: { completed: artifact.completed_count, total: artifact.total_questions },
+                canonicalReady: isReady,
+                canonicalError: '',
+                retryAccepted: false,
+                retryPendingCycles: 0,
+              });
+              return;
+            }
+          }
+        } catch {
+          // both retry and read failed
+        }
+      }
       publish({
         phase: 'idle',
         retryAccepted: false,
+        retryPendingCycles: 0,
         canonicalError: 'Không thể thử lại tạo Blueprint. Vui lòng kiểm tra lại.',
       });
     }

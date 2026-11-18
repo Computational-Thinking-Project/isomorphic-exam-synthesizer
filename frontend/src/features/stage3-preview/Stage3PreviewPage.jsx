@@ -43,6 +43,7 @@ export default function Stage3PreviewPage({
   const [isApproveModalOpen, setIsApproveModalOpen] = useState(false);
   const [approveError, setApproveError] = useState(null);
   const [toast, setToast] = useState(null);
+  const [outcomeUnknown, setOutcomeUnknown] = useState(false);
   const [shuffleQuestions, setShuffleQuestions] = useState(false);
   const [shuffleOptions, setShuffleOptions] = useState(false);
   const [sessionStatus, setSessionStatus] = useState('reviewed');
@@ -64,6 +65,7 @@ export default function Stage3PreviewPage({
     setPreviewData(null);
     setSelectedTab('');
     setError(null);
+    setOutcomeUnknown(false);
     setNeedsShuffle(false);
     setIsApproveModalOpen(false);
     setApproveError(null);
@@ -93,6 +95,7 @@ export default function Stage3PreviewPage({
     try {
       const data = await loadPreview(sessionId);
       if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
+      setOutcomeUnknown(false);
       setPreviewData(data);
       setNeedsShuffle(!data.is_finalized);
       if (data.status) {
@@ -110,6 +113,7 @@ export default function Stage3PreviewPage({
       if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
       // F03: Chỉ kích hoạt needsShuffle khi mã lỗi là ERR_SHUFFLE_REQUIRED
       if (err.errorCode === 'ERR_SHUFFLE_REQUIRED' || err.data?.error_code === 'ERR_SHUFFLE_REQUIRED') {
+        setOutcomeUnknown(false);
         setNeedsShuffle(true);
         setError(null);
 
@@ -133,15 +137,19 @@ export default function Stage3PreviewPage({
             if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
             setNeedsShuffle(false);
             setError('Không thể tải cấu hình xáo trộn đã lưu. Vui lòng thử lại.');
+            return null;
           }
         }
+        return { is_finalized: false, unfinalized: true };
       } else if (err.status === 423) {
+        setOutcomeUnknown(false);
         // Đã khóa, cố nạp dữ liệu ở chế độ view-only
         setError('Phiên làm việc đã được phê duyệt và khóa nội dung.');
+        return { is_finalized: true, locked: true };
       } else {
         setError(err.message || 'Không thể tải bản xem trước đề thi.');
+        return null;
       }
-      return null;
     } finally {
       if (isMountedRef.current && currentRequestId === requestIdRef.current) {
         setLoading(false);
@@ -176,23 +184,33 @@ export default function Stage3PreviewPage({
         toastMsg = 'Đã xáo trộn thứ tự đáp án (giữ nguyên câu hỏi).';
       }
       showToast(toastMsg, 'success');
+      setOutcomeUnknown(false);
       await loadData();
     } catch (err) {
       if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
 
-      // Issue #86: Kiểm tra đối soát authoritative preview xem thao tác finalize/shuffle có thực chất đã commit thành công trên máy chủ hay không
-      try {
-        const reconciledData = await loadData();
-        if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
-        if (reconciledData?.is_finalized) {
-          showToast('Đã hoàn tất sắp xếp đề thi (đã xác thực trạng thái từ máy chủ).', 'success');
-          return;
-        }
-      } catch {
-        // loadData thất bại (mất mạng)
+      // Issue #86 & F91-04: Kiểm tra đối soát authoritative preview xem thao tác finalize/shuffle có thực chất đã commit thành công trên máy chủ hay không
+      const reconciled = await loadData();
+      if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
+
+      if (reconciled?.is_finalized) {
+        setOutcomeUnknown(false);
+        showToast('Đã hoàn tất sắp xếp đề thi (đã xác thực trạng thái từ máy chủ).', 'success');
+        return;
       }
 
-      showToast(err.message || 'Không thể thực hiện hoàn tất sắp xếp đề thi.', 'error');
+      if (reconciled?.unfinalized || reconciled?.is_finalized === false) {
+        // GET xác nhận server CHƯA finalize (ví dụ 409 ERR_SHUFFLE_REQUIRED)
+        // Cho phép người dùng thử lại an toàn, giữ nguyên cờ shuffle
+        setOutcomeUnknown(false);
+        showToast(err.message || 'Không thể thực hiện hoàn tất sắp xếp đề thi.', 'error');
+        return;
+      }
+
+      // Reconciliation cũng thất bại (503 / network error / timeout) -> OUTCOME UNKNOWN!
+      // Không cho phép bấm lại PATCH/POST; hiển thị giao diện kiểm tra trạng thái
+      setOutcomeUnknown(true);
+      setError('Chưa thể xác định kết quả chốt thứ tự đề thi do mất kết nối. Vui lòng kiểm tra lại trạng thái.');
     } finally {
       if (isMountedRef.current && activeSessionIdRef.current === targetSessionId) {
         setShuffling(false);
@@ -394,6 +412,25 @@ export default function Stage3PreviewPage({
           <div className="py-20 flex flex-col items-center justify-center text-muted gap-4">
             <Loader2 className="w-8 h-8 animate-spin text-highlight" />
             <p className="text-sm">Đang tải bản chiếu xem trước đề thi...</p>
+          </div>
+        ) : outcomeUnknown ? (
+          /* F91-04 (S86-B): Kết quả shuffle chưa xác định do mất kết nối cả POST và GET đối soát */
+          <div className="max-w-md mx-auto my-16 p-8 rounded-2xl bg-surface border border-accent-border text-center shadow-paper" data-testid="outcome-unknown-view">
+            <AlertCircle className="w-10 h-10 text-accent-ink mx-auto mb-3" />
+            <h2 className="text-lg font-semibold mb-2 text-strong">Chưa xác định được kết quả chốt thứ tự</h2>
+            <p className="text-sm text-muted mb-6">
+              Yêu cầu hoàn tất đã được gửi tới máy chủ nhưng chưa nhận được phản hồi xác nhận. Vui lòng kiểm tra lại trạng thái trước khi thực hiện lại thao tác.
+            </p>
+            <button
+              type="button"
+              data-testid="btn-check-status"
+              onClick={() => loadData()}
+              disabled={loading}
+              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg bg-highlight hover:bg-highlight text-white text-sm font-semibold transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              <span>Kiểm tra trạng thái</span>
+            </button>
           </div>
         ) : error && !needsShuffle ? (
           <div className="p-6 rounded-xl bg-danger-soft border border-danger-border text-danger max-w-2xl mx-auto my-12 text-center">
