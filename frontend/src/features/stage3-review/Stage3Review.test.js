@@ -2390,3 +2390,115 @@ test('F84-03-D: HTTP 423 with approved/exported status routes to export', async 
     await harness.unmount();
   }
 });
+
+test('Issue #85: accept candidate A succeeds but refetch returns replacement candidate B pending => B remains pending, not approved', async () => {
+  let loadCount = 0;
+  const sessionWithCandidateA = {
+    id: 'sess-issue-85',
+    title: 'Đề thi kiểm tra stale accept',
+    status: 'generated',
+    config: { n_versions: 1 },
+    source_questions: [{ source_question_id: 'sq-1', question_no: 1, raw_content: 'Đề nguồn câu 1' }],
+    exam_versions: [
+      {
+        version_index: 1,
+        questions: [
+          {
+            id: 'cand-old-A',
+            candidate_id: 'cand-old-A',
+            question_id: 'cand-old-A',
+            source_question_id: 'sq-1',
+            question_no: 1,
+            number: 1,
+            status: 'pending_review',
+            content: 'Nội dung biến thể A',
+            options: { A: '1', B: '2', C: '3', D: '4' },
+            correct_key: 'A',
+            solution_md: 'Lời giải A',
+          },
+        ],
+      },
+    ],
+  };
+
+  const sessionWithCandidateB = {
+    id: 'sess-issue-85',
+    title: 'Đề thi kiểm tra stale accept',
+    status: 'generated',
+    config: { n_versions: 1 },
+    source_questions: [{ source_question_id: 'sq-1', question_no: 1, raw_content: 'Đề nguồn câu 1' }],
+    exam_versions: [
+      {
+        version_index: 1,
+        questions: [
+          {
+            id: 'cand-new-B',
+            candidate_id: 'cand-new-B',
+            question_id: 'cand-new-B',
+            source_question_id: 'sq-1',
+            question_no: 1,
+            number: 1,
+            status: 'pending_review',
+            content: 'Nội dung biến thể mới B (đã regenerate ở Tab B)',
+            options: { A: '10', B: '20', C: '30', D: '40' },
+            correct_key: 'B',
+            solution_md: 'Lời giải B',
+          },
+        ],
+      },
+    ],
+  };
+
+  const mockLoadSession = async () => {
+    loadCount++;
+    if (loadCount === 1) {
+      return sessionWithCandidateA;
+    }
+    // Lần tải thứ hai (sau khi accept): server trả về candidate B đang pending_review
+    return sessionWithCandidateB;
+  };
+
+  const mockAcceptQuestion = async (sId, qId) => {
+    assert.equal(qId, 'cand-old-A');
+    return { question_id: 'cand-old-A', question_status: 'approved' };
+  };
+
+  const harness = renderStage3Page('sess-issue-85', {
+    loadSession: mockLoadSession,
+    acceptQuestionFn: mockAcceptQuestion,
+  });
+
+  try {
+    await harness.render();
+
+    // Mở xem chi tiết câu 1
+    const inspectBtn = harness.container.querySelector('[data-review-inspect="true"]');
+    assert.ok(inspectBtn, 'Phải có nút xem chi tiết câu hỏi');
+    await act(async () => {
+      inspectBtn.click();
+    });
+
+    // Bấm nút Duyệt câu này
+    const approveBtn = harness.container.querySelector('[data-review-approve="true"]');
+    assert.ok(approveBtn, 'Phải có nút Duyệt câu này');
+    await act(async () => {
+      approveBtn.click();
+    });
+
+    // Sau khi accept A thành công và refetch nhận được B (đang pending_review):
+    // 1. Candidate B PHẢI ở trạng thái pending_review, KHÔNG được bị ép thành approved
+    const text = harness.container.textContent;
+    assert.ok(
+      text.includes('0/1 câu') || text.includes('Chưa duyệt (1)'),
+      `Số lượng duyệt không được tính là 1/1 khi candidate B đang pending. Text: ${text}`,
+    );
+    assert.ok(!text.includes('Đã duyệt 1/1 câu'), 'Không được báo đã duyệt 1/1 câu');
+
+    // 2. Nút Duyệt câu này phải còn hiển thị và KHÔNG được disable như đã duyệt
+    const approveBtnAfter = harness.container.querySelector('[data-review-approve="true"]');
+    assert.ok(approveBtnAfter, 'Nút duyệt câu hỏi cho candidate B phải còn tồn tại');
+    assert.ok(!approveBtnAfter.disabled, 'Nút duyệt câu hỏi cho candidate B không được bị disable');
+  } finally {
+    await harness.unmount();
+  }
+});
