@@ -13,9 +13,12 @@ _QUOTED_STR_RE = re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"')
 _TEXT_WRAPPER_RE = re.compile(
     r"\\(?:text|textrm|textbf|textsf|operatorname)(?![a-zA-Z])\s*\{"
 )
+_MATHRM_WRAPPER_RE = re.compile(r"\\mathrm(?![a-zA-Z])\s*\{")
 _TWO_ARG_CMD_RE = re.compile(r"\\([dt]?frac|[dt]?binom)(?![a-zA-Z])\s*\{")
 _SQRT_N_RE = re.compile(r"\\sqrt(?![a-zA-Z])\s*\[([^\[\]]+)\]\s*\{")
 _SQRT_RE = re.compile(r"\\sqrt(?![a-zA-Z])\s*\{")
+_SUPERSCRIPT_RE = re.compile(r"\^\{")
+_SUBSCRIPT_RE = re.compile(r"_\{")
 
 _SINGLE_ARG_WRAPPERS: dict[str, str] = {
     "mathbb": "bb",
@@ -424,6 +427,15 @@ def _transform_outside_quotes(text: str, transform: Callable[[str], str]) -> str
     return "".join(parts)
 
 
+def _search_outside_quotes(text: str, pattern: re.Pattern[str]) -> re.Match[str] | None:
+    """Return the first match of pattern that starts outside double-quoted literals."""
+    quoted_spans = [m.span() for m in _QUOTED_STR_RE.finditer(text)]
+    for match in pattern.finditer(text):
+        if not any(start <= match.start() < end for start, end in quoted_spans):
+            return match
+    return None
+
+
 def _extract_balanced_braces(text: str, start_idx: int) -> Tuple[str, int]:
     """
     Extract content inside balanced curly braces starting at start_idx.
@@ -462,13 +474,16 @@ def _extract_balanced_braces(text: str, start_idx: int) -> Tuple[str, int]:
     return "".join(inner_chars), i
 
 
-def _convert_aligned_row(row: str) -> str:
+def _convert_aligned_row(row: str, *, quote_unknown: bool = False) -> str:
     """Convert one &-delimited row while preserving Typst column separators."""
-    cols = [latex_math_to_typst(col.strip()) for col in _COL_SPLIT_RE.split(row)]
+    cols = [
+        _latex_math_to_typst_impl(col.strip(), quote_unknown=quote_unknown)
+        for col in _COL_SPLIT_RE.split(row)
+    ]
     return " & ".join(cols)
 
 
-def _convert_env(name: str, body: str) -> str:
+def _convert_env(name: str, body: str, *, quote_unknown: bool = False) -> str:
     """Convert a LaTeX math environment body to Typst syntax."""
     body_clean = body.strip()
 
@@ -494,7 +509,11 @@ def _convert_env(name: str, body: str) -> str:
 
     if name == "cases":
         # F82-02: preserve '&' column separators inside Typst cases(...).
-        converted_rows = [_convert_aligned_row(row) for row in rows if row.strip()]
+        converted_rows = [
+            _convert_aligned_row(row, quote_unknown=quote_unknown)
+            for row in rows
+            if row.strip()
+        ]
         return f"cases({', '.join(converted_rows)})"
 
     if name in _MATRIX_DELIMS:
@@ -502,7 +521,10 @@ def _convert_env(name: str, body: str) -> str:
         for row in rows:
             if not row.strip():
                 continue
-            cells = [latex_math_to_typst(cell.strip()) for cell in _COL_SPLIT_RE.split(row)]
+            cells = [
+                _latex_math_to_typst_impl(cell.strip(), quote_unknown=quote_unknown)
+                for cell in _COL_SPLIT_RE.split(row)
+            ]
             converted_rows.append(", ".join(cells))
         delim = _MATRIX_DELIMS[name]
         joined = "; ".join(converted_rows)
@@ -517,9 +539,11 @@ def _convert_env(name: str, body: str) -> str:
         if not row.strip():
             continue
         if name in {"aligned", "alignedat", "split"}:
-            converted_lines.append(_convert_aligned_row(row))
+            converted_lines.append(_convert_aligned_row(row, quote_unknown=quote_unknown))
         else:
-            converted_lines.append(latex_math_to_typst(row.strip()))
+            converted_lines.append(
+                _latex_math_to_typst_impl(row.strip(), quote_unknown=quote_unknown)
+            )
     return r" \ ".join(converted_lines)
 
 
@@ -565,9 +589,9 @@ def _finalize_math_segment(segment: str, *, quote_unknown: bool = False) -> str:
 
 
 def _convert_mathrm(inner: str) -> str:
-    """Convert \\mathrm{...} while preserving unit/text labels such as cm or kg (F82-03)."""
-    if not re.search(r'[\\^_{}"]', inner):
-        return f'upright("{inner}")'
+    """Convert \\mathrm{...} while preserving unit labels and math operators (F82-03, F82-04)."""
+    if not inner.strip():
+        return 'upright("")'
     converted_inner = _latex_math_to_typst_impl(inner, quote_unknown=True)
     return f"upright({converted_inner})"
 
@@ -608,34 +632,34 @@ def _latex_math_to_typst_impl(math_str: str, *, quote_unknown: bool = False) -> 
     s = re.sub(r"\.[a-zA-Z_]\w*\s*\(", " ", s)
     s = re.sub(r"\b(?:panic|eval|assert)\b", " ", s)
 
-    # 1. Convert innermost LaTeX math environments (cases, matrices, aligned, etc.)
-    while _ENV_RE.search(s):
-        m = _ENV_RE.search(s)
-        if not m:
-            break
-        s = s[: m.start()] + _convert_env(m.group(1), m.group(2)) + s[m.end() :]
-
-    # 2. Convert \text{...} / \textrm{...} / \textbf{...} / \textsf{...} / \operatorname{...} -> "..."
-    while _TEXT_WRAPPER_RE.search(s):
-        m = _TEXT_WRAPPER_RE.search(s)
-        if not m:
-            break
+    # 1. Convert \text{...} / \textrm{...} / \textbf{...} / \textsf{...} / \operatorname{...} -> "..."
+    while (m := _search_outside_quotes(s, _TEXT_WRAPPER_RE)) is not None:
         inner, end_idx = _extract_balanced_braces(s, m.end() - 1)
         escaped_inner = re.sub(r'(?<!\\)"', r'\"', inner)
         s = s[: m.start()] + f'"{escaped_inner}"' + s[end_idx:]
 
-    # 3. Convert two-argument fraction and binomial commands.
-    while _TWO_ARG_CMD_RE.search(s):
-        m = _TWO_ARG_CMD_RE.search(s)
-        if not m:
-            break
+    # 2. Convert \mathrm{...} before structural passes so nested fractions/scripts keep label context (F82-04)
+    while (m := _search_outside_quotes(s, _MATHRM_WRAPPER_RE)) is not None:
+        inner, end_idx = _extract_balanced_braces(s, m.end() - 1)
+        s = s[: m.start()] + _convert_mathrm(inner) + s[end_idx:]
+
+    # 3. Convert innermost LaTeX math environments (cases, matrices, aligned, etc.)
+    while (m := _search_outside_quotes(s, _ENV_RE)) is not None:
+        s = (
+            s[: m.start()]
+            + _convert_env(m.group(1), m.group(2), quote_unknown=quote_unknown)
+            + s[m.end() :]
+        )
+
+    # 4. Convert two-argument fraction and binomial commands.
+    while (m := _search_outside_quotes(s, _TWO_ARG_CMD_RE)) is not None:
         num, idx2 = _extract_balanced_braces(s, m.end() - 1)
         while idx2 < len(s) and s[idx2].isspace():
             idx2 += 1
         if idx2 < len(s) and s[idx2] == "{":
             den, end_idx = _extract_balanced_braces(s, idx2)
-            conv_num = latex_math_to_typst(num)
-            conv_den = latex_math_to_typst(den)
+            conv_num = _latex_math_to_typst_impl(num, quote_unknown=quote_unknown)
+            conv_den = _latex_math_to_typst_impl(den, quote_unknown=quote_unknown)
             converted = (
                 f"binom({conv_num}, {conv_den})"
                 if m.group(1).endswith("binom")
@@ -645,38 +669,25 @@ def _latex_math_to_typst_impl(math_str: str, *, quote_unknown: bool = False) -> 
         else:
             break
 
-    # 4. Convert \sqrt[n]{A} -> root(n, A) and \sqrt{A} -> sqrt(A)
-    while _SQRT_N_RE.search(s):
-        m = _SQRT_N_RE.search(s)
-        if not m:
-            break
-        deg = latex_math_to_typst(m.group(1).strip())
+    # 5. Convert \sqrt[n]{A} -> root(n, A) and \sqrt{A} -> sqrt(A)
+    while (m := _search_outside_quotes(s, _SQRT_N_RE)) is not None:
+        deg = _latex_math_to_typst_impl(m.group(1).strip(), quote_unknown=quote_unknown)
         inner, end_idx = _extract_balanced_braces(s, m.end() - 1)
-        conv_inner = latex_math_to_typst(inner)
+        conv_inner = _latex_math_to_typst_impl(inner, quote_unknown=quote_unknown)
         s = s[: m.start()] + f"root({deg}, {conv_inner})" + s[end_idx:]
 
-    while _SQRT_RE.search(s):
-        m = _SQRT_RE.search(s)
-        if not m:
-            break
+    while (m := _search_outside_quotes(s, _SQRT_RE)) is not None:
         inner, end_idx = _extract_balanced_braces(s, m.end() - 1)
-        conv_inner = latex_math_to_typst(inner)
+        conv_inner = _latex_math_to_typst_impl(inner, quote_unknown=quote_unknown)
         s = s[: m.start()] + f"sqrt({conv_inner})" + s[end_idx:]
 
-    # 5. Convert braced and single-token style/accent commands (\mathbb, \overline, \vec, \hat, \bar, ...)
-    while _SINGLE_ARG_WRAPPER_RE.search(s):
-        m = _SINGLE_ARG_WRAPPER_RE.search(s)
-        if not m:
-            break
+    # 6. Convert braced and single-token style/accent commands (\mathbb, \overline, \vec, \hat, \bar, ...)
+    while (m := _search_outside_quotes(s, _SINGLE_ARG_WRAPPER_RE)) is not None:
         cmd = m.group(1)
         typst_fn = _SINGLE_ARG_WRAPPERS[cmd]
         inner, end_idx = _extract_balanced_braces(s, m.end() - 1)
-        if cmd == "mathrm":
-            replacement = _convert_mathrm(inner)
-        else:
-            conv_inner = latex_math_to_typst(inner)
-            replacement = f"{typst_fn}({conv_inner})"
-        s = s[: m.start()] + replacement + s[end_idx:]
+        conv_inner = _latex_math_to_typst_impl(inner, quote_unknown=quote_unknown)
+        s = s[: m.start()] + f"{typst_fn}({conv_inner})" + s[end_idx:]
 
     s = _transform_outside_quotes(
         s,
@@ -686,28 +697,30 @@ def _latex_math_to_typst_impl(math_str: str, *, quote_unknown: bool = False) -> 
         ),
     )
 
-    # 6. Remove \left and \right modifiers (including empty delimiters \left. / \right.)
+    # 7. Remove \left and \right modifiers (including empty delimiters \left. / \right.)
     s = _transform_outside_quotes(
         s,
         lambda seg: re.sub(r"\\(?:left|right)(?![a-zA-Z])\s*(?:\.(?!\d))?", "", seg),
     )
 
-    # 7. Grouped superscripts and subscripts: ^{abc} -> ^(abc), _{abc} -> _(abc)
-    while re.search(r"\^\{", s):
-        m = re.search(r"\^\{", s)
-        if not m:
-            break
+    # 8. Grouped superscripts and subscripts: ^{abc} -> ^(abc), _{abc} -> _(abc)
+    while (m := _search_outside_quotes(s, _SUPERSCRIPT_RE)) is not None:
         inner, end_idx = _extract_balanced_braces(s, m.end() - 1)
-        s = s[: m.start()] + f"^({latex_math_to_typst(inner)})" + s[end_idx:]
+        s = (
+            s[: m.start()]
+            + f"^({_latex_math_to_typst_impl(inner, quote_unknown=quote_unknown)})"
+            + s[end_idx:]
+        )
 
-    while re.search(r"_\{", s):
-        m = re.search(r"_\{", s)
-        if not m:
-            break
+    while (m := _search_outside_quotes(s, _SUBSCRIPT_RE)) is not None:
         inner, end_idx = _extract_balanced_braces(s, m.end() - 1)
-        s = s[: m.start()] + f"_({latex_math_to_typst(inner)})" + s[end_idx:]
+        s = (
+            s[: m.start()]
+            + f"_({_latex_math_to_typst_impl(inner, quote_unknown=quote_unknown)})"
+            + s[end_idx:]
+        )
 
-    # 8. Symbols, Greek letters, functions, script attachment, and adjacent variable splitting
+    # 9. Symbols, Greek letters, functions, script attachment, and adjacent variable splitting
     s = _transform_outside_quotes(
         s,
         lambda seg: _finalize_math_segment(seg, quote_unknown=quote_unknown),

@@ -7,6 +7,7 @@
   - Resolved review finding F82-01: consume and validate mandatory alignment column-count arguments in `alignedat` (`\begin{alignedat}{n}`) and optional placement specifiers (`[t|b|c]`), preventing stray `{n}` metadata from corrupting exported formulas while keeping equations and row boundaries intact.
   - Resolved review finding F82-02: preserve `&` column separators inside `cases` (`\begin{cases}...\end{cases}`) instead of flattening expression/condition boundaries into spaces.
   - Resolved review finding F82-03: preserve unit and upright text labels inside `\mathrm{...}` (`\mathrm{cm}` -> `upright("cm")`, `\mathrm{kg}` -> `upright("kg")`) without splitting abbreviations into separate mathematical variables.
+  - Resolved review finding F82-04: remove whole-argument quoting in `_convert_mathrm()` and process `\mathrm{...}` before structural/environment passes while propagating `quote_unknown=True` through nested expressions, preserving math operators (`\mathrm{x+y}`, `\mathrm{kg/mol}`) and nested fractions (`\mathrm{\frac{kg}{mol}}`).
 - Added unit tests and `TestRealTypstIntegration` Golden snapshot & extended math tests in `backend/tests/exporter/test_typst_compiler.py`.
 
 ---
