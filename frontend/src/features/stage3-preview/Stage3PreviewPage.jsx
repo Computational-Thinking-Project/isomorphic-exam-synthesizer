@@ -85,14 +85,14 @@ export default function Stage3PreviewPage({
 
   // F04 & F05: loadData chỉ phụ thuộc vào sessionId, dùng requestIdRef để loại bỏ race condition
   const loadData = useCallback(async () => {
-    if (!sessionId) return;
+    if (!sessionId) return null;
     const currentRequestId = ++requestIdRef.current;
     setLoading(true);
     setError(null);
 
     try {
       const data = await loadPreview(sessionId);
-      if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return;
+      if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
       setPreviewData(data);
       setNeedsShuffle(!data.is_finalized);
       if (data.status) {
@@ -105,8 +105,9 @@ export default function Stage3PreviewPage({
       if (data.versions?.length > 0) {
         setSelectedTab((prev) => prev || data.versions[0].version_code);
       }
+      return data;
     } catch (err) {
-      if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return;
+      if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
       // F03: Chỉ kích hoạt needsShuffle khi mã lỗi là ERR_SHUFFLE_REQUIRED
       if (err.errorCode === 'ERR_SHUFFLE_REQUIRED' || err.data?.error_code === 'ERR_SHUFFLE_REQUIRED') {
         setNeedsShuffle(true);
@@ -120,7 +121,7 @@ export default function Stage3PreviewPage({
         } else if (typeof loadPreferences === 'function') {
           try {
             const prefs = await loadPreferences(sessionId);
-            if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return;
+            if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
             if (prefs && typeof prefs === 'object') {
               setShuffleQuestions(Boolean(prefs.shuffle_questions ?? false));
               setShuffleOptions(Boolean(prefs.shuffle_options ?? false));
@@ -129,7 +130,7 @@ export default function Stage3PreviewPage({
               }
             }
           } catch {
-            if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return;
+            if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
             setNeedsShuffle(false);
             setError('Không thể tải cấu hình xáo trộn đã lưu. Vui lòng thử lại.');
           }
@@ -140,6 +141,7 @@ export default function Stage3PreviewPage({
       } else {
         setError(err.message || 'Không thể tải bản xem trước đề thi.');
       }
+      return null;
     } finally {
       if (isMountedRef.current && currentRequestId === requestIdRef.current) {
         setLoading(false);
@@ -230,7 +232,10 @@ export default function Stage3PreviewPage({
   const approveDialogRef = useDialogFocus(isApproveModalOpen, approving, () => setIsApproveModalOpen(false));
 
   const handleTabKeyDown = (e) => {
-    const tabs = [...(previewData?.versions?.map((v) => v.version_code) || []), 'matrix'];
+    const tabs = [
+      ...(previewData?.versions?.map((v) => v.version_code) || []),
+      ...(isTeacherMode ? ['matrix'] : []),
+    ];
     const currentIndex = tabs.indexOf(selectedTab);
     if (currentIndex === -1) return;
     if (e.key === 'ArrowRight') {
@@ -511,13 +516,13 @@ export default function Stage3PreviewPage({
               </div>
             )}
 
-            {/* Navigation Tabs (Version Codes + Answers Matrix) */}
-            <div className="border-b border-line">
+            {/* Navigation Tabs (Version Codes + Answers Matrix) + Student/Teacher View Mode Toggle */}
+            <div className="border-b border-line flex flex-wrap items-center justify-between gap-3 pb-px">
               <nav
                 role="tablist"
                 aria-label="Các mã đề thi và bảng đáp án"
                 onKeyDown={handleTabKeyDown}
-                className="flex gap-2 overflow-x-auto pb-px"
+                className="flex gap-2 overflow-x-auto"
               >
                 {previewData?.versions?.map((ver) => (
                   <button
@@ -542,23 +547,43 @@ export default function Stage3PreviewPage({
                   </button>
                 ))}
 
-                <button
-                  role="tab"
-                  id="tab-matrix"
-                  aria-controls="tabpanel-matrix"
-                  data-testid="tab-matrix"
-                  aria-selected={selectedTab === 'matrix'}
-                  onClick={() => setSelectedTab('matrix')}
-                  className={`inline-flex items-center gap-2 py-3 px-4 border-b-2 font-medium text-sm whitespace-nowrap transition-colors ${
-                    selectedTab === 'matrix'
-                      ? 'border-support-line text-highlight bg-support-bg'
-                      : 'border-transparent text-muted hover:text-ink hover:border-line'
-                  }`}
-                >
-                  <Grid className="w-4 h-4" />
-                  <span>Bảng đáp án</span>
-                </button>
+                {isTeacherMode && (
+                  <button
+                    role="tab"
+                    id="tab-matrix"
+                    aria-controls="tabpanel-matrix"
+                    data-testid="tab-matrix"
+                    aria-selected={selectedTab === 'matrix'}
+                    onClick={() => setSelectedTab('matrix')}
+                    className={`inline-flex items-center gap-2 py-3 px-4 border-b-2 font-medium text-sm whitespace-nowrap transition-colors ${
+                      selectedTab === 'matrix'
+                        ? 'border-support-line text-highlight bg-support-bg'
+                        : 'border-transparent text-muted hover:text-ink hover:border-line'
+                    }`}
+                  >
+                    <Grid className="w-4 h-4" />
+                    <span>Bảng đáp án</span>
+                  </button>
+                )}
               </nav>
+
+              <div className="flex items-center gap-2 py-2">
+                <button
+                  type="button"
+                  data-testid="btn-toggle-view-mode"
+                  onClick={() => {
+                    if (isTeacherMode && selectedTab === 'matrix') {
+                      const firstCode = previewData?.versions?.[0]?.version_code;
+                      if (firstCode) setSelectedTab(firstCode);
+                    }
+                    setIsTeacherMode((prev) => !prev);
+                  }}
+                  className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg border border-line bg-surface hover:bg-rail text-xs font-semibold text-strong transition-colors shadow-sm"
+                >
+                  <Eye className="w-3.5 h-3.5 text-highlight" />
+                  <span>{isTeacherMode ? 'Đề học sinh' : 'Hiện đáp án và lời giải'}</span>
+                </button>
+              </div>
             </div>
 
             {/* Tab Content: Version Exam Viewer */}
@@ -580,18 +605,6 @@ export default function Stage3PreviewPage({
                         ? 'Chế độ giáo viên: kiểm tra nội dung, đáp án và lời giải trước khi phê duyệt.'
                         : 'Chế độ học sinh: xem cấu trúc đề thi thực tế (ẩn đáp án và lời giải).'}
                     </p>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      data-testid="btn-toggle-view-mode"
-                      onClick={() => setIsTeacherMode(!isTeacherMode)}
-                      className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg border border-line bg-surface hover:bg-rail text-xs font-semibold text-strong transition-colors shadow-sm"
-                    >
-                      <Eye className="w-3.5 h-3.5 text-highlight" />
-                      <span>{isTeacherMode ? 'Đề học sinh' : 'Hiện đáp án và lời giải'}</span>
-                    </button>
                   </div>
                 </div>
 
@@ -649,12 +662,10 @@ export default function Stage3PreviewPage({
                               <div className="flex-1 min-w-0 overflow-x-auto text-sm pt-0.5">
                                 <MathRenderer content={String(opt)} inline />
                               </div>
-                              {isCorrect && (
+                              {isTeacherMode && isCorrect && (
                                 <span
                                   data-testid="badge-correct"
-                                  className={`items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-approved-bg text-approved-ink shrink-0 ${
-                                    isTeacherMode ? 'inline-flex' : 'hidden'
-                                  }`}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-approved-bg text-approved-ink shrink-0"
                                 >
                                   <Check className="w-3 h-3" />
                                   Đáp án đúng
@@ -666,8 +677,8 @@ export default function Stage3PreviewPage({
                       </div>
 
                       {/* Detailed Solution */}
-                      {q.solution_md && (
-                        <div className={`mt-4 pt-3 border-t border-line min-w-0 overflow-x-auto ${isTeacherMode ? 'block' : 'hidden'}`}>
+                      {isTeacherMode && q.solution_md && (
+                        <div className="mt-4 pt-3 border-t border-line min-w-0 overflow-x-auto">
                           <h4 className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">
                             Lời giải chi tiết
                           </h4>
@@ -683,7 +694,7 @@ export default function Stage3PreviewPage({
             )}
 
             {/* Tab Content: Answers Matrix Table */}
-            {selectedTab === 'matrix' && (
+            {isTeacherMode && selectedTab === 'matrix' && (
               <div
                 role="tabpanel"
                 id="tabpanel-matrix"
@@ -793,14 +804,22 @@ export default function Stage3PreviewPage({
                 </div>
                 <button
                   type="button"
+                  disabled={loading}
                   onClick={async () => {
-                    await loadData();
-                    if (isLocked) {
+                    const targetSessionId = sessionId;
+                    const data = await loadData();
+                    if (
+                      !isMountedRef.current ||
+                      activeSessionIdRef.current !== targetSessionId
+                    ) {
+                      return;
+                    }
+                    if (['approved', 'exported'].includes(data?.status)) {
                       setIsApproveModalOpen(false);
-                      navigate(exportPath(sessionId));
+                      navigate(exportPath(targetSessionId));
                     }
                   }}
-                  className="self-start rounded-md border border-danger-border bg-surface px-3 py-1 text-xs font-semibold text-danger hover:bg-danger/10 transition-colors"
+                  className="self-start rounded-md border border-danger-border bg-surface px-3 py-1 text-xs font-semibold text-danger hover:bg-danger/10 transition-colors disabled:opacity-50"
                 >
                   Kiểm tra trạng thái
                 </button>
