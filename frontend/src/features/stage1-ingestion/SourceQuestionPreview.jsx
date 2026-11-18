@@ -87,6 +87,17 @@ export default function SourceQuestionPreview({ questions }) {
                 {!['A', 'B', 'C', 'D'].includes(question.correct_key) && (
                   <p className="pt-1 text-xs text-muted">Đáp án: Chưa xác định</p>
                 )}
+
+                {question.solution_md ? (
+                  <div className="mt-2 rounded-xl border border-line bg-rail p-3 text-xs text-ink leading-relaxed">
+                    <span className="font-semibold text-strong block mb-1">Lời giải chi tiết:</span>
+                    <MathRenderer content={question.solution_md} />
+                  </div>
+                ) : (
+                  <p className="mt-1 text-xs italic text-muted">
+                    Đề gốc chưa kèm lời giải; bạn vẫn có thể tiếp tục.
+                  </p>
+                )}
               </li>
             ))}
           </ol>

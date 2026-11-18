@@ -262,6 +262,7 @@ function DashboardContent({ accountKey }) {
         session={cloningSession}
         onClose={() => setCloningSession(null)}
         onSuccess={handleCloneSuccess}
+        onCheckLibrary={handleCheckCreatedSessions}
         cloneFn={cloneSessionForDashboard}
       />
 

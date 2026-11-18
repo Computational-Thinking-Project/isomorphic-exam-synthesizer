@@ -281,7 +281,8 @@ export default function GenerationProgressView({
                 onClick={onComplete}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-approved-ink px-4 py-2 text-xs font-semibold text-white shadow-soft  hover:bg-approved-ink"
               >
-                Xem đề ngay
+                Duyệt câu hỏi
+                <span className="sr-only"> (Xem đề ngay)</span>
                 <ArrowRight className="h-3.5 w-3.5" />
               </button>
             )}
@@ -298,7 +299,8 @@ export default function GenerationProgressView({
                 <AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-accent-ink" />
                 <div>
                   <h4 className="text-sm font-bold text-strong">
-                    Tiến trình hoàn thành một phần (<code>partial_generated</code>)
+                    Đã tạo một phần; còn câu cần sinh bổ sung.
+                    <span className="sr-only"> (partial_generated)</span>
                   </h4>
                   <p className="mt-1 text-xs text-accent-ink">
                     {hasSnapshotData ? (

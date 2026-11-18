@@ -13,7 +13,7 @@ const { default: Stage3ReviewPage } = await import('./Stage3ReviewPage.jsx');
 
 function renderStage3Page(
   sessionId,
-  { loadSession, loadSessionDetail, retryGen, acceptQuestionFn, regenerateQuestionFn } = {},
+  { loadSession, loadSessionDetail, retryGen, acceptQuestionFn, regenerateQuestionFn, revertQuestionFn } = {},
 ) {
   const container = document.createElement('div');
   const root = createRoot(container);
@@ -50,6 +50,7 @@ function renderStage3Page(
                   retryGen,
                   acceptQuestionFn,
                   regenerateQuestionFn,
+                  revertQuestionFn,
                 }),
               }),
               React.createElement(Route, {
@@ -2019,4 +2020,90 @@ test('R78-02: accepting an expanded pending card preserves pinned visibility wit
     await act(async () => { harness.container.querySelector('[data-review-inspect="true"]').click(); });
     assert.equal(harness.container.querySelector('#review-1-1'), null);
   } finally { await harness.unmount(); }
+});
+
+test('UX-08 & Identity: Revert button requires confirmation_id and job_snapshot_id, and mutation is blocked without authoritative ID', async () => {
+  const revertCalls = [];
+  const mockRevertFn = async (sid, qid, key) => {
+    revertCalls.push({ sid, qid, key });
+    return { question_id: 'cand-rev-1', status: 'pending_review', is_reverted: true };
+  };
+
+  // 1. Session WITH confirmation_id and job_snapshot_id
+  const harness = renderStage3Page('sess-revert-test', {
+    loadSession: async () => ({
+      id: 'sess-revert-test',
+      status: 'generated',
+      confirmation_id: 'conf-uuid-1',
+      job_snapshot_id: 'job-uuid-1',
+      config: { n_versions: 1 },
+      source_questions: [{ source_question_id: 'sq-1', question_no: 1, raw_content: 'Đề gốc' }],
+      exam_versions: [{
+        version_index: 1,
+        questions: [{
+          id: 'cand-1',
+          candidate_id: 'cand-1',
+          source_question_id: 'sq-1',
+          question_no: 1,
+          content: 'Biến thể 1',
+          options: { A: '1', B: '2' },
+          correct_key: 'A',
+          status: 'pending_review',
+        }],
+      }],
+    }),
+    revertQuestionFn: mockRevertFn,
+  });
+
+  const originalConfirm = window.confirm;
+  window.confirm = () => true;
+
+  try {
+    await harness.render();
+    // Mở card câu 1
+    await act(async () => {
+      harness.container.querySelector('[data-review-inspect="true"]').click();
+    });
+
+    const revertBtn = harness.container.querySelector('[data-review-revert="true"]');
+    assert.ok(revertBtn, 'Nút Khôi phục đề gốc phải xuất hiện khi có W4 snapshot metadata');
+
+    await act(async () => {
+      revertBtn.click();
+    });
+
+    assert.equal(revertCalls.length, 1);
+    assert.equal(revertCalls[0].qid, 'cand-1');
+
+    // Sau khi revert thành công, badge phải hiển thị "Đã khôi phục đề gốc — cần duyệt lại"
+    const text = harness.container.textContent;
+    assert.match(text, /Đã khôi phục đề gốc — cần duyệt lại/);
+  } finally {
+    window.confirm = originalConfirm;
+    await harness.unmount();
+  }
+});
+
+test('UX-10: Deep link Stage 3 nhận HTTP 409 ERR_SHUFFLE_REQUIRED hiển thị nút chuyển sang Xem trước & Phê duyệt', async () => {
+  const err409 = new Error('Shuffle required');
+  err409.response = { status: 409, data: { error_code: 'ERR_SHUFFLE_REQUIRED' } };
+
+  const harness = renderStage3Page('sess-409-test', {
+    loadSession: async () => { throw err409; },
+  });
+
+  try {
+    await harness.render();
+    const btn = harness.container.querySelector('[data-testid="stage3-btn-goto-preview-409"]');
+    assert.ok(btn, 'Phải có nút Chuyển tới Xem trước & Phê duyệt khi nhận 409');
+    assert.match(btn.textContent, /Chuyển tới Xem trước & Phê duyệt/);
+
+    await act(async () => {
+      btn.click();
+    });
+
+    assert.equal(harness.getLocation(), '/session/sess-409-test/stage3/preview');
+  } finally {
+    await harness.unmount();
+  }
 });

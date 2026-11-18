@@ -252,7 +252,7 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
               <div>
                 <label htmlFor={inputId} className="text-sm font-semibold text-strong">Nhập trực tiếp</label>
                 <p id={`${inputId}-help`} className="mt-0.5 text-xs text-muted">
-                  Tối đa 100.000 ký tự. Nhập câu hỏi, các phương án A–D và đáp án đúng.
+                  Tối đa 100.000 ký tự. Đề và đáp án phải có trong cùng nội dung nhập.
                 </p>
               </div>
               <textarea
@@ -323,6 +323,12 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
         <div className={`min-h-0 flex-1 flex-col overflow-auto ${
           readOnly || mobileTab === 'preview' ? 'flex' : 'hidden md:flex'
         }`}>
+          {state.isInputDirty && (
+            <div role="status" className="shrink-0 mb-3 rounded-xl border border-accent-border bg-accent-soft p-3 text-xs text-accent-ink font-medium">
+              <span className="font-bold block mb-0.5">Nguồn đã thay đổi — bản đọc chưa cập nhật</span>
+              Nội dung đã thay đổi. Nạp lại để cập nhật bản đọc.
+            </div>
+          )}
           {state.unavailable ? (
             <p className="rounded-xl border border-line bg-surface p-6 text-sm text-muted shadow-soft">
               Chưa thể hiển thị nguồn. Hãy kiểm tra lại quyền truy cập phiên.
@@ -333,7 +339,9 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
         </div>
       </div>
       {!readOnly && (<p id={`${inputId}-confirm-help`} className="shrink-0 text-xs text-muted">
-        {state.retryConfirmation ? 'Chưa thấy kết quả xác nhận. Bạn có thể thử lại lần xác nhận trước.'
+        {state.isInputDirty
+          ? 'Nội dung đã thay đổi. Nạp lại để cập nhật bản đọc.'
+          : state.retryConfirmation ? 'Chưa thấy kết quả xác nhận. Bạn có thể thử lại lần xác nhận trước.'
           : !readOnly && state.detail.source_questions.length > 0 && !isSourceUuid(state.detail.source_revision)
             ? 'Bản đề này chưa thể xác nhận. Hãy đọc lại nguồn đã lưu.'
             : 'Xác nhận bản đề đang hiển thị. Nếu đã sửa nội dung nhập, hãy nạp lại trước khi xác nhận.'}

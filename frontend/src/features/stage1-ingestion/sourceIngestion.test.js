@@ -864,3 +864,35 @@ test('Phillip F04: proceedToStage2 is guarded against busy states', async () => 
   controller.proceedToStage2();
   assert.deepEqual(navigations, ['session-a']);
 });
+
+test('UX-14: Sửa input sau ingest đánh dấu isInputDirty và khóa canConfirm; nạp lại mở khóa', async () => {
+  let server = detail({ source_revision: revA, source_questions: a });
+  const f = confirmationFixture({
+    initialDetail: server,
+    load: async () => server,
+    ingestText: async () => {
+      server = detail({ source_revision: revB, source_questions: b });
+      return { session_id: 'session-a', questions: b };
+    },
+  });
+  f.controller.setText('Nội dung A');
+  await f.controller.submit();
+  assert.equal(f.controller.getSnapshot().isInputDirty, false);
+  assert.equal(f.controller.canConfirm(), true);
+
+  // Sửa input sau khi nạp thành công
+  f.controller.setText('Nội dung A đã bị sửa');
+  assert.equal(f.controller.getSnapshot().isInputDirty, true);
+  assert.equal(f.controller.canConfirm(), false, 'canConfirm phải bị khóa khi input dirty');
+
+  // Thao tác confirm bị chặn
+  await f.controller.confirm();
+  assert.equal(f.confirms.length, 0, 'Không được gửi confirm khi input dirty');
+
+  // Nạp lại thành công
+  await f.controller.submit();
+  assert.equal(f.controller.getSnapshot().isInputDirty, false);
+  assert.equal(f.controller.canConfirm(), true, 'canConfirm được mở khóa sau khi nạp mới');
+  await f.controller.confirm();
+  assert.equal(f.confirms.length, 1, 'Confirm gửi thành công sau khi nạp mới');
+});

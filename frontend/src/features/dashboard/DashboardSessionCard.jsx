@@ -2,7 +2,7 @@ import { Calendar, Clock, Copy, ExternalLink, FileText, Loader2 } from 'lucide-r
 
 const statusLabels = {
   draft: 'Đang chuẩn bị',
-  blueprinted: 'Đã xác nhận quy tắc',
+  blueprinted: 'Đã xác nhận đề gốc',
   configured: 'Đã cấu hình sinh đề',
   generating: 'Đang sinh đề',
   partial_generated: 'Đã sinh một phần',
@@ -129,8 +129,10 @@ export default function DashboardSessionCard({
             ) : isReadOnly ? (
               <>
                 <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>Xem đề</span>
+                <span>Mở bộ đề</span>
               </>
+            ) : ['partial_generated', 'generated'].includes(session.status) ? (
+              <span>Tiếp tục duyệt</span>
             ) : (
               <span>Tiếp tục</span>
             )}

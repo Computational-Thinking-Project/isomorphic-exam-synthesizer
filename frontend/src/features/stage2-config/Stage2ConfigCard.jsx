@@ -191,7 +191,7 @@ export default function Stage2ConfigCard({
             2. Thứ tự câu hỏi và đáp án
           </label>
           <p className="mt-1 text-sm text-muted">
-            Tùy chọn áp dụng khi tạo các mã đề.
+            Hai lựa chọn này được <strong>lưu</strong> khi cấu hình. Thứ tự câu hỏi và phương án chỉ được <strong>áp dụng</strong> khi bạn chốt ở màn Xem trước, sau khi duyệt đủ câu.
           </p>
 
           <div className="mt-4 space-y-3">
@@ -268,13 +268,13 @@ export default function Stage2ConfigCard({
                 {shuffleQuestions && (
                   <span className="flex items-center gap-1.5 rounded-lg bg-rail px-2.5 py-1 text-ink">
                     <Shuffle className="h-3.5 w-3.5 text-accent-ink" />
-                    Thứ tự câu hỏi xáo ngẫu nhiên
+                    Đã chọn đảo thứ tự câu hỏi
                   </span>
                 )}
                 {shuffleOptions && (
                   <span className="flex items-center gap-1.5 rounded-lg bg-rail px-2.5 py-1 text-ink">
                     <Shuffle className="h-3.5 w-3.5 text-highlight" />
-                    Thứ tự đáp án (A, B, C, D) xáo ngẫu nhiên
+                    Đã chọn đảo thứ tự phương án
                   </span>
                 )}
               </div>
