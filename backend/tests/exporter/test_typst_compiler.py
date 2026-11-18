@@ -673,6 +673,7 @@ class TestRealTypstIntegration:
                 r"Toa do: $Oxyz$, doan $AB$, diem $IN$, khoang cach $\overline{AB}$, $\vec{CD}$, $\hat{x}$, $\bar{y}$, $\ddot{z}$.",
                 r"Tong va gioi han: $\sum_{k=1}^{n} k^2$, $\prod_{i=1}^{n} a_i$, $\lim_{x \to 0} \frac{\sin x}{x} = 1$, $\sin^2 x + \cos^2 x = 1$.",
                 r"Tap hop va ky hieu: $x \in \mathbb{R} \setminus \{0\}$, $A \subseteq B$, $A \cong B$, $A \sim B$, $a \propto b$, $90^\circ$, $\angle ABC$, $\triangle ABC$, $d \perp \Delta$, $d \parallel d'$, $\langle u, v \rangle$, $\lVert u \rVert$, $\cdots$, $\vdots$, $\ddots$, $5\,\mathrm{cm} + 2\,\mathrm{kg} + 3\,\mathrm{km} + \mathrm{cm}^2 + \mathrm{cm^2}$, $\mathrm{x+y}$, $\mathrm{kg/mol}$, $\mathrm{\frac{kg}{mol}}$, $\text{don vi } 5\,\text{cm}$.",
+                r"Token provenance (F82-05): $pi + \pi$, $in + (x \in A)$, $sum + \sum_{k=1}^{n} k$, $sin + \sin x$, $\mathrm{in}$, $\mathrm{pi}$, $\mathrm{sin}$, $\mathrm{\frac{in}{mol}}$, $\mathrm{\sqrt{pi}}$, $\mathbf{pi} + \mathit{in} + \mathsf{sin} + \vec{pi} + \mathbf{\pi}$.",
                 r"He phuong trinh va ma tran: $\begin{cases} x + y = 1 \\ x - y = 3 \end{cases}$, $\begin{cases}x^2 & x\ge 0\\-x & x<0\end{cases}$, $\begin{alignedat}{2}x&=1 & y&=2\\z&=3 & t&=4\end{alignedat}$ va $\begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix}$.",
                 r"Fallback unknown macro: $\unknownmacro + x$.",
             ]
@@ -789,4 +790,47 @@ class TestGoldenAndExtendedMathConverter:
         assert latex_math_to_typst(r"\mathrm{kg/mol}") == 'upright("kg"/"mol")'
         assert latex_math_to_typst(r"\mathrm{\frac{kg}{mol}}") == 'upright((("kg")/("mol")))'
         assert latex_math_to_typst(r"\frac{\mathrm{kg}}{\mathrm{mol}}") == '((upright("kg"))/(upright("mol")))'
+
+    @pytest.mark.parametrize(
+        ("latex_input", "expected_typst"),
+        [
+            # Case A: Original Latin identifiers vs explicit LaTeX commands
+            (r"pi", "p i"),
+            (r"\pi", "pi"),
+            (r"in", "i n"),
+            (r"\in", "in"),
+            (r"sum", "s u m"),
+            (r"\sum", "sum"),
+            (r"sin", "s i n"),
+            (r"\sin", "sin"),
+            # Case B: Upright labels and nested expressions in \mathrm{...}
+            (r"\mathrm{in}", 'upright("in")'),
+            (r"\mathrm{pi}", 'upright("pi")'),
+            (r"\mathrm{sin}", 'upright("sin")'),
+            (r"\mathrm{cm}", 'upright("cm")'),
+            (r"\mathrm{kg/mol}", 'upright("kg"/"mol")'),
+            (r"\mathrm{\frac{in}{mol}}", 'upright((("in")/("mol")))'),
+            (r"\mathrm{\sqrt{pi}}", 'upright(sqrt("pi"))'),
+            (r"\mathrm{kg \cdot m/s^2}", 'upright("kg" dot m/s^2)'),
+            # Case C: Font and accent wrappers preserve token provenance
+            (r"\mathbf{pi}", "bold(p i)"),
+            (r"\mathit{in}", "italic(i n)"),
+            (r"\mathsf{sin}", "sans(s i n)"),
+            (r"\vec{pi}", "arrow(p i)"),
+            (r"\mathbf{\pi}", "bold(pi)"),
+            (r"\vec{\pi}", "arrow(pi)"),
+            (r"\mathrm{\pi}", "upright(pi)"),
+        ],
+    )
+    def test_token_provenance_preserves_identifier_semantics_f82_05(
+        self, latex_input: str, expected_typst: str
+    ):
+        assert latex_math_to_typst(latex_input) == expected_typst
+
+    def test_sentinel_characters_in_input_do_not_bypass_splitting_or_security(self):
+        # PUA sentinel characters in untrusted input must not fake protected tokens or bypass guards.
+        spoofed = "\ue000pi\ue001 + \ue000eval\ue001(1)"
+        out = latex_math_to_typst(spoofed)
+        assert "eval" not in out
+        assert "p i" in out
 

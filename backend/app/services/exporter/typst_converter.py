@@ -224,193 +224,20 @@ _MODIFIER_CMDS: frozenset[str] = frozenset(
 
 _CONTROL_WORD_RE = re.compile(r"\\([A-Za-z]+)(?![a-zA-Z])")
 
-_TYPST_DOT_SYMBOLS: frozenset[str] = frozenset(
-    {
-        "plus.minus",
-        "minus.plus",
-        "integral.double",
-        "integral.triple",
-        "integral.cont",
-        "epsilon.alt",
-        "theta.alt",
-        "phi.alt",
-        "subset.eq",
-        "supset.eq",
-        "tilde.op",
-        "tilde.eq",
-        "tilde.equiv",
-        "circle.small",
-        "dots.h",
-        "dots.c",
-        "dots.v",
-        "dots.down",
-        "angle.l",
-        "angle.r",
-        "chevron.l",
-        "chevron.r",
-        "arrow.l.double",
-        "arrow.r.bar",
-        "bar.v",
-        "bar.v.double",
-        "dot.double",
-    }
-)
-
-_TYPST_MATH_IDENTIFIERS: frozenset[str] = frozenset(
-    {
-        # Logic, set, relation, and symbol keywords
-        "in",
-        "not",
-        "and",
-        "or",
-        "approx",
-        "equiv",
-        "prop",
-        "subset",
-        "supset",
-        "union",
-        "sect",
-        "without",
-        "emptyset",
-        "forall",
-        "exists",
-        "hash",
-        "times",
-        "div",
-        "dot",
-        "infinity",
-        "oo",
-        "partial",
-        "nabla",
-        "degree",
-        "angle",
-        "triangle",
-        "perp",
-        "parallel",
-        # Big operators, constructs, and delimiters
-        "sum",
-        "product",
-        "integral",
-        "sqrt",
-        "root",
-        "binom",
-        "mat",
-        "cases",
-        "lr",
-        "abs",
-        "norm",
-        "floor",
-        "ceil",
-        "round",
-        "frac",
-        "dif",
-        "op",
-        "delim",
-        "none",
-        # Spacing and typography wrappers
-        "quad",
-        "wide",
-        "thin",
-        "med",
-        "thick",
-        "bold",
-        "upright",
-        "italic",
-        "sans",
-        "serif",
-        "bb",
-        "cal",
-        "frak",
-        "mono",
-        "overline",
-        "underline",
-        "underbrace",
-        "overbrace",
-        "arrow",
-        "hat",
-        "macron",
-        "tilde",
-        # Greek letters
-        "alpha",
-        "beta",
-        "gamma",
-        "delta",
-        "epsilon",
-        "zeta",
-        "eta",
-        "theta",
-        "iota",
-        "kappa",
-        "lambda",
-        "mu",
-        "nu",
-        "xi",
-        "omicron",
-        "pi",
-        "rho",
-        "sigma",
-        "tau",
-        "upsilon",
-        "phi",
-        "chi",
-        "psi",
-        "omega",
-        "Gamma",
-        "Delta",
-        "Theta",
-        "Lambda",
-        "Xi",
-        "Pi",
-        "Sigma",
-        "Upsilon",
-        "Phi",
-        "Psi",
-        "Omega",
-        # Standard math functions
-        "sin",
-        "cos",
-        "tan",
-        "cot",
-        "sec",
-        "csc",
-        "arcsin",
-        "arccos",
-        "arctan",
-        "arccot",
-        "sinh",
-        "cosh",
-        "tanh",
-        "coth",
-        "sech",
-        "csch",
-        "ln",
-        "log",
-        "lg",
-        "exp",
-        "lim",
-        "limsup",
-        "liminf",
-        "min",
-        "max",
-        "sup",
-        "inf",
-        "arg",
-        "det",
-        "dim",
-        "gcd",
-        "lcm",
-        "deg",
-        "mod",
-    }
-)
+_PROTECTED_OPEN = "\ue000"
+_PROTECTED_CLOSE = "\ue001"
+_ESCAPE_SENTINEL = "\ue002"
 
 _SPLIT_TOKEN_RE = re.compile(
     _QUOTED_STR_RE.pattern
-    + r"|(?<![A-Za-z])(?:"
-    + "|".join(re.escape(sym) for sym in sorted(_TYPST_DOT_SYMBOLS, key=len, reverse=True))
-    + r")(?![A-Za-z])"
-    r"|(?<![A-Za-z])[A-Za-z]{2,}(?![A-Za-z])"
+    + rf"|{_PROTECTED_OPEN}[^{_PROTECTED_CLOSE}]*{_PROTECTED_CLOSE}"
+    + r"|(?<![A-Za-z])[A-Za-z]{2,}(?![A-Za-z])"
 )
+
+
+def _protect(typst_token: str) -> str:
+    """Wrap a converter-generated Typst token so raw identifier passes keep it intact."""
+    return f"{_PROTECTED_OPEN}{typst_token}{_PROTECTED_CLOSE}"
 
 
 def _transform_outside_quotes(text: str, transform: Callable[[str], str]) -> str:
@@ -514,7 +341,7 @@ def _convert_env(name: str, body: str, *, quote_unknown: bool = False) -> str:
             for row in rows
             if row.strip()
         ]
-        return f"cases({', '.join(converted_rows)})"
+        return f"{_protect('cases')}({', '.join(converted_rows)})"
 
     if name in _MATRIX_DELIMS:
         converted_rows = []
@@ -529,9 +356,9 @@ def _convert_env(name: str, body: str, *, quote_unknown: bool = False) -> str:
         delim = _MATRIX_DELIMS[name]
         joined = "; ".join(converted_rows)
         if delim is None:
-            return f"mat({joined})"
-        delim_arg = "none" if delim == "none" else f'"{delim}"'
-        return f"mat(delim: {delim_arg}, {joined})"
+            return f"{_protect('mat')}({joined})"
+        delim_arg = _protect("none") if delim == "none" else f'"{delim}"'
+        return f"{_protect('mat')}({_protect('delim')}: {delim_arg}, {joined})"
 
     # aligned / alignedat / gathered / split
     converted_lines: List[str] = []
@@ -552,7 +379,7 @@ def _split_multiletter_segment(segment: str, *, quote_unknown: bool = False) -> 
 
     def _replace_tok(match: re.Match[str]) -> str:
         tok = match.group(0)
-        if tok.startswith('"') or tok in _TYPST_DOT_SYMBOLS or tok in _TYPST_MATH_IDENTIFIERS:
+        if tok.startswith('"') or tok.startswith(_PROTECTED_OPEN):
             return tok
         return f'"{tok}"' if quote_unknown else " ".join(tok)
 
@@ -567,15 +394,15 @@ def _finalize_math_segment(segment: str, *, quote_unknown: bool = False) -> str:
         if cmd in _MODIFIER_CMDS:
             return " "
         if cmd in _BINARY_SYMBOLS:
-            return f" {_BINARY_SYMBOLS[cmd]} "
+            return f" {_protect(_BINARY_SYMBOLS[cmd])} "
         if cmd in _PREFIX_SYMBOLS:
-            return f" {_PREFIX_SYMBOLS[cmd]} "
+            return f" {_protect(_PREFIX_SYMBOLS[cmd])} "
         # Fallback: quote unrecognized TeX control words so Typst never parses '\cmd' as '\c' + 'md'.
         return f'"{cmd}"'
 
     # Strip spacing punctuation commands, convert escaped math literals, and convert '\\' line breaks.
     segment = re.sub(r"\\[,;:!]", " ", segment)
-    segment = segment.replace(r"\|", " bar.v.double ")
+    segment = segment.replace(r"\|", f" {_protect('bar.v.double')} ")
     segment = segment.replace(r"\&", '"&"')
     segment = segment.replace(r"\%", "%")
     segment = segment.replace(r"\_", '"_"')
@@ -583,7 +410,7 @@ def _finalize_math_segment(segment: str, *, quote_unknown: bool = False) -> str:
 
     segment = _CONTROL_WORD_RE.sub(_replace_cmd, segment)
     segment = re.sub(r"[ \t]+", " ", segment)
-    segment = re.sub(r"(?<=[A-Za-z0-9)\]|\"'])[ \t]+(?=[_^])", "", segment)
+    segment = re.sub(rf"(?<=[A-Za-z0-9)\]|\"'{_PROTECTED_CLOSE}])[ \t]+(?=[_^])", "", segment)
     segment = re.sub(r"([_^])[ \t]+", r"\1", segment)
     return _split_multiletter_segment(segment, quote_unknown=quote_unknown)
 
@@ -591,9 +418,9 @@ def _finalize_math_segment(segment: str, *, quote_unknown: bool = False) -> str:
 def _convert_mathrm(inner: str) -> str:
     """Convert \\mathrm{...} while preserving unit labels and math operators (F82-03, F82-04)."""
     if not inner.strip():
-        return 'upright("")'
+        return f'{_protect("upright")}("")'
     converted_inner = _latex_math_to_typst_impl(inner, quote_unknown=True)
-    return f"upright({converted_inner})"
+    return f"{_protect('upright')}({converted_inner})"
 
 
 def latex_math_to_typst(math_str: str) -> str:
@@ -612,7 +439,25 @@ def latex_math_to_typst(math_str: str) -> str:
     - Grouped superscripts / subscripts: ^{...} -> ^(...), _{...} -> _(...)
     - Security: neutralizes '#' and control triggers in math mode to prevent Typst code injection
     """
-    return _latex_math_to_typst_impl(math_str, quote_unknown=False)
+    if not math_str or not math_str.strip():
+        return ""
+    has_pua = any(ch in math_str for ch in (_PROTECTED_OPEN, _PROTECTED_CLOSE, _ESCAPE_SENTINEL))
+    escaped_input = (
+        math_str.replace(_ESCAPE_SENTINEL, f"{_ESCAPE_SENTINEL}\ue003")
+        .replace(_PROTECTED_OPEN, f"{_ESCAPE_SENTINEL}\ue004")
+        .replace(_PROTECTED_CLOSE, f"{_ESCAPE_SENTINEL}\ue005")
+        if has_pua
+        else math_str
+    )
+    out = _latex_math_to_typst_impl(escaped_input, quote_unknown=False)
+    out = out.replace(_PROTECTED_OPEN, "").replace(_PROTECTED_CLOSE, "")
+    if has_pua:
+        out = (
+            out.replace(f"{_ESCAPE_SENTINEL}\ue005", _PROTECTED_CLOSE)
+            .replace(f"{_ESCAPE_SENTINEL}\ue004", _PROTECTED_OPEN)
+            .replace(f"{_ESCAPE_SENTINEL}\ue003", _ESCAPE_SENTINEL)
+        )
+    return out
 
 
 def _latex_math_to_typst_impl(math_str: str, *, quote_unknown: bool = False) -> str:
@@ -627,8 +472,9 @@ def _latex_math_to_typst_impl(math_str: str, *, quote_unknown: bool = False) -> 
     # We neutralize '\#' and '#' to ' hash ', ensuring no literal '#' ever enters math mode.
     # Strip method calls (\.[a-zA-Z_]\w*\s*\() without corrupting decimal numbers (e.g. 0.5(x+1)),
     # and strip code keywords (panic, eval, assert).
-    s = re.sub(r"\\#", " hash ", s)
-    s = re.sub(r"#", " hash ", s)
+    hash_tok = f" {_protect('hash')} "
+    s = re.sub(r"\\#", hash_tok, s)
+    s = re.sub(r"#", hash_tok, s)
     s = re.sub(r"\.[a-zA-Z_]\w*\s*\(", " ", s)
     s = re.sub(r"\b(?:panic|eval|assert)\b", " ", s)
 
@@ -661,7 +507,7 @@ def _latex_math_to_typst_impl(math_str: str, *, quote_unknown: bool = False) -> 
             conv_num = _latex_math_to_typst_impl(num, quote_unknown=quote_unknown)
             conv_den = _latex_math_to_typst_impl(den, quote_unknown=quote_unknown)
             converted = (
-                f"binom({conv_num}, {conv_den})"
+                f"{_protect('binom')}({conv_num}, {conv_den})"
                 if m.group(1).endswith("binom")
                 else f"(({conv_num})/({conv_den}))"
             )
@@ -674,17 +520,17 @@ def _latex_math_to_typst_impl(math_str: str, *, quote_unknown: bool = False) -> 
         deg = _latex_math_to_typst_impl(m.group(1).strip(), quote_unknown=quote_unknown)
         inner, end_idx = _extract_balanced_braces(s, m.end() - 1)
         conv_inner = _latex_math_to_typst_impl(inner, quote_unknown=quote_unknown)
-        s = s[: m.start()] + f"root({deg}, {conv_inner})" + s[end_idx:]
+        s = s[: m.start()] + f"{_protect('root')}({deg}, {conv_inner})" + s[end_idx:]
 
     while (m := _search_outside_quotes(s, _SQRT_RE)) is not None:
         inner, end_idx = _extract_balanced_braces(s, m.end() - 1)
         conv_inner = _latex_math_to_typst_impl(inner, quote_unknown=quote_unknown)
-        s = s[: m.start()] + f"sqrt({conv_inner})" + s[end_idx:]
+        s = s[: m.start()] + f"{_protect('sqrt')}({conv_inner})" + s[end_idx:]
 
     # 6. Convert braced and single-token style/accent commands (\mathbb, \overline, \vec, \hat, \bar, ...)
     while (m := _search_outside_quotes(s, _SINGLE_ARG_WRAPPER_RE)) is not None:
         cmd = m.group(1)
-        typst_fn = _SINGLE_ARG_WRAPPERS[cmd]
+        typst_fn = _protect(_SINGLE_ARG_WRAPPERS[cmd])
         inner, end_idx = _extract_balanced_braces(s, m.end() - 1)
         conv_inner = _latex_math_to_typst_impl(inner, quote_unknown=quote_unknown)
         s = s[: m.start()] + f"{typst_fn}({conv_inner})" + s[end_idx:]
@@ -692,7 +538,7 @@ def _latex_math_to_typst_impl(math_str: str, *, quote_unknown: bool = False) -> 
     s = _transform_outside_quotes(
         s,
         lambda seg: _UNBRACED_WRAPPER_RE.sub(
-            lambda m: f"{_SINGLE_ARG_WRAPPERS[m.group(1)]}({m.group(2)})",
+            lambda m: f"{_protect(_SINGLE_ARG_WRAPPERS[m.group(1)])}({m.group(2)})",
             seg,
         ),
     )
