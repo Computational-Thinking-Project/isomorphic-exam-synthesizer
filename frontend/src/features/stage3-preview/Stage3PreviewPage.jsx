@@ -43,7 +43,7 @@ export default function Stage3PreviewPage({
   const [isApproveModalOpen, setIsApproveModalOpen] = useState(false);
   const [approveError, setApproveError] = useState(null);
   const [toast, setToast] = useState(null);
-  const [outcomeUnknown, setOutcomeUnknown] = useState(false);
+  const [shuffleRecovery, setShuffleRecovery] = useState(null);
   const [shuffleQuestions, setShuffleQuestions] = useState(false);
   const [shuffleOptions, setShuffleOptions] = useState(false);
   const [sessionStatus, setSessionStatus] = useState('reviewed');
@@ -65,7 +65,7 @@ export default function Stage3PreviewPage({
     setPreviewData(null);
     setSelectedTab('');
     setError(null);
-    setOutcomeUnknown(false);
+    setShuffleRecovery(null);
     setNeedsShuffle(false);
     setIsApproveModalOpen(false);
     setApproveError(null);
@@ -85,8 +85,8 @@ export default function Stage3PreviewPage({
     }, 4000);
   };
 
-  // F04 & F05: loadData chỉ phụ thuộc vào sessionId, dùng requestIdRef để loại bỏ race condition
-  const loadData = useCallback(async () => {
+  // requestIdRef loại bỏ phản hồi cũ khi đổi phiên hoặc bắt đầu lượt đọc mới.
+  const loadData = useCallback(async (recovery = null) => {
     if (!sessionId) return null;
     const currentRequestId = ++requestIdRef.current;
     setLoading(true);
@@ -95,7 +95,14 @@ export default function Stage3PreviewPage({
     try {
       const data = await loadPreview(sessionId);
       if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
-      setOutcomeUnknown(false);
+      if (recovery && (
+        data?.session_id !== sessionId ||
+        (data.is_finalized !== true && (recovery === 'confirmed' || !data.ordering_preferences))
+      )) {
+        setError('Chưa thể tải bản xem trước nhất quán với trạng thái chốt thứ tự.');
+        return null;
+      }
+      setShuffleRecovery(null);
       setPreviewData(data);
       setNeedsShuffle(!data.is_finalized);
       if (data.status) {
@@ -113,9 +120,10 @@ export default function Stage3PreviewPage({
       if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
       // F03: Chỉ kích hoạt needsShuffle khi mã lỗi là ERR_SHUFFLE_REQUIRED
       if (err.errorCode === 'ERR_SHUFFLE_REQUIRED' || err.data?.error_code === 'ERR_SHUFFLE_REQUIRED') {
-        setOutcomeUnknown(false);
-        setNeedsShuffle(true);
-        setError(null);
+        if (recovery === 'confirmed') {
+          setError('Chưa thể tải bản xem trước nhất quán với trạng thái chốt thứ tự.');
+          return null;
+        }
 
         // Khôi phục ordering_preferences đã lưu ở backend theo Issue #45
         const errPrefs = err.response?.data?.ordering_preferences || err.data?.ordering_preferences;
@@ -140,10 +148,13 @@ export default function Stage3PreviewPage({
             return null;
           }
         }
-        return { is_finalized: false, unfinalized: true };
-      } else if (err.status === 423) {
-        setOutcomeUnknown(false);
-        // Đã khóa, cố nạp dữ liệu ở chế độ view-only
+        setShuffleRecovery(null);
+        setNeedsShuffle(true);
+        return { is_finalized: false };
+      } else if (err.status === 423 && err.errorCode === 'ERR_SESSION_LOCKED') {
+        setShuffleRecovery(null);
+        setNeedsShuffle(false);
+        setSessionStatus('approved');
         setError('Phiên làm việc đã được phê duyệt và khóa nội dung.');
         return { is_finalized: true, locked: true };
       } else {
@@ -164,6 +175,7 @@ export default function Stage3PreviewPage({
   // Xử lý hoàn tất sắp xếp / xáo trộn mã đề (F02: cô lập targetSessionId; hỗ trợ cả 4 tổ hợp Boolean theo Issue #45)
   const handleShuffle = async (preferences = { shuffle_questions: false, shuffle_options: false }) => {
     const targetSessionId = sessionId;
+    if (shuffling || shuffleRecovery || activeSessionIdRef.current !== targetSessionId) return;
     const sanitizedPrefs = {
       shuffle_questions: Boolean(preferences.shuffle_questions),
       shuffle_options: Boolean(preferences.shuffle_options),
@@ -171,7 +183,24 @@ export default function Stage3PreviewPage({
     setShuffling(true);
     setError(null);
     try {
-      await executeFinalizeShuffle(targetSessionId, sanitizedPrefs);
+      try {
+        await executeFinalizeShuffle(targetSessionId, sanitizedPrefs);
+      } catch (err) {
+        if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
+
+        // Issue #86: Đối soát khi thao tác chưa nhận được xác nhận từ máy chủ.
+        setShuffleRecovery('unknown');
+        const reconciled = await loadData('unknown');
+        if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
+
+        if (reconciled?.is_finalized) {
+          showToast('Đã hoàn tất sắp xếp đề thi (đã xác thực trạng thái từ máy chủ).', 'success');
+        } else if (reconciled?.is_finalized === false) {
+          showToast(err.message || 'Không thể thực hiện hoàn tất sắp xếp đề thi.', 'error');
+        }
+        return;
+      }
+
       if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
       let toastMsg = 'Đã áp dụng cấu hình xáo trộn đề thi.';
       if (!sanitizedPrefs.shuffle_questions && !sanitizedPrefs.shuffle_options) {
@@ -184,33 +213,9 @@ export default function Stage3PreviewPage({
         toastMsg = 'Đã xáo trộn thứ tự đáp án (giữ nguyên câu hỏi).';
       }
       showToast(toastMsg, 'success');
-      setOutcomeUnknown(false);
-      await loadData();
-    } catch (err) {
-      if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
-
-      // Issue #86 & F91-04: Kiểm tra đối soát authoritative preview xem thao tác finalize/shuffle có thực chất đã commit thành công trên máy chủ hay không
-      const reconciled = await loadData();
-      if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
-
-      if (reconciled?.is_finalized) {
-        setOutcomeUnknown(false);
-        showToast('Đã hoàn tất sắp xếp đề thi (đã xác thực trạng thái từ máy chủ).', 'success');
-        return;
-      }
-
-      if (reconciled?.unfinalized || reconciled?.is_finalized === false) {
-        // GET xác nhận server CHƯA finalize (ví dụ 409 ERR_SHUFFLE_REQUIRED)
-        // Cho phép người dùng thử lại an toàn, giữ nguyên cờ shuffle
-        setOutcomeUnknown(false);
-        showToast(err.message || 'Không thể thực hiện hoàn tất sắp xếp đề thi.', 'error');
-        return;
-      }
-
-      // Reconciliation cũng thất bại (503 / network error / timeout) -> OUTCOME UNKNOWN!
-      // Không cho phép bấm lại PATCH/POST; hiển thị giao diện kiểm tra trạng thái
-      setOutcomeUnknown(true);
-      setError('Chưa thể xác định kết quả chốt thứ tự đề thi do mất kết nối. Vui lòng kiểm tra lại trạng thái.');
+      setShuffleRecovery('confirmed');
+      setNeedsShuffle(false);
+      await loadData('confirmed');
     } finally {
       if (isMountedRef.current && activeSessionIdRef.current === targetSessionId) {
         setShuffling(false);
@@ -229,6 +234,7 @@ export default function Stage3PreviewPage({
   const canApprove =
     !loading &&
     !error &&
+    !shuffleRecovery &&
     !needsShuffle &&
     !isLocked &&
     previewData?.session_id === sessionId &&
@@ -348,7 +354,7 @@ export default function Stage3PreviewPage({
                   </span>
                   <span className="text-[11px] text-muted mt-0.5">Đề đã khóa</span>
                 </>
-              ) : needsShuffle ? (
+              ) : needsShuffle && !shuffleRecovery ? (
                 <>
                   <span
                     data-testid="badge-status-pending"
@@ -413,18 +419,26 @@ export default function Stage3PreviewPage({
             <Loader2 className="w-8 h-8 animate-spin text-highlight" />
             <p className="text-sm">Đang tải bản chiếu xem trước đề thi...</p>
           </div>
-        ) : outcomeUnknown ? (
-          /* F91-04 (S86-B): Kết quả shuffle chưa xác định do mất kết nối cả POST và GET đối soát */
-          <div className="max-w-md mx-auto my-16 p-8 rounded-2xl bg-surface border border-accent-border text-center shadow-paper" data-testid="outcome-unknown-view">
+        ) : shuffleRecovery ? (
+          <div
+            className="max-w-md mx-auto my-16 p-8 rounded-2xl bg-surface border border-accent-border text-center shadow-paper"
+            data-testid={shuffleRecovery === 'confirmed' ? 'preview-recovery-view' : 'outcome-unknown-view'}
+          >
             <AlertCircle className="w-10 h-10 text-accent-ink mx-auto mb-3" />
-            <h2 className="text-lg font-semibold mb-2 text-strong">Chưa xác định được kết quả chốt thứ tự</h2>
+            <h2 className="text-lg font-semibold mb-2 text-strong">
+              {shuffleRecovery === 'confirmed'
+                ? 'Đã chốt thứ tự, chưa tải được bản xem trước'
+                : 'Chưa xác định được kết quả chốt thứ tự'}
+            </h2>
             <p className="text-sm text-muted mb-6">
-              Yêu cầu hoàn tất đã được gửi tới máy chủ nhưng chưa nhận được phản hồi xác nhận. Vui lòng kiểm tra lại trạng thái trước khi thực hiện lại thao tác.
+              {shuffleRecovery === 'confirmed'
+                ? 'Kiểm tra lại trạng thái để tải bản xem trước trước khi phê duyệt.'
+                : 'Yêu cầu hoàn tất đã được gửi tới máy chủ nhưng chưa nhận được phản hồi xác nhận. Vui lòng kiểm tra lại trạng thái trước khi thực hiện lại thao tác.'}
             </p>
             <button
               type="button"
               data-testid="btn-check-status"
-              onClick={() => loadData()}
+              onClick={() => loadData(shuffleRecovery)}
               disabled={loading}
               className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg bg-highlight hover:bg-highlight text-white text-sm font-semibold transition-colors disabled:opacity-50"
             >
