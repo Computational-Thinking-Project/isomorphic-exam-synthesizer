@@ -1604,3 +1604,143 @@ test('F84-05: Student Mode DOM isolation — không có badge-correct, lời gi�
     await harness.unmount();
   }
 });
+
+test('Issue #86 Regression: PATCH succeeds, POST commits but response is lost, authoritative GET returns is_finalized: true => UI recovers without second write', async () => {
+  const originalGet = api.get;
+  const originalPatch = api.patch;
+  const originalPost = api.post;
+
+  const calls = [];
+  let getCount = 0;
+
+  api.get = async (url) => {
+    calls.push({ type: 'get', url });
+    if (url.includes('/preferences')) {
+      return { data: { shuffle_questions: false, shuffle_options: false, is_finalized: false } };
+    }
+    if (url.includes('/finalize/preview')) {
+      getCount++;
+      if (getCount === 1) {
+        // Initial load: needs shuffle
+        return {
+          data: {
+            session_id: 'session-issue-86',
+            status: 'reviewed',
+            is_finalized: false,
+            exam_versions: [],
+          },
+        };
+      }
+      // Reconcile call: server has committed finalization
+      return {
+        data: {
+          session_id: 'session-issue-86',
+          status: 'reviewed',
+          is_finalized: true,
+          versions: GOLDEN_PREVIEW_FIXTURE.versions,
+        },
+      };
+    }
+    return { data: {} };
+  };
+
+  api.patch = async (url, payload) => {
+    calls.push({ type: 'patch', url, payload });
+    return { data: { success: true } };
+  };
+
+  api.post = async (url, payload) => {
+    calls.push({ type: 'post', url, payload });
+    if (url.includes('/finalize/shuffle')) {
+      // Giả lập network error / response lost sau khi backend đã commit
+      const netErr = new Error('Network Error / Timeout after commit');
+      netErr.isAxiosError = true;
+      throw netErr;
+    }
+    return { data: {} };
+  };
+
+  const harness = renderPreviewPage('session-issue-86');
+  try {
+    await harness.render();
+
+    const applyBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
+    assert.ok(applyBtn, 'Nút Áp dụng & Xem trước phải hiển thị');
+
+    await act(async () => {
+      applyBtn.click();
+    });
+
+    // 1. Kiểm tra UI đã tự đối chiếu authoritative preview và hiển thị preview thành công
+    assert.match(harness.container.textContent, /Bản xem trước — Mã đề 101/);
+    assert.match(harness.container.textContent, /Sẵn sàng phê duyệt/);
+
+    // 2. Không được thực hiện thêm mutation nào (chỉ 1 patch, 1 post, rồi 1 get đối chiếu)
+    const patchCalls = calls.filter((c) => c.type === 'patch');
+    const postCalls = calls.filter((c) => c.type === 'post');
+    assert.equal(patchCalls.length, 1, 'Chỉ được gọi PATCH 1 lần');
+    assert.equal(postCalls.length, 1, 'Chỉ được gọi POST shuffle 1 lần');
+  } finally {
+    api.get = originalGet;
+    api.patch = originalPatch;
+    api.post = originalPost;
+    await harness.unmount();
+  }
+});
+
+test('Issue #86: When POST fails and authoritative GET confirms not finalized => retry remains available', async () => {
+  const originalGet = api.get;
+  const originalPatch = api.patch;
+  const originalPost = api.post;
+
+  api.get = async (url) => {
+    if (url.includes('/preferences')) {
+      return { data: { shuffle_questions: false, shuffle_options: false, is_finalized: false } };
+    }
+    // GET preview consistently reports not finalized
+    return {
+      data: {
+        session_id: 'session-issue-86-not-finalized',
+        status: 'reviewed',
+        is_finalized: false,
+        exam_versions: [],
+      },
+    };
+  };
+
+  api.patch = async () => ({ data: { success: true } });
+
+  let postCount = 0;
+  api.post = async (url) => {
+    if (url.includes('/finalize/shuffle')) {
+      postCount++;
+      if (postCount === 1) {
+        throw new Error('Connection reset');
+      }
+      return { data: { session_id: 'session-issue-86-not-finalized', is_finalized: true } };
+    }
+    return { data: {} };
+  };
+
+  const harness = renderPreviewPage('session-issue-86-not-finalized');
+  try {
+    await harness.render();
+
+    const applyBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
+    assert.ok(applyBtn);
+
+    // Lần 1: click và gặp lỗi
+    await act(async () => {
+      applyBtn.click();
+    });
+
+    // Nút Áp dụng & Xem trước vẫn còn để người dùng thử lại
+    const retryBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
+    assert.ok(retryBtn, 'Nút Áp dụng & Xem trước phải còn để người dùng thử lại');
+  } finally {
+    api.get = originalGet;
+    api.patch = originalPatch;
+    api.post = originalPost;
+    await harness.unmount();
+  }
+});

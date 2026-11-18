@@ -179,6 +179,19 @@ export default function Stage3PreviewPage({
       await loadData();
     } catch (err) {
       if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
+
+      // Issue #86: Kiểm tra đối soát authoritative preview xem thao tác finalize/shuffle có thực chất đã commit thành công trên máy chủ hay không
+      try {
+        const reconciledData = await loadData();
+        if (!isMountedRef.current || activeSessionIdRef.current !== targetSessionId) return;
+        if (reconciledData?.is_finalized) {
+          showToast('Đã hoàn tất sắp xếp đề thi (đã xác thực trạng thái từ máy chủ).', 'success');
+          return;
+        }
+      } catch {
+        // loadData thất bại (mất mạng)
+      }
+
       showToast(err.message || 'Không thể thực hiện hoàn tất sắp xếp đề thi.', 'error');
     } finally {
       if (isMountedRef.current && activeSessionIdRef.current === targetSessionId) {
