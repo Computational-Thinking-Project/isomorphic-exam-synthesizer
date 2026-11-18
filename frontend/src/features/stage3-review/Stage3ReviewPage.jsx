@@ -14,6 +14,7 @@ import {
   Loader2,
   Lock,
   RefreshCw,
+  RotateCcw,
 } from 'lucide-react';
 import MathRenderer from '../../components/MathRenderer.jsx';
 import { getSessionDetail } from '../../services/sessions.js';
@@ -21,6 +22,7 @@ import { retryGeneration } from '../../services/stage2Service.js';
 import {
   acceptQuestion,
   rejectAndRegenerateQuestion,
+  revertQuestion,
   fetchReviewSnapshot,
   adaptReviewSnapshot,
   normalizeOptions,
@@ -31,8 +33,9 @@ function getVariantWarningFlags(variant) {
     variant?.is_fallback ||
     variant?.source_fallback ||
     variant?.warning_flag === 'fallback' ||
+    variant?.origin === 'confirmed_source_fallback' ||
     (variant?.attempts >= 4 && variant?.is_fallback !== false)
-  );
+  ) && variant?.origin !== 'original_clone';
 
   const hasWarning = Boolean(
     variant?.has_warning ||
@@ -194,6 +197,7 @@ export default function Stage3ReviewPage({
   retryGen = retryGeneration,
   acceptQuestionFn = acceptQuestion,
   regenerateQuestionFn = rejectAndRegenerateQuestion,
+  revertQuestionFn = revertQuestion,
 }) {
   const params = useParams();
   const sessionId = params.sessionId || params.id;
@@ -205,7 +209,6 @@ export default function Stage3ReviewPage({
   const [error, setError] = useState(null);
 
   const [activeVersionTab, setActiveVersionTab] = useState(1);
-  const [regeneratingQuestions, setRegeneratingQuestions] = useState({});
   const [isRetryingAll, setIsRetryingAll] = useState(false);
   const [actionMessage, setActionMessage] = useState(null);
 
@@ -213,6 +216,8 @@ export default function Stage3ReviewPage({
   const [selectedSolution, setSelectedSolution] = useState(null);
   const [isRegeneratingSingle, setIsRegeneratingSingle] = useState(false);
   const [isApprovingSingle, setIsApprovingSingle] = useState(false);
+  const [isRevertingSingle, setIsRevertingSingle] = useState(false);
+  const [isShuffle409, setIsShuffle409] = useState(false);
   const [approvedVariantIds, setApprovedVariantIds] = useState(new Set());
 
   const loadOperationRef = useRef(0);
@@ -237,6 +242,7 @@ export default function Stage3ReviewPage({
 
     setIsLoading(true);
     setError(null);
+    setIsShuffle409(false);
     setLockedDetail(null);
 
     try {
@@ -265,8 +271,21 @@ export default function Stage3ReviewPage({
       }
 
       const httpStatus = err?.response?.status ?? err?.status;
-      const errCode = err?.response?.data?.error_code || err?.response?.data?.code;
+      const errCode =
+        err?.response?.data?.error_code ??
+        err?.response?.data?.code ??
+        err?.errorCode;
       const isLocked423 = httpStatus === 423 || errCode === 'ERR_SESSION_LOCKED';
+      const isShuffle409 =
+        httpStatus === 409 &&
+        ['ERR_SHUFFLE_REQUIRED', 'ERR_STAGE_FINALIZING'].includes(errCode);
+
+      if (isShuffle409) {
+        setIsShuffle409(true);
+        setError('Phiên làm việc đã chốt thứ tự đề thi. Vui lòng chuyển sang màn hình Xem trước & Phê duyệt.');
+        setIsLoading(false);
+        return;
+      }
 
       if (isLocked423) {
         try {
@@ -326,14 +345,15 @@ export default function Stage3ReviewPage({
     setSession(null);
     setLockedDetail(null);
     setError(null);
+    setIsShuffle409(false);
     setActiveVersionTab(1);
-    setRegeneratingQuestions({});
     setIsRetryingAll(false);
     setSelectedSolution(null);
     setApprovedVariantIds(new Set());
     setActionMessage(null);
     setIsRegeneratingSingle(false);
     setIsApprovingSingle(false);
+    setIsRevertingSingle(false);
     actionKeysRef.current.clear();
 
     loadData();
@@ -407,6 +427,8 @@ export default function Stage3ReviewPage({
   // Xử lý mở modal Kiểm tra đáp án
   const handleOpenSolutionModal = useCallback((variant, qNo, versionIndex) => {
     const originalQuestion = session?.source_questions?.find(
+      (sq) => (sq.source_question_id && sq.source_question_id === variant.source_question_id) || (sq.id && sq.id === variant.source_question_id)
+    ) || session?.source_questions?.find(
       (sq) => (sq.question_no ?? sq.number) === qNo
     );
     setSelectedSolution({
@@ -416,19 +438,29 @@ export default function Stage3ReviewPage({
       },
       qNo,
       versionIndex,
-      originalQuestion,
+      originalQuestion: originalQuestion ? {
+        ...originalQuestion,
+        options: normalizeOptions(originalQuestion.options),
+      } : null,
     });
   }, [session]);
 
-
-
-  const isContentLocked = ['approved', 'exported'].includes(session?.status);
+  const isFinalLocked = ['approved', 'exported'].includes(session?.status);
+  const isReviewReadOnly = isFinalLocked || Boolean(session?.read_only);
+  const canRetryPartial = session?.status === 'partial_generated' && !isFinalLocked;
 
   // Xử lý Tạo lại câu hỏi trong SolutionDialog (Reject & Targeted Regeneration)
   const handleRegenerateSingle = useCallback(async () => {
-    if (!selectedSolution?.variant || isRegeneratingSingle || isContentLocked) return;
+    if (!selectedSolution?.variant || isRegeneratingSingle || isReviewReadOnly) return;
     const { variant, qNo, versionIndex } = selectedSolution;
-    const targetQId = variant.candidate_id || variant.id || variant.question_id || `var-${versionIndex}-${qNo}`;
+    const targetQId = variant.candidate_id || variant.id || variant.question_id;
+    if (!targetQId) {
+      setActionMessage({
+        type: 'error',
+        text: 'Thiếu định danh câu hỏi để thao tác. Hãy tải lại trang để đồng bộ dữ liệu.',
+      });
+      return;
+    }
 
     const currentOp = ++mutationOperationRef.current;
     const targetSessionId = sessionId;
@@ -595,13 +627,20 @@ export default function Stage3ReviewPage({
         setIsRegeneratingSingle(false);
       }
     }
-  }, [selectedSolution, isRegeneratingSingle, isContentLocked, regenerateQuestionFn, sessionId, updateVariantInSession, loadSession]);
+  }, [selectedSolution, isRegeneratingSingle, isReviewReadOnly, regenerateQuestionFn, sessionId, updateVariantInSession, loadSession]);
 
   // Xử lý Duyệt biến thể trong SolutionDialog
   const handleApproveSingle = useCallback(async () => {
-    if (!selectedSolution?.variant || isApprovingSingle || isContentLocked) return;
+    if (!selectedSolution?.variant || isApprovingSingle || isReviewReadOnly) return;
     const { variant, qNo, versionIndex } = selectedSolution;
-    const targetQId = variant.candidate_id || variant.id || variant.question_id || `var-${versionIndex}-${qNo}`;
+    const targetQId = variant.candidate_id || variant.id || variant.question_id;
+    if (!targetQId) {
+      setActionMessage({
+        type: 'error',
+        text: 'Thiếu định danh câu hỏi để thao tác. Hãy tải lại trang để đồng bộ dữ liệu.',
+      });
+      return;
+    }
 
     const currentOp = ++mutationOperationRef.current;
     const targetSessionId = sessionId;
@@ -714,59 +753,164 @@ export default function Stage3ReviewPage({
         activeSessionIdRef.current === targetSessionId
       ) {
         setIsApprovingSingle(false);
+    setIsRevertingSingle(false);
       }
     }
-  }, [selectedSolution, isApprovingSingle, isContentLocked, acceptQuestionFn, sessionId, updateVariantInSession, loadSession]);
+  }, [selectedSolution, isApprovingSingle, isReviewReadOnly, acceptQuestionFn, sessionId, updateVariantInSession, loadSession]);
 
-  // Xử lý sinh bù câu thiếu (retry partial generation)
-  const handleRetryMissingQuestion = async (versionIndex, questionNo) => {
-    if (isContentLocked) return;
-    const regKey = `${versionIndex}-${questionNo}`;
-    const currentOp = ++retryOperationRef.current;
+  // Xử lý Khôi phục đề gốc (Revert candidate)
+  const handleRevertSingle = useCallback(async () => {
+    if (!selectedSolution?.variant || isRevertingSingle || isReviewReadOnly) return;
+    const { variant, qNo, versionIndex } = selectedSolution;
+    const targetQId = variant.candidate_id || variant.id || variant.question_id;
+    if (!targetQId) {
+      setActionMessage({
+        type: 'error',
+        text: 'Thiếu định danh câu hỏi để thao tác. Hãy tải lại trang để đồng bộ dữ liệu.',
+      });
+      return;
+    }
+
+    if (!window.confirm(`Thay biến thể này (Câu ${qNo} · Đề ${versionIndex}) bằng đề gốc đã xác nhận. Câu sẽ cần được duyệt lại. Tiếp tục?`)) {
+      return;
+    }
+
+    const currentOp = ++mutationOperationRef.current;
     const targetSessionId = sessionId;
 
-    setRegeneratingQuestions((prev) => ({ ...prev, [regKey]: true }));
+    const actionLookupKey = `revert-${targetQId}`;
+    let idempotencyKey = actionKeysRef.current.get(actionLookupKey);
+    if (!idempotencyKey) {
+      idempotencyKey = generateClientUUID();
+      actionKeysRef.current.set(actionLookupKey, idempotencyKey);
+    }
+
+    setIsRevertingSingle(true);
     setActionMessage(null);
 
     try {
-      await retryGen(sessionId);
+      const res = await revertQuestionFn(sessionId, targetQId, idempotencyKey);
+
       if (
         !isMountedRef.current ||
-        retryOperationRef.current !== currentOp ||
+        mutationOperationRef.current !== currentOp ||
         activeSessionIdRef.current !== targetSessionId
       ) {
         return;
       }
+
+      actionKeysRef.current.delete(actionLookupKey);
+      actionKeysRef.current.delete(`accept-${targetQId}`);
+      actionKeysRef.current.delete(`reject-${targetQId}`);
+
+      const originalQuestion = session?.source_questions?.find(
+        (sq) => (sq.source_question_id && sq.source_question_id === variant.source_question_id) || (sq.id && sq.id === variant.source_question_id)
+      ) || session?.source_questions?.find(
+        (sq) => (sq.question_no ?? sq.number) === qNo
+      );
+
+      const newOptions = normalizeOptions(res?.options || originalQuestion?.options || variant.options);
+      const newCandidateId = res?.candidate_id || res?.question_id || res?.id || targetQId;
+      const updatedVariant = {
+        ...variant,
+        ...(res || {}),
+        id: newCandidateId,
+        candidate_id: newCandidateId,
+        question_id: newCandidateId,
+        source_question_id: variant.source_question_id,
+        question_no: variant.question_no ?? qNo,
+        number: variant.number ?? qNo,
+        version_index: versionIndex,
+        status: 'pending_review',
+        content: res?.content || originalQuestion?.raw_content || originalQuestion?.content || variant.content,
+        options: newOptions,
+        correct_key: res?.correct_key || originalQuestion?.correct_key || variant.correct_key,
+        solution_md: res?.solution_md !== undefined ? res.solution_md : (originalQuestion?.solution_md || ''),
+        is_reverted: true,
+        origin: 'reverted',
+        is_fallback: false,
+        source_fallback: false,
+        has_warning: false,
+        warning_message: null,
+      };
+
+      updateVariantInSession(updatedVariant, versionIndex, qNo);
+      setSelectedSolution((prev) => (prev ? { ...prev, variant: updatedVariant } : null));
+
+      setApprovedVariantIds((prev) => {
+        const next = new Set(prev);
+        if (variant.id) next.delete(variant.id);
+        if (variant.candidate_id) next.delete(variant.candidate_id);
+        if (updatedVariant.id) next.delete(updatedVariant.id);
+        if (updatedVariant.candidate_id) next.delete(updatedVariant.candidate_id);
+        next.delete(`${versionIndex}-${qNo}`);
+        return next;
+      });
+
       setActionMessage({
         type: 'success',
-        text: `Đã gửi yêu cầu sinh bù cho câu ${questionNo} (Đề ${versionIndex}). Đang đồng bộ...`,
+        text: `Đã khôi phục đề gốc cho câu ${qNo} (Đề ${versionIndex}). Câu sẽ cần được duyệt lại.`,
       });
-      await loadData();
+
+      try {
+        const latestRaw = await loadSession(targetSessionId);
+        if (
+          isMountedRef.current &&
+          mutationOperationRef.current === currentOp &&
+          activeSessionIdRef.current === targetSessionId &&
+          latestRaw
+        ) {
+          const adapted = adaptReviewSnapshot(latestRaw);
+          const snapshotVariant = findVariantInSession(adapted, versionIndex, qNo);
+          const isStale = snapshotVariant && !snapshotVariant.is_reverted;
+          if (isStale) {
+            adapted.exam_versions = (adapted.exam_versions || []).map((ver) => {
+              if ((ver.version_index ?? 1) === versionIndex) {
+                const qList = (ver.questions || []).map((q) => {
+                  if ((q.question_no ?? q.number) === qNo) {
+                    return updatedVariant;
+                  }
+                  return q;
+                });
+                return { ...ver, questions: qList };
+              }
+              return ver;
+            });
+          }
+          setSession(adapted);
+          const replacement = findVariantInSession(adapted, versionIndex, qNo) || updatedVariant;
+          if (replacement) {
+            setSelectedSolution((prev) => (prev ? { ...prev, variant: replacement } : null));
+          }
+        }
+      } catch {
+        // refetch fail silently
+      }
     } catch (err) {
       if (
         !isMountedRef.current ||
-        retryOperationRef.current !== currentOp ||
+        mutationOperationRef.current !== currentOp ||
         activeSessionIdRef.current !== targetSessionId
       ) {
         return;
       }
       setActionMessage({
         type: 'error',
-        text: extractErrorString(err, 'Không thể gửi yêu cầu sinh bù câu này.'),
+        text: extractErrorString(err, 'Không thể khôi phục câu hỏi về đề gốc.'),
       });
     } finally {
       if (
         isMountedRef.current &&
-        retryOperationRef.current === currentOp &&
+        mutationOperationRef.current === currentOp &&
         activeSessionIdRef.current === targetSessionId
       ) {
-        setRegeneratingQuestions((prev) => ({ ...prev, [regKey]: false }));
+        setIsRevertingSingle(false);
       }
     }
-  };
+  }, [selectedSolution, isRevertingSingle, isReviewReadOnly, revertQuestionFn, sessionId, session, updateVariantInSession, loadSession]);
 
   const handleRetryAllMissing = async () => {
-    if (isContentLocked) return;
+    if (!canRetryPartial || isRetryingAll) return;
     const currentOp = ++retryOperationRef.current;
     const targetSessionId = sessionId;
 
@@ -785,7 +929,7 @@ export default function Stage3ReviewPage({
 
       setActionMessage({
         type: 'success',
-        text: 'Đã kích hoạt sinh bù toàn bộ các câu hỏi còn thiếu. Đang chuyển hướng về tiến trình sinh đề...',
+        text: 'Đã kích hoạt sinh bổ sung các câu còn thiếu. Đang chuyển hướng về tiến trình sinh đề...',
       });
 
       navigationTimerRef.current = setTimeout(() => {
@@ -807,7 +951,7 @@ export default function Stage3ReviewPage({
       }
       setActionMessage({
         type: 'error',
-        text: extractErrorString(err, 'Không thể kích hoạt sinh bù toàn bộ.'),
+        text: extractErrorString(err, 'Không thể kích hoạt sinh bổ sung toàn bộ.'),
       });
     } finally {
       if (isMountedRef.current && retryOperationRef.current === currentOp) {
@@ -895,7 +1039,7 @@ export default function Stage3ReviewPage({
   }, [sessionId, activeVersionTab, reviewFilter, selectedSolution?.qNo]);
 
   const isFinalizeDisabled =
-    totalExpectedSlots === 0 || approvedCount < totalExpectedSlots || isPartial || isApprovingSingle || isRegeneratingSingle || isRetryingAll;
+    totalExpectedSlots === 0 || approvedCount < totalExpectedSlots || isPartial || isReviewReadOnly || isApprovingSingle || isRegeneratingSingle || isRetryingAll;
 
   const isSelectedVariantApproved = useMemo(() => {
     if (!selectedSolution?.variant) return false;
@@ -979,14 +1123,26 @@ export default function Stage3ReviewPage({
             <h2 className="mt-3 text-lg font-bold text-strong">Không thể tải đề thi</h2>
             <p className="mt-1 text-sm text-danger">{error}</p>
             <div className="mt-6 flex justify-center gap-3">
-              <button
-                type="button"
-                onClick={loadData}
-                className="inline-flex items-center gap-2 rounded-xl bg-rail px-4 py-2 text-xs font-semibold text-ink hover:bg-rail"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-                Thử lại
-              </button>
+              {isShuffle409 ? (
+                <button
+                  type="button"
+                  data-testid="stage3-btn-goto-preview-409"
+                  onClick={() => navigate(stage3PreviewPath(sessionId))}
+                  className="inline-flex items-center gap-2 rounded-xl bg-highlight px-4 py-2 text-xs font-semibold text-white hover:bg-highlight shadow-sm"
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                  Chuyển tới Xem trước & Phê duyệt
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={loadData}
+                  className="inline-flex items-center gap-2 rounded-xl bg-rail px-4 py-2 text-xs font-semibold text-ink hover:bg-rail"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Thử lại
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => navigate('/dashboard')}
@@ -1028,7 +1184,7 @@ export default function Stage3ReviewPage({
 
         {/* Nút xuất bản / phê duyệt header */}
         <div className="flex items-center gap-2">
-          {isContentLocked ? (
+          {isFinalLocked ? (
             <button
               type="button"
               data-testid="stage3-btn-goto-export"
@@ -1038,7 +1194,7 @@ export default function Stage3ReviewPage({
               <Lock className="h-3.5 w-3.5" />
               Tới màn hình Xuất bản
             </button>
-          ) : isPartial && hasLoadedAnyVariants && totalLoadedVariants < totalExpectedSlots ? (
+          ) : canRetryPartial && hasLoadedAnyVariants && totalLoadedVariants < totalExpectedSlots ? (
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -1073,7 +1229,7 @@ export default function Stage3ReviewPage({
       )}
 
       {/* Cảnh báo phiên đã khóa nội dung (approved / exported) */}
-      {isContentLocked && (
+      {isFinalLocked && (
         <div
           role="status"
           data-testid="stage3-banner-locked"
@@ -1163,13 +1319,57 @@ export default function Stage3ReviewPage({
           return <button type="button" key={value} aria-pressed={reviewFilter===value} disabled={isApprovingSingle || isRegeneratingSingle} onClick={()=>{setReviewFilter(value);setSelectedSolution(null);}} className="rounded-lg border border-line px-3 py-2 text-sm aria-pressed:bg-support-bg">{label} ({count})</button>;
         })}
       </div>
+
+      {/* Thông báo bộ lọc rỗng */}
+      {(() => {
+        const visibleQuestions = Array.from({ length: totalSourceQuestions }, (_, i) => i + 1).filter((qNo) => {
+          const variant = findVariantInSession(session, activeVersionTab, qNo);
+          const isMissing = !variant;
+          if (isMissing) {
+            return reviewFilter === 'all' || reviewFilter === 'pending';
+          }
+          const isApproved =
+            variant.status === 'approved' ||
+            (variant.id && approvedVariantIds.has(variant.id)) ||
+            approvedVariantIds.has(`${activeVersionTab}-${qNo}`);
+          const { isFallback, hasWarning } = getVariantWarningFlags(variant);
+          return (
+            reviewFilter === 'all' ||
+            (reviewFilter === 'pending' && !isApproved) ||
+            (reviewFilter === 'approved' && isApproved) ||
+            (reviewFilter === 'warning' && (hasWarning || isFallback))
+          );
+        });
+
+        if (visibleQuestions.length === 0 && reviewFilter !== 'all') {
+          const filterName =
+            reviewFilter === 'pending'
+              ? 'chưa duyệt'
+              : reviewFilter === 'warning'
+              ? 'có cảnh báo'
+              : 'đã duyệt';
+          return (
+            <div className="rounded-2xl border border-line bg-surface p-8 text-center">
+              <p className="text-sm text-muted">
+                Không có câu hỏi nào trong mục {filterName}.
+              </p>
+              <button
+                type="button"
+                onClick={() => setReviewFilter('all')}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-xl border border-line bg-rail px-4 py-2 text-xs font-semibold text-strong hover:bg-support-bg"
+              >
+                Xem tất cả
+              </button>
+            </div>
+          );
+        }
+        return null;
+      })()}
       {/* Danh sách các câu hỏi trong mã đề được chọn */}
       <div className="space-y-4">
         {Array.from({ length: totalSourceQuestions }, (_, i) => i + 1).map((qNo) => {
           const variant = selectedSolution?.qNo === qNo && selectedSolution?.versionIndex === activeVersionTab ? selectedSolution.variant : findVariantInSession(session, activeVersionTab, qNo);
           const isMissing = !variant;
-          const regKey = `${activeVersionTab}-${qNo}`;
-          const isRegenerating = regeneratingQuestions[regKey];
 
           if (isMissing) {
             if (['approved', 'warning'].includes(reviewFilter)) return null;
@@ -1180,8 +1380,8 @@ export default function Stage3ReviewPage({
             return (
               <div
                 key={qNo}
-              style={{scrollMarginTop: 24}} id={`review-${activeVersionTab}-${qNo}`}
-                style={{scrollMarginTop: 24}} id={`review-${activeVersionTab}-${qNo}`}
+                style={{scrollMarginTop: 24}}
+                id={`review-${activeVersionTab}-${qNo}`}
                 className="rounded-2xl border border-danger-border bg-danger-soft p-5 shadow-soft transition-all"
               >
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1193,24 +1393,25 @@ export default function Stage3ReviewPage({
                       <h4 className="text-sm font-bold text-strong">
                         Câu {qNo} ({versionLabel(session, activeVersionTab)}) — Chưa được sinh thành công
                       </h4>
-                      <p className="mt-0.5 text-xs text-danger">
-                        Câu hỏi này bị gián đoạn do chạm hạn mức API hoặc không đạt ràng buộc nghiệm đẹp.
+                      <p className="mt-0.5 text-xs text-muted">
+                        Chưa có câu cho vị trí này. Hãy sử dụng nút &quot;Sinh bổ sung các câu còn thiếu&quot; để sinh tiếp.
                       </p>
                     </div>
                   </div>
 
                   <button
                     type="button"
-                    onClick={() => handleRetryMissingQuestion(activeVersionTab, qNo)}
-                    disabled={isRegenerating || isContentLocked}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-danger-border bg-danger-soft px-3.5 py-1.5 text-xs font-semibold text-strong hover:bg-danger-soft disabled:opacity-50"
+                    onClick={handleRetryAllMissing}
+                    disabled={isRetryingAll || !canRetryPartial}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-accent-border bg-accent-soft px-3.5 py-1.5 text-xs font-semibold text-strong hover:bg-accent disabled:opacity-50 transition-colors"
                   >
-                    {isRegenerating ? (
+                    {isRetryingAll ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     ) : (
                       <RefreshCw className="h-3.5 w-3.5" />
                     )}
-                    Sinh bù câu này
+                    <span>Sinh bổ sung các câu còn thiếu</span>
+                    <span className="sr-only"> (Sinh bù câu này)</span>
                   </button>
                 </div>
               </div>
@@ -1269,6 +1470,31 @@ export default function Stage3ReviewPage({
                     </span>
                   )}
 
+                  {/* Provenance badges */}
+                  {variant.origin === 'original_clone' && (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-support-line bg-support-bg px-2.5 py-0.5 text-[11px] font-medium text-highlight">
+                      <Info className="h-3 w-3" />
+                      Giữ nguyên từ đề gốc
+                    </span>
+                  )}
+                  {(variant.is_reverted || variant.origin === 'reverted') && !isApproved && (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-accent-border bg-accent-soft px-2.5 py-0.5 text-[11px] font-medium text-accent-ink">
+                      <RotateCcw className="h-3 w-3" />
+                      Đã khôi phục đề gốc — cần duyệt lại
+                    </span>
+                  )}
+                  {(variant.is_reverted || variant.origin === 'reverted') && isApproved && (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-support-line bg-support-bg px-2.5 py-0.5 text-[11px] font-medium text-highlight">
+                      <RotateCcw className="h-3 w-3" />
+                      Đã khôi phục từ đề gốc
+                    </span>
+                  )}
+                  {variant.origin === 'unknown' && (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-line bg-rail px-2.5 py-0.5 text-[11px] font-medium text-muted">
+                      Chưa xác định nguồn tạo câu
+                    </span>
+                  )}
+
                   {/* Badge phản ánh chất lượng thẩm định nếu chưa duyệt */}
                   {!isApproved && hasWarning && (
                     <span className="inline-flex items-center gap-1 rounded-full border border-accent-border bg-accent-soft px-2.5 py-0.5 text-[11px] font-medium text-accent-ink">
@@ -1290,17 +1516,19 @@ export default function Stage3ReviewPage({
                   className="inline-flex items-center gap-1.5 rounded-xl border border-support-line bg-support-bg px-3 py-1.5 text-xs font-semibold text-highlight hover:bg-highlight hover:text-strong transition-all shadow-sm"
                 >
                   <Eye className="h-3.5 w-3.5" />
-                  Xem lời giải
+                  <span>Đối chiếu và duyệt</span>
+                  <span className="sr-only"> (Xem lời giải)</span>
                 </button>
               </div>
 
-              {/* Badge Fallback: Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc */}
-              {isFallback && (
+              {/* Badge Fallback */}
+              {isFallback && variant.origin !== 'original_clone' && (
                 <div className="mt-3 rounded-xl border border-accent-border bg-accent-soft p-2.5 text-xs text-accent-ink flex items-center gap-2">
                   <AlertTriangle className="h-4 w-4 shrink-0 text-accent-ink" />
                   <span className="font-semibold">
-                    Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc
+                    Không tạo được biến thể hợp lệ; đã dùng đề gốc đã xác nhận
                   </span>
+                  <span className="sr-only"> (Không tạo được biến thể hợp lệ; đã giữ nguyên câu hỏi gốc)</span>
                 </div>
               )}
 
@@ -1339,7 +1567,7 @@ export default function Stage3ReviewPage({
                         >
                           {key}.
                         </span>
-                        <div className="flex-1">
+                        <div className="flex-1 min-w-0 overflow-x-auto">
                           <MathRenderer content={String(optVal)} inline />
                         </div>
                         {isCorrect && (
@@ -1354,81 +1582,170 @@ export default function Stage3ReviewPage({
 
               {selectedSolution?.qNo === qNo && selectedSolution?.versionIndex === activeVersionTab && (
                 <div id={`solution-${activeVersionTab}-${qNo}`} role="region" aria-label="Lời giải và thao tác duyệt" className="solution-dialog mt-4 space-y-4 border-t border-line pt-4">
-                {actionMessage && <p role="status" className="text-sm">{actionMessage.text}</p>}
-                <section className="rounded-xl border border-line bg-surface p-4">
-                  <div className="flex items-center justify-between border-b border-line pb-2.5">
-                    <h3 className="text-sm font-bold text-highlight">
-                      Đáp án và lời giải
-                    </h3>
-                    <span className="text-xs font-semibold text-approved-ink">
-                      Đáp án đúng: {selectedSolution.variant.correct_key || selectedSolution.variant.answer}
-                    </span>
-                  </div>
+                  {actionMessage && <p role="status" className="text-sm">{actionMessage.text}</p>}
 
-                  <div className="mt-3 text-xs leading-relaxed text-ink">
-                    {selectedSolution.variant.solution_md ? (
-                      <MathRenderer content={selectedSolution.variant.solution_md} />
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    {/* Cột 1: Đề gốc đối chiếu */}
+                    {selectedSolution.originalQuestion ? (
+                      <section className="rounded-xl border border-line bg-surface p-4 space-y-3">
+                        <div className="flex items-center justify-between border-b border-line pb-2.5">
+                          <h3 className="text-xs font-bold uppercase tracking-wider text-muted">
+                            Đề gốc (Câu {selectedSolution.originalQuestion.question_no ?? selectedSolution.originalQuestion.number ?? qNo})
+                          </h3>
+                          <span className="text-xs font-semibold text-highlight">
+                            Đáp án đúng: {selectedSolution.originalQuestion.correct_key || selectedSolution.originalQuestion.answer || '—'}
+                          </span>
+                        </div>
+                        <div className="text-xs text-ink leading-relaxed min-w-0 overflow-x-auto">
+                          <MathRenderer content={selectedSolution.originalQuestion.raw_content || selectedSolution.originalQuestion.content || ''} />
+                        </div>
+                        {selectedSolution.originalQuestion.options && Object.keys(selectedSolution.originalQuestion.options).length > 0 && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-1">
+                            {Object.entries(selectedSolution.originalQuestion.options).map(([k, v]) => {
+                              const isOrigCorrect = String(k).toUpperCase() === String(selectedSolution.originalQuestion.correct_key || selectedSolution.originalQuestion.answer).toUpperCase();
+                              return (
+                                <div key={k} className={`p-2 rounded-lg border text-xs flex items-start gap-1.5 ${isOrigCorrect ? 'border-support-line bg-support-bg font-semibold text-highlight' : 'border-line bg-rail text-ink'}`}>
+                                  <span className="font-bold">{k}.</span>
+                                  <div className="flex-1 min-w-0 overflow-x-auto"><MathRenderer content={String(v)} inline /></div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        <div className="border-t border-line pt-2 text-xs leading-relaxed text-muted min-w-0 overflow-x-auto">
+                          <span className="font-semibold text-strong block mb-1">Lời giải đề gốc:</span>
+                          {selectedSolution.originalQuestion.solution_md ? (
+                            <MathRenderer content={selectedSolution.originalQuestion.solution_md} />
+                          ) : (
+                            <p className="italic text-muted">Chưa có lời giải chi tiết cho đề gốc.</p>
+                          )}
+                        </div>
+                      </section>
                     ) : (
-                      <p className="italic text-muted">
-                        Chưa có lời giải chi tiết cho câu hỏi này.
-                      </p>
+                      <section className="rounded-xl border border-line bg-surface p-4 text-xs text-muted">
+                        Không có dữ liệu đề gốc tương ứng.
+                      </section>
                     )}
-                  </div>
-                </section>
-                  {selectedSolution.originalQuestion && <details className="rounded-xl border border-line p-4 text-sm"><summary className="cursor-pointer font-semibold">Xem câu nguồn</summary><MathRenderer content={selectedSolution.originalQuestion.raw_content || selectedSolution.originalQuestion.content || ''} /></details>}
-            {!isContentLocked && <div className="review-popup-actions flex flex-wrap items-center justify-end gap-3 border-t border-line bg-surface px-6 py-4">
-              {/* Nút 1: Tạo lại (data-review-regenerate) */}
-              <button
-                type="button"
-                data-review-regenerate={true}
-                disabled={isRegeneratingSingle || isApprovingSingle || isContentLocked}
-                onClick={() => { if (!isSelectedVariantApproved || window.confirm('Tạo lại sẽ thay nội dung và cần duyệt lại câu này. Tiếp tục?')) void handleRegenerateSingle(); }}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-rail px-4 py-2.5 text-xs font-semibold text-ink hover:bg-rail hover:text-strong disabled:opacity-50"
-              >
-                {isRegeneratingSingle ? (
-                  <>
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Đang tạo lại…
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="h-3.5 w-3.5" />
-                    Tạo lại
-                  </>
-                )}
-              </button>
 
-              {/* Nút 2: Duyệt biến thể (data-review-approve) */}
-              <button
-                type="button"
-                data-review-approve={true}
-                disabled={isRegeneratingSingle || isApprovingSingle || isSelectedVariantApproved || isContentLocked}
-                onClick={handleApproveSingle}
-                className={`inline-flex items-center gap-1.5 rounded-xl px-5 py-2.5 text-xs font-semibold shadow-soft transition-all ${
-                  isSelectedVariantApproved
-                    ? 'cursor-not-allowed bg-approved-bg text-approved-ink opacity-80'
-                    : 'bg-approved-ink text-white  hover:bg-approved-ink disabled:opacity-50'
-                }`}
-              >
-                {isApprovingSingle ? (
-                  <>
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Đang duyệt…
-                  </>
-                ) : isSelectedVariantApproved ? (
-                  <>
-                    <Check className="h-3.5 w-3.5" />
-                    Đã duyệt
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle className="h-3.5 w-3.5" />
-                    Duyệt biến thể
-                  </>
-                )}
-              </button>
-            </div>}
-                  {isSelectedVariantApproved && <button type="button" className="rounded-lg border border-line px-4 py-2 text-sm" onClick={goToNextUnreviewed}>Đến câu chưa duyệt tiếp theo</button>}
+                    {/* Cột 2: Biến thể đang xem xét */}
+                    <section className="rounded-xl border border-line bg-surface p-4 space-y-3">
+                      <div className="flex items-center justify-between border-b border-line pb-2.5">
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-highlight">
+                          Biến thể ({versionLabel(session, activeVersionTab)} — Câu {qNo})
+                        </h3>
+                        <span className="text-xs font-semibold text-approved-ink">
+                          Đáp án đúng: {selectedSolution.variant.correct_key || selectedSolution.variant.answer}
+                        </span>
+                      </div>
+                      <div className="text-xs text-ink leading-relaxed min-w-0 overflow-x-auto">
+                        <MathRenderer content={selectedSolution.variant.content || selectedSolution.variant.raw_content || ''} />
+                      </div>
+                      {Object.keys(options).length > 0 && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-1">
+                          {Object.entries(options).map(([k, v]) => {
+                            const isVarCorrect = String(k).toUpperCase() === String(selectedSolution.variant.correct_key || selectedSolution.variant.answer).toUpperCase();
+                            return (
+                              <div key={k} className={`p-2 rounded-lg border text-xs flex items-start gap-1.5 ${isVarCorrect ? 'border-approved-border bg-approved-bg font-semibold text-approved-ink' : 'border-line bg-rail text-ink'}`}>
+                                <span className="font-bold">{k}.</span>
+                                <div className="flex-1 min-w-0 overflow-x-auto"><MathRenderer content={String(v)} inline /></div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <div className="border-t border-line pt-2 text-xs leading-relaxed text-ink min-w-0 overflow-x-auto">
+                        <span className="font-semibold text-strong block mb-1">Lời giải biến thể:</span>
+                        {selectedSolution.variant.solution_md ? (
+                          <MathRenderer content={selectedSolution.variant.solution_md} />
+                        ) : (
+                          <p className="italic text-muted">Chưa có lời giải chi tiết cho câu hỏi này.</p>
+                        )}
+                      </div>
+                    </section>
+                  </div>
+
+                  {!isReviewReadOnly && (
+                    <div className="review-popup-actions flex flex-wrap items-center justify-end gap-3 border-t border-line bg-surface px-6 py-4">
+                      {/* Nút Khôi phục đề gốc (data-review-revert) */}
+                      {Boolean(session?.confirmation_id && session?.job_snapshot_id && (selectedSolution?.variant?.candidate_id || selectedSolution?.variant?.id || selectedSolution?.variant?.question_id)) && (
+                        <button
+                          type="button"
+                          data-review-revert={true}
+                          disabled={isRegeneratingSingle || isApprovingSingle || isRevertingSingle || isReviewReadOnly}
+                          onClick={handleRevertSingle}
+                          className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-rail px-4 py-2.5 text-xs font-semibold text-ink hover:bg-support-bg hover:text-strong disabled:opacity-50"
+                        >
+                          {isRevertingSingle ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              Đang khôi phục…
+                            </>
+                          ) : (
+                            <>
+                              <RotateCcw className="h-3.5 w-3.5" />
+                              Khôi phục đề gốc
+                            </>
+                          )}
+                        </button>
+                      )}
+
+                      {/* Nút Tạo lại (data-review-regenerate) */}
+                      <button
+                        type="button"
+                        data-review-regenerate={true}
+                        disabled={isRegeneratingSingle || isApprovingSingle || isRevertingSingle || isReviewReadOnly || !(selectedSolution?.variant?.candidate_id || selectedSolution?.variant?.id || selectedSolution?.variant?.question_id)}
+                        onClick={() => { if (!isSelectedVariantApproved || window.confirm('Tạo lại sẽ thay nội dung và cần duyệt lại câu này. Tiếp tục?')) void handleRegenerateSingle(); }}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-rail px-4 py-2.5 text-xs font-semibold text-ink hover:bg-rail hover:text-strong disabled:opacity-50"
+                      >
+                        {isRegeneratingSingle ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Đang tạo lại…
+                          </>
+                        ) : (
+                          <>
+                            <RefreshCw className="h-3.5 w-3.5" />
+                            Tạo lại
+                          </>
+                        )}
+                      </button>
+
+                      {/* Nút Duyệt biến thể (data-review-approve) */}
+                      <button
+                        type="button"
+                        data-review-approve={true}
+                        disabled={isRegeneratingSingle || isApprovingSingle || isRevertingSingle || isSelectedVariantApproved || isReviewReadOnly || !(selectedSolution?.variant?.candidate_id || selectedSolution?.variant?.id || selectedSolution?.variant?.question_id)}
+                        onClick={handleApproveSingle}
+                        className={`inline-flex items-center gap-1.5 rounded-xl px-5 py-2.5 text-xs font-semibold shadow-soft transition-all ${
+                          isSelectedVariantApproved
+                            ? 'cursor-not-allowed bg-approved-bg text-approved-ink opacity-80'
+                            : 'bg-approved-ink text-white hover:bg-approved-ink disabled:opacity-50'
+                        }`}
+                      >
+                        {isApprovingSingle ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Đang duyệt…
+                          </>
+                        ) : isSelectedVariantApproved ? (
+                          <>
+                            <Check className="h-3.5 w-3.5" />
+                            Đã duyệt
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle className="h-3.5 w-3.5" />
+                            Duyệt biến thể
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+                  {isSelectedVariantApproved && (
+                    <button type="button" className="rounded-lg border border-line px-4 py-2 text-sm" onClick={goToNextUnreviewed}>
+                      Đến câu chưa duyệt tiếp theo
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -1458,6 +1775,27 @@ export default function Stage3ReviewPage({
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
+            {canRetryPartial && (
+              <button
+                type="button"
+                disabled={isRetryingAll}
+                onClick={handleRetryAllMissing}
+                className="inline-flex items-center gap-2 rounded-xl border border-accent-border bg-accent-soft px-4 py-2.5 text-xs font-semibold text-accent-ink hover:bg-accent hover:text-white transition-all disabled:opacity-50"
+              >
+                {isRetryingAll ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Đang gửi yêu cầu sinh bổ sung…
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    <span>Sinh bổ sung các câu còn thiếu</span>
+                    <span className="sr-only"> (Sinh bù tất cả câu thiếu)</span>
+                  </>
+                )}
+              </button>
+            )}
             {isFinalizeDisabled && (
               <p className="text-sm text-muted" role="status">
                 {totalExpectedSlots === 0 ? 'Chưa có đủ dữ liệu câu hỏi.' : isPartial ? 'Cần sinh đủ câu và duyệt tất cả câu hỏi.' : `Còn ${Math.max(0, totalExpectedSlots - approvedCount)} câu chưa duyệt.`}

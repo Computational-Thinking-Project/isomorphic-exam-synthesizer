@@ -451,10 +451,10 @@ test('204: 422 confirm không mở dialog incomplete và không làm mất nháp
   };
   const app = mount(confirmSessionId);
   await app.render();
-  await act(async () => input(app.container, 'Nháp chưa nạp'));
   await act(async () => button(app.container, confirmLabel).click());
   assert.match(app.container.textContent, /Không thể xác nhận bản đề/);
   assert.match(app.container.textContent, /Nguồn qa/);
+  await act(async () => input(app.container, 'Nháp chưa nạp'));
   assert.equal(app.container.querySelector('textarea').value, 'Nháp chưa nạp');
   assert.equal(dialog(app.container), null);
   assert.deepEqual(calls, ['get', 'post']);

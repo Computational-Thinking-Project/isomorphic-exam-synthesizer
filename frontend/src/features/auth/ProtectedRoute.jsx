@@ -8,9 +8,11 @@ export default function ProtectedRoute({ profileState }) {
 
   if (status === 'checking') {
     return (
-      <p role="status" className="p-6 text-slate-300">
-        Đang kiểm tra phiên đăng nhập…
-      </p>
+      <div className="paper-ui min-h-screen bg-canvas p-6">
+        <p role="status" className="text-muted">
+          Đang kiểm tra phiên đăng nhập…
+        </p>
+      </div>
     );
   }
 
@@ -18,20 +20,22 @@ export default function ProtectedRoute({ profileState }) {
   // while blocking the outlet, so a reload does not detour through Login.
   if (status === 'profile_pending') {
     return (
-      <section aria-label="Xác minh tài khoản" className="p-6 text-slate-300">
-        {profileState?.error ? (
-          <div role="alert">
-            <p>{profileState.error}</p>
-            <button type="button" onClick={profileState.retry}
-              className="mt-3 rounded-lg border border-current px-4 py-2">
-              Thử lại tải hồ sơ
-            </button>
-          </div>
-        ) : <p role="status">Đang xác minh hồ sơ tài khoản…</p>}
-        <Link to="/login" replace className="mt-4 inline-block text-sky-300 underline">
-          Quay về đăng nhập
-        </Link>
-      </section>
+      <div className="paper-ui min-h-screen bg-canvas p-6">
+        <section aria-label="Xác minh tài khoản" className="rounded-2xl border border-line bg-surface p-6 shadow-paper max-w-md">
+          {profileState?.error ? (
+            <div role="alert" className="text-danger">
+              <p>{profileState.error}</p>
+              <button type="button" onClick={profileState.retry}
+                className="mt-3 rounded-lg border border-danger-border bg-danger-soft px-4 py-2 text-sm font-semibold hover:bg-danger-soft/80">
+                Thử lại tải hồ sơ
+              </button>
+            </div>
+          ) : <p role="status" className="text-muted">Đang xác minh hồ sơ tài khoản…</p>}
+          <Link to="/login" replace className="mt-4 inline-block text-highlight font-semibold hover:underline">
+            Quay về đăng nhập
+          </Link>
+        </section>
+      </div>
     );
   }
 

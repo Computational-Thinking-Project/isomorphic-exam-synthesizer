@@ -128,10 +128,10 @@ export default function App() {
       {authMessage && (
         <div
           role={authMessage.kind === 'error' ? 'alert' : 'status'}
-          className={`p-4 ${
+          className={`p-4 border-b border-line bg-surface ${
             authMessage.kind === 'error'
-              ? 'text-rose-300'
-              : 'text-slate-300'
+              ? 'border-danger-border bg-danger-soft text-danger'
+              : 'border-support-line bg-support-bg text-ink'
           }`}
         >
           <p>{authMessage.text}</p>
@@ -140,7 +140,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setAuthAttempt((attempt) => attempt + 1)}
-              className="mt-2 rounded-lg border border-current px-4 py-2"
+              className="mt-2 rounded-lg border border-line bg-surface px-4 py-2 text-sm font-medium hover:bg-rail"
             >
               Thử lại
             </button>

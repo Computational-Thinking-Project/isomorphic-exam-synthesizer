@@ -13,7 +13,7 @@ const { default: Stage3ReviewPage } = await import('./Stage3ReviewPage.jsx');
 
 function renderStage3Page(
   sessionId,
-  { loadSession, loadSessionDetail, retryGen, acceptQuestionFn, regenerateQuestionFn } = {},
+  { loadSession, loadSessionDetail, retryGen, acceptQuestionFn, regenerateQuestionFn, revertQuestionFn } = {},
 ) {
   const container = document.createElement('div');
   const root = createRoot(container);
@@ -50,6 +50,7 @@ function renderStage3Page(
                   retryGen,
                   acceptQuestionFn,
                   regenerateQuestionFn,
+                  revertQuestionFn,
                 }),
               }),
               React.createElement(Route, {
@@ -2019,4 +2020,373 @@ test('R78-02: accepting an expanded pending card preserves pinned visibility wit
     await act(async () => { harness.container.querySelector('[data-review-inspect="true"]').click(); });
     assert.equal(harness.container.querySelector('#review-1-1'), null);
   } finally { await harness.unmount(); }
+});
+
+test('UX-08 & Identity: Revert button requires confirmation_id and job_snapshot_id, and mutation is blocked without authoritative ID', async () => {
+  const revertCalls = [];
+  const mockRevertFn = async (sid, qid, key) => {
+    revertCalls.push({ sid, qid, key });
+    return { question_id: 'cand-rev-1', status: 'pending_review', is_reverted: true };
+  };
+
+  // 1. Session WITH confirmation_id and job_snapshot_id
+  const harness = renderStage3Page('sess-revert-test', {
+    loadSession: async () => ({
+      id: 'sess-revert-test',
+      status: 'generated',
+      confirmation_id: 'conf-uuid-1',
+      job_snapshot_id: 'job-uuid-1',
+      config: { n_versions: 1 },
+      source_questions: [{ source_question_id: 'sq-1', question_no: 1, raw_content: 'Đề gốc' }],
+      exam_versions: [{
+        version_index: 1,
+        questions: [{
+          id: 'cand-1',
+          candidate_id: 'cand-1',
+          source_question_id: 'sq-1',
+          question_no: 1,
+          content: 'Biến thể 1',
+          options: { A: '1', B: '2' },
+          correct_key: 'A',
+          status: 'pending_review',
+        }],
+      }],
+    }),
+    revertQuestionFn: mockRevertFn,
+  });
+
+  const originalConfirm = window.confirm;
+  window.confirm = () => true;
+
+  try {
+    await harness.render();
+    // Mở card câu 1
+    await act(async () => {
+      harness.container.querySelector('[data-review-inspect="true"]').click();
+    });
+
+    const revertBtn = harness.container.querySelector('[data-review-revert="true"]');
+    assert.ok(revertBtn, 'Nút Khôi phục đề gốc phải xuất hiện khi có W4 snapshot metadata');
+
+    await act(async () => {
+      revertBtn.click();
+    });
+
+    assert.equal(revertCalls.length, 1);
+    assert.equal(revertCalls[0].qid, 'cand-1');
+
+    // Sau khi revert thành công, badge phải hiển thị "Đã khôi phục đề gốc — cần duyệt lại"
+    const text = harness.container.textContent;
+    assert.match(text, /Đã khôi phục đề gốc — cần duyệt lại/);
+  } finally {
+    window.confirm = originalConfirm;
+    await harness.unmount();
+  }
+});
+
+test('UX-10: Deep link Stage 3 nhận HTTP 409 ERR_SHUFFLE_REQUIRED hiển thị nút chuyển sang Xem trước & Phê duyệt', async () => {
+  const err409 = new Error('Shuffle required');
+  err409.response = { status: 409, data: { error_code: 'ERR_SHUFFLE_REQUIRED' } };
+
+  const harness = renderStage3Page('sess-409-test', {
+    loadSession: async () => { throw err409; },
+  });
+
+  try {
+    await harness.render();
+    const btn = harness.container.querySelector('[data-testid="stage3-btn-goto-preview-409"]');
+    assert.ok(btn, 'Phải có nút Chuyển tới Xem trước & Phê duyệt khi nhận 409');
+    assert.match(btn.textContent, /Chuyển tới Xem trước & Phê duyệt/);
+
+    await act(async () => {
+      btn.click();
+    });
+
+    assert.equal(harness.getLocation(), '/session/sess-409-test/stage3/preview');
+  } finally {
+    await harness.unmount();
+  }
+});
+
+test('F84-01-A: partial_generated with read_only: true permits retry, blocks mutations, disables finalize, and hides export CTA', async () => {
+  const retryCalls = [];
+  const mockLoadSession = async (sId) => ({
+    id: sId,
+    title: 'Đề thi Toán 12 — Sinh thiếu một phần',
+    status: 'partial_generated',
+    read_only: true,
+    subject: 'Toán',
+    grade: 12,
+    config: { n_versions: 1 },
+    source_questions: [
+      { id: 'q1', question_no: 1, raw_content: 'Câu 1 gốc' },
+      { id: 'q2', question_no: 2, raw_content: 'Câu 2 gốc' },
+    ],
+    exam_versions: [
+      {
+        version_index: 1,
+        questions: [
+          {
+            id: 'cand-1',
+            candidate_id: 'cand-1',
+            question_no: 1,
+            content: 'Biến thể câu 1',
+            options: { A: '1', B: '2' },
+            correct_key: 'A',
+            status: 'approved',
+            solution_md: 'Lời giải 1',
+          },
+        ],
+      },
+    ],
+  });
+
+  const mockRetryGen = async (sId) => {
+    retryCalls.push(sId);
+    return { ok: true };
+  };
+
+  const harness = renderStage3Page('sess-partial-f84-01', {
+    loadSession: mockLoadSession,
+    retryGen: mockRetryGen,
+  });
+
+  try {
+    await harness.render();
+
+    // 1. Nút sinh bổ sung tồn tại và không bị disabled
+    const retryBtn = Array.from(harness.container.querySelectorAll('button')).find(
+      (b) => b.textContent.includes('Sinh bổ sung các câu còn thiếu') || b.textContent.includes('Sinh bù câu này'),
+    );
+    assert.ok(retryBtn, 'Nút sinh bổ sung phải tồn tại trong phiên partial_generated');
+    assert.equal(retryBtn.getAttribute('disabled'), null, 'Nút sinh bổ sung không được bị disabled');
+
+    // 2. Click gọi retryGen(sessionId) đúng một lần
+    await act(async () => {
+      retryBtn.click();
+    });
+    assert.equal(retryCalls.length, 1);
+    assert.equal(retryCalls[0], 'sess-partial-f84-01');
+
+    // 3. Không có CTA Export dành cho phiên đã khóa
+    assert.equal(
+      harness.container.querySelector('[data-testid="stage3-btn-goto-export"]'),
+      null,
+      'Không được hiển thị CTA Export trong phiên partial',
+    );
+    assert.equal(
+      harness.container.querySelector('[data-testid="stage3-banner-locked"]'),
+      null,
+      'Không được hiển thị banner đã khóa vĩnh viễn',
+    );
+
+    // 4. Accept/Reject/Revert bị chặn khi read_only: true
+    await act(async () => {
+      harness.container.querySelector('[data-review-inspect="true"]')?.click();
+    });
+    assert.equal(
+      harness.container.querySelector('.review-popup-actions'),
+      null,
+      'Không xuất hiện các nút mutation (Accept/Reject/Revert) khi read_only: true',
+    );
+
+    // 5. Finalize bị disabled
+    const finalizeBtn = harness.container.querySelector('[data-review-finalize="true"]');
+    assert.ok(finalizeBtn);
+    assert.notEqual(finalizeBtn.getAttribute('disabled'), null, 'Nút xem trước bộ đề (finalize) phải bị disabled');
+  } finally {
+    await harness.unmount();
+  }
+});
+
+test('F84-01-B: failed session with read_only: true is view-only, does not show export CTA or locked banner, and blocks mutations', async () => {
+  const mockLoadSession = async (sId) => ({
+    id: sId,
+    title: 'Đề thi thất bại',
+    status: 'failed',
+    read_only: true,
+    subject: 'Toán',
+    grade: 12,
+    config: { n_versions: 1 },
+    source_questions: [
+      { id: 'q1', question_no: 1, raw_content: 'Câu 1 gốc' },
+    ],
+    exam_versions: [
+      {
+        version_index: 1,
+        questions: [
+          {
+            id: 'cand-f',
+            candidate_id: 'cand-f',
+            question_no: 1,
+            content: 'Biến thể câu 1',
+            options: { A: '1' },
+            correct_key: 'A',
+            status: 'pending_review',
+          },
+        ],
+      },
+    ],
+  });
+
+  const harness = renderStage3Page('sess-failed-f84-01', {
+    loadSession: mockLoadSession,
+  });
+
+  try {
+    await harness.render();
+
+    assert.equal(harness.container.querySelector('[data-testid="stage3-banner-locked"]'), null);
+    assert.equal(harness.container.querySelector('[data-testid="stage3-btn-goto-export"]'), null);
+
+    // Mở chi tiết câu hỏi
+    await act(async () => {
+      harness.container.querySelector('[data-review-inspect="true"]')?.click();
+    });
+    assert.equal(harness.container.querySelector('.review-popup-actions'), null);
+
+    const finalizeBtn = harness.container.querySelector('[data-review-finalize="true"]');
+    assert.ok(finalizeBtn);
+    assert.notEqual(finalizeBtn.getAttribute('disabled'), null);
+  } finally {
+    await harness.unmount();
+  }
+});
+
+test('F84-01-C: permanent lock for approved/exported sessions blocks all mutations and shows export CTA', async () => {
+  const mockLoadSession = async (sId) => ({
+    id: sId,
+    title: 'Đề thi đã duyệt',
+    status: 'approved',
+    read_only: true,
+    subject: 'Toán',
+    grade: 12,
+    config: { n_versions: 1 },
+    source_questions: [{ id: 'q1', question_no: 1, raw_content: 'Câu 1 gốc' }],
+    exam_versions: [{
+      version_index: 1,
+      questions: [{
+        id: 'cand-app',
+        candidate_id: 'cand-app',
+        question_no: 1,
+        content: 'Biến thể câu 1',
+        options: { A: '1' },
+        correct_key: 'A',
+        status: 'approved',
+      }],
+    }],
+  });
+
+  const harness = renderStage3Page('sess-approved-f84-01', {
+    loadSession: mockLoadSession,
+  });
+
+  try {
+    await harness.render();
+
+    const exportBtn = harness.container.querySelector('[data-testid="stage3-btn-goto-export"]');
+    assert.ok(exportBtn, 'Phải có CTA Export');
+    const lockedBanner = harness.container.querySelector('[data-testid="stage3-banner-locked"]');
+    assert.ok(lockedBanner, 'Phải có locked banner');
+
+    await act(async () => {
+      harness.container.querySelector('[data-review-inspect="true"]')?.click();
+    });
+    assert.equal(harness.container.querySelector('.review-popup-actions'), null);
+
+    await act(async () => {
+      exportBtn.click();
+    });
+    assert.equal(harness.getLocation(), '/session/sess-approved-f84-01/export');
+  } finally {
+    await harness.unmount();
+  }
+});
+
+test('F84-03-B: 409 ERR_REVIEW_STATE_CONFLICT does NOT show Final Preview button with shuffled message', async () => {
+  const errConflict = new Error('Review state conflict');
+  errConflict.response = {
+    status: 409,
+    data: {
+      error_code: 'ERR_REVIEW_STATE_CONFLICT',
+      message: 'Phiên chưa sẵn sàng cho Stage 3',
+    },
+  };
+
+  const harness = renderStage3Page('sess-409-conflict', {
+    loadSession: async () => { throw errConflict; },
+  });
+
+  try {
+    await harness.render();
+    assert.equal(
+      harness.container.querySelector('[data-testid="stage3-btn-goto-preview-409"]'),
+      null,
+      'Không được hiển thị nút chuyển tới preview 409 khi mã lỗi là ERR_REVIEW_STATE_CONFLICT',
+    );
+    const text = harness.container.textContent;
+    assert.ok(!text.includes('đã chốt thứ tự đề thi'), 'Không được báo là đã chốt thứ tự');
+    assert.ok(text.includes('Phiên chưa sẵn sàng cho Stage 3') || text.includes('Không thể tải chi tiết'));
+  } finally {
+    await harness.unmount();
+  }
+});
+
+test('F84-03-C: HTTP 409 with unknown error code is handled safely as general conflict', async () => {
+  const errUnknown409 = new Error('Unknown conflict');
+  errUnknown409.response = {
+    status: 409,
+    data: {
+      error_code: 'ERR_UNKNOWN_CONFLICT',
+      message: 'Conflict chung',
+    },
+  };
+
+  const harness = renderStage3Page('sess-409-unknown', {
+    loadSession: async () => { throw errUnknown409; },
+  });
+
+  try {
+    await harness.render();
+    assert.equal(
+      harness.container.querySelector('[data-testid="stage3-btn-goto-preview-409"]'),
+      null,
+      'Không được kết luận đã shuffle khi error_code không xác định',
+    );
+    const retryBtn = Array.from(harness.container.querySelectorAll('button')).find(
+      (b) => b.textContent.includes('Thử lại'),
+    );
+    assert.ok(retryBtn, 'Phải có nút Thử lại');
+  } finally {
+    await harness.unmount();
+  }
+});
+
+test('F84-03-D: HTTP 423 with approved/exported status routes to export', async () => {
+  const err423 = new Error('Session locked');
+  err423.response = { status: 423, data: { error_code: 'ERR_SESSION_LOCKED' } };
+
+  const mockLoadSessionDetail = async (sId) => ({
+    id: sId,
+    title: 'Đề thi đã khóa 423',
+    status: 'approved',
+  });
+
+  const harness = renderStage3Page('sess-423-locked', {
+    loadSession: async () => { throw err423; },
+    loadSessionDetail: mockLoadSessionDetail,
+  });
+
+  try {
+    await harness.render();
+    const exportBtn = harness.container.querySelector('[data-testid="stage3-btn-goto-export"]');
+    assert.ok(exportBtn, 'Phải có nút Đi đến xuất đề');
+
+    await act(async () => {
+      exportBtn.click();
+    });
+    assert.equal(harness.getLocation(), '/session/sess-423-locked/export');
+  } finally {
+    await harness.unmount();
+  }
 });

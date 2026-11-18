@@ -4,6 +4,7 @@ import { api } from './api.js';
 import {
   acceptQuestion,
   rejectAndRegenerateQuestion,
+  revertQuestion,
   fetchReviewProgress,
   fetchReviewSnapshot,
   adaptReviewSnapshot,
@@ -62,6 +63,32 @@ test('rejectAndRegenerateQuestion gọi đúng POST /sessions/:id/questions/:qid
     assert.equal(res.question_id, 'q-var-new');
     assert.equal(res.status, 'pending_review');
     assert.equal(res.content, 'Cho hàm số $y = 2x + 1$');
+  } finally {
+    api.post = originalPost;
+  }
+});
+
+test('revertQuestion gọi đúng POST /sessions/:id/questions/:qid/revert với Idempotency-Key', async () => {
+  let capturedPost = null;
+  const originalPost = api.post;
+
+  api.post = async (url, payload, options) => {
+    capturedPost = { url, payload, options };
+    return {
+      data: {
+        question_id: 'q-root-source',
+        is_reverted: true,
+        status: 'pending_review',
+      },
+    };
+  };
+
+  try {
+    const res = await revertQuestion('sess-123', 'q-var-1', 'idem-revert-123');
+    assert.ok(capturedPost);
+    assert.equal(capturedPost.url, '/sessions/sess-123/questions/q-var-1/revert');
+    assert.equal(capturedPost.options.headers['Idempotency-Key'], 'idem-revert-123');
+    assert.equal(res.is_reverted, true);
   } finally {
     api.post = originalPost;
   }

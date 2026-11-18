@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   Check,
   CheckCircle2,
+  Eye,
   FileText,
   Grid,
   Loader2,
@@ -45,6 +46,7 @@ export default function Stage3PreviewPage({
   const [shuffleQuestions, setShuffleQuestions] = useState(false);
   const [shuffleOptions, setShuffleOptions] = useState(false);
   const [sessionStatus, setSessionStatus] = useState('reviewed');
+  const [isTeacherMode, setIsTeacherMode] = useState(false);
   const isMountedRef = useRef(true);
   const requestIdRef = useRef(0);
   const activeSessionIdRef = useRef(sessionId);
@@ -83,14 +85,14 @@ export default function Stage3PreviewPage({
 
   // F04 & F05: loadData chỉ phụ thuộc vào sessionId, dùng requestIdRef để loại bỏ race condition
   const loadData = useCallback(async () => {
-    if (!sessionId) return;
+    if (!sessionId) return null;
     const currentRequestId = ++requestIdRef.current;
     setLoading(true);
     setError(null);
 
     try {
       const data = await loadPreview(sessionId);
-      if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return;
+      if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
       setPreviewData(data);
       setNeedsShuffle(!data.is_finalized);
       if (data.status) {
@@ -103,8 +105,9 @@ export default function Stage3PreviewPage({
       if (data.versions?.length > 0) {
         setSelectedTab((prev) => prev || data.versions[0].version_code);
       }
+      return data;
     } catch (err) {
-      if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return;
+      if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
       // F03: Chỉ kích hoạt needsShuffle khi mã lỗi là ERR_SHUFFLE_REQUIRED
       if (err.errorCode === 'ERR_SHUFFLE_REQUIRED' || err.data?.error_code === 'ERR_SHUFFLE_REQUIRED') {
         setNeedsShuffle(true);
@@ -118,7 +121,7 @@ export default function Stage3PreviewPage({
         } else if (typeof loadPreferences === 'function') {
           try {
             const prefs = await loadPreferences(sessionId);
-            if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return;
+            if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
             if (prefs && typeof prefs === 'object') {
               setShuffleQuestions(Boolean(prefs.shuffle_questions ?? false));
               setShuffleOptions(Boolean(prefs.shuffle_options ?? false));
@@ -127,7 +130,7 @@ export default function Stage3PreviewPage({
               }
             }
           } catch {
-            if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return;
+            if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
             setNeedsShuffle(false);
             setError('Không thể tải cấu hình xáo trộn đã lưu. Vui lòng thử lại.');
           }
@@ -138,6 +141,7 @@ export default function Stage3PreviewPage({
       } else {
         setError(err.message || 'Không thể tải bản xem trước đề thi.');
       }
+      return null;
     } finally {
       if (isMountedRef.current && currentRequestId === requestIdRef.current) {
         setLoading(false);
@@ -227,6 +231,24 @@ export default function Stage3PreviewPage({
 
   const approveDialogRef = useDialogFocus(isApproveModalOpen, approving, () => setIsApproveModalOpen(false));
 
+  const handleTabKeyDown = (e) => {
+    const tabs = [
+      ...(previewData?.versions?.map((v) => v.version_code) || []),
+      ...(isTeacherMode ? ['matrix'] : []),
+    ];
+    const currentIndex = tabs.indexOf(selectedTab);
+    if (currentIndex === -1) return;
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      const nextIndex = (currentIndex + 1) % tabs.length;
+      setSelectedTab(tabs[nextIndex]);
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const prevIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+      setSelectedTab(tabs[prevIndex]);
+    }
+  };
+
   const currentVersion = previewData?.versions?.find((v) => v.version_code === selectedTab);
 
   return (
@@ -254,15 +276,27 @@ export default function Stage3PreviewPage({
       <header className="border-b border-line bg-surface sticky top-0 z-20 backdrop-blur">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 min-h-16 py-3 flex flex-wrap gap-3 items-center justify-between">
           <div className="flex flex-wrap items-center gap-4">
-            <button
-              type="button"
-              data-testid="btn-back"
-              onClick={() => navigate(stage3Path(sessionId))}
-              className="inline-flex items-center gap-2 text-sm text-muted hover:text-ink transition-colors py-1.5 px-2.5 rounded-lg hover:bg-rail"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              <span>Quay lại duyệt từng câu</span>
-            </button>
+            {isLocked ? (
+              <button
+                type="button"
+                data-testid="btn-back"
+                onClick={() => navigate(exportPath(sessionId))}
+                className="inline-flex items-center gap-2 text-sm text-highlight hover:underline py-1.5 px-2.5 rounded-lg hover:bg-rail font-semibold"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Đi tới xuất đề</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                data-testid="btn-back"
+                onClick={() => navigate(stage3Path(sessionId))}
+                className="inline-flex items-center gap-2 text-sm text-muted hover:text-ink transition-colors py-1.5 px-2.5 rounded-lg hover:bg-rail"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Quay lại duyệt từng câu</span>
+              </button>
+            )}
             <div className="h-4 w-px bg-rail" />
             <h1 className="text-base sm:text-lg font-semibold text-strong flex items-center gap-2">
               <span>Xem trước và phê duyệt</span>
@@ -270,32 +304,47 @@ export default function Stage3PreviewPage({
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {/* Status badge */}
-            {isLocked ? (
-              <span
-                data-testid="badge-status-locked"
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-approved-bg text-approved-ink border border-approved-border"
-              >
-                <Lock className="w-3.5 h-3.5" />
-                Đã phê duyệt & Khóa đề
-              </span>
-            ) : needsShuffle ? (
-              <span
-                data-testid="badge-status-pending"
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-accent-soft text-accent-ink border border-accent-border"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                Chờ chốt thứ tự
-              </span>
-            ) : canApprove ? (
-              <span
-                data-testid="badge-status-ready"
-                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-support-bg text-highlight border border-support-line"
-              >
-                <Check className="w-3.5 h-3.5" />
-                Sẵn sàng phê duyệt
-              </span>
-            ) : null}
+            {/* Status badge & authoritative server status text */}
+            <div className="flex flex-col items-end">
+              {isLocked ? (
+                <>
+                  <span
+                    data-testid="badge-status-locked"
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-approved-bg text-approved-ink border border-approved-border"
+                  >
+                    <Lock className="w-3.5 h-3.5" />
+                    Đã phê duyệt & Khóa đề
+                  </span>
+                  <span className="text-[11px] text-muted mt-0.5">Đề đã khóa</span>
+                </>
+              ) : needsShuffle ? (
+                <>
+                  <span
+                    data-testid="badge-status-pending"
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-accent-soft text-accent-ink border border-accent-border"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Chờ chốt thứ tự
+                  </span>
+                  <span className="text-[11px] text-accent-ink mt-0.5">
+                    {shuffling ? 'Đã lưu lựa chọn; đang chờ xác nhận áp dụng' : 'Chưa áp dụng thứ tự cuối'}
+                  </span>
+                </>
+              ) : canApprove ? (
+                <>
+                  <span
+                    data-testid="badge-status-ready"
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-support-bg text-highlight border border-support-line"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    Sẵn sàng phê duyệt
+                  </span>
+                  <span className="text-[11px] text-approved-ink font-medium mt-0.5">
+                    Đã áp dụng thứ tự cuối — bản đang xem đã được xác nhận
+                  </span>
+                </>
+              ) : null}
+            </div>
 
             {/* Header Action Buttons: F01 bỏ reshuffle; F02 chỉ render khi canApprove */}
             {canApprove && (
@@ -467,13 +516,20 @@ export default function Stage3PreviewPage({
               </div>
             )}
 
-            {/* Navigation Tabs (Version Codes + Answers Matrix) */}
-            <div className="border-b border-line">
-              <nav role="tablist" className="flex gap-2 overflow-x-auto pb-px">
+            {/* Navigation Tabs (Version Codes + Answers Matrix) + Student/Teacher View Mode Toggle */}
+            <div className="border-b border-line flex flex-wrap items-center justify-between gap-3 pb-px">
+              <nav
+                role="tablist"
+                aria-label="Các mã đề thi và bảng đáp án"
+                onKeyDown={handleTabKeyDown}
+                className="flex gap-2 overflow-x-auto"
+              >
                 {previewData?.versions?.map((ver) => (
                   <button
                     key={ver.version_code}
                     role="tab"
+                    id={`tab-version-${ver.version_code}`}
+                    aria-controls={`tabpanel-version-${ver.version_code}`}
                     data-testid={`tab-version-${ver.version_code}`}
                     aria-selected={selectedTab === ver.version_code}
                     onClick={() => setSelectedTab(ver.version_code)}
@@ -491,33 +547,63 @@ export default function Stage3PreviewPage({
                   </button>
                 ))}
 
-                <button
-                  role="tab"
-                  data-testid="tab-matrix"
-                  aria-selected={selectedTab === 'matrix'}
-                  onClick={() => setSelectedTab('matrix')}
-                  className={`inline-flex items-center gap-2 py-3 px-4 border-b-2 font-medium text-sm whitespace-nowrap transition-colors ${
-                    selectedTab === 'matrix'
-                      ? 'border-support-line text-highlight bg-support-bg'
-                      : 'border-transparent text-muted hover:text-ink hover:border-line'
-                  }`}
-                >
-                  <Grid className="w-4 h-4" />
-                  <span>Bảng đáp án</span>
-                </button>
+                {isTeacherMode && (
+                  <button
+                    role="tab"
+                    id="tab-matrix"
+                    aria-controls="tabpanel-matrix"
+                    data-testid="tab-matrix"
+                    aria-selected={selectedTab === 'matrix'}
+                    onClick={() => setSelectedTab('matrix')}
+                    className={`inline-flex items-center gap-2 py-3 px-4 border-b-2 font-medium text-sm whitespace-nowrap transition-colors ${
+                      selectedTab === 'matrix'
+                        ? 'border-support-line text-highlight bg-support-bg'
+                        : 'border-transparent text-muted hover:text-ink hover:border-line'
+                    }`}
+                  >
+                    <Grid className="w-4 h-4" />
+                    <span>Bảng đáp án</span>
+                  </button>
+                )}
               </nav>
+
+              <div className="flex items-center gap-2 py-2">
+                <button
+                  type="button"
+                  data-testid="btn-toggle-view-mode"
+                  onClick={() => {
+                    if (isTeacherMode && selectedTab === 'matrix') {
+                      const firstCode = previewData?.versions?.[0]?.version_code;
+                      if (firstCode) setSelectedTab(firstCode);
+                    }
+                    setIsTeacherMode((prev) => !prev);
+                  }}
+                  className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg border border-line bg-surface hover:bg-rail text-xs font-semibold text-strong transition-colors shadow-sm"
+                >
+                  <Eye className="w-3.5 h-3.5 text-highlight" />
+                  <span>{isTeacherMode ? 'Đề học sinh' : 'Hiện đáp án và lời giải'}</span>
+                </button>
+              </div>
             </div>
 
             {/* Tab Content: Version Exam Viewer */}
             {selectedTab !== 'matrix' && currentVersion && (
-              <div className="space-y-6">
-                <div className="flex items-center justify-between">
+              <div
+                role="tabpanel"
+                id={`tabpanel-version-${currentVersion.version_code}`}
+                aria-labelledby={`tab-version-${currentVersion.version_code}`}
+                tabIndex={0}
+                className="space-y-6 focus:outline-none"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h2 className="text-lg font-bold text-strong">
                       Bản xem trước — Mã đề {currentVersion.version_code}
                     </h2>
                     <p className="text-xs text-muted mt-0.5">
-                      Kiểm tra nội dung, đáp án và lời giải trước khi phê duyệt.
+                      {isTeacherMode
+                        ? 'Chế độ giáo viên: kiểm tra nội dung, đáp án và lời giải trước khi phê duyệt.'
+                        : 'Chế độ học sinh: xem cấu trúc đề thi thực tế (ẩn đáp án và lời giải).'}
                     </p>
                   </div>
                 </div>
@@ -534,7 +620,7 @@ export default function Stage3PreviewPage({
                           <span className="px-2.5 py-1 rounded bg-rail text-highlight font-bold text-sm">
                             Câu {q.question_no}
                           </span>
-                          <span className="text-xs text-muted">
+                          <span className={`text-xs text-muted ${isTeacherMode ? 'inline' : 'hidden'}`}>
                             [Gốc: #{q.canonical_question_no}]
                           </span>
                         </div>
@@ -545,7 +631,7 @@ export default function Stage3PreviewPage({
                       </div>
 
                       {/* Question Content */}
-                      <div className="text-ink text-base leading-relaxed">
+                      <div className="text-ink text-base leading-relaxed min-w-0 overflow-x-auto">
                         <MathRenderer content={q.content} />
                       </div>
 
@@ -559,24 +645,24 @@ export default function Stage3PreviewPage({
                             <div
                               key={optionLabel}
                               className={`p-3.5 rounded-lg border flex items-start gap-3 transition-colors ${
-                                isCorrect
+                                isCorrect && isTeacherMode
                                   ? 'bg-approved-bg border-approved-border text-approved-ink'
                                   : 'bg-surface border-line text-ink'
                               }`}
                             >
                               <span
                                 className={`w-6 h-6 rounded flex items-center justify-center text-xs font-bold shrink-0 ${
-                                  isCorrect
+                                  isCorrect && isTeacherMode
                                     ? 'bg-approved-ink text-white'
                                     : 'bg-rail text-muted'
                                 }`}
                               >
                                 {optionLabel}
                               </span>
-                              <div className="flex-1 text-sm pt-0.5">
+                              <div className="flex-1 min-w-0 overflow-x-auto text-sm pt-0.5">
                                 <MathRenderer content={String(opt)} inline />
                               </div>
-                              {isCorrect && (
+                              {isTeacherMode && isCorrect && (
                                 <span
                                   data-testid="badge-correct"
                                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-approved-bg text-approved-ink shrink-0"
@@ -591,8 +677,8 @@ export default function Stage3PreviewPage({
                       </div>
 
                       {/* Detailed Solution */}
-                      {q.solution_md && (
-                        <div className="mt-4 pt-3 border-t border-line">
+                      {isTeacherMode && q.solution_md && (
+                        <div className="mt-4 pt-3 border-t border-line min-w-0 overflow-x-auto">
                           <h4 className="text-xs font-semibold text-muted uppercase tracking-wider mb-2">
                             Lời giải chi tiết
                           </h4>
@@ -608,8 +694,14 @@ export default function Stage3PreviewPage({
             )}
 
             {/* Tab Content: Answers Matrix Table */}
-            {selectedTab === 'matrix' && (
-              <div className="space-y-4">
+            {isTeacherMode && selectedTab === 'matrix' && (
+              <div
+                role="tabpanel"
+                id="tabpanel-matrix"
+                aria-labelledby="tab-matrix"
+                tabIndex={0}
+                className="space-y-4 focus:outline-none"
+              >
                 <div>
                   <h2 className="text-lg font-bold text-strong">
                     Bảng đáp án các mã đề
@@ -705,9 +797,32 @@ export default function Stage3PreviewPage({
             </div>
 
             {approveError && (
-              <div className="p-3 rounded-lg bg-danger-soft border border-danger-border text-danger text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 text-danger" />
-                <p>{approveError}</p>
+              <div className="p-3.5 rounded-lg bg-danger-soft border border-danger-border text-danger text-xs flex flex-col gap-2">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-danger mt-0.5" />
+                  <p className="flex-1">{approveError}</p>
+                </div>
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={async () => {
+                    const targetSessionId = sessionId;
+                    const data = await loadData();
+                    if (
+                      !isMountedRef.current ||
+                      activeSessionIdRef.current !== targetSessionId
+                    ) {
+                      return;
+                    }
+                    if (['approved', 'exported'].includes(data?.status)) {
+                      setIsApproveModalOpen(false);
+                      navigate(exportPath(targetSessionId));
+                    }
+                  }}
+                  className="self-start rounded-md border border-danger-border bg-surface px-3 py-1 text-xs font-semibold text-danger hover:bg-danger/10 transition-colors disabled:opacity-50"
+                >
+                  Kiểm tra trạng thái
+                </button>
               </div>
             )}
 

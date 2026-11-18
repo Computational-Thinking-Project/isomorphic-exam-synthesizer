@@ -616,6 +616,11 @@ test('Stage3PreviewPage: Hiển thị đầy đủ danh sách mã đề, câu h�
   try {
     await harness.render();
 
+    // Chuyển sang Teacher Mode để xem đáp án đúng, lời giải và bảng đáp án
+    await act(async () => {
+      harness.container.querySelector('[data-testid="btn-toggle-view-mode"]').click();
+    });
+
     // Tabs mã đề
     const tab101 = harness.container.querySelector('[data-testid="tab-version-101"]');
     const tab102 = harness.container.querySelector('[data-testid="tab-version-102"]');
@@ -674,6 +679,11 @@ test('Stage3PreviewPage: Bấm Tab "Ma trận đáp án đối soát" hiển th�
   const harness = renderPreviewPage('sess-matrix-view');
   try {
     await harness.render();
+
+    // Chuyển sang Teacher Mode để hiển thị tab ma trận
+    await act(async () => {
+      harness.container.querySelector('[data-testid="btn-toggle-view-mode"]').click();
+    });
 
     const tabMatrix = harness.container.querySelector('[data-testid="tab-matrix"]');
     assert.ok(tabMatrix);
@@ -970,6 +980,11 @@ test('F04: Chuyển đổi giữa các tab không gọi lại API GET preview', 
   try {
     await harness.render();
     assert.equal(getCallCount, 1, 'Lần đầu tải trang chỉ gọi GET đúng 1 lần');
+
+    // Chuyển sang Teacher Mode để hiển thị tab ma trận
+    await act(async () => {
+      harness.container.querySelector('[data-testid="btn-toggle-view-mode"]').click();
+    });
 
     // Chuyển sang tab 102
     const tab102Btn = harness.container.querySelector('[data-testid="tab-version-102"]');
@@ -1303,4 +1318,289 @@ test('R78-01: preference rejection after unmount is ignored', async () => {
     await act(async () => { rejectPreferences(new Error('Late failure')); });
     assert.equal(harness.container.textContent, '');
   } finally { api.get = originalGet; }
+});
+
+test('F84-04-A: Approval commit nhưng response mất -> GET trả approved -> Kiểm tra trạng thái điều hướng tới Export và không POST lại', async () => {
+  const originalGet = api.get;
+  const originalPost = api.post;
+  let postCount = 0;
+  let getCount = 0;
+
+  api.post = async () => {
+    postCount++;
+    throw new Error('Network timeout on approve');
+  };
+
+  api.get = async () => {
+    getCount++;
+    if (getCount === 1) {
+      return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'sess-f84-04-a', status: 'reviewed', is_finalized: true } };
+    }
+    return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'sess-f84-04-a', status: 'approved', is_finalized: true } };
+  };
+
+  const harness = renderPreviewPage('sess-f84-04-a');
+  try {
+    await harness.render();
+
+    // Mở modal approve và click Phê duyệt
+    await act(async () => {
+      harness.container.querySelector('[data-testid="btn-open-approve"]').click();
+    });
+    await act(async () => {
+      harness.container.querySelector('[data-testid="btn-confirm-approve"]').click();
+    });
+
+    assert.equal(postCount, 1);
+    assert.match(harness.container.textContent, /Network timeout on approve/);
+
+    // Nút "Kiểm tra trạng thái" xuất hiện
+    const checkStatusBtn = Array.from(harness.container.querySelectorAll('button')).find(
+      (b) => b.textContent.includes('Kiểm tra trạng thái'),
+    );
+    assert.ok(checkStatusBtn, 'Phải có nút Kiểm tra trạng thái');
+
+    // Click Kiểm tra trạng thái
+    await act(async () => {
+      checkStatusBtn.click();
+    });
+
+    // Phải điều hướng tới export và không gọi thêm POST
+    assert.equal(harness.getLocation(), '/session/sess-f84-04-a/export');
+    assert.equal(postCount, 1, 'Không được gọi thêm POST approve');
+  } finally {
+    api.get = originalGet;
+    api.post = originalPost;
+    await harness.unmount();
+  }
+});
+
+test('F84-04-B: Approval chưa thành công (GET trả reviewed) -> không điều hướng tới Export', async () => {
+  const originalGet = api.get;
+  const originalPost = api.post;
+
+  api.post = async () => {
+    throw new Error('Approve failed');
+  };
+
+  api.get = async () => ({
+    data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'sess-f84-04-b', status: 'reviewed', is_finalized: true },
+  });
+
+  const harness = renderPreviewPage('sess-f84-04-b');
+  try {
+    await harness.render();
+
+    await act(async () => {
+      harness.container.querySelector('[data-testid="btn-open-approve"]').click();
+    });
+    await act(async () => {
+      harness.container.querySelector('[data-testid="btn-confirm-approve"]').click();
+    });
+
+    const checkStatusBtn = Array.from(harness.container.querySelectorAll('button')).find(
+      (b) => b.textContent.includes('Kiểm tra trạng thái'),
+    );
+    assert.ok(checkStatusBtn);
+
+    await act(async () => {
+      checkStatusBtn.click();
+    });
+
+    assert.equal(harness.getLocation(), '/session/sess-f84-04-b/stage3/preview');
+  } finally {
+    api.get = originalGet;
+    api.post = originalPost;
+    await harness.unmount();
+  }
+});
+
+test('F84-04-C: GET tiếp tục thất bại -> không làm mất trạng thái lỗi, cho phép thử lại', async () => {
+  const originalGet = api.get;
+  const originalPost = api.post;
+  let getCount = 0;
+
+  api.post = async () => {
+    throw new Error('Initial approve failed');
+  };
+
+  api.get = async () => {
+    getCount++;
+    if (getCount === 1) {
+      return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'sess-f84-04-c', status: 'reviewed', is_finalized: true } };
+    }
+    throw new Error('Connection error during check');
+  };
+
+  const harness = renderPreviewPage('sess-f84-04-c');
+  try {
+    await harness.render();
+
+    await act(async () => {
+      harness.container.querySelector('[data-testid="btn-open-approve"]').click();
+    });
+    await act(async () => {
+      harness.container.querySelector('[data-testid="btn-confirm-approve"]').click();
+    });
+
+    const checkStatusBtn = Array.from(harness.container.querySelectorAll('button')).find(
+      (b) => b.textContent.includes('Kiểm tra trạng thái'),
+    );
+    assert.ok(checkStatusBtn);
+
+    await act(async () => {
+      checkStatusBtn.click();
+    });
+
+    assert.equal(harness.getLocation(), '/session/sess-f84-04-c/stage3/preview');
+    assert.match(harness.container.textContent, /Initial approve failed/);
+  } finally {
+    api.get = originalGet;
+    api.post = originalPost;
+    await harness.unmount();
+  }
+});
+
+test('F84-04-D: Session switching bỏ qua response cũ khi đối soát', async () => {
+  const originalGet = api.get;
+  const originalPost = api.post;
+  let deferredA;
+
+  api.post = async () => {
+    throw new Error('Approve timeout');
+  };
+
+  api.get = async (url) => {
+    if (url.includes('session-a')) {
+      if (!deferredA) {
+        return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'session-a', status: 'reviewed', is_finalized: true } };
+      }
+      return deferredA.promise;
+    }
+    return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'session-b', status: 'reviewed', is_finalized: true } };
+  };
+
+  const harness = renderPreviewPage('session-a');
+  try {
+    await harness.render();
+
+    await act(async () => {
+      harness.container.querySelector('[data-testid="btn-open-approve"]').click();
+    });
+    await act(async () => {
+      harness.container.querySelector('[data-testid="btn-confirm-approve"]').click();
+    });
+
+    const checkStatusBtn = Array.from(harness.container.querySelectorAll('button')).find(
+      (b) => b.textContent.includes('Kiểm tra trạng thái'),
+    );
+    assert.ok(checkStatusBtn);
+
+    // Tạo deferred response cho request loadData tiếp theo của session A
+    let resolveA;
+    deferredA = {
+      promise: new Promise((res) => { resolveA = res; }),
+    };
+
+    // Bắt đầu kiểm tra trạng thái session A
+    checkStatusBtn.click();
+
+    // Chuyển sang session B ngay trong lúc GET đang pending
+    await harness.navigate('/session/session-b/stage3/preview');
+
+    // Request session A trả về approved muộn
+    await act(async () => {
+      resolveA({ data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'session-a', status: 'approved', is_finalized: true } });
+    });
+
+    // Phải ở session B, không bị kéo về /session/session-a/export
+    assert.equal(harness.getLocation(), '/session/session-b/stage3/preview');
+  } finally {
+    api.get = originalGet;
+    api.post = originalPost;
+    await harness.unmount();
+  }
+});
+
+test('F84-05: Student Mode DOM isolation — không có badge-correct, lời giải hoặc bảng đáp án trong DOM', async () => {
+  const originalGet = api.get;
+  api.get = async () => ({
+    data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'sess-student-mode', is_finalized: true, status: 'reviewed' },
+  });
+
+  const harness = renderPreviewPage('sess-student-mode');
+  try {
+    await harness.render();
+
+    // Mặc định là Student Mode (isTeacherMode = false)
+    // 1. [data-testid="badge-correct"] không tồn tại trong DOM
+    assert.equal(
+      harness.container.querySelector('[data-testid="badge-correct"]'),
+      null,
+      'Student mode: [data-testid="badge-correct"] không được tồn tại trong DOM',
+    );
+
+    // 2. Không có lời giải chi tiết trong DOM
+    assert.equal(
+      harness.container.textContent.includes('Lời giải chi tiết'),
+      false,
+      'Student mode: lời giải không được xuất hiện trong DOM',
+    );
+
+    // 3. Tab bảng đáp án không tồn tại trong DOM
+    assert.equal(
+      harness.container.querySelector('[data-testid="tab-matrix"]'),
+      null,
+      'Student mode: tab bảng đáp án không được hiển thị',
+    );
+    assert.equal(
+      harness.container.querySelector('[data-testid="matrix-table"]'),
+      null,
+      'Student mode: bảng đáp án matrix-table không được xuất hiện',
+    );
+
+    // Chuyển sang Teacher Mode
+    const toggleBtn = harness.container.querySelector('[data-testid="btn-toggle-view-mode"]');
+    assert.ok(toggleBtn);
+    await act(async () => {
+      toggleBtn.click();
+    });
+
+    // 4. Trong Teacher Mode: badge-correct, lời giải và tab bảng đáp án xuất hiện
+    assert.ok(
+      harness.container.querySelector('[data-testid="badge-correct"]'),
+      'Teacher mode: badge-correct phải xuất hiện',
+    );
+    assert.ok(
+      harness.container.textContent.includes('Lời giải chi tiết'),
+      'Teacher mode: lời giải phải xuất hiện',
+    );
+    assert.ok(
+      harness.container.querySelector('[data-testid="tab-matrix"]'),
+      'Teacher mode: tab bảng đáp án phải xuất hiện',
+    );
+
+    // Mở tab matrix trong Teacher mode
+    await act(async () => {
+      harness.container.querySelector('[data-testid="tab-matrix"]').click();
+    });
+    assert.ok(
+      harness.container.querySelector('[data-testid="matrix-table"]'),
+      'Teacher mode: bảng ma trận đáp án phải hiển thị khi chọn tab',
+    );
+
+    // Chuyển lại về Student Mode
+    await act(async () => {
+      toggleBtn.click();
+    });
+
+    // Tự động trở về tab version và cách ly DOM
+    assert.equal(harness.container.querySelector('[data-testid="badge-correct"]'), null);
+    assert.equal(harness.container.querySelector('[data-testid="tab-matrix"]'), null);
+    assert.equal(harness.container.querySelector('[data-testid="matrix-table"]'), null);
+    assert.equal(harness.container.textContent.includes('Lời giải chi tiết'), false);
+  } finally {
+    api.get = originalGet;
+    await harness.unmount();
+  }
 });

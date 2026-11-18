@@ -27,6 +27,7 @@ function getDefaultTitle(session) {
  * @param {Function} props.onClose - Callback khi đóng/hủy modal
  * @param {Function} props.onSuccess - Callback khi nhân bản thành công: onSuccess(newSession)
  *   Lưu ý: cloneFn bắt buộc trả về trực tiếp đối tượng phiên mới (unwrap response data)
+ * @param {Function} [props.onCheckLibrary] - Callback khi bấm kiểm tra thư viện đề
  * @param {Function} [props.cloneFn=mockCloneSession] - Hàm thực hiện clone (hỗ trợ DI/mock/real API)
  */
 export default function CloneSessionModal({
@@ -34,11 +35,13 @@ export default function CloneSessionModal({
   session,
   onClose,
   onSuccess,
+  onCheckLibrary,
   cloneFn = mockCloneSession,
 }) {
   const [title, setTitle] = useState(() => getDefaultTitle(session));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [isOutcomeUncertain, setIsOutcomeUncertain] = useState(false);
 
   const inputRef = useRef(null);
   const modalBoxRef = useRef(null);
@@ -105,6 +108,7 @@ export default function CloneSessionModal({
       isSubmittingRef.current = false;
       setIsSubmitting(false);
       setErrorMessage('');
+      setIsOutcomeUncertain(false);
     }
   }, [isOpen]);
 
@@ -118,6 +122,7 @@ export default function CloneSessionModal({
 
       setTitle(getDefaultTitle(session));
       setErrorMessage('');
+      setIsOutcomeUncertain(false);
       setIsSubmitting(false);
       isSubmittingRef.current = false;
       activeRequestIdRef.current += 1;
@@ -253,11 +258,28 @@ export default function CloneSessionModal({
 
       isSubmittingRef.current = false;
       setIsSubmitting(false);
-      const message =
-        cause instanceof Error && cause.message
-          ? cause.message
-          : 'Không thể nhân bản phiên lúc này. Vui lòng thử lại.';
-      setErrorMessage(message);
+
+      const status = cause?.response?.status ?? cause?.status;
+      const isUncertain =
+        cause?.outcomeUncertain === true ||
+        cause?.isUncertain === true ||
+        (status !== undefined && status !== null && (status >= 500 || status === 408)) ||
+        (!status && cause?.name === 'AxiosError') ||
+        (typeof cause?.message === 'string' &&
+          (cause.message.includes('Chưa xác nhận được kết quả nhân bản') ||
+           cause.message.includes('tải lại trang để kiểm tra danh sách')));
+
+      if (isUncertain) {
+        setIsOutcomeUncertain(true);
+        setErrorMessage('Chưa xác nhận được kết quả nhân bản. Hãy kiểm tra thư viện trước khi tạo lại.');
+      } else {
+        setIsOutcomeUncertain(false);
+        const message =
+          cause instanceof Error && cause.message
+            ? cause.message
+            : 'Không thể nhân bản phiên lúc này. Vui lòng thử lại.';
+        setErrorMessage(message);
+      }
     }
   }
 
@@ -295,9 +317,21 @@ export default function CloneSessionModal({
         {errorMessage && (
           <div
             role="alert"
-            className="mb-4 rounded-xl border border-danger-border bg-danger-soft p-3 text-sm text-danger"
+            className="mb-4 rounded-xl border border-danger-border bg-danger-soft p-3.5 text-sm text-danger"
           >
-            {errorMessage}
+            <p>{errorMessage}</p>
+            {isOutcomeUncertain && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (onCheckLibrary) onCheckLibrary();
+                  handleClose();
+                }}
+                className="mt-3 inline-flex items-center rounded-lg border border-danger bg-surface px-3 py-1.5 text-xs font-semibold text-danger hover:bg-danger/10 transition-colors"
+              >
+                Kiểm tra thư viện
+              </button>
+            )}
           </div>
         )}
 
@@ -314,11 +348,14 @@ export default function CloneSessionModal({
               id="clone-session-title"
               type="text"
               required
-              disabled={isSubmitting}
+              disabled={isSubmitting || isOutcomeUncertain}
               value={title}
               onChange={(e) => {
                 setTitle(e.target.value);
-                if (errorMessage) setErrorMessage('');
+                if (errorMessage) {
+                  setErrorMessage('');
+                  setIsOutcomeUncertain(false);
+                }
               }}
               placeholder="Nhập tiêu đề cho phiên nhân bản..."
               className="w-full rounded-xl border border-zinc-300 bg-white px-3.5 py-2.5 text-strong placeholder-muted focus:border-highlight focus:outline-none focus:ring-2 focus:ring-highlight/20 transition-all disabled:opacity-50"
@@ -338,7 +375,7 @@ export default function CloneSessionModal({
             <button
               type="submit"
               className={primaryButtonClass}
-              disabled={!isTitleValid || isSubmitting}
+              disabled={!isTitleValid || isSubmitting || isOutcomeUncertain}
             >
               {isSubmitting ? (
                 <>
