@@ -29,13 +29,13 @@ export const markdownListComponents = {
   ol: ({ children, className = '', ...props }) =>
     React.createElement(
       'ol',
-      { className: `list-decimal pl-6 space-y-1 my-2 text-slate-100 ${className}`, ...props },
+      { className: `list-decimal pl-6 space-y-1 my-2 text-inherit ${className}`, ...props },
       children,
     ),
   ul: ({ children, className = '', ...props }) =>
     React.createElement(
       'ul',
-      { className: `list-disc pl-6 space-y-1 my-2 text-slate-100 ${className}`, ...props },
+      { className: `list-disc pl-6 space-y-1 my-2 text-inherit ${className}`, ...props },
       children,
     ),
   li: ({ children, className = '', ...props }) =>
