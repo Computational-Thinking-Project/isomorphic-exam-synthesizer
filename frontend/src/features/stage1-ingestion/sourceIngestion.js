@@ -57,18 +57,17 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
   const listeners = new Set();
   let revision = 0;
   let request;
-  let hasIngested = false;
+  let hasIngested = (initialDetail?.source_questions?.length ?? 0) > 0;
   let lastIngested = {
     mode: state.mode,
     text: state.text,
-    fileKey: null,
+    file: null,
   };
   const checkIsDirty = (mode, text, file) => {
     if (!hasIngested || (state.detail?.source_questions?.length ?? 0) === 0) return false;
-    const currentFileKey = file ? `${file.name}-${file.size}` : null;
     if (mode !== lastIngested.mode) return true;
     if (mode === 'text' && text !== lastIngested.text) return true;
-    if (mode === 'file' && currentFileKey !== lastIngested.fileKey) return true;
+    if (mode === 'file' && file !== lastIngested.file) return true;
     return false;
   };
   const publish = (next) => {
@@ -82,7 +81,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
   const sameRevision = (detail) => isSourceUuid(detail.source_revision)
     && detail.source_revision.toLowerCase() === intent?.sourceRevision.toLowerCase();
   const canConfirm = () => Boolean(confirmSource && confirmationStore && !storageBlocked && !recoveryRevision && canWrite()
-    && (!state.isInputDirty || state.retryConfirmation)
+    && !state.isInputDirty
     && isSourceUuid(state.detail.source_revision) && state.detail.source_questions.length
     && (!intent || (state.retryConfirmation && sameRevision(state.detail))));
   const invalidate = () => { revision++; request?.abort(); };
@@ -522,7 +521,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
         lastIngested = {
           mode: state.mode,
           text: state.text,
-          fileKey: state.file ? `${state.file.name}-${state.file.size}` : null,
+          file: state.file,
         };
         publish({ detail, phase: 'idle', requiresReload: false, unavailable: false, isInputDirty: false,
           confirmationError: storageBlocked ? CONFIRM_STORAGE : recoveryRevision ? CONFIRM_RECOVERY : '',

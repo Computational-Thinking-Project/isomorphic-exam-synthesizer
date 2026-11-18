@@ -58,11 +58,11 @@ test('F01: uncertain request then F5 retry 400/422 releases intent for source re
     const first = confirmationFixture({ confirmSource: async () => { throw new Error('Not delivered'); } });
     await first.controller.confirm();
     const next = confirmationFixture({ confirmSource: async () => { throw httpError(status); } }, first.memory);
-    next.controller.setText('Sửa nguồn');
     await next.controller.restoreConfirmation();
     await next.controller.confirm();
     assert.equal(next.memory.intent, null);
     assert(next.controller.canSubmit());
+    next.controller.setText('Sửa nguồn');
     assert.equal(next.controller.getSnapshot().text, 'Sửa nguồn');
     await next.controller.submit();
     assert.equal(next.writes.length, 1);
@@ -243,7 +243,6 @@ test('409 tải lại bản B, cần click mới và dùng key mới; 422 confir
       throw httpError(attempts.length === 1 ? 409 : 422);
     },
   });
-  controller.setText('Nháp riêng');
   await controller.confirm();
   assert.equal(attempts.length, 1);
   assert.equal(controller.getSnapshot().detail.source_questions, b);
@@ -251,7 +250,6 @@ test('409 tải lại bản B, cần click mới và dùng key mới; 422 confir
   await controller.confirm();
   assert.equal(attempts[1].sourceRevision, revB);
   assert.equal(attempts[1].idempotencyKey, secondKey);
-  assert.equal(controller.getSnapshot().text, 'Nháp riêng');
   assert.equal(controller.getSnapshot().cause, null);
   assert.equal(memory.intent, null);
 });
@@ -895,4 +893,106 @@ test('UX-14: Sửa input sau ingest đánh dấu isInputDirty và khóa canConfi
   assert.equal(f.controller.canConfirm(), true, 'canConfirm được mở khóa sau khi nạp mới');
   await f.controller.confirm();
   assert.equal(f.confirms.length, 1, 'Confirm gửi thành công sau khi nạp mới');
+});
+
+test('F84-02-A: Reload với nguồn đã lưu — sửa text đánh dấu dirty và chặn confirm', async () => {
+  const server = detail({ source_revision: revA, source_questions: a });
+  const f = confirmationFixture({
+    initialDetail: server,
+    load: async () => server,
+  });
+
+  // Ban đầu sau khi F5/reload, chưa sửa gì: canConfirm = true
+  assert.equal(f.controller.getSnapshot().isInputDirty, false);
+  assert.equal(f.controller.canConfirm(), true);
+
+  // Người dùng nhập text mới
+  f.controller.setText('Đề đã thay đổi sau reload');
+  assert.equal(f.controller.getSnapshot().isInputDirty, true);
+  assert.equal(f.controller.canConfirm(), false, 'canConfirm phải bị khóa khi input dirty sau reload');
+
+  // Thao tác confirm bị chặn
+  await f.controller.confirm();
+  assert.equal(f.confirms.length, 0, 'Không được gửi confirm khi input dirty sau reload');
+});
+
+test('F84-02-B: File replacement — chọn file khác cùng tên/kích thước vẫn nhận diện dirty', async () => {
+  const file1 = new File(['1234567890abcdef'], 'de-toan.md');
+  const file2 = new File(['abcdef1234567890'], 'de-toan.md'); // cùng tên và size (16 bytes)
+
+  let server = detail({ source_revision: revA, source_questions: a });
+  const f = confirmationFixture({
+    initialDetail: server,
+    load: async () => server,
+    ingestFile: async () => {
+      server = detail({ source_revision: revB, source_questions: b });
+      return { session_id: 'session-a', questions: b };
+    },
+  });
+
+  f.controller.setMode('file');
+  f.controller.selectFiles([file1]);
+  await f.controller.submit();
+  assert.equal(f.controller.getSnapshot().isInputDirty, false);
+  assert.equal(f.controller.canConfirm(), true);
+
+  // Chọn file2 (cùng tên, cùng size nhưng là file mới)
+  f.controller.selectFiles([file2]);
+  assert.equal(f.controller.getSnapshot().isInputDirty, true, 'Phải nhận diện dirty khi chọn file mới');
+  assert.equal(f.controller.canConfirm(), false, 'canConfirm phải bị chặn khi chọn file mới');
+
+  await f.controller.confirm();
+  assert.equal(f.confirms.length, 0, 'Không được gửi confirm');
+});
+
+test('F84-02-C: Retry confirmation không được vượt qua dirty guard khi input đã sửa', async () => {
+  const memory = { intent: { sourceRevision: revA, idempotencyKey: firstKey } };
+  const server = detail({ source_revision: revA, source_questions: a });
+  const f = confirmationFixture(
+    {
+      initialDetail: server,
+      load: async () => server,
+      readArtifacts: async () => { throw httpError(404); },
+    },
+    memory,
+  );
+
+  // Reconcile để đưa vào trạng thái retryConfirmation: true
+  await f.controller.reload();
+  assert.equal(f.controller.getSnapshot().retryConfirmation, true);
+  assert.equal(f.controller.getSnapshot().isInputDirty, false);
+  assert.equal(f.controller.canConfirm(), true);
+
+  // Sửa input
+  f.controller.setText('Sửa nội dung khi đang chờ retry confirm');
+  assert.equal(f.controller.getSnapshot().isInputDirty, true);
+  assert.equal(f.controller.canConfirm(), false, 'retryConfirmation không được bỏ qua dirty guard');
+
+  await f.controller.confirm();
+  assert.equal(f.confirms.length, 0, 'Confirm không được gửi khi input dirty');
+});
+
+test('F84-02-D: Re-ingest thành công sau dirty cập nhật baseline và mở khóa confirm', async () => {
+  let server = detail({ source_revision: revA, source_questions: a });
+  const f = confirmationFixture({
+    initialDetail: server,
+    load: async () => server,
+    ingestText: async () => {
+      server = detail({ source_revision: revB, source_questions: b });
+      return { session_id: 'session-a', questions: b };
+    },
+  });
+
+  f.controller.setText('Nội dung đề mới');
+  assert.equal(f.controller.getSnapshot().isInputDirty, true);
+  assert.equal(f.controller.canConfirm(), false);
+
+  // Submit re-ingest thành công
+  await f.controller.submit();
+  assert.equal(f.controller.getSnapshot().isInputDirty, false);
+  assert.equal(f.controller.getSnapshot().detail.source_revision, revB);
+  assert.equal(f.controller.canConfirm(), true, 'canConfirm mở khóa sau khi nạp thành công bản mới');
+
+  await f.controller.confirm();
+  assert.equal(f.confirms.length, 1);
 });
