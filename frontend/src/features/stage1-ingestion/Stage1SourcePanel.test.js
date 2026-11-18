@@ -910,3 +910,31 @@ test('W4-MVP-10: Deep-link Stage 1 khi phiên ở trạng thái reviewed/approve
     await app.unmount();
   }
 });
+
+test('Issue #87: canonical status pending (expired lease) displays retry button and clicking it calls retry', async () => {
+  const methods = [];
+  let status = 'pending';
+  api.defaults.adapter = async (config) => {
+    methods.push(`${config.method.toUpperCase()} ${config.url}`);
+    if (config.url.endsWith('/source-artifacts/retry')) {
+      status = 'running';
+      return response(config, { session_id: confirmSessionId, ready: false, canonical_status: 'running', supported_modes: null });
+    }
+    if (config.url.endsWith('/source-artifacts')) {
+      return response(config, { session_id: confirmSessionId, ready: false, canonical_status: status, supported_modes: null });
+    }
+    return response(config, confirmDetail('blueprinted', false));
+  };
+  const app = mount(confirmSessionId);
+  try {
+    await app.render();
+    assert.match(app.container.textContent, /Đang chờ chuẩn bị cấu trúc đề/);
+    const retryBtn = button(app.container, 'Thử lại');
+    assert.ok(retryBtn, 'Phải có nút Thử lại khi trạng thái là pending sau khi hết hạn lease');
+    await act(async () => retryBtn.click());
+    assert.match(app.container.textContent, /Đang chuẩn bị cấu trúc đề/);
+    assert(methods.some((m) => m.includes('POST') && m.includes('/source-artifacts/retry')));
+  } finally {
+    await app.unmount();
+  }
+});

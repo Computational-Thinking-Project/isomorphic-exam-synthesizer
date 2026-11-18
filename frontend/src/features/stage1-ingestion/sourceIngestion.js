@@ -365,6 +365,9 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
           } else if (artifact.canonical_status === 'failed') {
             retryAccepted = true;
             cStatus = 'failed';
+          } else if (artifact.canonical_status === 'pending') {
+            retryAccepted = true;
+            cStatus = 'pending';
           }
         } catch {
           if (!operation.current()) return;

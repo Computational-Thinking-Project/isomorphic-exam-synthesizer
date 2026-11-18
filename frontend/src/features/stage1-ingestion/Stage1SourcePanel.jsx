@@ -156,7 +156,7 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {state.canonicalStatus === 'failed' && !state.retryAccepted && (
+              {((state.canonicalStatus === 'failed') || (state.canonicalStatus === 'pending' && !state.canonicalReady)) && !state.retryAccepted && (
                 <button
                   type="button"
                   className={`${buttonClass} border-danger/30 text-danger hover:bg-danger-soft`}
