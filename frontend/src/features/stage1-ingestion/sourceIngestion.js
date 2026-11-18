@@ -50,11 +50,26 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     canonicalStatus: initialCanonicalStatus,
     canonicalReady: initialCanonicalReady,
     canonicalError: '',
+    canonicalProgress: null,
     retryAccepted: false,
+    isInputDirty: false,
   };
   const listeners = new Set();
   let revision = 0;
   let request;
+  let hasIngested = (initialDetail?.source_questions?.length ?? 0) > 0;
+  let lastIngested = {
+    mode: state.mode,
+    text: state.text,
+    file: null,
+  };
+  const checkIsDirty = (mode, text, file) => {
+    if (!hasIngested || (state.detail?.source_questions?.length ?? 0) === 0) return false;
+    if (mode !== lastIngested.mode) return true;
+    if (mode === 'text' && text !== lastIngested.text) return true;
+    if (mode === 'file' && file !== lastIngested.file) return true;
+    return false;
+  };
   const publish = (next) => {
     state = { ...state, ...next };
     listeners.forEach((listener) => listener());
@@ -66,6 +81,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
   const sameRevision = (detail) => isSourceUuid(detail.source_revision)
     && detail.source_revision.toLowerCase() === intent?.sourceRevision.toLowerCase();
   const canConfirm = () => Boolean(confirmSource && confirmationStore && !storageBlocked && !recoveryRevision && canWrite()
+    && !state.isInputDirty
     && isSourceUuid(state.detail.source_revision) && state.detail.source_questions.length
     && (!intent || (state.retryConfirmation && sameRevision(state.detail))));
   const invalidate = () => { revision++; request?.abort(); };
@@ -287,6 +303,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       publish({
         phase: 'idle',
         canonicalStatus: artifact.canonical_status,
+        canonicalProgress: { completed: artifact.completed_count, total: artifact.total_questions },
         canonicalReady: isReady,
         canonicalError: '',
         retryAccepted: false,
@@ -302,12 +319,13 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
           },
         } : {}),
       });
-    } catch {
+    } catch (cause) {
       if (!operation.current()) return;
       publish({
         phase: 'idle',
         canonicalReady: false,
-        canonicalError: 'Không xác định được trạng thái Blueprint. Vui lòng kiểm tra lại.',
+        unavailable: isUnavailable(cause?.response?.status),
+        canonicalError: 'Chưa cập nhật được tiến độ. Hệ thống sẽ tự kết nối lại.',
       });
     }
   }
@@ -410,7 +428,8 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     reload,
     setMode(mode) {
       if (busy() || !isCurrent() || !['text', 'file'].includes(mode)) return;
-      publish({ mode, ...(state.cause?.code === 'ERR_INGEST_INPUT' ? { error: '', cause: null } : {}) });
+      const isInputDirty = checkIsDirty(mode, state.text, state.file);
+      publish({ mode, isInputDirty, ...(state.cause?.code === 'ERR_INGEST_INPUT' ? { error: '', cause: null } : {}) });
     },
     selectFiles(files) {
       if (busy() || !isCurrent()) return;
@@ -419,23 +438,27 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
           throw Object.assign(new Error('Vui lòng chọn đúng một tệp đề nguồn.'), { code: 'ERR_INGEST_INPUT' });
         }
         const file = validateFile(files[0]);
-        publish({ file, upload: null, message: '',
+        const isInputDirty = checkIsDirty(state.mode, state.text, file);
+        publish({ file, upload: null, message: '', isInputDirty,
           ...(state.cause?.code === 'ERR_INGEST_INPUT' ? { error: '', cause: null } : {}) });
       } catch (cause) {
         // An invalid replacement must not accidentally submit the previously selected file.
-        publish({ file: null, upload: null, message: '',
+        const isInputDirty = checkIsDirty(state.mode, state.text, null);
+        publish({ file: null, upload: null, message: '', isInputDirty,
           ...(!state.uncertain && !state.requiresReload && !state.unavailable
             ? { error: errorMessage(cause), cause } : {}) });
       }
     },
     clearFile() {
       if (busy() || !isCurrent()) return;
-      publish({ file: null, upload: null,
+      const isInputDirty = checkIsDirty(state.mode, state.text, null);
+      publish({ file: null, upload: null, isInputDirty,
         ...(state.cause?.code === 'ERR_INGEST_INPUT' ? { error: '', cause: null } : {}) });
     },
     setText(text) {
       if (busy() || !isCurrent()) return;
-      publish({ text, ...(state.cause?.code === 'ERR_INGEST_INPUT' ? { error: '', cause: null } : {}) });
+      const isInputDirty = checkIsDirty(state.mode, text, state.file);
+      publish({ text, isInputDirty, ...(state.cause?.code === 'ERR_INGEST_INPUT' ? { error: '', cause: null } : {}) });
     },
     cancelRequest() {
       if (!['submitting', 'reloading'].includes(state.phase) || !isCurrent()) return;
@@ -494,7 +517,13 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
           try { confirmationStore.clear(); recoveryRevision = null; }
           catch { storageBlocked = true; }
         }
-        publish({ detail, phase: 'idle', requiresReload: false, unavailable: false,
+        hasIngested = true;
+        lastIngested = {
+          mode: state.mode,
+          text: state.text,
+          file: state.file,
+        };
+        publish({ detail, phase: 'idle', requiresReload: false, unavailable: false, isInputDirty: false,
           confirmationError: storageBlocked ? CONFIRM_STORAGE : recoveryRevision ? CONFIRM_RECOVERY : '',
           message: `Đã nạp ${count} câu nguồn.` });
       } catch (cause) {

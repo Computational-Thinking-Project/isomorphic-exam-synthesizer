@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { stage1Path, stage3Path } from '../../sessionPaths.js';
+import { exportPath, stage1Path, stage3Path, stage3PreviewPath } from '../../sessionPaths.js';
 import {
   AlertCircle,
   ArrowLeft,
+  ArrowRight,
   FileQuestion,
   Loader2,
+  Lock,
   RefreshCw,
 } from 'lucide-react';
 import Stage2ConfigCard from './Stage2ConfigCard.jsx';
@@ -26,7 +28,7 @@ import {
  * 1. Tải thông tin phiên và trạng thái Blueprint từ API
  * 2. Hiển thị form cấu hình (Stage2ConfigCard)
  * 3. Kích hoạt sinh đề và hiển thị tiến trình SSE thời gian thực (GenerationProgressView)
- * 4. Tự động điều hướng sang Stage 3 khi hoàn tất
+ * 4. Người dùng chủ động chuyển sang Stage 3 khi hoàn tất
  */
 /**
  * Trích xuất chuỗi thông báo lỗi an toàn từ response HTTP (tránh lỗi React child khi response trả về object)
@@ -116,10 +118,10 @@ export default function Stage2ConfigPage({
           return;
         }
 
-        // F02 / F08: Khi mở lại phiên partial_generated hoặc generating mà chưa có snapshot progress, nạp snapshot
+        // F02 / F08 / C8: Khi mở lại phiên partial_generated, generating hoặc generated mà chưa có snapshot progress, nạp snapshot
         if (
           data &&
-          (data.status === 'generating' || data.status === 'partial_generated') &&
+          (data.status === 'generating' || data.status === 'partial_generated' || data.status === 'generated') &&
           !data.progress
         ) {
           try {
@@ -238,6 +240,8 @@ export default function Stage2ConfigPage({
           null;
 
         const isFailed = String(snapStatus || '').trim().toLowerCase() === 'failed';
+        const isGenerated = String(snapStatus || '').trim().toLowerCase() === 'generated';
+        const isPartial = String(snapStatus || '').trim().toLowerCase() === 'partial_generated';
 
         if (data?.progress) {
           setSession((prev) =>
@@ -245,7 +249,7 @@ export default function Stage2ConfigPage({
               ? {
                   ...prev,
                   status: snapStatus || prev.status,
-                  generation_error_code: errCode ?? prev.generation_error_code ?? null,
+                  generation_error_code: isGenerated ? null : (errCode ?? prev.generation_error_code ?? null),
                   progress: data.progress,
                   question_statuses: {
                     ...(prev.question_statuses || {}),
@@ -264,15 +268,19 @@ export default function Stage2ConfigPage({
             ...(prev || {}),
             ...data,
             status: snapStatus || data.status || prev?.status,
-            generation_error_code:
-              errCode ?? data.generation_error_code ?? prev?.generation_error_code ?? null,
+            generation_error_code: isGenerated
+              ? null
+              : (errCode ?? data.generation_error_code ?? prev?.generation_error_code ?? null),
           }));
         }
 
-        // P2 (Duy): Giải phóng các cờ đang chạy khi snapshot xác nhận trạng thái terminal failed
+        // P2 & C7: Giải phóng các cờ đang chạy khi snapshot xác nhận trạng thái terminal
         if (isFailed) {
           setIsGenerating(false);
           setIsNewRunActive(false);
+        } else if (isGenerated || isPartial) {
+          setIsNewRunActive(false);
+          setIsGenerating(true);
         }
 
         return data;
@@ -326,12 +334,63 @@ export default function Stage2ConfigPage({
           authoritativeFailed = true;
           confirmedErrorCode = snap?.generation_error_code || errCode;
           confirmedProgress = snap?.progress;
-        } else if (
-          snapStatus === 'generating' ||
-          snapStatus === 'partial_generated' ||
-          snapStatus === 'generated'
-        ) {
-          // Backend vẫn đang chạy hoặc đã hoàn thành -> lỗi SSE chỉ là transport mạng tạm thời.
+        } else if (snapStatus === 'generated') {
+          // C1: Backend đã hoàn thành toàn bộ (generated) -> Áp dụng terminal snapshot và trạng thái hoàn tất
+          setSession((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: 'generated',
+                  generation_error_code: null,
+                  ...(snap?.progress ? { progress: snap.progress } : {}),
+                  question_statuses: {
+                    ...(prev.question_statuses || {}),
+                    ...(snap?.question_statuses || {}),
+                  },
+                  stream_epoch: snap?.stream_epoch ?? prev.stream_epoch,
+                  resume_after_event_id:
+                    snap?.resume_after_event_id !== undefined
+                      ? snap.resume_after_event_id
+                      : prev.resume_after_event_id,
+                }
+              : prev,
+          );
+          setIsNewRunActive(false);
+          setIsGenerating(true);
+          return;
+        } else if (snapStatus === 'partial_generated') {
+          // C1: Backend đã hoàn thành một phần (partial_generated) -> Áp dụng terminal snapshot, giữ câu thiếu và khả năng retry
+          const errCodeFromSnap =
+            snap?.generation_error_code ||
+            snap?.error_code ||
+            snap?.progress?.generation_error_code ||
+            snap?.progress?.error_code ||
+            errCode ||
+            null;
+          setSession((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  status: 'partial_generated',
+                  generation_error_code: errCodeFromSnap ?? prev.generation_error_code ?? null,
+                  ...(snap?.progress ? { progress: snap.progress } : {}),
+                  question_statuses: {
+                    ...(prev.question_statuses || {}),
+                    ...(snap?.question_statuses || {}),
+                  },
+                  stream_epoch: snap?.stream_epoch ?? prev.stream_epoch,
+                  resume_after_event_id:
+                    snap?.resume_after_event_id !== undefined
+                      ? snap.resume_after_event_id
+                      : prev.resume_after_event_id,
+                }
+              : prev,
+          );
+          setIsNewRunActive(false);
+          setIsGenerating(true);
+          return;
+        } else if (snapStatus === 'generating') {
+          // Backend vẫn đang chạy -> lỗi SSE chỉ là transport mạng tạm thời.
           // Giữ nguyên giao diện để người dùng tiếp tục theo dõi và có thể kết nối lại; KHÔNG ép sang failed!
           return;
         }
@@ -347,11 +406,55 @@ export default function Stage2ConfigPage({
           if (latestStatus === 'failed') {
             authoritativeFailed = true;
             confirmedErrorCode = latest?.generation_error_code || errCode;
-          } else if (
-            latestStatus === 'generating' ||
-            latestStatus === 'partial_generated' ||
-            latestStatus === 'generated'
-          ) {
+          } else if (latestStatus === 'generated') {
+            setSession((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    status: 'generated',
+                    generation_error_code: null,
+                    ...(latest?.progress ? { progress: latest.progress } : {}),
+                    question_statuses: {
+                      ...(prev.question_statuses || {}),
+                      ...(latest?.question_statuses || {}),
+                    },
+                    stream_epoch: latest?.stream_epoch ?? prev.stream_epoch,
+                    resume_after_event_id:
+                      latest?.resume_after_event_id !== undefined
+                        ? latest.resume_after_event_id
+                        : prev.resume_after_event_id,
+                  }
+                : prev,
+            );
+            setIsNewRunActive(false);
+            setIsGenerating(true);
+            return;
+          } else if (latestStatus === 'partial_generated') {
+            const errCodeFromLatest =
+              latest?.generation_error_code || latest?.error_code || errCode || null;
+            setSession((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    status: 'partial_generated',
+                    generation_error_code: errCodeFromLatest ?? prev.generation_error_code ?? null,
+                    ...(latest?.progress ? { progress: latest.progress } : {}),
+                    question_statuses: {
+                      ...(prev.question_statuses || {}),
+                      ...(latest?.question_statuses || {}),
+                    },
+                    stream_epoch: latest?.stream_epoch ?? prev.stream_epoch,
+                    resume_after_event_id:
+                      latest?.resume_after_event_id !== undefined
+                        ? latest.resume_after_event_id
+                        : prev.resume_after_event_id,
+                  }
+                : prev,
+            );
+            setIsNewRunActive(false);
+            setIsGenerating(true);
+            return;
+          } else if (latestStatus === 'generating') {
             return;
           }
         } catch {
@@ -403,9 +506,19 @@ export default function Stage2ConfigPage({
     }
   }, [session?.status, isGenerating, isNewRunActive]);
 
-  // Hook SSE kết nối khi ở trạng thái isGenerating
+  const isTerminalSession = Boolean(
+    session?.status &&
+      ['generated', 'partial_generated', 'failed', 'reviewed', 'approved', 'exported'].includes(
+        session.status,
+      ),
+  );
+  const shouldConnectSSE = Boolean(
+    isGenerating && (isNewRunActive || !isTerminalSession),
+  );
+
+  // Hook SSE kết nối khi cần theo dõi tiến trình thực tế (C4)
   const sseState = useSSEHook(sessionId, {
-    enabled: isGenerating,
+    enabled: shouldConnectSSE,
     initialProgress: session?.progress,
     initialQuestionStatuses: session?.question_statuses,
     initialResumeAfterEventId:
@@ -416,9 +529,12 @@ export default function Stage2ConfigPage({
     onError: handleSSEError,
   });
 
+  const isPostStage2Locked = ['reviewed', 'approved', 'exported'].includes(session?.status);
+  const isFinalExportLocked = ['approved', 'exported'].includes(session?.status);
+
   // Xử lý nộp form cấu hình
   async function handleConfigSubmit(payload) {
-    if (isSubmittingConfig) return;
+    if (isSubmittingConfig || isPostStage2Locked) return;
 
     const isBlueprintReady = Boolean(
       session?.status !== 'draft' &&
@@ -458,6 +574,8 @@ export default function Stage2ConfigPage({
       ) {
         return;
       }
+      setSession((prev) => (prev ? { ...prev, status: 'generating' } : prev));
+      setIsNewRunActive(true);
       setIsGenerating(true);
     } catch (err) {
       if (
@@ -504,7 +622,7 @@ export default function Stage2ConfigPage({
   }, [navigate, sessionId]);
 
   const handleRetryGeneration = useCallback(async () => {
-    if (isRetryingGeneration) return;
+    if (isRetryingGeneration || isPostStage2Locked) return;
 
     const thisRetryOp = ++retryOperationRef.current;
     const targetSessionId = sessionId;
@@ -551,15 +669,27 @@ export default function Stage2ConfigPage({
         setIsRetryingGeneration(false);
       }
     }
-  }, [isRetryingGeneration, retryGen, sessionId, sseState]);
+  }, [isPostStage2Locked, isRetryingGeneration, retryGen, sessionId, sseState]);
 
 
   // Trích xuất số lượng mã đề thật, không võ đoán mặc định 2 khi F5/reload
   const restoredStatuses = session?.question_statuses || {};
-  const mergedStatuses = {
-    ...restoredStatuses,
-    ...(sseState.questionStatuses || {}),
-  };
+  const isConfirmedTerminalRun = Boolean(
+    session?.status &&
+      ['generated', 'partial_generated', 'reviewed', 'approved', 'exported'].includes(session.status) &&
+      !isNewRunActive,
+  );
+
+  const mergedStatuses =
+    isConfirmedTerminalRun && Object.keys(restoredStatuses).length > 0
+      ? {
+          ...(sseState.questionStatuses || {}),
+          ...restoredStatuses,
+        }
+      : {
+          ...restoredStatuses,
+          ...(sseState.questionStatuses || {}),
+        };
 
   const statusVersions = Object.keys(mergedStatuses).map((k) =>
     parseInt(k.split('-')[0], 10),
@@ -581,9 +711,11 @@ export default function Stage2ConfigPage({
     (maxVersionFromStatuses && maxVersionFromStatuses > 0 ? maxVersionFromStatuses : null);
 
   const mergedProgress =
-    (sseState.progress?.percent > 0 || sseState.progress?.completedCount > 0 || sseState.isDone)
-      ? sseState.progress
-      : session?.progress || (sseState.progress?.hasData ? sseState.progress : null);
+    isConfirmedTerminalRun && session?.progress
+      ? session.progress
+      : (sseState.progress?.percent > 0 || sseState.progress?.completedCount > 0 || sseState.isDone)
+        ? sseState.progress
+        : session?.progress || (sseState.progress?.hasData ? sseState.progress : null);
 
   // F03 / F07 / F09: Tách trạng thái kết thúc lượt sinh khỏi trạng thái kết nối SSE.
   // F09: Chỉ hoàn tất chuyển Stage 3 khi backend xác nhận 'generated' qua snapshot/detail HOẶC sự kiện kết thúc 'done' từ stream SSE.
@@ -605,14 +737,6 @@ export default function Stage2ConfigPage({
     (normalizedSnapshotStatus === 'generated' ||
       String(session?.status || '').trim().toLowerCase() === 'generated');
 
-  const isStreamDone = Boolean(
-    sseState.isDone &&
-    !sseState.isPartial &&
-    String(sseState.progress?.session_status || '').trim().toLowerCase() !== 'partial_generated'
-  );
-
-  const isCompletedGenerated = Boolean(isBackendGenerated || isStreamDone);
-
   const isSnapshotFinished = Boolean(
     !isGeneratingStatus &&
     (isBackendGenerated ||
@@ -626,29 +750,12 @@ export default function Stage2ConfigPage({
     ? sseState.isDone
     : (isSnapshotFinished || sseState.isDone);
 
-  // Tự động chuyển hướng khi hoàn tất ở cấp độ container độc lập — CHỈ KHI hoàn tất 100% (không partial_generated)
-  useEffect(() => {
-    if (isGenerating && isCompletedGenerated) {
-      const isPartial =
-        mergedProgress?.session_status === 'partial_generated' ||
-        Boolean(mergedProgress?.is_partial) ||
-        (mergedProgress?.percent !== undefined && mergedProgress.percent < 100);
-
-      if (!isPartial) {
-        const timer = setTimeout(() => {
-          handleCompleteRedirect();
-        }, 1500);
-        return () => clearTimeout(timer);
-      }
-    }
-  }, [isGenerating, isCompletedGenerated, mergedProgress, handleCompleteRedirect]);
-
   // Giao diện khi đang tải phiên
   if (isLoadingSession) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center p-6 text-center">
-        <Loader2 className="h-10 w-10 animate-spin text-sky-400" />
-        <p className="mt-4 text-sm font-medium text-slate-300">
+        <Loader2 className="h-10 w-10 animate-spin text-highlight" />
+        <p className="mt-4 text-sm font-medium text-ink">
           Đang tải thông tin đề thi và cấu trúc Blueprint...
         </p>
       </div>
@@ -658,33 +765,35 @@ export default function Stage2ConfigPage({
   // Giao diện khi tải phiên thất bại
   if (sessionError) {
     return (
-      <div className="mx-auto max-w-xl p-6">
-        <div
-          role="alert"
-          className="rounded-2xl border border-rose-500/40 bg-rose-950/40 p-6 text-center shadow-xl"
-        >
-          <AlertCircle className="mx-auto h-10 w-10 text-rose-400" />
-          <h2 className="mt-3 text-lg font-bold text-white">
-            Không thể tải phiên làm việc
-          </h2>
-          <p className="mt-1 text-sm text-rose-200">{sessionError}</p>
-          <div className="mt-6 flex justify-center gap-3">
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-              Thử lại
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/dashboard')}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              Về Dashboard
-            </button>
+      <div className="paper-ui min-h-screen bg-canvas text-ink p-6">
+        <div className="mx-auto max-w-xl">
+          <div
+            role="alert"
+            className="rounded-2xl border border-danger-border bg-danger-soft p-6 text-center shadow-paper"
+          >
+            <AlertCircle className="mx-auto h-10 w-10 text-danger" />
+            <h2 className="mt-3 text-lg font-bold text-strong">
+              Không thể tải phiên làm việc
+            </h2>
+            <p className="mt-1 text-sm text-danger">{sessionError}</p>
+            <div className="mt-6 flex justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="inline-flex items-center gap-2 rounded-xl bg-rail px-4 py-2 text-xs font-semibold text-ink hover:bg-rail"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Thử lại
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/dashboard')}
+                className="inline-flex items-center gap-2 rounded-xl border border-line px-4 py-2 text-xs font-semibold text-ink hover:bg-rail"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                Về Dashboard
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -694,30 +803,32 @@ export default function Stage2ConfigPage({
   // Kiểm tra trạng thái phiên: nếu chưa xong Stage 1 (draft)
   if (session?.status === 'draft') {
     return (
-      <div className="mx-auto max-w-2xl p-6">
-        <div className="rounded-2xl border border-amber-500/40 bg-amber-950/30 p-8 text-center shadow-xl">
-          <FileQuestion className="mx-auto h-12 w-12 text-amber-400" />
-          <h2 className="mt-4 text-xl font-bold text-white">
-            Đề nguồn chưa được xác nhận (Giai đoạn 1)
-          </h2>
-          <p className="mt-2 text-sm text-slate-300">
-            Phiên làm việc này đang ở trạng thái bản thảo (<code>draft</code>). Bạn cần xác nhận nội dung đề nguồn ở Giai đoạn 1 để hệ thống tự động bóc tách Blueprint trước khi sang cấu hình sinh đề.
-          </p>
-          <div className="mt-6 flex justify-center gap-3">
-            <button
-              type="button"
-              onClick={() => navigate(stage1Path(sessionId))}
-              className="rounded-xl bg-amber-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-amber-600/30 hover:bg-amber-500"
-            >
-              Đến Giai đoạn 1 (Xác nhận đề gốc)
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/dashboard')}
-              className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
-            >
-              Về Dashboard
-            </button>
+      <div className="paper-ui min-h-screen bg-canvas text-ink p-6">
+        <div className="mx-auto max-w-2xl">
+          <div className="rounded-2xl border border-accent-border bg-accent-soft p-8 text-center shadow-paper">
+            <FileQuestion className="mx-auto h-12 w-12 text-accent-ink" />
+            <h2 className="mt-4 text-xl font-bold text-strong">
+              Đề nguồn chưa được xác nhận (Giai đoạn 1)
+            </h2>
+            <p className="mt-2 text-sm text-ink">
+              Xác nhận nội dung đề nguồn và chờ phân tích cấu trúc đề trước khi tạo mã đề.
+            </p>
+            <div className="mt-6 flex justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => navigate(stage1Path(sessionId))}
+                className="rounded-xl bg-accent px-5 py-2.5 text-xs font-semibold text-strong shadow-soft  hover:bg-accent"
+              >
+                Đến Giai đoạn 1 (Xác nhận đề gốc)
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/dashboard')}
+                className="rounded-xl border border-line px-4 py-2 text-xs font-medium text-ink hover:bg-rail"
+              >
+                Về Dashboard
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -733,47 +844,91 @@ export default function Stage2ConfigPage({
       session?.progress?.error_code;
 
     return (
-      <div className="mx-auto max-w-2xl p-6">
+      <div className="paper-ui min-h-screen bg-canvas text-ink p-6">
+        <div className="mx-auto max-w-2xl">
+          <div
+            role="alert"
+            className="rounded-2xl border border-danger-border bg-danger-soft p-8 text-center shadow-paper"
+          >
+            <AlertCircle className="mx-auto h-12 w-12 text-danger" />
+            <h2 className="mt-4 text-xl font-bold text-strong">
+              Tiến trình sinh đề thi bị gián đoạn hoặc thất bại
+            </h2>
+            <p className="mt-2 text-sm text-ink">
+              Phiên sinh đề gặp sự cố trong quá trình xử lý. Bạn có thể kích hoạt thử lại để tiếp tục tiến trình sinh đề mà không mất cấu hình đã thiết lập.
+            </p>
+            {errorCode && (
+              <div className="mt-4 inline-flex items-center gap-2 rounded-lg border border-danger-border bg-danger-soft px-3.5 py-1.5 text-xs font-mono font-medium text-danger">
+                <span>Mã lỗi:</span>
+                <strong className="text-strong">{errorCode}</strong>
+              </div>
+            )}
+            {retryError && (
+              <div className="mt-3 text-xs text-danger" role="status">
+                {retryError}
+              </div>
+            )}
+            <div className="mt-6 flex justify-center gap-3">
+              <button
+                type="button"
+                onClick={handleRetryGeneration}
+                disabled={isRetryingGeneration}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-danger px-5 py-2.5 text-xs font-semibold text-white shadow-soft  hover:bg-danger disabled:opacity-50"
+              >
+                {isRetryingGeneration ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" />
+                )}
+                {isRetryingGeneration ? 'Đang kích hoạt lại…' : 'Thử lại tiến trình sinh đề'}
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate('/dashboard')}
+                className="rounded-xl border border-line px-4 py-2 text-xs font-medium text-ink hover:bg-rail"
+              >
+                Về Dashboard
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Khóa deep-link Stage 2 khi phiên đã sang Rà soát cuối hoặc đã phê duyệt/xuất bản
+  if (isPostStage2Locked && !isGenerating && !isNewRunActive) {
+    return (
+      <div className="paper-ui mx-auto max-w-2xl p-6">
         <div
-          role="alert"
-          className="rounded-2xl border border-rose-500/40 bg-rose-950/30 p-8 text-center shadow-xl"
+          role="status"
+          className="rounded-2xl border border-approved-border bg-approved-bg p-8 text-center shadow-paper"
         >
-          <AlertCircle className="mx-auto h-12 w-12 text-rose-400" />
-          <h2 className="mt-4 text-xl font-bold text-white">
-            Tiến trình sinh đề thi bị gián đoạn hoặc thất bại
+          <Lock className="mx-auto h-12 w-12 text-approved-ink" />
+          <h2 className="mt-4 text-xl font-bold text-strong">
+            {isFinalExportLocked
+              ? 'Đề thi đã được phê duyệt và khóa cấu hình'
+              : 'Phiên đã hoàn tất duyệt từng câu'}
           </h2>
-          <p className="mt-2 text-sm text-slate-300">
-            Phiên sinh đề gặp sự cố trong quá trình xử lý. Bạn có thể kích hoạt thử lại để tiếp tục tiến trình sinh đề mà không mất cấu hình đã thiết lập.
+          <p className="mt-2 text-sm text-ink">
+            {isFinalExportLocked
+              ? 'Phiên làm việc đã chốt ở bước phê duyệt cuối cùng. Không thể thay đổi cấu hình hay khởi chạy lại quá trình sinh đề.'
+              : 'Toàn bộ biến thể của phiên này đã được duyệt. Hãy chuyển sang màn hình Rà soát cuối để xáo trộn và phê duyệt đề.'}
           </p>
-          {errorCode && (
-            <div className="mt-4 inline-flex items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-900/50 px-3.5 py-1.5 text-xs font-mono font-medium text-rose-200">
-              <span>Mã lỗi:</span>
-              <strong className="text-white">{errorCode}</strong>
-            </div>
-          )}
-          {retryError && (
-            <div className="mt-3 text-xs text-rose-300" role="status">
-              {retryError}
-            </div>
-          )}
           <div className="mt-6 flex justify-center gap-3">
             <button
               type="button"
-              onClick={handleRetryGeneration}
-              disabled={isRetryingGeneration}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-5 py-2.5 text-xs font-semibold text-white shadow-lg shadow-rose-600/30 hover:bg-rose-500 disabled:opacity-50"
+              data-testid="stage2-btn-goto-locked-target"
+              onClick={() => navigate(isFinalExportLocked ? exportPath(sessionId) : stage3PreviewPath(sessionId))}
+              className="inline-flex items-center gap-2 rounded-xl bg-approved-ink px-5 py-2.5 text-xs font-semibold text-white shadow-soft  hover:bg-approved-ink"
             >
-              {isRetryingGeneration ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="h-3.5 w-3.5" />
-              )}
-              {isRetryingGeneration ? 'Đang kích hoạt lại…' : 'Thử lại tiến trình sinh đề'}
+              <span>{isFinalExportLocked ? 'Tới màn hình Xuất bản' : 'Tới màn hình Rà soát cuối'}</span>
+              <ArrowRight className="h-3.5 w-3.5" />
             </button>
             <button
               type="button"
               onClick={() => navigate('/dashboard')}
-              className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-medium text-slate-300 hover:bg-slate-800"
+              className="rounded-xl border border-line px-4 py-2 text-xs font-medium text-ink hover:bg-rail"
             >
               Về Dashboard
             </button>
@@ -783,21 +938,33 @@ export default function Stage2ConfigPage({
     );
   }
 
-
   return (
-    <div className="min-h-screen bg-slate-950 px-4 py-8 text-slate-100 sm:px-6 lg:px-8">
+    <div className="paper-ui min-h-screen bg-canvas text-ink px-4 py-8 sm:px-6 lg:px-8">
       {/* Nút điều hướng phụ trên cùng */}
       <div className="mx-auto mb-6 max-w-5xl">
         <button
           type="button"
           onClick={() => navigate('/dashboard')}
-          className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-400 hover:text-white"
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-muted hover:text-strong"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Quay lại Bảng điều khiển (Dashboard)
         </button>
       </div>
 
+      {['generated', 'partial_generated'].includes(session?.status) && !isNewRunActive && (
+        <section className="mx-auto mb-6 max-w-5xl rounded-2xl border border-line bg-surface p-6">
+          <h1 className="text-xl font-bold text-strong">Thông tin lần sinh</h1>
+          <p className="mt-2 text-sm text-muted">Cấu hình đã dùng cho bộ đề hiện tại · Chỉ đọc</p>
+          <dl className="mt-4 flex flex-wrap gap-6 text-sm">
+            <div><dt>Số mã đề</dt><dd className="font-semibold">{derivedNumVersions}</dd></div>
+            <div><dt>Số câu mỗi đề</dt><dd className="font-semibold">{session?.source_questions?.length ?? 'Chưa có dữ liệu'}</dd></div>
+            <div><dt>Xáo trộn câu hỏi</dt><dd>{session?.config?.ordering_preferences?.shuffle_questions ? 'Bật' : 'Tắt'}</dd></div>
+            <div><dt>Xáo trộn đáp án</dt><dd>{session?.config?.ordering_preferences?.shuffle_options ? 'Bật' : 'Tắt'}</dd></div>
+          </dl>
+          <button type="button" onClick={handleCompleteRedirect} className="mt-5 rounded-xl bg-highlight px-4 py-3 font-semibold text-white">Quay lại duyệt câu hỏi</button>
+        </section>
+      )}
       {isGenerating ? (
         <GenerationProgressView
           sessionId={sessionId}
@@ -814,9 +981,17 @@ export default function Stage2ConfigPage({
           }
           questionStatuses={mergedStatuses}
           warnings={sseState.warnings}
-          connectionState={sseState.connectionState}
+          connectionState={
+            isConfirmedTerminalRun && session?.status === 'generated'
+              ? 'completed'
+              : sseState.connectionState
+          }
           isDone={effectiveIsDone}
-          error={retryError || sseState.error}
+          error={
+            isConfirmedTerminalRun && session?.status === 'generated'
+              ? null
+              : retryError || sseState.error
+          }
           reconnectCount={sseState.reconnectCount}
           onReconnect={sseState.reconnect}
           onRetryGeneration={handleRetryGeneration}

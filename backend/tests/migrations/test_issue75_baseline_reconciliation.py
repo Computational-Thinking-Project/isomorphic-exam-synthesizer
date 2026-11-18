@@ -734,3 +734,42 @@ class Issue75BaselineReconciliationTests(PostgresCase):
         self.assertIn("required authenticated SELECT", result.stderr)
         self.assertEqual(before, self.value(
             "SELECT relacl::text FROM pg_class WHERE oid='public.users'::regclass"))
+
+    def test_t18_service_role_exam_sessions_select_migration_025(self):
+        """PR #78 Regression test: service_role requires SELECT on exam_sessions for SSE ownership and terminal state."""
+        self.seed_five_table_baseline()
+        # Explicitly revoke SELECT from service_role to reproduce baseline permission denied (SQLSTATE 42501)
+        self.sql("REVOKE ALL ON TABLE public.exam_sessions FROM service_role")
+
+        # 1. Confirm service_role does NOT have table-level SELECT
+        has_sel_before = self.value("SELECT has_table_privilege('service_role', 'public.exam_sessions', 'SELECT')")
+        self.assertIn(has_sel_before.lower(), ("f", "false"))
+
+        # 2. Confirm SELECT under service_role fails before migration (42501 permission denied)
+        fail_res = self.as_role_fail("service_role", USER_A, f"SELECT user_id, status FROM public.exam_sessions WHERE id='{SESSION_A}'")
+        self.assertNotEqual(fail_res.returncode, 0)
+        self.assertIn("permission denied for table exam_sessions", fail_res.stderr)
+
+        # 3. Apply migration 025_service_role_exam_sessions_select.sql
+        m_path = ROOT / "backend/migrations/025_service_role_exam_sessions_select.sql"
+        self.sql(m_path.read_text(encoding="utf-8"))
+
+        # 4. Confirm has_table_privilege is now true
+        has_sel_after = self.value("SELECT has_table_privilege('service_role', 'public.exam_sessions', 'SELECT')")
+        self.assertIn(has_sel_after.lower(), ("t", "true"))
+
+        # 5. Confirm service_role can read user_id and status
+        owner_read = self.as_role("service_role", USER_A, f"SELECT user_id || '|' || status FROM public.exam_sessions WHERE id='{SESSION_A}'")
+        self.assertIn(f"{USER_A}|draft", owner_read)
+
+        # 6. Re-apply migration 025 to verify idempotency
+        self.sql(m_path.read_text(encoding="utf-8"))
+        has_sel_reapply = self.value("SELECT has_table_privilege('service_role', 'public.exam_sessions', 'SELECT')")
+        self.assertIn(has_sel_reapply.lower(), ("t", "true"))
+
+        # 7. Verify no privilege escalation for anon or authenticated
+        anon_sel = self.value("SELECT has_table_privilege('anon', 'public.exam_sessions', 'SELECT')")
+        self.assertIn(anon_sel.lower(), ("f", "false"))
+        auth_dml = self.value("SELECT has_table_privilege('authenticated', 'public.exam_sessions', 'DELETE')")
+        self.assertIn(auth_dml.lower(), ("f", "false"))
+

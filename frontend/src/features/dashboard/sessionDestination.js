@@ -1,15 +1,12 @@
 import {
+  exportPath,
   stage1Path,
   stage2Path,
   stage3Path,
   stage3PreviewPath,
 } from '../../sessionPaths.js';
 
-const pendingDestinations = new Set([
-  'approved',
-  'exported',
-  'failed',
-]);
+const pendingDestinations = new Set();
 
 // Only connect destinations whose screen and contract have been handed over.
 export function sessionDestination(session) {
@@ -25,7 +22,7 @@ export function sessionDestination(session) {
       notice: '',
     };
   }
-  if (['configured', 'generating'].includes(session.status)) {
+  if (['configured', 'generating', 'failed'].includes(session.status)) {
     return { path: stage2Path(session.id), notice: '' };
   }
   if (['partial_generated', 'generated'].includes(session.status)) {
@@ -33,6 +30,9 @@ export function sessionDestination(session) {
   }
   if (session.status === 'reviewed') {
     return { path: stage3PreviewPath(session.id), notice: '' };
+  }
+  if (['approved', 'exported'].includes(session.status)) {
+    return { path: exportPath(session.id), notice: '' };
   }
   return {
     path: null,

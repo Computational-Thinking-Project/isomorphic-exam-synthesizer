@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { api } from './api.js';
 import {
   fetchFinalizePreview,
+  fetchOrderingPreferences,
   updateOrderingPreferences,
   triggerFinalizeShuffle,
   executeFinalizeShuffle,
@@ -147,6 +148,70 @@ test('updateOrderingPreferences: ném lỗi nếu không truyền sessionId', as
   await assert.rejects(
     async () => {
       await updateOrderingPreferences('');
+    },
+    {
+      message: 'Cần cung cấp sessionId hợp lệ.',
+    }
+  );
+});
+
+test('fetchOrderingPreferences: gọi đúng GET /sessions/:id và trả về ordering_preferences', async () => {
+  let capturedGet = null;
+  const originalGet = api.get;
+
+  api.get = async (url, options) => {
+    capturedGet = { url, options };
+    return {
+      data: {
+        id: 'session-pref-1',
+        status: 'reviewed',
+        generation_config: {
+          ordering_preferences: {
+            shuffle_questions: true,
+            shuffle_options: false,
+          },
+        },
+      },
+    };
+  };
+
+  try {
+    const prefs = await fetchOrderingPreferences('session-pref-1');
+    assert.equal(capturedGet.url, '/sessions/session-pref-1');
+    assert.deepEqual(prefs, {
+      shuffle_questions: true,
+      shuffle_options: false,
+      status: 'reviewed',
+    });
+  } finally {
+    api.get = originalGet;
+  }
+});
+
+test('fetchOrderingPreferences: defaults OFF/OFF only after successful GET without preferences', async () => {
+  const originalGet = api.get;
+
+  api.get = async () => ({
+    data: { id: 'session-no-pref', status: 'reviewed' },
+  });
+
+  try {
+    const prefs = await fetchOrderingPreferences('session-no-pref');
+    assert.deepEqual(prefs, {
+      shuffle_questions: false,
+      shuffle_options: false,
+      status: 'reviewed',
+    });
+  } finally {
+    api.get = originalGet;
+  }
+
+});
+
+test('fetchOrderingPreferences: ném lỗi nếu không truyền sessionId', async () => {
+  await assert.rejects(
+    async () => {
+      await fetchOrderingPreferences('');
     },
     {
       message: 'Cần cung cấp sessionId hợp lệ.',
@@ -365,18 +430,44 @@ test('F03: encodeURIComponent cho sessionId trên toàn bộ các endpoints tron
   try {
     const complexSessionId = 'sess test/123?foo=bar';
     await fetchFinalizePreview(complexSessionId);
+    await fetchOrderingPreferences(complexSessionId);
     await updateOrderingPreferences(complexSessionId, { shuffle_questions: true, shuffle_options: true });
     await triggerFinalizeShuffle(complexSessionId);
     await triggerFinalizeApprove(complexSessionId);
 
     const encoded = encodeURIComponent(complexSessionId);
     assert.equal(capturedUrls[0], `/sessions/${encoded}/finalize/preview`);
-    assert.equal(capturedUrls[1], `/sessions/${encoded}/ordering-preferences`);
-    assert.equal(capturedUrls[2], `/sessions/${encoded}/finalize/shuffle`);
-    assert.equal(capturedUrls[3], `/sessions/${encoded}/finalize/approve`);
+    assert.equal(capturedUrls[1], `/sessions/${encoded}`);
+    assert.equal(capturedUrls[2], `/sessions/${encoded}/ordering-preferences`);
+    assert.equal(capturedUrls[3], `/sessions/${encoded}/finalize/shuffle`);
+    assert.equal(capturedUrls[4], `/sessions/${encoded}/finalize/approve`);
   } finally {
     api.get = originalGet;
     api.patch = originalPatch;
     api.post = originalPost;
   }
+});
+
+for (const status of [500, undefined]) {
+  test(`fetchOrderingPreferences: preserves original ${status || 'network'} error`, async () => {
+    const originalGet = api.get;
+    const failure = new Error('Read failed');
+    if (status) failure.response = { status, data: { detail: 'Unavailable' } };
+    api.get = async () => { throw failure; };
+    try {
+      await assert.rejects(fetchOrderingPreferences('session-error'), err => err === failure);
+    } finally { api.get = originalGet; }
+  });
+}
+
+test('fetchOrderingPreferences: restores OFF/ON and authoritative session status', async () => {
+  const originalGet = api.get;
+  api.get = async () => ({ data: { status: 'exported', generation_config: {
+    ordering_preferences: { shuffle_questions: false, shuffle_options: true },
+  } } });
+  try {
+    assert.deepEqual(await fetchOrderingPreferences('session-off-on'), {
+      shuffle_questions: false, shuffle_options: true, status: 'exported',
+    });
+  } finally { api.get = originalGet; }
 });

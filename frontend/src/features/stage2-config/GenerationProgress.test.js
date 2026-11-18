@@ -151,7 +151,9 @@ test('GenerationProgressView tự động gọi onComplete sau khi nhận isDone
     await new Promise((r) => setTimeout(r, 1600));
   });
 
-  assert.equal(completedCalled, true, 'onComplete phải được kích hoạt sau 1.5s');
+  assert.equal(completedCalled, false, 'Không tự chuyển trang');
+  await act(async () => harness.container.querySelectorAll('button').find(b => b.textContent.includes('Xem đề ngay')).click());
+  assert.equal(completedCalled, true);
 
   await harness.unmount();
 });
@@ -219,7 +221,7 @@ test('F02: GenerationProgressView hiển thị Chưa có dữ liệu tiến đ�
   const text = harness.container.textContent;
   assert.ok(text.includes('Chưa có dữ liệu tiến độ'), 'Phải báo Chưa có dữ liệu tiến độ khi thiếu snapshot');
   assert.equal(/0\s*\/\s*4/.test(text), false, 'Tuyệt đối không được hiển thị 0 / 4 khi chưa có snapshot');
-  assert.ok(text.includes('--%'), 'Hiển thị --% thay vì 0%');
+  assert.ok(text.includes('Đang cập nhật'), 'Hiển thị --% thay vì 0%');
 
   await harness.unmount();
 });

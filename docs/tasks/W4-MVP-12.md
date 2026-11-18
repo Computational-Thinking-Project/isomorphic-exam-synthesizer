@@ -1,6 +1,40 @@
 # W4-MVP-12 — Security/negative baseline và regression tích hợp
 
-## Current integration checkpoint — 16/11/2026
+## Current integration checkpoint — 18/11/2026
+
+- Author, workflow v0.1 proposed + INPUT-20261109. Đồng bộ `dev@43e1e26`
+  (07/#58, 08/#63, Resume/#66 và UI/#84 đã merge; có migration025).
+  Merge local sạch, không còn tái hiện conflict GitHub từng báo. PR73 hiện base
+  `dev`; giữ Draft cho tới khi compiler và các gate tích hợp được kiểm đủ.
+- [Re-review #82](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/82#pullrequestreview-5953968554)
+  tại `af0cb4f`: APPROVED cho converter scope. Exporter/security **320 passed,
+  1 skipped** (XeLaTeX), Ruff PASS; sáu probe lồng nhau compile thật. Overlay
+  converter lên fixture Golden gốc của12 vẫn cho **2 XPASS(strict)**. Đây là
+  bằng chứng prospective; #82 chưa merge vào dev khi chụp checkpoint, nên giữ
+  strict markers trên nhánh hiện tại. Gỡ sau khi tích hợp và rerun thành công.
+- [Review #83](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/83#pullrequestreview-5953968992)
+  tại `05d8289`: APPROVED cho preparation/handoff. **24/24 checksum Git blob**
+  khớp inventory rehearsal `ad87643`; query chỉ đọc được kiểm tĩnh. Không chạy
+  catalog/shared runtime trong lượt này. Inventory final phải tính từ candidate
+  chung, gồm025; không coi inventory rehearsal là applied manifest.
+- Duy/Đạt đã COMMENT không có finding bắt buộc mới trong baseline12 `5890c05`;
+  chưa GitHub Approve hay live acceptance. OPS báo ngày17/11 còn thiếu020 và
+  bucket export; đây là quan sát có ngày, không thay read-back hiện tại.
+- I-W412-01/02/03 tiếp tục cần common runtime/applied manifest, private bucket/
+  ACL/limits, controlled A/B principals và safe fault/budget scope, producer SSE.
+  Runtime vẫn disabled. Không apply DB/cloud, không tự merge dependency hoặc
+  đổi PR/issue descriptions. G0/G1/G2 chưa được nghiệm thu.
+- Kiểm combined tree trên Docker local/Python3.11/Typst0.11.1: Ruff PASS,
+  mypy **128 files PASS**; security/API/services/exporter **1289 passed,
+  3 skipped, 2 xfailed**, 8 cảnh báo hiện có. Skip: hai module asyncpg chưa
+  có dependency trong image, XeLaTeX. Không tính strict XFAIL là Golden PASS.
+- PostgreSQL15 isolated + exporter/snapshot/private export: **328 passed,
+  1 skipped** (XeLaTeX), **21 subtests**, 2 cảnh báo. Fixture áp full chain
+  đến025, gồm SEC12-08, ba Preview parity cases, concurrency/replay/recovery/
+  rollback. SQL/RLS thật qua test transport; private PDF/Storage là double.
+  Không có thay đổi product/test logic trong lượt sync này.
+
+## Integration checkpoint — lịch sử 16/11/2026
 
 - Author, workflow v0.1 proposed + INPUT-20261109 (`7b7387f`). Đã đồng bộ
   dependency08 `ad87643`, gồm `dev@26af798`: PR49 Preview và PR81/migration024

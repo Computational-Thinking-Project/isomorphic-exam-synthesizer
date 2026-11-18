@@ -348,9 +348,9 @@ export async function fetchSessionDetail(sessionId) {
     restoredQuestionStatuses = computedStatuses;
   }
 
-  // F02 / F07 / F08: Nếu phiên partial_generated hoặc generating chưa có progress (ví dụ PR #32 chỉ có metadata mã đề),
+  // F02 / F07 / F08 / C8: Nếu phiên partial_generated, generating hoặc generated chưa có progress (ví dụ PR #32 chỉ có metadata mã đề),
   // thử tải generation-snapshot nếu endpoint đã có kết quả
-  if (!restoredProgress && (data.status === 'partial_generated' || data.status === 'generating')) {
+  if (!restoredProgress && (data.status === 'partial_generated' || data.status === 'generating' || data.status === 'generated')) {
     try {
       const snap = await fetchGenerationSnapshot(sessionId);
       if (snap?.progress) {
