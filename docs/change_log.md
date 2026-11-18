@@ -1015,6 +1015,37 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
 - Decision: consume Duy's PR #52 migration 017 RPC contract for cursor-paged stale scanning, token-fenced failure and durable error read-back. Start one scanner on startup/every 30 seconds, retain terminal buffers for at least 15 minutes, clean every 60 seconds and hold a broker lease for issued SSE tickets. Use PR #32 admin dependency and the existing Gemini observer/collector for protected metrics.
 - Impact: generation repository/runner/recovery, snapshot/SSE/ticket/broker, validator adapter, app lifespan and metrics route. The follow-up patch aligns dev and Docker smoke with metrics Auth (anonymous 401 + Bearer challenge) and fixes the CI test fixture for collector 503. PR #52 later merged into dev; applied DB ledger, one-worker deployment and live FE/DB/proxy acceptance remain pending. No migration, AI generator, validator aggregator or FE owner code is changed here.
 
+## DEC-TV7-W4-008: Private export integration draft (12/11/2026, proposed)
+
+Hùng triển khai pipeline độc lập trên dependency PR #58: manifest/checksums,
+immutable upload/read-back verification, durable ledger ports và safe error/
+lost-response handling. [Contract Q09/Q10](api/private-export-contract.md) là đề
+xuất chờ Duy/Đạt/Philip; chưa bật RPC/migration/HTTP hay thay ACL/cloud config.
+Plan và evidence/giới hạn: [W4-MVP-08](tasks/W4-MVP-08.md). Không coi fake-port
+tests là PostgreSQL/Storage live proof hoặc GitHub approval.
+
+12/11, cập nhật theo [quyết định Q09 của Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6819045971):
+thêm forward migration020, service-only RPC ledger, root-first locks, immutable
+receipt checkpoint và atomic ready/exported; recovery giữ object cũ với quyền
+fencing mới, chỉ restart khi xác minh missing/checksum mismatch. Backend adapter
+và service đã nối; HTTP/Storage thật chưa bật. Targeted restrictive Storage policy
+chặn owner export mutations, giữ raw/source behavior. 900s còn provisional,
+chưa phải shared applied manifest. PostgreSQL15 isolated tests kiểm concurrency,
+response loss/recovery/rollback và ACL; [plan08](tasks/W4-MVP-08.md) giữ kết quả và
+giới hạn. Các chữ ký RPC và semantics hiện hành ở [contract08](api/private-export-contract.md).
+## DEC-TV7-W4-008-HTTP — Q10 implementation and checkpoint acknowledgments (14/11/2026)
+
+- Hùng triển khai synchronous worker-thread HTTP theo [Philip chấp nhận Q10](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6825618302): POST export200/202, GET read-only, POST download-url3600s/no-store. Runtime opt-in mặc định tắt, timeout từng IO phải cấu hình; không tự apply DDL/cloud.
+- Sửa Q09 review: chỉ structured NoSuchKey/404 cho restart missing, mọi404 chưa kết luận giữ checkpoint. RPC020 checkpoint trả token + persisted receipt, adapter xác minh exact trước upload. Đổi payload acknowledgment nội bộ cần Duy kiểm lại; không đổi chữ ký RPC/public JSON.
+- Trạng thái code local/test theo [plan08](tasks/W4-MVP-08.md); chưa live Storage/JWT/PostgREST, chưa xác nhận lease900s/proxy budget hoặc shared applied manifest.
+# DEC-TV7-W4-008-Q01 — 16/11/2026
+
+- Theo Q01 sửa đổi của Duy tại PR74, runtime08 truyền worker RPC client có
+  timeout vào verifier provenance của07, sau owner/approval và chỉ scoped ledger.
+  Nội dung vẫn đọc bằng user RLS; empty AI/missing verifier fail closed trước claim.
+- Revalidation giữ capability nội bộ cho fallback/clone, không đổi JSON/hash
+  của snapshot cũ. Thêm HTTP/SQL/Typst regression; private Storage/live Golden
+  chưa được nghiệm thu. Không thay migration/API hay bật runtime.
 
 ## DEC-ISSUE80 — Optional source explanations
 
