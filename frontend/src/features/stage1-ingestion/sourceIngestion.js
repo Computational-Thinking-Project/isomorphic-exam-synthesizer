@@ -52,6 +52,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     canonicalError: '',
     canonicalProgress: null,
     retryAccepted: false,
+    retryOutcomeUnknown: false,
     isInputDirty: false,
   };
   const listeners = new Set();
@@ -65,30 +66,39 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
   };
   let pendingReplacedIngestion = false;
   let pendingSubmittedInput = null;
-  const checkIsDirty = (mode, text, file) => {
-    if (!hasIngested || (state.detail?.source_questions?.length ?? 0) === 0) return false;
+  const checkIsDirty = (mode, text, file, detail = state.detail) => {
+    if (!hasIngested || (detail?.source_questions?.length ?? 0) === 0) return false;
     if (mode !== lastIngested.mode) return true;
     if (mode === 'text' && text !== lastIngested.text) return true;
     if (mode === 'file' && file !== lastIngested.file) return true;
     return false;
   };
   const applySavedDraftRevision = (detail, baselineInput = null) => {
-    if (baselineInput) {
-      hasIngested = true;
-      lastIngested = baselineInput;
-    }
-    if (
-      recoveryRevision &&
-      isSourceUuid(detail.source_revision) &&
-      recoveryRevision !== detail.source_revision.toLowerCase()
-    ) {
+    if (recoveryRevision) {
+      if (
+        detail.status !== 'draft' ||
+        !isSourceUuid(detail.source_revision) ||
+        recoveryRevision === detail.source_revision.toLowerCase()
+      ) {
+        return false;
+      }
+      if (baselineInput) {
+        hasIngested = true;
+        lastIngested = baselineInput;
+      }
       try {
         confirmationStore?.clear();
         recoveryRevision = null;
       } catch {
         storageBlocked = true;
       }
+      return true;
     }
+    if (baselineInput) {
+      hasIngested = true;
+      lastIngested = baselineInput;
+    }
+    return true;
   };
   const publish = (next) => {
     state = { ...state, ...next };
@@ -147,6 +157,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       canonicalReady,
       canonicalError,
       retryAccepted: false,
+      retryOutcomeUnknown: false,
     });
   }
 
@@ -270,11 +281,11 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       }
       let nextDirty = state.isInputDirty;
       if (pendingReplacedIngestion) {
-        const baseline = pendingSubmittedInput;
-        pendingSubmittedInput = null;
-        pendingReplacedIngestion = false;
-        applySavedDraftRevision(detail, baseline);
-        nextDirty = checkIsDirty(state.mode, state.text, state.file);
+        if (applySavedDraftRevision(detail, pendingSubmittedInput)) {
+          pendingSubmittedInput = null;
+          pendingReplacedIngestion = false;
+        }
+        nextDirty = checkIsDirty(state.mode, state.text, state.file, detail);
       }
       publish({
         detail,
@@ -341,13 +352,24 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       const artifact = await readArtifacts(id, { signal: operation.signal });
       if (!operation.current()) return;
       const isReady = artifact.ready === true && artifact.canonical_status === 'ready';
+      let nextPendingCycles = 0;
+
+      if (['pending', 'failed'].includes(artifact.canonical_status)
+          && (state.retryAccepted || state.retryOutcomeUnknown)) {
+        const cycles = (state.retryPendingCycles ?? 0) + 1;
+        // The previous attempt can still report failed before the new producer starts.
+        if (cycles <= 5) nextPendingCycles = cycles;
+      }
+
       publish({
         phase: 'idle',
         canonicalStatus: artifact.canonical_status,
         canonicalProgress: { completed: artifact.completed_count, total: artifact.total_questions },
         canonicalReady: isReady,
         canonicalError: '',
-        retryAccepted: false,
+        retryAccepted: nextPendingCycles > 0 && state.retryAccepted,
+        retryOutcomeUnknown: nextPendingCycles > 0 && state.retryOutcomeUnknown,
+        retryPendingCycles: nextPendingCycles,
         ...(isReady ? {
           detail: {
             ...state.detail,
@@ -372,64 +394,62 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
   }
 
   async function retryCanonical() {
-    if (busy() || !isCurrent() || !retryArtifacts) return;
+    if (busy() || !isCurrent() || !retryArtifacts || state.retryAccepted || state.retryOutcomeUnknown) return;
     const operation = begin();
     publish({ phase: 'retrying_canonical', canonicalError: '' });
+    let outcomeUnknown = false;
     try {
       await retryArtifacts(id, { signal: operation.signal });
+    } catch (cause) {
       if (!operation.current()) return;
-      let retryAccepted = true;
-      let cStatus = state.canonicalStatus;
-      let cReady = false;
-      let cError = '';
-      let updatedDetail = state.detail;
-      if (readArtifacts) {
-        try {
-          const artifact = await readArtifacts(id, { signal: operation.signal });
-          if (!operation.current()) return;
-          if (artifact.canonical_status === 'running') {
-            retryAccepted = false;
-            cStatus = 'running';
-          } else if (artifact.canonical_status === 'ready' && artifact.ready === true) {
-            retryAccepted = false;
-            cStatus = 'ready';
-            cReady = true;
-            updatedDetail = {
-              ...state.detail,
-              blueprint_summary: {
-                ...(state.detail.blueprint_summary || {}),
-                is_ready: true,
-                supported_modes: artifact.supported_modes,
-                total_questions: artifact.total_questions,
-              },
-            };
-          } else if (artifact.canonical_status === 'failed') {
-            retryAccepted = true;
-            cStatus = 'failed';
-          }
-        } catch {
-          if (!operation.current()) return;
-          retryAccepted = true;
-          cError = 'Đã tiếp nhận yêu cầu tạo lại nhưng chưa đọc được trạng thái. Vui lòng kiểm tra lại.';
-        }
+      if (cause?.response?.status) {
+        publish({
+          phase: 'idle',
+          canonicalError: 'Không thể thử lại tạo Blueprint. Vui lòng kiểm tra lại.',
+        });
+        return;
       }
-      publish({
-        phase: 'idle',
-        canonicalStatus: cStatus,
-        canonicalReady: cReady,
-        canonicalError: cError,
-        retryAccepted,
-        message: retryAccepted ? 'Đã tiếp nhận yêu cầu tạo lại Blueprint.' : state.message,
-        detail: updatedDetail,
-      });
-    } catch {
-      if (!operation.current()) return;
-      publish({
-        phase: 'idle',
-        retryAccepted: false,
-        canonicalError: 'Không thể thử lại tạo Blueprint. Vui lòng kiểm tra lại.',
-      });
+      outcomeUnknown = true;
     }
+    if (!operation.current()) return;
+    let artifact;
+    let canonicalError = '';
+    if (readArtifacts) {
+      try {
+        artifact = await readArtifacts(id, { signal: operation.signal });
+      } catch {
+        canonicalError = outcomeUnknown
+          ? 'Chưa đọc được trạng thái chuẩn bị đề. Hệ thống sẽ tự kết nối lại.'
+          : 'Đã tiếp nhận yêu cầu tạo lại nhưng chưa đọc được trạng thái. Vui lòng kiểm tra lại.';
+      }
+    }
+    if (!operation.current()) return;
+    const isReady = artifact?.canonical_status === 'ready' && artifact.ready === true;
+    const awaitingProducer = artifact?.canonical_status !== 'running' && !isReady;
+    publish({
+      phase: 'idle',
+      canonicalStatus: artifact?.canonical_status ?? state.canonicalStatus,
+      canonicalReady: isReady,
+      canonicalError,
+      retryAccepted: awaitingProducer && !outcomeUnknown,
+      retryOutcomeUnknown: awaitingProducer && outcomeUnknown,
+      retryPendingCycles: 0,
+      ...(awaitingProducer && !outcomeUnknown ? { message: 'Đã tiếp nhận yêu cầu tạo lại Blueprint.' } : {}),
+      ...(artifact ? {
+        canonicalProgress: { completed: artifact.completed_count, total: artifact.total_questions },
+      } : {}),
+      ...(isReady ? {
+        detail: {
+          ...state.detail,
+          blueprint_summary: {
+            ...(state.detail.blueprint_summary || {}),
+            is_ready: true,
+            supported_modes: artifact.supported_modes,
+            total_questions: artifact.total_questions,
+          },
+        },
+      } : {}),
+    });
   }
 
   function proceedToStage2() {
@@ -563,18 +583,21 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
           finishConfirmation(detail);
           return;
         }
-        const baseline = pendingSubmittedInput;
-        pendingSubmittedInput = null;
-        pendingReplacedIngestion = false;
-        applySavedDraftRevision(detail, baseline);
+        const consumed = applySavedDraftRevision(detail, pendingSubmittedInput);
+        if (consumed) {
+          pendingSubmittedInput = null;
+          pendingReplacedIngestion = false;
+        }
         publish({
           detail,
           phase: 'idle',
           requiresReload: false,
           unavailable: false,
-          isInputDirty: checkIsDirty(state.mode, state.text, state.file),
+          isInputDirty: checkIsDirty(state.mode, state.text, state.file, detail),
           confirmationError: storageBlocked ? CONFIRM_STORAGE : recoveryRevision ? CONFIRM_RECOVERY : '',
-          message: `Đã nạp ${count} câu nguồn.`,
+          ...(consumed
+            ? { message: `Đã nạp ${count} câu nguồn.` }
+            : { error: 'Đã nạp đề nhưng bản đọc về chưa cập nhật. Hãy đọc lại nguồn đã lưu.' }),
         });
       } catch (cause) {
         if (!operation.current()) return;

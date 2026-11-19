@@ -846,9 +846,11 @@ test('203b: đổi route bỏ incomplete trả muộn; logout khi dialog đang m
   await app.unmount();
 });
 
-test('Phillip F04 & INT-03: Không render trùng nút Kiểm tra trạng thái và xử lý retryAccepted', async () => {
-  let artifact = { session_id: confirmSessionId, ready: false, canonical_status: 'failed', supported_modes: null };
+test('F91-R06: Stage 1 keeps polling stale failed status before restoring Retry', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const artifact = { session_id: confirmSessionId, ready: false, canonical_status: 'failed', supported_modes: null };
   let retryCalls = 0;
+  let artifactReads = 0;
   api.defaults.adapter = async (config) => {
     if (config.url.endsWith('/source-artifacts/retry')) {
       retryCalls++;
@@ -859,30 +861,38 @@ test('Phillip F04 & INT-03: Không render trùng nút Kiểm tra trạng thái v
         config,
       };
     }
-    if (config.url.endsWith('/source-artifacts')) return response(config, artifact);
+    if (config.url.endsWith('/source-artifacts')) {
+      artifactReads++;
+      return response(config, artifact);
+    }
     return config.method === 'get' ? response(config, confirmDetail('blueprinted')) : confirmedResponse(config);
   };
   const app = mount(confirmSessionId);
-  await app.render();
+  try {
+    await app.render();
+    assert.match(app.container.textContent, /Chưa chuẩn bị được cấu trúc đề/);
+    assert.equal(artifactReads, 1);
+    await act(async () => button(app.container, 'Thử lại').click());
+    assert.equal(artifactReads, 2);
+    assert.match(app.container.textContent, /Đã tiếp nhận yêu cầu tạo lại/);
+    assert.equal(button(app.container, 'Thử lại'), undefined);
+    assert.equal(button(app.container, 'Kiểm tra trạng thái'), undefined);
 
-  assert.match(app.container.textContent, /Chưa chuẩn bị được cấu trúc đề/);
-  const retryBtn = button(app.container, 'Thử lại');
-  assert.ok(retryBtn);
+    for (let cycle = 1; cycle <= 5; cycle++) {
+      await act(async () => t.mock.timers.tick(2000));
+      assert.equal(artifactReads, 2 + cycle);
+      assert.ok(!button(app.container, 'Thử lại'), `Hide Retry on poll ${cycle}`);
+    }
 
-  // Click retry
-  await act(async () => retryBtn.click());
-  assert.equal(retryCalls, 1);
-  // While retryAccepted, the text is shown and button is hidden
-  assert.match(app.container.textContent, /Đã tiếp nhận yêu cầu tạo lại/);
-  assert.equal(button(app.container, 'Thử lại'), undefined, 'Nút thử tạo lại bị ẩn khi đã tiếp nhận');
-
-  // Verify only 1 "Kiểm tra trạng thái" button
-  const checkButtons = Array.from(app.container.querySelectorAll('button')).filter(
-    (b) => b.textContent.includes('Kiểm tra trạng thái')
-  );
-  assert.equal(checkButtons.length, 0, 'Tiến độ được cập nhật tự động');
-
-  await app.unmount();
+    await act(async () => t.mock.timers.tick(2000));
+    assert.equal(artifactReads, 8);
+    assert.equal(button(app.container, 'Thử lại').getAttribute('disabled'), null);
+    await act(async () => t.mock.timers.tick(2000));
+    assert.equal(artifactReads, 8);
+    assert.equal(retryCalls, 1);
+  } finally {
+    await app.unmount();
+  }
 });
 
 test('W4-MVP-10: Deep-link Stage 1 khi phiên ở trạng thái reviewed/approved/exported khóa sửa và hiện link tới bước hiện tại', async () => {
@@ -911,14 +921,14 @@ test('W4-MVP-10: Deep-link Stage 1 khi phiên ở trạng thái reviewed/approve
   }
 });
 
-test('Issue #55 UI: recovery marker -> submit B with failed GET -> manual reload unlocks confirm without duplicate ingest', async () => {
+test('Issue #55 UI: recovery marker -> submit B with failed/stale GET -> manual reload unlocks confirm without duplicate ingest', async () => {
   const revB = '20000000-0000-4000-8000-000000000009';
   const key = `stage1-confirm:${JSON.stringify(['account-a', confirmSessionId])}`;
   window.sessionStorage.setItem(key, '{broken');
   let ingestCalls = 0;
   let confirmCalls = 0;
   let serverDetail = confirmDetail();
-  let failNextGet = false;
+  let getStep = 0;
 
   api.defaults.adapter = async (config) => {
     if (config.url.endsWith('/ingest-text')) {
@@ -928,7 +938,7 @@ test('Issue #55 UI: recovery marker -> submit B with failed GET -> manual reload
         source_revision: revB,
         source_questions: [question('qb', confirmSessionId)],
       };
-      failNextGet = true;
+      getStep = 1;
       return response(config, { session_id: confirmSessionId, total_questions: 1, questions: [question('qb', confirmSessionId)] });
     }
     if (config.url.endsWith('/confirm-source')) {
@@ -938,9 +948,13 @@ test('Issue #55 UI: recovery marker -> submit B with failed GET -> manual reload
     if (config.url.endsWith('/source-artifacts')) {
       return response(config, { session_id: confirmSessionId, ready: false, canonical_status: 'pending', supported_modes: null });
     }
-    if (failNextGet) {
-      failNextGet = false;
+    if (getStep === 1) {
+      getStep = 2;
       throw { config, response: { status: 503, data: {} } };
+    }
+    if (getStep === 2) {
+      getStep = 0;
+      return response(config, confirmDetail());
     }
     return response(config, serverDetail);
   };
@@ -957,6 +971,12 @@ test('Issue #55 UI: recovery marker -> submit B with failed GET -> manual reload
     assert.match(app.container.textContent, /Đã nạp đề nhưng chưa đọc được bản mới/);
     assert.notEqual(button(app.container, confirmLabel).getAttribute('disabled'), null);
 
+    // First manual reload still reads stale revA -> keep fence & preserve receipt.
+    await act(async () => button(app.container, 'Đọc lại nguồn đã lưu').click());
+    assert.match(app.container.textContent, /Không khôi phục được mã xác nhận cũ/);
+    assert.notEqual(button(app.container, confirmLabel).getAttribute('disabled'), null);
+
+    // Second manual reload observes revB -> clear recovery fence & confirm without another POST.
     await act(async () => button(app.container, 'Đọc lại nguồn đã lưu').click());
     assert.match(app.container.textContent, /Nguồn qb/);
     assert.equal(button(app.container, confirmLabel).getAttribute('disabled'), null);
@@ -965,6 +985,34 @@ test('Issue #55 UI: recovery marker -> submit B with failed GET -> manual reload
     assert.equal(ingestCalls, 1, 'Must confirm revB without a duplicate ingest POST');
     assert.equal(confirmCalls, 1);
     assert.match(app.container.textContent, /Đang chờ chuẩn bị cấu trúc đề/);
+  } finally {
+    await app.unmount();
+  }
+});
+
+test('Issue #87: canonical status pending (expired lease) displays retry button and clicking it calls retry', async () => {
+  const methods = [];
+  let status = 'pending';
+  api.defaults.adapter = async (config) => {
+    methods.push(`${config.method.toUpperCase()} ${config.url}`);
+    if (config.url.endsWith('/source-artifacts/retry')) {
+      status = 'running';
+      return response(config, { session_id: confirmSessionId, ready: false, canonical_status: 'running', supported_modes: null });
+    }
+    if (config.url.endsWith('/source-artifacts')) {
+      return response(config, { session_id: confirmSessionId, ready: false, canonical_status: status, supported_modes: null });
+    }
+    return response(config, confirmDetail('blueprinted', false));
+  };
+  const app = mount(confirmSessionId);
+  try {
+    await app.render();
+    assert.match(app.container.textContent, /Đang chờ chuẩn bị cấu trúc đề/);
+    const retryBtn = button(app.container, 'Thử lại');
+    assert.ok(retryBtn, 'Phải có nút Thử lại khi trạng thái là pending sau khi hết hạn lease');
+    await act(async () => retryBtn.click());
+    assert.match(app.container.textContent, /Đang chuẩn bị cấu trúc đề/);
+    assert(methods.some((m) => m.includes('POST') && m.includes('/source-artifacts/retry')));
   } finally {
     await app.unmount();
   }

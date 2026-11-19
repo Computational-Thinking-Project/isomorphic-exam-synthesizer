@@ -135,14 +135,30 @@ Thay placeholders bằng SHA runtime thực và file báo cáo chưa tồn tại
 
 Golden input cần Quỳnh/Tâm/Duy bàn giao: Markdown3 câu đủ key/solution có quyền dùng, N=2, shuffle OFF/OFF; đây chưa phải fixture đã có. Không đổi prompt để tối ưu sát demo. Flow modes/fallback W4 theo Q03/#45/#46 cần owner chốt và code tương thích, không giả W2 đã có W4 behavior.
 
-1. Login, tạo/mở session, import Golden Markdown.
-2. Preview và xác nhận đề nguồn, chờ canonical Blueprint ready.
-3. Cấu hình N=2, kiểm shuffle defaults OFF/OFF.
-4. Generate, theo dõi SSE và kết quả6 slots; thử resume ở ca riêng.
-5. Review Accept/Reject/Regenerate/Revert; dùng slot/phiên riêng nếu thao tác xung đột, ghi rõ.
-6. Shuffle/preview đúng projection đã chốt; refresh không đổi mapping.
-7. Final approval, xác minh lock, export/download ZIP thật và đối chiếu6/6 đáp án/lời giải.
-8. Reload/mở lại phiên, kiểm locked/export/resume đúng state.
+Chạy trên staging/test đã được cấp quyền với candidate SHA đã xác minh, DB ledger tương thích, Gemini, Typst và private Storage hoạt động. Kiểm cấu hình theo [private export contract](api/private-export-contract.md#runtime-opt-in-and-io-lifecycle). Nếu thiếu quyền, fixture/oracle hoặc môi trường, ghi `BLOCKED` cùng bước chưa chạy.
+
+Thao tác qua UI và dùng API dưới đây để đối chiếu hoặc replay có kiểm soát. Tất cả path bắt đầu từ `/api/sessions`; `/{id}` là UUID phiên. Dùng Bearer access token của người dùng sở hữu phiên cho API, trừ kết nối SSE dùng ticket và tải file dùng URL ký.
+
+1. **Tạo và nạp nguồn.** `POST /api/sessions` với JSON `{"title":"Golden E2E","subject":"Toán","grade":12}` trả 201 và `id`. Gửi Markdown qua `POST /{id}/ingest-file` dạng multipart với field `file`, hoặc dán nội dung qua `POST /{id}/ingest-text` với JSON `{"raw_text":"<nội dung Golden>"}`. Kiểm HTTP 200, `total_questions: 3`. `GET /{id}` lấy `source_revision` của bản đã lưu và đối chiếu đủ ba `source_questions` với oracle.
+2. **Xác nhận và chờ Blueprint.** Sinh UUID mới cho lần xác nhận này. Gửi `POST /{id}/confirm-source` với header `Idempotency-Key: <UUID>` và JSON `{"source_revision":"<UUID từ GET>"}`. Kiểm HTTP 200, `status: "blueprinted"` và `confirmation_id` khớp key. Nếu mất response, đọc lại phiên trước khi quyết định retry; dùng lại đúng key và revision khi replay cùng lần xác nhận. Nếu revision đổi, đọc và kiểm bản nguồn mới trước khi xác nhận. Poll `GET /{id}/source-artifacts` đến khi `canonical_status: "ready"`, `ready: true`, `completed_count: 3` và `total_questions: 3`. Nếu `pending` hoặc `running`, tiếp tục đọc với khoảng nghỉ và hạn chờ đã định cho run. Nếu `failed`, ghi lỗi và dùng `POST /{id}/source-artifacts/retry` khi đủ điều kiện. Khi kết quả POST chưa rõ, tiếp tục kiểm qua GET trong cửa sổ polling trước lần retry khác.
+3. **Cấu hình generation.** Gửi `POST /{id}/config` với JSON dưới đây. Kiểm HTTP 200, `status: "configured"` và `config.n_versions: 2`. [Schema request](../backend/app/models/generation_config.py).
+
+   ```json
+   {
+     "n_versions": 2,
+     "active_variation_modes": [],
+     "ordering_preferences": {
+       "shuffle_questions": false,
+       "shuffle_options": false
+     }
+   }
+   ```
+
+4. **Sinh đề.** Gửi `POST /{id}/generate` với body rỗng. HTTP 202 và `status: "generating"` xác nhận đã tiếp nhận. UI theo dõi SSE. Để replay API, lấy ticket qua `POST /{id}/events/ticket`, sau đó mở `GET /{id}/events?ticket=<ticket>`. Khi reconnect cần ticket mới. Đối chiếu kết quả lưu qua `GET /{id}/generation-snapshot` và `GET /{id}/review/snapshot`. Chờ đủ 6 slot. Ghi lỗi nếu run kết thúc partial/failed hoặc hết hạn chờ. [Generation và SSE](api/generation-job-endpoints.md).
+5. **Duyệt ứng viên hiện hành.** Đọc JSON thô từ `GET /{id}/review/snapshot`, lấy từng UUID tại `versions[].slots[].candidate.candidate_id` và kiểm câu, phương án, đáp án, lời giải. Dừng bước duyệt nếu thiếu ứng viên hoặc UUID ở bất kỳ slot nào. Với từng ứng viên đạt, gửi `POST /{id}/questions/{candidate_id}/accept` với body rỗng, kiểm HTTP 200 và `status: "approved"`. Đọc lại snapshot, đối chiếu đủ sáu UUID hiện hành và kiểm `progress.approved_slots: 6`, `progress.ready: true`, `session_status: "reviewed"`. Chạy Reject/Regenerate/Revert trên slot hoặc phiên riêng nếu ảnh hưởng baseline.
+6. **Chốt thứ tự và kiểm preview.** `PATCH /{id}/ordering-preferences` với `{"shuffle_questions":false,"shuffle_options":false}`, rồi `POST /{id}/finalize/shuffle` với body rỗng, kể cả OFF/OFF. Đọc `GET /{id}/finalize/preview` và xác minh `is_finalized: true` cùng thứ tự, đáp án và lời giải của cả hai mã. Nếu POST đã xác nhận chốt nhưng GET lỗi, chỉ lặp lại GET (nút **Kiểm tra trạng thái** trên UI) và chờ preview hợp lệ trước khi phê duyệt. Nếu response POST bị mất, đọc preview để đối soát. Chỉ thử chốt lại khi GET xác nhận `ERR_SHUFFLE_REQUIRED` và đã đọc được cấu hình lưu. Chạy ON/ON trên phiên khác nếu cần.
+7. **Khóa, export và tải.** `POST /{id}/finalize/approve` với body rỗng, kiểm HTTP 200, `status: "approved"` và `approved_at`. Gửi `POST /{id}/export` với body rỗng. HTTP 202 trả `state: "preparing"`; HTTP 200 có thể trả `state: "ready"`. Poll `GET /{id}/export` với hạn chờ; nếu `failed`, ghi `error_code`; nếu `ready`, lưu metadata `filename`, `size_bytes`, `sha256` làm receipt. Sau `ready`, gửi riêng `POST /{id}/export/download-url` với body rỗng để nhận `url`, `expires_at`, `expires_in`, `filename`. Tải ZIP trực tiếp qua URL ký, không gửi kèm Bearer token. Nếu URL hết hạn, xin URL mới qua cùng endpoint. Trên PowerShell dùng `(Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()` để so với `sha256` từ status và `(Get-Item -LiteralPath $zipPath).Length` để so với `size_bytes`. Dừng với FAIL nếu sai. Kiểm manifest, mở PDF/TeX/MD và đối chiếu đáp án, lời giải đủ 6/6 slot với preview, dữ liệu đã khóa và oracle. [Export/status/download contracts](api/private-export-contract.md).
+8. **Resume.** Reload/mở lại phiên, kiểm đúng trạng thái khóa và export đã sẵn sàng. Ghi bằng chứng cho lần đọc lại và các ca phân quyền đã được phép.
 
 Fallback4attempts có targeted test riêng nếu không xuất hiện Golden; chưa kiểm thì ghi unverified. Không dùng fake provider thay live Golden.
 
@@ -160,7 +176,10 @@ Golden fixture+oracle version / N / ordering:
 8 steps actual results:
 6-slot key+solution comparison:
 Targeted fallback/restart/security tests and limits:
-ZIP checksum / sanitized logs+recording location:
+Session alias / source revision / confirmation receipt / config ID:
+Generation and review counts / finalized and approved receipts:
+Export ledger receipt / filename / size / expected and downloaded ZIP SHA-256:
+Sanitized logs+recording location:
 Blockers / module owner / next action:
 Acceptance: Duy, actual date/link or NOT ACCEPTED
 ```
