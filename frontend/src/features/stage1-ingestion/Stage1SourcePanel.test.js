@@ -910,3 +910,130 @@ test('W4-MVP-10: Deep-link Stage 1 khi phiên ở trạng thái reviewed/approve
     await app.unmount();
   }
 });
+
+test('Issue #93: Stage 1 header step pill, text char counter, format guide, and create uncertain link', async () => {
+  const app = mount();
+  await app.render();
+  assert.match(app.container.textContent, /Bước 1\/3 · Đề gốc/);
+  assert.match(app.container.textContent, /Bản nháp/);
+  assert.match(app.container.textContent, /0 \/ 100\.000 ký tự/);
+  assert.match(app.container.textContent, /Gợi ý định dạng đề nguồn chuẩn/);
+
+  await act(async () => input(app.container, 'Câu 1 test'));
+  assert.match(app.container.textContent, /10 \/ 100\.000 ký tự/);
+  await app.unmount();
+
+  // New session uncertain error stays inside max-w-xl wrapper and provides dashboard recovery link.
+  api.defaults.adapter = async (config) => {
+    throw Object.assign(new Error('Network timeout'), { config, code: 'ECONNABORTED' });
+  };
+  const newApp = mount('new');
+  await newApp.render();
+  const titleInput = newApp.container.querySelector('input');
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(Object.getPrototypeOf(titleInput), 'value').set.call(titleInput, 'Đề toán kiểm tra');
+    titleInput.dispatchEvent({ type: 'input', bubbles: true });
+  });
+  await act(async () => submit(newApp.container));
+  const alertEl = newApp.container.querySelector('.max-w-xl')?.querySelector('[role="alert"]');
+  assert.ok(alertEl, 'Alert must be aligned inside the max-w-xl form container');
+  const dashboardLink = Array.from(alertEl.querySelectorAll('a')).find((a) => a.getAttribute('href') === '/dashboard');
+  assert.ok(dashboardLink, 'Uncertain create error should include a Dashboard check link');
+  await newApp.unmount();
+});
+
+test('Issue #93: SourceQuestionPreview empty checklist, missing key badge, long formula container, and BlueprintStatusCard 4 states', async () => {
+  const emptyHtml = renderToStaticMarkup(React.createElement(SourceQuestionPreview, { questions: [] }));
+  assert(emptyHtml.includes('Phiên chưa có câu nguồn đã lưu'));
+  assert(!emptyHtml.includes('<button'));
+
+  const missingKeyQ = {
+    ...question('q-nokey'),
+    correct_key: null,
+    solution_md: 'Phân tích $x^2 - 9 = (x-3)(x+3)$.',
+  };
+  const missingHtml = renderToStaticMarkup(React.createElement(SourceQuestionPreview, { questions: [missingKeyQ] }));
+  assert(missingHtml.includes('1 câu thiếu đáp án'));
+  assert(missingHtml.includes('Chưa xác định đáp án'));
+  assert(missingHtml.includes('overflow-x-auto'));
+  assert(missingHtml.includes('Lời giải chi tiết:'));
+
+  for (const [status, expectedHeading, expectRetry, expectContinueDisabled] of [
+    ['pending', /Đang chờ chuẩn bị cấu trúc đề/, false, true],
+    ['running', /Đang chuẩn bị cấu trúc đề/, false, true],
+    ['failed', /Chưa chuẩn bị được cấu trúc đề/, true, true],
+    ['ready', /Cấu trúc đề đã sẵn sàng/, false, false],
+  ]) {
+    api.defaults.adapter = async (config) => {
+      if (config.url.endsWith('/source-artifacts')) {
+        return response(config, {
+          session_id: confirmSessionId,
+          ready: status === 'ready',
+          canonical_status: status,
+          supported_modes: status === 'ready' ? ['NUMERIC_CONSTANT'] : null,
+          total_questions: 4,
+          completed_count: status === 'ready' ? 4 : 2,
+        });
+      }
+      // Initial detail stays unready so Stage1Route keeps Stage1SourcePanel mounted while artifact poll resolves ready.
+      return response(config, confirmDetail('blueprinted', false));
+    };
+    const app = mount(confirmSessionId);
+    await app.render();
+    assert.match(app.container.textContent, /Đã xác nhận đề gốc/);
+    assert.match(app.container.querySelector('[data-testid="canonical-status-text"]').textContent, expectedHeading);
+    assert.equal(Boolean(button(app.container, 'Thử lại')), expectRetry, `Retry button state for ${status}`);
+    const continueBtn = button(app.container, 'Tiếp tục cấu hình');
+    assert.equal(continueBtn.getAttribute('disabled') !== null, expectContinueDisabled, `Continue disabled state for ${status}`);
+    assert(!app.container.textContent.includes('NUMERIC_CONSTANT'), 'Must never expose technical variation modes');
+    assert(!app.container.textContent.includes('PRIVATE_BLUEPRINT'));
+    await app.unmount();
+  }
+});
+
+test('Issue #93: React StrictMode effect replay does not deadlock blueprinted status polling', async () => {
+  api.defaults.adapter = async (config) => {
+    if (config.url.endsWith('/source-artifacts')) {
+      return response(config, {
+        session_id: confirmSessionId,
+        ready: true,
+        canonical_status: 'ready',
+        supported_modes: ['NUMERIC_CONSTANT'],
+        total_questions: 2,
+        completed_count: 2,
+      });
+    }
+    return response(config, confirmDetail('blueprinted', false));
+  };
+  const container = document.createElement('div');
+  const root = createRoot(container);
+  try {
+    await act(async () =>
+      root.render(
+        React.createElement(
+          React.StrictMode,
+          null,
+          React.createElement(
+            MemoryRouter,
+            { initialEntries: [`/session/${confirmSessionId}/stage1`] },
+            React.createElement(
+              Routes,
+              null,
+              React.createElement(Route, {
+                path: '/session/:sessionId/stage1',
+                element: React.createElement(Stage1Route),
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+    assert.match(
+      container.querySelector('[data-testid="canonical-status-text"]').textContent,
+      /Cấu trúc đề đã sẵn sàng/,
+    );
+    assert.equal(button(container, 'Tiếp tục cấu hình').getAttribute('disabled'), null);
+  } finally {
+    await act(async () => root.unmount());
+  }
+});

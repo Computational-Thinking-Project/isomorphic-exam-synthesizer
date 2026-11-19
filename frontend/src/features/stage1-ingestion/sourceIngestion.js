@@ -414,7 +414,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     dispose() {
       invalidate();
       // React's development effect replay must be able to restart a read-only recovery.
-      if (state.phase === 'reconciling') state = { ...state, phase: 'idle' };
+      if (['reconciling', 'checking_status'].includes(state.phase)) state = { ...state, phase: 'idle' };
     },
     restoreConfirmation() {
       if (intent) return reload();
