@@ -510,7 +510,9 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
               className={
                 state.retryConfirmation
                   ? 'inline-flex items-center justify-center gap-1.5 rounded-xl border border-accent-border bg-accent-soft px-4 py-2 text-sm font-semibold text-accent-ink hover:bg-accent/20 disabled:cursor-not-allowed disabled:opacity-50 transition-colors'
-                  : primaryButtonClass
+                  : ingestIsPrimary
+                    ? buttonClass
+                    : primaryButtonClass
               }
               disabled={dialogOpen || !canConfirmReady}
               aria-describedby={`${inputId}-confirm-help`}

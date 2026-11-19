@@ -5,7 +5,7 @@ const STATUS_META = {
     badge: 'Chờ xử lý',
     heading: 'Đang chờ chuẩn bị cấu trúc đề',
     guidance:
-      'Yêu cầu phân tích cấu trúc đề đang ở hàng đợi. Tiến trình sẽ tự cập nhật; chưa thể sang Bước 2 lúc này.',
+      'Yêu cầu phân tích cấu trúc đề đang ở hàng đợi. Tiến trình sẽ tự cập nhật; nếu chờ quá lâu, bạn có thể bấm Thử lại.',
     cardClass: 'border-accent-border bg-accent-soft/50',
     iconBoxClass: 'bg-surface border border-accent-border text-accent-ink',
     badgeClass: 'border-accent-border bg-surface text-accent-ink',
@@ -102,7 +102,9 @@ export default function BlueprintStatusCard({
               {status ? meta.heading : ''}
             </p>
             <p className="mt-1 text-xs leading-relaxed text-ink">
-              {meta.guidance}
+              {status === 'failed' && retryInProgress
+                ? 'Đã gửi yêu cầu tạo lại. Hệ thống đang chờ tiến trình mới khởi chạy.'
+                : meta.guidance}
             </p>
             {retryInProgress && (
               <p className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-semibold text-highlight">

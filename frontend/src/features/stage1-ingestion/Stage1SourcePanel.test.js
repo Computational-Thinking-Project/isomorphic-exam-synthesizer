@@ -1091,7 +1091,24 @@ test('Issue #93 + PR #91: BlueprintStatusCard renders retryOutcomeUnknown status
     await app.render();
     await act(async () => button(app.container, 'Thử lại').click());
     assert.match(app.container.textContent, /Đang kiểm tra kết quả yêu cầu tạo lại\. Tiến độ sẽ tự cập nhật\./);
+    assert(!app.container.textContent.includes('Hãy bấm Thử lại để yêu cầu xử lý lại'));
     assert.equal(button(app.container, 'Thử lại'), undefined);
+  } finally {
+    await app.unmount();
+  }
+});
+
+test('Issue #93: CTA emphasis switches cleanly from Xác nhận to Nạp nguồn when input becomes dirty', async () => {
+  api.defaults.adapter = async (config) => response(config, confirmDetail());
+  const app = mount(confirmSessionId);
+  try {
+    await app.render();
+    assert((button(app.container, confirmLabel).getAttribute('class') || '').includes('bg-highlight'));
+    assert(!(button(app.container, 'Nạp nguồn').getAttribute('class') || '').includes('bg-highlight'));
+
+    await act(async () => input(app.container, 'Sửa lại nội dung mới'));
+    assert((button(app.container, 'Nạp nguồn').getAttribute('class') || '').includes('bg-highlight'));
+    assert(!(button(app.container, confirmLabel).getAttribute('class') || '').includes('bg-highlight'));
   } finally {
     await app.unmount();
   }
