@@ -1,3 +1,12 @@
+## Issue #70 — Per-question generation policy (PR #101, proposed for review) — 19/11/2026
+
+- Đạt thay intersection toàn đề bằng policy theo câu cho job mới: values/context riêng từng Blueprint; chỉ Clone câu có policy hợp lệ nhưng không có chiều được hỗ trợ. Empty/malformed/stale vẫn fail closed. Public request giữ `active_variation_modes: []`.
+- Forward migration 026 dùng mapping_version 1.1 hiện có, freeze `question_policies` trong snapshot JSONB; config modes/dimensions là union để giữ receipt. Không thêm bảng/cột, không backfill job lịch sử. SQL/Python kiểm kết quả theo policy từng câu; writer/claim/read/finish giữ auth, parent lock, fencing và idempotency.
+- Worker dùng full source order cho seed/hash/fingerprint; Clone không reserve quota/call Gemini. Resume giữ nguyên snapshot1.0 hoặc1.1, bỏ slot AI/Clone/fallback đã commit. Original Clone khác fallback AI sau4attempt.
+- Contract cập nhật: [config](api/generation-config-endpoint.md), [worker](api/generation-job-endpoints.md), [input handoff](api/generation-integration-inputs.md). Môi trường kiểm và giới hạn ghi ở [plan70](tasks/TASK-70-PER-QUESTION-GENERATION.md). Chưa là reviewer acceptance hay bằng chứng áp migration vào shared Supabase.
+
+---
+
 ## TASK-306 / RENDER12-01: Typst math converter integral & multi-letter variable fix — 16/11/2026
 
 - Fixed `latex_math_to_typst()` in `backend/app/services/exporter/typst_converter.py` so real Golden math fixtures (`\int_{0}^{1}`, `dx`, `Oxyz`) compile cleanly under Typst `v0.11.1`:

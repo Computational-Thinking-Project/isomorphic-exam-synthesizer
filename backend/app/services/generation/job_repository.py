@@ -30,7 +30,11 @@ from app.services.generation.job_contracts import (
     IncompleteGenerationSource,
     QuestionTarget,
 )
-from app.services.generation.mode_mapper import PUBLIC_TO_CANONICAL_DIMENSIONS
+from app.services.generation.mode_mapper import (
+    PER_QUESTION_MAPPING_VERSION,
+    PUBLIC_TO_CANONICAL_DIMENSIONS,
+    question_policy,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +76,7 @@ def _check_frozen_config(config: dict[str, Any], context: dict[str, Any]) -> tup
             for prefs in (preferences, frozen_preferences)
             for key in ("shuffle_questions", "shuffle_options")
         )
-        or context["mapping_version"] != "1.0"
+        or context["mapping_version"] not in {"1.0", PER_QUESTION_MAPPING_VERSION}
     ):
         raise ValueError("Claim configuration differs from its frozen context.")
     if (
@@ -325,6 +329,16 @@ class GenerationJobRepository:
                 raise ValueError("Invalid durable quota count.")
             dimensions = _check_frozen_config(config, context)
             sources = _check_frozen_sources(context, session_id)
+            policies = None
+            if context["mapping_version"] == PER_QUESTION_MAPPING_VERSION:
+                policies = {
+                    row["source_question_id"]: question_policy(_object(row["canonical_blueprint"]))
+                    for row in sources
+                }
+                if context.get("question_policies") != policies or set(dimensions) != {
+                    dim for policy in policies.values() for dim in policy["canonical_dimensions"]
+                }:
+                    raise ValueError("Frozen per-question policy does not match its Blueprint evidence.")
             targets: list[QuestionTarget] = []
             source_models: list[SourceQuestion] = []
             blueprints: dict[str, dict[str, Any]] = {}
@@ -356,12 +370,17 @@ class GenerationJobRepository:
                 _uuid(row["source_question_id"]): index for index, row in enumerate(sources)
             }
             clone_mode = not dimensions
-            allowed_kinds = {"ORIGINAL_CLONE"} if clone_mode else {"AI_RESULT", FALLBACK_KIND}
+            clone_ids = {
+                key for key, policy in (policies or {}).items()
+                if policy["result_kind"] == "ORIGINAL_CLONE"
+            }
             claimed: dict[QuestionTarget, str] = {}
             for value in _array(receipt["committed_targets"]):
                 row = _object(value)
                 target = _target_from_receipt(row)
                 kind = row["result_kind"]
+                is_clone = str(target.source_question_id) in clone_ids if policies is not None else clone_mode
+                allowed_kinds = {"ORIGINAL_CLONE"} if is_clone else {"AI_RESULT", FALLBACK_KIND}
                 if target not in target_set or target in claimed or kind not in allowed_kinds:
                     raise ValueError("Claimed result is outside the frozen job.")
                 claimed[target] = kind
@@ -387,7 +406,7 @@ class GenerationJobRepository:
                     )
                     _check_fallback_readback(loaded, target, row, expected)
                     fallback_slots.add((target.version_index, str(target.source_question_id)))
-                elif not clone_mode:
+                elif row["result_kind"] == "AI_RESULT":
                     result = QuestionResult.model_validate(row["raw_result"])
                     candidate = result.candidate
                     if (
@@ -418,6 +437,11 @@ class GenerationJobRepository:
                     confirmation_id=_uuid(context["confirmation_id"]),
                     frozen_sources={row["source_question_id"]: deepcopy(row) for row in sources},
                     committed_fallbacks=frozenset(fallback_slots),
+                    source_variation_modes=(
+                        {key: tuple(policy["canonical_dimensions"]) for key, policy in policies.items()}
+                        if policies is not None else None
+                    ),
+                    clone_source_ids=frozenset(clone_ids),
                 )
             return GenerationPlan(
                 session_id, job_id, tuple(targets), frozenset(saved), count, inputs
@@ -617,6 +641,14 @@ class GenerationJobRepository:
 
     async def save_clone(self, plan: GenerationPlan, target: QuestionTarget) -> None:
         inputs = plan.inputs
+        if isinstance(inputs, AIBatchInputs) and str(target.source_question_id) in inputs.clone_source_ids:
+            if inputs.snapshot_id is None:
+                raise ValueError("Mixed Clone snapshot identity is missing.")
+            inputs = CloneJobInputs(inputs.snapshot_id, {
+                "confirmed_sources": [inputs.frozen_sources[source.id] for source in inputs.sources],
+                "confirmed_source_hash": inputs.confirmed_source_hash,
+                "base_seed": inputs.base_seed,
+            })
         if not isinstance(inputs, CloneJobInputs):
             raise ValueError("Clone requires a frozen clone snapshot.")
         if target in plan.saved or target not in plan.targets:

@@ -1,5 +1,16 @@
 # TASK-207b: Generation jobs and SSE integration contract
 
+## Current policy — Issue #70 / migration 026
+
+New jobs use mapping 1.1 and frozen per-question `question_policies`.
+A single job can contain AI_RESULT and ORIGINAL_CLONE targets; only AI targets
+enter the provider batch. CONFIRMED_SOURCE_FALLBACK remains the separate,
+warning-bearing four-attempt AI fallback. Existing 1.0 snapshots keep their
+whole-exam dispatch semantics on retry. See the
+[versioned config and snapshot contract](generation-config-endpoint.md#issue-70--current-contract-after-migration-026-pr-101).
+The whole-exam empty-mode statements below describe 1.0/all-Clone jobs.
+
+
 ## Implementation status
 
 W4 follow-up in Draft #67 uses migration 019 to infer modes from the confirmed
