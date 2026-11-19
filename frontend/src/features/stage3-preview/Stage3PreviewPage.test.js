@@ -1604,3 +1604,477 @@ test('F84-05: Student Mode DOM isolation — không có badge-correct, lời gi�
     await harness.unmount();
   }
 });
+
+test('F91-04 / S86-A: GET ban đầu 409 ERR_SHUFFLE_REQUIRED; PATCH thành công; POST đã commit nhưng response timeout; GET đối soát trả 200 is_finalized=true => UI chuyển preview finalized; 1 PATCH, 1 POST, không lặp mutation', async () => {
+  const originalGet = api.get;
+  const originalPatch = api.patch;
+  const originalPost = api.post;
+
+  const calls = [];
+  let getCount = 0;
+
+  api.get = async (url) => {
+    calls.push({ type: 'get', url });
+    if (url.includes('/finalize/preview')) {
+      getCount++;
+      if (getCount === 1) {
+        // Initial load: 409 ERR_SHUFFLE_REQUIRED
+        const err = new Error('Shuffle required');
+        err.response = { status: 409, data: { error_code: 'ERR_SHUFFLE_REQUIRED', detail: 'Shuffle required' } };
+        throw err;
+      }
+      // Reconcile call: server has committed finalization
+      return {
+        data: {
+          session_id: 'session-s86-a',
+          status: 'reviewed',
+          is_finalized: true,
+          versions: GOLDEN_PREVIEW_FIXTURE.versions,
+        },
+      };
+    }
+    return { data: { id: 'session-s86-a', status: 'reviewed' } };
+  };
+
+  api.patch = async (url, payload) => {
+    calls.push({ type: 'patch', url, payload });
+    return { data: { success: true } };
+  };
+
+  api.post = async (url, payload) => {
+    calls.push({ type: 'post', url, payload });
+    if (url.includes('/finalize/shuffle')) {
+      // Giả lập network timeout sau khi backend đã commit
+      const netErr = new Error('Network timeout after commit');
+      netErr.isAxiosError = true;
+      throw netErr;
+    }
+    return { data: {} };
+  };
+
+  const harness = renderPreviewPage('session-s86-a');
+  try {
+    await harness.render();
+
+    const applyBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
+    assert.ok(applyBtn, 'Nút Áp dụng & Xem trước phải hiển thị khi 409 ERR_SHUFFLE_REQUIRED');
+
+    await act(async () => {
+      applyBtn.click();
+    });
+
+    // 1. Kiểm tra UI đã tự đối chiếu authoritative preview và hiển thị preview thành công
+    assert.match(harness.container.textContent, /Bản xem trước — Mã đề 101/);
+    assert.match(harness.container.textContent, /Sẵn sàng phê duyệt/);
+
+    // 2. Đúng 1 PATCH, 1 POST
+    const patchCalls = calls.filter((c) => c.type === 'patch');
+    const postCalls = calls.filter((c) => c.type === 'post');
+    assert.equal(patchCalls.length, 1, 'Chỉ được gọi PATCH đúng 1 lần');
+    assert.equal(postCalls.length, 1, 'Chỉ được gọi POST shuffle đúng 1 lần');
+  } finally {
+    api.get = originalGet;
+    api.patch = originalPatch;
+    api.post = originalPost;
+    await harness.unmount();
+  }
+});
+
+test('F91-04 / S86-B: POST timeout và GET đối soát cũng 503 => UI hiển thị chưa xác định kết quả, có nút Kiểm tra trạng thái, không cho bấm PATCH/POST', async () => {
+  const originalGet = api.get;
+  const originalPatch = api.patch;
+  const originalPost = api.post;
+
+  const calls = [];
+  let getCount = 0;
+
+  api.get = async (url) => {
+    calls.push({ type: 'get', url });
+    if (url.includes('/finalize/preview')) {
+      getCount++;
+      if (getCount === 1) {
+        // Initial load: 409 ERR_SHUFFLE_REQUIRED
+        const err = new Error('Shuffle required');
+        err.response = { status: 409, data: { error_code: 'ERR_SHUFFLE_REQUIRED', detail: 'Shuffle required' } };
+        throw err;
+      }
+      if (getCount === 2) {
+        // Reconciliation call fails: 503 Unavailable
+        const err503 = new Error('Service Unavailable during reconciliation');
+        err503.response = { status: 503, data: { detail: 'Service Unavailable' } };
+        throw err503;
+      }
+      // Third call (user clicks Check Status later): server confirms finalized!
+      return {
+        data: {
+          session_id: 'session-s86-b',
+          status: 'reviewed',
+          is_finalized: true,
+          versions: GOLDEN_PREVIEW_FIXTURE.versions,
+        },
+      };
+    }
+    return { data: { id: 'session-s86-b', status: 'reviewed' } };
+  };
+
+  api.patch = async (url, payload) => {
+    calls.push({ type: 'patch', url, payload });
+    return { data: { success: true } };
+  };
+
+  api.post = async (url, payload) => {
+    calls.push({ type: 'post', url, payload });
+    if (url.includes('/finalize/shuffle')) {
+      const netErr = new Error('Network Drop on POST');
+      netErr.isAxiosError = true;
+      throw netErr;
+    }
+    return { data: {} };
+  };
+
+  const harness = renderPreviewPage('session-s86-b');
+  try {
+    await harness.render();
+
+    const applyBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
+    assert.ok(applyBtn);
+
+    await act(async () => {
+      applyBtn.click();
+    });
+
+    // 1. Phải hiển thị màn hình outcome-unknown-view
+    const unknownView = harness.container.querySelector('[data-testid="outcome-unknown-view"]');
+    assert.ok(unknownView, 'Phải hiển thị outcome-unknown-view khi reconciliation không thể kết luận');
+    assert.match(harness.container.textContent, /Chưa xác định được kết quả chốt thứ tự/);
+
+    // 2. Nút btn-shuffle KHÔNG được xuất hiện để ngăn người dùng bấm lặp PATCH/POST
+    const shuffleBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
+    assert.equal(shuffleBtn, null, 'Nút bấm shuffle không được hiển thị khi outcome chưa xác định');
+
+    // 3. Phải có nút "Kiểm tra trạng thái"
+    const checkStatusBtn = harness.container.querySelector('[data-testid="btn-check-status"]');
+    assert.ok(checkStatusBtn, 'Phải có nút Kiểm tra trạng thái');
+
+    // Số mutations tại thời điểm này: 1 patch, 1 post
+    assert.equal(calls.filter((c) => c.type === 'patch').length, 1);
+    assert.equal(calls.filter((c) => c.type === 'post').length, 1);
+
+    // 4. Bấm "Kiểm tra trạng thái" -> CHỈ gọi GET, KHÔNG gọi thêm mutation nào
+    await act(async () => {
+      checkStatusBtn.click();
+    });
+
+    // Không có thêm PATCH hay POST nào
+    assert.equal(calls.filter((c) => c.type === 'patch').length, 1, 'Không được gọi thêm PATCH');
+    assert.equal(calls.filter((c) => c.type === 'post').length, 1, 'Không được gọi thêm POST');
+
+    // Sau khi GET trả finalized, màn hình chuyển sang preview finalized thành công
+    assert.match(harness.container.textContent, /Bản xem trước — Mã đề 101/);
+    assert.match(harness.container.textContent, /Sẵn sàng phê duyệt/);
+  } finally {
+    api.get = originalGet;
+    api.patch = originalPatch;
+    api.post = originalPost;
+    await harness.unmount();
+  }
+});
+
+test('F91-04 / S86-C: POST trả lỗi, GET đối soát xác nhận 409 ERR_SHUFFLE_REQUIRED => cho phép retry, giữ đúng 2 flags, số mutations đúng', async () => {
+  const originalGet = api.get;
+  const originalPatch = api.patch;
+  const originalPost = api.post;
+
+  const calls = [];
+  let postCount = 0;
+
+  api.get = async (url) => {
+    calls.push({ type: 'get', url });
+    if (url.includes('/finalize/preview')) {
+      if (postCount < 2) {
+        const err = new Error('Shuffle required');
+        err.response = {
+          status: 409,
+          data: {
+            error_code: 'ERR_SHUFFLE_REQUIRED',
+            ordering_preferences: { shuffle_questions: true, shuffle_options: false },
+          },
+        };
+        throw err;
+      }
+      return {
+        data: {
+          session_id: 'session-s86-c',
+          status: 'reviewed',
+          is_finalized: true,
+          versions: GOLDEN_PREVIEW_FIXTURE.versions,
+        },
+      };
+    }
+    return {
+      data: {
+        id: 'session-s86-c',
+        status: 'reviewed',
+        ordering_preferences: { shuffle_questions: true, shuffle_options: false },
+      },
+    };
+  };
+
+  api.patch = async (url, payload) => {
+    calls.push({ type: 'patch', url, payload });
+    return { data: { success: true } };
+  };
+
+  api.post = async (url, payload) => {
+    calls.push({ type: 'post', url, payload });
+    if (url.includes('/finalize/shuffle')) {
+      postCount++;
+      if (postCount === 1) {
+        throw new Error('Immediate server error 500 on shuffle');
+      }
+      return { data: { session_id: 'session-s86-c', is_finalized: true } };
+    }
+    return { data: {} };
+  };
+
+  const harness = renderPreviewPage('session-s86-c');
+  try {
+    await harness.render();
+
+    // 1. Kiểm tra 2 flags được hydrate đúng (ON/OFF)
+    const qCheckbox = harness.container.querySelector('[data-testid="checkbox-shuffle-questions"]');
+    const optCheckbox = harness.container.querySelector('[data-testid="checkbox-shuffle-options"]');
+    assert.equal(qCheckbox.checked, true);
+    assert.equal(optCheckbox.checked, false);
+
+    const applyBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
+    assert.ok(applyBtn);
+
+    // Lần 1: click và gặp lỗi POST
+    await act(async () => {
+      applyBtn.click();
+    });
+
+    // 2. Vì GET đối soát xác nhận vẫn là 409 ERR_SHUFFLE_REQUIRED, nút thử lại vẫn hiển thị
+    const retryBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
+    assert.ok(retryBtn, 'Nút Áp dụng & Xem trước vẫn còn để người dùng thử lại');
+    assert.equal(qCheckbox.checked, true, 'Giữ nguyên cờ shuffle_questions');
+    assert.equal(optCheckbox.checked, false, 'Giữ nguyên cờ shuffle_options');
+
+    // 3. Người dùng bấm thử lại lần 2
+    await act(async () => {
+      retryBtn.click();
+    });
+
+    // Lần 2 thành công và chuyển sang preview
+    assert.match(harness.container.textContent, /Bản xem trước — Mã đề 101/);
+    assert.equal(calls.filter((c) => c.type === 'patch').length, 2);
+    assert.equal(calls.filter((c) => c.type === 'post').length, 2);
+  } finally {
+    api.get = originalGet;
+    api.patch = originalPatch;
+    api.post = originalPost;
+    await harness.unmount();
+  }
+});
+
+for (const finalStatus of ['reviewed', 'approved']) {
+  test(`F91-R04: successful shuffle keeps recovery read-only until ${finalStatus} preview loads`, async () => {
+    const { get, patch, post } = api;
+    const sessionId = 'session-r04';
+    const calls = [];
+    let previewReads = 0;
+    const unavailable = () => {
+      throw Object.assign(new Error('Preview temporarily unavailable'), { response: { status: 503 } });
+    };
+    const shuffleRequired = () => {
+      throw Object.assign(new Error('Shuffle required'), {
+        response: {
+          status: 409,
+          data: {
+            error_code: 'ERR_SHUFFLE_REQUIRED',
+            ordering_preferences: { shuffle_questions: false, shuffle_options: false },
+          },
+        },
+      });
+    };
+
+    api.get = async (url) => {
+      calls.push(['GET', url]);
+      switch (++previewReads) {
+        case 1:
+        case 4:
+          return shuffleRequired();
+        case 2:
+        case 3:
+          return unavailable();
+        case 5:
+          return { data: { session_id: sessionId, status: 'reviewed', is_finalized: false } };
+        default:
+          return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: sessionId, status: finalStatus } };
+      }
+    };
+    api.patch = async (url) => {
+      calls.push(['PATCH', url]);
+      return { data: {} };
+    };
+    api.post = async (url) => {
+      calls.push(['POST', url]);
+      return { data: { session_id: sessionId, is_finalized: true } };
+    };
+
+    const harness = renderPreviewPage(sessionId);
+    const find = (testId) => harness.container.querySelector(`[data-testid="${testId}"]`);
+    const previewRead = ['GET', `/sessions/${sessionId}/finalize/preview`];
+    const expectedCalls = [
+      previewRead,
+      ['PATCH', `/sessions/${sessionId}/ordering-preferences`],
+      ['POST', `/sessions/${sessionId}/finalize/shuffle`],
+      previewRead,
+    ];
+    try {
+      await harness.render();
+      await act(async () => find('btn-shuffle').click());
+      for (let reads = 2; reads <= 5; reads++) {
+        assert.deepEqual(calls, expectedCalls);
+        assert.ok(!find('btn-shuffle'), 'Recovery must hide the shuffle button');
+        assert.equal(find('btn-open-approve'), null);
+        assert.equal(find('badge-status-pending'), null);
+        assert.match(harness.container.textContent, /Đã chốt thứ tự/);
+        assert.ok(find('btn-check-status'));
+        await act(async () => find('btn-check-status').click());
+        expectedCalls.push(previewRead);
+      }
+      assert.deepEqual(calls, expectedCalls);
+      assert.equal(find('btn-check-status'), null);
+      assert.equal(find('btn-shuffle'), null);
+      assert.match(harness.container.textContent, /Bản xem trước — Mã đề 101/);
+      assert.equal(Boolean(find('btn-open-approve')), finalStatus === 'reviewed');
+      assert.equal(Boolean(find('btn-goto-export')), finalStatus === 'approved');
+    } finally {
+      Object.assign(api, { get, patch, post });
+      await harness.unmount();
+    }
+  });
+}
+
+test('F91-R04: late preview recovery for session A leaves session B unchanged', async () => {
+  const { get, patch, post } = api;
+  const recoveryStarted = Promise.withResolvers();
+  const recoveryResponse = Promise.withResolvers();
+  let sessionAReads = 0;
+  api.get = async (url) => {
+    if (url === '/sessions/session-A/finalize/preview') {
+      if (++sessionAReads === 2) {
+        throw Object.assign(new Error('Preview temporarily unavailable'), { response: { status: 503 } });
+      }
+      if (sessionAReads === 3) {
+        recoveryStarted.resolve();
+        return recoveryResponse.promise;
+      }
+    }
+    const sessionId = url.split('/')[2];
+    return { data: { session_id: sessionId, status: 'reviewed', is_finalized: false } };
+  };
+  api.patch = async () => ({ data: {} });
+  api.post = async () => ({ data: { session_id: 'session-A', is_finalized: true } });
+
+  const harness = renderPreviewPage('session-A');
+  const find = (testId) => harness.container.querySelector(`[data-testid="${testId}"]`);
+  try {
+    await harness.render();
+    await act(async () => find('btn-shuffle').click());
+    await act(async () => find('btn-check-status').click());
+    await recoveryStarted.promise;
+
+    await harness.navigate('/session/session-B/stage3/preview');
+    const sessionBView = harness.container.textContent;
+    await act(async () => {
+      recoveryResponse.resolve({ data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'session-A' } });
+      await recoveryResponse.promise;
+    });
+
+    assert.equal(harness.getLocation(), '/session/session-B/stage3/preview');
+    assert.equal(harness.container.textContent, sessionBView);
+    assert.equal(find('btn-shuffle').getAttribute('disabled'), null);
+    assert.equal(find('btn-open-approve'), null);
+  } finally {
+    Object.assign(api, { get, patch, post });
+    await harness.unmount();
+  }
+});
+
+test('F91-04 / S86-D: late shuffle POST for session A leaves session B unchanged', async () => {
+  const originalGet = api.get;
+  const originalPatch = api.patch;
+  const originalPost = api.post;
+
+  const postStarted = Promise.withResolvers();
+  const postResponse = Promise.withResolvers();
+  const previewReads = [];
+
+  api.get = async (url) => {
+    previewReads.push(url);
+    if (url.includes('session-A')) {
+      return {
+        data: {
+          session_id: 'session-A',
+          status: 'reviewed',
+          is_finalized: false,
+          exam_versions: [],
+        },
+      };
+    }
+    return {
+      data: {
+        session_id: 'session-B',
+        status: 'reviewed',
+        is_finalized: false,
+        exam_versions: [],
+      },
+    };
+  };
+
+  api.patch = async () => ({ data: { success: true } });
+
+  api.post = (url) => {
+    postStarted.resolve(url);
+    return postResponse.promise;
+  };
+
+  const harness = renderPreviewPage('session-A');
+  try {
+    await harness.render();
+
+    const applyBtn = harness.container.querySelector('[data-testid="btn-shuffle"]');
+    assert.ok(applyBtn);
+
+    await act(async () => {
+      applyBtn.click();
+    });
+    assert.equal(await postStarted.promise, '/sessions/session-A/finalize/shuffle');
+
+    await harness.navigate('/session/session-B/stage3/preview');
+    const sessionBView = harness.container.textContent;
+    assert.ok(harness.container.querySelector('[data-testid="btn-shuffle"]'));
+
+    // Resolve and flush the response inside act so its async handler can run.
+    await act(async () => {
+      postResponse.resolve({ data: { session_id: 'session-A', is_finalized: true } });
+      await postResponse.promise;
+    });
+
+    assert.equal(harness.getLocation(), '/session/session-B/stage3/preview');
+    assert.equal(harness.container.textContent, sessionBView);
+    assert.equal(harness.container.querySelector('[data-testid="btn-shuffle"]').getAttribute('disabled'), null);
+    assert.deepEqual(previewReads, [
+      '/sessions/session-A/finalize/preview',
+      '/sessions/session-B/finalize/preview',
+    ]);
+  } finally {
+    api.get = originalGet;
+    api.patch = originalPatch;
+    api.post = originalPost;
+    await harness.unmount();
+  }
+});

@@ -846,9 +846,11 @@ test('203b: đổi route bỏ incomplete trả muộn; logout khi dialog đang m
   await app.unmount();
 });
 
-test('Phillip F04 & INT-03: Không render trùng nút Kiểm tra trạng thái và xử lý retryAccepted', async () => {
-  let artifact = { session_id: confirmSessionId, ready: false, canonical_status: 'failed', supported_modes: null };
+test('F91-R06: Stage 1 keeps polling stale failed status before restoring Retry', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const artifact = { session_id: confirmSessionId, ready: false, canonical_status: 'failed', supported_modes: null };
   let retryCalls = 0;
+  let artifactReads = 0;
   api.defaults.adapter = async (config) => {
     if (config.url.endsWith('/source-artifacts/retry')) {
       retryCalls++;
@@ -859,30 +861,38 @@ test('Phillip F04 & INT-03: Không render trùng nút Kiểm tra trạng thái v
         config,
       };
     }
-    if (config.url.endsWith('/source-artifacts')) return response(config, artifact);
+    if (config.url.endsWith('/source-artifacts')) {
+      artifactReads++;
+      return response(config, artifact);
+    }
     return config.method === 'get' ? response(config, confirmDetail('blueprinted')) : confirmedResponse(config);
   };
   const app = mount(confirmSessionId);
-  await app.render();
+  try {
+    await app.render();
+    assert.match(app.container.textContent, /Chưa chuẩn bị được cấu trúc đề/);
+    assert.equal(artifactReads, 1);
+    await act(async () => button(app.container, 'Thử lại').click());
+    assert.equal(artifactReads, 2);
+    assert.match(app.container.textContent, /Đã tiếp nhận yêu cầu tạo lại/);
+    assert.equal(button(app.container, 'Thử lại'), undefined);
+    assert.equal(button(app.container, 'Kiểm tra trạng thái'), undefined);
 
-  assert.match(app.container.textContent, /Chưa chuẩn bị được cấu trúc đề/);
-  const retryBtn = button(app.container, 'Thử lại');
-  assert.ok(retryBtn);
+    for (let cycle = 1; cycle <= 5; cycle++) {
+      await act(async () => t.mock.timers.tick(2000));
+      assert.equal(artifactReads, 2 + cycle);
+      assert.ok(!button(app.container, 'Thử lại'), `Hide Retry on poll ${cycle}`);
+    }
 
-  // Click retry
-  await act(async () => retryBtn.click());
-  assert.equal(retryCalls, 1);
-  // While retryAccepted, the text is shown and button is hidden
-  assert.match(app.container.textContent, /Đã tiếp nhận yêu cầu tạo lại/);
-  assert.equal(button(app.container, 'Thử lại'), undefined, 'Nút thử tạo lại bị ẩn khi đã tiếp nhận');
-
-  // Verify only 1 "Kiểm tra trạng thái" button
-  const checkButtons = Array.from(app.container.querySelectorAll('button')).filter(
-    (b) => b.textContent.includes('Kiểm tra trạng thái')
-  );
-  assert.equal(checkButtons.length, 0, 'Tiến độ được cập nhật tự động');
-
-  await app.unmount();
+    await act(async () => t.mock.timers.tick(2000));
+    assert.equal(artifactReads, 8);
+    assert.equal(button(app.container, 'Thử lại').getAttribute('disabled'), null);
+    await act(async () => t.mock.timers.tick(2000));
+    assert.equal(artifactReads, 8);
+    assert.equal(retryCalls, 1);
+  } finally {
+    await app.unmount();
+  }
 });
 
 test('W4-MVP-10: Deep-link Stage 1 khi phiên ở trạng thái reviewed/approved/exported khóa sửa và hiện link tới bước hiện tại', async () => {
@@ -959,7 +969,7 @@ test('Issue #93: SourceQuestionPreview empty checklist, missing key badge, long 
   assert(missingHtml.includes('Lời giải chi tiết:'));
 
   for (const [status, expectedHeading, expectRetry, expectContinueDisabled] of [
-    ['pending', /Đang chờ chuẩn bị cấu trúc đề/, false, true],
+    ['pending', /Đang chờ chuẩn bị cấu trúc đề/, true, true],
     ['running', /Đang chuẩn bị cấu trúc đề/, false, true],
     ['failed', /Chưa chuẩn bị được cấu trúc đề/, true, true],
     ['ready', /Cấu trúc đề đã sẵn sàng/, false, false],
@@ -1035,5 +1045,54 @@ test('Issue #93: React StrictMode effect replay does not deadlock blueprinted st
     assert.equal(button(container, 'Tiếp tục cấu hình').getAttribute('disabled'), null);
   } finally {
     await act(async () => root.unmount());
+  }
+});
+
+test('Issue #87: canonical status pending (expired lease) displays retry button and clicking it calls retry', async () => {
+  const methods = [];
+  let status = 'pending';
+  api.defaults.adapter = async (config) => {
+    methods.push(`${config.method.toUpperCase()} ${config.url}`);
+    if (config.url.endsWith('/source-artifacts/retry')) {
+      status = 'running';
+      return response(config, { session_id: confirmSessionId, ready: false, canonical_status: 'running', supported_modes: null });
+    }
+    if (config.url.endsWith('/source-artifacts')) {
+      return response(config, { session_id: confirmSessionId, ready: false, canonical_status: status, supported_modes: null });
+    }
+    return response(config, confirmDetail('blueprinted', false));
+  };
+  const app = mount(confirmSessionId);
+  try {
+    await app.render();
+    assert.match(app.container.textContent, /Đang chờ chuẩn bị cấu trúc đề/);
+    const retryBtn = button(app.container, 'Thử lại');
+    assert.ok(retryBtn, 'Phải có nút Thử lại khi trạng thái là pending sau khi hết hạn lease');
+    await act(async () => retryBtn.click());
+    assert.match(app.container.textContent, /Đang chuẩn bị cấu trúc đề/);
+    assert(methods.some((m) => m.includes('POST') && m.includes('/source-artifacts/retry')));
+  } finally {
+    await app.unmount();
+  }
+});
+
+test('Issue #93 + PR #91: BlueprintStatusCard renders retryOutcomeUnknown status and hides Retry after timed-out retry', async () => {
+  api.defaults.adapter = async (config) => {
+    if (config.url.endsWith('/source-artifacts/retry')) {
+      throw new Error('Retry network timeout');
+    }
+    if (config.url.endsWith('/source-artifacts')) {
+      return response(config, { session_id: confirmSessionId, ready: false, canonical_status: 'failed', supported_modes: null });
+    }
+    return response(config, confirmDetail('blueprinted', false));
+  };
+  const app = mount(confirmSessionId);
+  try {
+    await app.render();
+    await act(async () => button(app.container, 'Thử lại').click());
+    assert.match(app.container.textContent, /Đang kiểm tra kết quả yêu cầu tạo lại\. Tiến độ sẽ tự cập nhật\./);
+    assert.equal(button(app.container, 'Thử lại'), undefined);
+  } finally {
+    await app.unmount();
   }
 });

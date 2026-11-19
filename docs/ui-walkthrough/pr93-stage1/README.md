@@ -16,6 +16,6 @@ Before baseline refers to the prior Stage 1 UI captured in [PR #78](../pr78-poli
 ## Verification Notes
 
 - Measured viewport fit at both `1440 × 900` and `375 × 812` with document `scrollWidth` within viewport bounds and KaTeX integral expressions contained inside preview cards.
-- Confirmed interactive `Thử lại` flow on `?scenario=blueprint_failed` transitions to `Đang chuẩn bị cấu trúc đề` / `Đang xử lý` without modifying backend `pending` behavior (which remains scoped to `#87` / PR `#91`).
+- Confirmed interactive `Thử lại` flow on `?scenario=blueprint_failed` transitions to `Đang chuẩn bị cấu trúc đề` / `Đang xử lý`. After merging `PR #91` (`#87`) into `dev`, `BlueprintStatusCard` was updated to also preserve `pending` retry recovery and `retryOutcomeUnknown` progress states (verified via automated DOM tests).
 - Also resolved a `<React.StrictMode>` mount-remount deadlock in `sourceIngestion.js` `dispose()` where aborting an initial `checkCanonicalStatus` left `phase === 'checking_status'` stuck on `blueprinted` sessions.
 - Not verified here: live backend worker execution, production Auth/API round-trips, screen-reader announcement testing, or browser zoom at 200%.

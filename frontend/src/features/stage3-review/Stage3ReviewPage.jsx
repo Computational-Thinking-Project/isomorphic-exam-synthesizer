@@ -63,8 +63,15 @@ function extractErrorString(err, fallback = 'Đã xảy ra lỗi.') {
   return fallback;
 }
 
+function isVariantApproved(variant, approvedSet) {
+  if (!variant) return false;
+  if (variant.status === 'approved') return true;
+  const candId = variant.id || variant.candidate_id || variant.question_id;
+  return Boolean(candId && approvedSet?.has(candId));
+}
+
 /**
- * Thu thập toàn bộ ID, candidate_id và mã vị trí (${vIdx}-${qNo}) của các câu đã được duyệt
+ * Thu thập toàn bộ ID, candidate_id của các câu đã được duyệt
  */
 function extractApprovedIds(sessionData) {
   const approved = new Set();
@@ -75,23 +82,19 @@ function extractApprovedIds(sessionData) {
       if (q.status === 'approved') {
         if (q.id) approved.add(q.id);
         if (q.candidate_id) approved.add(q.candidate_id);
-        const qVIdx = q.version_index ?? q.version_code;
-        const qNo = q.question_no ?? q.number;
-        if (qVIdx && qNo) approved.add(`${qVIdx}-${qNo}`);
+        if (q.question_id) approved.add(q.question_id);
       }
     });
   }
 
   if (Array.isArray(sessionData.exam_versions)) {
-    sessionData.exam_versions.forEach((ver, idx) => {
-      const vIdx = ver.version_index ?? ver.index ?? idx + 1;
+    sessionData.exam_versions.forEach((ver) => {
       const qList = ver.questions || ver.version_questions || [];
       qList.forEach((q) => {
         if (q.status === 'approved') {
           if (q.id) approved.add(q.id);
           if (q.candidate_id) approved.add(q.candidate_id);
-          const qNo = q.question_no ?? q.number;
-          if (qNo) approved.add(`${vIdx}-${qNo}`);
+          if (q.question_id) approved.add(q.question_id);
         }
       });
     });
@@ -534,7 +537,6 @@ export default function Stage3ReviewPage({
         if (variant.candidate_id) next.delete(variant.candidate_id);
         if (updatedVariant.id) next.delete(updatedVariant.id);
         if (updatedVariant.candidate_id) next.delete(updatedVariant.candidate_id);
-        next.delete(`${versionIndex}-${qNo}`);
         return next;
       });
 
@@ -585,14 +587,12 @@ export default function Stage3ReviewPage({
           const authoritativeApproved = extractApprovedIds(adapted);
           setApprovedVariantIds((prev) => {
             const next = new Set(prev);
-            next.delete(`${versionIndex}-${qNo}`);
             if (variant.id) next.delete(variant.id);
             if (variant.candidate_id) next.delete(variant.candidate_id);
             if (replacement?.id) next.delete(replacement.id);
             if (replacement?.candidate_id) next.delete(replacement.candidate_id);
             authoritativeApproved.forEach((id) => {
               if (
-                id !== `${versionIndex}-${qNo}` &&
                 id !== variant.id &&
                 id !== variant.candidate_id &&
                 (!replacement || (id !== replacement.id && id !== replacement.candidate_id))
@@ -688,7 +688,7 @@ export default function Stage3ReviewPage({
         const next = new Set(prev);
         if (variant.id) next.add(variant.id);
         if (variant.candidate_id) next.add(variant.candidate_id);
-        next.add(`${versionIndex}-${qNo}`);
+        if (variant.question_id) next.add(variant.question_id);
         return next;
       });
 
@@ -707,12 +707,17 @@ export default function Stage3ReviewPage({
           latestRaw
         ) {
           const adapted = adaptReviewSnapshot(latestRaw);
-          // Đảm bảo không ghi đè trạng thái approved vừa duyệt nếu snapshot từ mock tĩnh trả về câu chưa duyệt
+          const targetCandidateId = variant.candidate_id || variant.id || variant.question_id;
+
+          // Chỉ áp dụng optimistic approved nếu candidate tại slot vẫn đúng là candidate vừa được duyệt (Issue #85)
           adapted.exam_versions = (adapted.exam_versions || []).map((ver) => {
             if ((ver.version_index ?? 1) === versionIndex) {
               const qList = (ver.questions || []).map((q) => {
                 if ((q.question_no ?? q.number) === qNo) {
-                  return { ...q, status: 'approved' };
+                  const currentCandidateId = q.candidate_id || q.id || q.question_id;
+                  if (targetCandidateId && currentCandidateId === targetCandidateId) {
+                    return { ...q, status: 'approved' };
+                  }
                 }
                 return q;
               });
@@ -721,13 +726,26 @@ export default function Stage3ReviewPage({
             return ver;
           });
           setSession(adapted);
+
+          // Cập nhật selectedSolution nếu đang mở đúng slot này
+          setSelectedSolution((prev) => {
+            if (!prev) return null;
+            if (prev.versionIndex === versionIndex && prev.qNo === qNo) {
+              const latestVariant = findVariantInSession(adapted, versionIndex, qNo);
+              if (latestVariant) {
+                return { ...prev, variant: latestVariant };
+              }
+            }
+            return prev;
+          });
+
           const authoritativeApproved = extractApprovedIds(adapted);
           setApprovedVariantIds((prev) => {
             const merged = new Set(prev);
             authoritativeApproved.forEach((id) => merged.add(id));
             if (variant.id) merged.add(variant.id);
             if (variant.candidate_id) merged.add(variant.candidate_id);
-            merged.add(`${versionIndex}-${qNo}`);
+            if (variant.question_id) merged.add(variant.question_id);
             return merged;
           });
         }
@@ -843,7 +861,6 @@ export default function Stage3ReviewPage({
         if (variant.candidate_id) next.delete(variant.candidate_id);
         if (updatedVariant.id) next.delete(updatedVariant.id);
         if (updatedVariant.candidate_id) next.delete(updatedVariant.candidate_id);
-        next.delete(`${versionIndex}-${qNo}`);
         return next;
       });
 
@@ -981,13 +998,7 @@ export default function Stage3ReviewPage({
     for (let vIdx = 1; vIdx <= numVersions; vIdx++) {
       for (let qNo = 1; qNo <= totalSourceQuestions; qNo++) {
         const v = findVariantInSession(session, vIdx, qNo);
-        const slotKey = `${vIdx}-${qNo}`;
-        if (
-          v &&
-          (v.status === 'approved' ||
-            (v.id && approvedVariantIds.has(v.id)) ||
-            approvedVariantIds.has(slotKey))
-        ) {
+        if (isVariantApproved(v, approvedVariantIds)) {
           count++;
         }
       }
@@ -1002,7 +1013,7 @@ export default function Stage3ReviewPage({
       const version = Math.floor(position / totalSourceQuestions) + 1;
       const number = position % totalSourceQuestions + 1;
       const candidate = findVariantInSession(session, version, number);
-      if (candidate && candidate.status !== 'approved' && !approvedVariantIds.has(`${version}-${number}`)) {
+      if (candidate && !isVariantApproved(candidate, approvedVariantIds)) {
         setReviewFilter('all');
         setActiveVersionTab(version);
         handleOpenSolutionModal(candidate, number, version);
@@ -1042,14 +1053,7 @@ export default function Stage3ReviewPage({
     totalExpectedSlots === 0 || approvedCount < totalExpectedSlots || isPartial || isReviewReadOnly || isApprovingSingle || isRegeneratingSingle || isRetryingAll;
 
   const isSelectedVariantApproved = useMemo(() => {
-    if (!selectedSolution?.variant) return false;
-    const { variant, versionIndex, qNo } = selectedSolution;
-    const slotKey = `${versionIndex}-${qNo}`;
-    return (
-      variant.status === 'approved' ||
-      (variant.id && approvedVariantIds.has(variant.id)) ||
-      approvedVariantIds.has(slotKey)
-    );
+    return isVariantApproved(selectedSolution?.variant, approvedVariantIds);
   }, [selectedSolution, approvedVariantIds]);
 
 
@@ -1303,7 +1307,7 @@ export default function Stage3ReviewPage({
                   : 'border border-line bg-rail text-ink hover:bg-rail'
               }`}
             >
-              {versionLabel(session, vIdx)} · {Array.from({length: totalSourceQuestions}, (_, i) => i+1).filter(n => findVariantInSession(session,vIdx,n)?.status === 'approved' || approvedVariantIds.has(`${vIdx}-${n}`)).length}/{totalSourceQuestions}
+              {versionLabel(session, vIdx)} · {Array.from({length: totalSourceQuestions}, (_, i) => i+1).filter(n => isVariantApproved(findVariantInSession(session,vIdx,n), approvedVariantIds)).length}/{totalSourceQuestions}
             </button>
           );
         })}
@@ -1311,9 +1315,9 @@ export default function Stage3ReviewPage({
 
       <div role="group" aria-label="Lọc câu hỏi" className="flex flex-wrap gap-2">
         {[['all','Tất cả'],['pending','Chưa duyệt'],['warning','Có cảnh báo'],['approved','Đã duyệt']].map(([value,label]) => {
-          const count = Array.from({length:totalSourceQuestions},(_,i)=>findVariantInSession(session,activeVersionTab,i+1)).filter((v,i)=>{
+          const count = Array.from({length:totalSourceQuestions},(_,i)=>findVariantInSession(session,activeVersionTab,i+1)).filter((v)=>{
             const { hasWarning, isFallback } = getVariantWarningFlags(v);
-            const approved = v?.status === 'approved' || approvedVariantIds.has(`${activeVersionTab}-${i+1}`);
+            const approved = isVariantApproved(v, approvedVariantIds);
             return value === 'all' || (value === 'pending' && !approved) || (value === 'approved' && approved) || (value === 'warning' && (hasWarning || isFallback));
           }).length;
           return <button type="button" key={value} aria-pressed={reviewFilter===value} disabled={isApprovingSingle || isRegeneratingSingle} onClick={()=>{setReviewFilter(value);setSelectedSolution(null);}} className="rounded-lg border border-line px-3 py-2 text-sm aria-pressed:bg-support-bg">{label} ({count})</button>;
@@ -1328,10 +1332,7 @@ export default function Stage3ReviewPage({
           if (isMissing) {
             return reviewFilter === 'all' || reviewFilter === 'pending';
           }
-          const isApproved =
-            variant.status === 'approved' ||
-            (variant.id && approvedVariantIds.has(variant.id)) ||
-            approvedVariantIds.has(`${activeVersionTab}-${qNo}`);
+          const isApproved = isVariantApproved(variant, approvedVariantIds);
           const { isFallback, hasWarning } = getVariantWarningFlags(variant);
           return (
             reviewFilter === 'all' ||
@@ -1421,11 +1422,7 @@ export default function Stage3ReviewPage({
           // Hiển thị câu hỏi đã hoàn tất
           const options = normalizeOptions(variant.options);
           const correctKey = variant.correct_key || variant.answer;
-          const slotKey = `${activeVersionTab}-${qNo}`;
-          const isApproved =
-            variant.status === 'approved' ||
-            (variant.id && approvedVariantIds.has(variant.id)) ||
-            approvedVariantIds.has(slotKey);
+          const isApproved = isVariantApproved(variant, approvedVariantIds);
 
           const { isFallback, hasWarning } = getVariantWarningFlags(variant);
 

@@ -65,8 +65,9 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
     pendingFocus.current = null;
     if (controller.canSubmit()) target?.focus();
   }, [controller, state.mode, dismissedCause]);
+  const retryInProgress = state.retryAccepted || state.retryOutcomeUnknown;
   const preparing = state.detail.status === 'blueprinted' && !state.canonicalReady
-    && (!state.canonicalStatus || ['pending', 'running'].includes(state.canonicalStatus) || state.retryAccepted)
+    && (!state.canonicalStatus || ['pending', 'running'].includes(state.canonicalStatus) || retryInProgress)
     && !state.unavailable;
   useEffect(() => {
     if (!preparing) return;
@@ -193,6 +194,7 @@ export default function Stage1SourcePanel({ detail, isCurrent, onConfirmed }) {
           status={state.canonicalStatus}
           ready={state.canonicalReady}
           retryAccepted={state.retryAccepted}
+          retryOutcomeUnknown={state.retryOutcomeUnknown}
           progress={state.canonicalProgress}
           busy={busy}
           onRetry={() => void controller.retryCanonical()}
