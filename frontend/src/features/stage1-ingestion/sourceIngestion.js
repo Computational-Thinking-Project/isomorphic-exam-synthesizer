@@ -63,12 +63,32 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     text: state.text,
     file: null,
   };
+  let pendingReplacedIngestion = false;
+  let pendingSubmittedInput = null;
   const checkIsDirty = (mode, text, file) => {
     if (!hasIngested || (state.detail?.source_questions?.length ?? 0) === 0) return false;
     if (mode !== lastIngested.mode) return true;
     if (mode === 'text' && text !== lastIngested.text) return true;
     if (mode === 'file' && file !== lastIngested.file) return true;
     return false;
+  };
+  const applySavedDraftRevision = (detail, baselineInput = null) => {
+    if (baselineInput) {
+      hasIngested = true;
+      lastIngested = baselineInput;
+    }
+    if (
+      recoveryRevision &&
+      isSourceUuid(detail.source_revision) &&
+      recoveryRevision !== detail.source_revision.toLowerCase()
+    ) {
+      try {
+        confirmationStore?.clear();
+        recoveryRevision = null;
+      } catch {
+        storageBlocked = true;
+      }
+    }
   };
   const publish = (next) => {
     state = { ...state, ...next };
@@ -237,15 +257,36 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       const detail = await readDetail(operation.signal);
       if (!operation.current()) return;
       if (detail.status === 'blueprinted') {
+        pendingSubmittedInput = null;
+        pendingReplacedIngestion = false;
         await recoverBlueprintedDetail(detail, operation);
         return;
       }
       if (['configured', 'generating'].includes(detail.status)) {
+        pendingSubmittedInput = null;
+        pendingReplacedIngestion = false;
         finishConfirmation(detail);
         return;
       }
-      publish({ detail, phase: 'idle', requiresReload: false, unavailable: false, cause: null,
-        message: 'Đã đọc lại nguồn đã lưu.', error: state.uncertain ? UNCERTAIN_MESSAGE : '' });
+      let nextDirty = state.isInputDirty;
+      if (pendingReplacedIngestion) {
+        const baseline = pendingSubmittedInput;
+        pendingSubmittedInput = null;
+        pendingReplacedIngestion = false;
+        applySavedDraftRevision(detail, baseline);
+        nextDirty = checkIsDirty(state.mode, state.text, state.file);
+      }
+      publish({
+        detail,
+        phase: 'idle',
+        requiresReload: false,
+        unavailable: false,
+        cause: null,
+        isInputDirty: nextDirty,
+        confirmationError: storageBlocked ? CONFIRM_STORAGE : recoveryRevision ? CONFIRM_RECOVERY : '',
+        message: 'Đã đọc lại nguồn đã lưu.',
+        error: state.uncertain ? UNCERTAIN_MESSAGE : '',
+      });
       // A GET is a snapshot; it cannot establish that an earlier ingest POST has stopped.
     } catch (cause) {
       if (!operation.current()) return;
@@ -471,6 +512,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     async submit() {
       if (!canSubmit()) return;
       const fileMode = state.mode === 'file';
+      const submittedInput = { mode: state.mode, text: state.text, file: state.file };
       let input;
       try { input = fileMode ? validateFile(state.file) : validateText(state.text); }
       catch (cause) { publish({ error: errorMessage(cause), cause, message: '' }); return; }
@@ -491,6 +533,8 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
         assertSameSession(result.session_id);
         if (!Array.isArray(result.questions)) throw new Error('Unexpected source response');
         count = result.questions.length;
+        pendingSubmittedInput = submittedInput;
+        pendingReplacedIngestion = true;
       } catch (cause) {
         if (!operation.current()) return;
         const status = cause?.response?.status;
@@ -508,24 +552,30 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
         const detail = await readDetail(operation.signal);
         if (!operation.current()) return;
         if (detail.status === 'blueprinted') {
+          pendingSubmittedInput = null;
+          pendingReplacedIngestion = false;
           await recoverBlueprintedDetail(detail, operation);
           return;
         }
-        if (['configured', 'generating'].includes(detail.status)) { finishConfirmation(detail); return; }
-        if (recoveryRevision && isSourceUuid(detail.source_revision)
-          && recoveryRevision !== detail.source_revision.toLowerCase()) {
-          try { confirmationStore.clear(); recoveryRevision = null; }
-          catch { storageBlocked = true; }
+        if (['configured', 'generating'].includes(detail.status)) {
+          pendingSubmittedInput = null;
+          pendingReplacedIngestion = false;
+          finishConfirmation(detail);
+          return;
         }
-        hasIngested = true;
-        lastIngested = {
-          mode: state.mode,
-          text: state.text,
-          file: state.file,
-        };
-        publish({ detail, phase: 'idle', requiresReload: false, unavailable: false, isInputDirty: false,
+        const baseline = pendingSubmittedInput;
+        pendingSubmittedInput = null;
+        pendingReplacedIngestion = false;
+        applySavedDraftRevision(detail, baseline);
+        publish({
+          detail,
+          phase: 'idle',
+          requiresReload: false,
+          unavailable: false,
+          isInputDirty: checkIsDirty(state.mode, state.text, state.file),
           confirmationError: storageBlocked ? CONFIRM_STORAGE : recoveryRevision ? CONFIRM_RECOVERY : '',
-          message: `Đã nạp ${count} câu nguồn.` });
+          message: `Đã nạp ${count} câu nguồn.`,
+        });
       } catch (cause) {
         if (!operation.current()) return;
         publish({ phase: 'idle', unavailable: isUnavailable(cause?.response?.status),
