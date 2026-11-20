@@ -85,11 +85,26 @@ test('renders the private overview, chart values, fallback, and return link', as
   assert.ok(requests[0].signal);
   assert.equal(container.querySelector('a').getAttribute('href'), '/dashboard');
   assert.match(container.textContent, /2 phiên sinh đề gặp lỗi và 1 phiên chưa xác định trạng thái/);
-  const chart = container.querySelector('section');
-  assert.equal(chart.querySelectorAll('dt').length, 11);
-  assert.match(chart.textContent, /Đã tạo gói xuất1/);
-  assert.match(chart.textContent, /Chưa xác định1/);
-  assert.match(chart.textContent, /Đang chuẩn bị đề gốc0/);
+  const summary = container.querySelector('dl');
+  const values = Array.from(summary.querySelectorAll('dd'), (cell) => parseInt(cell.textContent, 10));
+  assert.deepEqual(values, [6, 1, 1, 1]);
+  const body = container.querySelector('tbody');
+  const chartRows = () => Array.from(body.querySelectorAll('tr'), (row) => [
+    row.querySelector('th').textContent, Number(row.querySelector('td').textContent),
+  ]);
+  const allRows = chartRows();
+  assert.equal(allRows.length, 11);
+  assert.equal(allRows.reduce((sum, [, count]) => sum + count, 0), values[0]);
+  assert.deepEqual(allRows.slice(5), [
+    ['Đã sinh đề', 1], ['Đã duyệt các câu, chờ chốt', 0], ['Đã duyệt, chưa xuất', 1],
+    ['Đã tạo gói xuất', 1], ['Sinh đề gặp lỗi', 2], ['Chưa xác định', 1],
+  ]);
+  const toggle = container.querySelector('input[type="checkbox"]');
+  await act(async () => toggle.click());
+  assert.deepEqual(chartRows(), allRows.filter(([, count]) => count > 0));
+  await act(async () => toggle.click());
+  assert.deepEqual(chartRows(), allRows);
+  assert.equal(requests.length, 1);
 });
 
 test('reports loading, retries a failure, and shows real zeros for an empty account', async () => {
@@ -106,7 +121,8 @@ test('reports loading, retries a failure, and shows real zeros for an empty acco
   api.defaults.adapter = async (config) => response(config, empty);
   await act(async () => container.querySelector('button').dispatchEvent({ type: 'click', bubbles: true }));
   assert.match(container.textContent, /Bạn chưa có phiên đề nào/);
-  assert.deepEqual(Array.from(container.querySelectorAll('dd'), (item) => item.textContent), Array(4).fill('0phiên đề'));
+  assert.deepEqual(Array.from(container.querySelectorAll('dd'), (item) => parseInt(item.textContent, 10)), [0, 0, 0, 0]);
+  assert.equal(container.querySelector('table'), null);
 });
 
 test('aborts stale account data and renders the new account', async () => {
