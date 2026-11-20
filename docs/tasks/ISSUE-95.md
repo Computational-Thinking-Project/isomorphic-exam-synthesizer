@@ -94,7 +94,27 @@ Dùng [UI walkthrough](../ui-walkthrough/README.md) (`PREVIEW.html` các màn S0
 
 ---
 
-## 5. Bàn giao *(cập nhật sau các lượt triển khai)*
+## 5. Bàn giao *(cập nhật sau lượt Commit 5 — Local Ready)*
 
-- **Trạng thái hiện tại (Commit 1):** Mới hoàn tất lập **M2 Plan** (`docs/tasks/ISSUE-95.md`) trên nhánh `feat/issue-95-stage3-redesign` (`dev@e7e0088`). Chưa sửa code FE hay chạy bộ test mới trên nhánh này.
-- **Bước tiếp:** Mở Draft PR để đối chiếu nhanh các điểm `I-95-STAGE2` / `I-95-EXPORT-V2` và triển khai lần lượt **Commit 2 (Review)** $\rightarrow$ **Commit 3 (Final Preview)** $\rightarrow$ **Commit 4 (Export)** $\rightarrow$ **Commit 5 (Verify & Walkthrough evidence)**.
+- **Trạng thái hiện tại:** Hoàn tất cả **5 lượt commit** trên nhánh `feat/issue-95-stage3-redesign` (rẽ từ `dev@e7e0088`). Toàn bộ giao diện Giai đoạn 3 (Review, Final Preview, Export) đã được đồng bộ với `docs/ui-walkthrough/` (`S06`/`S07`/`S08`) và hệ token `.paper-ui` (`index.css`), bảo toàn toàn bộ cơ chế an toàn `#85`, `#86`, `partial_generated`, `409`/`423` và không chạm các file ngoài phạm vi (`backend/**`, `exportController.js`, `exportService.js`, `stage3Service.js`, `App.jsx`, `sessionDestination.js`, `index.css`).
+
+### 5.1. Danh sách commit trên nhánh
+1. `809dc5e` — `docs(issue-95): add M2 redesign plan aligned with ui-walkthrough` (`docs/tasks/ISSUE-95.md`)
+2. `313975e` — `feat(stage3-review): align review workspace UX with ui-walkthrough (#95)` (`Stage3ReviewPage.jsx`, `Stage3Review.test.js`)
+3. `3b1df06` — `feat(stage3-preview): restrict shuffle to question order and align preview UX with ui-walkthrough (#95)` (`stage3PreviewService.js`, `stage3PreviewService.test.js`, `Stage3PreviewPage.jsx`, `Stage3PreviewPage.test.js`)
+4. `97b64db` — `feat(export): align ZIP export screen with ui-walkthrough S08 and w4-export-v2 (#95)` (`SessionExportPage.jsx`, `SessionExportPage.test.js`)
+5. *(commit này)* — `docs(issue-95): update handoff verification results and limitations (#95)` (`docs/tasks/ISSUE-95.md`)
+
+### 5.2. Kết quả kiểm tra đã chạy sau Commit 4
+- **Full frontend test suite (`npm test`):** `563/563 PASS` (`2` suites, `0` fail, `0` skipped, `0` cancelled, `0` todo).
+- **Stage 3 & Export targeted suite (`node --test --test-concurrency=1` trên 6 file test Review / Preview / Export):** `129/129 PASS` (`0` fail, `0` skipped, `0` cancelled, `0` todo), bao gồm các ca `#85`, `#86`, guard `shuffle_options` bất đồng bộ/cũ, `stage3PreviewPath(sessionId)` URL-encoded, mô tả `w4-export-v2`, kích thước gói ZIP và retry `failed`.
+- **Lint (`npm run lint` — `eslint . --max-warnings 0`):** Exit `0` (0 lỗi, 0 cảnh báo).
+- **Production build (`npm run build` — `vite build`):** Exit `0`, transform `1920` modules thành công trong `22.98s` (`dist/` sạch).
+- **Static audit Responsive & Keyboard/ARIA (trong mã nguồn JSX đã build):**
+  - Đã kiểm lớp bố cục responsive (`sm:`, `lg:`, `max-w-*`, `grid-cols-1 sm:grid-cols-2`, `w-full sm:w-auto`) và cô lập tràn công thức KaTeX/ma trận đáp án bằng `min-w-0 overflow-x-auto`.
+  - Đã kiểm cấu trúc ngữ nghĩa/bàn phím: `role="tablist"`, `onKeyDown={handleTabKeyDown}`, `role="tab"` (`aria-selected`), `role="tabpanel"` (`tabIndex={0}`), `role="dialog"` (`aria-modal="true"`), `role="status"`, `role="alert"`.
+
+### 5.3. Giới hạn & phần chưa xác minh (Minh bạch trước khi Merge / Ready)
+- **Live E2E & Backend tích hợp:** Toàn bộ test sử dụng JSDOM và adapter/API mock; chưa chạy E2E với Supabase Auth, Stage 2 (`#94`) hoặc worker đóng gói ZIP (`PR #103`/`PR #104`).
+- **Ảnh chụp trình duyệt thật (`docs/ui-walkthrough/pr95-stage3/`):** Chưa tạo ảnh chụp màn hình `1440×900` và `375×812` trên browser thật do route `/session/:id/stage3/*` và `/session/:id/export` được bảo vệ bởi Supabase session trong `App.jsx` và phạm vi PR không sửa `App.jsx` hay dựng route bypass auth. Cần bổ sung kiểm tra visual desktop/mobile trực tiếp sau khi ghép môi trường staging có đăng nhập.
+- **Bước tiếp:** Chuyển Draft PR sang **Ready for review** (tag `@htbaax`, `@AI-WFox`, `@benalexx007`, `@johannguyen015`), phối hợp smoke E2E sau khi `#94` và `PR #103/#104` sẵn sàng trên môi trường tích hợp.
