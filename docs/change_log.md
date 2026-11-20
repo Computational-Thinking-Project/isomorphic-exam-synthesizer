@@ -1,3 +1,9 @@
+## DEC-97-001 — Issue #97: Teacher usage statistics — 20/11/2026
+
+- Decision owner: Issue #97 assignee. Status: proposed for review.
+- Add a caller-scoped usage statistics API over stored session statuses. Use one invoker RPC snapshot so the four overview counts and the distribution reconcile.
+- Statistics links from the Dashboard and adds a protected Vietnamese overview. The contract explains why Gemini and retry counters are omitted. [API contract](api/statistics-endpoint.md)
+
 ## Issue #70 — Per-question generation policy (PR #101, proposed for review) — 19/11/2026
 
 - Đạt thay intersection toàn đề bằng policy theo câu cho job mới: values/context riêng từng Blueprint; chỉ Clone câu có policy hợp lệ nhưng không có chiều được hỗ trợ. Empty/malformed/stale vẫn fail closed. Public request giữ `active_variation_modes: []`.
