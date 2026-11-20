@@ -4,6 +4,8 @@ import { api } from './api.js';
 import {
   fetchFinalizePreview,
   fetchOrderingPreferences,
+  hasReliableOrderingPreferences,
+  extractReliableOrderingPreferences,
   updateOrderingPreferences,
   triggerFinalizeShuffle,
   executeFinalizeShuffle,
@@ -466,8 +468,33 @@ test('fetchOrderingPreferences: restores OFF/ON and authoritative session status
     ordering_preferences: { shuffle_questions: false, shuffle_options: true },
   } } });
   try {
-    assert.deepEqual(await fetchOrderingPreferences('session-off-on'), {
+    const prefs = await fetchOrderingPreferences('session-off-on');
+    assert.deepEqual(prefs, {
       shuffle_questions: false, shuffle_options: true, status: 'exported',
     });
+    assert.equal(hasReliableOrderingPreferences(prefs), true);
   } finally { api.get = originalGet; }
+});
+
+test('ISSUE-95: fetchOrderingPreferences đánh dấu không đáng tin cậy khi thiếu hoặc sai kiểu shuffle_options', async () => {
+  const originalGet = api.get;
+  try {
+    api.get = async () => ({ data: { id: 'sess-missing', status: 'reviewed' } });
+    const missingPrefs = await fetchOrderingPreferences('sess-missing');
+    assert.equal(hasReliableOrderingPreferences(missingPrefs), false);
+
+    api.get = async () => ({
+      data: { id: 'sess-bad-type', status: 'reviewed', ordering_preferences: { shuffle_questions: true } },
+    });
+    const badTypePrefs = await fetchOrderingPreferences('sess-bad-type');
+    assert.equal(hasReliableOrderingPreferences(badTypePrefs), false);
+
+    assert.equal(extractReliableOrderingPreferences({ shuffle_questions: false }), null);
+    assert.deepEqual(
+      extractReliableOrderingPreferences({ shuffle_questions: false, shuffle_options: true }),
+      { shuffle_questions: false, shuffle_options: true },
+    );
+  } finally {
+    api.get = originalGet;
+  }
 });
