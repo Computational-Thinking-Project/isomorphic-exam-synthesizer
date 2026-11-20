@@ -1,6 +1,12 @@
 # W4 OPS handoff — lifecycle đề xuất và baseline triển khai
 
-## Baseline hiện hành 11/11 — đọc trước các mốc lịch sử
+## Baseline hiện hành — 17/11/2026
+
+Runtime local đã build từ `dev@1ff345cc4d1ca04d81abc75b6ca14db0f192c9db`, hai containers healthy, smoke8/8 PASS và backend Supabase REST200. Preview/Export routes đã mount; #58 và #66 đã merge. Xem [checkpoint OPS và phần còn thiếu](tasks/TASK-W4-OPS.md) để phân biệt local connectivity, DB deployment và G0/G1/G2.
+
+Đọc catalog shared DB: thiếu bảng/RPC migration020 và bucket private export; bốn thân hàm024 khớp repo nhưng chưa chứng nhận applied manifest/ACL đầy đủ. Chưa apply DDL hoặc bật export. #63/#82 vẫn cần tích hợp; G0/G1/G2 chưa verified. Các nhận định “chưa merge” và runtime294c69a phía dưới là lịch sử ngày11/11, không còn là trạng thái hiện hành.
+
+## Baseline lịch sử — 11/11
 
 Checkpoint source sync devb47e4fa; runtime đã build vẫn là294c69a: PR51 và PR52 đã merge; 017 có reviewer PostgreSQL23/23 proof, chưa có applied ledger DB ứng dụng. PR30 vẫn Open tại `66ad00c`, đã Approve phạm vi W2; F02 resource bounds đã reviewer verified, không còn chờ sửa F02. Worker/metrics/SSE vẫn chưa thuộc base này. PR54/018 đã merged vào dev21887c1; PR61/019@9fda6fd đã Approve, đã merged vào devb47e4fa; DB-applied UNVERIFIED; W4 adapter tách issue64; không tự ghép PR heads làm candidate đã nghiệm thu. [Migration checkpoint](w4-migration-candidate.md) và [input-handoff duy nhất](tasks/TASK-W4-OPS.md#input-handoff) ghi nguồn/version và phần còn thiếu.
 

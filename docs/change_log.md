@@ -1,3 +1,27 @@
+## Issue #70 — Per-question generation policy (PR #101, proposed for review) — 19/11/2026
+
+- Đạt thay intersection toàn đề bằng policy theo câu cho job mới: values/context riêng từng Blueprint; chỉ Clone câu có policy hợp lệ nhưng không có chiều được hỗ trợ. Empty/malformed/stale vẫn fail closed. Public request giữ `active_variation_modes: []`.
+- Forward migration 026 dùng mapping_version 1.1 hiện có, freeze `question_policies` trong snapshot JSONB; config modes/dimensions là union để giữ receipt. Không thêm bảng/cột, không backfill job lịch sử. SQL/Python kiểm kết quả theo policy từng câu; writer/claim/read/finish giữ auth, parent lock, fencing và idempotency.
+- Worker dùng full source order cho seed/hash/fingerprint; Clone không reserve quota/call Gemini. Resume giữ nguyên snapshot1.0 hoặc1.1, bỏ slot AI/Clone/fallback đã commit. Original Clone khác fallback AI sau4attempt.
+- Contract cập nhật: [config](api/generation-config-endpoint.md), [worker](api/generation-job-endpoints.md), [input handoff](api/generation-integration-inputs.md). Môi trường kiểm và giới hạn ghi ở [plan70](tasks/TASK-70-PER-QUESTION-GENERATION.md). Chưa là reviewer acceptance hay bằng chứng áp migration vào shared Supabase.
+
+---
+
+## TASK-306 / RENDER12-01: Typst math converter integral & multi-letter variable fix — 16/11/2026
+
+- Fixed `latex_math_to_typst()` in `backend/app/services/exporter/typst_converter.py` so real Golden math fixtures (`\int_{0}^{1}`, `dx`, `Oxyz`) compile cleanly under Typst `v0.11.1`:
+  - Added Typst math mappings for integrals/big operators (`\int`, `\iint`, `\iiint`, `\oint`, `\sum`, `\prod`), remaining `_MATH_COMMANDS` symbols/functions/Greek letters/style & accent wrappers (`\mathbb`, `\overline`, `\vec`, `\hat`, `\bar`, `\ddot`, etc.), spacing escapes, and math environments (`cases`, matrices, `aligned`, `alignedat`, `gathered`, `split`).
+  - Normalized script attachment around `_` and `^` (e.g. `\int_{0}^{1}` -> `integral_(0)^(1)` instead of stray `\i`+`nt` escape).
+  - Added quote-safe and case-sensitive `_split_multiletter_segment` logic separating adjacent LaTeX single-letter variables (`dx` -> `d x`, `Oxyz` -> `O x y z`, `IN` -> `I N`) while preserving Typst math identifiers/dot-symbols, `"..."` literals, `#`/`.method(`/`panic|eval|assert` security neutralization (`F03`), and decimal coefficients (`0.5(x+1)`, `F06`).
+  - Resolved review finding F82-01: consume and validate mandatory alignment column-count arguments in `alignedat` (`\begin{alignedat}{n}`) and optional placement specifiers (`[t|b|c]`), preventing stray `{n}` metadata from corrupting exported formulas while keeping equations and row boundaries intact.
+  - Resolved review finding F82-02: preserve `&` column separators inside `cases` (`\begin{cases}...\end{cases}`) instead of flattening expression/condition boundaries into spaces.
+  - Resolved review finding F82-03: preserve unit and upright text labels inside `\mathrm{...}` (`\mathrm{cm}` -> `upright("cm")`, `\mathrm{kg}` -> `upright("kg")`) without splitting abbreviations into separate mathematical variables.
+  - Resolved review finding F82-04: remove whole-argument quoting in `_convert_mathrm()` and process `\mathrm{...}` before structural/environment passes while propagating `quote_unknown=True` through nested expressions, preserving math operators (`\mathrm{x+y}`, `\mathrm{kg/mol}`) and nested fractions (`\mathrm{\frac{kg}{mol}}`).
+  - Resolved review finding F82-05: protect converter-generated Typst tokens with internal provenance sentinels instead of matching `_TYPST_MATH_IDENTIFIERS` / `_TYPST_DOT_SYMBOLS` against raw source text, keeping raw Latin identifiers (`pi`, `in`, `sum`, `sin`), `\mathrm{...}` labels (`\mathrm{in}`, `\mathrm{pi}`, `\mathrm{sin}`, `\mathrm{\frac{in}{mol}}`, `\mathrm{\sqrt{pi}}`), and font/accent wrapper arguments (`\mathbf{pi}`, `\mathit{in}`, `\mathsf{sin}`, `\vec{pi}`) distinct from explicit LaTeX commands (`\pi`, `\in`, `\sum`, `\sin`).
+- Added unit tests and `TestRealTypstIntegration` Golden snapshot & extended math tests in `backend/tests/exporter/test_typst_compiler.py`.
+
+---
+
 ## DEC-TV7-W4-007-Q01: Verified empty fallback/clone solutions — 16/11/2026
 
 - Hùng áp dụng Q01 revised của Duy tại PR74#issuecomment-6904736595, thay guard solution bắt buộc tuyệt đối. AI/regenerated giữ strict validation; fallback/Original Clone rỗng chỉ qua receipt/snapshot hợp lệ. Không tự thêm placeholder hoặc autoapprove.

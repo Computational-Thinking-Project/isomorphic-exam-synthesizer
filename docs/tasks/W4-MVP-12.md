@@ -1,6 +1,43 @@
 # W4-MVP-12 — Security/negative baseline và regression tích hợp
 
-## Current integration checkpoint — 18/11/2026
+## Current integration checkpoint — 20/11/2026
+
+- Author; workflow v0.1 proposed + INPUT-20261109, docs baseline `7b7387f`.
+  Tích hợp local `origin/dev@e7e0088` vào head12 `1436bcf`, merge sạch,
+  chưa commit/push. PR82/83/91/101 đã merge; candidate có migration026.
+- RENDER12-01 đã hết tái hiện trên combined tree: giữ nguyên hai fixture Golden
+  (solution đầy đủ/rỗng), bỏ strict XFAIL và bắt buộc compile thành công. Kiểm thêm
+  đủ `2N+1` PDF, magic bytes, revision/session của manifest, tập entry và SHA256/
+  kích thước từng entry ZIP. **2/2 PASS** với Typst0.11.1. Đây là renderer/bundle
+  regression; không phải toàn luồng Golden hay nghiệm thu G0/G1/G2.
+- Docker local: Ruff PASS; mypy **128 files PASS**; security/API/services/exporter
+  **1325 passed, 3 skipped**, không còn XFAIL, 8 cảnh báo. Skip: hai module asyncpg
+  không có dependency trong image kiểm và XeLaTeX. Image kiểm cũ chưa có font fix92;
+  kết quả compile thành công không chứng minh glyph được vẽ đúng.
+- PostgreSQL15 isolated, full migration chain đến026: exporter/snapshot/private
+  export/Q01 **362 passed, 1 skipped** (XeLaTeX), **21 subtests**, 2 cảnh báo.
+  SQL/RLS/transaction thật qua test transport; Storage/JWT/PostgREST vẫn là double.
+- OPS ngày20/11 đã báo runtime candidate `e7e0088` và private bucket/ledger có mặt.
+  Đây là báo cáo có ngày, chưa phải TASK12 live acceptance. Read-back báo thiếu
+  `_generation_question_policy` (026); cần applied manifest cùng candidate, backup/
+  forward-only GO trước thay đổi DB. Không tự apply DB, bật export hoặc sửa cloud.
+- I-W412-01/02/03 còn cần controlled A/B principals, fixtures/fault/budget scope,
+  config/applied manifest đầy đủ và producer SSE trên cùng runtime. Giữ PR73 Draft;
+  không đánh dấu TASK12 Done. Review độc lập sau thay đổi được ghi bổ sung bên dưới.
+- Prospective integration với image fix glyph92 (nhánh riêng, chưa merge/push):
+  cùng security/API/services/exporter **1325 passed, 3 skipped**, 6 cảnh báo.
+  Golden full/empty đều compile và đủ file; sau review tăng guard kiểm chính xác
+  cả TeX/MD/README/manifest, count và duplicate entries, rerun **2 passed**.
+  Đã xem PDF exam/solutions/matrix với font mới; không coi compile/PDF magic bytes
+  là bằng chứng glyph. Kết quả chi tiết fix92 nằm ở plan của nhánh tương ứng.
+- M4/M5 độc lập **GPT-6.2 Sol High**, 20/11: security **256 passed** ở vòng đầu;
+  finding F12-01 (thiếu oracle độc lập cho TeX/MD trong Golden) đã sửa bằng exact
+  entry/count ở trên và reviewer rerun **2/2 PASS**. Reviewer xác nhận không còn
+  finding cần sửa trong phạm vi; đã xem thêm PDF Golden và bộ20 câu với font mới.
+  Reviewer không chạy lại PG/live; kết quả author và review không cộng gộp.
+  Đây là xác minh local, không phải GitHub Approve hoặc chấp nhận G0/G1/G2.
+
+## Integration checkpoint — lịch sử 18/11/2026
 
 - Author, workflow v0.1 proposed + INPUT-20261109. Đồng bộ `dev@43e1e26`
   (07/#58, 08/#63, Resume/#66 và UI/#84 đã merge; có migration025).
@@ -145,8 +182,8 @@ Bảng này là nơi tổng hợp input TASK-12. Các ID dưới đây đã **Re
 | SEC12-14 | Client không gọi privileged RPC/ghi ledger/ghi đè object export được | `test_private_export_pg.py` RPC ACL/forged-role/ledger RLS + restrictive Storage mutation policy | PASS PG policy fixture; BLOCKED Supabase/PostgREST/Storage ACL thật |
 | SEC12-15 | Mỗi lần cấp link đều kiểm owner; TTL 3600, no-store; bucket private và URL hết hạn bị từ chối | Private service/HTTP tests kiểm reauthorize/TTL/header; SEC12-03 kiểm B không xin link | PASS local issuance; BLOCKED direct-object/TTL enforcement thật. URL đã cấp là bearer, không kiểm lại user khi mở |
 | SEC12-16 | SSE ticket single-use, owner thay đổi 403, stale/future cursor 409/resync, reconnect không leak stream | `api/test_generation_stream.py` | PASS fixture; BLOCKED proxy/browser/Supabase live |
-| SEC12-17 | Fallback/revert warning, provenance/flags và thiếu solution phải hiện đúng, không xuất đề sai | `exporter/test_private_q01.py`, `migrations/test_export_q01_pg.py`, `migrations/test_private_export_q01_pg.py`: AI thiếu solution fail closed; fallback/clone rỗng chỉ khi provenance hợp lệ; giữ mục lời giải rỗng | PASS cục bộ cho consumer/SQL và Typst fixture nhỏ; **PARTIAL toàn case**: upstream migration022/producer Q01 chưa hoàn thiện trong phạm vi này. Chưa chứng minh toàn chuỗi producer → review → preview → export |
-| SEC12-18 / RENDER12-01 | Fixture Golden gốc phải tạo đủ PDF/TeX/MD/manifest cho cả solution đầy đủ/rỗng | `security/test_golden_renderer_regression.py` (Typst thật, strict xfail theo lỗi hiện tại) | **BLOCKED: lỗi product TASK-306 đã tái hiện**, không tính XFAIL là PASS; cần Tâm sửa/review trước Golden acceptance |
+| SEC12-17 | Fallback/revert warning, provenance/flags và thiếu solution phải hiện đúng, không xuất đề sai | `exporter/test_private_q01.py`, `migrations/test_export_q01_pg.py`, `migrations/test_private_export_q01_pg.py`: AI thiếu solution fail closed; fallback/clone rỗng chỉ khi provenance hợp lệ; giữ mục lời giải rỗng | PASS consumer/SQL và Typst fixture; producer code/022 đã tích hợp. **PARTIAL toàn case**: chưa chứng minh toàn chuỗi producer → review → preview → export trên runtime chung |
+| SEC12-18 / RENDER12-01 | Fixture Golden gốc phải tạo đủ PDF/TeX/MD/manifest cho cả solution đầy đủ/rỗng | `security/test_golden_renderer_regression.py` (Typst thật, positive assertions và kiểm checksum/entry) | **PASS renderer/bundle local 20/11**; lỗi compiler cũ đã hết sau tích hợp82. Chưa phải Golden E2E hoặc bằng chứng glyph92 |
 ## Cách chạy lại
 
 Tại root, dùng môi trường backend đã cài dependencies; chỉ dùng test values, không cần API key thật:
