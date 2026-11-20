@@ -1,3 +1,19 @@
+## DEC-EXPORT-92-V2 — Combined per-version documents — 20/11/2026
+
+- Hùng yêu cầu thống nhất mỗi mã đề một PDF/TeX/MD: đề → ma trận đáp án riêng mã → lời giải; PDF/TeX ngắt trang trước ma trận. Giữ ZIP và đường dẫn `exam_<code>`; bỏ PDF lời giải/ma trận riêng khỏi bundle. Đây là thay đổi bố cục theo yêu cầu mới, không phải chỉ sửa glyph.
+- Bump `PACKAGER_VERSION=w4-export-v2` để không replay ZIP v1 khi xin v2; giữ nguyên ledger/object lịch sử, không migration/backfill. API tải/Storage ACL không đổi. File đề kết hợp có đáp án: chỉ chia sẻ phần trang đề cho thí sinh.
+- FE bỏ grant cache khi nhận ready snapshot mới để không hiển thị receipt v2 nhưng tải URL v1 còn hạn. Footer PDF kết hợp chỉ ghi số trang hiện tại, tránh hiểu sai tổng trang khi tách phần đề. Philip review phần controller dùng chung.
+- Tác động: compiler/pipeline, bundler, source renderers/template, contract và tests. Cần Tâm/Đạt/Duy peer review theo [plan](tasks/ISSUE-92-PACKAGING.md); chưa là rollout hoặc live acceptance.
+
+---
+
+## Issue #92 — Vietnamese PDF heading glyphs (partial scope) — 20/11/2026
+
+- Hùng bổ sung `fonts-liberation2` và `TYPST_FONT_PATHS` trong backend Docker để Typst0.11.1 dùng Liberation Serif đã khai báo, thay fallback bold-italic làm mất thân chữ `ờ`. Cần rebuild image; không sửa PDF cũ. Font metrics có thể đổi ngắt dòng.
+- Thêm fixture NFC/NFD, regression kiểm font nhúng và kiểm ảnh PDF thật. Không đổi compiler/converter, API, migration hoặc cách đóng gói ZIP. Kết quả/giới hạn ở [plan92](tasks/ISSUE-92.md); lựa chọn packaging còn ngoài phạm vi.
+
+---
+
 ## Issue #70 — Per-question generation policy (PR #101, proposed for review) — 19/11/2026
 
 - Đạt thay intersection toàn đề bằng policy theo câu cho job mới: values/context riêng từng Blueprint; chỉ Clone câu có policy hợp lệ nhưng không có chiều được hỗ trợ. Empty/malformed/stale vẫn fail closed. Public request giữ `active_variation_modes: []`.

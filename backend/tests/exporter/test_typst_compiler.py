@@ -504,7 +504,7 @@ class TestDocumentLayoutRenderers:
             questions=questions,
         )
 
-        assert "BẢNG ĐÁP ÁN NHANH" in typst_code
+        assert "MA TRẬN ĐÁP ÁN" in typst_code
         assert "LỜI GIẢI CHI TIẾT TỪNG CÂU" in typst_code
         assert "MÃ ĐỀ THI: 101" in typst_code
         assert "*Câu 1 (Đáp án C):*" in typst_code
@@ -636,9 +636,6 @@ class TestRealTypstIntegration:
             for expected_pdf in (
                 f"{root}/pdf/exam_101.pdf",
                 f"{root}/pdf/exam_102.pdf",
-                f"{root}/pdf/solutions_101.pdf",
-                f"{root}/pdf/solutions_102.pdf",
-                f"{root}/pdf/answers_matrix.pdf",
             ):
                 assert expected_pdf in names
                 data = zf.read(expected_pdf)

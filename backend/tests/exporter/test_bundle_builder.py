@@ -31,8 +31,7 @@ def test_archive_matches_layout_and_preserves_shuffled_answers(snapshot):
     with ZipFile(BytesIO(result.data)) as archive:
         assert archive.testzip() is None
         assert set(archive.namelist()) == {
-            f"{root}/pdf/exam_101.pdf", f"{root}/pdf/solutions_101.pdf",
-            f"{root}/pdf/answers_matrix.pdf", f"{root}/latex/exam_101.tex",
+            f"{root}/pdf/exam_101.pdf", f"{root}/latex/exam_101.tex",
             f"{root}/latex/README_huong_dan_bien_dich.txt",
             f"{root}/markdown/exam_101.md", f"{root}/README.txt",
         }
@@ -120,7 +119,7 @@ def test_four_versions_have_complete_pdf_and_source_manifest(snapshot_data):
                                  for i, version in enumerate(snapshot_data["versions"])]
     snapshot = ApprovedExportSnapshot.model_validate(snapshot_data)
     with ZipFile(BytesIO(build_bundle(snapshot, pdfs(snapshot)).data)) as archive:
-        assert len(archive.namelist()) == 19  # 9 PDFs + 8 sources + 2 README
+        assert len(archive.namelist()) == 14  # 4 PDFs + 8 sources + 2 README
 
 
 @pytest.mark.skipif(shutil.which("xelatex") is None, reason="XeLaTeX not installed; source tests do not prove rendering")

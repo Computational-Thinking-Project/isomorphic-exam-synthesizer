@@ -49,10 +49,9 @@ def test_unchanged_golden_compiles_to_private_bundle(empty_solutions):
     assert artifact.size_bytes > 0
     root = f"exam_bundle_{snapshot.session_id}/"
     with ZipFile(BytesIO(artifact.data)) as archive:
-        expected_pdfs = {"pdf/answers_matrix.pdf"} | {
-            f"pdf/{kind}_{version.code}.pdf"
+        expected_pdfs = {
+            f"pdf/exam_{version.code}.pdf"
             for version in snapshot.versions
-            for kind in ("exam", "solutions")
         }
         expected_entries = expected_pdfs | {
             f"{directory}/exam_{version.code}.{extension}"
@@ -64,6 +63,7 @@ def test_unchanged_golden_compiles_to_private_bundle(empty_solutions):
         for name in expected_pdfs:
             assert archive.read(root + name).startswith(b"%PDF-")
         manifest = json.loads(archive.read(root + "manifest.json"))
+        assert manifest["format"] == "w4-export-v2"
         assert manifest["revision"] == snapshot.revision
         assert manifest["session_id"] == str(snapshot.session_id)
         assert {entry["path"] for entry in manifest["files"]} == expected_entries - {"manifest.json"}

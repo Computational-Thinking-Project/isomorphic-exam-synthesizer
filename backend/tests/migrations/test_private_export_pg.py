@@ -167,6 +167,45 @@ class PrivateExportPostgresTests(ExportSnapshotPostgresFixture):
     def run_export(self):
         return self.service.export(self.sid, OWNER)
 
+    def test_v2_build_and_replay_preserve_ready_v1_ledger_and_object(self):
+        from app.services.exporter.private_models import ReadyExport
+
+        old_identity = replace(
+            self.identity,
+            packager_version="w4-export-v1",
+            packaging_key=hashlib.sha256(
+                f"w4-export-v1\n{self.identity.revision}".encode()
+            ).hexdigest(),
+        )
+        claim = self.ledger.claim(old_identity)
+        payload = b"historical v1 ZIP fixture"
+        old_bundle = BundleArtifact(
+            f"exam_bundle_{self.sid}.zip", payload, hashlib.sha256(payload).hexdigest()
+        )
+        old = ReadyExport(
+            old_identity, f"{self.sid}/{old_identity.packaging_key}/{claim.token}.zip",
+            old_bundle.filename, old_bundle.sha256, len(payload),
+        )
+        self.ledger.record_built(old, claim.token)
+        self.store.upload(old.object_path, old_bundle)
+        self.ledger.complete(old, claim.token)
+        before = self.sql(
+            "SELECT row_to_json(r)::text FROM private_export_ledger r "
+            f"WHERE packaging_key={literal(old_identity.packaging_key)};"
+        ).stdout
+        self.assertEqual(self.service.status(self.sid, OWNER).state, "idle")
+        current = self.run_export()
+        self.assertEqual(current.state, "ready")
+        self.assertNotEqual(current.artifact.object_path, old.object_path)
+        self.assertEqual(self.run_export(), current)
+        self.assertEqual(self.builds, 1)
+        self.assertEqual(self.ledger.read(old_identity).artifact, old)
+        self.assertEqual(self.store.objects[old.object_path], payload)
+        self.assertEqual(self.sql(
+            "SELECT row_to_json(r)::text FROM private_export_ledger r "
+            f"WHERE packaging_key={literal(old_identity.packaging_key)};"
+        ).stdout, before)
+
     def test_checkpoint_ack_attests_persisted_receipt_and_token(self):
         self.run_export()
         ready = self.ledger.read(self.identity)

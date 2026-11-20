@@ -1,5 +1,22 @@
 # TASK-307 — XeLaTeX / Markdown / ZIP handoff
 
+## Current layout — Issue92 follow-up, 20/11/2026
+
+`w4-export-v2` supersedes the historical layout below. ZIP remains the download
+container. Each version has one PDF, one TeX and one Markdown file named
+`exam_<code>.<extension>` in its existing format folder. Each contains the exam,
+then its own answer matrix, then detailed solutions. PDF/TeX force a page break
+before the matrix; Markdown joins the sections without a forced break.
+No standalone solutions or cross-version matrix PDF is included. There are N
+compile calls and `3N+3` ZIP entries including both READMEs and the private manifest.
+Standalone legacy compiler methods still exist for other callers, but the bundle
+pipeline uses `render_combined_document`. Old paths `pdf/exam_<code>.pdf` now carry
+answers too: distribute only the exam pages to candidates. Teachers retain the
+complete file. See [current contract](api/private-export-contract.md) and
+[plan](tasks/ISSUE-92-PACKAGING.md) for versioning, review and verification limits.
+
+## Historical W3 handoff (v1)
+
 Owner: Đạt. [Duy đã chốt tên file và lịch input](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/27#issuecomment-6485753431). Phần độc lập hiện làm bằng fixture; dữ liệu approved thật hẹn chiều 02/11.
 
 ## Gọi hàm

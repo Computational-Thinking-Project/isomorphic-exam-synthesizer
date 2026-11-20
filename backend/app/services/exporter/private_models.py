@@ -6,7 +6,7 @@ from uuid import UUID
 
 from .bundle_models import ApprovedExportSnapshot, BundleArtifact
 
-PACKAGER_VERSION = "w4-export-v1"
+PACKAGER_VERSION = "w4-export-v2"
 SIGNED_URL_TTL = 3600
 
 

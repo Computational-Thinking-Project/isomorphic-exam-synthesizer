@@ -1,6 +1,30 @@
 # W4-MVP-12 — Security/negative baseline và regression tích hợp
 
-## Current integration checkpoint — 20/11/2026
+## Current integration checkpoint — per-version v2, 20/11/2026
+
+- Author; workflow v0.1 proposed + INPUT-20261109. Tích hợp local candidate
+  packaging `8dde84e`, phụ thuộc glyph PR103@3f58c23, vào baseline12 `b4d3d4e`.
+  `dev` vẫn `e7e0088`. Đây là candidate chưa merge dev, không phải deployed head.
+- Theo yêu cầu mới của Hùng, `w4-export-v2` có mỗi mã một PDF/TeX/MD:
+  đề → ma trận đáp án riêng mã → lời giải; PDF/TeX ngắt trang trước ma trận.
+  Golden oracle cập nhật chính xác N PDF và tổng3N+3 entries, giữ cả hai fixture
+  full/empty, hash/size, revision/session, không duplicate và thêm format v2.
+- v2 tạo packaging identity mới; giữ nguyên ledger/object v1, không overwrite.
+  Exporter331 PASS (có XeLaTeX thật); PostgreSQL full chain026 **368 passed,
+  1 skipped, 21 subtests** trên branch packaging. FE Docker Node22 **560 passed**,
+  lint/build PASS. Không cộng các suite chồng lặp.
+- GPT-6.2 Sol High đã review layout/identity/FE và recheck F01 cache URL cũ,
+  F02 footer trang; không còn actionable finding. Reviewer độc lập chạy PG v1/v2
+  **1 PASS**,331 exporter và11 controller; đã kiểm trang/ma trận trên20 tài liệu
+  Typst/XeLaTeX. Đây không phải GitHub Approve hoặc live acceptance.
+- Combined TASK12 security/API/services/exporter với actual Typst/XeLaTeX:
+  **1332 passed, 2 skipped**,6 cảnh báo; Ruff PASS, mypy128 PASS. Hai skip là
+  modules asyncpg không có dependency trong image, không phải PASS live DB.
+  Reviewer GPT-6.2 Sol High rerun độc lập Golden v2 **2/2 PASS**, xác nhận fixture
+  gốc không đổi và oracle đủ3N+3 entries; không có actionable finding.
+  I-W412-01/02/03 và G0/G1/G2 vẫn chưa đủ input; giữ Draft, không deploy/activate.
+
+## Integration checkpoint — lịch sử v1, 20/11/2026
 
 - Author; workflow v0.1 proposed + INPUT-20261109, docs baseline `7b7387f`.
   Tích hợp local `origin/dev@e7e0088` vào head12 `1436bcf`, merge sạch,
