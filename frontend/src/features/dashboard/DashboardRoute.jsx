@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { stage1Path } from '../../sessionPaths.js';
 import { useAuthStore } from '../auth/authStore.js';
 import DashboardPage from './DashboardPage.jsx';
@@ -151,7 +151,12 @@ function DashboardContent({ accountKey }) {
       <aside className="sticky top-0 z-30 border-b border-line bg-surface/90 backdrop-blur-sm shadow-soft">
         <div className="mx-auto max-w-[1160px] px-4 sm:px-8 py-3">
           <div className="flex flex-wrap items-center justify-between gap-4">
-            <BrandLogo size="md" />
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+              <BrandLogo size="md" />
+              <Link to="/statistics" className="rounded-md py-2 text-sm font-semibold text-highlight hover:underline">
+                Thống kê sử dụng
+              </Link>
+            </div>
 
             <div className="flex items-center gap-3 sm:gap-4">
               <div className="flex min-w-0 items-center gap-2.5">
