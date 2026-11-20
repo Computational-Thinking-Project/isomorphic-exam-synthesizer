@@ -266,10 +266,31 @@ class GenerationService:
         base_seed: int = 100, variation_modes: list[str] | None = None,
         completed: list[QuestionResult] | None = None, on_result: ResultCallback | None = None,
         committed_fallbacks: frozenset[tuple[int, str]] = frozenset(),
+        source_variation_modes: dict[str, tuple[str, ...]] | None = None,
+        clone_source_ids: frozenset[str] = frozenset(),
     ) -> BatchResult:
         sources = [source.model_copy(deep=True) for source in sources]
         blueprints = deepcopy(blueprints)
         modes = list(variation_modes or [])
+        per_source_modes = (
+            {key: list(value) for key, value in source_variation_modes.items()}
+            if source_variation_modes is not None else {source.id: modes for source in sources}
+        )
+        if source_variation_modes is not None:
+            from app.services.generation.mode_mapper import question_policy
+
+            expected_policies = {
+                key: question_policy(value)["canonical_dimensions"]
+                for key, value in blueprints.items()
+            }
+            if (
+                per_source_modes != expected_policies
+                or set(per_source_modes) != {source.id for source in sources}
+                or clone_source_ids != {key for key, value in expected_policies.items() if not value}
+            ):
+                raise ToolError("BLUEPRINTS_NOT_READY", "Chính sách theo câu không khớp Blueprint đã đóng băng.")
+        elif clone_source_ids:
+            raise ToolError("BLUEPRINTS_NOT_READY", "Clone cần chính sách theo câu.")
         items = prepare_sources(sources)
         if not 1 <= n_versions <= 4:
             raise ToolError("VERSION_COUNT_INVALID", "Số mã đề phải từ 1 đến 4.")
@@ -278,7 +299,7 @@ class GenerationService:
         if set(blueprints) != {source.id for source in sources}:
             raise ToolError("BLUEPRINTS_NOT_READY", "Cần đủ Blueprint cho toàn bộ đề nguồn.")
         for source in sources:
-            self._prepare(source, blueprints[source.id], modes)
+            self._prepare(source, blueprints[source.id], per_source_modes[source.id])
         slots = [
             (version, index, source, base_seed + version * 1000 + index)
             for version in range(1, n_versions + 1)
@@ -286,17 +307,19 @@ class GenerationService:
         ]
         cached = {(r.version_index, r.source_question_id): r.model_copy(deep=True) for r in completed or []}
         slot_keys = {(version, source.id) for version, _, source, _ in slots}
+        clone_slots = {key for key in slot_keys if key[1] in clone_source_ids}
         if (
             len(cached) != len(completed or [])
             or not (set(cached) | committed_fallbacks) <= slot_keys
             or set(cached) & committed_fallbacks
+            or (set(cached) | committed_fallbacks) & clone_slots
         ):
             raise ToolError("RESUME_MISMATCH", "Kết quả lưu không khớp các vị trí cần sinh.")
         seen: dict[str, set[str]] = {source.id: set() for source in sources}
         for version, index, source, seed in slots:
             saved = cached.get((version, source.id))
             if saved:
-                expected = self._request_fingerprint(items[index], blueprints[source.id], seed, modes)
+                expected = self._request_fingerprint(items[index], blueprints[source.id], seed, per_source_modes[source.id])
                 if (
                     saved.request_fingerprint != expected or saved.candidate is None or saved.error_code
                     or saved.candidate.source_question_id != source.id
@@ -330,7 +353,7 @@ class GenerationService:
             async with semaphore:
                 result = await self._generate(
                     source, items[index], blueprints[source.id], context,
-                    seed, version, modes, accept=accept,
+                    seed, version, per_source_modes[source.id], accept=accept,
                 )
                 if on_result:
                     # Await persistence before declaring this slot complete. Failure cancels siblings.
@@ -340,10 +363,10 @@ class GenerationService:
         async with asyncio.TaskGroup() as group:
             for position, slot in enumerate(slots):
                 version, _, source, _ = slot
-                if (version, source.id) not in committed_fallbacks:
+                if (version, source.id) not in committed_fallbacks | clone_slots:
                     group.create_task(one(position, *slot))
         ordered = [result for result in results if result is not None]
-        count = len(committed_fallbacks) + sum(result.candidate is not None for result in ordered)
+        count = len(committed_fallbacks) + len(clone_slots) + sum(result.candidate is not None for result in ordered)
         status: Literal["generated", "partial_generated", "failed"] = (
             "generated" if count == len(slots) else "partial_generated" if count else "failed"
         )
