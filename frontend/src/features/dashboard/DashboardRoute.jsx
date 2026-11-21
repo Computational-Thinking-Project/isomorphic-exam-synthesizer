@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { stage1Path } from '../../sessionPaths.js';
 import { useAuthStore } from '../auth/authStore.js';
 import DashboardPage from './DashboardPage.jsx';
@@ -154,7 +154,11 @@ function DashboardContent({ accountKey }) {
             <BrandLogo size="md" />
 
             <div className="flex items-center gap-3 sm:gap-4">
-              <div className="flex min-w-0 items-center gap-2.5">
+              <Link
+                to="/settings"
+                aria-label="Cài đặt cá nhân"
+                className="flex min-w-0 items-center gap-2.5 rounded-lg hover:bg-rail"
+              >
                 <UserAvatar
                   key={`${user?.id}:${sessionVersion}:${avatarUrl}`}
                   src={avatarUrl}
@@ -167,7 +171,7 @@ function DashboardContent({ accountKey }) {
                   </p>
 
                 </div>
-              </div>
+              </Link>
 
               <div className="hidden sm:block h-4 w-px bg-line" aria-hidden="true" />
 
