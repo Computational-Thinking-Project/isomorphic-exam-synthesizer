@@ -87,16 +87,21 @@ export default function IncompleteContentDialog({
       }}
     >
       <div className="flex max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col rounded-2xl border border-line bg-surface shadow-2xl">
-        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-line p-5">
+        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-line p-4 sm:p-5">
           <div className="flex items-start gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-danger-soft text-danger border border-danger-border mt-0.5">
+            <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-danger-border bg-danger-soft text-danger">
               <AlertCircle className="h-5 w-5" aria-hidden="true" />
             </span>
             <div>
-              <h2 id={`${id}-title`} className="text-lg font-bold text-strong">
-                Đề nguồn chưa đầy đủ
-              </h2>
-              <p id={`${id}-help`} className="mt-1 text-xs text-muted leading-relaxed">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 id={`${id}-title`} className="text-lg font-bold text-strong">
+                  Đề nguồn chưa đầy đủ
+                </h2>
+                <span className="rounded-md border border-danger-border bg-danger-soft px-2 py-0.5 text-[11px] font-semibold text-danger">
+                  {errors.length} mục cần sửa
+                </span>
+              </div>
+              <p id={`${id}-help`} className="mt-1 text-xs leading-relaxed text-muted">
                 Sửa tệp hoặc văn bản nguồn theo các lỗi dưới đây, sau đó bấm Nạp nguồn để gửi lại.
               </p>
             </div>
@@ -115,16 +120,21 @@ export default function IncompleteContentDialog({
         <ol
           aria-label="Danh sách lỗi nguồn"
           tabIndex={0}
-          className="min-h-0 space-y-3 overflow-auto p-5"
+          className="min-h-0 space-y-3 overflow-auto p-4 sm:p-5"
         >
           {errors.map((error, index) => (
             <li
               key={index}
               className="space-y-1.5 break-words rounded-xl border border-danger-border bg-danger-soft/40 p-4"
             >
-              <h3 className="text-xs font-bold text-danger">
-                {error.location} · {error.title}
-              </h3>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-xs font-bold text-danger">
+                  {error.location} · {error.title}
+                </h3>
+                <span className="rounded bg-surface px-1.5 py-0.5 text-[11px] font-semibold text-danger border border-danger-border">
+                  #{index + 1}
+                </span>
+              </div>
               {error.detail && (
                 <p className="whitespace-pre-wrap text-xs text-strong">
                   {error.detail}
@@ -135,7 +145,7 @@ export default function IncompleteContentDialog({
           ))}
         </ol>
 
-        <footer className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-line p-4 bg-rail/40">
+        <footer className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-line bg-rail/40 p-4">
           <button
             type="button"
             className={buttonClass}
