@@ -23,16 +23,13 @@ TeX Live đầy đủ hoặc Overleaf: chọn compiler XeLaTeX.
 Font: TeX Gyre Termes. Packages: fontspec, amsmath, amssymb, geometry, enumitem.
 Lệnh: xelatex -no-shell-escape -interaction=nonstopmode exam_101.tex
 Đổi 101 theo mã đề cần biên dịch. Không dùng pdfLaTeX.
-Mỗi file gồm đề ở đầu, đáp án và lời giải ở phần sau.
+Mỗi mã đề có một PDF, một TeX và một Markdown: đề → ma trận đáp án → lời giải.
+PDF/TeX bắt đầu ma trận trên trang mới sau đề. Markdown viết nối tiếp.
 """
 
 
 def required_pdf_names(snapshot: ApprovedExportSnapshot) -> set[str]:
-    return {"answers_matrix.pdf"} | {
-        f"{kind}_{version.code}.pdf"
-        for version in snapshot.versions
-        for kind in ("exam", "solutions")
-    }
+    return {f"exam_{version.code}.pdf" for version in snapshot.versions}
 
 
 def build_bundle(
@@ -76,7 +73,9 @@ def build_bundle(
         "README.txt",
         (
             f"{snapshot.title}\nSession: {snapshot.session_id}\nRevision: {snapshot.revision}\n"
-            "pdf/: đề, ma trận đáp án và lời giải PDF.\n"
+            "Mỗi mã đề có một file trong mỗi thư mục pdf/, latex/, markdown/.\n"
+            "Thứ tự: đề → ma trận đáp án riêng mã đề → lời giải.\n"
+            "PDF/TeX ngắt trang trước ma trận; Markdown nối tiếp.\n"
             "latex/: nguồn XeLaTeX độc lập. markdown/: đề, đáp án và lời giải Markdown.\n"
             "Nội dung theo thứ tự câu/options/key/lời giải đã duyệt sau shuffle.\n"
         ).encode("utf-8"),

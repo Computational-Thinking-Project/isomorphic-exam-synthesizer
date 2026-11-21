@@ -1,5 +1,10 @@
 # ISSUE-92 — Vietnamese PDF glyph fix (partial scope)
 
+Historical glyph-only handoff from PR103@3f58c23. The subsequent user decision
+to combine per-version documents and use packaging v2 is tracked in
+[the packaging plan](ISSUE-92-PACKAGING.md). Its version/rollout rules supersede
+the ready-v1 reuse limitation below when the v2 runtime is deployed.
+
 - Owner/author: Hùng (`benalexx007`); workflow v0.1 proposed + INPUT-20261109.
 - Input: [Issue92](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/92), source `dev@e7e0088`.
 - This change addresses only the incorrectly rendered Vietnamese solution heading.

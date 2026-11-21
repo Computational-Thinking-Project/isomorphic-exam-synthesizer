@@ -305,7 +305,7 @@ def test_real_07_snapshot_typst_manifest_bundle():
         root = f"exam_bundle_{SESSION_ID}/"
         manifest = json.loads(archive.read(root + "manifest.json"))
         pdfs = [e for e in manifest["files"] if e["path"].endswith(".pdf")]
-        assert len(pdfs) == 5
+        assert len(pdfs) == 2
         for entry in pdfs:
             assert archive.read(root + entry["path"]).startswith(b"%PDF-")
         for version in snapshot.versions:

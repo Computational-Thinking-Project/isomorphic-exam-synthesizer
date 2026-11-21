@@ -197,6 +197,34 @@ test('signed URL hết hạn tự gọi issueDownloadUrl cấp lại URL mới',
   assert.equal(calls.open[2].url, 'https://storage.example.test/s1.zip?v=2');
 });
 
+test('ready refresh discards a still-valid URL for the previous packager artifact', async () => {
+  let version = 1;
+  let issues = 0;
+  const { controller, calls } = setup({
+    getStatus: async () => ({
+      status: 'ready', filename: 'exam_bundle_s1.zip', sha256: String(version).repeat(64),
+    }),
+    issueDownloadUrl: async () => {
+      issues += 1;
+      return {
+        url: `https://storage.example.test/s1/v${version}.zip`,
+        expires_in: 3600,
+        filename: 'exam_bundle_s1.zip',
+      };
+    },
+  });
+  await controller.load('s1');
+  await controller.download();
+  await controller.download();
+  assert.equal(issues, 1);
+  version = 2; // Another tab/device completes the v2 export.
+  await controller.refreshStatus();
+  assert.equal(controller.getSnapshot().downloadGrant, null);
+  await controller.download();
+  assert.equal(issues, 2);
+  assert.equal(calls.open.at(-1).url, 'https://storage.example.test/s1/v2.zip');
+});
+
 test('cancel hoặc đổi account hủy timer, abort request và bỏ kết quả về muộn', async () => {
   let current = true;
   const pending = deferred();
