@@ -17,7 +17,20 @@ Mã đề: ((( code )))
 ((* endfor *))
 \end{enumerate}
 ((* endfor *))
+\begin{center}\textbf{HẾT}\end{center}
 \clearpage
+\section*{Ma trận đáp án}
+\begin{center}
+\begin{tabular}{|c|c|}
+\hline
+Câu & Đáp án \\
+\hline
+((* for q in questions *))
+((( q.number ))) & ((( q.correct_key ))) \\
+\hline
+((* endfor *))
+\end{tabular}
+\end{center}
 \section*{Đáp án và lời giải}
 ((* for q in questions *))
 \noindent\textbf{Câu ((( q.number ))) — Đáp án ((( q.correct_key ))).}

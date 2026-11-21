@@ -203,6 +203,8 @@ class TypstCompiler:
         questions: Sequence[Dict[str, Any]],
         exam_title: str = "KỲ THI KHẢO SÁT CHẤT LƯỢNG",
         subject: str = "Toán học",
+        *,
+        include_total_pages: bool = True,
     ) -> str:
         """
         Generate complete Typst source code for an exam paper.
@@ -212,6 +214,7 @@ class TypstCompiler:
         clean_title_display = escape_typst_text(exam_title)
         clean_subject_display = escape_typst_text(subject)
         clean_version_display = escape_typst_text(str(version_code))
+        total_pages_label = " / #t" if include_total_pages else ""
 
         q_blocks: List[str] = []
         labels = ["A", "B", "C", "D"]
@@ -256,7 +259,7 @@ class TypstCompiler:
   footer: locate(loc => {{
     let p = counter(page).at(loc).first()
     let t = counter(page).final(loc).first()
-    align(center)[#text(size: 9pt, fill: luma(100))[Trang #p / #t]]
+    align(center)[#text(size: 9pt, fill: luma(100))[Trang #p{total_pages_label}]]
   }})
 )
 #set text(font: ("Liberation Serif", "Times New Roman", "DejaVu Serif"), size: 11pt, lang: "vi")
@@ -316,11 +319,30 @@ class TypstCompiler:
 """
         return template
 
+    def render_combined_document(
+        self,
+        version_code: str,
+        questions: Sequence[Dict[str, Any]],
+        exam_title: str,
+    ) -> str:
+        """One version: exam, then its answer matrix and solutions on a new page."""
+        return (
+            self.render_exam_document(
+                version_code, questions, exam_title=exam_title, include_total_pages=False
+            )
+            + "\n#pagebreak()\n"
+            + self.render_solution_document(
+                version_code, questions, exam_title=exam_title, include_preamble=False
+            )
+        )
+
     def render_solution_document(
         self,
         version_code: str,
         questions: Sequence[Dict[str, Any]],
         exam_title: str = "HƯỚNG DẪN GIẢI VÀ BẢNG ĐÁP ÁN CHI TIẾT",
+        *,
+        include_preamble: bool = True,
     ) -> str:
         """
         Generate complete Typst source code for solution explanations and answer table.
@@ -397,7 +419,7 @@ class TypstCompiler:
 
         solutions_content = "\n".join(sol_blocks)
 
-        template = f"""// Auto-generated Solution Document
+        preamble = f"""// Auto-generated Solution Document
 #set document(title: "{clean_title_meta}", author: "Isomorphic Exam Synthesizer")
 #set page(
   paper: "a4",
@@ -411,6 +433,9 @@ class TypstCompiler:
 #set text(font: ("Liberation Serif", "Times New Roman", "DejaVu Serif"), size: 11pt, lang: "vi")
 #set par(justify: true, leading: 0.7em)
 
+"""
+        template = f"""
+
 #align(center)[
   #text(weight: "bold", size: 14pt)[{clean_title_display}]\\
   #text(weight: "bold", size: 12pt)[MÃ ĐỀ THI: {clean_version_display}]\\
@@ -421,7 +446,7 @@ class TypstCompiler:
 #line(length: 100%, stroke: 1pt)
 #v(10pt)
 
-#text(weight: "bold", size: 12pt)[I. BẢNG ĐÁP ÁN NHANH]
+#text(weight: "bold", size: 12pt)[I. MA TRẬN ĐÁP ÁN]
 #v(6pt)
 
 {answer_table_markup}
@@ -433,7 +458,7 @@ class TypstCompiler:
 
 {solutions_content}
 """
-        return template
+        return (preamble if include_preamble else "") + template
 
     def render_answers_matrix_document(
         self,

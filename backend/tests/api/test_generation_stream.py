@@ -288,3 +288,52 @@ def test_restart_ticket_keeps_progress_for_fatal_source_error(stream_api) -> Non
     assert '"session_status":"failed"' in stream.text
     assert '"completed_count":1' in stream.text
     assert '"error_code":"ERR_SOURCE_SOLUTION_REQUIRED"' in stream.text
+
+
+def test_terminal_state_db_error_returns_503_and_releases_reservation(stream_api) -> None:
+    client, sid, uid, registry, tickets, events, owner, app = stream_api
+    app.state.terminal.side_effect = RuntimeError("42501: permission denied for table exam_sessions")
+    response = client.post(f"/api/sessions/{sid}/events/ticket?stream_epoch={events.epoch}&last_event_id=0")
+    assert response.status_code == 503
+    assert "permission denied" not in response.text
+    assert response.json()["detail"] == "Stream service is temporarily unavailable."
+    # Verify lease was released and tickets was not issued
+    assert not tickets._tickets
+    # Session reservation can be re-reserved without capacity error
+    async def verify_capacity() -> None:
+        lease = await events.reserve_session(sid, last_event_id=0)
+        await lease.close()
+    asyncio.run(verify_capacity())
+
+
+def test_owner_lookup_db_permission_denied_returns_503_fail_closed(stream_api) -> None:
+    client, sid, uid, registry, tickets, events, owner, app = stream_api
+    owner.side_effect = RuntimeError("42501: permission denied for table exam_sessions")
+    ticket = client.post(f"/api/sessions/{sid}/events/ticket").json()["ticket"]
+    path = f"/api/sessions/{sid}/events?ticket={ticket}"
+    response = client.get(path)
+    assert response.status_code == 503
+    assert "42501" not in response.text
+    assert "permission denied" not in response.text
+    assert response.json()["detail"] == "Stream authorization is temporarily unavailable."
+    # Ticket must be consumed fail-closed
+    assert client.get(path).status_code == 401
+    assert registry.snapshot().active_sse_connections == 0
+
+
+def test_restart_ticket_restores_generated_terminal_event_from_durable_state(stream_api) -> None:
+    client, sid, uid, registry, tickets, events, owner, app = stream_api
+    app.state.terminal.return_value = ("generated", 5, 5, None)
+    response = client.post(
+        f"/api/sessions/{sid}/events/ticket?stream_epoch={events.epoch}&last_event_id=0"
+    )
+    assert response.status_code == 200
+    path = f"/api/sessions/{sid}/events?ticket={response.json()['ticket']}&last_event_id=0&stream_epoch={events.epoch}"
+    stream = client.get(path)
+    assert stream.status_code == 200 and "event: done" in stream.text
+    assert '"session_status":"generated"' in stream.text
+    assert '"completed_count":5' in stream.text
+    assert '"total_count":5' in stream.text
+    assert '"percent_complete":100.0' in stream.text
+    assert app.state.terminal.await_count == 1
+

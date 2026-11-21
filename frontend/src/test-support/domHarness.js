@@ -63,6 +63,9 @@ export class DOMElement extends DOMNode {
     this._value = '';
     this._checked = false;
   }
+  get options() {
+    return this.childNodes.filter((c) => c.nodeType === 1 && c.tagName === 'OPTION');
+  }
   get value() {
     return this._value;
   }

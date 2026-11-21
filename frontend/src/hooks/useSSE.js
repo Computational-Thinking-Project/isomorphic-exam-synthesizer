@@ -82,6 +82,8 @@ export function useSSE(sessionId, {
   // Bộ định danh phiên và lượt kết nối để cô lập tuyệt đối tác vụ
   const activeSessionIdRef = useRef(sessionId);
   const connectionTokenRef = useRef(0);
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
   const prevSessionIdRef = useRef(sessionId);
   const lastInitialProgressRef = useRef(initialProgress);
   const lastInitialStatusesRef = useRef(initialQuestionStatuses);
@@ -307,7 +309,8 @@ export function useSSE(sessionId, {
         !isMountedRef.current ||
         connectionTokenRef.current !== currentToken ||
         activeSessionIdRef.current !== currentSessionId ||
-        !enabled
+        !enabled ||
+        !enabledRef.current
       ) {
         return;
       }
@@ -325,7 +328,8 @@ export function useSSE(sessionId, {
         !isMountedRef.current ||
         connectionTokenRef.current !== currentToken ||
         activeSessionIdRef.current !== currentSessionId ||
-        !enabled
+        !enabled ||
+        !enabledRef.current
       ) {
         return;
       }
@@ -364,7 +368,8 @@ export function useSSE(sessionId, {
       !isMountedRef.current ||
       connectionTokenRef.current !== currentToken ||
       activeSessionIdRef.current !== currentSessionId ||
-      !enabled
+      !enabled ||
+      !enabledRef.current
     ) {
       return;
     }
@@ -740,10 +745,12 @@ export function useSSE(sessionId, {
   useEffect(() => {
     isMountedRef.current = true;
     activeSessionIdRef.current = sessionId;
+    enabledRef.current = enabled;
 
     if (enabled && sessionId) {
       connect();
     } else {
+      connectionTokenRef.current += 1;
       cleanupConnection();
       if (!enabled) {
         setConnectionState((prev) => (prev === 'completed' ? prev : 'idle'));
@@ -752,6 +759,7 @@ export function useSSE(sessionId, {
 
     return () => {
       isMountedRef.current = false;
+      connectionTokenRef.current += 1;
       cleanupConnection();
     };
   }, [sessionId, enabled, connect, cleanupConnection]);

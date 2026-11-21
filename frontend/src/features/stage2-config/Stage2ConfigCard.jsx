@@ -3,8 +3,6 @@ import {
   AlertCircle,
   ArrowRight,
   Check,
-  CheckCircle2,
-  HelpCircle,
   Layers,
   Loader2,
   Shuffle,
@@ -16,8 +14,8 @@ import {
  *
  * Chức năng:
  * - Chọn số lượng mã đề N in [1, 4]
- * - Lựa chọn các chế độ biến thể hợp lệ dựa trên Blueprint (chống xung đột)
- * - Tùy chọn xáo trộn thứ tự câu hỏi (shuffle_questions)
+ * - Lựa chọn các chế độ biến thể hợp lệ dựa trên cấu trúc đề (chống xung đột)
+ * - Tùy chọn xáo trộn thứ tự câu hỏi
  * - Thẻ tóm tắt tự động tổng số lượng câu hỏi và mã đề cần sinh
  * - Gửi cấu hình và xử lý trạng thái lỗi/xung đột rõ ràng
  */
@@ -32,8 +30,7 @@ export default function Stage2ConfigCard({
 }) {
   const formId = useId();
 
-  // Danh sách các chế độ từ Blueprint
-  const supportedModes = session?.blueprint_summary?.supported_modes || [];
+  // Danh sách các chế độ từ cấu trúc đề
   const isBlueprintReady = Boolean(
     session?.status !== 'draft' &&
     session?.blueprint_summary?.is_ready === true &&
@@ -61,7 +58,7 @@ export default function Stage2ConfigCard({
     setValidationError('');
 
     if (!isBlueprintReady) {
-      setValidationError('Đề nguồn chưa hoàn tất phân tích Blueprint. Vui lòng quay lại Giai đoạn 1 để xác nhận đề gốc.');
+      setValidationError('Đề nguồn chưa hoàn tất phân tích cấu trúc đề. Vui lòng quay lại Giai đoạn 1 để xác nhận đề gốc.');
       return;
     }
 
@@ -71,7 +68,7 @@ export default function Stage2ConfigCard({
     }
 
     // Issue #45: Chuẩn hóa payload không gửi user-selected variation modes
-    // Backend tự suy ra từ canonical Blueprint khi nhận active_variation_modes: []
+    // Backend tự suy ra từ canonical cấu trúc đề khi nhận active_variation_modes: []
     const payload = {
       n_versions: Number(numVersions),
       active_variation_modes: [],
@@ -87,28 +84,28 @@ export default function Stage2ConfigCard({
   }
 
   return (
-    <div className="mx-auto max-w-4xl rounded-2xl border border-slate-700 bg-slate-900/90 p-6 shadow-xl backdrop-blur-sm sm:p-8">
+    <div className="paper-ui mx-auto max-w-4xl rounded-2xl border border-line bg-surface p-6 shadow-paper backdrop-blur-sm sm:p-8">
       {/* Header tóm tắt phiên làm việc */}
-      <div className="mb-8 border-b border-slate-800 pb-6">
+      <div className="mb-8 border-b border-line pb-6">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
-              <span className="rounded-full bg-sky-500/20 px-3 py-1 text-xs font-semibold text-sky-300">
-                Giai đoạn 2: Cấu hình sinh đề
+              <span className="rounded-full bg-support-bg px-3 py-1 text-xs font-semibold text-highlight">
+                Bước 2 · Tạo mã đề
               </span>
-              <span className="text-xs text-slate-400">
+              <span className="text-xs text-muted">
                 Môn: {session?.subject || 'Toán'} • Khối {session?.grade || 12}
               </span>
             </div>
-            <h1 className="mt-2 text-2xl font-bold tracking-tight text-white sm:text-3xl">
+            <h1 className="mt-2 text-2xl font-bold tracking-tight text-strong sm:text-3xl">
               {session?.title || 'Cấu hình tạo đề thi đẳng cấu'}
             </h1>
           </div>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-800/60 px-4 py-3 text-right">
-            <p className="text-xs text-slate-400">Đề nguồn đã duyệt</p>
-            <p className="text-xl font-bold text-sky-400">
-              {totalQuestions} <span className="text-sm font-normal text-slate-300">câu hỏi</span>
+          <div className="rounded-xl border border-line bg-rail px-4 py-3 text-right">
+            <p className="text-xs text-muted">Đề nguồn</p>
+            <p className="text-xl font-bold text-highlight">
+              {totalQuestions} <span className="text-sm font-normal text-ink">câu hỏi</span>
             </p>
           </div>
         </div>
@@ -118,9 +115,9 @@ export default function Stage2ConfigCard({
       {(error || validationError) && (
         <div
           role="alert"
-          className="mb-6 flex items-start gap-3 rounded-xl border border-rose-500/40 bg-rose-950/40 p-4 text-rose-200"
+          className="mb-6 flex items-start gap-3 rounded-xl border border-danger-border bg-danger-soft p-4 text-danger"
         >
-          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-rose-400" />
+          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-danger" />
           <div className="text-sm">
             <p className="font-semibold">Cần điều chỉnh cấu hình:</p>
             <p>{validationError || error}</p>
@@ -129,16 +126,16 @@ export default function Stage2ConfigCard({
       )}
 
       {!isBlueprintReady && (
-        <div className="mb-6 rounded-xl border border-amber-500/40 bg-amber-950/20 p-4 text-center text-sm text-amber-200">
-          <p className="font-semibold">Chưa có thông tin Blueprint khả dụng</p>
-          <p className="mt-1 text-xs text-amber-300/80">
-            Đề nguồn chưa hoàn tất phân tích Blueprint hoặc thiếu dữ liệu câu hỏi. Vui lòng quay lại Giai đoạn 1 để xác nhận đề gốc.
+        <div className="mb-6 rounded-xl border border-accent-border bg-accent-soft p-4 text-center text-sm text-accent-ink">
+          <p className="font-semibold">Chưa có thông tin cấu trúc đề khả dụng</p>
+          <p className="mt-1 text-xs text-accent-ink">
+            Đề nguồn chưa hoàn tất phân tích cấu trúc đề hoặc thiếu dữ liệu câu hỏi. Vui lòng quay lại Giai đoạn 1 để xác nhận đề gốc.
           </p>
           {onReturnToStage1 && (
             <button
               type="button"
               onClick={onReturnToStage1}
-              className="mt-3 inline-flex items-center rounded-lg border border-amber-500/50 bg-amber-950/40 px-3 py-1.5 text-xs font-semibold text-amber-200 hover:bg-amber-900/50"
+              className="mt-3 inline-flex items-center rounded-lg border border-accent-border bg-accent-soft px-3 py-1.5 text-xs font-semibold text-accent-ink hover:bg-accent-soft"
             >
               Quay về Giai đoạn 1
             </button>
@@ -150,11 +147,11 @@ export default function Stage2ConfigCard({
         <fieldset disabled={isSubmitting || !isBlueprintReady} className="space-y-8">
         {/* Phần 1: Chọn số lượng mã đề */}
         <div>
-          <label className="block text-base font-semibold text-white">
-            1. Số lượng mã đề cần sinh (N)
+          <label className="block text-base font-semibold text-strong">
+            1. Số lượng mã đề cần tạo
           </label>
-          <p className="mt-1 text-sm text-slate-400">
-            Hệ thống sẽ tạo ra các đề thi có cùng cấu trúc ma trận nhưng khác biệt về số liệu hoặc ngữ cảnh.
+          <p className="mt-1 text-sm text-muted">
+            Các mã đề giữ cấu trúc của đề nguồn đã xác nhận.
           </p>
 
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -165,19 +162,20 @@ export default function Stage2ConfigCard({
                   key={n}
                   type="button"
                   onClick={() => setNumVersions(n)}
+                  aria-pressed={isSelected}
                   disabled={isSubmitting}
                   className={`flex flex-col items-center justify-center rounded-xl border p-4 transition-all ${
                     isSelected
-                      ? 'border-sky-500 bg-sky-950/50 text-white shadow-lg shadow-sky-950/40 ring-2 ring-sky-500/40'
-                      : 'border-slate-700 bg-slate-800/60 text-slate-300 hover:border-slate-600 hover:bg-slate-800'
+                      ? 'border-support-line bg-support-bg text-strong shadow-soft  ring-2 ring-highlight'
+                      : 'border-line bg-rail text-ink hover:border-line hover:bg-rail'
                   } disabled:cursor-not-allowed disabled:opacity-50`}
                 >
                   <span className="text-3xl font-extrabold">{n}</span>
-                  <span className="mt-1 text-xs text-slate-400">
-                    {n === 1 ? '1 phiên bản' : `${n} mã đề so le`}
+                  <span className="mt-1 text-xs text-muted">
+                    {n === 1 ? '1 phiên bản' : `${n} mã đề`}
                   </span>
                   {isSelected && (
-                    <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-sky-500/20 px-2 py-0.5 text-[11px] font-medium text-sky-300">
+                    <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-support-bg px-2 py-0.5 text-[11px] font-medium text-highlight">
                       <Check className="h-3 w-3" /> Đã chọn
                     </span>
                   )}
@@ -187,104 +185,17 @@ export default function Stage2ConfigCard({
           </div>
         </div>
 
-        {/* Phần 2: Chế độ biến thể (Tự động theo Issue #45) */}
-        <div>
-          <div className="flex items-center justify-between">
-            <label className="block text-base font-semibold text-white">
-              2. Chế độ biến thể bài toán (Variation Modes)
-            </label>
-            <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/20 px-2.5 py-0.5 text-xs font-medium text-sky-300">
-              <Sparkles className="h-3 w-3" /> Tự động tối ưu từ Blueprint
-            </span>
-          </div>
-          <p className="mt-1 text-sm text-slate-400">
-            Hệ thống tự động phân tích và áp dụng các chế độ biến thể toán học tối ưu từ Blueprint đề nguồn đã xác nhận (theo quy ước Issue #45).
-          </p>
-
-          <div className="mt-4 space-y-3">
-            {!isBlueprintReady ? (
-              <p className="text-xs text-amber-300/80">
-                Đang chờ Blueprint sẵn sàng để hiển thị các phương pháp sinh biến thể.
-              </p>
-            ) : supportedModes.length === 0 ? (
-              <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-4 text-sm text-slate-300">
-                <div className="flex items-start gap-3">
-                  <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-sky-400" />
-                  <div>
-                    <p className="font-semibold text-white">Đề nguồn giữ nguyên bài toán gốc</p>
-                    <p className="mt-1 text-xs text-slate-400">
-                      Các câu hỏi trong đề được phân tích chỉ áp dụng chế độ giữ nguyên (không biến đổi số liệu hoặc ngữ cảnh). Hệ thống sẽ sinh các mã đề dựa trên xáo trộn thứ tự câu hỏi bên dưới.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {supportedModes.map((mode) => {
-                  const isAvailable = mode.is_available !== false;
-                  return (
-                    <div
-                      key={mode.id}
-                      id={`mode-badge-${mode.id}`}
-                      className={`flex items-start gap-3 rounded-xl border p-4 text-left transition-colors ${
-                        isAvailable
-                          ? 'border-slate-700 bg-slate-800/40 text-slate-200'
-                          : 'border-slate-800/60 bg-slate-900/30 text-slate-500'
-                      }`}
-                    >
-                      <div className="mt-0.5">
-                        {isAvailable ? (
-                          <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                        ) : (
-                          <AlertCircle className="h-4 w-4 text-amber-500/60" />
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className={`text-sm font-semibold select-none ${isAvailable ? 'text-white' : 'text-slate-400'}`}>
-                            {mode.label || mode.id}
-                          </span>
-                          {isAvailable ? (
-                            <span className="rounded bg-slate-800 px-2 py-0.5 text-[11px] font-medium text-slate-300">
-                              Hỗ trợ {mode.question_count ?? totalQuestions}/{totalQuestions} câu
-                            </span>
-                          ) : (
-                            <span className="rounded bg-rose-950/40 px-2 py-0.5 text-[11px] font-medium text-rose-300">
-                              Không khả dụng
-                            </span>
-                          )}
-                        </div>
-                        {mode.description && (
-                          <p className="mt-1 text-xs text-slate-400">
-                            {mode.description}
-                          </p>
-                        )}
-                        {!isAvailable && mode.unavailable_reason && (
-                          <p className="mt-1.5 flex items-center gap-1 text-xs text-amber-400/90">
-                            <HelpCircle className="h-3.5 w-3.5" />
-                            {mode.unavailable_reason}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-
         {/* Phần 3: Tùy chọn xáo trộn ban đầu */}
         <div>
-          <label className="block text-base font-semibold text-white">
-            3. Tùy chọn xáo trộn thứ tự đề thi
+          <label className="block text-base font-semibold text-strong">
+            2. Thứ tự câu hỏi và đáp án
           </label>
-          <p className="mt-1 text-sm text-slate-400">
-            Tối ưu hóa khả năng chống nhìn bài giữa các thí sinh ngồi cạnh nhau.
+          <p className="mt-1 text-sm text-muted">
+            Hai lựa chọn này được <strong>lưu</strong> khi cấu hình. Thứ tự câu hỏi và phương án chỉ được <strong>áp dụng</strong> khi bạn chốt ở màn Xem trước, sau khi duyệt đủ câu.
           </p>
 
           <div className="mt-4 space-y-3">
-            <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-4">
+            <div className="rounded-xl border border-line bg-rail p-4">
               <label className="flex cursor-pointer items-start gap-3">
                 <input
                   type="checkbox"
@@ -292,23 +203,23 @@ export default function Stage2ConfigCard({
                   checked={shuffleQuestions}
                   disabled={isSubmitting}
                   onChange={(e) => setShuffleQuestions(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-slate-600 bg-slate-700 text-sky-500 focus:ring-sky-500 focus:ring-offset-slate-900"
+                  className="mt-0.5 h-4 w-4 rounded border-line bg-rail text-highlight focus:ring-highlight focus:ring-offset-surface"
                 />
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-white">
-                      Xáo trộn thứ tự câu hỏi giữa các mã đề (shuffle_questions)
+                    <span className="text-sm font-semibold text-strong">
+                      Xáo trộn thứ tự câu hỏi giữa các mã đề
                     </span>
-                    <Shuffle className="h-3.5 w-3.5 text-slate-400" />
+                    <Shuffle className="h-3.5 w-3.5 text-muted" />
                   </div>
-                  <p className="mt-0.5 text-xs text-slate-400">
-                    Các câu hỏi sẽ được hoán vị ngẫu nhiên trên từng mã đề, đảm bảo thí sinh cùng phòng làm các câu khác vị trí nhau.
+                  <p className="mt-0.5 text-xs text-muted">
+                    Đổi vị trí câu hỏi giữa các mã đề.
                   </p>
                 </div>
               </label>
             </div>
 
-            <div className="rounded-xl border border-slate-700 bg-slate-800/40 p-4">
+            <div className="rounded-xl border border-line bg-rail p-4">
               <label className="flex cursor-pointer items-start gap-3">
                 <input
                   type="checkbox"
@@ -316,17 +227,17 @@ export default function Stage2ConfigCard({
                   checked={shuffleOptions}
                   disabled={isSubmitting}
                   onChange={(e) => setShuffleOptions(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-slate-600 bg-slate-700 text-sky-500 focus:ring-sky-500 focus:ring-offset-slate-900"
+                  className="mt-0.5 h-4 w-4 rounded border-line bg-rail text-highlight focus:ring-highlight focus:ring-offset-surface"
                 />
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-white">
-                      Xáo trộn thứ tự các đáp án A, B, C, D (shuffle_options)
+                    <span className="text-sm font-semibold text-strong">
+                      Xáo trộn thứ tự các đáp án A, B, C, D
                     </span>
-                    <Shuffle className="h-3.5 w-3.5 text-sky-400" />
+                    <Shuffle className="h-3.5 w-3.5 text-highlight" />
                   </div>
-                  <p className="mt-0.5 text-xs text-slate-400">
-                    Xáo trộn vị trí các phương án lựa chọn trên từng câu hỏi giữa các mã đề, phòng trường hợp dù đã tạo câu hỏi khác nhau nhưng vị trí đáp án đúng ở các mã đề lại giống nhau (ví dụ: câu 1 của các mã 101, 102, 103 đều rơi vào phương án A).
+                  <p className="mt-0.5 text-xs text-muted">
+                    Đổi vị trí các phương án; đáp án đúng được cập nhật tương ứng.
                   </p>
                 </div>
               </label>
@@ -335,35 +246,35 @@ export default function Stage2ConfigCard({
         </div>
 
         {/* Phần 4: Thẻ tóm tắt thông số trực quan */}
-        <div className="rounded-xl border border-sky-800/40 bg-sky-950/20 p-5">
+        <div className="rounded-xl border border-support-line bg-support-bg p-5">
           <div className="flex items-start gap-3">
-            <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-sky-400" />
+            <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-highlight" />
             <div>
-              <h3 className="text-sm font-semibold text-sky-200">
+              <h3 className="text-sm font-semibold text-highlight">
                 Tóm tắt cấu hình sinh đề:
               </h3>
-              <p className="mt-1 text-sm text-slate-300">
-                Hệ thống sẽ sinh <strong className="text-white">{numVersions} mã đề</strong>, mỗi mã gồm <strong className="text-white">{totalQuestions} câu hỏi tương đương</strong>.
+              <p className="mt-1 text-sm text-ink">
+                Hệ thống sẽ sinh <strong className="text-strong">{numVersions} mã đề</strong>, mỗi mã gồm <strong className="text-strong">{totalQuestions} câu hỏi tương đương</strong>.
               </p>
-              <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-400">
-                <span className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-slate-200">
-                  <Layers className="h-3.5 w-3.5 text-sky-400" />
-                  Tổng cộng: <strong className="text-white">{totalVariantsToGenerate}</strong> câu hỏi biến thể
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-muted">
+                <span className="flex items-center gap-1.5 rounded-lg bg-rail px-2.5 py-1 text-ink">
+                  <Layers className="h-3.5 w-3.5 text-highlight" />
+                  Tổng cộng: <strong className="text-strong">{totalVariantsToGenerate}</strong> câu hỏi biến thể
                 </span>
-                <span className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-slate-200">
-                  <Sparkles className="h-3.5 w-3.5 text-sky-400" />
-                  Tự động tối ưu biến thể từ Blueprint
+                <span className="flex items-center gap-1.5 rounded-lg bg-rail px-2.5 py-1 text-ink">
+                  <Sparkles className="h-3.5 w-3.5 text-highlight" />
+                  Giữ cấu trúc đề nguồn
                 </span>
                 {shuffleQuestions && (
-                  <span className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-slate-200">
-                    <Shuffle className="h-3.5 w-3.5 text-amber-400" />
-                    Thứ tự câu hỏi xáo ngẫu nhiên
+                  <span className="flex items-center gap-1.5 rounded-lg bg-rail px-2.5 py-1 text-ink">
+                    <Shuffle className="h-3.5 w-3.5 text-accent-ink" />
+                    Đã chọn đảo thứ tự câu hỏi
                   </span>
                 )}
                 {shuffleOptions && (
-                  <span className="flex items-center gap-1.5 rounded-lg bg-slate-800/80 px-2.5 py-1 text-slate-200">
-                    <Shuffle className="h-3.5 w-3.5 text-sky-400" />
-                    Thứ tự đáp án (A, B, C, D) xáo ngẫu nhiên
+                  <span className="flex items-center gap-1.5 rounded-lg bg-rail px-2.5 py-1 text-ink">
+                    <Shuffle className="h-3.5 w-3.5 text-highlight" />
+                    Đã chọn đảo thứ tự phương án
                   </span>
                 )}
               </div>
@@ -379,7 +290,7 @@ export default function Stage2ConfigCard({
               type="button"
               onClick={onBack}
               disabled={isSubmitting}
-              className="rounded-xl border border-slate-700 px-5 py-2.5 text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-50"
+              className="rounded-xl border border-line px-5 py-2.5 text-sm font-medium text-ink hover:bg-rail hover:text-strong disabled:opacity-50"
             >
               Quay về Dashboard
             </button>
@@ -390,7 +301,7 @@ export default function Stage2ConfigCard({
           <button
             type="submit"
             disabled={isSubmitting || !isBlueprintReady}
-            className="flex items-center gap-2 rounded-xl bg-sky-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-sky-600/30 hover:bg-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex items-center gap-2 rounded-xl bg-highlight px-6 py-3 text-sm font-semibold text-white shadow-soft  hover:bg-highlight focus:outline-none focus:ring-2 focus:ring-highlight focus:ring-offset-2 focus:ring-offset-surface disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isSubmitting ? (
               <>

@@ -45,6 +45,8 @@ class AIBatchInputs(BaseModel):
     confirmation_id: UUID | None = None
     frozen_sources: dict[str, dict[str, Any]] = Field(default_factory=dict)
     committed_fallbacks: frozenset[tuple[int, str]] = frozenset()
+    source_variation_modes: dict[str, tuple[StrictStr, ...]] | None = None
+    clone_source_ids: frozenset[str] = frozenset()
 
     @field_validator("confirmed_source_hash")
     @classmethod
@@ -62,6 +64,19 @@ def _check_plan_inputs(plan: GenerationPlan, inputs: AIBatchInputs) -> None:
         raise ValueError("AI sources do not match the plan's ordered source identities.")
     if set(inputs.blueprints) != {source.id for source in inputs.sources}:
         raise ValueError("AI Blueprints do not cover the job sources.")
+    if inputs.source_variation_modes is not None:
+        from app.services.generation.mode_mapper import question_policy
+
+        expected = {
+            key: tuple(question_policy(blueprint)["canonical_dimensions"])
+            for key, blueprint in inputs.blueprints.items()
+        }
+        if inputs.source_variation_modes != expected or inputs.clone_source_ids != {
+            key for key, dimensions in expected.items() if not dimensions
+        }:
+            raise ValueError("Per-question inputs differ from frozen Blueprint policy.")
+    elif inputs.clone_source_ids:
+        raise ValueError("Mixed Clone requires a per-question policy.")
     cached: set[QuestionTarget] = set()
     indices = {source_id: index for index, source_id in enumerate(source_ids)}
     for result in inputs.completed:
@@ -83,7 +98,11 @@ def _check_plan_inputs(plan: GenerationPlan, inputs: AIBatchInputs) -> None:
     if (
         len(fallback_targets) != len(inputs.committed_fallbacks)
         or cached & fallback_targets
-        or cached | fallback_targets != set(plan.saved)
+        or cached | fallback_targets != {
+            target for target in plan.saved
+            if str(target.source_question_id) not in inputs.clone_source_ids
+        }
+        or any(str(target.source_question_id) in inputs.clone_source_ids for target in cached | fallback_targets)
     ):
         raise ValueError("Completed AI and fallback records do not match the committed job targets.")
 
@@ -120,8 +139,12 @@ class AIBatchAdapter:
                 reservation.raise_if_failed()
                 if callback_failure is not None:
                     raise callback_failure
-                if prepared.target in plan.saved or prepared.target in attempted:
-                    raise ValueError("AI must deliver each new target only once.")
+                if (
+                    prepared.target in plan.saved
+                    or prepared.target in attempted
+                    or str(prepared.target.source_question_id) in snapshot.clone_source_ids
+                ):
+                    raise ValueError("AI must deliver each new AI target only once.")
                 attempted.add(prepared.target)
                 try:
                     await on_result(prepared)
@@ -132,6 +155,10 @@ class AIBatchAdapter:
 
         try:
             async with asyncio.timeout_at(deadline):
+                policy_args: dict[str, Any] = {} if snapshot.source_variation_modes is None else {
+                    "source_variation_modes": snapshot.source_variation_modes,
+                    "clone_source_ids": snapshot.clone_source_ids,
+                }
                 batch = await self._service.generate_exam_drafts(
                     list(snapshot.sources),
                     snapshot.blueprints,
@@ -143,6 +170,7 @@ class AIBatchAdapter:
                     completed=list(snapshot.completed),
                     on_result=deliver,
                     committed_fallbacks=snapshot.committed_fallbacks,
+                    **policy_args,
                 )
         except asyncio.CancelledError:
             raise
@@ -160,12 +188,15 @@ class AIBatchAdapter:
         ai_targets = {
             target for target in plan.targets
             if (target.version_index, str(target.source_question_id)) not in snapshot.committed_fallbacks
+            and str(target.source_question_id) not in snapshot.clone_source_ids
         }
         if len(keys) != len(ai_targets) or set(keys) != ai_targets:
             raise ValueError("AI batch did not return exactly the planned targets.")
-        if acknowledged != set(plan.targets) - set(plan.saved):
+        if acknowledged != ai_targets - set(plan.saved):
             raise ValueError("AI batch returned before all new result callbacks completed.")
-        completed_count = len(snapshot.committed_fallbacks) + sum(result.draft is not None for result in results)
+        completed_count = len(snapshot.committed_fallbacks) + sum(
+            str(target.source_question_id) in snapshot.clone_source_ids for target in plan.targets
+        ) + sum(result.draft is not None for result in results)
         expected_status = (
             "generated"
             if completed_count == len(plan.targets)

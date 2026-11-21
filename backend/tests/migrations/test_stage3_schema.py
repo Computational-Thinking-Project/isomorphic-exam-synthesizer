@@ -72,7 +72,7 @@ class PostgresCase(unittest.TestCase):
             "none",
             "-e",
             "POSTGRES_HOST_AUTH_METHOD=trust",
-            "postgres:15-alpine",
+            os.getenv("POSTGRES_MIGRATION_TEST_IMAGE", "postgres:15-alpine"),
         )
         for _ in range(40):
             ready = cls.run_docker(

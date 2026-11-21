@@ -61,7 +61,8 @@ _LIST_FIELDS = ("target_refs", "preconditions", "limits")
 _TRANSFORMATION_FIELDS = {"dimension", *_TEXT_FIELDS, *_LIST_FIELDS}
 
 
-def _validate_canonical_policy(blueprint: object) -> None:
+def validate_canonical_policy(blueprint: object) -> None:
+    """Reject missing or malformed transformation evidence before scheduling."""
     requirement = blueprint.get("requirement") if isinstance(blueprint, dict) else None
     policy = requirement.get("variation_policy") if isinstance(requirement, dict) else None
     transformations = policy.get("allowed_transformations") if isinstance(policy, dict) else None
@@ -123,6 +124,6 @@ def validate_generation_config(
     if blueprint_ids != source_ids or len(context.canonical_blueprints) != len(source_ids):
         raise _source_not_ready()
     for blueprint in context.canonical_blueprints:
-        _validate_canonical_policy(blueprint.canonical_blueprint)
+        validate_canonical_policy(blueprint.canonical_blueprint)
 
     return config

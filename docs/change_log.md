@@ -1,3 +1,104 @@
+## DEC-EXPORT-92-V2 — Combined per-version documents — 20/11/2026
+
+- Hùng yêu cầu thống nhất mỗi mã đề một PDF/TeX/MD: đề → ma trận đáp án riêng mã → lời giải; PDF/TeX ngắt trang trước ma trận. Giữ ZIP và đường dẫn `exam_<code>`; bỏ PDF lời giải/ma trận riêng khỏi bundle. Đây là thay đổi bố cục theo yêu cầu mới, không phải chỉ sửa glyph.
+- Bump `PACKAGER_VERSION=w4-export-v2` để không replay ZIP v1 khi xin v2; giữ nguyên ledger/object lịch sử, không migration/backfill. API tải/Storage ACL không đổi. File đề kết hợp có đáp án: chỉ chia sẻ phần trang đề cho thí sinh.
+- FE bỏ grant cache khi nhận ready snapshot mới để không hiển thị receipt v2 nhưng tải URL v1 còn hạn. Footer PDF kết hợp chỉ ghi số trang hiện tại, tránh hiểu sai tổng trang khi tách phần đề. Philip review phần controller dùng chung.
+- Tác động: compiler/pipeline, bundler, source renderers/template, contract và tests. Cần Tâm/Đạt/Duy peer review theo [plan](tasks/ISSUE-92-PACKAGING.md); chưa là rollout hoặc live acceptance.
+
+---
+
+## Issue #92 — Vietnamese PDF heading glyphs (partial scope) — 20/11/2026
+
+- Hùng bổ sung `fonts-liberation2` và `TYPST_FONT_PATHS` trong backend Docker để Typst0.11.1 dùng Liberation Serif đã khai báo, thay fallback bold-italic làm mất thân chữ `ờ`. Cần rebuild image; không sửa PDF cũ. Font metrics có thể đổi ngắt dòng.
+- Thêm fixture NFC/NFD, regression kiểm font nhúng và kiểm ảnh PDF thật. Không đổi compiler/converter, API, migration hoặc cách đóng gói ZIP. Kết quả/giới hạn ở [plan92](tasks/ISSUE-92.md); lựa chọn packaging còn ngoài phạm vi.
+
+---
+
+## Issue #70 — Per-question generation policy (PR #101, proposed for review) — 19/11/2026
+
+- Đạt thay intersection toàn đề bằng policy theo câu cho job mới: values/context riêng từng Blueprint; chỉ Clone câu có policy hợp lệ nhưng không có chiều được hỗ trợ. Empty/malformed/stale vẫn fail closed. Public request giữ `active_variation_modes: []`.
+- Forward migration 026 dùng mapping_version 1.1 hiện có, freeze `question_policies` trong snapshot JSONB; config modes/dimensions là union để giữ receipt. Không thêm bảng/cột, không backfill job lịch sử. SQL/Python kiểm kết quả theo policy từng câu; writer/claim/read/finish giữ auth, parent lock, fencing và idempotency.
+- Worker dùng full source order cho seed/hash/fingerprint; Clone không reserve quota/call Gemini. Resume giữ nguyên snapshot1.0 hoặc1.1, bỏ slot AI/Clone/fallback đã commit. Original Clone khác fallback AI sau4attempt.
+- Contract cập nhật: [config](api/generation-config-endpoint.md), [worker](api/generation-job-endpoints.md), [input handoff](api/generation-integration-inputs.md). Môi trường kiểm và giới hạn ghi ở [plan70](tasks/TASK-70-PER-QUESTION-GENERATION.md). Chưa là reviewer acceptance hay bằng chứng áp migration vào shared Supabase.
+
+---
+
+## TASK-306 / RENDER12-01: Typst math converter integral & multi-letter variable fix — 16/11/2026
+
+- Fixed `latex_math_to_typst()` in `backend/app/services/exporter/typst_converter.py` so real Golden math fixtures (`\int_{0}^{1}`, `dx`, `Oxyz`) compile cleanly under Typst `v0.11.1`:
+  - Added Typst math mappings for integrals/big operators (`\int`, `\iint`, `\iiint`, `\oint`, `\sum`, `\prod`), remaining `_MATH_COMMANDS` symbols/functions/Greek letters/style & accent wrappers (`\mathbb`, `\overline`, `\vec`, `\hat`, `\bar`, `\ddot`, etc.), spacing escapes, and math environments (`cases`, matrices, `aligned`, `alignedat`, `gathered`, `split`).
+  - Normalized script attachment around `_` and `^` (e.g. `\int_{0}^{1}` -> `integral_(0)^(1)` instead of stray `\i`+`nt` escape).
+  - Added quote-safe and case-sensitive `_split_multiletter_segment` logic separating adjacent LaTeX single-letter variables (`dx` -> `d x`, `Oxyz` -> `O x y z`, `IN` -> `I N`) while preserving Typst math identifiers/dot-symbols, `"..."` literals, `#`/`.method(`/`panic|eval|assert` security neutralization (`F03`), and decimal coefficients (`0.5(x+1)`, `F06`).
+  - Resolved review finding F82-01: consume and validate mandatory alignment column-count arguments in `alignedat` (`\begin{alignedat}{n}`) and optional placement specifiers (`[t|b|c]`), preventing stray `{n}` metadata from corrupting exported formulas while keeping equations and row boundaries intact.
+  - Resolved review finding F82-02: preserve `&` column separators inside `cases` (`\begin{cases}...\end{cases}`) instead of flattening expression/condition boundaries into spaces.
+  - Resolved review finding F82-03: preserve unit and upright text labels inside `\mathrm{...}` (`\mathrm{cm}` -> `upright("cm")`, `\mathrm{kg}` -> `upright("kg")`) without splitting abbreviations into separate mathematical variables.
+  - Resolved review finding F82-04: remove whole-argument quoting in `_convert_mathrm()` and process `\mathrm{...}` before structural/environment passes while propagating `quote_unknown=True` through nested expressions, preserving math operators (`\mathrm{x+y}`, `\mathrm{kg/mol}`) and nested fractions (`\mathrm{\frac{kg}{mol}}`).
+  - Resolved review finding F82-05: protect converter-generated Typst tokens with internal provenance sentinels instead of matching `_TYPST_MATH_IDENTIFIERS` / `_TYPST_DOT_SYMBOLS` against raw source text, keeping raw Latin identifiers (`pi`, `in`, `sum`, `sin`), `\mathrm{...}` labels (`\mathrm{in}`, `\mathrm{pi}`, `\mathrm{sin}`, `\mathrm{\frac{in}{mol}}`, `\mathrm{\sqrt{pi}}`), and font/accent wrapper arguments (`\mathbf{pi}`, `\mathit{in}`, `\mathsf{sin}`, `\vec{pi}`) distinct from explicit LaTeX commands (`\pi`, `\in`, `\sum`, `\sin`).
+- Added unit tests and `TestRealTypstIntegration` Golden snapshot & extended math tests in `backend/tests/exporter/test_typst_compiler.py`.
+
+---
+
+## DEC-TV7-W4-007-Q01: Verified empty fallback/clone solutions — 16/11/2026
+
+- Hùng áp dụng Q01 revised của Duy tại PR74#issuecomment-6904736595, thay guard solution bắt buộc tuyệt đối. AI/regenerated giữ strict validation; fallback/Original Clone rỗng chỉ qua receipt/snapshot hợp lệ. Không tự thêm placeholder hoặc autoapprove.
+- Nội dung và ownership vẫn dùng user RLS. Service client tùy chọn chỉ đọc provenance của session/question đã authorize; missing/invalid evidence fail closed. Không thay API JSON, revision/hash payload hoặc migration. Capability nội bộ giữ ngoại lệ qua compiler/bundler revalidation; dump JSON không tự mang quyền đó.
+- Ảnh hưởng: snapshot reader/builder/models, pipeline revalidation, tests và export-snapshot contract; task08 nối client, task12 kiểm regression. Đã kiểm cục bộ được ghi tại plan07; không coi là producer/deployment/Golden PASS.
+
+## DEC-TV7-W4-007: Approved export snapshot adapter
+
+- Ngày/người: 12/11/2026 — Hùng; áp dụng [quyết định của Duy trên PR58](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/58#issuecomment-6801792075). Chưa là GitHub approval hay nghiệm thu tích hợp.
+- Bối cảnh: task08 cần model export từ nội dung đã lưu và khóa; timestamp thay đổi khi approve nên không định danh đúng artifact.
+- Quyết định: SHA-256 ID + title chuẩn hóa + versions đã validate; không status/timestamps. Giữ table reads qua user RLS, kiểm session trước/sau, không thêm RPC/migration. Giữ409 cho dữ liệu sai (`ERR_EXPORT_SNAPSHOT_INVALID`), không đổi network/SDK errors thành409.
+- Sửa F01 sau review độc lập: chỉ display slots phải1..M; canonical giữ số câu nguồn nguyên dương/không trùng (ví dụ3,8,9). Mapping với nguồn vẫn do shuffle/approval xác thực; adapter giữ kiểm source coverage và key/canonical khớp nhau, không renumber dữ liệu nguồn. Bổ sung positive/negative regressions và PostgreSQL thật.
+- Ảnh hưởng: package exporter, fixtures/tests, [contract](api/export-snapshot-contract.md), [plan/input07](tasks/W4-MVP-07.md). Chờ Tâm xác nhận fixture/đồng bộ docs preview. Export thiếu solution đã chốt fail-closed trên issue46; gate upstream Q01 còn riêng, không hỏi lại quyết định export.
+- Kiểm: unit/stub và PostgreSQL15 dùng một lần với chain002–018; actual shuffle/approval, RLS, lock/fencing, concurrency và parity6slot với PR49 pinned. Chưa deployed Supabase/JWT/PostgREST, fullW2, PDF/Storage hay E2E08. Code test không cấp quyền cloud hoặc merge.
+
+## OPS11/21 smoke tooling — 15/11/2026
+
+- Đạt bổ sung anonymous session/metrics probes trực tiếp và qua proxy vào `scripts/w4_ops.py smoke`: HTTP401 phải kèm Bearer challenge; không lưu response content/headers hoặc gửi credentials. JSON checks tăng4→8; schema_version vẫn1, cấu trúc từng check và acceptance không đổi. Consumer không nên cố định độ dài checks.
+- Runbook và bằng chứng local devc2ee9fd cập nhật cùng PR. Không đổi API/schema/Docker/auth policy, không kích hoạt export hoặc áp migration. Tooling chỉ chứng nhận các observations local, không tự nâng G0/G1/G2.
+
+## W4-MVP-05: Post-shuffle pre-approval preview projection API — 08/11/2026 (proposed)
+
+Introduces dedicated read-only endpoint `GET /api/sessions/{session_id}/finalize/preview`
+providing post-shuffle examination preview projection before final approval. Enforces
+full parity with exporter `DisplayQuestion` invariants (non-empty content/solution, 4
+normalized distinct options, status='approved'), complete answer-key integrity checks,
+and finalized shuffle provenance verification. Resolves Decision Q06. See the
+[preview projection contract](api/preview-projection-contract.md).
+
+### Review Round 2 & Q01 Revised Policy Alignment (`16/11/2026`):
+- **Q01 Revised Policy (`W4-MVP-05` Preview Provenance Exception):** Aligned `FinalizeRepository.fetch_preview_snapshot()` and `GET /api/sessions/{session_id}/finalize/preview` with Duy's updated `Q01` decision on PR `#74` (`16/11/2026`):
+  - AI-generated candidates and Stage 3 regenerated candidates (`regenerated_from_id` set) continue to fail closed (`409 ERR_INCONSISTENT_ANSWER_KEYS`) when `solution_md` is empty or missing.
+  - Empty `solution_md` (normalized to `""` when `canonical_solution_md` is also empty) is permitted **strictly** for slots with verified `CONFIRMED_SOURCE_FALLBACK` provenance (migration `021` fallback report and `has_warning=True`) or `ORIGINAL_CLONE` provenance (explicit empty `active_variation_modes` and `canonical_dimensions`, non-warning empty report), including Stage 3 reverts back to those root rows.
+  - On HTTP `GET /api/sessions/{session_id}/finalize/preview`, when empty solutions are present, `provenance_db` is resolved lazily after owner-RLS verification (`get_user_db`) and cross-checks `generation_target_results` (`result_kind`) and `generation_job_snapshots` read-only, failing closed with `409 ERR_INCONSISTENT_ANSWER_KEYS` whenever provenance verification is unavailable, missing, or mismatched (even for direct repository/service calls without a provenance client, per F13).
+
+### Review Round 2 Findings (F01–F04) Resolution:
+- **F01 (Real PostgreSQL integration & fixture):** Fixed `reviewed_exam_session` fixture
+  schema compliance by populating `canonical_question_no` on `answer_keys` and valid
+  `permutations` on `exam_versions`. Upgraded `test_preview_snapshot_on_real_pg` to exercise
+  the complete `prepare_shuffle` -> `finalize_persist_shuffle` transactional RPC -> `get_preview_snapshot`
+  pipeline on PostgreSQL, asserting slots, choices, answer keys, and canonical mappings.
+- **F02 (Persisted shuffle provenance validation):** Replicated migration 008 invariants in
+  `fetch_preview_snapshot()`: verified non-empty `shuffle_seed`, complete permutation map
+  bijections, exact match between displayed options and `canonical_options` under `option_permutations`,
+  `correct_key == perm_map[canonical_correct_key]`, and synchronized explanation markdown
+  against `canonical_solution_md`.
+- **F03 (Canonical & source lineage validation):** Enforced 1:1 set coverage of source questions
+  for each version and verified `source_by_id[source_question_id] == canonical_question_no`,
+  failing closed on swapped or omitted source references.
+- **F04 (Export title mapping & mock column projection):** Added `title` to `.select()` in
+  `FinalizeRepository.get_session_meta()` and updated `MockSupabaseClient` in `finalize_test_client.py`
+  to project selected columns, preventing false-positive tests on unqueried fields.
+- **F05 (Self-Review hardening & cache invariant alignment):**
+  - Enforced `Cache-Control: no-store` on `GET /{session_id}/finalize/preview` and `GET /{session_id}/finalize/matrix` to prevent intermediate caching of sensitive exam projections, aligning with PR #54 (`w4-mvp-03-review-snapshot`).
+  - Constrained `PreviewVersionItem.total_questions` to `ge=1, le=20` for strict parity with `PreviewSnapshotResponse.total_questions` and domain invariants ($1 \le M \le 20$).
+  - Enforced strict dictionary length validation (`len(c_to_d) == m`, `len(d_to_c) == m`, `len(opt_perms) == m`) in `fetch_preview_snapshot()`, immediately failing closed on incomplete or extraneous permutation maps with descriptive errors.
+  - Added session user ownership guard (`user_id` validation) in `FinalizeService.get_answers_matrix()`, aligning authorization defense-in-depth with `get_preview_snapshot()`.
+  - Added test coverage for `Cache-Control: no-store` headers, permutation dictionary bounds, matrix cross-user authorization, and Pydantic validation of version item bounds.
+
+---
+
 ## Issue #64 — C5 Python consumer cho migration 021 (Draft #67)
 
 - AI job ghi `CONFIRMED_SOURCE_FALLBACK` sau bốn lượt đủ điều kiện trong một lần chạy slot. Writer đối chiếu provenance và ghi `pending_review`. Worker phát `GENERATION_RETRIES_EXHAUSTED` và `question_done` sau khi xác nhận ghi.
@@ -9,6 +110,7 @@
 - `POST /api/sessions/{session_id}/config` nhận `n_versions` nguyên 1–4, modes bỏ qua hoặc `[]` và cờ shuffle mặc định OFF/OFF. RPC 019 suy ra modes từ canonical Blueprint của nguồn đã xác nhận. API trả cấu hình DB đã lưu cùng manifest. [Contract config](api/generation-config-endpoint.md)
 - Claim đối chiếu receipt 015–017 với frozen config/context, manifest và các slot đã commit trước khi dispatch. Frozen dimensions hợp lệ chọn AI. Modes và dimensions cùng rỗng chọn Original Clone với 0 lượt Gemini. Retry giữ snapshot và slot đã commit, kể cả alias `1.0` đã lưu từ W2.
 - Receipt sai trả `503 ERR_GENERATION_STORAGE_FAILURE` trước khi chạy worker. Nếu DB đã commit claim, recovery 017 xử lý job stale và chặn token cũ. [Bằng chứng và phần chờ trong M2](tasks/W4-MVP-02_IMPLEMENTATION_PLAN.md#bàn-giao--ghi-theo-bằng-chứng-thực-tế)
+
 ## OPS11/21 checkpoint — 13/11/2026
 
 - Đạt tiếp nối PR51 đã merge bằng nhánh OPS mới từ dev294c69a. Cập nhật task/input-handoff, runbook và migration checkpoint017/018 merged; 019 đã merge qua PR61 tại devb47e4fa; giữ historical inventory73583d7, không tạo applied ledger giả.
@@ -349,7 +451,7 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
 
 > Checkpoint tích hợp 26/10/2026: Auth PR #7 đã squash merge vào dev tại `bbb7c5e`. Nhánh TASK-103 đang ghép nền dev và giữ list/phân trang/Clone Modal thật; chưa lưu merge commit. Các mục DEC-TV1 bên dưới ghi đúng phạm vi lịch sử ở ngày thực hiện, không ghi đè bằng chứng hoặc nhận TASK-103 đã hoàn tất.
 
-> **Mục đích:** Tài liệu này dùng để lưu trữ các **quyết định kỹ thuật (Architecture Decision Records - ADR)**, các thay đổi công nghệ hoặc điều chỉnh quy trình phát triển phát sinh trong quá trình triển khai dự án so với tài liệu thiết kế ban đầu.  
+> **Mục đích:** Tài liệu này dùng để lưu trữ các **quyết định kỹ thuật (Architecture Decision Records - ADR)**, các thay đổi công nghệ hoặc điều chỉnh quy trình phát triển phát sinh trong quá trình triển khai dự án so với tài liệu thiết kế ban đầu.
 > Khi dự án triển khai, mọi thay đổi về stack, quy ước code, cấu trúc thư mục hoặc luồng phối hợp giữa các thành viên đều cần được ghi chép tại đây để đảm bảo tính minh bạch và thống nhất cho toàn đội.
 
 ---
@@ -588,7 +690,7 @@ Gateway async dùng chung, xác nhận nguồn trước Blueprint, canonical cor
   3. Kịch bản kiểm thử quyền `anon` trong `verify_migration_003_permissions.sql` chạy trực tiếp dưới kết nối superuser `postgres`, khiến RPC tin cậy `session_user` và bỏ qua kiểm tra quyền, không xác thực được cơ chế cấm `EXECUTE` (SQLSTATE 42501).
 * **Quyết định:**
   1. **Phân loại ngoại lệ phân tán theo kiểu `isinstance`:** Xây dựng các helper `is_network_timeout`, `is_network_transport`, `is_database_rollback_evidence` kiểm tra cây ngoại lệ `__cause__`/`__context__`. Trả về HTTP 504 Gateway Timeout khi trạng thái commit chưa rõ ràng; chỉ trả về HTTP 500 khẳng định hoàn tác khi có bằng chứng từ `postgrest.exceptions.APIError`.
-  2. **Chuẩn hóa script kiểm quyền migration 003:** 
+  2. **Chuẩn hóa script kiểm quyền migration 003:**
      - Thêm preflight tạo mock users trong `auth.users` và `public.users`.
      - Giả lập caller PostgREST qua `SET SESSION AUTHORIZATION authenticator; SET ROLE anon / authenticated / service_role;`.
      - Xác thực role `anon` bị từ chối `EXECUTE` ở tầng PostgreSQL Engine (SQLSTATE 42501 / Least Privilege SEC-04).
@@ -952,3 +1054,43 @@ Public confirm-source/background and frozen-v1 RPC wiring remain in progress.
 - Context: on-access stale recovery and an in-memory SSE broker could not independently recover an abandoned job or retain its error after restart. The public metrics stub did not report the shared worker's live activity.
 - Decision: consume Duy's PR #52 migration 017 RPC contract for cursor-paged stale scanning, token-fenced failure and durable error read-back. Start one scanner on startup/every 30 seconds, retain terminal buffers for at least 15 minutes, clean every 60 seconds and hold a broker lease for issued SSE tickets. Use PR #32 admin dependency and the existing Gemini observer/collector for protected metrics.
 - Impact: generation repository/runner/recovery, snapshot/SSE/ticket/broker, validator adapter, app lifespan and metrics route. The follow-up patch aligns dev and Docker smoke with metrics Auth (anonymous 401 + Bearer challenge) and fixes the CI test fixture for collector 503. PR #52 later merged into dev; applied DB ledger, one-worker deployment and live FE/DB/proxy acceptance remain pending. No migration, AI generator, validator aggregator or FE owner code is changed here.
+
+## DEC-TV7-W4-008: Private export integration draft (12/11/2026, proposed)
+
+Hùng triển khai pipeline độc lập trên dependency PR #58: manifest/checksums,
+immutable upload/read-back verification, durable ledger ports và safe error/
+lost-response handling. [Contract Q09/Q10](api/private-export-contract.md) là đề
+xuất chờ Duy/Đạt/Philip; chưa bật RPC/migration/HTTP hay thay ACL/cloud config.
+Plan và evidence/giới hạn: [W4-MVP-08](tasks/W4-MVP-08.md). Không coi fake-port
+tests là PostgreSQL/Storage live proof hoặc GitHub approval.
+
+12/11, cập nhật theo [quyết định Q09 của Duy](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6819045971):
+thêm forward migration020, service-only RPC ledger, root-first locks, immutable
+receipt checkpoint và atomic ready/exported; recovery giữ object cũ với quyền
+fencing mới, chỉ restart khi xác minh missing/checksum mismatch. Backend adapter
+và service đã nối; HTTP/Storage thật chưa bật. Targeted restrictive Storage policy
+chặn owner export mutations, giữ raw/source behavior. 900s còn provisional,
+chưa phải shared applied manifest. PostgreSQL15 isolated tests kiểm concurrency,
+response loss/recovery/rollback và ACL; [plan08](tasks/W4-MVP-08.md) giữ kết quả và
+giới hạn. Các chữ ký RPC và semantics hiện hành ở [contract08](api/private-export-contract.md).
+## DEC-TV7-W4-008-HTTP — Q10 implementation and checkpoint acknowledgments (14/11/2026)
+
+- Hùng triển khai synchronous worker-thread HTTP theo [Philip chấp nhận Q10](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/63#issuecomment-6825618302): POST export200/202, GET read-only, POST download-url3600s/no-store. Runtime opt-in mặc định tắt, timeout từng IO phải cấu hình; không tự apply DDL/cloud.
+- Sửa Q09 review: chỉ structured NoSuchKey/404 cho restart missing, mọi404 chưa kết luận giữ checkpoint. RPC020 checkpoint trả token + persisted receipt, adapter xác minh exact trước upload. Đổi payload acknowledgment nội bộ cần Duy kiểm lại; không đổi chữ ký RPC/public JSON.
+- Trạng thái code local/test theo [plan08](tasks/W4-MVP-08.md); chưa live Storage/JWT/PostgREST, chưa xác nhận lease900s/proxy budget hoặc shared applied manifest.
+# DEC-TV7-W4-008-Q01 — 16/11/2026
+
+- Theo Q01 sửa đổi của Duy tại PR74, runtime08 truyền worker RPC client có
+  timeout vào verifier provenance của07, sau owner/approval và chỉ scoped ledger.
+  Nội dung vẫn đọc bằng user RLS; empty AI/missing verifier fail closed trước claim.
+- Revalidation giữ capability nội bộ cho fallback/clone, không đổi JSON/hash
+  của snapshot cũ. Thêm HTTP/SQL/Typst regression; private Storage/live Golden
+  chưa được nghiệm thu. Không thay migration/API hay bật runtime.
+
+## DEC-ISSUE80 — Optional source explanations
+
+- Date: 2026-11-16; authority: Issue #80 product decision.
+- Migration 024 replaces the Q01 claim guard and source-reuse projection; no schema or RPC signature changes.
+- AI validation remains required. Clone/fallback/Revert use the agreed missing-solution disclosure.
+- New Revert actions restore frozen sources pending teacher review; historical receipts remain immutable.
+- Deploy with workers drained and matched backend; use forward fixes rather than replaying historical migrations.

@@ -58,6 +58,33 @@ export async function rejectAndRegenerateQuestion(sessionId, questionId, idempot
 }
 
 /**
+ * Khôi phục câu hỏi biến thể về câu nguồn đã xác nhận (TASK-301 / W4-C5 / Revert)
+ * POST /api/sessions/{session_id}/questions/{version_question_id}/revert
+ *
+ * @param {string} sessionId
+ * @param {string} questionId
+ * @param {string|null} idempotencyKey
+ * @param {object} config
+ * @returns {Promise<object>}
+ */
+export async function revertQuestion(sessionId, questionId, idempotencyKey = null, config = {}) {
+  if (!sessionId || !questionId) {
+    throw new Error('Cần cung cấp sessionId và questionId hợp lệ.');
+  }
+
+  const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey, ...config.headers } : { ...config.headers };
+  const response = await api.post(
+    `/sessions/${sessionId}/questions/${questionId}/revert`,
+    null,
+    {
+      ...config,
+      headers,
+    }
+  );
+  return response.data;
+}
+
+/**
  * Lấy số liệu tiến độ duyệt bài của toàn phiên
  * GET /api/sessions/{session_id}/review/progress
  *
@@ -160,7 +187,6 @@ export function adaptReviewSnapshot(raw, detail = null) {
       }
 
       const isFallback =
-        c.origin === 'original_clone' ||
         c.origin === 'confirmed_source_fallback' ||
         Boolean(c.is_fallback);
 

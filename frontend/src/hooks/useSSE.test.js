@@ -1287,3 +1287,45 @@ test('P2: useSSE triggerRecovery nhận snapshot failed thì chuyển ngay sang 
 
   await harness.unmount();
 });
+
+test('PR #78 C5: Ticket request trả về muộn sau khi enabled chuyển sang false không được mở EventSource', async () => {
+  MockEventSource.instances = [];
+  let resolveTicket;
+  const ticketPromise = new Promise((resolve) => {
+    resolveTicket = resolve;
+  });
+
+  const mockRequestTicket = async () => ticketPromise;
+
+  const harness = renderHookHarness(({ enabled }) =>
+    useSSE('session-late-ticket', {
+      enabled,
+      requestTicket: mockRequestTicket,
+      eventSourceFactory: (url) => new MockEventSource(url),
+    }),
+  );
+
+  // 1. Initial render với enabled: true -> bắt đầu xin ticket
+  await harness.render({ enabled: true });
+  assert.equal(MockEventSource.instances.length, 0, 'Chưa có EventSource vì ticket request đang chờ');
+
+  // 2. enabled chuyển sang false (ví dụ snapshot xác nhận generated)
+  await harness.render({ enabled: false });
+  assert.equal(harness.result.connectionState, 'idle');
+
+  // 3. Ticket trả về muộn sau khi SSE đã bị disabled
+  await act(async () => {
+    resolveTicket({ ticket: 'late-ticket-123' });
+    await new Promise((r) => setTimeout(r, 50));
+  });
+
+  // 4. Tuyệt đối không được tạo MockEventSource
+  assert.equal(
+    MockEventSource.instances.length,
+    0,
+    'Ticket trả về muộn không được mở EventSource khi SSE đã bị vô hiệu hóa',
+  );
+
+  await harness.unmount();
+});
+

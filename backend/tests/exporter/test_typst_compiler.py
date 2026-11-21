@@ -22,17 +22,26 @@ Verifies:
 7. Real CLI compilation integration test (conditionally executed if typst binary is present).
 """
 
+import json
 import os
 import subprocess
+from pathlib import Path
 from unittest.mock import patch
+from zipfile import ZipFile
 
 import pytest
 
+from app.services.exporter.bundle_models import (
+    ApprovedExportSnapshot,
+    DisplayQuestion,
+    DisplayVersion,
+)
 from app.services.exporter.exceptions import (
     TypstCompilationError,
     TypstNotFoundError,
     TypstTimeoutError,
 )
+from app.services.exporter.export_pipeline import build_compiled_bundle
 from app.services.exporter.typst_compiler import (
     PDF_MAGIC_BYTES,
     TypstCompiler,
@@ -495,7 +504,7 @@ class TestDocumentLayoutRenderers:
             questions=questions,
         )
 
-        assert "BẢNG ĐÁP ÁN NHANH" in typst_code
+        assert "MA TRẬN ĐÁP ÁN" in typst_code
         assert "LỜI GIẢI CHI TIẾT TỪNG CÂU" in typst_code
         assert "MÃ ĐỀ THI: 101" in typst_code
         assert "*Câu 1 (Đáp án C):*" in typst_code
@@ -582,3 +591,243 @@ class TestRealTypstIntegration:
         )
         pdf_bytes = compiler.compile_document(source, "f06_test.pdf")
         assert pdf_bytes.startswith(PDF_MAGIC_BYTES)
+
+    def test_real_typst_compile_golden_snapshot_bundle(self):
+        compiler = TypstCompiler()
+        if not compiler.is_available():
+            pytest.skip("Typst CLI is not installed on host PATH; skipping real compile test.")
+
+        fixture_path = (
+            Path(__file__).resolve().parents[1] / "fixtures" / "w4_preview_snapshot_fixture.json"
+        )
+        raw = json.loads(fixture_path.read_text(encoding="utf-8"))
+        snapshot = ApprovedExportSnapshot(
+            session_id=raw["session_id"],
+            revision="golden-rev-1",
+            title="Golden Renderer Regression Exam",
+            status="approved",
+            versions=tuple(
+                DisplayVersion(
+                    code=ver["version_code"],
+                    questions=tuple(
+                        DisplayQuestion(
+                            id=q["id"],
+                            question_no=q["question_no"],
+                            content=q["content"],
+                            options=tuple(q["options"]),
+                            correct_key=q["correct_key"],
+                            solution_md=q["solution_md"],
+                            status=q["status"],
+                        )
+                        for q in ver["questions"]
+                    ),
+                )
+                for ver in raw["versions"]
+            ),
+        )
+
+        bundle = build_compiled_bundle(snapshot, compiler=compiler)
+        assert bundle.size_bytes > 0
+        from io import BytesIO
+
+        with ZipFile(BytesIO(bundle.data), "r") as zf:
+            names = set(zf.namelist())
+            root = f"exam_bundle_{snapshot.session_id}"
+            for expected_pdf in (
+                f"{root}/pdf/exam_101.pdf",
+                f"{root}/pdf/exam_102.pdf",
+            ):
+                assert expected_pdf in names
+                data = zf.read(expected_pdf)
+                assert data.startswith(PDF_MAGIC_BYTES)
+
+    def test_real_typst_compile_golden_empty_solutions_and_extended_math(self):
+        compiler = TypstCompiler()
+        if not compiler.is_available():
+            pytest.skip("Typst CLI is not installed on host PATH; skipping real compile test.")
+
+        fixture_path = (
+            Path(__file__).resolve().parents[1] / "fixtures" / "w4_preview_snapshot_fixture.json"
+        )
+        raw = json.loads(fixture_path.read_text(encoding="utf-8"))
+        empty_questions = [
+            {
+                "question_no": q["question_no"],
+                "correct_key": q["correct_key"],
+                "content": q["content"],
+                "options": q["options"],
+                "solution_md": "",
+            }
+            for q in raw["versions"][0]["questions"]
+        ]
+        sol_empty_src = compiler.render_solution_document("101", empty_questions)
+        sol_empty_pdf = compiler.compile_document(sol_empty_src, "golden_solutions_empty.pdf")
+        assert sol_empty_pdf.startswith(PDF_MAGIC_BYTES)
+
+        extended_payload = "\n\n".join(
+            [
+                r"Tich phan: $I = \int_{0}^{1} (3x^2 + 2x) dx + \iint_{D} f(x,y)\,dx\,dy$.",
+                r"Toa do: $Oxyz$, doan $AB$, diem $IN$, khoang cach $\overline{AB}$, $\vec{CD}$, $\hat{x}$, $\bar{y}$, $\ddot{z}$.",
+                r"Tong va gioi han: $\sum_{k=1}^{n} k^2$, $\prod_{i=1}^{n} a_i$, $\lim_{x \to 0} \frac{\sin x}{x} = 1$, $\sin^2 x + \cos^2 x = 1$.",
+                r"Tap hop va ky hieu: $x \in \mathbb{R} \setminus \{0\}$, $A \subseteq B$, $A \cong B$, $A \sim B$, $a \propto b$, $90^\circ$, $\angle ABC$, $\triangle ABC$, $d \perp \Delta$, $d \parallel d'$, $\langle u, v \rangle$, $\lVert u \rVert$, $\cdots$, $\vdots$, $\ddots$, $5\,\mathrm{cm} + 2\,\mathrm{kg} + 3\,\mathrm{km} + \mathrm{cm}^2 + \mathrm{cm^2}$, $\mathrm{x+y}$, $\mathrm{kg/mol}$, $\mathrm{\frac{kg}{mol}}$, $\text{don vi } 5\,\text{cm}$.",
+                r"Token provenance (F82-05): $pi + \pi$, $in + (x \in A)$, $sum + \sum_{k=1}^{n} k$, $sin + \sin x$, $\mathrm{in}$, $\mathrm{pi}$, $\mathrm{sin}$, $\mathrm{\frac{in}{mol}}$, $\mathrm{\sqrt{pi}}$, $\mathbf{pi} + \mathit{in} + \mathsf{sin} + \vec{pi} + \mathbf{\pi}$.",
+                r"He phuong trinh va ma tran: $\begin{cases} x + y = 1 \\ x - y = 3 \end{cases}$, $\begin{cases}x^2 & x\ge 0\\-x & x<0\end{cases}$, $\begin{alignedat}{2}x&=1 & y&=2\\z&=3 & t&=4\end{alignedat}$ va $\begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix}$.",
+                r"Fallback unknown macro: $\unknownmacro + x$.",
+            ]
+        )
+        ext_src = (
+            '#set page(paper: "a4")\n'
+            "= Extended Math Coverage\n"
+            f"{convert_markdown_to_typst(extended_payload)}\n"
+        )
+        ext_pdf = compiler.compile_document(ext_src, "extended_math.pdf")
+        assert ext_pdf.startswith(PDF_MAGIC_BYTES)
+
+
+class TestGoldenAndExtendedMathConverter:
+    def test_golden_integral_and_differential_conversion(self):
+        out = latex_math_to_typst(r"I = \int_{0}^{1} (3x^2 + 2x) dx")
+        assert out == "I = integral_(0)^(1) (3x^2 + 2x) d x"
+        assert r"\int" not in out
+        assert "dx" not in out
+
+    def test_golden_multiletter_geometry_coordinates_split_cleanly(self):
+        assert latex_math_to_typst("Oxyz") == "O x y z"
+        assert latex_math_to_typst("ABC") == "A B C"
+        # Case sensitivity prevents colliding uppercase point names with Typst lowercase keywords.
+        assert latex_math_to_typst("IN") == "I N"
+        assert latex_math_to_typst("AND") == "A N D"
+        assert latex_math_to_typst(r"x \in \mathbb{R} \setminus \{0\}") == r"x in bb(R) without \{0\}"
+
+    def test_big_operators_trig_powers_and_limits(self):
+        assert latex_math_to_typst(r"\iint_{D} f(x, y)\,dx\,dy") == "integral.double_(D) f(x, y) d x d y"
+        assert latex_math_to_typst(r"\sum_{k=1}^{n} k^2") == "sum_(k=1)^(n) k^2"
+        assert latex_math_to_typst(r"\prod_{i=1}^{n} a_i") == "product_(i=1)^(n) a_i"
+        assert latex_math_to_typst(r"\lim_{x \to 0} \frac{\sin x}{x} = 1") == "lim_(x -> 0) ((sin x)/(x)) = 1"
+        assert latex_math_to_typst(r"\sin^2 x + \cos^2 x = 1") == "sin^2 x + cos^2 x = 1"
+
+    def test_accents_environments_text_escaping_and_unknown_fallback(self):
+        assert (
+            latex_math_to_typst(r"\overline{AB} + \vec{CD} + \hat{x} + \bar{y} + \ddot{z}")
+            == "overline(A B) + arrow(C D) + hat(x) + macron(y) + dot.double(z)"
+        )
+        assert latex_math_to_typst(r"\begin{cases} x + y = 1 \\ x - y = 3 \end{cases}") == "cases(x + y = 1, x - y = 3)"
+        assert latex_math_to_typst(r"\begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix}") == "mat(1, 2; 3, 4)"
+        assert latex_math_to_typst(r"\text{khi } dx > 0") == '"khi " d x > 0'
+        assert latex_math_to_typst(r'\text{a "b"}') == r'"a \"b\""'
+        assert latex_math_to_typst(r"\unknownmacro + x") == '"unknownmacro" + x'
+
+    def test_security_and_decimal_invariants_preserved_with_integrals(self):
+        malicious = latex_math_to_typst(r'\int_{0}^{1} \#.replace("", panic("REVIEW_MARKER")) dx')
+        assert "#" not in malicious
+        assert "panic" not in malicious
+        assert ".replace" not in malicious
+        assert "integral_(0)^(1)" in malicious
+        assert "hash" in malicious
+        assert "d x" in malicious
+
+        decimal_out = latex_math_to_typst(r"\int_{0}^{1} 0.5(x+1) dx")
+        assert "0.5(x+1)" in decimal_out
+        assert "integral_(0)^(1)" in decimal_out
+        assert "d x" in decimal_out
+
+    def test_alignedat_consumes_alignment_count_argument_f82_01(self):
+        # Regression for F82-01: \begin{alignedat}{n} mandatory {n} argument must be consumed
+        # and must not leak into the generated Typst equations as stray numbers.
+        raw = r"\begin{alignedat}{2}x&=1 & y&=2\\z&=3 & t&=4\end{alignedat}"
+        converted = latex_math_to_typst(raw)
+        assert converted == r"x & =1 & y & =2 \ z & =3 & t & =4"
+        assert "{2}" not in converted
+        # Ensure '2' only appears as the value assigned to y, not at the beginning of x
+        assert converted.startswith("x")
+
+        # Test with spaces and different column counts
+        raw_spaces = r"\begin{alignedat} { 3 } a &= 10 & b &= 20 & c &= 30 \\ d &= 40 & e &= 50 & f &= 60 \end{alignedat}"
+        converted_spaces = latex_math_to_typst(raw_spaces)
+        assert "{ 3 }" not in converted_spaces
+        assert "{3}" not in converted_spaces
+        assert "3 " not in converted_spaces.split("&")[0]
+        assert converted_spaces.startswith("a")
+        assert "\\" in converted_spaces
+
+        # Test with optional [t] / [b] / [c] specifier
+        raw_valign = r"\begin{alignedat}[t]{2} u &= v \\ w &= z \end{alignedat}"
+        converted_valign = latex_math_to_typst(raw_valign)
+        assert converted_valign == r"u & = v \ w & = z"
+        assert "[t]" not in converted_valign
+        assert "{2}" not in converted_valign
+
+    def test_cases_preserves_column_separation_f82_02(self):
+        # Regression for F82-02: \begin{cases} must retain '&' alignment columns.
+        assert (
+            latex_math_to_typst(r"\begin{cases}x^2 & x\ge 0\\-x & x<0\end{cases}")
+            == "cases(x^2 & x >= 0, -x & x<0)"
+        )
+        assert (
+            latex_math_to_typst(
+                r"\begin{cases} x^2 + 1 & \text{if } x \ge 0 \\ -x & \text{if } x < 0 \end{cases}"
+            )
+            == 'cases(x^2 + 1 & "if " x >= 0, -x & "if " x < 0)'
+        )
+        assert (
+            latex_math_to_typst(r"\begin{cases} x + y = 1 \\ x - y = 3 \end{cases}")
+            == "cases(x + y = 1, x - y = 3)"
+        )
+
+    def test_mathrm_preserves_unit_labels_f82_03(self):
+        # Regression for F82-03 & F82-04: \mathrm{...} must preserve unit labels and math operators/nesting.
+        assert latex_math_to_typst(r"\mathrm{cm}") == 'upright("cm")'
+        assert latex_math_to_typst(r"\mathrm{kg}") == 'upright("kg")'
+        assert latex_math_to_typst(r"\mathrm{km}") == 'upright("km")'
+        assert latex_math_to_typst(r"5\,\mathrm{cm} + 2\,\mathrm{kg}") == '5 upright("cm") + 2 upright("kg")'
+        assert latex_math_to_typst(r"\mathrm{cm}^2") == 'upright("cm")^2'
+        assert latex_math_to_typst(r"\mathrm{cm^2}") == 'upright("cm"^2)'
+        assert latex_math_to_typst(r"\mathrm{kg \cdot m/s^2}") == 'upright("kg" dot m/s^2)'
+        assert latex_math_to_typst(r"\mathrm{x+y}") == "upright(x+y)"
+        assert latex_math_to_typst(r"\mathrm{kg/mol}") == 'upright("kg"/"mol")'
+        assert latex_math_to_typst(r"\mathrm{\frac{kg}{mol}}") == 'upright((("kg")/("mol")))'
+        assert latex_math_to_typst(r"\frac{\mathrm{kg}}{\mathrm{mol}}") == '((upright("kg"))/(upright("mol")))'
+
+    @pytest.mark.parametrize(
+        ("latex_input", "expected_typst"),
+        [
+            # Case A: Original Latin identifiers vs explicit LaTeX commands
+            (r"pi", "p i"),
+            (r"\pi", "pi"),
+            (r"in", "i n"),
+            (r"\in", "in"),
+            (r"sum", "s u m"),
+            (r"\sum", "sum"),
+            (r"sin", "s i n"),
+            (r"\sin", "sin"),
+            # Case B: Upright labels and nested expressions in \mathrm{...}
+            (r"\mathrm{in}", 'upright("in")'),
+            (r"\mathrm{pi}", 'upright("pi")'),
+            (r"\mathrm{sin}", 'upright("sin")'),
+            (r"\mathrm{cm}", 'upright("cm")'),
+            (r"\mathrm{kg/mol}", 'upright("kg"/"mol")'),
+            (r"\mathrm{\frac{in}{mol}}", 'upright((("in")/("mol")))'),
+            (r"\mathrm{\sqrt{pi}}", 'upright(sqrt("pi"))'),
+            (r"\mathrm{kg \cdot m/s^2}", 'upright("kg" dot m/s^2)'),
+            # Case C: Font and accent wrappers preserve token provenance
+            (r"\mathbf{pi}", "bold(p i)"),
+            (r"\mathit{in}", "italic(i n)"),
+            (r"\mathsf{sin}", "sans(s i n)"),
+            (r"\vec{pi}", "arrow(p i)"),
+            (r"\mathbf{\pi}", "bold(pi)"),
+            (r"\vec{\pi}", "arrow(pi)"),
+            (r"\mathrm{\pi}", "upright(pi)"),
+        ],
+    )
+    def test_token_provenance_preserves_identifier_semantics_f82_05(
+        self, latex_input: str, expected_typst: str
+    ):
+        assert latex_math_to_typst(latex_input) == expected_typst
+
+    def test_sentinel_characters_in_input_do_not_bypass_splitting_or_security(self):
+        # PUA sentinel characters in untrusted input must not fake protected tokens or bypass guards.
+        spoofed = "\ue000pi\ue001 + \ue000eval\ue001(1)"
+        out = latex_math_to_typst(spoofed)
+        assert "eval" not in out
+        assert "p i" in out
+
