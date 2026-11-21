@@ -5,6 +5,8 @@ import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { ensureDomEnvironment } from '../../test-support/domHarness.js';
+import { useAuthStore } from '../auth/authStore.js';
+import { readDefaultNumVersions, writeDefaultNumVersions } from '../settings/defaultVersionsPreference.js';
 
 ensureDomEnvironment();
 
@@ -593,6 +595,62 @@ test('Stage2ConfigPage nạp cấu hình đã lưu (initialConfig n_versions: 4)
   assert.ok(text.includes('4 mã đề'), 'Phải hiển thị đúng 4 mã đề từ cấu hình đã lưu');
 
   await harness.unmount();
+});
+
+test('Stage 2 seeds only new forms from Settings and keeps persisted, edited, and locked sessions separate', async (t) => {
+  const originalAuth = useAuthStore.getState();
+  useAuthStore.setState({ user: { id: 'teacher-stage2' } });
+  const values = new Map();
+  window.localStorage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+  };
+
+  const saveConfig = t.mock.fn(async () => {});
+  const startGen = t.mock.fn(async () => { throw new Error('Offline'); });
+  const harness = renderPage('unconfigured-default', {
+    saveConfig,
+    startGen,
+    loadSession: async (id) => ({
+      id,
+      status: id === 'locked' ? 'approved' : id === 'saved' ? 'configured' : 'blueprinted',
+      config: { n_versions: id === 'saved' ? 1 : 2 },
+      savedNumVersions: id === 'saved' ? 1 : null,
+      blueprint_summary: { is_ready: true, total_questions: 1, supported_modes: [] },
+    }),
+  });
+  t.after(async () => {
+    await harness.unmount();
+    useAuthStore.setState(originalAuth);
+    delete window.localStorage;
+  });
+  const selected = () => harness.container.querySelector('button[aria-pressed="true"]');
+  await harness.render();
+  assert.match(selected().textContent, /^2/);
+
+  writeDefaultNumVersions('teacher-stage2', 4);
+  await harness.navigate('unconfigured-with-preference');
+  assert.match(selected().textContent, /^4/);
+
+  await harness.navigate('saved');
+  assert.match(selected().textContent, /^1/);
+
+  await harness.navigate('locked');
+  assert.equal(selected(), null);
+  assert.equal(saveConfig.mock.callCount(), 0);
+  assert.equal(startGen.mock.callCount(), 0);
+
+  await harness.navigate('unconfigured-with-preference');
+  assert.match(selected().textContent, /^4/);
+  const three = harness.container.querySelectorAll('button')
+    .find((button) => button.textContent.trim().startsWith('3'));
+  await act(async () => three.click());
+  const form = harness.container.querySelector('form');
+  await act(async () => form.dispatchEvent({
+    type: 'submit', bubbles: true, cancelable: true, preventDefault() {},
+  }));
+  assert.equal(saveConfig.mock.calls[0].arguments[1].n_versions, 3);
+  assert.equal(readDefaultNumVersions('teacher-stage2'), 4);
 });
 
 test('Stage2ConfigPage phiên generating thiếu config: SSE báo lỗi hiển thị rõ ràng và có nút kết nối lại', async () => {

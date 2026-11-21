@@ -9,6 +9,28 @@ import {
   requestEventTicket,
 } from './stage2Service.js';
 
+test('session detail distinguishes an actual saved count from the progress default', async () => {
+  const originalGet = api.get;
+  try {
+    for (const [data, expected] of [
+      [{ generation_config: {} }, null],
+      [{ generation_config: { n_versions: 2 } }, 2],
+      [{ config: { num_versions: 4 } }, 4],
+      [{ n_versions: 3 }, 3],
+      [{ generation_config: { n_versions: 9 } }, null],
+    ]) {
+      api.get = async () => ({ data: { status: 'blueprinted', ...data } });
+      const detail = await fetchSessionDetail('saved-count');
+      assert.equal(detail.savedNumVersions, expected);
+      if (data.generation_config && Object.keys(data.generation_config).length === 0) {
+        assert.equal(detail.config.n_versions, 2);
+      }
+    }
+  } finally {
+    api.get = originalGet;
+  }
+});
+
 test('saveSessionConfig CHỈ gửi đúng tên trường theo contract 207a (không gửi num_versions/variation_modes)', async () => {
   let capturedPost = null;
   const originalPost = api.post;
