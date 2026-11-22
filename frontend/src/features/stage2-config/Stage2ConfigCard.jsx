@@ -22,6 +22,7 @@ import {
 export default function Stage2ConfigCard({
   session,
   initialConfig = null,
+  initialNumVersions,
   onSubmit,
   isSubmitting = false,
   error = null,
@@ -38,7 +39,7 @@ export default function Stage2ConfigCard({
   );
 
   // Giá trị khởi tạo từ cấu hình đã lưu hoặc mặc định
-  const defaultNumVersions = initialConfig?.n_versions ?? initialConfig?.num_versions ?? 2;
+  const defaultNumVersions = initialNumVersions ?? initialConfig?.n_versions ?? initialConfig?.num_versions ?? 2;
 
   const [numVersions, setNumVersions] = useState(defaultNumVersions);
   // Issue #45: Mặc định tắt (false) cho cả hai tùy chọn xáo trộn

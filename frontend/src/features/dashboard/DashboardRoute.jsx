@@ -159,7 +159,11 @@ function DashboardContent({ accountKey }) {
             </div>
 
             <div className="flex flex-wrap items-center gap-3 sm:gap-4">
-              <div className="flex min-w-0 items-center gap-2.5">
+              <Link
+                to="/settings"
+                aria-label="Cài đặt cá nhân"
+                className="flex min-w-0 items-center gap-2.5 rounded-lg px-1 py-1 hover:bg-rail sm:px-2"
+              >
                 <UserAvatar
                   key={`${user?.id}:${sessionVersion}:${avatarUrl}`}
                   src={avatarUrl}
@@ -172,7 +176,7 @@ function DashboardContent({ accountKey }) {
                   </p>
 
                 </div>
-              </div>
+              </Link>
 
               <div className="hidden sm:block h-4 w-px bg-line" aria-hidden="true" />
 
