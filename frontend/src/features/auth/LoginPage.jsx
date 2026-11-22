@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { AlertCircle, AlertTriangle, Loader2, LogOut, RefreshCw, Info } from 'lucide-react';
 import { getSupabase } from '../../services/supabase.js';
 import { useAuthStore } from './authStore.js';
@@ -170,6 +170,13 @@ export default function LoginPage({ profileState }) {
                   </>
                 )}
               </button>
+
+              <Link
+                to="/help"
+                className="flex w-fit items-center text-sm font-semibold text-highlight underline-offset-4 hover:underline"
+              >
+                Trung tâm trợ giúp
+              </Link>
 
               {(status === 'profile_pending' || status === 'reauth_required') && (
                 <button

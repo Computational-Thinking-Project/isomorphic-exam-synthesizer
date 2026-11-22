@@ -10,6 +10,7 @@ import ProtectedRoute from './features/auth/ProtectedRoute.jsx';
 import { useAuthStore } from './features/auth/authStore.js';
 import { useAuthProfile } from './features/auth/useAuthProfile.js';
 import DashboardRoute from './features/dashboard/DashboardRoute.jsx';
+import HelpPage from './features/help/HelpPage.jsx';
 import Stage1Route from './features/stage1-ingestion/Stage1Route.jsx';
 import Stage2ConfigPage from './features/stage2-config/Stage2ConfigPage.jsx';
 import {
@@ -26,6 +27,23 @@ import { getSupabase } from './services/supabase.js';
 import { classifyAuthError } from './services/authErrors.js';
 
 export default function App() {
+  return (
+    <BrowserRouter>
+      <AppRoutes />
+    </BrowserRouter>
+  );
+}
+
+export function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/help" element={<HelpPage />} />
+      <Route path="*" element={<SessionRoutes />} />
+    </Routes>
+  );
+}
+
+function SessionRoutes() {
   const [authMessage, setAuthMessage] = useState(null);
   const [authAttempt, setAuthAttempt] = useState(0);
   const setChecking = useAuthStore((state) => state.setChecking);
@@ -124,7 +142,7 @@ export default function App() {
   }, [authAttempt, setChecking, setSession]);
 
   return (
-    <BrowserRouter>
+    <>
       {authMessage && (
         <div
           role={authMessage.kind === 'error' ? 'alert' : 'status'}
@@ -165,6 +183,6 @@ export default function App() {
 
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
-    </BrowserRouter>
+    </>
   );
 }
