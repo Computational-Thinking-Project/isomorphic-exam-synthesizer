@@ -1,6 +1,41 @@
 # W4-MVP-12 — Security/negative baseline và regression tích hợp
 
-## Current integration checkpoint — per-version v2, 20/11/2026
+## Current integration checkpoint — 22/11/2026
+
+- Author; workflow v0.1 proposed + INPUT-20261109 (docs baseline `7b7387f`).
+  Đồng bộ `origin/dev@ad7c313` vào TASK12 từ `bf04c31`, merge không conflict.
+  PR103/104 đã merge: glyph Liberation2 và `w4-export-v2` là code trên dev,
+  không còn là dependency chờ merge. Dev cũng có Stage2 PR108 và statistics
+  migration027; PR105 Stage3 UI còn là review riêng, chưa nằm trong candidate này.
+- Giữ nguyên phạm vi TASK12: negative/security, Golden renderer/bundle oracle và
+  snapshot regression; không đổi production contract hoặc áp migration lên DB nhóm.
+  Các số ngày20/11 bên dưới chỉ là bằng chứng lịch sử, không tự chuyển sang head mới.
+- Sửa fixture auth để giữ dependency graph thật của `get_user_db`: endpoint
+  statistics mới xác thực qua dependency lồng này. Override DB bằng Mock cũ làm
+  mất bước auth và gây422 giả trong6 ca. Nay guard client factories để kiểm
+ 401 thật và chứng minh chưa mở DB transport, không đổi code production.
+- Docker local candidate22/11: Ruff PASS, mypy128 files PASS;
+  security/API/services/exporter **1349 passed, 2 skipped**,6 cảnh báo.
+  Hai skip là modules asyncpg thiếu dependency trong image, không là PG PASS.
+  Có Typst/XeLaTeX thật. Frontend Node22 **592 passed**, lint/build PASS
+  (build còn cảnh báo chunk size). Không cộng các suite chồng lặp.
+- PostgreSQL15 disposable internal network: exporter/snapshot/private export/Q01
+  **370 passed, 21 subtests passed**, không skip, full migration chain đến027;
+  kiểm SQL/RLS/transaction thật, thay JWT/PostgREST bằng SQL transport và Storage
+  bằng double. Đây không phải applied receipts DB nhóm hoặc live acceptance.
+- Reviewer độc lập **GPT-6.1 Sol High** đã kiểm lại fixture sửa và Golden full/empty
+  với compiler thật cùng statistics API: **213 passed**; lượt security/statistics
+  rộng hơn **273 passed** (không cộng gộp). Kết luận cuối ghi tại gói review PR73.
+- OPS báo ngày21/11 tại [PR74](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/74#issuecomment-7055801711):
+  runtime local `6131352`, ledger và bucket private ZIP50MiB có mặt,
+  `PRIVATE_EXPORT_ENABLED=false`, thiếu helper026. Đây là receipt có ngày,
+  không phải quan sát DB mới ngày22/11 hoặc nghiệm thu runtime `ad7c313`.
+- I-W412-01/02/03 vẫn chưa Accepted cho live run: cần runtime/frozen SHA cùng
+  applied receipts, backup/restore và GO; controlled A/B principals, fixtures,
+  fault/budget scope và producer SSE. Dùng [DB0 handoff chuẩn](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/101#issuecomment-7027700960)
+  để bổ sung phần còn thiếu. G0 BLOCKED; G1/G2 NOT RUN; giữ PR73 Draft.
+
+## Integration checkpoint — lịch sử per-version v2, 20/11/2026
 
 - Author; workflow v0.1 proposed + INPUT-20261109. Tích hợp local candidate
   packaging `8dde84e`, phụ thuộc glyph PR103@3f58c23, vào baseline12 `b4d3d4e`.

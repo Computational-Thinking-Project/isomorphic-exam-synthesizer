@@ -33,8 +33,12 @@ def boundary(monkeypatch):
     assert dependencies.get_current_user not in app.dependency_overrides
     overrides = app.dependency_overrides.copy()
     downstream = Mock(side_effect=AssertionError("Unauthenticated DB access"))
-    for dependency in (dependencies.get_user_db, dependencies.get_service_db):
-        app.dependency_overrides[dependency] = downstream
+    # Preserve the real dependency graph: get_user_db also owns authentication
+    # for routes without a separate get_current_user parameter (e.g. statistics).
+    # Replacing it removes that auth check and turns Mock's *args/**kwargs into
+    # required query parameters. Guard the transport factories instead.
+    monkeypatch.setattr(dependencies, "get_authenticated_client", downstream)
+    monkeypatch.setattr(dependencies, "get_service_role_client", downstream)
     auth = Mock(return_value=SimpleNamespace(user=None))
     factory = Mock(return_value=SimpleNamespace(auth=SimpleNamespace(get_user=auth)))
     monkeypatch.setattr(dependencies, "get_supabase_client", factory)

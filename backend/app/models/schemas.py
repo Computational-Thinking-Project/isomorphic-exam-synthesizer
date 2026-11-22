@@ -1,5 +1,5 @@
 from enum import Enum, StrEnum
-from typing import Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -78,6 +78,31 @@ class UserProfile(BaseModel):
     email: str = Field(..., description="Email người dùng")
     name: Optional[str] = Field(None, description="Tên người dùng")
     created_at: Optional[str] = Field(None, description="Thời điểm tạo tài khoản")
+
+
+SessionCount = Annotated[int, Field(strict=True, ge=0)]
+
+
+class SessionStatusCounts(BaseModel):
+    draft: SessionCount
+    blueprinted: SessionCount
+    configured: SessionCount
+    generating: SessionCount
+    partial_generated: SessionCount
+    generated: SessionCount
+    reviewed: SessionCount
+    approved: SessionCount
+    exported: SessionCount
+    failed: SessionCount
+    unknown: SessionCount
+
+
+class SessionStatisticsResponse(BaseModel):
+    total_sessions: SessionCount
+    in_progress_sessions: SessionCount
+    approved_not_exported_sessions: SessionCount
+    exported_sessions: SessionCount
+    by_status: SessionStatusCounts
 
 
 class SessionCreate(BaseModel):
