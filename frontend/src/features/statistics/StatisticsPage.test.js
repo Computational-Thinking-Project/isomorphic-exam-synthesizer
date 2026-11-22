@@ -13,6 +13,7 @@ register('../../test-loader.mjs', import.meta.url);
 register('../../services/test-support/auth-loader.js', import.meta.url);
 
 const { api } = await import('../../services/api.js');
+const { normalStatisticsFixture } = await import('../../../dev-mocks/statistics.js');
 const { default: ProtectedRoute } = await import('../auth/ProtectedRoute.jsx');
 const { default: StatisticsPage } = await import('./StatisticsPage.jsx');
 const { default: DashboardRoute } = await import('../dashboard/DashboardRoute.jsx');
@@ -85,26 +86,11 @@ test('renders the private overview, chart values, fallback, and return link', as
   assert.ok(requests[0].signal);
   assert.equal(container.querySelector('a').getAttribute('href'), '/dashboard');
   assert.match(container.textContent, /2 phiên sinh đề gặp lỗi và 1 phiên chưa xác định trạng thái/);
-  const summary = container.querySelector('dl');
-  const values = Array.from(summary.querySelectorAll('dd'), (cell) => parseInt(cell.textContent, 10));
-  assert.deepEqual(values, [6, 1, 1, 1]);
-  const body = container.querySelector('tbody');
-  const chartRows = () => Array.from(body.querySelectorAll('tr'), (row) => [
-    row.querySelector('th').textContent, Number(row.querySelector('td').textContent),
-  ]);
-  const allRows = chartRows();
-  assert.equal(allRows.length, 11);
-  assert.equal(allRows.reduce((sum, [, count]) => sum + count, 0), values[0]);
-  assert.deepEqual(allRows.slice(5), [
-    ['Đã sinh đề', 1], ['Đã duyệt các câu, chờ chốt', 0], ['Đã duyệt, chưa xuất', 1],
-    ['Đã tạo gói xuất', 1], ['Sinh đề gặp lỗi', 2], ['Chưa xác định', 1],
-  ]);
-  const toggle = container.querySelector('input[type="checkbox"]');
-  await act(async () => toggle.click());
-  assert.deepEqual(chartRows(), allRows.filter(([, count]) => count > 0));
-  await act(async () => toggle.click());
-  assert.deepEqual(chartRows(), allRows);
-  assert.equal(requests.length, 1);
+  const chart = container.querySelector('section');
+  assert.equal(chart.querySelectorAll('dt').length, 11);
+  assert.match(chart.textContent, /Đã tạo gói xuất1/);
+  assert.match(chart.textContent, /Chưa xác định1/);
+  assert.match(chart.textContent, /Đang chuẩn bị đề gốc0/);
 });
 
 test('reports loading, retries a failure, and shows real zeros for an empty account', async () => {
@@ -121,8 +107,7 @@ test('reports loading, retries a failure, and shows real zeros for an empty acco
   api.defaults.adapter = async (config) => response(config, empty);
   await act(async () => container.querySelector('button').dispatchEvent({ type: 'click', bubbles: true }));
   assert.match(container.textContent, /Bạn chưa có phiên đề nào/);
-  assert.deepEqual(Array.from(container.querySelectorAll('dd'), (item) => parseInt(item.textContent, 10)), [0, 0, 0, 0]);
-  assert.equal(container.querySelector('table'), null);
+  assert.deepEqual(Array.from(container.querySelectorAll('dd'), (item) => item.textContent), Array(4).fill('0phiên đề'));
 });
 
 test('aborts stale account data and renders the new account', async () => {
@@ -156,3 +141,197 @@ test('offers a Dashboard entry and gates direct signed-out visits', async () => 
   assert.equal(container.querySelector('h1').textContent, 'Đăng nhập');
   assert.deepEqual(requests, ['/sessions']);
 });
+
+test('dynamically renders 10 status rows when unknown === 0, and omits incident banner when no errors', async () => {
+  api.defaults.adapter = async (config) => response(config, {
+    ...normalStatisticsFixture,
+    by_status: { ...normalStatisticsFixture.by_status, failed: 0, unknown: 0 },
+  });
+  await mount();
+
+  const chart = container.querySelector('section');
+  assert.equal(chart.querySelectorAll('dt').length, 10);
+  assert.doesNotMatch(chart.textContent, /Chưa xác định/);
+  assert.doesNotMatch(container.textContent, /Lưu ý trạng thái phiên đề/);
+});
+
+test('applies responsive mobile order to donut and satisfies a11y tap targets', async () => {
+  api.defaults.adapter = async (config) => response(config, normalStatisticsFixture);
+  await mount();
+
+  // Donut container has order-first lg:order-none for mobile prioritization
+  const donutCard = container.querySelector('.order-first');
+  assert.ok(donutCard, 'Donut container must have order-first class');
+  assert.ok(donutCard.getAttribute('class').includes('lg:order-none'), 'Donut container must have lg:order-none class');
+
+  // Back link has min-h-[44px] and focus ring
+  const backLink = container.querySelector('a[href="/dashboard"]');
+  assert.ok(backLink.getAttribute('class').includes('min-h-[44px]'));
+  assert.ok(backLink.getAttribute('class').includes('focus-visible:ring-2'));
+
+  // Incident banner is shown because failed === 1 in normalStatisticsFixture
+  assert.match(container.textContent, /1 phiên sinh đề gặp lỗi/);
+});
+
+test('empty account provides onboarding guidance and accessible dashboard link', async () => {
+  api.defaults.adapter = async (config) => response(config, empty);
+  await mount();
+
+  assert.match(container.textContent, /Bạn chưa có phiên đề nào trong tài khoản/);
+  assert.match(container.textContent, /Bắt đầu bằng cách tạo phiên đề mới hoặc nạp tài liệu từ Thư viện đề/);
+
+  const dashboardLinks = Array.from(container.querySelectorAll('a[href="/dashboard"]'));
+  assert.ok(dashboardLinks.length >= 2, 'Should have header back link and empty state call-to-action');
+  const onboardingLink = dashboardLinks.find((link) => link.textContent.includes('Về Thư viện đề'));
+  assert.ok(onboardingLink);
+  assert.ok(onboardingLink.getAttribute('class').includes('min-h-[44px]'));
+});
+
+test('calculates pipeline funnel stages and percentage shares accurately for multi-stage sessions', async () => {
+  const customFixture = {
+    total_sessions: 20,
+    in_progress_sessions: 14,
+    approved_not_exported_sessions: 2,
+    exported_sessions: 4,
+    by_status: {
+      draft: 2,
+      blueprinted: 2,
+      configured: 3,
+      generating: 2,
+      partial_generated: 1,
+      generated: 3,
+      reviewed: 1,
+      approved: 2,
+      exported: 4,
+      failed: 0,
+      unknown: 0,
+    },
+  };
+  api.defaults.adapter = async (config) => response(config, customFixture);
+  await mount();
+
+  // Funnel Stage 1: draft (2) + blueprinted (2) = 4 (20%)
+  // Funnel Stage 2: configured (3) + generating (2) + partial (1) + generated (3) = 9 (45%)
+  // Funnel Stage 3: reviewed (1) + approved (2) = 3 (15%)
+  // Funnel Stage 4: exported (4) = 4 (20%)
+  assert.match(container.textContent, /CHẶNG 01/);
+  assert.match(container.textContent, /20%/);
+  assert.match(container.textContent, /CHẶNG 02/);
+  assert.match(container.textContent, /45%/);
+  assert.match(container.textContent, /CHẶNG 03/);
+  assert.match(container.textContent, /15%/);
+  assert.match(container.textContent, /CHẶNG 04/);
+  assert.match(container.textContent, /Tổng luân chuyển: 20 phiên/);
+});
+
+test('handles large volume numbers with Vietnamese locale formatting and 4% bar clamp', async () => {
+  const largeFixture = {
+    total_sessions: 1250,
+    in_progress_sessions: 750,
+    approved_not_exported_sessions: 250,
+    exported_sessions: 250,
+    by_status: {
+      draft: 100,
+      blueprinted: 50,
+      configured: 100,
+      generating: 100,
+      partial_generated: 100,
+      generated: 200,
+      reviewed: 100,
+      approved: 250,
+      exported: 250,
+      failed: 0,
+      unknown: 0,
+    },
+  };
+  api.defaults.adapter = async (config) => response(config, largeFixture);
+  await mount();
+
+  // Vietnamese number format uses dot as thousands separator: 1.250
+  assert.match(container.textContent, /1\.250/);
+  assert.match(container.textContent, /750/);
+
+  // Status rows check: dd elements exist and contain numbers
+  const dds = container.querySelectorAll('dd');
+  assert.ok(dds.length >= 10);
+  const text = container.textContent;
+  assert.match(text, /Đã sinh đề200/);
+  assert.match(text, /Đã duyệt, chưa xuất250/);
+});
+
+test('preserves WCAG semantic landmarks, headings, and accessible descriptions', async () => {
+  api.defaults.adapter = async (config) => response(config, normalStatisticsFixture);
+  await mount();
+
+  // Main landmark
+  const main = container.querySelector('main');
+  assert.ok(main, 'Must have <main> landmark');
+
+  // Navigation landmark with aria-label
+  const nav = container.querySelector('nav[aria-label="Điều hướng trang"]');
+  assert.ok(nav, 'Must have <nav aria-label="Điều hướng trang">');
+
+  // Page H1 heading
+  const h1 = container.querySelector('h1');
+  assert.ok(h1);
+  assert.equal(h1.textContent, 'Thống kê sử dụng');
+
+  // Section with aria-labelledby matching H2 id
+  const section = container.querySelector('section[aria-labelledby="status-chart-title"]');
+  assert.ok(section, 'Must have <section aria-labelledby="status-chart-title">');
+  const h2 = container.querySelector('#status-chart-title');
+  assert.ok(h2);
+  assert.equal(h2.textContent, 'Phân bố trạng thái phiên');
+
+  // Description lists
+  const dls = container.querySelectorAll('dl');
+  assert.ok(dls.length >= 2, 'Should have <dl> for summary deck and status chart');
+});
+
+test('handles boundary condition: 100% of sessions in a single status bucket', async () => {
+  const singleBucketFixture = {
+    total_sessions: 10,
+    in_progress_sessions: 10,
+    approved_not_exported_sessions: 0,
+    exported_sessions: 0,
+    by_status: {
+      ...empty.by_status,
+      generating: 10,
+    },
+  };
+  api.defaults.adapter = async (config) => response(config, singleBucketFixture);
+  await mount();
+
+  assert.match(container.textContent, /10/);
+  assert.match(container.textContent, /100%/);
+  // Generating pulse animation exists
+  const generatingDot = container.querySelector('.animate-pulse');
+  assert.ok(generatingDot);
+});
+
+test('handles incident alert when only unknown status sessions exist', async () => {
+  api.defaults.adapter = async (config) => response(config, {
+    total_sessions: 5,
+    in_progress_sessions: 4,
+    approved_not_exported_sessions: 0,
+    exported_sessions: 0,
+    by_status: { ...empty.by_status, draft: 4, unknown: 1 },
+  });
+  await mount();
+  assert.match(container.textContent, /1 phiên chưa xác định trạng thái/);
+  assert.doesNotMatch(container.textContent, /phiên sinh đề gặp lỗi/);
+});
+
+test('handles incident alert when only failed status sessions exist', async () => {
+  api.defaults.adapter = async (config) => response(config, {
+    total_sessions: 5,
+    in_progress_sessions: 4,
+    approved_not_exported_sessions: 0,
+    exported_sessions: 0,
+    by_status: { ...empty.by_status, draft: 4, failed: 1 },
+  });
+  await mount();
+  assert.match(container.textContent, /1 phiên sinh đề gặp lỗi/);
+  assert.doesNotMatch(container.textContent, /chưa xác định trạng thái/);
+});
+

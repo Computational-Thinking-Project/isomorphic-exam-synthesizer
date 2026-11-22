@@ -70,12 +70,29 @@ supply a RAM double; there is no production fallback without the durable adapter
 inspect ACLs or prove the configured bucket is private. Signed URLs must be HTTPS.
 Server clients, their timeouts and bucket limits must be supplied/confirmed by OPS.
 
-ZIP layout preserves the W3 bundler and adds `<root>/manifest.json`. Manifest
-contains format `w4-export-v1`, session ID, snapshot revision, and each other file's
+Current packaging is **`w4-export-v2`**, following Hùng's requested per-version
+layout (20/11/2026, Issue92 follow-up). ZIP root remains `exam_bundle_<session_id>/`.
+Each version has exactly `pdf/exam_<code>.pdf`, `latex/exam_<code>.tex` and
+`markdown/exam_<code>.md`: exam → that version's answer matrix → detailed solutions.
+PDF/TeX start the matrix on a new page after the exam; Markdown flows continuously.
+There is no separate `solutions_<code>.pdf` or cross-version `answers_matrix.pdf`
+in v2. Root README and LaTeX compile README remain. The ZIP has `3N+3` entries
+including `<root>/manifest.json` for N versions. Manifest
+contains format `w4-export-v2`, session ID, snapshot revision, and each other file's
 relative path, SHA256 and byte length. It excludes itself. The ledger stores the
 digest/size of the entire ZIP. No timestamps in the manifest. A packaging/rendering
 change that changes artifact semantics must bump `PACKAGER_VERSION`; otherwise a
-ready artifact is intentionally reused without recompiling.
+ready artifact is intentionally reused without recompiling. The v2 bump creates a
+different packaging key for the same snapshot: v1 objects/ledger rows stay immutable,
+and an explicit Export on the v2 runtime builds a new artifact. Before that export,
+v2 status can be idle even for a session already marked exported by v1. Ready v2
+exports replay normally. No migration/backfill or deletion is required: RPC020
+already namespaces the ledger by version-derived packaging key. Old already-issued
+URLs keep pointing to their original immutable objects until expiry.
+The FE clears its cached grant when applying a ready status snapshot, since the
+current artifact can change across packager versions while keeping the filename.
+The next download reissues an authorized link; repeated downloads without a
+status refresh can still reuse an unexpired grant.
 
 ## Q09 — accepted architecture / implemented RPC020
 
@@ -89,7 +106,7 @@ or infer applied DB state from Git. No shared migration is applied here.
 
 - Separate export ledger, not new values in `session_status`. Unique current
   identity `(session_id, packaging_key)`; key is SHA256 of
-  `w4-export-v1 + "\n" + snapshot_revision`. Snapshot revision includes session ID.
+  `w4-export-v2 + "\n" + snapshot_revision`. Snapshot revision includes session ID.
 - States idle/no row, preparing, ready, failed. Every write locks the session,
   checks authenticated actor/owner, approved_at and approved/exported status.
   Use service-only RPCs with explicit verified actor, matching the existing server

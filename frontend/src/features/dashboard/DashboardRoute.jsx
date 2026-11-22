@@ -158,7 +158,7 @@ function DashboardContent({ accountKey }) {
               </Link>
             </div>
 
-            <div className="flex items-center gap-3 sm:gap-4">
+            <div className="flex flex-wrap items-center gap-3 sm:gap-4">
               <div className="flex min-w-0 items-center gap-2.5">
                 <UserAvatar
                   key={`${user?.id}:${sessionVersion}:${avatarUrl}`}
@@ -175,6 +175,14 @@ function DashboardContent({ accountKey }) {
               </div>
 
               <div className="hidden sm:block h-4 w-px bg-line" aria-hidden="true" />
+
+              <Link
+                to="/help"
+                state={{ fromDashboard: true }}
+                className="inline-flex items-center whitespace-nowrap text-sm font-semibold text-highlight underline-offset-4 hover:underline"
+              >
+                Trợ giúp
+              </Link>
 
               <button
                 type="button"

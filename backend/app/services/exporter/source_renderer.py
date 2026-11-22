@@ -118,7 +118,9 @@ def render_markdown(snapshot: ApprovedExportSnapshot, version: DisplayVersion) -
         lines.extend([f"## Câu {q.question_no}", "", markdown_text(q.content), ""])
         lines.extend(f"- **{key}.** {markdown_text(option)}" for key, option in zip("ABCD", q.options, strict=True))
         lines.append("")
-    lines.extend(["# Đáp án và lời giải", ""])
+    lines.extend(["# Ma trận đáp án", "", "| Câu | Đáp án |", "| --- | --- |"])
+    lines.extend(f"| {q.question_no} | {q.correct_key} |" for q in version.questions)
+    lines.extend(["", "# Đáp án và lời giải", ""])
     for q in version.questions:
         lines.extend([f"## Câu {q.question_no} — Đáp án {q.correct_key}", "", markdown_text(q.solution_md), ""])
     return "\n".join(lines)
