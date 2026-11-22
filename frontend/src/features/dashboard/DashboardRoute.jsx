@@ -153,7 +153,7 @@ function DashboardContent({ accountKey }) {
           <div className="flex flex-wrap items-center justify-between gap-4">
             <BrandLogo size="md" />
 
-            <div className="flex items-center gap-3 sm:gap-4">
+            <div className="flex flex-wrap items-center gap-3 sm:gap-4">
               <Link
                 to="/settings"
                 aria-label="Cài đặt cá nhân"
@@ -174,6 +174,14 @@ function DashboardContent({ accountKey }) {
               </Link>
 
               <div className="hidden sm:block h-4 w-px bg-line" aria-hidden="true" />
+
+              <Link
+                to="/help"
+                state={{ fromDashboard: true }}
+                className="inline-flex items-center whitespace-nowrap text-sm font-semibold text-highlight underline-offset-4 hover:underline"
+              >
+                Trợ giúp
+              </Link>
 
               <button
                 type="button"

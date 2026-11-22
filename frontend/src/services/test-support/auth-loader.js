@@ -1,11 +1,12 @@
-// Chỉ thay dependency Supabase của hai module cần kiểm; giữ nguyên source.
-const consumers = new Set([
-    new URL('../api.js', import.meta.url).href,
-    new URL('../authRefresh.js', import.meta.url).href,
+// Chỉ stub import Supabase của các module được kiểm thử.
+const consumers = new Map([
+    [new URL('../api.js', import.meta.url).href, './supabase.js'],
+    [new URL('../authRefresh.js', import.meta.url).href, './supabase.js'],
+    [new URL('../../App.jsx', import.meta.url).href, './services/supabase.js'],
 ]);
 
 export function resolve(specifier, context, nextResolve) {
-    if (specifier === './supabase.js' && consumers.has(context.parentURL)) {
+    if (consumers.get(context.parentURL) === specifier) {
         return {
             url: new URL('./supabase.stub.js', import.meta.url).href,
             shortCircuit: true,
