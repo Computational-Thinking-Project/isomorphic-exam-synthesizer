@@ -110,27 +110,20 @@ Khi dừng, Ctrl+C chỉ dừng theo dõi source; chạy `.\scripts\dev.ps1 down
 
 Cần Node.js/npm đã cài. Lượt kiểm trực tiếp ngày 19/10/2026 dùng Node.js 22.20.0; checkpoint Docker mới ở mục Kiểm tra bên dưới.
 
-Tại thư mục `frontend`:
+Tại thư mục gốc repo:
 
 ```powershell
-npm.cmd ci
-if (-not (Test-Path -LiteralPath .env.local)) {
-    Copy-Item -LiteralPath .env.example -Destination .env.local
+if (-not (Test-Path -LiteralPath .env)) {
+    Copy-Item -LiteralPath .env.example -Destination .env
 }
+npm.cmd --prefix frontend ci
+# Điền cấu hình public bên dưới trong .env gốc trước khi chạy dev.
+npm.cmd --prefix frontend run dev
 ```
 
-Chỉ sao chép mẫu khi **chưa có** `.env.local`; giữ file cấu hình đã chuẩn bị nếu nó tồn tại. Điền hai biến sau bằng cấu hình public của Supabase project dùng chung:
+Giữ nguyên `.env` nếu đã có; không ghi đè cấu hình hiện tại. Điền `VITE_SUPABASE_URL` và `VITE_SUPABASE_PUBLISHABLE_KEY` bằng cấu hình public của Supabase project dùng chung trong **`.env` ở gốc repo**.
 
-```dotenv
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_replace_me
-```
-
-`.env.local` được Git ignore. Frontend chỉ dùng publishable key; Google client secret và Supabase service-role/secret key không thuộc frontend. Khi chạy trực tiếp tại `frontend`, dùng `.env.local`; khi chạy bằng Docker, dùng `.env` gốc theo mục trên.
-
-```powershell
-npm.cmd run dev
-```
+Vite chạy với project directory `frontend` và `envDir: '../'`, nên đọc env từ gốc repo, cùng vị trí `.env` Docker dùng. `frontend/.env.example` là mẫu cũ, không phải nguồn cấu hình đang dùng. `.env` được Git ignore. Backend-only secrets (Google client secret, Supabase service-role/secret key) không được dùng tiền tố `VITE_`, vì các biến này có thể được đưa vào bundle frontend.
 
 Mở `http://localhost:3000/login`. Nếu Vite chuyển sang 3001, dùng đúng URL được terminal thông báo. Khởi động lại Vite sau khi sửa env.
 

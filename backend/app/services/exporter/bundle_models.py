@@ -4,7 +4,15 @@ from dataclasses import dataclass
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from app.services.blueprint.adapters import normalized_text
 
@@ -13,14 +21,32 @@ Text = Annotated[str, Field(min_length=1, max_length=16000)]
 
 class DisplayQuestion(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+    _empty_solution_id: UUID | None = PrivateAttr(default=None)
 
     id: UUID
     question_no: int = Field(ge=1, le=20)
     content: Text
     options: tuple[Text, Text, Text, Text]
     correct_key: Literal["A", "B", "C", "D"]
-    solution_md: Text
+    solution_md: Annotated[str, Field(max_length=16000)]
     status: Literal["approved"]
+
+    @field_validator("solution_md")
+    @classmethod
+    def verified_empty_solution(cls, value: str, info: ValidationInfo) -> str:
+        # This is an internal construction capability, not a JSON field. Only
+        # the DB builder supplies it after checking the generation provenance.
+        if not value and info.data.get("id") not in (info.context or {}).get(
+            "verified_empty_solution_ids", ()
+        ):
+            raise ValueError("Empty solution requires verified fallback/clone provenance")
+        return value
+
+    def model_post_init(self, context: object) -> None:
+        # Preserve the internal authorization through downstream revalidation,
+        # without serializing provenance or altering the canonical hash payload.
+        if not self.solution_md:
+            self._empty_solution_id = self.id
 
     @field_validator("options")
     @classmethod
@@ -79,3 +105,17 @@ class BundleBuildError(ValueError):
     def __init__(self, code: str):
         super().__init__(code)
         self.code = code
+
+
+def revalidate_snapshot(snapshot: ApprovedExportSnapshot) -> ApprovedExportSnapshot:
+    """Revalidate all fields, carrying only DB-builder-verified empty-slot IDs.
+
+    A JSON round trip intentionally drops this capability; callers must reload
+    the snapshot from the DB instead of using client-supplied provenance flags.
+    """
+    verified_ids = {
+        q.id for v in snapshot.versions for q in v.questions if q._empty_solution_id == q.id
+    }
+    return ApprovedExportSnapshot.model_validate(
+        snapshot.model_dump(), context={"verified_empty_solution_ids": verified_ids}
+    )

@@ -195,7 +195,7 @@ test('GenerationProgressView khi có câu lỗi: hiển thị thông báo lỗi 
   await harness.unmount();
 });
 
-test('GenerationProgressView tự động gọi onComplete sau 1.5s khi isDone = true và !isPartial', async () => {
+test('GenerationProgressView khi hoàn tất cho phép bấm Bắt đầu duyệt để gọi onComplete, không tự động chuyển màn', async () => {
   let completedCalled = false;
   const harness = renderProgress({
     sessionId: 'session-prog-done',
@@ -212,12 +212,21 @@ test('GenerationProgressView tự động gọi onComplete sau 1.5s khi isDone =
   const text = harness.container.textContent;
   assert.ok(text.includes('Đã tạo đủ biến thể'));
 
-  // Đợi timer chuyển hướng tự động 1.5s
+  // Không tự chuyển trang sau 1.6s
   await act(async () => {
     await new Promise((r) => setTimeout(r, 1600));
   });
+  assert.equal(completedCalled, false, 'Không được tự chuyển trang khi chưa bấm nút');
 
-  assert.equal(completedCalled, true, 'onComplete phải được kích hoạt sau 1.5s');
+  // Bấm nút "Bắt đầu duyệt →"
+  const ctaBtn = Array.from(harness.container.querySelectorAll('button')).find(
+    (b) => b.textContent.includes('Bắt đầu duyệt'),
+  );
+  assert.ok(ctaBtn, 'Phải có nút Bắt đầu duyệt');
+  await act(async () => {
+    ctaBtn.click();
+  });
+  assert.equal(completedCalled, true, 'onComplete phải được kích hoạt khi bấm Bắt đầu duyệt');
 
   await harness.unmount();
 });

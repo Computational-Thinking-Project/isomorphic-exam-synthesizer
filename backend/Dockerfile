@@ -1,9 +1,11 @@
 FROM python:3.11-slim-bookworm@sha256:0a310eeecf4e1f5a0743f9a6520c90c88d089c903ca5fd283f501e3a805f5f89
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends curl xz-utils ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends curl xz-utils ca-certificates fonts-liberation2 \
     && rm -rf /var/lib/apt/lists/*
 ENV TYPST_VERSION=v0.11.1
+# Slim images have no fontconfig; make the installed template font discoverable.
+ENV TYPST_FONT_PATHS=/usr/share/fonts/truetype/liberation2
 ARG TARGETARCH
 RUN case "$TARGETARCH" in amd64) arch=x86_64 ;; arm64) arch=aarch64 ;; \
       *) echo "Unsupported architecture: $TARGETARCH" >&2; exit 1 ;; esac \

@@ -50,11 +50,27 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     canonicalStatus: initialCanonicalStatus,
     canonicalReady: initialCanonicalReady,
     canonicalError: '',
+    canonicalProgress: null,
     retryAccepted: false,
+    retryOutcomeUnknown: false,
+    isInputDirty: false,
   };
   const listeners = new Set();
   let revision = 0;
   let request;
+  let hasIngested = (initialDetail?.source_questions?.length ?? 0) > 0;
+  let lastIngested = {
+    mode: state.mode,
+    text: state.text,
+    file: null,
+  };
+  const checkIsDirty = (mode, text, file) => {
+    if (!hasIngested || (state.detail?.source_questions?.length ?? 0) === 0) return false;
+    if (mode !== lastIngested.mode) return true;
+    if (mode === 'text' && text !== lastIngested.text) return true;
+    if (mode === 'file' && file !== lastIngested.file) return true;
+    return false;
+  };
   const publish = (next) => {
     state = { ...state, ...next };
     listeners.forEach((listener) => listener());
@@ -66,6 +82,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
   const sameRevision = (detail) => isSourceUuid(detail.source_revision)
     && detail.source_revision.toLowerCase() === intent?.sourceRevision.toLowerCase();
   const canConfirm = () => Boolean(confirmSource && confirmationStore && !storageBlocked && !recoveryRevision && canWrite()
+    && !state.isInputDirty
     && isSourceUuid(state.detail.source_revision) && state.detail.source_questions.length
     && (!intent || (state.retryConfirmation && sameRevision(state.detail))));
   const invalidate = () => { revision++; request?.abort(); };
@@ -111,6 +128,7 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       canonicalReady,
       canonicalError,
       retryAccepted: false,
+      retryOutcomeUnknown: false,
     });
   }
 
@@ -284,12 +302,24 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
       const artifact = await readArtifacts(id, { signal: operation.signal });
       if (!operation.current()) return;
       const isReady = artifact.ready === true && artifact.canonical_status === 'ready';
+      let nextPendingCycles = 0;
+
+      if (['pending', 'failed'].includes(artifact.canonical_status)
+          && (state.retryAccepted || state.retryOutcomeUnknown)) {
+        const cycles = (state.retryPendingCycles ?? 0) + 1;
+        // The previous attempt can still report failed before the new producer starts.
+        if (cycles <= 5) nextPendingCycles = cycles;
+      }
+
       publish({
         phase: 'idle',
         canonicalStatus: artifact.canonical_status,
+        canonicalProgress: { completed: artifact.completed_count, total: artifact.total_questions },
         canonicalReady: isReady,
         canonicalError: '',
-        retryAccepted: false,
+        retryAccepted: nextPendingCycles > 0 && state.retryAccepted,
+        retryOutcomeUnknown: nextPendingCycles > 0 && state.retryOutcomeUnknown,
+        retryPendingCycles: nextPendingCycles,
         ...(isReady ? {
           detail: {
             ...state.detail,
@@ -302,75 +332,74 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
           },
         } : {}),
       });
-    } catch {
+    } catch (cause) {
       if (!operation.current()) return;
       publish({
         phase: 'idle',
         canonicalReady: false,
-        canonicalError: 'Không xác định được trạng thái Blueprint. Vui lòng kiểm tra lại.',
+        unavailable: isUnavailable(cause?.response?.status),
+        canonicalError: 'Chưa cập nhật được tiến độ. Hệ thống sẽ tự kết nối lại.',
       });
     }
   }
 
   async function retryCanonical() {
-    if (busy() || !isCurrent() || !retryArtifacts) return;
+    if (busy() || !isCurrent() || !retryArtifacts || state.retryAccepted || state.retryOutcomeUnknown) return;
     const operation = begin();
     publish({ phase: 'retrying_canonical', canonicalError: '' });
+    let outcomeUnknown = false;
     try {
       await retryArtifacts(id, { signal: operation.signal });
+    } catch (cause) {
       if (!operation.current()) return;
-      let retryAccepted = true;
-      let cStatus = state.canonicalStatus;
-      let cReady = false;
-      let cError = '';
-      let updatedDetail = state.detail;
-      if (readArtifacts) {
-        try {
-          const artifact = await readArtifacts(id, { signal: operation.signal });
-          if (!operation.current()) return;
-          if (artifact.canonical_status === 'running') {
-            retryAccepted = false;
-            cStatus = 'running';
-          } else if (artifact.canonical_status === 'ready' && artifact.ready === true) {
-            retryAccepted = false;
-            cStatus = 'ready';
-            cReady = true;
-            updatedDetail = {
-              ...state.detail,
-              blueprint_summary: {
-                ...(state.detail.blueprint_summary || {}),
-                is_ready: true,
-                supported_modes: artifact.supported_modes,
-                total_questions: artifact.total_questions,
-              },
-            };
-          } else if (artifact.canonical_status === 'failed') {
-            retryAccepted = true;
-            cStatus = 'failed';
-          }
-        } catch {
-          if (!operation.current()) return;
-          retryAccepted = true;
-          cError = 'Đã tiếp nhận yêu cầu tạo lại nhưng chưa đọc được trạng thái. Vui lòng kiểm tra lại.';
-        }
+      if (cause?.response?.status) {
+        publish({
+          phase: 'idle',
+          canonicalError: 'Không thể thử lại tạo Blueprint. Vui lòng kiểm tra lại.',
+        });
+        return;
       }
-      publish({
-        phase: 'idle',
-        canonicalStatus: cStatus,
-        canonicalReady: cReady,
-        canonicalError: cError,
-        retryAccepted,
-        message: retryAccepted ? 'Đã tiếp nhận yêu cầu tạo lại Blueprint.' : state.message,
-        detail: updatedDetail,
-      });
-    } catch {
-      if (!operation.current()) return;
-      publish({
-        phase: 'idle',
-        retryAccepted: false,
-        canonicalError: 'Không thể thử lại tạo Blueprint. Vui lòng kiểm tra lại.',
-      });
+      outcomeUnknown = true;
     }
+    if (!operation.current()) return;
+    let artifact;
+    let canonicalError = '';
+    if (readArtifacts) {
+      try {
+        artifact = await readArtifacts(id, { signal: operation.signal });
+      } catch {
+        canonicalError = outcomeUnknown
+          ? 'Chưa đọc được trạng thái chuẩn bị đề. Hệ thống sẽ tự kết nối lại.'
+          : 'Đã tiếp nhận yêu cầu tạo lại nhưng chưa đọc được trạng thái. Vui lòng kiểm tra lại.';
+      }
+    }
+    if (!operation.current()) return;
+    const isReady = artifact?.canonical_status === 'ready' && artifact.ready === true;
+    const awaitingProducer = artifact?.canonical_status !== 'running' && !isReady;
+    publish({
+      phase: 'idle',
+      canonicalStatus: artifact?.canonical_status ?? state.canonicalStatus,
+      canonicalReady: isReady,
+      canonicalError,
+      retryAccepted: awaitingProducer && !outcomeUnknown,
+      retryOutcomeUnknown: awaitingProducer && outcomeUnknown,
+      retryPendingCycles: 0,
+      ...(awaitingProducer && !outcomeUnknown ? { message: 'Đã tiếp nhận yêu cầu tạo lại Blueprint.' } : {}),
+      ...(artifact ? {
+        canonicalProgress: { completed: artifact.completed_count, total: artifact.total_questions },
+      } : {}),
+      ...(isReady ? {
+        detail: {
+          ...state.detail,
+          blueprint_summary: {
+            ...(state.detail.blueprint_summary || {}),
+            is_ready: true,
+            supported_modes: artifact.supported_modes,
+            total_questions: artifact.total_questions,
+          },
+        },
+      } : {}),
+    });
   }
 
   function proceedToStage2() {
@@ -410,7 +439,8 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
     reload,
     setMode(mode) {
       if (busy() || !isCurrent() || !['text', 'file'].includes(mode)) return;
-      publish({ mode, ...(state.cause?.code === 'ERR_INGEST_INPUT' ? { error: '', cause: null } : {}) });
+      const isInputDirty = checkIsDirty(mode, state.text, state.file);
+      publish({ mode, isInputDirty, ...(state.cause?.code === 'ERR_INGEST_INPUT' ? { error: '', cause: null } : {}) });
     },
     selectFiles(files) {
       if (busy() || !isCurrent()) return;
@@ -419,23 +449,27 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
           throw Object.assign(new Error('Vui lòng chọn đúng một tệp đề nguồn.'), { code: 'ERR_INGEST_INPUT' });
         }
         const file = validateFile(files[0]);
-        publish({ file, upload: null, message: '',
+        const isInputDirty = checkIsDirty(state.mode, state.text, file);
+        publish({ file, upload: null, message: '', isInputDirty,
           ...(state.cause?.code === 'ERR_INGEST_INPUT' ? { error: '', cause: null } : {}) });
       } catch (cause) {
         // An invalid replacement must not accidentally submit the previously selected file.
-        publish({ file: null, upload: null, message: '',
+        const isInputDirty = checkIsDirty(state.mode, state.text, null);
+        publish({ file: null, upload: null, message: '', isInputDirty,
           ...(!state.uncertain && !state.requiresReload && !state.unavailable
             ? { error: errorMessage(cause), cause } : {}) });
       }
     },
     clearFile() {
       if (busy() || !isCurrent()) return;
-      publish({ file: null, upload: null,
+      const isInputDirty = checkIsDirty(state.mode, state.text, null);
+      publish({ file: null, upload: null, isInputDirty,
         ...(state.cause?.code === 'ERR_INGEST_INPUT' ? { error: '', cause: null } : {}) });
     },
     setText(text) {
       if (busy() || !isCurrent()) return;
-      publish({ text, ...(state.cause?.code === 'ERR_INGEST_INPUT' ? { error: '', cause: null } : {}) });
+      const isInputDirty = checkIsDirty(state.mode, text, state.file);
+      publish({ text, isInputDirty, ...(state.cause?.code === 'ERR_INGEST_INPUT' ? { error: '', cause: null } : {}) });
     },
     cancelRequest() {
       if (!['submitting', 'reloading'].includes(state.phase) || !isCurrent()) return;
@@ -494,7 +528,13 @@ export function createSourceIngestionController({ initialDetail, ingestText, ing
           try { confirmationStore.clear(); recoveryRevision = null; }
           catch { storageBlocked = true; }
         }
-        publish({ detail, phase: 'idle', requiresReload: false, unavailable: false,
+        hasIngested = true;
+        lastIngested = {
+          mode: state.mode,
+          text: state.text,
+          file: state.file,
+        };
+        publish({ detail, phase: 'idle', requiresReload: false, unavailable: false, isInputDirty: false,
           confirmationError: storageBlocked ? CONFIRM_STORAGE : recoveryRevision ? CONFIRM_RECOVERY : '',
           message: `Đã nạp ${count} câu nguồn.` });
       } catch (cause) {

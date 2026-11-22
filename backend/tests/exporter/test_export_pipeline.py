@@ -39,20 +39,16 @@ def test_pipeline_preserves_each_versions_display_data(shuffled_snapshot):
     before = shuffled_snapshot.model_dump()
     artifact = build_compiled_bundle(shuffled_snapshot, compiler=compiler)
     assert shuffled_snapshot.model_dump() == before
-    assert compiler.compile_document.call_count == 5
+    assert compiler.compile_document.call_count == 2
     assert {
         call.args[1] for call in compiler.compile_document.call_args_list
     } == required_pdf_names(shuffled_snapshot)
     for index, version in enumerate(shuffled_snapshot.versions):
         expected = [question.model_dump(mode="json") for question in version.questions]
-        for renderer in (compiler.render_exam_document, compiler.render_solution_document):
-            call = renderer.call_args_list[index]
-            assert call.args == (version.code, expected)
-            assert call.kwargs == {"exam_title": shuffled_snapshot.title}
-    assert compiler.render_answers_matrix_document.call_args.args[0] == [
-        {"version_code": "101", "answer_keys": {1: "C", 2: "B"}},
-        {"version_code": "102", "answer_keys": {1: "B", 2: "A"}},
-    ]
+        call = compiler.render_combined_document.call_args_list[index]
+        assert call.args == (version.code, expected)
+        assert call.kwargs == {"exam_title": shuffled_snapshot.title}
+    compiler.render_answers_matrix_document.assert_not_called()
     with ZipFile(BytesIO(artifact.data)) as archive:
         root = f"exam_bundle_{shuffled_snapshot.session_id}"
         for version in shuffled_snapshot.versions:
@@ -72,14 +68,14 @@ def test_invalid_snapshot_fails_before_compilation(snapshot):
     compiler.compile_document.assert_not_called()
 
 
-def test_compiler_failure_stops_without_partial_bundle(snapshot, monkeypatch):
+def test_compiler_failure_stops_without_partial_bundle(shuffled_snapshot, monkeypatch):
     compiler = Mock(wraps=TypstCompiler())
     error = TypstCompilationError(message="compile failed")
     compiler.compile_document.side_effect = [b"%PDF-1.4\n%%EOF\n", error]
     bundler = Mock()
     monkeypatch.setattr("app.services.exporter.export_pipeline.build_bundle", bundler)
     with pytest.raises(TypstCompilationError) as caught:
-        build_compiled_bundle(snapshot, compiler=compiler)
+        build_compiled_bundle(shuffled_snapshot, compiler=compiler)
     assert caught.value is error
     assert compiler.compile_document.call_count == 2
     bundler.assert_not_called()
@@ -130,15 +126,16 @@ def test_real_shuffler_answers_survive_export(snapshot_data, shuffle_questions, 
     compiler = Mock(wraps=TypstCompiler())
     compiler.compile_document.return_value = b"%PDF-1.4\nfixture\n%%EOF\n"
     artifact = build_compiled_bundle(snapshot, compiler=compiler)
-    matrix = compiler.render_answers_matrix_document.call_args.args[0]
     with ZipFile(BytesIO(artifact.data)) as archive:
         root = f"exam_bundle_{snapshot.session_id}"
-        for version, row in zip(snapshot.versions, matrix, strict=True):
-            assert row["version_code"] == version.code
+        for version in snapshot.versions:
             for extension, folder in (("md", "markdown"), ("tex", "latex")):
                 text = archive.read(f"{root}/{folder}/exam_{version.code}.{extension}").decode("utf-8")
                 for q in version.questions:
-                    assert row["answer_keys"][q.question_no] == q.correct_key
+                    if extension == "md":
+                        assert f"| {q.question_no} | {q.correct_key} |" in text
+                    else:
+                        assert f"{q.question_no} & {q.correct_key}" in text
                     assert f"Câu {q.question_no} — Đáp án {q.correct_key}" in text
                     assert f"Đáp án {q.correct_key}." in q.solution_md
     assert canonical == original
@@ -151,9 +148,9 @@ def test_real_typst_to_bundle(shuffled_snapshot):
     with ZipFile(BytesIO(artifact.data)) as archive:
         assert archive.testzip() is None
         names = archive.namelist()
-        assert len(names) == 11
+        assert len(names) == 8
         pdfs = [name for name in names if name.endswith(".pdf")]
-        assert len(pdfs) == 5
+        assert len(pdfs) == 2
         for name in pdfs:
             data = archive.read(name)
             assert data.startswith(b"%PDF-") and b"%%EOF" in data[-1024:]

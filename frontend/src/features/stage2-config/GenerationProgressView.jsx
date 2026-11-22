@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+
 import {
   AlertCircle,
   ArrowRight,
@@ -71,15 +71,7 @@ export default function GenerationProgressView({
   const isOffline = connectionState === 'disconnected' || connectionState === 'offline';
   const canEarlyReview = completedCount !== null && completedCount >= 1;
 
-  // F09 / Auto redirect: CHỈ kích hoạt sau khi nhận isDone = true và KHÔNG phải partial_generated
-  useEffect(() => {
-    if (isDone && !isPartial && onComplete) {
-      const timer = setTimeout(() => {
-        onComplete();
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
-  }, [isDone, isPartial, onComplete]);
+
 
   // Phân tích danh sách câu bị lỗi (failed / missing)
   const failedList = Object.entries(questionStatuses || {})

@@ -192,7 +192,7 @@ export default function Stage2ConfigCard({
             <AlertCircle className="h-5 w-5 shrink-0" />
             <div className="flex-1">
               <div>
-                <strong>Chưa có thông tin Blueprint khả dụng.</strong> Đề nguồn chưa hoàn tất phân tích Blueprint. Vui lòng quay lại Bước 1 để xác nhận đề gốc.
+                <strong>Chưa có thông tin cấu trúc đề khả dụng.</strong> Đề nguồn chưa hoàn tất phân tích cấu trúc đề. Vui lòng quay lại Bước 1 để xác nhận đề gốc.
               </div>
               {onReturnToStage1 && (
                 <div style={{ marginTop: '8px' }}>

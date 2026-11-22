@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 10
     ADMIN_EMAILS: str = ""  # Comma-separated list of admin emails (SEC-08 / TASK-207c)
 
+    # Opt in only after the applied migration/private Storage/OPS handoff.
+    PRIVATE_EXPORT_ENABLED: bool = False
+    PRIVATE_EXPORT_BUCKET: str = "exam-export-bundles"
+    PRIVATE_EXPORT_RPC_TIMEOUT_SECONDS: int | None = Field(default=None, ge=1, le=120)
+    PRIVATE_EXPORT_STORAGE_TIMEOUT_SECONDS: int | None = Field(default=None, ge=1, le=300)
+
     # Ports
     BACKEND_PORT: int = 8000
     FRONTEND_PORT: int = 3000

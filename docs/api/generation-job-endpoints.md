@@ -1,5 +1,16 @@
 # TASK-207b: Generation jobs and SSE integration contract
 
+## Current policy — Issue #70 / migration 026
+
+New jobs use mapping 1.1 and frozen per-question `question_policies`.
+A single job can contain AI_RESULT and ORIGINAL_CLONE targets; only AI targets
+enter the provider batch. CONFIRMED_SOURCE_FALLBACK remains the separate,
+warning-bearing four-attempt AI fallback. Existing 1.0 snapshots keep their
+whole-exam dispatch semantics on retry. See the
+[versioned config and snapshot contract](generation-config-endpoint.md#issue-70--current-contract-after-migration-026-pr-101).
+The whole-exam empty-mode statements below describe 1.0/all-Clone jobs.
+
+
 ## Implementation status
 
 W4 follow-up in Draft #67 uses migration 019 to infer modes from the confirmed
@@ -100,45 +111,16 @@ is_current_owner=...)`, same prefix:
 Factories use the existing Auth helpers. Sync ownership SDK calls run in the
 threadpool so these new routes do not block other active streams.
 
-### Q01 — Confirmed source solution
+### Q01 — Optional source solutions (Issue #80)
 
-Issue #64 / C5 uses migration 022 for the pre-claim guard. The SQL error uses
-SQLSTATE `22023`, `MESSAGE = ERR_SOURCE_SOLUTION_REQUIRED` and JSON `DETAIL`
-with `question_numbers`. The Python adapter maps that error to the HTTP
-payload below. [Owner decision](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/67#issuecomment-6877849395) · [SQL agreement](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/67#issuecomment-6880863821)
-
-- Keep `confirm-source` on its existing contract. In both AI and Original Clone,
-  `/generate` checks all confirmed sources. `/retry-generation` checks the
-  sources of missing slots in the frozen snapshot and preserves valid committed
-  slots, including committed fallback results.
-- A missing, null, empty, or whitespace-only `confirmed_input.solution` returns
-  HTTP 422 before the claim is written, the session enters `generating`, or
-  the worker or Gemini is dispatched. `question_numbers` contains the affected
-  source question numbers in ascending order, with each number listed once.
-
-```json
-{
-  "detail": {
-    "code": "ERR_SOURCE_SOLUTION_REQUIRED",
-    "message": "Confirmed sources require solutions before generation. Create a new session with complete source data.",
-    "question_numbers": [1, 3]
-  }
-}
-```
-
-- Migration 022 checks the same canonical or frozen snapshot that the claim
-  uses while holding the session lock. On retry it counts valid commits from
-  `_generation_committed` by source and checks sources with missing versions.
-  The guard runs before inserting a snapshot or changing the session status or
-  active job token.
-- Missing required source data detected after the job starts is fatal and
-  settles to `failed`, preserving committed slots. Nonfatal incomplete jobs
-  keep the existing `partial_generated` outcome when at least one slot was
-  committed and `failed` otherwise. Snapshot and SSE reflect the durable
-  status and progress. An uncertain settlement must surface as an error.
-- When a frozen snapshot is blocked for missing solutions, direct the user
-  to create a new session with complete source data. Adding a solution after
-  confirmation is deferred outside W4.
+Migration 024 supersedes the blanket solution guard in 022. AI and Original Clone
+may start or retry with missing source explanations. Ownership, canonical readiness,
+frozen revision/manifest, locking, quota and committed-slot checks still apply.
+Source-reuse writers preserve a real solution or use exactly
+`Không có lời giải cho câu hỏi này.` for null/empty/whitespace input.
+The notice is disclosure only; AI output still requires normal validation.
+The adapter retains legacy `ERR_SOURCE_SOLUTION_REQUIRED` mapping for older DBs;
+missing explanations alone do not require creating a new session after upgrade.
 
 ### C5 — Confirmed-source fallback
 
@@ -303,3 +285,17 @@ contracts, not DB or app lifecycle adapters.
 Partial-generation restrictions on export/finalize belong at those endpoints;
 none are implemented or bypassed by this module. DB RLS, locking, rollback,
 concurrency and crash recovery still require isolated integration tests.
+
+
+## Issue #80 — revised source-solution policy (supersedes blanket Q01)
+
+Confirmed source explanations are optional. AI candidates still require the existing
+validated explanation; their validation and four-attempt limit are unchanged.
+Original Clone, exhausted-attempt fallback, and Revert preserve the frozen source
+stem/options/key and any nonblank solution verbatim. Missing/null/whitespace-only
+solutions are displayed as exactly `Không có lời giải cho câu hỏi này.`.
+This is a disclosure, not mathematical validation; no extra Gemini call is made.
+Source inputs, revisions, hashes and historical committed receipts are immutable.
+New Revert actions restore the confirmed frozen source as `pending_review`, with
+warning/provenance and mandatory teacher reapproval. Accept remains `approved`.
+Historical action receipts replay unchanged. Approved/exported sessions stay locked.

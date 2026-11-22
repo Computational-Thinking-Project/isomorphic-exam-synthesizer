@@ -1,5 +1,52 @@
 # Generation configuration and persistence — TASK-207a/b
 
+## Issue #70 — current contract after migration 026 (PR #101)
+
+New claims use `mapping_version="1.1"`. The client still sends
+`active_variation_modes: []`; it cannot select dimensions. Save validates every
+confirmed, current canonical policy and stores the **union** of supported
+`values`/`context` dimensions, with the same stable alias order. The union is a
+receipt summary, **not permission to apply every dimension to every question**.
+
+At the first claim, under the existing parent lock, SQL freezes
+`context.question_policies` keyed by source question ID, alongside the existing
+confirmed sources, manifest, hash, source order, base seed and configuration:
+
+```json
+{
+  "question_policies": {
+    "<source UUID 1>": {"canonical_dimensions": ["values"], "result_kind": "AI_RESULT"},
+    "<source UUID 2>": {"canonical_dimensions": ["context"], "result_kind": "AI_RESULT"},
+    "<source UUID 3>": {"canonical_dimensions": [], "result_kind": "ORIGINAL_CLONE"}
+  }
+}
+```
+
+Each valid nonempty policy grants only its own supported dimensions. A valid
+policy containing only `wording`, `names`, `representation` or `option_order`
+uses Original Clone for that question, with zero provider requests/reservations.
+Missing, malformed, empty, stale or unconfirmed evidence fails closed. The
+existing supported-mode intersection summary is legacy metadata, not the
+scheduler for 1.1 jobs; no frontend variation selector is added.
+
+SQL claim/retry/writers/read/finish and the Python adapter verify the frozen
+decisions. AI fingerprints include that question's dimensions. Seeds continue
+using the complete source order (`base_seed + version*1000 + source_index`),
+including Clone positions. Mixed jobs persist Clone first, then run the existing
+bounded async AI batch for AI slots. A four-attempt AI failure may become
+`CONFIRMED_SOURCE_FALLBACK`; it never changes into Original Clone.
+
+An unfrozen pre-026 config is upgraded on its first new claim. Already frozen
+1.0 jobs keep their existing whole-exam policy and snapshot on retry; migration
+026 neither rewrites historical rows nor reads current Blueprints for retries.
+Durable AI/Clone/fallback slots are skipped without another provider reservation.
+Public endpoint paths, N=1–4, ordering, auth, fencing and quota contracts remain.
+
+**Version scope:** the 1.0/intersection sections below document historical jobs
+and migrations through 025. Migration 026 supersedes their scheduling policy
+only for new jobs; they remain relevant for legacy replay.
+
+
 ## W4-MVP-01 / migration 019 (consolidated implementation, proposed)
 
 Consolidated forward-only migration 019 (`019_w4_source_readiness_config.sql`), following merged 002–018 (PR #52 lifecycle and PR #54 review snapshot).

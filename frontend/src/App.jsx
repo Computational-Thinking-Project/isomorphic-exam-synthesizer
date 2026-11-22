@@ -10,15 +10,40 @@ import ProtectedRoute from './features/auth/ProtectedRoute.jsx';
 import { useAuthStore } from './features/auth/authStore.js';
 import { useAuthProfile } from './features/auth/useAuthProfile.js';
 import DashboardRoute from './features/dashboard/DashboardRoute.jsx';
+import HelpPage from './features/help/HelpPage.jsx';
 import Stage1Route from './features/stage1-ingestion/Stage1Route.jsx';
 import Stage2ConfigPage from './features/stage2-config/Stage2ConfigPage.jsx';
-import { STAGE1_ROUTE, STAGE2_ROUTE, STAGE3_ROUTE, STAGE3_PREVIEW_ROUTE } from './sessionPaths.js';
+import {
+  STAGE1_ROUTE,
+  STAGE2_ROUTE,
+  STAGE3_ROUTE,
+  STAGE3_PREVIEW_ROUTE,
+  EXPORT_ROUTE,
+} from './sessionPaths.js';
 import Stage3ReviewPage from './features/stage3-review/Stage3ReviewPage.jsx';
 import Stage3PreviewPage from './features/stage3-preview/Stage3PreviewPage.jsx';
+import SessionExportPage from './features/export/SessionExportPage.jsx';
 import { getSupabase } from './services/supabase.js';
 import { classifyAuthError } from './services/authErrors.js';
 
 export default function App() {
+  return (
+    <BrowserRouter>
+      <AppRoutes />
+    </BrowserRouter>
+  );
+}
+
+export function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/help" element={<HelpPage />} />
+      <Route path="*" element={<SessionRoutes />} />
+    </Routes>
+  );
+}
+
+function SessionRoutes() {
   const [authMessage, setAuthMessage] = useState(null);
   const [authAttempt, setAuthAttempt] = useState(0);
   const setChecking = useAuthStore((state) => state.setChecking);
@@ -117,14 +142,14 @@ export default function App() {
   }, [authAttempt, setChecking, setSession]);
 
   return (
-    <BrowserRouter>
+    <>
       {authMessage && (
         <div
           role={authMessage.kind === 'error' ? 'alert' : 'status'}
-          className={`p-4 ${
+          className={`p-4 border-b border-line bg-surface ${
             authMessage.kind === 'error'
-              ? 'text-rose-300'
-              : 'text-slate-300'
+              ? 'border-danger-border bg-danger-soft text-danger'
+              : 'border-support-line bg-support-bg text-ink'
           }`}
         >
           <p>{authMessage.text}</p>
@@ -133,7 +158,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setAuthAttempt((attempt) => attempt + 1)}
-              className="mt-2 rounded-lg border border-current px-4 py-2"
+              className="mt-2 rounded-lg border border-line bg-surface px-4 py-2 text-sm font-medium hover:bg-rail"
             >
               Thử lại
             </button>
@@ -153,10 +178,11 @@ export default function App() {
           <Route path={STAGE2_ROUTE} element={<Stage2ConfigPage />} />
           <Route path={STAGE3_ROUTE} element={<Stage3ReviewPage />} />
           <Route path={STAGE3_PREVIEW_ROUTE} element={<Stage3PreviewPage />} />
+          <Route path={EXPORT_ROUTE} element={<SessionExportPage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
-    </BrowserRouter>
+    </>
   );
 }

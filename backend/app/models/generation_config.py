@@ -31,7 +31,7 @@ class SavedGenerationConfig(BaseModel):
     ordering_preferences: OrderingPreferences
     source_manifest: dict[str, object]
     canonical_dimensions: list[Literal["values", "context"]]
-    mapping_version: Literal["1.0"]
+    mapping_version: Literal["1.0", "1.1"]
 
 
 class GenerationConfigResponse(BaseModel):

@@ -3,16 +3,99 @@
 @tailwind utilities;
 
 :root {
-  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   line-height: 1.5;
   font-weight: 400;
-  color-scheme: dark;
+  color-scheme: light;
+
+  --canvas: #fafafa;
+  --surface: #ffffff;
+  --rail: #f4f4f5;
+  --ink: #3f3f46;
+  --strong: #27272a;
+  --muted: #6b6b74;
+  --line: #e4e4e7;
+  --control-border: #85858f;
+  --highlight: #304c70;
+  --accent: #f5ce58;
+  --accent-soft: #fef7dd;
+  --gold-border: #f0d26b;
+  --accent-ink: #5e4a12;
+  --support-bg: #edf1f7;
+  --support-line: #d7e0ec;
+  --support-text: #52647b;
+  --approved-bg: #eaf5ed;
+  --approved-ink: #255c3b;
+  --approved-border: #b7d8c1;
+  --danger: #a32b32;
+  --danger-soft: #fff1f2;
+
+  --shadow-soft: 0 1px 3px rgba(39, 39, 42, 0.04);
+  --shadow-paper: 0 6px 16px rgba(39, 39, 42, 0.05);
+  --shadow-float: 0 12px 32px rgba(39, 39, 42, 0.08);
 }
 
 body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background-color: #0f172a;
-  color: #f8fafc;
+  background-color: var(--canvas);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Paper Canvas keyed option and answer label styles */
+.keyed-content {
+  font-weight: 600;
+}
+
+.answer-key-label {
+  color: var(--highlight);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+  white-space: nowrap;
+}
+
+/* Scoped to Paper Canvas screens; Export retains its existing controls. */
+@layer base {
+  .paper-ui :where(button, a, input:not([type="file"]), select) {
+    min-height: 2.75rem;
+  }
+
+  .paper-ui button {
+    min-width: 2.75rem;
+  }
+
+  .paper-ui :where(button, a):focus-visible {
+    outline: 2px solid var(--highlight);
+    outline-offset: 3px;
+  }
+
+  .paper-ui :where(button, input, select, textarea) {
+    scroll-margin-block: 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .paper-ui *, .paper-ui *::before, .paper-ui *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Long mathematical expressions scroll locally instead of widening the page. */
+.paper-ui .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 0.25rem;
+}
+.paper-ui .solution-columns > *, .paper-ui .dialog-copy {
+  min-width: 0;
+}
+.paper-ui input[type="checkbox"] {
+  min-height: 1.25rem;
+  min-width: 1.25rem;
 }

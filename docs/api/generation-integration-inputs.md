@@ -1,5 +1,15 @@
 # TASK-207 integration inputs — updated 2026-10-28
 
+## Issue #70 integration delta — 19/11/2026 / PR #101
+
+Migration 026 and the worker must ship together: new mapping 1.1 jobs freeze
+AI/Clone and allowed dimensions per source. Config modes summarize the union;
+they must not be reused as permission for every source. The public config request
+still sends `[]`. Frozen 1.0 jobs retain their old intersection policy. See the
+[current contract](generation-config-endpoint.md#issue-70--current-contract-after-migration-026-pr-101).
+The dated checkpoints below are historical, not current deployment evidence.
+
+
 ## Current author checkpoint — 07/11/2026
 
 The audit below is a historical 28/10 snapshot. PRs #32, #40 and #41 have

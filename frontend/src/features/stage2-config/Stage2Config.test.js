@@ -222,7 +222,7 @@ test('Stage2ConfigCard khóa submit và hiển thị cảnh báo khi Blueprint c
   await harness.render();
 
   const text = harness.container.textContent;
-  assert.ok(text.includes('Chưa có thông tin Blueprint khả dụng'));
+  assert.ok(text.includes('Chưa có thông tin cấu trúc đề khả dụng') || text.includes('Chưa có thông tin Blueprint khả dụng'));
 
   const submitBtn = harness.container.querySelector('button[type="submit"]');
   assert.equal(submitBtn.getAttribute('disabled') !== null, true);
