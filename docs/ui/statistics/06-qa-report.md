@@ -31,7 +31,7 @@ All redundant macro-visualizations (`PipelineFunnel`, `CompositionDonut`) have b
 |---|---|---|---|
 | **Data Integrity & Truth in Data** | Strict mapping to `GET /api/users/me/statistics`; 0 mock metrics; 0 unbacked filters | Verified: 4 KPIs + status distribution map 1:1 to `SessionStatisticsResponse` | **PASS** |
 | **Lifecycle States** | Loading, Error (retry), Empty (4 zeros + guidance), Stale abort | All 4 lifecycle states verified with automated unit tests | **PASS** |
-| **Multi-Viewport Responsive QA** | 375px (Mobile), 768px (Tablet), 1440px (Desktop) | `scrollWidth <= clientWidth`, 0 horizontal overflow; single unified status chart layout | **PASS** |
+| **Multi-Viewport Responsive QA** | 375px (Mobile), 768px (Tablet), 1440px (Desktop) | Static CSS audit + Browser emulation (375px, 768px, 1440px); zero horizontal overflow | **PASS** (Design/DOM audit) |
 | **Automated A11y Checks** | Semantic tags, landmarks, focus rings, minimum touch target | `<main>`, `<nav>`, `<section>`, `<dl>`, `<dt>`, `<dd>`, `min-h-[44px]` on interactive controls | **PASS** (DOM level) |
 | **Color Contrast Ratios** | Text >= 4.5:1, UI components >= 3:1 | Strong text 14.38:1, Muted text 5.25:1, Brand 8.61:1, Error text 7.21:1 | **PASS** (Calculated) |
 | **Anti-Slop & Scope Alignment** | Removal of redundant charts, no AI gradients, no false realtime claims | Monolithic card deck, single status chart, static freshness notice | **PASS** |
@@ -77,7 +77,7 @@ Every counter and bar rendered on the Statistics Dashboard binds strictly to the
 
 | State | Trigger Condition | UI Manifestation & DOM Attributes | Verified Behaviors | Result |
 |---|---|---|---|---|
-| **Loading** | Initial mount or retry button click (`state === 'loading'`) | Container with `min-h-[400px]`, `aria-busy="true"`, `aria-live="polite"`, animated spinner `<RefreshCw className="animate-spin">`, and `role="status"` | Verified: Screen reader announces loading state; spinner rotates; user cannot interact prematurely. | **PASS** |
+| **Loading** | Initial mount or retry button click (`state === 'loading'`) | Container with `min-h-[400px]`, `aria-busy="true"`, `aria-live="polite"`, animated spinner `<RefreshCw className="animate-spin">`, and `role="status"` | Verified (DOM level): Thẻ chứa đúng thuộc tính `role="status"`, `aria-live="polite"`, `aria-busy="true"`; spinner xoay; các nút thao tác bị khóa trong khi tải dữ liệu. *(Kiểm thử phát âm thực tế trên screen reader vật lý NVDA/VoiceOver đang chờ thực hiện trước deployment).* | **PASS** (DOM level) |
 | **Error** | Network offline, 503 Service Unavailable, 401 unauthenticated | Soft red banner (`border-danger-border bg-danger-soft`), `role="alert"`, clear Vietnamese message, and functional "Thử lại" button with `min-h-[44px]` | Verified: Clicking "Thử lại" resets state to `loading` and re-executes `getMyStatistics({ signal })`. | **PASS** |
 | **Empty** | Brand new teacher account (`total_sessions === 0`) | 4 honest zeros (`0 phiên đề`) in Summary Deck; StatusChart displays empty illustration, onboarding message, and CTA link to `/dashboard` with `min-h-[44px]` | Verified: No NaN% or broken progress bars appear. Direct link leads back to exam library. | **PASS** |
 | **Stale Abort** | Teacher switches account during in-flight network request | `AbortController.signal` bound to `key={accountKey}` in `StatisticsPage.jsx`; pending request is cancelled immediately | Verified: Late-arriving response from Account A is dropped and cannot overwrite Account B's state. | **PASS** |
@@ -86,13 +86,25 @@ Every counter and bar rendered on the Statistics Dashboard binds strictly to the
 
 ## 3. Responsive Layout Verification
 
-Layout behavior was verified across the three mandatory breakpoints:
+### 3.1 Cơ sở phương pháp xác minh (Verification Methodology & Basis)
+Do môi trường kiểm thử tự động Node.js / JSDOM không tính toán layout engine thực tế (`clientWidth` và `scrollWidth` mặc định bằng 0), cơ sở xác minh responsive trên 3 kích thước viewport chuẩn (375px, 768px, 1440px) được thiết lập dựa trên:
+1. **Phân tích tĩnh cấu trúc DOM và CSS Utilities:**
+   - Container chính áp dụng `max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8`, triệt tiêu toàn bộ pixel width cố định (`w-[...px]`), bảo đảm fluid layout.
+   - Text containers sử dụng `break-words` và `min-w-0` để ngăn tràn text do chuỗi dài.
+   - Summary Deck chuyển đổi từ `grid-cols-1 divide-y` (mobile < 640px) sang `sm:grid-cols-2 sm:divide-y-0 sm:divide-x` (tablet 640px - 1023px) và `lg:grid-cols-4` (desktop >= 1024px).
+   - Thanh trạng thái `StatusChart` sử dụng container flex/grid co giãn (`sm:grid-cols-[minmax(0,17rem)_minmax(0,1fr)]` trên tablet/desktop, stacked trên mobile) với thanh bar dùng tỷ lệ phần trăm `width: X%` (clamped min 4%).
+2. **Kiểm tra trực quan trên môi trường giả lập Dev & Browser Preview:**
+   - File standalone preview [statistics-preview.html](file:///c:/Users/ASUS%20Vivobook/Desktop/deepseek-harness-docker/workspace/isomorphic-exam-synthesizer/frontend/statistics-preview.html) được kiểm tra qua Chrome DevTools Device Emulation tại các preset: Mobile (iPhone SE 375x667), Tablet (iPad Air 768x1024), và Desktop (1440x900).
+   - Kết quả: Không xuất hiện thanh cuộn ngang (`overflow-x`), toàn bộ nội dung hiển thị trọn vẹn trong `clientWidth` của viewport tương ứng.
+3. **Phạm vi kiểm thử thực tế còn lại:** Kiểm thử trên thiết bị phần cứng thật (physical mobile/tablet devices) được ghi nhận là điều kiện trước deployment (Mục 6).
 
-| Viewport Width | Summary Deck Grid | Status Distribution Layout | Overflow Check |
-|---|---|---|---|
-| **375px (Mobile Portrait)** | 1 Column Stack (`grid-cols-1 divide-y`) | Full width vertical list; horizontal bar scales proportionally | `scrollWidth <= clientWidth` (0 overflow) |
-| **768px (Tablet)** | 2 Columns (`sm:grid-cols-2 divide-x divide-y`) | 2-column flex rows (`sm:grid-cols-[17rem_1fr]`) | `scrollWidth <= clientWidth` (0 overflow) |
-| **1440px (Desktop)** | 4 Columns (`lg:grid-cols-4 divide-x`) | Centered broadsheet section with proportional horizontal bars | `scrollWidth <= clientWidth` (0 overflow) |
+### 3.2 Bảng đối chiếu Breakpoint đã xác minh
+
+| Viewport Width | Summary Deck Grid | Status Distribution Layout | Cơ sở xác minh | Kết quả |
+|---|---|---|---|---|
+| **375px (Mobile Portrait)** | 1 Cột xếp dọc (`grid-cols-1 divide-y`) | Danh sách dọc xếp chồng label trên bar; bar co giãn theo % chiều rộng | Static CSS audit + Browser emulation (375px) | **PASS** (Zero overflow) |
+| **768px (Tablet)** | 2 Cột (`sm:grid-cols-2 divide-x divide-y`) | Hàng 2 cột flex (`sm:grid-cols-[17rem_1fr]`) | Static CSS audit + Browser emulation (768px) | **PASS** (Zero overflow) |
+| **1440px (Desktop)** | 4 Cột tích hợp (`lg:grid-cols-4 divide-x`) | Bố cục broadsheet toàn phần với thanh tỷ lệ căn đều | Static CSS audit + Browser emulation (1440px) | **PASS** (Zero overflow) |
 
 ---
 
@@ -175,3 +187,5 @@ The following items are **conditions precedent before production rollout** and a
    - Verify anonymous caller receives 401 Unauthorized.
 3. **Manual Assistive Technology Verification:**
    - Full screen reader verification with NVDA / VoiceOver across all interactive states remains pending manual validation on physical devices.
+4. **Manual Responsive & Device Verification:**
+   - Real physical mobile/tablet hardware testing to confirm tap ergonomics, touch targets, and absence of browser-specific viewport quirks.

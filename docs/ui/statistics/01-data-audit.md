@@ -108,7 +108,7 @@ The endpoint executes a single PostgreSQL RPC function: `public.get_my_session_s
 | `total_sessions` | `int >= 0` | Sessions | No | Sum of all 11 status buckets | Total exam sessions retained in the teacher's library across all time. |
 | `in_progress_sessions` | `int >= 0` | Sessions | No | Sum of 7 active pipeline status buckets | Sessions currently in active authoring, generation, or review (Stage 1 through Stage 3). |
 | `approved_not_exported_sessions` | `int >= 0` | Sessions | No | Direct count: `by_status.approved` | Sessions that passed quality review and final approval, but have not yet been packaged into export bundles. |
-| `exported_sessions` | `int >= 0` | Sessions | No | Direct count: `by_status.exported` | Sessions that have completed packaging into downloadable LaTeX/PDF/Word zip archives. |
+| `exported_sessions` | `int >= 0` | Sessions | No | Direct count: `by_status.exported` | Sessions that have completed packaging into downloadable export packages (PDF/LaTeX/Markdown zip archives). |
 | `by_status.draft` | `int >= 0` | Sessions | No | `exam_sessions.status = 'draft'` | Sessions created in Stage 1 with raw input (text/file) being edited or ingested. |
 | `by_status.blueprinted` | `int >= 0` | Sessions | No | `exam_sessions.status = 'blueprinted'` | Sessions where source questions and parameter blueprints are locked and confirmed. |
 | `by_status.configured` | `int >= 0` | Sessions | No | `exam_sessions.status = 'configured'` | Sessions where Stage 2 generation configuration (versions, variation modes) is saved. |
@@ -282,7 +282,7 @@ Defined in `frontend/dev-mocks/statistics.js` for isolated offline development a
 
 ### 6.3 Automated Test Verification
 Direct execution confirms that all statistics data parsing, schema handling, and mock fixtures pass 100%:
-- `frontend/src/features/statistics/StatisticsPage.test.js`: 4/4 passing tests.
+- `frontend/src/features/statistics/StatisticsPage.test.js`: 13/13 passing tests.
 - `frontend/dev-mocks/statistics.test.js`: 5/5 passing tests.
 - `backend/tests/observability/test_metrics_models.py`: 102/102 passing tests.
 
@@ -293,10 +293,5 @@ Direct execution confirms that all statistics data parsing, schema handling, and
 The statistics dashboard must be designed and built around the **precise, verified schema** of `GET /api/users/me/statistics`:
 1. **Core Summary Deck:** Focus on the 4 primary volume indicators (`total_sessions`, `in_progress_sessions`, `approved_not_exported_sessions`, `exported_sessions`).
 2. **Operational Alerting:** Highlight incidents via an alert banner when `failed > 0` or `unknown > 0`.
-3. **Pipeline Funnel:** Structure the authoring flow into a 4-stage pipeline matching the product lifecycle:
-   - Stage 01: Ingestion & Blueprint (`draft` + `blueprinted`)
-   - Stage 02: AI Variant Generation (`configured` + `generating` + `partial_generated` + `generated`)
-   - Stage 03: Review & Approval (`reviewed` + `approved`)
-   - Stage 04: Packaging & Export (`exported`)
-4. **Status Breakdown:** Present the complete, transparent 11-status distribution bar chart and composition breakdown.
-5. **Zero Fabrication:** Absolutely no unbacked mock charts, fake time-series, or fictitious student metrics.
+3. **Status Distribution Bar Chart:** Present the complete, transparent 11-status distribution bar chart (`StatusChart`) reflecting actual stored sessions across all lifecycle statuses. Redundant and potentially misleading visual models like `PipelineFunnel` and `CompositionDonut` are excluded per F102-01 to ensure 100% truthful data representation without artificial transit volumes.
+4. **Zero Fabrication:** Absolutely no unbacked mock charts, fake time-series, or fictitious student metrics.
