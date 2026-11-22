@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { exportPath, stage1Path, stage3Path, stage3PreviewPath } from '../../sessionPaths.js';
+import { useAuthStore } from '../auth/authStore.js';
+import { readDefaultNumVersions, SYSTEM_DEFAULT_NUM_VERSIONS } from '../settings/defaultVersionsPreference.js';
 import {
   AlertCircle,
   ArrowLeft,
@@ -56,6 +58,7 @@ export default function Stage2ConfigPage({
   const params = useParams();
   const sessionId = params.sessionId || params.id;
   const navigate = useNavigate();
+  const userId = useAuthStore((state) => state.user?.id);
 
   const [session, setSession] = useState(null);
   const [isLoadingSession, setIsLoadingSession] = useState(true);
@@ -564,6 +567,7 @@ export default function Stage2ConfigPage({
         return;
       }
       setActiveConfig(payload);
+      setSession((prev) => prev ? { ...prev, savedNumVersions: payload.n_versions } : prev);
 
       // Kích hoạt background generation
       await startGen(targetSessionId);
@@ -938,6 +942,11 @@ export default function Stage2ConfigPage({
     );
   }
 
+  const initialConfig = activeConfig || session?.config;
+  const savedNumVersions = session?.savedNumVersions === undefined
+    ? initialConfig?.n_versions ?? initialConfig?.num_versions
+    : session.savedNumVersions;
+
   return (
     <div className="paper-ui min-h-screen bg-canvas text-ink px-4 py-8 sm:px-6 lg:px-8">
       {/* Nút điều hướng phụ trên cùng */}
@@ -1001,8 +1010,10 @@ export default function Stage2ConfigPage({
         />
       ) : (
         <Stage2ConfigCard
+          key={sessionId}
           session={session}
-          initialConfig={activeConfig || session?.config}
+          initialConfig={initialConfig}
+          initialNumVersions={savedNumVersions ?? readDefaultNumVersions(userId) ?? SYSTEM_DEFAULT_NUM_VERSIONS}
           onSubmit={handleConfigSubmit}
           isSubmitting={isSubmittingConfig}
           error={configError}

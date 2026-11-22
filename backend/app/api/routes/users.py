@@ -1,14 +1,72 @@
 """User endpoints for profile retrieval and session management."""
 
+import logging
 from typing import Any, cast
 
-from fastapi import APIRouter, Depends
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from postgrest.exceptions import APIError
 from supabase import Client
 
 from app.api.dependencies import get_current_user, get_user_db
-from app.models.schemas import CurrentUser, UserProfile
+from app.core.rate_limit import crud_rate_limit
+from app.models.schemas import (
+    CurrentUser,
+    SessionStatisticsResponse,
+    SessionStatusCounts,
+    UserProfile,
+)
+
+logger = logging.getLogger(__name__)
+
+IN_PROGRESS_STATUSES = (
+    "draft", "blueprinted", "configured", "generating", "partial_generated", "generated", "reviewed",
+)
 
 router = APIRouter()
+
+
+def _session_statistics(rows: Any) -> SessionStatisticsResponse:
+    if not isinstance(rows, list):
+        raise ValueError("Expected a list of session status counts")
+
+    counts = dict.fromkeys(SessionStatusCounts.model_fields, 0)
+    for row in rows:
+        if not isinstance(row, dict) or "status" not in row or "count" not in row:
+            raise ValueError("Invalid session status count row")
+        stored_status, count = row["status"], row["count"]
+        if stored_status is not None and not isinstance(stored_status, str):
+            raise ValueError("Invalid session status type")
+        if type(count) is not int or count < 1:
+            raise ValueError("Invalid grouped session count")
+        bucket = stored_status if stored_status is not None and stored_status in counts else "unknown"
+        counts[bucket] += count
+
+    return SessionStatisticsResponse(
+        total_sessions=sum(counts.values()),
+        in_progress_sessions=sum(counts[key] for key in IN_PROGRESS_STATUSES),
+        approved_not_exported_sessions=counts["approved"],
+        exported_sessions=counts["exported"],
+        by_status=SessionStatusCounts.model_validate(counts),
+    )
+
+
+@router.get("/me/statistics", response_model=SessionStatisticsResponse)
+@crud_rate_limit
+async def get_my_statistics(
+    request: Request,
+    response: Response,
+    db: Client = Depends(get_user_db),
+) -> SessionStatisticsResponse:
+    """Count sessions visible to the authenticated caller in one database read."""
+    try:
+        result = _session_statistics(db.rpc("get_my_session_status_counts", {}).execute().data)
+    except (APIError, httpx.HTTPError, ValueError) as exc:
+        logger.warning("Session statistics unavailable (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Session statistics temporarily unavailable") from exc
+
+    response.headers["Cache-Control"] = "private, no-store"
+    return result
 
 
 @router.get("/me", response_model=UserProfile, summary="Get current user profile")

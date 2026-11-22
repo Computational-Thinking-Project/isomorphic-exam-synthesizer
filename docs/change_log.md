@@ -1,3 +1,11 @@
+## DEC-97-001 — Issue #97: Teacher usage statistics — 20/11/2026
+
+- Decision owner: Issue #97 assignee. Status: proposed for review.
+- Add a caller-scoped usage statistics API over stored session statuses. Use one invoker RPC snapshot so the four overview counts and the distribution reconcile.
+- Statistics links from the Dashboard and adds a protected Vietnamese overview. The contract explains why Gemini and retry counters are omitted. [API contract](api/statistics-endpoint.md)
+
+---
+
 ## DEC-EXPORT-92-V2 — Combined per-version documents — 20/11/2026
 
 - Hùng yêu cầu thống nhất mỗi mã đề một PDF/TeX/MD: đề → ma trận đáp án riêng mã → lời giải; PDF/TeX ngắt trang trước ma trận. Giữ ZIP và đường dẫn `exam_<code>`; bỏ PDF lời giải/ma trận riêng khỏi bundle. Đây là thay đổi bố cục theo yêu cầu mới, không phải chỉ sửa glyph.
