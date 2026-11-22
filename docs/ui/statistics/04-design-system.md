@@ -47,13 +47,13 @@ The design system is grounded in the repository's foundational **"Paper Canvas"*
 | Level / Role | Tailwind Classes | Size (rem / px) | Weight | Line Height | Usage Context |
 |---|---|---|---|---|---|
 | **Display Metric 1** | `text-4xl sm:text-5xl font-bold font-mono tabular-nums` | `2.25rem / 36px` → `3.00rem / 48px` | Bold (700) | `1.0` (tight) | Primary KPI counters in Summary Deck (`total_sessions`, `in_progress`) |
-| **Display Metric 2** | `text-2xl sm:text-3xl font-bold font-mono tabular-nums` | `1.50rem / 24px` → `1.875rem / 30px` | Bold (700) | `1.1` | Donut center readout, Pipeline Funnel stage volume counters |
+| **Display Metric 2** | `text-2xl sm:text-3xl font-bold font-mono tabular-nums` | `1.50rem / 24px` → `1.875rem / 30px` | Bold (700) | `1.1` | Status chart totals, secondary counters |
 | **Page Title** | `text-2xl sm:text-3xl font-extrabold text-strong tracking-tight` | `1.50rem / 24px` → `1.875rem / 30px` | Extra Bold (800) | `1.2` | Main page title ("Thống kê sử dụng") |
-| **Section Header** | `text-base font-bold text-strong` | `1.00rem / 16px` | Bold (700) | `1.5` | Section titles ("Phân bố trạng thái phiên", "Quy trình xử lý phiên đề 4 chặng") |
-| **Card / Label Header** | `text-xs font-bold text-muted uppercase tracking-wider` | `0.75rem / 12px` | Bold (700) | `1.4` | KPI deck category headers, stage badges ("CHẶNG 01") |
+| **Section Header** | `text-base font-bold text-strong` | `1.00rem / 16px` | Bold (700) | `1.5` | Section titles ("Phân bố trạng thái phiên") |
+| **Card / Label Header** | `text-xs font-bold text-muted uppercase tracking-wider` | `0.75rem / 12px` | Bold (700) | `1.4` | KPI deck category headers, stage badges ("01", "02") |
 | **Body / Row Label** | `text-sm font-medium text-strong` | `0.875rem / 14px` | Medium (500) | `1.5` | Status chart row titles, alert banner copy |
-| **Subtitle / Description**| `text-xs text-muted leading-relaxed` | `0.75rem / 12px` | Normal (400) | `1.5` | Subtitles, stage descriptions, contextual hints |
-| **Micro Benchmark** | `text-[11px] font-semibold uppercase tracking-wider` | `0.6875rem / 11px` | Semi-Bold (600) | `1.3` | Donut center unit label ("PHIÊN ĐỀ"), status indicator pills |
+| **Subtitle / Description**| `text-xs text-muted leading-relaxed` | `0.75rem / 12px` | Normal (400) | `1.5` | Subtitles, status descriptions, contextual hints |
+| **Micro Benchmark** | `text-[11px] font-semibold uppercase tracking-wider` | `0.6875rem / 11px` | Semi-Bold (600) | `1.3` | Status indicator pills, category labels |
 
 ---
 
@@ -142,28 +142,9 @@ Every status bucket from `SessionStatusCounts` is mapped to an authoritative lif
 
 ### 2.4 Chart & Visualization Conventions (Zero-Heavy-Dependencies)
 
-All visual representations are built strictly with semantic HTML, Tailwind CSS utilities, and native SVG.
+All visual representations are built strictly with semantic HTML and Tailwind CSS utilities. Per Issue #97 and finding F102-01, the dashboard focuses exclusively on a single authoritative distribution chart (`StatusChart`) alongside the 4 summary KPIs, eliminating redundant visual models (`CompositionDonut`, `PipelineFunnel`).
 
-#### 1. SVG Donut Geometry (`CompositionDonut`)
-```
-Radius r = 56px
-Circumference C = 2 * π * 56 ≈ 351.858px
-ViewBox = "0 0 140 140"
-Stroke Width = 14px
-Base Rail Stroke = "var(--rail)" (#f4f4f5)
-Coordinate Rotation = -rotate-90 (starts at 12 o'clock noon)
-Arc Stroke Dasharray = `${arcLength} ${circumference}`
-Arc Stroke Dashoffset = -${cumulativeOffset}
-```
-- **Categories Partitioned (Sum = `total_sessions`):**
-  1. `in_progress_sessions`: Highlight Navy (`#304c70`)
-  2. `approved_not_exported_sessions`: Amber (`#d97706`)
-  3. `exported_sessions`: Emerald Green (`#059669`)
-  4. `exceptions` (`failed + unknown`): Danger Red (`#a32b32`)
-- **Center Readout:** Monospace tabular total number with uppercase label `PHIÊN ĐỀ`.
-- **Accessible Legend:** Rendered directly beneath the SVG as an accessible tabular list with colored dot markers, Vietnamese labels, session counts, and percentage shares.
-
-#### 2. Horizontal Status Distribution Bars (`StatusChart`)
+#### Horizontal Status Distribution Bars (`StatusChart`)
 - **Markup:** Semantic `<section aria-labelledby="status-chart-title">` enclosing `<dl className="divide-y divide-line/60">`.
 - **Dynamic Rows Rule:**
   - When `unknown === 0`: Renders exactly **10 `<dt>` / `<dd>` rows** (hides `unknown` to keep the UI clean).
@@ -173,15 +154,6 @@ Arc Stroke Dashoffset = -${cumulativeOffset}
   - Bar width: `largest > 0 ? (count / largest) * 100 : 0`.
   - Non-zero visual clamp: when `count > 0`, CSS width is at least `4%` so small counts remain visible.
 - **Zero-State Handling:** Rows with `count === 0` are rendered cleanly with a muted dot (`bg-muted/40`), a muted title (`text-muted`), a blank track, and a grayed-out `0` numeral (`text-muted/50`).
-
-#### 3. 4-Stage Lifecycle Progression Funnel (`PipelineFunnel`)
-- **Markup:** 4-column connected grid (`grid-cols-1 sm:grid-cols-2 lg:grid-cols-4`).
-- **Stage Aggregations:**
-  - Stage 01 (Đề gốc & Blueprint): `counts.draft + counts.blueprinted`
-  - Stage 02 (Sinh biến thể AI): `counts.configured + counts.generating + counts.partial_generated + counts.generated`
-  - Stage 03 (Kiểm định & Phê duyệt): `counts.reviewed + counts.approved`
-  - Stage 04 (Đóng gói xuất bản): `counts.exported`
-- **Visual Presentation:** Monolithic container with hairline cross-dividers (`divide-y sm:divide-x divide-line`), stage index badge, percentage pill, volume counter, and proportional linear fill.
 
 ---
 
@@ -227,7 +199,7 @@ To maintain institutional dignity and prevent generic "AI dashboard" tropes, the
 │ DESKTOP VIEWPORT (1440px / 1024px) — CONTAINER: max-w-6xl mx-auto px-8 py-8                               │
 ├────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                                            │
-│ [← Thư viện đề]                                                              [● ĐỒNG BỘ TRỰC TIẾP (Pulse)] │
+│ [← Thư viện đề]                                                            [Số liệu tại thời điểm tải trang]│
 │                                                                                                            │
 │ Thống kê sử dụng                                                                                           │
 │ Các phiên đề hiện đang lưu trong tài khoản của bạn.                                                        │
@@ -251,40 +223,21 @@ To maintain institutional dignity and prevent generic "AI dashboard" tropes, the
 │ └────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │
 │                                                                                                            │
 │ ┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │
-│ │ MAIN ANALYSIS HUB (Desktop Asymmetric 2-Column Grid: [minmax(0,1fr)_340px] gap-6)                      │ │
-│ ├─────────────────────────────────────────────────────────────┬──────────────────────────────────────────┤ │
-│ │ STATUS DISTRIBUTION BAR CHART (StatusChart)                 │ MACRO COMPOSITION DONUT (CompositionDonut│ │
-│ │                                                             │                                          │ │
-│ │ Phân bố trạng thái phiên                 [10 trạng thái]    │ Cơ cấu vòng đời phiên        9% hoàn tất │ │
-│ │ Chi tiết 11 trạng thái dọc chuỗi nghiệp vụ                  │ Tỷ lệ hoàn thành qua các chặng           │ │
-│ │ ─────────────────────────────────────────────────────────── │ ──────────────────────────────────────── │ │
-│ │ [01] Đang chuẩn bị đề gốc       [========       ]  4        │                 ╭──────╮                 │ │
-│ │ [01] Đã xác nhận đề gốc         [======         ]  3        │              ╭──╯ 74%  ╰──╮              │ │
-│ │ [02] Đã cấu hình sinh đề        [====           ]  2        │              │  23 phiên  │              │ │
-│ │ [02] Đang sinh đề               [==             ]  1        │              ╰──╮         ╭──╯              │ │
-│ │ [02] Đã sinh một phần           [==             ]  1        │                 ╰──────╯                 │ │
-│ │ [02] Đã sinh đề                 [========       ]  4        │                                          │ │
-│ │ [03] Đã duyệt các câu, chờ chốt [====           ]  2        │ ──────────────────────────────────────── │ │
-│ │ [03] Đã duyệt, chưa xuất        [======         ]  3        │ ■ Đang thực hiện         17 (74%)        │ │
-│ │ [04] Đã tạo gói xuất            [====           ]  2        │ ■ Đã duyệt, chưa xuất     3 (13%)        │ │
-│ │ [ERR] Sinh đề gặp lỗi           [==             ]  1        │ ■ Đã xuất                 2 (9%)         │ │
-│ │                                                             │ ■ Ngoại lệ / lỗi          1 (4%)         │ │
-│ └─────────────────────────────────────────────────────────────┴──────────────────────────────────────────┘ │
-│                                                                                                            │
-│ ┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │
-│ │ 4-STAGE LIFECYCLE PROGRESSION FUNNEL (PipelineFunnel: border border-line rounded-xl bg-surface p-6)    │ │
+│ │ STATUS DISTRIBUTION BAR CHART (StatusChart: border border-line rounded-xl bg-surface p-6 shadow-paper)│ │
 │ │                                                                                                        │ │
-│ │ Quy trình xử lý phiên đề 4 chặng                                     Tổng luân chuyển: 23 phiên        │ │
-│ │ Sơ đồ luân chuyển tuyến tính từ nạp nguồn đến đóng gói xuất bản                                        │ │
+│ │ Phân bố trạng thái phiên                                                               10 trạng thái   │ │
+│ │ Chi tiết 11 trạng thái dọc chuỗi nghiệp vụ                                                             │ │
 │ │ ────────────────────────────────────────────────────────────────────────────────────────────────────── │ │
-│ │ ┌───────────────────┬───────────────────┬──────────────────────┬─────────────────────────────────────┐ │ │
-│ │ │ CHẶNG 01      30% │ CHẶNG 02      35% │ CHẶNG 03         22% │ CHẶNG 04                         9% │ │ │
-│ │ │ Đề gốc & Blueprint│ Sinh biến thể AI  │ Kiểm định & Duyệt    │ Đóng gói xuất bản                   │ │ │
-│ │ │ Bóc tách & chốt   │ Cấu hình & sinh   │ Đối soát toán & duyệt│ Hoàn thiện PDF/Word                 │ │ │
-│ │ │ ───────────────── │ ───────────────── │ ──────────────────── │ ─────────────────────────────────── │ │ │
-│ │ │ 7 phiên           │ 8 phiên           │ 5 phiên              │ 2 phiên                             │ │ │
-│ │ │ [======         ] │ [=======        ] │ [====              ] │ [==                               ] │ │ │
-│ │ └───────────────────┴───────────────────┴──────────────────────┴─────────────────────────────────────┘ │ │
+│ │ [01] Đang chuẩn bị đề gốc              [========================================      ] 4 phiên (17%)  │ │
+│ │ [01] Đã xác nhận đề gốc                [==============================                ] 3 phiên (13%)  │ │
+│ │ [02] Đã cấu hình sinh đề               [====================                          ] 2 phiên  (9%)  │ │
+│ │ [02] Đang sinh đề                      [==========                                    ] 1 phiên  (4%)  │ │
+│ │ [02] Đã sinh một phần                  [==========                                    ] 1 phiên  (4%)  │ │
+│ │ [02] Đã sinh đề                        [========================================      ] 4 phiên (17%)  │ │
+│ │ [03] Đã duyệt các câu, chờ chốt        [====================                          ] 2 phiên  (9%)  │ │
+│ │ [03] Đã duyệt, chưa xuất               [==============================                ] 3 phiên (13%)  │ │
+│ │ [04] Đã tạo gói xuất                   [====================                          ] 2 phiên  (9%)  │ │
+│ │ [ERR] Sinh đề gặp lỗi                  [==========                                    ] 1 phiên  (4%)  │ │
 │ └────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -298,7 +251,7 @@ To maintain institutional dignity and prevent generic "AI dashboard" tropes, the
 │ TABLET VIEWPORT (768px) — CONTAINER: max-w-6xl mx-auto px-6 py-6                                 │
 ├──────────────────────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                                  │
-│ [← Thư viện đề]                                                    [● ĐỒNG BỘ TRỰC TIẾP (Pulse)] │
+│ [← Thư viện đề]                                                [Số liệu tại thời điểm tải trang] │
 │                                                                                                  │
 │ Thống kê sử dụng                                                                                 │
 │ Các phiên đề hiện đang lưu trong tài khoản của bạn.                                              │
@@ -318,37 +271,18 @@ To maintain institutional dignity and prevent generic "AI dashboard" tropes, the
 │ [!] Lưu ý trạng thái: Tổng số phiên bao gồm 1 phiên gặp lỗi.                                     │
 │                                                                                                  │
 │ ┌──────────────────────────────────────────────────────────────────────────────────────────────┐ │
-│ │ MACRO COMPOSITION DONUT (Stacked above status list on tablet)                                │ │
-│ │                 ╭──────╮                                                                     │ │
-│ │              ╭──╯ 74%  ╰──╮           ■ Đang thực hiện: 17 (74%)   ■ Đã duyệt: 3 (13%)       │ │
-│ │              │  23 phiên  │           ■ Đã xuất: 2 (9%)            ■ Lỗi: 1 (4%)             │ │
-│ │              ╰──╮         ╭──╯                                                               │ │
-│ │                 ╰──────╯                                                                     │ │
-│ └──────────────────────────────────────────────────────────────────────────────────────────────┘ │
-│                                                                                                  │
-│ ┌──────────────────────────────────────────────────────────────────────────────────────────────┐ │
 │ │ STATUS DISTRIBUTION BAR CHART (Full width on tablet)                                         │ │
-│ │ [01] Đang chuẩn bị đề gốc                 [=================              ] 4                │ │
-│ │ [01] Đã xác nhận đề gốc                   [=============                  ] 3                │ │
-│ │ [02] Đã cấu hình sinh đề                  [=========                      ] 2                │ │
-│ │ [02] Đang sinh đề                         [====                           ] 1                │ │
-│ │ [02] Đã sinh một phần                     [====                           ] 1                │ │
-│ │ [02] Đã sinh đề                           [=================              ] 4                │ │
-│ │ [03] Đã duyệt các câu, chờ chốt           [=========                      ] 2                │ │
-│ │ [03] Đã duyệt, chưa xuất                  [=============                  ] 3                │ │
-│ │ [04] Đã tạo gói xuất                      [=========                      ] 2                │ │
-│ │ [ERR] Sinh đề gặp lỗi                     [====                           ] 1                │ │
+│ │ [01] Đang chuẩn bị đề gốc                 [=================              ] 4 phiên (17%)    │ │
+│ │ [01] Đã xác nhận đề gốc                   [=============                  ] 3 phiên (13%)    │ │
+│ │ [02] Đã cấu hình sinh đề                  [=========                      ] 2 phiên  (9%)    │ │
+│ │ [02] Đang sinh đề                         [====                           ] 1 phiên  (4%)    │ │
+│ │ [02] Đã sinh một phần                     [====                           ] 1 phiên  (4%)    │ │
+│ │ [02] Đã sinh đề                           [=================              ] 4 phiên (17%)    │ │
+│ │ [03] Đã duyệt các câu, chờ chốt           [=========                      ] 2 phiên  (9%)    │ │
+│ │ [03] Đã duyệt, chưa xuất                  [=============                  ] 3 phiên (13%)    │ │
+│ │ [04] Đã tạo gói xuất                      [=========                      ] 2 phiên  (9%)    │ │
+│ │ [ERR] Sinh đề gặp lỗi                     [====                           ] 1 phiên  (4%)    │ │
 │ └──────────────────────────────────────────────────────────────────────────────────────────────┘ │
-│                                                                                                  │
-│ ┌──────────────────────────────────────────────────────────────────────────────────────────────┐ │
-│ │ PIPELINE FUNNEL (2x2 Grid on tablet: sm:grid-cols-2 divide-x divide-y)                       │ │
-│ ├──────────────────────────────────────────────┬───────────────────────────────────────────────┤ │
-│ │ CHẶNG 01: Đề gốc & Blueprint            30%  │ CHẶNG 02: Sinh biến thể AI               35%  │ │
-│ │ 7 phiên                       [======      ] │ 8 phiên                        [=======     ] │ │
-│ ├──────────────────────────────────────────────┼───────────────────────────────────────────────┤ │
-│ │ CHẶNG 03: Kiểm định & Phê duyệt         22%  │ CHẶNG 04: Đóng gói xuất bản               9%  │ │
-│ │ 5 phiên                       [====        ] │ 2 phiên                        [==          ] │ │
-│ └──────────────────────────────────────────────┴───────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -363,7 +297,7 @@ To maintain institutional dignity and prevent generic "AI dashboard" tropes, the
 │ GUARANTEE: scrollWidth <= clientWidth   │
 ├─────────────────────────────────────────┤
 │ [← Thư viện đề]                         │
-│ [● ĐỒNG BỘ TRỰC TIẾP]                   │
+│ [Số liệu tại thời điểm tải trang]       │
 │                                         │
 │ Thống kê sử dụng                        │
 │ Các phiên đề hiện đang lưu trong        │
@@ -397,74 +331,35 @@ To maintain institutional dignity and prevent generic "AI dashboard" tropes, the
 │ └─────────────────────────────────────┘ │
 │                                         │
 │ ┌─────────────────────────────────────┐ │
-│ │ CƠ CẤU VÒNG ĐỜI                     │ │
-│ │               ╭──────╮              │ │
-│ │            ╭──╯ 74%  ╰──╮           │ │
-│ │            │  23 phiên  │           │ │
-│ │            ╰──╮         ╭──╯           │ │
-│ │               ╰──────╯              │ │
-│ │                                     │ │
-│ │ ■ Đang thực hiện         17 (74%)   │ │
-│ │ ■ Đã duyệt, chưa xuất     3 (13%)   │ │
-│ │ ■ Đã xuất                 2 (9%)    │ │
-│ │ ■ Ngoại lệ / lỗi          1 (4%)    │ │
-│ └─────────────────────────────────────┘ │
-│                                         │
-│ ┌─────────────────────────────────────┐ │
 │ │ PHÂN BỐ TRẠNG THÁI                  │ │
 │ │                                     │ │
 │ │ ● Đang chuẩn bị đề gốc              │ │
 │ │ [=============                    ] │ │
-│ │ 4 phiên                             │ │
+│ │ 4 phiên (17%)                       │ │
 │ │ ─────────────────────────────────── │ │
 │ │ ● Đã xác nhận đề gốc                │ │
 │ │ [==========                       ] │ │
-│ │ 3 phiên                             │ │
+│ │ 3 phiên (13%)                       │ │
 │ │ ─────────────────────────────────── │ │
 │ │ ● Đang sinh đề                      │ │
 │ │ [===                              ] │ │
-│ │ 1 phiên                             │ │
+│ │ 1 phiên (4%)                        │ │
 │ │ ─────────────────────────────────── │ │
 │ │ ● Đã sinh đề                        │ │
 │ │ [=============                    ] │ │
-│ │ 4 phiên                             │ │
+│ │ 4 phiên (17%)                       │ │
 │ │ ─────────────────────────────────── │ │
 │ │ ● Đã duyệt, chưa xuất               │ │
 │ │ [==========                       ] │ │
-│ │ 3 phiên                             │ │
+│ │ 3 phiên (13%)                       │ │
 │ │ ─────────────────────────────────── │ │
 │ │ ● Đã tạo gói xuất                   │ │
 │ │ [======                           ] │ │
-│ │ 2 phiên                             │ │
+│ │ 2 phiên (9%)                        │ │
 │ │ ─────────────────────────────────── │ │
 │ │ ● Sinh đề gặp lỗi                   │ │
 │ │ [===                              ] │ │
-│ │ 1 phiên                             │ │
-│ └─────────────────────────────────────┘ │
-│                                         │
-│ ┌─────────────────────────────────────┐ │
-│ │ QUY TRÌNH 4 CHẶNG                   │ │
-│ │ (1-Column Stack: divide-y)          │ │
-│ ├─────────────────────────────────────┤ │
-│ │ CHẶNG 01                        30% │ │
-│ │ Đề gốc & Blueprint                  │ │
-│ │ 7 phiên                             │ │
-│ │ [==========                       ] │ │
-│ ├─────────────────────────────────────┤ │
-│ │ CHẶNG 02                        35% │ │
-│ │ Sinh biến thể AI                    │ │
-│ │ 8 phiên                             │ │
-│ │ [===========                      ] │ │
-│ ├─────────────────────────────────────┤ │
-│ │ CHẶNG 03                        22% │ │
-│ │ Kiểm định & Phê duyệt               │ │
-│ │ 5 phiên                             │ │
-│ │ [=======                          ] │ │
-│ ├─────────────────────────────────────┤ │
-│ │ CHẶNG 04                         9% │ │
-│ │ Đóng gói xuất bản                   │ │
-│ │ 2 phiên                             │ │
-│ │ [===                              ] │ │
+│ │ 1 phiên (4%)                        │ │
 │ └─────────────────────────────────────┘ │
 └─────────────────────────────────────────┘
 ```
@@ -478,9 +373,9 @@ To maintain institutional dignity and prevent generic "AI dashboard" tropes, the
   - Element: `<Link to="/dashboard">`
   - Classes: `inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted hover:text-strong transition-colors min-h-[44px]`
   - Micro-Interaction: Arrow icon shifts left by 2px on hover (`group-hover:-translate-x-0.5 transition-transform`).
-- **Live Sync Badge:**
-  - Visual: Pulsating green status dot (`animate-pulse bg-emerald-500 rounded-full h-2 w-2`) accompanied by label `"ĐỒNG BỘ TRỰC TIẾP"`.
-  - Mental Value: Informs educators that metrics reflect active database reality.
+- **Data Freshness Label:**
+  - Visual: Static label `"Số liệu tại thời điểm tải trang"` in font-mono muted typography.
+  - Mental Value: Clearly informs educators that metrics reflect the database state at page load time rather than a continuous realtime subscription (F102-03).
 - **Refresh Action:**
   - Button with rotating sync icon on click (`disabled:opacity-50`).
 
@@ -541,37 +436,7 @@ To maintain institutional dignity and prevent generic "AI dashboard" tropes, the
 
 ---
 
-### 4.5 Macro Composition Donut (`CompositionDonut`)
-- **Visual Presentation:** Dual-layer pure SVG vector graphic with central typography.
-- **Base Geometry:**
-  ```jsx
-  <svg className="h-44 w-44 -rotate-90 transform" viewBox="0 0 140 140" aria-hidden="true">
-    <circle cx="70" cy="70" r={56} fill="transparent" stroke="var(--rail)" strokeWidth="14" />
-    {/* Dynamic Arcs with strokeDasharray and strokeDashoffset */}
-  </svg>
-  ```
-- **Center Readout:**
-  - Total numeral: `font-mono text-3xl font-bold tracking-tight text-strong`
-  - Subtitle: `text-[11px] font-semibold uppercase tracking-wider text-muted`
-- **Tabular Legend List:**
-  - Border top separator: `border-t border-line pt-4 mt-6`
-  - Each item displays: color dot (`h-2 w-2 rounded-full`), status label, tabular count, and percentage.
-
----
-
-### 4.6 4-Stage Lifecycle Progression Funnel (`PipelineFunnel`)
-- **Visual Presentation:** Unified 4-column connected panel (`rounded-xl border border-line bg-surface p-6 shadow-paper`).
-- **Inner Grid:** `grid grid-cols-1 divide-y divide-line sm:grid-cols-2 sm:divide-y-0 sm:divide-x lg:grid-cols-4 border border-line rounded-lg overflow-hidden bg-canvas`.
-- **Card Content:**
-  - Header: `CHẶNG 01` / `CHẶNG 02` / `CHẶNG 03` / `CHẶNG 04` with percentage pill.
-  - Stage Title: Vietnamese stage name (`text-sm font-bold text-strong`).
-  - Stage Description: Explanatory subtitle (`text-xs text-muted line-clamp-2`).
-  - Volume Readout: `font-mono text-2xl font-bold tabular-nums text-strong` + `phiên`.
-  - Progress Bar: Proportional linear bar indicating stage share of total pipeline work.
-
----
-
-### 4.7 Lifecycle State Containers
+### 4.5 Lifecycle State Containers
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -590,7 +455,7 @@ To maintain institutional dignity and prevent generic "AI dashboard" tropes, the
 │ **Empty Account** | Renders Summary Deck with honest zeros (`0 phiên đề`).                       │
 │                   | Informational empty banner: "Bạn chưa có phiên đề nào trong tài khoản."      │
 │                   | Action button: "Tạo phiên đề mới" linking to `/session/new` or `/dashboard`. │
-│                   | Donut and Funnel cleanly return `null` without throwing errors.              │
+│                   | Status chart cleanly renders zero values without throwing errors.            │
 └───────────────────┴──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -605,33 +470,30 @@ To maintain institutional dignity and prevent generic "AI dashboard" tropes, the
 | Breakpoint Token  | Min Width    | Grid / Column Adaptations          | Layout Padding & Overflow |
 +───────────────────+──────────────+───────────────────────────────────+───────────────────────────+
 | **Mobile (`xs`)** | `< 640px`    | - Deck: 1-column stack (divide-y) | - Container: `px-4 py-6`  |
-|                   | (Target 375) | - Hub: 1-column stack             | - Zero horizontal scroll  |
-|                   |              | - Funnel: 1-column stack          |   (`scrollWidth <= client`)|
-|                   |              | - Status bars: stacked label/bar  | - Tap targets >= 44px     |
+|                   | (Target 375) | - Status bars: stacked label/bar  | - Zero horizontal scroll  |
+|                   |              |                                   |   (`scrollWidth <= client`)|
+|                   |              |                                   | - Tap targets >= 44px     |
 +───────────────────+──────────────+───────────────────────────────────+───────────────────────────+
 | **Tablet (`sm`)** | `640px` -    | - Deck: 2x2 grid (divide-x & y)   | - Container: `px-6 py-8`  |
-|                   | `767px`      | - Hub: 1-column stack             | - Bar label grid begins   |
-|                   |              | - Funnel: 2x2 grid                |   `sm:grid-cols-[17rem_1fr`|
+|                   | `767px`      | - Status bars: 2-column flex rows | - Bar label grid begins   |
+|                   |              |   `sm:grid-cols-[17rem_1fr]`      |   `sm:grid-cols-[17rem_1fr`|
 +───────────────────+──────────────+───────────────────────────────────+───────────────────────────+
 | **Tablet (`md`)** | `768px` -    | - Deck: 2x2 grid                  | - Container: `px-6 py-8`  |
-|                   | `1023px`     | - Hub: Donut above Status list    | - Donut centered          |
-|                   |              | - Funnel: 2x2 grid                |                           |
+|                   | `1023px`     | - Status bars: 2-column flex rows |                           |
 +───────────────────+──────────────+───────────────────────────────────+───────────────────────────+
 | **Desktop (`lg`)**| `1024px` -   | - Deck: 4-column row (divide-x)   | - Container: `px-8 py-8`  |
-|                   | `1439px`     | - Hub: 2-column split [1fr_340px] | - Donut sticky right col  |
-|                   |              | - Funnel: 4-column row            | - Max width: `72rem`      |
+|                   | `1439px`     | - Status bars: broadsheet section | - Max width: `72rem`      |
 +───────────────────+──────────────+───────────────────────────────────+───────────────────────────+
 | **Wide (`xl`)**   | `>= 1440px`  | - Deck: 4-column row              | - Container: `px-8 py-8`  |
-|                   |              | - Hub: 2-column split [1fr_340px] | - Max width: `72rem`      |
-|                   |              | - Funnel: 4-column row            |   centered with margins   |
+|                   |              | - Status bars: broadsheet section | - Max width: `72rem`      |
+|                   |              |                                   |   centered with margins   |
 +───────────────────+──────────────+───────────────────────────────────+───────────────────────────+
 ```
 
 ### 5.1 Horizontal Overflow Prevention Rules:
 1. All containers enforce `max-w-full`.
 2. Tables and definition lists use `break-words` and `min-w-0` on text flex containers.
-3. SVG charts use fixed internal `viewBox` coordinates with responsive outer percentage wrappers (`h-44 w-44`).
-4. Automated verification constraint: `document.documentElement.scrollWidth <= document.documentElement.clientWidth` across 375px, 768px, and 1440px.
+3. Automated verification constraint: `document.documentElement.scrollWidth <= document.documentElement.clientWidth` across 375px, 768px, and 1440px.
 
 ---
 
@@ -644,10 +506,9 @@ To maintain institutional dignity and prevent generic "AI dashboard" tropes, the
 3. **Screen Reader Semantic Tree:**
    - Summary cards use semantic `<dl>`, `<dt>`, `<dd>`.
    - Status chart uses `<section aria-labelledby="status-chart-title">` with `<dl>`, `<dt>`, `<dd>`.
-   - SVG charts include `aria-hidden="true"` with accessible tabular legends.
    - Live regions (`aria-live="polite"`, `role="status"`, `role="alert"`) are employed for loading and error states.
 4. **Reduced Motion Compliance:**
-   - Respects `@media (prefers-reduced-motion: reduce)` by disabling SVG stroke transition animations and pulse rings.
+   - Respects `@media (prefers-reduced-motion: reduce)` by disabling transition animations.
 
 ---
 

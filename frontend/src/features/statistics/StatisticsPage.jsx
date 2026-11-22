@@ -11,7 +11,6 @@ import {
   Layers,
   PackageCheck,
   RefreshCw,
-  Workflow,
 } from 'lucide-react';
 import { useAuthStore } from '../auth/authStore.js';
 import { getMyStatistics } from '../../services/statistics.js';
@@ -43,79 +42,57 @@ function getStatusMeta(key) {
   switch (key) {
     case 'draft':
       return {
-        stageId: '01',
-        stageLabel: 'Đề gốc',
         barColor: 'bg-slate-500',
         dotColor: 'bg-slate-500',
       };
     case 'blueprinted':
       return {
-        stageId: '01',
-        stageLabel: 'Blueprint',
         barColor: 'bg-sky-500',
         dotColor: 'bg-sky-500',
       };
     case 'configured':
       return {
-        stageId: '02',
-        stageLabel: 'Cấu hình',
         barColor: 'bg-indigo-600',
         dotColor: 'bg-indigo-600',
       };
     case 'generating':
       return {
-        stageId: '02',
-        stageLabel: 'Đang sinh',
         barColor: 'bg-amber-500',
         dotColor: 'bg-amber-500 animate-pulse',
       };
     case 'partial_generated':
       return {
-        stageId: '02',
-        stageLabel: 'Sinh một phần',
         barColor: 'bg-amber-600',
         dotColor: 'bg-amber-600',
       };
     case 'generated':
       return {
-        stageId: '02',
-        stageLabel: 'Đã sinh đề',
         barColor: 'bg-violet-600',
         dotColor: 'bg-violet-600',
       };
     case 'reviewed':
       return {
-        stageId: '03',
-        stageLabel: 'Chờ chốt',
         barColor: 'bg-teal-600',
         dotColor: 'bg-teal-600',
       };
     case 'approved':
       return {
-        stageId: '03',
-        stageLabel: 'Đã duyệt',
         barColor: 'bg-emerald-600',
         dotColor: 'bg-emerald-600',
       };
     case 'exported':
       return {
-        stageId: '04',
-        stageLabel: 'Đã xuất',
         barColor: 'bg-[#304c70]',
         dotColor: 'bg-[#304c70]',
       };
     case 'failed':
       return {
-        stageId: 'ERR',
-        stageLabel: 'Lỗi',
         barColor: 'bg-danger',
         dotColor: 'bg-danger',
       };
     case 'unknown':
     default:
       return {
-        stageId: 'N/A',
-        stageLabel: 'Chưa rõ',
         barColor: 'bg-muted',
         dotColor: 'bg-muted',
       };
@@ -123,277 +100,7 @@ function getStatusMeta(key) {
 }
 
 /**
- * Biểu đồ tròn vành khuyên thể hiện cơ cấu vòng đời phiên đề
- */
-function CompositionDonut({ data }) {
-  const total = data.total_sessions || 0;
-  if (total <= 0) return null;
-
-  const inProgress = data.in_progress_sessions || 0;
-  const approved = data.approved_not_exported_sessions || 0;
-  const exported = data.exported_sessions || 0;
-  const failed = data.by_status?.failed || 0;
-  const unknown = data.by_status?.unknown || 0;
-  const exceptions = failed + unknown;
-
-  const radius = 56;
-  const circumference = 2 * Math.PI * radius;
-
-  const inProgLen = (inProgress / total) * circumference;
-  const appLen = (approved / total) * circumference;
-  const expLen = (exported / total) * circumference;
-  const excLen = (exceptions / total) * circumference;
-
-  const inProgOffset = 0;
-  const appOffset = inProgLen;
-  const expOffset = appOffset + appLen;
-  const excOffset = expOffset + expLen;
-
-  return (
-    <div className="flex flex-col items-center justify-center p-6">
-      <div className="relative flex items-center justify-center shrink-0">
-        <svg
-          className="h-44 w-44 -rotate-90 transform"
-          viewBox="0 0 140 140"
-          aria-hidden="true"
-        >
-          {/* Base rail */}
-          <circle
-            cx="70"
-            cy="70"
-            r={radius}
-            fill="transparent"
-            stroke="var(--rail)"
-            strokeWidth="14"
-          />
-          {inProgress > 0 && (
-            <circle
-              cx="70"
-              cy="70"
-              r={radius}
-              fill="transparent"
-              stroke="#304c70"
-              strokeWidth="14"
-              strokeDasharray={`${inProgLen} ${circumference}`}
-              strokeDashoffset={-inProgOffset}
-              className="transition-all duration-500 ease-out"
-            />
-          )}
-          {approved > 0 && (
-            <circle
-              cx="70"
-              cy="70"
-              r={radius}
-              fill="transparent"
-              stroke="#d97706"
-              strokeWidth="14"
-              strokeDasharray={`${appLen} ${circumference}`}
-              strokeDashoffset={-appOffset}
-              className="transition-all duration-500 ease-out"
-            />
-          )}
-          {exported > 0 && (
-            <circle
-              cx="70"
-              cy="70"
-              r={radius}
-              fill="transparent"
-              stroke="#15803d"
-              strokeWidth="14"
-              strokeDasharray={`${expLen} ${circumference}`}
-              strokeDashoffset={-expOffset}
-              className="transition-all duration-500 ease-out"
-            />
-          )}
-          {exceptions > 0 && (
-            <circle
-              cx="70"
-              cy="70"
-              r={radius}
-              fill="transparent"
-              stroke="#a32b32"
-              strokeWidth="14"
-              strokeDasharray={`${excLen} ${circumference}`}
-              strokeDashoffset={-excOffset}
-              className="transition-all duration-500 ease-out"
-            />
-          )}
-        </svg>
-
-        <div className="absolute inset-0 flex flex-col items-center justify-center text-center select-none pointer-events-none">
-          <span className="font-mono text-3xl font-bold tracking-tight tabular-nums text-strong">
-            {number.format(total)}
-          </span>
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">
-            Phiên đề
-          </span>
-        </div>
-      </div>
-
-      {/* Legend list with clean monolithic tabular rows */}
-      <div className="w-full mt-6 space-y-2.5 border-t border-line pt-4 text-xs font-medium">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-[#304c70]" aria-hidden="true" />
-            <span className="text-strong">Đang thực hiện</span>
-          </div>
-          <span className="font-mono tabular-nums text-muted">
-            {number.format(inProgress)} <span className="text-muted/60">({Math.round((inProgress / total) * 100)}%)</span>
-          </span>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-amber-600" aria-hidden="true" />
-            <span className="text-strong">Đã duyệt, chưa xuất</span>
-          </div>
-          <span className="font-mono tabular-nums text-muted">
-            {number.format(approved)} <span className="text-muted/60">({Math.round((approved / total) * 100)}%)</span>
-          </span>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-emerald-600" aria-hidden="true" />
-            <span className="text-strong">Đã xuất</span>
-          </div>
-          <span className="font-mono tabular-nums text-muted">
-            {number.format(exported)} <span className="text-muted/60">({Math.round((exported / total) * 100)}%)</span>
-          </span>
-        </div>
-
-        {exceptions > 0 && (
-          <div className="flex items-center justify-between text-danger">
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-danger" aria-hidden="true" />
-              <span className="font-semibold">Ngoại lệ / lỗi</span>
-            </div>
-            <span className="font-mono tabular-nums">
-              {number.format(exceptions)} <span className="opacity-80">({Math.round((exceptions / total) * 100)}%)</span>
-            </span>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/**
- * Funnel liên kết 4 chặng luân chuyển phiên đề
- */
-function PipelineFunnel({ counts, total }) {
-  if (total <= 0) return null;
-
-  const stage1 = (counts.draft || 0) + (counts.blueprinted || 0);
-  const stage2 =
-    (counts.configured || 0) +
-    (counts.generating || 0) +
-    (counts.partial_generated || 0) +
-    (counts.generated || 0);
-  const stage3 = (counts.reviewed || 0) + (counts.approved || 0);
-  const stage4 = counts.exported || 0;
-
-  const pipelineStages = [
-    {
-      num: '01',
-      title: 'Đề gốc & Blueprint',
-      count: stage1,
-      detail: 'Bóc tách dữ liệu & chốt ma trận',
-      bar: 'bg-indigo-600',
-    },
-    {
-      num: '02',
-      title: 'Sinh biến thể AI',
-      count: stage2,
-      detail: 'Cấu hình hoán vị & sinh câu hỏi',
-      bar: 'bg-[#304c70]',
-    },
-    {
-      num: '03',
-      title: 'Kiểm định & Phê duyệt',
-      count: stage3,
-      detail: 'Đối soát toán học & duyệt chốt',
-      bar: 'bg-amber-600',
-    },
-    {
-      num: '04',
-      title: 'Đóng gói xuất bản',
-      count: stage4,
-      detail: 'Hoàn thiện tài liệu PDF/Word',
-      bar: 'bg-emerald-600',
-    },
-  ];
-
-  return (
-    <div className="rounded-xl border border-line bg-surface p-6 shadow-paper">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6 pb-4 border-b border-line">
-        <div>
-          <h2 className="text-base font-bold text-strong flex items-center gap-2">
-            <Workflow className="h-4 w-4 text-highlight" aria-hidden="true" />
-            <span>Quy trình xử lý phiên đề 4 chặng</span>
-          </h2>
-          <p className="mt-0.5 text-xs text-muted">
-            Sơ đồ luân chuyển tuyến tính từ nạp nguồn đến đóng gói xuất bản
-          </p>
-        </div>
-        <div className="text-xs font-mono tabular-nums text-muted bg-rail px-3 py-1 rounded-md border border-line self-start sm:self-auto">
-          Tổng luân chuyển: {number.format(total)} phiên
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 divide-y divide-line sm:grid-cols-2 sm:divide-y-0 sm:divide-x lg:grid-cols-4 border border-line rounded-lg overflow-hidden bg-canvas">
-        {pipelineStages.map((stg) => {
-          const pct = Math.round((stg.count / total) * 100);
-          return (
-            <div key={stg.num} className="p-4 sm:p-5 flex flex-col justify-between bg-surface transition-colors hover:bg-rail/30">
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <span className="font-mono text-xs font-bold text-muted tracking-wider">
-                    CHẶNG {stg.num}
-                  </span>
-                  <span className="font-mono tabular-nums text-xs font-semibold text-muted bg-rail px-2 py-0.5 rounded border border-line">
-                    {pct}%
-                  </span>
-                </div>
-
-                <div className="text-sm font-bold text-strong mb-1">
-                  {stg.title}
-                </div>
-
-                <div className="text-xs text-muted leading-relaxed line-clamp-2">
-                  {stg.detail}
-                </div>
-              </div>
-
-              <div className="mt-5 pt-3 border-t border-line/60">
-                <div className="flex items-baseline justify-between mb-2">
-                  <span className="font-mono text-2xl font-bold tabular-nums text-strong">
-                    {number.format(stg.count)}
-                  </span>
-                  <span className="text-xs font-medium text-muted">phiên</span>
-                </div>
-
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-rail" aria-hidden="true">
-                  <div
-                    className={`h-full rounded-full ${stg.bar} transition-all duration-500`}
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/**
- * Phân bố chi tiết 11 trạng thái phiên đề
- * Tuân thủ 100% hợp đồng kiểm thử:
- * - container.querySelector('section') tìm thấy section này
- * - chart.querySelectorAll('dt').length === 11
- * - textContent chứa chính xác: /Đã tạo gói xuất1/, /Chưa xác định1/, /Đang chuẩn bị đề gốc0/
+ * Phân bố chi tiết trạng thái phiên đề
  */
 function StatusChart({ counts, total }) {
   const largest = Math.max(1, ...Object.values(counts));
@@ -414,7 +121,7 @@ function StatusChart({ counts, total }) {
             </h2>
           </div>
           <p className="mt-0.5 text-xs text-muted">
-            Chi tiết 11 trạng thái dọc theo chuỗi nghiệp vụ sinh đề đẳng cấu
+            Chi tiết các trạng thái dọc theo chuỗi nghiệp vụ sinh đề đẳng cấu
           </p>
         </div>
 
@@ -657,34 +364,8 @@ function StatisticsData() {
         </div>
       )}
 
-      {/* Main Analysis Hub: 11-Status Distribution + Composition Donut */}
-      {total > 0 && (
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-          <div>
-            <StatusChart counts={data.by_status} total={data.total_sessions} />
-          </div>
-
-          <div className="order-first lg:order-none rounded-xl border border-line bg-surface shadow-paper flex flex-col">
-            <div className="px-5 py-4 border-b border-line flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-muted">
-                Tỷ trọng phân bổ phiên
-              </span>
-              <span className="font-mono text-xs font-semibold tabular-nums text-muted">
-                {Math.round(((data.approved_not_exported_sessions + data.exported_sessions) / total) * 100)}% hoàn tất
-              </span>
-            </div>
-            <CompositionDonut data={data} />
-          </div>
-        </div>
-      )}
-
-      {/* When total is 0, render StatusChart as empty */}
-      {total === 0 && (
-        <StatusChart counts={data.by_status} total={data.total_sessions} />
-      )}
-
-      {/* 4-Stage Lifecycle Progression Funnel */}
-      <PipelineFunnel counts={data.by_status} total={data.total_sessions} />
+      {/* Status Distribution Chart */}
+      <StatusChart counts={data.by_status} total={data.total_sessions} />
     </div>
   );
 }
@@ -705,13 +386,12 @@ export default function StatisticsPage() {
             <span>Thư viện đề</span>
           </Link>
 
-          <div className="flex items-center gap-2 font-mono text-xs text-muted">
-            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" aria-hidden="true" />
-            <span>ĐỒNG BỘ TRỰC TIẾP</span>
+          <div className="text-xs font-mono text-muted">
+            <span>Số liệu tại thời điểm tải trang</span>
           </div>
         </nav>
 
-        {/* Page Heading: Clean, authoritative, no clipart slop */}
+        {/* Page Heading */}
         <div className="mb-8 border-b border-line pb-6">
           <div className="flex flex-col sm:flex-row sm:items-baseline sm:justify-between gap-2">
             <div>

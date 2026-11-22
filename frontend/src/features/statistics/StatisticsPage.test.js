@@ -155,14 +155,14 @@ test('dynamically renders 10 status rows when unknown === 0, and omits incident 
   assert.doesNotMatch(container.textContent, /Lưu ý trạng thái phiên đề/);
 });
 
-test('applies responsive mobile order to donut and satisfies a11y tap targets', async () => {
+test('satisfies a11y tap targets, renders static freshness label, and verifies no realtime indicators', async () => {
   api.defaults.adapter = async (config) => response(config, normalStatisticsFixture);
   await mount();
 
-  // Donut container has order-first lg:order-none for mobile prioritization
-  const donutCard = container.querySelector('.order-first');
-  assert.ok(donutCard, 'Donut container must have order-first class');
-  assert.ok(donutCard.getAttribute('class').includes('lg:order-none'), 'Donut container must have lg:order-none class');
+  // Freshness label is static (F102-03)
+  assert.match(container.textContent, /Số liệu tại thời điểm tải trang/);
+  assert.doesNotMatch(container.textContent, /ĐỒNG BỘ TRỰC TIẾP/);
+  assert.doesNotMatch(container.textContent, /PDF\/Word/);
 
   // Back link has min-h-[44px] and focus ring
   const backLink = container.querySelector('a[href="/dashboard"]');
@@ -187,41 +187,56 @@ test('empty account provides onboarding guidance and accessible dashboard link',
   assert.ok(onboardingLink.getAttribute('class').includes('min-h-[44px]'));
 });
 
-test('calculates pipeline funnel stages and percentage shares accurately for multi-stage sessions', async () => {
-  const customFixture = {
-    total_sessions: 20,
-    in_progress_sessions: 14,
-    approved_not_exported_sessions: 2,
-    exported_sessions: 4,
+test('accurately displays 4 KPIs and full status distribution for 6-session fixture without misleading funnel (F102-01 regression)', async () => {
+  const regressionFixture = {
+    total_sessions: 6,
+    in_progress_sessions: 1,
+    approved_not_exported_sessions: 1,
+    exported_sessions: 1,
     by_status: {
-      draft: 2,
-      blueprinted: 2,
-      configured: 3,
-      generating: 2,
-      partial_generated: 1,
-      generated: 3,
-      reviewed: 1,
-      approved: 2,
-      exported: 4,
-      failed: 0,
-      unknown: 0,
+      draft: 0,
+      blueprinted: 0,
+      configured: 0,
+      generating: 0,
+      partial_generated: 0,
+      generated: 1,
+      reviewed: 0,
+      approved: 1,
+      exported: 1,
+      failed: 2,
+      unknown: 1,
     },
   };
-  api.defaults.adapter = async (config) => response(config, customFixture);
+  api.defaults.adapter = async (config) => response(config, regressionFixture);
   await mount();
 
-  // Funnel Stage 1: draft (2) + blueprinted (2) = 4 (20%)
-  // Funnel Stage 2: configured (3) + generating (2) + partial (1) + generated (3) = 9 (45%)
-  // Funnel Stage 3: reviewed (1) + approved (2) = 3 (15%)
-  // Funnel Stage 4: exported (4) = 4 (20%)
-  assert.match(container.textContent, /CHẶNG 01/);
-  assert.match(container.textContent, /20%/);
-  assert.match(container.textContent, /CHẶNG 02/);
-  assert.match(container.textContent, /45%/);
-  assert.match(container.textContent, /CHẶNG 03/);
-  assert.match(container.textContent, /15%/);
-  assert.match(container.textContent, /CHẶNG 04/);
-  assert.match(container.textContent, /Tổng luân chuyển: 20 phiên/);
+  // 4 KPI checks
+  const ddValues = Array.from(container.querySelectorAll('dd'), (item) => item.textContent);
+  assert.equal(ddValues[0], '6phiên đề'); // total
+  assert.equal(ddValues[1], '1phiên đề'); // in-progress
+  assert.equal(ddValues[2], '1phiên đề'); // approved not exported
+  assert.equal(ddValues[3], '1phiên đề'); // exported
+
+  // Sum of all status buckets equals total_sessions (6)
+  const totalInBuckets = Object.values(regressionFixture.by_status).reduce((acc, v) => acc + v, 0);
+  assert.equal(totalInBuckets, 6);
+
+  // StatusChart displays all populated buckets including failed and unknown
+  const chart = container.querySelector('section[aria-labelledby="status-chart-title"]');
+  assert.ok(chart);
+  assert.match(chart.textContent, /Đã sinh đề1/);
+  assert.match(chart.textContent, /Đã duyệt, chưa xuất1/);
+  assert.match(chart.textContent, /Đã tạo gói xuất1/);
+  assert.match(chart.textContent, /Sinh đề gặp lỗi2/);
+  assert.match(chart.textContent, /Chưa xác định1/);
+
+  // Failed (2) and unknown (1) in alert remainder
+  assert.match(container.textContent, /2 phiên sinh đề gặp lỗi và 1 phiên chưa xác định trạng thái/);
+
+  // Verified: No misleading funnel, transit totals, or Word format references
+  assert.doesNotMatch(container.textContent, /CHẶNG 0/);
+  assert.doesNotMatch(container.textContent, /Tổng luân chuyển/);
+  assert.doesNotMatch(container.textContent, /PDF\/Word/);
 });
 
 test('handles large volume numbers with Vietnamese locale formatting and 4% bar clamp', async () => {
@@ -334,4 +349,3 @@ test('handles incident alert when only failed status sessions exist', async () =
   assert.match(container.textContent, /1 phiên sinh đề gặp lỗi/);
   assert.doesNotMatch(container.textContent, /chưa xác định trạng thái/);
 });
-

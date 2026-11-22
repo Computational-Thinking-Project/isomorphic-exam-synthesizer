@@ -232,7 +232,7 @@ Based on our benchmark findings, we designed and analyzed three structurally dis
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ DIRECTION 1: MONOLITHIC INTEGRATED PIPELINE HUB                                                  │
 │                                                                                                  │
-│ [← Thư viện đề]                                                    [● ĐỒNG BỘ TRỰC TIẾP (Pulse)] │
+│ [← Thư viện đề]                                                [Số liệu tại thời điểm tải trang] │
 │ Thống kê sử dụng — Các phiên đề hiện đang lưu trong tài khoản của bạn                            │
 │                                                                                                  │
 │ ┌──────────────────────┬──────────────────────┬──────────────────────┬─────────────────────────┐ │
@@ -242,24 +242,16 @@ Based on our benchmark findings, we designed and analyzed three structurally dis
 │                                                                                                  │
 │ [!] Lưu ý trạng thái: Tổng số phiên bao gồm 1 phiên gặp lỗi.                                     │
 │                                                                                                  │
-│ ┌───────────────────────────────────────────────────────┬──────────────────────────────────────┐ │
-│ │ PHÂN BỐ CHI TIẾT 11 TRẠNG THÁI (Semantic Bar Chart)   │ CƠ CẤU VÒNG ĐỜI (SVG Donut Ring)     │ │
-│ │ 01 Đang chuẩn bị đề gốc    ■■■■ 4                     │                 ╭──────╮             │ │
-│ │ 01 Đã xác nhận đề gốc      ■■■ 3                      │              ╭──╯ 74%  ╰──╮          │ │
-│ │ 02 Đang sinh đề            ■ 1                        │              │  23 phiên  │          │ │
-│ │ 02 Đã sinh đề              ■■■■ 4                     │              ╰──╮         ╭──╯          │ │
-│ │ 03 Đã duyệt, chờ chốt      ■■ 2                       │                 ╰──────╯             │ │
-│ │ 03 Đã duyệt, chưa xuất     ■■■ 3                      │  ■ Đang thực hiện: 17 (74%)          │ │
-│ │ 04 Đã tạo gói xuất         ■■ 2                       │  ■ Đã duyệt: 3 (13%)                 │ │
-│ │ ERR Sinh đề gặp lỗi        ■ 1                        │  ■ Đã xuất: 2 (9%)                   │ │
-│ └───────────────────────────────────────────────────────┴──────────────────────────────────────┘ │
-│                                                                                                  │
 │ ┌──────────────────────────────────────────────────────────────────────────────────────────────┐ │
-│ │ QUY TRÌNH XỬ LÝ PHIÊN ĐỀ 4 CHẶNG (Linear Lifecycle Funnel)                                   │ │
-│ │ ┌───────────────────┬───────────────────┬──────────────────────┬───────────────────────────┐ │ │
-│ │ │ CHẶNG 01: NẠP ĐỀ  │ CHẶNG 02: SINH AI │ CHẶNG 03: DUYỆT ĐỀ   │ CHẶNG 04: XUẤT BẢN        │ │ │
-│ │ │ 7 phiên (30%)     │ 8 phiên (35%)     │ 5 phiên (22%)        │ 2 phiên (9%)              │ │ │
-│ │ └───────────────────┴───────────────────┴──────────────────────┴───────────────────────────┘ │ │
+│ │ PHÂN BỐ CHI TIẾT 11 TRẠNG THÁI (Semantic Bar Chart)                                          │ │
+│ │ 01 Đang chuẩn bị đề gốc    ■■■■ 4                                                            │ │
+│ │ 01 Đã xác nhận đề gốc      ■■■ 3                                                             │ │
+│ │ 02 Đang sinh đề            ■ 1                                                               │ │
+│ │ 02 Đã sinh đề              ■■■■ 4                                                            │ │
+│ │ 03 Đã duyệt, chờ chốt      ■■ 2                                                              │ │
+│ │ 03 Đã duyệt, chưa xuất     ■■■ 3                                                             │ │
+│ │ 04 Đã tạo gói xuất         ■■ 2                                                              │ │
+│ │ ERR Sinh đề gặp lỗi        ■ 1                                                               │ │
 │ └──────────────────────────────────────────────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -268,16 +260,15 @@ Based on our benchmark findings, we designed and analyzed three structurally dis
 Direction 1 embodies the "Paper Canvas" philosophy. Rather than presenting fragmented floating cards, the entire dashboard is organized into monolithic, bordered rectangular panels with subtle hairlines (`border border-line rounded-xl shadow-paper bg-surface`).
 
 #### B. Visual Hierarchy & Progressive Disclosure
-1. **Tier 1 (Header):** Contextual navigation and a pulsating live-sync indicator.
+1. **Tier 1 (Header):** Contextual navigation and a static data freshness notice ("Số liệu tại thời điểm tải trang").
 2. **Tier 2 (Summary Deck):** A unified 4-card container partitioned by `divide-y sm:divide-x divide-line`.
 3. **Tier 3 (Incident Alert Banner):** Conditional high-visibility banner surfacing `failed` or `unknown` records.
-4. **Tier 4 (Main Analysis Hub):** Asymmetric 2-column layout pairing a horizontal status bar chart (`<dl>`) with a pure SVG composition donut.
-5. **Tier 5 (Pipeline Funnel):** Connected 4-stage funnel showing linear authoring progression.
+4. **Tier 4 (Status Distribution Hub):** Comprehensive horizontal status bar chart (`<dl>`) with proportional width fills.
 
 #### C. Strengths
-- **Low Cognitive Load:** Organizes 15 distinct data points into logical, digestible visual tiers.
-- **Zero Charting Overhead:** Built entirely with semantic HTML (`<dl>`, `<dt>`, `<dd>`), Tailwind CSS, and vanilla SVG (`<svg viewBox="0 0 140 140">`).
-- **Responsive Perfection:** Collapses cleanly from 2-column desktop to 2x2 tablet and 1-column mobile without any horizontal overflow.
+- **Low Cognitive Load:** Focuses on essential metrics without superfluous or misleading macro visualisations.
+- **Zero Charting Overhead:** Built entirely with semantic HTML (`<dl>`, `<dt>`, `<dd>`) and Tailwind CSS.
+- **Responsive Perfection:** Collapses cleanly from desktop to 2x2 tablet and 1-column mobile without any horizontal overflow.
 
 ---
 
@@ -405,21 +396,20 @@ To objectively determine the winning direction, we evaluated all three design di
 - **Direction 1:** Employs progressive disclosure:
   - Top Deck: Answers *"What is my macro volume?"*
   - Alert Banner: Answers *"Did anything break?"*
-  - Analysis Hub: Answers *"What is my completion ratio and status distribution?"*
-  - Funnel: Answers *"Where is work flowing right now?"*
+  - Status Distribution: Answers *"What is my exact breakdown across stored statuses?"*
 - **Direction 2:** Forces the user to read linearly from top to bottom, making macro-triage cumbersome.
 - **Direction 3:** Overwhelms the user with numbers immediately, offering zero visual Gestalt.
 
 #### 3. Responsive Adaptability across Viewports
 - **Direction 1:** Flawlessly adapts across all three target viewports:
-  - 1440px / 1024px: 4-card row, 2-column hub, 4-stage funnel.
-  - 768px (Tablet): 2x2 summary grid, stacked hub, 2x2 funnel.
-  - 375px (Mobile): 1-column vertical card deck, full-width status bars with wrapping labels, 1-column funnel, zero horizontal overflow (`scrollWidth <= clientWidth`).
+  - 1440px / 1024px: 4-card row, full-width status distribution section.
+  - 768px (Tablet): 2x2 summary grid, 2-column status rows.
+  - 375px (Mobile): 1-column vertical card deck, full-width status bars with wrapping labels, zero horizontal overflow (`scrollWidth <= clientWidth`).
 - **Direction 2:** Excessive vertical scroll depth on mobile (over 2,500px of scrolling).
 - **Direction 3:** Incurably broken on mobile; multi-column tables trigger horizontal scrollbars on 375px screens, directly violating acceptance criteria.
 
 #### 4. Implementation Complexity & Dependency Footprint
-- All three directions can be built with pure HTML and Tailwind CSS. Direction 1 incorporates a lightweight pure SVG donut ring (`<svg viewBox="0 0 140 140">` with `strokeDasharray`), keeping external charting dependencies at **zero kB**.
+- All three directions can be built with pure HTML and Tailwind CSS, keeping external charting dependencies at **zero kB**.
 
 #### 5. Strict Alignment with Verified Backend Data (`01-data-audit.md`)
 - **Direction 1 & 3:** Bind directly to `SessionStatisticsResponse` fields without requiring any additional query params, date ranges, or session logs.
@@ -429,8 +419,6 @@ To objectively determine the winning direction, we evaluated all three design di
 - **Direction 1:** Maps directly to accessible HTML elements:
   - Summary Deck: `<dl>` with `<dt>` (metric title) and `<dd>` (formatted value).
   - Status Distribution: `<section aria-labelledby="...">` with `<dl>`, `<dt>`, `<dd>`.
-  - Donut Ring: `<svg aria-hidden="true">` backed by an accessible tabular legend list.
-  - Funnel: Grouped semantic grid with clear stage headings.
 
 ---
 
