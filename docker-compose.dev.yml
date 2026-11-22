@@ -29,6 +29,8 @@ services:
       API_PROXY_TARGET: http://backend:8000
       VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
+      MOCK_STATISTICS_API: ${MOCK_STATISTICS_API:-false}
+      MOCK_STATISTICS_SCENARIO: ${MOCK_STATISTICS_SCENARIO:-normal}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
     restart: "no"
