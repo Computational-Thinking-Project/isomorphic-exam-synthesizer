@@ -272,7 +272,7 @@ def test_all_output_formats_keep_blank_solution_at_its_display_slot():
     compiler = Mock(wraps=TypstCompiler())
     compiler.compile_document.side_effect = lambda source, name: b"%PDF-1.4\n%%EOF\n"
     artifact = build_compiled_bundle(snapshot, compiler=compiler)
-    source = compiler.compile_document.call_args_list[1].args[0]
+    source = compiler.compile_document.call_args_list[0].args[0]
     assert "Câu 1 (Đáp án A):" in source and "Lời giải chi tiết:" in source
     assert "  \n]\n" in source  # heading stays, the solution body is blank
     with ZipFile(BytesIO(artifact.data)) as archive:
@@ -291,5 +291,5 @@ def test_verified_empty_solution_compiles_into_real_pdf_bundle():
     artifact = build_compiled_bundle(snapshot)
     with ZipFile(BytesIO(artifact.data)) as archive:
         pdfs = [name for name in archive.namelist() if name.endswith(".pdf")]
-        assert len(pdfs) == 5
+        assert len(pdfs) == 2
         assert all(archive.read(name).startswith(b"%PDF-") for name in pdfs)

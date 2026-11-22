@@ -155,6 +155,9 @@ export function createExportController({
       publish({
         phase: 'ready_to_download',
         artifact: normalizeArtifact(snapshot, sessionId),
+        // A ready refresh may select a new packager version with the same filename.
+        // Reauthorize the next download instead of reusing an older artifact URL.
+        downloadGrant: null,
         error: '',
         errorCode: null,
         busyAction: null,
