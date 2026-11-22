@@ -27,43 +27,36 @@ function SSEProgressPreviewApp() {
   useEffect(() => {
     if (!isPlaying) return;
 
+    // Danh sách 12 biến thể tuần tự: Mã 101 chạy từ câu 1 -> 6, sau đó Mã 102 chạy từ câu 1 -> 6
+    const tasks = [];
+    for (let v = 1; v <= numVersions; v++) {
+      for (let q = 1; q <= totalQuestions; q++) {
+        tasks.push({ vIdx: v, qNo: q, key: `${v}-${q}` });
+      }
+    }
+
     let currentStep = 0;
     const interval = setInterval(() => {
       currentStep += 1;
       const newPercent = Math.min(100, Math.round((currentStep / 24) * 100));
       setPercent(newPercent);
 
-      // Mô phỏng diễn tiến từng câu hỏi theo 5 trạng thái thân thiện:
-      // 1. analyzing -> 2. generating -> 3. validating -> 4. retrying -> 5. done
-      const qIndex = Math.min(totalVariants, Math.ceil(currentStep / 2));
-      const vIdx = ((qIndex - 1) % numVersions) + 1;
-      const qNo = Math.floor((qIndex - 1) / numVersions) + 1;
-      const key = `${vIdx}-${qNo}`;
-
-      let currentStatus = 'analyzing';
-      if (currentStep % 4 === 1) currentStatus = 'analyzing';
-      else if (currentStep % 4 === 2) currentStatus = 'generating';
-      else if (currentStep % 4 === 3) currentStatus = 'validating';
-      else currentStatus = 'done';
+      const taskIndex = Math.min(tasks.length - 1, Math.floor((currentStep - 1) / 2));
+      const currentTask = tasks[taskIndex];
+      const isFinishingQuestion = currentStep % 2 === 0;
+      const currentStatus = isFinishingQuestion ? 'done' : 'generating';
 
       setQuestionStatuses((prev) => ({
         ...prev,
-        [key]: {
-          version_index: vIdx,
-          question_no: qNo,
+        [currentTask.key]: {
+          version_index: currentTask.vIdx,
+          question_no: currentTask.qNo,
           status: currentStatus,
-          message:
-            currentStatus === 'analyzing'
-              ? 'Đang phân tích mô hình'
-              : currentStatus === 'generating'
-              ? 'Đang soạn nội dung biến thể'
-              : currentStatus === 'validating'
-              ? 'Đang kiểm tra lời giải'
-              : 'Đã hoàn thành',
+          message: isFinishingQuestion ? 'Đã hoàn thành' : 'Đang soạn nội dung biến thể',
         },
       }));
 
-      if (currentStatus === 'done') {
+      if (isFinishingQuestion) {
         setCompletedCount((c) => Math.min(totalVariants, c + 1));
       }
 
@@ -72,9 +65,24 @@ function SSEProgressPreviewApp() {
         setIsPlaying(false);
         setPercent(100);
         setCompletedCount(totalVariants);
+
+        // Đảm bảo toàn bộ 12 câu hỏi đều đạt trạng thái hoàn thành
+        setQuestionStatuses(() => {
+          const allDone = {};
+          tasks.forEach((t) => {
+            allDone[t.key] = {
+              version_index: t.vIdx,
+              question_no: t.qNo,
+              status: 'done',
+              message: 'Đã hoàn thành',
+            };
+          });
+          return allDone;
+        });
+
         clearInterval(interval);
       }
-    }, 600);
+    }, 350);
 
     return () => clearInterval(interval);
   }, [isPlaying, totalVariants]);

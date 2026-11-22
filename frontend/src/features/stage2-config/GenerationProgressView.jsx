@@ -99,7 +99,11 @@ export default function GenerationProgressView({
       } else if (item?.status === 'failed' || item?.status === 'missing' || (isDone && isPartial && !item)) {
         vFailed++;
       } else if (item?.status === 'generating' || item?.status === 'analyzing' || item?.status === 'retrying' || item?.status === 'validating') {
-        vActive++;
+        if (isDone && !isPartial) {
+          vCompleted++;
+        } else {
+          vActive++;
+        }
       }
     }
 
