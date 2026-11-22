@@ -436,9 +436,10 @@
 /* Generation Progress View (S05) */
 .progress-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: 16px;
+  gap: 8px 16px;
   margin-bottom: 8px;
 }
 
@@ -471,7 +472,7 @@
 
 .flow-progress-bar-fill {
   height: 100%;
-  background: var(--accent);
+  background: var(--highlight);
   transition: width 0.3s ease;
 }
 
@@ -564,10 +565,43 @@
     flex-direction: column;
     gap: 16px;
   }
-  .generation-table-heading,
+  .generation-table-heading {
+    display: none;
+  }
   .generation-row {
-    grid-template-columns: 100px minmax(0, 1fr) 110px;
-    gap: 12px;
-    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 14px 16px;
+  }
+  .generation-row > div {
+    width: 100%;
+    min-width: 0;
+  }
+  .generation-row .generation-state {
+    align-self: flex-start;
+    width: fit-content;
+  }
+}
+
+@media (max-width: 380px) {
+  .stage2-flow {
+    padding: 0 8px 32px;
+  }
+  .stage2-flow .flow-main {
+    padding: 16px 12px;
+  }
+  .flow-stepper {
+    gap: 4px;
+    font-size: 11px;
+  }
+  .flow-stepper .step-indicator {
+    width: 22px;
+    height: 22px;
+    font-size: 11px;
+  }
+  .generation-row {
+    padding: 12px 10px;
   }
 }

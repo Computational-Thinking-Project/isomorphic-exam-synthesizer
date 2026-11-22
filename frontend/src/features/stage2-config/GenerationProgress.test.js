@@ -269,3 +269,48 @@ test('F02: GenerationProgressView CHỈ hiển thị 0 / 4 khi backend xác nh�
 
   await harness.unmount();
 });
+
+test('F108-01 & F108-03: Cấu trúc generation-row và thanh tiến trình tổng đáp ứng responsive mobile', async () => {
+  const harness = renderProgress({
+    sessionId: 'session-prog-responsive',
+    numVersions: 2,
+    totalSourceQuestions: 6,
+    progress: {
+      hasData: true,
+      completedCount: 6,
+      percent: 50,
+      totalCount: 12,
+    },
+    questionStatuses: {
+      '1-1': { version_index: 1, question_no: 1, status: 'done' },
+      '1-2': { version_index: 1, question_no: 2, status: 'done' },
+      '1-3': { version_index: 1, question_no: 3, status: 'done' },
+      '1-4': { version_index: 1, question_no: 4, status: 'done' },
+      '1-5': { version_index: 1, question_no: 5, status: 'done' },
+      '1-6': { version_index: 1, question_no: 6, status: 'done' },
+      '2-1': { version_index: 2, question_no: 1, status: 'generating' },
+    },
+    connectionState: 'connected',
+  });
+  await harness.render();
+
+  // F108-03: Thanh tiến trình tổng có class flow-progress-bar-fill
+  const overallFill = harness.container.querySelector('.flow-progress-bar-fill');
+  assert.ok(overallFill, 'Phải có phần tử .flow-progress-bar-fill');
+  assert.equal(overallFill.style.width, '50%');
+
+  // F108-01: Mỗi row có 3 khối con riêng biệt để xếp dọc (Mã đề -> Tiến độ -> Badge)
+  const rows = harness.container.querySelectorAll('.generation-row');
+  assert.equal(rows.length, 2);
+  rows.forEach((row) => {
+    const childElements = row.childNodes.filter((c) => c.nodeType === 1);
+    assert.equal(childElements.length, 3, 'Mỗi generation-row phải có 3 khối con để xếp chồng linh hoạt');
+    const [titleBlock, progressBlock, stateBlock] = childElements;
+    assert.ok(titleBlock.querySelector('h3'), 'Khối 1 phải chứa tiêu đề mã đề');
+    assert.ok(progressBlock.querySelector('.row-progress-bar'), 'Khối 2 phải chứa thanh tiến trình');
+    assert.ok((stateBlock.getAttribute('class') || '').includes('generation-state'), 'Khối 3 phải là khối trạng thái generation-state');
+    assert.ok(stateBlock.querySelector('.flow-badge'), 'Khối 3 phải chứa badge trạng thái flow-badge');
+  });
+
+  await harness.unmount();
+});
