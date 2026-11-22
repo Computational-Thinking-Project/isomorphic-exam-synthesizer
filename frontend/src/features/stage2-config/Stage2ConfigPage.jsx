@@ -532,6 +532,24 @@ export default function Stage2ConfigPage({
     onError: handleSSEError,
   });
 
+  const [isReadingStatus, setIsReadingStatus] = useState(false);
+
+  // F108-08: "Đọc lại trạng thái" tải snapshot có thẩm quyền từ backend và kết nối lại SSE
+  const handleReadStatus = useCallback(async () => {
+    if (isReadingStatus) return;
+    setIsReadingStatus(true);
+    try {
+      await handleResyncSnapshot(sessionId);
+      if (sseState.reconnect) {
+        sseState.reconnect();
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsReadingStatus(false);
+      }
+    }
+  }, [handleResyncSnapshot, sessionId, sseState, isReadingStatus]);
+
   const isPostStage2Locked = ['reviewed', 'approved', 'exported'].includes(session?.status);
   const isFinalExportLocked = ['approved', 'exported'].includes(session?.status);
 
@@ -1002,7 +1020,8 @@ export default function Stage2ConfigPage({
               : retryError || sseState.error
           }
           reconnectCount={sseState.reconnectCount}
-          onReconnect={sseState.reconnect}
+          onReconnect={handleReadStatus}
+          isReadingStatus={isReadingStatus}
           onRetryGeneration={handleRetryGeneration}
           isRetrying={isRetryingGeneration}
           onComplete={handleCompleteRedirect}

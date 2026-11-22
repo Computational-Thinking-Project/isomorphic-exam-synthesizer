@@ -127,7 +127,13 @@ test('Stage2ConfigCard gửi đúng payload chuẩn: n_versions, active_variatio
     form.dispatchEvent({ type: 'submit', bubbles: true, cancelable: true, preventDefault: () => {} });
   });
 
-  assert.ok(submittedPayload, 'Form phải submit thành công');
+  const confirmBtn = harness.container.querySelector('.flow-modal')?.querySelector('.button-primary');
+  assert.ok(confirmBtn, 'Phải mở modal xác nhận và có nút Tạo biến thể');
+  await act(async () => {
+    confirmBtn.click();
+  });
+
+  assert.ok(submittedPayload, 'Form phải submit thành công sau khi xác nhận');
   assert.equal(submittedPayload.n_versions, 3);
   assert.deepEqual(submittedPayload.active_variation_modes, [], 'Gửi mảng rỗng active_variation_modes');
   assert.deepEqual(submittedPayload.ordering_preferences, {
@@ -166,6 +172,12 @@ test('Stage2ConfigCard hiển thị thông báo chỉ đọc khi phiên cũ có 
   const form = harness.container.querySelector('form');
   await act(async () => {
     form.dispatchEvent({ type: 'submit', bubbles: true, cancelable: true, preventDefault: () => {} });
+  });
+
+  const confirmBtn = harness.container.querySelector('.flow-modal')?.querySelector('.button-primary');
+  assert.ok(confirmBtn, 'Phải mở modal xác nhận');
+  await act(async () => {
+    confirmBtn.click();
   });
 
   assert.ok(submittedPayload);
@@ -226,6 +238,83 @@ test('Stage2ConfigCard khóa submit và hiển thị cảnh báo khi Blueprint c
 
   const submitBtn = harness.container.querySelector('button[type="submit"]');
   assert.equal(submitBtn.getAttribute('disabled') !== null, true);
+
+  await harness.unmount();
+});
+
+test('F108-06: Mọi submit hợp lệ đều mở confirmation modal, bấm Hủy đóng modal và không submit', async () => {
+  let submitted = false;
+  const harness = renderCard({
+    session: sampleSession,
+    onSubmit: async () => {
+      submitted = true;
+    },
+  });
+  await harness.render();
+
+  const form = harness.container.querySelector('form');
+  // Submit synthetic
+  await act(async () => {
+    form.dispatchEvent({ type: 'submit', bubbles: true, cancelable: true, preventDefault: () => {} });
+  });
+
+  // Modal phải xuất hiện
+  const modal = harness.container.querySelector('.flow-modal');
+  assert.ok(modal, 'Modal xác nhận phải xuất hiện');
+  assert.equal(submitted, false, 'Chưa được gọi onSubmit khi chưa bấm xác nhận trong modal');
+
+  // Bấm nút Hủy
+  const cancelBtn = Array.from(modal.querySelectorAll('button')).find((b) => b.textContent.includes('Hủy'));
+  assert.ok(cancelBtn, 'Phải có nút Hủy');
+  await act(async () => {
+    cancelBtn.click();
+  });
+
+  // Modal phải đóng
+  assert.equal(harness.container.querySelector('.flow-modal'), null, 'Modal phải đóng sau khi bấm Hủy');
+  assert.equal(submitted, false, 'onSubmit tuyệt đối không được gọi');
+
+  await harness.unmount();
+});
+
+test('F108-06: Nhấn Enter trong ô nhập hoặc bấm submit đều mở modal, và chống double-submit khi isSubmitting', async () => {
+  let submitCount = 0;
+  const harness = renderCard({
+    session: sampleSession,
+    isSubmitting: false,
+    onSubmit: async () => {
+      submitCount++;
+    },
+  });
+  await harness.render();
+
+  // Nhấn Enter / submit trên form
+  const form = harness.container.querySelector('form');
+  await act(async () => {
+    form.dispatchEvent({ type: 'submit', bubbles: true, cancelable: true, preventDefault: () => {} });
+  });
+
+  const confirmBtn = harness.container.querySelector('.flow-modal')?.querySelector('.button-primary');
+  assert.ok(confirmBtn, 'Phải có nút Tạo biến thể trong modal');
+
+  // Bấm xác nhận
+  await act(async () => {
+    confirmBtn.click();
+  });
+  assert.equal(submitCount, 1, 'onSubmit được gọi đúng 1 lần');
+
+  // Re-render với isSubmitting = true
+  await harness.render({
+    session: sampleSession,
+    isSubmitting: true,
+    onSubmit: async () => {
+      submitCount++;
+    },
+  });
+
+  // Nút submit chính phải bị disabled khi isSubmitting
+  const mainSubmitBtn = harness.container.querySelector('button[type="submit"]');
+  assert.equal(mainSubmitBtn.getAttribute('disabled') !== null, true, 'Nút submit chính bị khóa khi đang submit');
 
   await harness.unmount();
 });

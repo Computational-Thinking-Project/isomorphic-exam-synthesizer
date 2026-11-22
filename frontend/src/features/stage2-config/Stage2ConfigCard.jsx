@@ -84,6 +84,7 @@ export default function Stage2ConfigCard({
   const hadShuffleOptions = Boolean(initialConfig?.ordering_preferences?.shuffle_options);
 
   async function executeSubmit() {
+    if (isSubmitting) return;
     setShowConfirmModal(false);
     if (!onSubmit) return;
 
@@ -118,14 +119,8 @@ export default function Stage2ConfigCard({
       return;
     }
 
-    // Nếu là sự kiện tương tác thật từ người dùng (isTrusted = true), hiển thị Confirmation Modal
-    if (e?.isTrusted) {
-      setShowConfirmModal(true);
-      return;
-    }
-
-    // Trong môi trường headless unit test (synthetic event), nộp trực tiếp
-    executeSubmit();
+    // F108-06: Mọi submit hợp lệ đều mở modal xác nhận (không bypass bằng synthetic event)
+    setShowConfirmModal(true);
   }
 
   return (
@@ -352,6 +347,7 @@ export default function Stage2ConfigCard({
             <div className="modal-actions">
               <button
                 type="button"
+                disabled={isSubmitting}
                 onClick={() => setShowConfirmModal(false)}
                 className="quiet-button"
               >
@@ -359,6 +355,7 @@ export default function Stage2ConfigCard({
               </button>
               <button
                 type="button"
+                disabled={isSubmitting}
                 onClick={executeSubmit}
                 className="button-primary"
               >

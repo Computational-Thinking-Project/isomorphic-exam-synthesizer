@@ -34,6 +34,7 @@ export default function GenerationProgressView({
   error = null,
   reconnectCount = 0,
   onReconnect,
+  isReadingStatus = false,
   onRetryGeneration,
   isRetrying = false,
   onComplete,
@@ -71,18 +72,50 @@ export default function GenerationProgressView({
   const isOffline = connectionState === 'disconnected' || connectionState === 'offline';
   const canEarlyReview = completedCount !== null && completedCount >= 1;
 
+  // F108-05: Dựng missing slots theo từng mã × câu ở terminal partial và các câu failed/missing
+  const failedSet = new Set();
+  const failedList = [];
 
+  function addFailed(v, q) {
+    const code = Number(v) > 100 ? v : 100 + Number(v);
+    const label = `Câu ${q} · Mã ${code}`;
+    if (!failedSet.has(label)) {
+      failedSet.add(label);
+      failedList.push(label);
+    }
+  }
 
-  // Phân tích danh sách câu bị lỗi (failed / missing)
-  const failedList = Object.entries(questionStatuses || {})
-    .filter(([, item]) => item?.status === 'failed' || item?.status === 'missing')
-    .map(([key]) => {
-      const parts = key.split('-');
-      const v = parts[0];
-      const q = parts[1];
-      const code = Number(v) > 100 ? v : 100 + Number(v);
-      return `Câu ${q} · Mã ${code}`;
-    });
+  // 1. Quét theo lưới chuẩn version × question
+  if (effectiveNumVersions > 0 && totalSourceQuestions > 0) {
+    for (let v = 1; v <= effectiveNumVersions; v++) {
+      for (let q = 1; q <= totalSourceQuestions; q++) {
+        const item = questionStatuses?.[`${v}-${q}`];
+        if (
+          item?.status === 'failed' ||
+          item?.status === 'missing' ||
+          (isPartial && !item)
+        ) {
+          addFailed(v, q);
+        }
+      }
+    }
+  }
+
+  // 2. Bổ sung các key failed/missing nằm ngoài dải chuẩn nếu có
+  Object.entries(questionStatuses || {}).forEach(([key, item]) => {
+    if (item?.status === 'failed' || item?.status === 'missing') {
+      const [v, q] = key.split('-');
+      if (v && q) {
+        addFailed(v, q);
+      }
+    }
+  });
+
+  // F108-04: Chỉ tính từng mã từ trạng thái câu đã xác nhận trong questionStatuses
+  const hasPerVersionData =
+    Object.keys(questionStatuses || {}).length > 0 ||
+    (isDone && !isPartial) ||
+    (hasSnapshotData && completedCount === 0);
 
   // Tạo danh sách các dòng cho từng mã đề
   const rows = [];
@@ -96,28 +129,23 @@ export default function GenerationProgressView({
       const item = questionStatuses[`${v}-${q}`];
       if (item?.status === 'done' || (!item && isDone && !isPartial)) {
         vCompleted++;
-      } else if (item?.status === 'failed' || item?.status === 'missing' || (isDone && isPartial && !item)) {
+      } else if (
+        item?.status === 'failed' ||
+        item?.status === 'missing' ||
+        (isPartial && !item)
+      ) {
         vFailed++;
-      } else if (item?.status === 'generating' || item?.status === 'analyzing' || item?.status === 'retrying' || item?.status === 'validating') {
+      } else if (
+        item?.status === 'generating' ||
+        item?.status === 'analyzing' ||
+        item?.status === 'retrying' ||
+        item?.status === 'validating'
+      ) {
         if (isDone && !isPartial) {
           vCompleted++;
         } else {
           vActive++;
         }
-      }
-    }
-
-    // Nếu không có questionStatuses chi tiết nhưng có completedCount chung
-    if (Object.keys(questionStatuses || {}).length === 0 && completedCount !== null) {
-      const fullVersions = Math.floor(completedCount / totalSourceQuestions);
-      const remainder = completedCount % totalSourceQuestions;
-      if (v <= fullVersions) {
-        vCompleted = totalSourceQuestions;
-      } else if (v === fullVersions + 1) {
-        vCompleted = remainder;
-        vActive = remainder > 0 ? 1 : 0;
-      } else {
-        vCompleted = 0;
       }
     }
 
@@ -253,54 +281,68 @@ export default function GenerationProgressView({
                   <span>TRẠNG THÁI</span>
                 </div>
 
-                {rows.map((row) => {
-                  const rowPercent = Math.round((row.count / row.target) * 100);
-                  return (
-                    <div key={row.code} className="generation-row">
-                      <div>
-                        <h3>Mã {row.code}</h3>
-                        <small>{row.target} câu gốc</small>
-                      </div>
-                      <div>
-                        <p>
-                          {row.count}/{row.target} hoàn tất
-                        </p>
-                        <div className="row-progress-bar">
-                          <div
-                            className="row-progress-bar-fill"
-                            style={{ width: `${rowPercent}%` }}
-                          />
+                {hasPerVersionData ? (
+                  rows.map((row) => {
+                    const rowPercent = Math.round((row.count / row.target) * 100);
+                    return (
+                      <div key={row.code} className="generation-row">
+                        <div>
+                          <h3>Mã {row.code}</h3>
+                          <small>{row.target} câu gốc</small>
+                        </div>
+                        <div>
+                          <p>
+                            {row.count}/{row.target} hoàn tất
+                          </p>
+                          <div className="row-progress-bar">
+                            <div
+                              className="row-progress-bar-fill"
+                              style={{ width: `${rowPercent}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div className="generation-state">
+                          {row.kind === 'complete' && (
+                            <span className="flow-badge approved">
+                              <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                              Đã hoàn tất
+                            </span>
+                          )}
+                          {row.kind === 'active' && (
+                            <span className="flow-badge gold">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                              Đang xử lý
+                            </span>
+                          )}
+                          {row.kind === 'pending' && (
+                            <span className="flow-badge">
+                              <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+                              Chờ lượt
+                            </span>
+                          )}
+                          {row.kind === 'failed' && (
+                            <span className="flow-badge danger">
+                              <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                              Cần thử lại
+                            </span>
+                          )}
                         </div>
                       </div>
-                      <div className="generation-state">
-                        {row.kind === 'complete' && (
-                          <span className="flow-badge approved">
-                            <Check className="h-3.5 w-3.5" aria-hidden="true" />
-                            Đã hoàn tất
-                          </span>
-                        )}
-                        {row.kind === 'active' && (
-                          <span className="flow-badge gold">
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                            Đang xử lý
-                          </span>
-                        )}
-                        {row.kind === 'pending' && (
-                          <span className="flow-badge">
-                            <Clock className="h-3.5 w-3.5" aria-hidden="true" />
-                            Chờ lượt
-                          </span>
-                        )}
-                        {row.kind === 'failed' && (
-                          <span className="flow-badge danger">
-                            <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
-                            Cần thử lại
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                ) : (
+                  <div
+                    className="generation-table-empty"
+                    style={{
+                      padding: '24px 16px',
+                      textAlign: 'center',
+                      color: 'var(--muted)',
+                      fontStyle: 'italic',
+                    }}
+                  >
+                    Chưa có dữ liệu tiến độ từng mã
+                  </div>
+                )}
               </div>
             </>
           )}
@@ -333,11 +375,12 @@ export default function GenerationProgressView({
                     <button
                       type="button"
                       onClick={onReconnect}
+                      disabled={isReadingStatus}
                       className="quiet-button"
                       style={{ padding: '4px 12px', fontSize: '13px' }}
                     >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                      Kết nối lại
+                      <RefreshCw className={`h-3.5 w-3.5 ${isReadingStatus ? 'animate-spin' : ''}`} />
+                      {isReadingStatus ? 'Đang kết nối lại...' : 'Kết nối lại'}
                     </button>
                   </div>
                 )}
@@ -358,11 +401,12 @@ export default function GenerationProgressView({
                     <button
                       type="button"
                       onClick={onReconnect}
+                      disabled={isReadingStatus}
                       className="quiet-button"
                       style={{ padding: '4px 12px', fontSize: '13px' }}
                     >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                      Đọc lại trạng thái
+                      <RefreshCw className={`h-3.5 w-3.5 ${isReadingStatus ? 'animate-spin' : ''}`} />
+                      {isReadingStatus ? 'Đang đọc...' : 'Đọc lại trạng thái'}
                     </button>
                   </div>
                 )}

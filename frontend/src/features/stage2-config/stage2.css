@@ -1,7 +1,20 @@
 /* Design Tokens and Styles for Stage 2 (Issue #94)
    Matching prototype docs/ui-walkthrough/PREVIEW.html (S04 & S05) */
 
-:root {
+/* Stage 2 Main Flow Container */
+.stage2-flow {
+  --on-accent: #3f3f46;
+  --brand-text: #806411;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  color: var(--ink);
+  background: var(--canvas);
+  min-height: 100vh;
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0 16px 40px;
+}
+
+[data-theme='dark'] .stage2-flow {
   --canvas: #141416;
   --surface: #1c1c1f;
   --rail: #18181b;
@@ -25,42 +38,6 @@
   --approved-bg: #223b2c;
   --approved-ink: #6ee7b7;
   --approved-border: #059669;
-  --shadow-soft: 0 1px 3px #0000001a;
-  --shadow-paper: 0 6px 16px #0000001a;
-  --shadow-float: 0 12px 32px #00000033;
-}
-
-[data-theme='light'] {
-  --canvas: #fafafa;
-  --surface: #ffffff;
-  --rail: #f4f4f5;
-  --ink: #3f3f46;
-  --strong: #27272a;
-  --muted: #6b6b74;
-  --line: #e4e4e7;
-  --control-border: #85858f;
-  --accent: #f5ce58;
-  --accent-soft: #fef7dd;
-  --gold-border: #f0d26b;
-  --accent-ink: #5e4a12;
-  --on-accent: #3f3f46;
-  --brand-text: #806411;
-  --support-bg: #edf1f7;
-  --support-line: #d7e0ec;
-  --support-text: #52647b;
-  --highlight: #304c70;
-  --danger: #a32b32;
-  --danger-soft: #fff1f2;
-  --approved-bg: #eaf5ed;
-  --approved-ink: #255c3b;
-  --approved-border: #b7d8c1;
-}
-
-/* Stage 2 Main Flow Container */
-.stage2-flow {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 0 16px 40px;
 }
 
 .stage2-flow .flow-main {

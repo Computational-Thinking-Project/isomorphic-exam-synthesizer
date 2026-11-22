@@ -314,3 +314,120 @@ test('F108-01 & F108-03: Cấu trúc generation-row và thanh tiến trình tổ
 
   await harness.unmount();
 });
+
+test('F108-04: Không suy diễn tiến độ từng mã đề khi questionStatuses trống, hiển thị Chưa có dữ liệu tiến độ từng mã', async () => {
+  const harness = renderProgress({
+    sessionId: 'session-prog-no-per-version',
+    numVersions: 2,
+    totalSourceQuestions: 5,
+    progress: {
+      percent: 50,
+      completedCount: 5,
+      totalCount: 10,
+    },
+    questionStatuses: {}, // Không có trạng thái chi tiết từng câu
+    connectionState: 'connected',
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  assert.ok(
+    text.includes('Chưa có dữ liệu tiến độ từng mã'),
+    'Phải hiển thị thông báo Chưa có dữ liệu tiến độ từng mã khi questionStatuses trống',
+  );
+  assert.equal(
+    harness.container.querySelectorAll('.generation-row').length,
+    0,
+    'Tuyệt đối không render các hàng với số liệu suy diễn phân bổ',
+  );
+
+  await harness.unmount();
+});
+
+test('F108-05: Missing slots trong terminal partial_generated được phát hiện và đưa đầy đủ vào failedList', async () => {
+  let retried = false;
+  const harness = renderProgress({
+    sessionId: 'session-prog-partial-missing-slots',
+    numVersions: 2,
+    totalSourceQuestions: 2,
+    isDone: true,
+    progress: {
+      session_status: 'partial_generated',
+      is_partial: true,
+      percent: 25,
+      completedCount: 1,
+      totalCount: 4,
+    },
+    // Chỉ có 1-1 done, vắng mặt hoàn toàn 1-2, 2-1, 2-2
+    questionStatuses: {
+      '1-1': { version_index: 1, question_no: 1, status: 'done' },
+    },
+    connectionState: 'connected',
+    onRetryGeneration: () => {
+      retried = true;
+    },
+  });
+  await harness.render();
+
+  const text = harness.container.textContent;
+  // F108-05: Các câu vắng hẳn khỏi questionStatuses phải được phát hiện và hiển thị
+  assert.ok(text.includes('Câu 2 · Mã 101'), 'Phải liệt kê Câu 2 Mã 101 thiếu');
+  assert.ok(text.includes('Câu 1 · Mã 102'), 'Phải liệt kê Câu 1 Mã 102 thiếu');
+  assert.ok(text.includes('Câu 2 · Mã 102'), 'Phải liệt kê Câu 2 Mã 102 thiếu');
+  assert.ok(text.includes('chưa tạo được.'));
+
+  const retryBtn = Array.from(harness.container.querySelectorAll('button')).find(
+    (b) => b.textContent.includes('Thử lại phần lỗi'),
+  );
+  assert.ok(retryBtn, 'Phải hiển thị nút Thử lại phần lỗi');
+
+  await act(async () => {
+    retryBtn.click();
+  });
+  assert.equal(retried, true);
+
+  await harness.unmount();
+});
+
+test('F108-08: Nút Đọc lại trạng thái khi offline gọi onReconnect và hiển thị trạng thái đang đọc', async () => {
+  let reconnected = false;
+  const harness = renderProgress({
+    sessionId: 'session-prog-reconnect',
+    numVersions: 2,
+    totalSourceQuestions: 2,
+    connectionState: 'offline',
+    isReadingStatus: false,
+    onReconnect: () => {
+      reconnected = true;
+    },
+  });
+  await harness.render();
+
+  const reconnectBtn = Array.from(harness.container.querySelectorAll('button')).find(
+    (b) => b.textContent.includes('Đọc lại trạng thái'),
+  );
+  assert.ok(reconnectBtn, 'Phải có nút Đọc lại trạng thái khi offline');
+
+  await act(async () => {
+    reconnectBtn.click();
+  });
+  assert.equal(reconnected, true, 'onReconnect phải được kích hoạt');
+
+  // Kiểm tra khi isReadingStatus = true
+  await harness.render({
+    sessionId: 'session-prog-reconnect',
+    numVersions: 2,
+    totalSourceQuestions: 2,
+    connectionState: 'offline',
+    isReadingStatus: true,
+    onReconnect: () => {},
+  });
+
+  const readingBtn = Array.from(harness.container.querySelectorAll('button')).find(
+    (b) => b.textContent.includes('Đang đọc...'),
+  );
+  assert.ok(readingBtn, 'Nút phải đổi nhãn sang Đang đọc...');
+  assert.equal(readingBtn.getAttribute('disabled') !== null, true, 'Nút phải bị khóa khi đang đọc');
+
+  await harness.unmount();
+});
