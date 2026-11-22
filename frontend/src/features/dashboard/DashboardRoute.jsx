@@ -157,7 +157,7 @@ function DashboardContent({ accountKey }) {
               <Link
                 to="/settings"
                 aria-label="Cài đặt cá nhân"
-                className="flex min-w-0 items-center gap-2.5 rounded-lg hover:bg-rail"
+                className="flex min-w-0 items-center gap-2.5 rounded-lg px-1 py-1 hover:bg-rail sm:px-2"
               >
                 <UserAvatar
                   key={`${user?.id}:${sessionVersion}:${avatarUrl}`}
