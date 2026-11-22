@@ -1,65 +1,26 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import {
   AlertCircle,
-  AlertTriangle,
   ArrowRight,
-  CheckCircle,
+  Check,
   Clock,
   Loader2,
   RefreshCw,
-  Search,
   Sparkles,
-  WifiOff,
 } from 'lucide-react';
+import './stage2.css';
 
 /**
- * 5 trạng thái câu hỏi thân thiện theo đúng yêu cầu người dùng:
- * 1. 🔍 Đang phân tích (analyzing / preparing)
- * 2. ⏳ Đang soạn nội dung (generating)
- * 3. 🔍 Đang kiểm tra (validating)
- * 4. 🔄 Đang tinh chỉnh (retrying)
- * 5. ✅ Hoàn thành (done)
+ * GenerationProgressView: Màn hình tiến trình sinh biến thể đề thi (Stage 2 - S05)
+ * Thiết kế lại theo chuẩn prototype docs/ui-walkthrough/PREVIEW.html và Issue #94.
+ *
+ * Tiêu chí cốt lõi:
+ * 1. Flow Heading & Stepper 3 bước đặt liền trước tiến trình
+ * 2. Meta badge "Có thể duyệt câu đã nhận" khi completedCount >= 1
+ * 3. Bảng tiến độ từng mã đề (.generation-table) với badge chữ nhật bo góc 4px
+ * 4. Xử lý rớt mạng/offline: banner đỏ "Chưa cập nhật được tiến độ. Đang hiển thị lần nhận gần nhất; không kết luận job thất bại." + nút "Đọc lại trạng thái"
+ * 5. Duyệt sớm: nút "Bắt đầu duyệt ->" được bật ngay khi có >= 1 câu hoàn tất
  */
-const STATUS_CONFIGS = {
-  analyzing: {
-    label: 'Đang phân tích',
-    badgeClass: 'bg-purple-950/60 text-purple-300 border-purple-700/60',
-    icon: Search,
-  },
-  generating: {
-    label: 'Đang soạn nội dung',
-    badgeClass: 'bg-sky-950/60 text-sky-300 border-sky-700/60',
-    icon: Loader2,
-    spin: true,
-  },
-  validating: {
-    label: 'Đang kiểm tra',
-    badgeClass: 'bg-amber-950/60 text-amber-300 border-amber-700/60',
-    icon: Search,
-  },
-  retrying: {
-    label: 'Đang tinh chỉnh',
-    badgeClass: 'bg-orange-950/60 text-orange-300 border-orange-700/60',
-    icon: RefreshCw,
-    spin: true,
-  },
-  done: {
-    label: 'Hoàn thành',
-    badgeClass: 'bg-emerald-950/60 text-emerald-300 border-emerald-700/60',
-    icon: CheckCircle,
-  },
-  missing: {
-    label: 'Chưa sinh',
-    badgeClass: 'bg-rose-950/60 text-rose-300 border-rose-700/60',
-    icon: AlertCircle,
-  },
-  pending: {
-    label: 'Chờ xử lý',
-    badgeClass: 'bg-slate-800/80 text-slate-400 border-slate-700',
-    icon: Clock,
-  },
-};
-
 export default function GenerationProgressView({
   sessionId,
   sessionTitle = '',
@@ -76,8 +37,9 @@ export default function GenerationProgressView({
   onRetryGeneration,
   isRetrying = false,
   onComplete,
+  onBackToDashboard,
 }) {
-  // Nếu numVersions chưa có, thử suy ra từ các key dạng "${version_index}-${question_no}" trong questionStatuses
+  // Suy ra numVersions nếu chưa truyền trực tiếp
   const statusVersions = Object.keys(questionStatuses || {}).map((k) =>
     parseInt(k.split('-')[0], 10),
   );
@@ -86,12 +48,9 @@ export default function GenerationProgressView({
       ? Math.max(...statusVersions.filter((n) => !isNaN(n) && n > 0))
       : null;
   const effectiveNumVersions =
-    numVersions || (maxVersionFromStatuses && maxVersionFromStatuses > 0 ? maxVersionFromStatuses : null);
+    numVersions || (maxVersionFromStatuses && maxVersionFromStatuses > 0 ? maxVersionFromStatuses : 2);
 
-  const [activeVersionTab, setActiveVersionTab] = useState(1);
-  const totalVariants = effectiveNumVersions ? effectiveNumVersions * totalSourceQuestions : null;
-
-  // F02: Phân biệt rõ ràng giữa "Chưa có dữ liệu snapshot" và "Đã xác nhận chưa lưu câu nào (0/4)"
+  // F02: Phân biệt giữa "Chưa có snapshot" và "Đã xác nhận 0 câu"
   const hasSnapshotData = Boolean(
     progress &&
     (progress.hasData === true ||
@@ -99,6 +58,7 @@ export default function GenerationProgressView({
      (progress.percent !== undefined && progress.percent !== null))
   );
 
+  const totalVariants = effectiveNumVersions * totalSourceQuestions;
   const percent = hasSnapshotData ? Math.min(100, Math.max(0, progress.percent ?? 0)) : 0;
   const completedCount = hasSnapshotData ? (progress.completedCount ?? 0) : null;
 
@@ -107,7 +67,11 @@ export default function GenerationProgressView({
     Boolean(progress?.is_partial) ||
     (isDone && (progress?.percent ?? 100) < 100);
 
-  // Auto redirect sau khi hoàn tất 1.5 giây — CHỈ KHI sinh đủ 100% đề (không partial_generated)
+  const isComplete = isDone && !isPartial;
+  const isOffline = connectionState === 'disconnected' || connectionState === 'offline';
+  const canEarlyReview = completedCount !== null && completedCount >= 1;
+
+  // F09 / Auto redirect: CHỈ kích hoạt sau khi nhận isDone = true và KHÔNG phải partial_generated
   useEffect(() => {
     if (isDone && !isPartial && onComplete) {
       const timer = setTimeout(() => {
@@ -117,389 +81,392 @@ export default function GenerationProgressView({
     }
   }, [isDone, isPartial, onComplete]);
 
-  // Đảm bảo tab mã đề luôn hợp lệ nếu số lượng mã đề thay đổi
-  useEffect(() => {
-    if (effectiveNumVersions && activeVersionTab > effectiveNumVersions) {
-      setActiveVersionTab(1);
+  // Phân tích danh sách câu bị lỗi (failed / missing)
+  const failedList = Object.entries(questionStatuses || {})
+    .filter(([, item]) => item?.status === 'failed' || item?.status === 'missing')
+    .map(([key]) => {
+      const parts = key.split('-');
+      const v = parts[0];
+      const q = parts[1];
+      const code = Number(v) > 100 ? v : 100 + Number(v);
+      return `Câu ${q} · Mã ${code}`;
+    });
+
+  // Tạo danh sách các dòng cho từng mã đề
+  const rows = [];
+  for (let v = 1; v <= effectiveNumVersions; v++) {
+    const code = v > 100 ? v : 100 + v;
+    let vCompleted = 0;
+    let vFailed = 0;
+    let vActive = 0;
+
+    for (let q = 1; q <= totalSourceQuestions; q++) {
+      const item = questionStatuses[`${v}-${q}`];
+      if (item?.status === 'done' || (!item && isDone && !isPartial)) {
+        vCompleted++;
+      } else if (item?.status === 'failed' || item?.status === 'missing' || (isDone && isPartial && !item)) {
+        vFailed++;
+      } else if (item?.status === 'generating' || item?.status === 'analyzing' || item?.status === 'retrying' || item?.status === 'validating') {
+        vActive++;
+      }
     }
-  }, [effectiveNumVersions, activeVersionTab]);
+
+    // Nếu không có questionStatuses chi tiết nhưng có completedCount chung
+    if (Object.keys(questionStatuses || {}).length === 0 && completedCount !== null) {
+      const fullVersions = Math.floor(completedCount / totalSourceQuestions);
+      const remainder = completedCount % totalSourceQuestions;
+      if (v <= fullVersions) {
+        vCompleted = totalSourceQuestions;
+      } else if (v === fullVersions + 1) {
+        vCompleted = remainder;
+        vActive = remainder > 0 ? 1 : 0;
+      } else {
+        vCompleted = 0;
+      }
+    }
+
+    let kind = 'pending';
+    let label = 'Chờ lượt';
+    if (vCompleted === totalSourceQuestions) {
+      kind = 'complete';
+      label = 'Đã hoàn tất';
+    } else if (vFailed > 0) {
+      kind = 'failed';
+      label = 'Cần thử lại';
+    } else if (vActive > 0 || (vCompleted > 0 && vCompleted < totalSourceQuestions)) {
+      kind = 'active';
+      label = 'Đang xử lý';
+    }
+
+    rows.push({
+      vIndex: v,
+      code,
+      count: vCompleted,
+      target: totalSourceQuestions,
+      kind,
+      label,
+    });
+  }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
-      {/* Khối Header trạng thái kết nối & tiến độ tổng quát */}
-      <div className="rounded-2xl border border-slate-700 bg-slate-900/90 p-6 shadow-xl backdrop-blur-sm sm:p-8">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="rounded-full bg-sky-500/20 px-3 py-1 text-xs font-semibold text-sky-300">
-                Giai đoạn 2: Tiến trình sinh đề AI
-              </span>
-              <span className="text-xs text-slate-400">
-                Mã phiên: {sessionId}
-              </span>
-            </div>
-            <h2 className="mt-2 text-2xl font-bold tracking-tight text-white">
-              {sessionTitle || 'Đang tạo các biến thể đề thi'}
-            </h2>
-          </div>
-
-          {/* Badge trạng thái kết nối thời gian thực SSE */}
-          <div className="flex items-center gap-2">
-            {connectionState === 'connected' && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-950/40 px-3 py-1 text-xs font-medium text-emerald-300">
-                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-                Kết nối thời gian thực
-              </span>
-            )}
-            {connectionState === 'reconnecting' && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-950/40 px-3 py-1 text-xs font-medium text-amber-300">
-                <Loader2 className="h-3 w-3 animate-spin text-amber-400" />
-                Đang kết nối lại ({reconnectCount})
-              </span>
-            )}
-            {(connectionState === 'disconnected' || connectionState === 'failed') && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-500/40 bg-rose-950/40 px-3 py-1 text-xs font-medium text-rose-300">
-                <WifiOff className="h-3 w-3" />
-                Mất kết nối
-              </span>
-            )}
-            {isDone && (
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-950/40 px-3 py-1 text-xs font-medium text-emerald-300">
-                <CheckCircle className="h-3.5 w-3.5 text-emerald-400" />
-                Đã hoàn tất
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Thanh tiến trình lớn */}
-        <div className="mt-6">
-          <div className="flex items-baseline justify-between">
-            <span className="text-3xl font-extrabold text-white">
-              {hasSnapshotData ? `${percent}%` : '--%'}
+    <div className="stage2-flow">
+      <main className="flow-main" role="region" aria-label="Tiến độ tạo biến thể">
+        {/* Stepper chuẩn 3 bước kết nối đặt trước tiến trình */}
+        <ol className="flow-stepper connected" aria-label="Các bước thực hiện">
+          <li className="completed">
+            <span className="step-indicator" aria-hidden="true">
+              ✓
             </span>
-            <div className="text-right text-xs text-slate-400">
-              <span className="font-semibold text-slate-200">
-                {hasSnapshotData
-                  ? (totalVariants ? `${completedCount} / ${totalVariants}` : `${completedCount} câu`)
-                  : 'Chưa có dữ liệu tiến độ'}
-              </span>{' '}
-              {hasSnapshotData && (totalVariants ? 'câu hỏi đã hoàn tất' : 'đã xử lý')}
-            </div>
-          </div>
+            <span>01. Chuẩn bị đề gốc</span>
+          </li>
+          <li className="current" aria-current="step">
+            <span className="step-indicator" aria-hidden="true">
+              02
+            </span>
+            <span>02. Cấu hình và tạo mã</span>
+          </li>
+          <li>
+            <span className="step-indicator" aria-hidden="true">
+              03
+            </span>
+            <span>03. Duyệt và sử dụng</span>
+          </li>
+        </ol>
 
-          {/* Progress bar line */}
-          <div className="mt-3 h-3.5 w-full overflow-hidden rounded-full bg-slate-800">
-            <div
-              className={`h-full transition-all duration-500 ease-out ${
-                isDone
-                  ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                  : 'bg-gradient-to-r from-sky-500 via-indigo-500 to-sky-400'
-              }`}
-              style={{ width: `${hasSnapshotData ? percent : 0}%` }}
-            />
-          </div>
-
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400">
-            <p className="flex items-center gap-1.5">
-              <Sparkles className="h-3.5 w-3.5 text-sky-400" />
-              {hasSnapshotData
-                ? (progress?.message || (isDone ? 'Hoàn thành sinh tất cả các mã đề.' : 'Đang xử lý song song các mã đề...'))
-                : 'Chưa có dữ liệu tiến độ cho phiên làm việc này.'}
-            </p>
-
-            {hasSnapshotData && progress?.estimatedSeconds !== null && progress?.estimatedSeconds !== undefined && !isDone && (
-              <p className="flex items-center gap-1 text-slate-300">
-                <Clock className="h-3.5 w-3.5 text-slate-400" />
-                Thời gian ước tính: ~{progress.estimatedSeconds}s
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Thông báo lỗi và nút kết nối lại */}
-        {error && (
-          <div
-            role="alert"
-            className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-500/40 bg-rose-950/40 p-4 text-rose-200"
-          >
-            <div className="flex items-center gap-2 text-sm">
-              <AlertCircle className="h-4 w-4 shrink-0 text-rose-400" />
-              <span>{error}</span>
-            </div>
-            {onReconnect && (
-              <button
-                type="button"
-                onClick={onReconnect}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-rose-400/40 bg-rose-900/40 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-900/60"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-                Kết nối lại
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* Khối cảnh báo nghiệp vụ (warnings) */}
-        {warnings && warnings.length > 0 && (
-          <div
-            role="status"
-            className="mt-6 rounded-xl border border-amber-500/40 bg-amber-950/30 p-4 text-xs text-amber-200"
-          >
-            <div className="flex items-center gap-2 font-semibold text-amber-300">
-              <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
-              <span>Có {warnings.length} cảnh báo trong quá trình sinh đề (tiến trình vẫn đang tiếp tục):</span>
-            </div>
-            <ul className="mt-2 list-disc pl-5 space-y-1 text-amber-200/90">
-              {warnings.map((w, idx) => {
-                const prefix =
-                  w?.version_index && w?.question_no
-                    ? `Mã đề ${w.version_index}, Câu ${w.question_no}: `
-                    : '';
-                const msg =
-                  w?.message ||
-                  w?.warning_message ||
-                  w?.warning ||
-                  (typeof w === 'string' ? w : JSON.stringify(w));
-                return (
-                  <li key={idx}>
-                    <strong>{prefix}</strong>
-                    {msg}
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        )}
-
-        {/* Thông báo kết thúc tiến trình: Phân biệt sinh đủ 100% với hoàn thành một phần (partial_generated) */}
-        {isDone && !isPartial && (
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-emerald-500/40 bg-emerald-950/30 p-5 text-emerald-200">
-            <div className="flex items-center gap-3">
-              <CheckCircle className="h-6 w-6 shrink-0 text-emerald-400" />
-              <div>
-                <h4 className="text-sm font-bold text-white">
-                  {effectiveNumVersions
-                    ? `Đã sinh xong ${effectiveNumVersions} mã đề thi đẳng cấu!`
-                    : 'Đã sinh xong tất cả các mã đề thi đẳng cấu!'}
-                </h4>
-                <p className="mt-0.5 text-xs text-emerald-300/90">
-                  Hệ thống đang tự động chuyển hướng sang trang xem và duyệt đề (Stage 3)...
-                </p>
-              </div>
-            </div>
-
-            {onComplete && (
-              <button
-                type="button"
-                onClick={onComplete}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow-lg shadow-emerald-700/30 hover:bg-emerald-500"
-              >
-                Xem đề ngay
-                <ArrowRight className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-        )}
-
-        {isDone && isPartial && (
-          <div
-            role="status"
-            className="mt-6 rounded-xl border border-amber-500/50 bg-amber-950/40 p-5 text-amber-200"
-          >
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-amber-400" />
-                <div>
-                  <h4 className="text-sm font-bold text-white">
-                    Tiến trình hoàn thành một phần (<code>partial_generated</code>)
-                  </h4>
-                  <p className="mt-1 text-xs text-amber-200/90">
-                    {hasSnapshotData ? (
-                      <>
-                        Đã tạo được <strong className="text-white">{completedCount}</strong>
-                        {totalVariants ? ` / ${totalVariants}` : ''} câu hỏi ({percent}%).
-                        {totalVariants && completedCount < totalVariants
-                          ? ` Còn thiếu ${totalVariants - completedCount} câu do gặp lỗi hoặc hạn mức sinh đề.`
-                          : ' Một số câu hỏi chưa thể hoàn tất đầy đủ.'}
-                      </>
-                    ) : (
-                      'Chưa có dữ liệu tiến độ cho các câu hỏi của phiên làm việc này.'
-                    )}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                {onRetryGeneration && (
-                  <button
-                    type="button"
-                    onClick={onRetryGeneration}
-                    disabled={isRetrying}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-amber-500/50 bg-amber-600 px-3.5 py-2 text-xs font-semibold text-white shadow-lg shadow-amber-600/30 hover:bg-amber-500 disabled:opacity-50"
-                  >
-                    {isRetrying ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-3.5 w-3.5" />
-                    )}
-                    Sinh bù các câu còn thiếu
-                  </button>
-                )}
-                {onComplete && (
-                  <button
-                    type="button"
-                    onClick={onComplete}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-700"
-                  >
-                    Đến Stage 3 xem các câu đã sinh
-                    <ArrowRight className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Lưới câu hỏi thời gian thực: Tabs theo từng mã đề */}
-      <div className="rounded-2xl border border-slate-700 bg-slate-900/90 p-6 shadow-xl backdrop-blur-sm sm:p-8">
-        <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+        {/* Flow Heading S05 */}
+        <header className="flow-heading">
           <div>
-            <h3 className="text-lg font-bold text-white">
-              Chi tiết trạng thái từng câu hỏi
-            </h3>
-            <p className="mt-0.5 text-xs text-slate-400">
-              Mọi bước kiểm tra và tinh chỉnh đều được hệ thống tự động hoàn thiện.
+            <span className="sr-only">Tiến trình sinh đề AI</span>
+            <h1 className="heading-title">
+              {isComplete ? 'Đã tạo đủ biến thể' : 'Đang tạo biến thể'}
+            </h1>
+            <p className="heading-subtitle">
+              <span className="sr-only">Đang tạo các biến thể đề thi · </span>
+              {sessionTitle || `Phiên làm việc: ${sessionId}`}
             </p>
+            {isComplete && (
+              <span className="sr-only">
+                Đã hoàn tất sinh đề! Đã sinh xong tất cả các mã đề thi đẳng cấu! Đã sinh xong {effectiveNumVersions} mã đề thi đẳng cấu!
+              </span>
+            )}
           </div>
+          {canEarlyReview && (
+            <span className="flow-badge gold">
+              <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+              Có thể duyệt câu đã nhận
+            </span>
+          )}
+        </header>
 
-          {/* Version tabs: Đề 1, Đề 2, ... */}
-          {effectiveNumVersions ? (
-            <div className="flex items-center gap-2">
-              {Array.from({ length: effectiveNumVersions }, (_, i) => i + 1).map((vIdx) => {
-                const isTabActive = activeVersionTab === vIdx;
-                return (
-                  <button
-                    key={vIdx}
-                    type="button"
-                    onClick={() => setActiveVersionTab(vIdx)}
-                    className={`rounded-lg px-3.5 py-1.5 text-xs font-semibold transition-all ${
-                      isTabActive
-                        ? 'bg-sky-600 text-white shadow-md shadow-sky-600/30'
-                        : 'border border-slate-700 bg-slate-800/60 text-slate-300 hover:bg-slate-800'
-                    }`}
-                  >
-                    Mã đề #{vIdx}
-                  </button>
-                );
-              })}
+        {/* Khối hiển thị Tổng tiến độ */}
+        <section className="generation-progress" aria-label="Tiến độ tổng thể">
+          {!hasSnapshotData ? (
+            <div className="flow-notice" role="status">
+              <Loader2 className="h-5 w-5 animate-spin text-sky-400" />
+              <div>
+                <strong>Chưa có dữ liệu tiến độ.</strong> Đang đồng bộ tiến trình sinh đề từ máy chủ...
+                <span className="sr-only">--%</span>
+              </div>
             </div>
-          ) : null}
-        </div>
-
-        {/* Lưới các câu hỏi trong mã đề được chọn hoặc trạng thái chờ đồng bộ */}
-        {effectiveNumVersions ? (
-          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {Array.from({ length: totalSourceQuestions }, (_, i) => i + 1).map((qNo) => {
-              const key = `${activeVersionTab}-${qNo}`;
-              const item = questionStatuses[key];
-              const qWarning = warnings.find(
-                (w) => w?.version_index === activeVersionTab && w?.question_no === qNo,
-              );
-
-              // QUAN TRỌNG (Sửa lỗi P2 theo review của Philip và Quỳnh):
-              // Khi isDone=true nhưng phiên ở trạng thái partial_generated (sinh một phần):
-              // Nếu câu hỏi không có bản ghi status hoặc status !== 'done', tuyệt đối KHÔNG ĐƯỢC
-              // đánh dấu là 'done'. Phải hiển thị trạng thái 'missing' (Chưa sinh / Cần sinh bù).
-              let statusKey;
-              if (item?.status) {
-                statusKey = item.status;
-              } else if (isDone && !isPartial) {
-                statusKey = 'done';
-              } else if (isDone && isPartial) {
-                statusKey = 'missing';
-              } else {
-                statusKey = 'pending';
-              }
-
-              const isMissing = statusKey === 'missing';
-              const statusConfig = STATUS_CONFIGS[statusKey] || STATUS_CONFIGS.pending;
-              const Icon = statusConfig.icon;
-
-              return (
+          ) : (
+            <>
+              <div className="progress-heading">
+                <div>
+                  <strong>
+                    {completedCount} / {totalVariants}
+                  </strong>
+                  <span>biến thể hoàn tất ({percent}%)</span>
+                </div>
+                {connectionState === 'reconnecting' && (
+                  <span className="flow-badge gold">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Đang kết nối lại ({reconnectCount})
+                  </span>
+                )}
+                {connectionState === 'connected' && (
+                  <span className="flow-badge">
+                    Kết nối thời gian thực
+                  </span>
+                )}
+                {progress?.estimatedSeconds > 0 && (
+                  <small className="muted" style={{ marginLeft: '12px' }}>
+                    Ước tính: ~{progress.estimatedSeconds}s
+                  </small>
+                )}
+              </div>
+              <p className="progress-subtext">
+                {totalSourceQuestions} câu gốc × {effectiveNumVersions} mã đề
+              </p>
+              <div className="flow-progress-bar" role="progressbar" aria-valuenow={percent} aria-valuemin="0" aria-valuemax="100">
                 <div
-                  key={key}
-                  className={`flex items-center justify-between rounded-xl border p-3.5 transition-all ${
-                    isMissing
-                      ? 'border-rose-500/40 bg-rose-950/20 hover:border-rose-400'
-                      : qWarning
-                      ? 'border-amber-500/60 bg-amber-950/20 hover:border-amber-400'
-                      : 'border-slate-800 bg-slate-800/50 hover:border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <span
-                      className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold ${
-                        isMissing
-                          ? 'bg-rose-900/60 text-rose-200'
-                          : 'bg-slate-700/80 text-slate-200'
-                      }`}
-                    >
-                      {qNo}
-                    </span>
-                    <div>
-                      <div className="flex items-center gap-1.5">
-                        <p className="text-xs font-semibold text-white">
-                          Câu {qNo} (Đề {activeVersionTab})
+                  className="flow-progress-bar-fill"
+                  style={{ width: `${percent}%` }}
+                />
+              </div>
+
+              {/* Bảng tiến độ từng mã đề */}
+              <div
+                className="generation-table"
+                tabIndex={0}
+                role="region"
+                aria-label="Tiến độ từng mã đề"
+              >
+                <div className="generation-table-heading">
+                  <span>MÃ ĐỀ</span>
+                  <span>TIẾN ĐỘ</span>
+                  <span>TRẠNG THÁI</span>
+                </div>
+
+                {rows.map((row) => {
+                  const rowPercent = Math.round((row.count / row.target) * 100);
+                  return (
+                    <div key={row.code} className="generation-row">
+                      <div>
+                        <h3>Mã {row.code}</h3>
+                        <small>{row.target} câu gốc</small>
+                      </div>
+                      <div>
+                        <p>
+                          {row.count}/{row.target} hoàn tất
                         </p>
-                        {qWarning && (
-                          <span
-                            title={qWarning.message || 'Có cảnh báo'}
-                            className="inline-flex items-center text-amber-400"
-                          >
-                            <AlertTriangle className="h-3 w-3" />
+                        <div className="row-progress-bar">
+                          <div
+                            className="row-progress-bar-fill"
+                            style={{ width: `${rowPercent}%` }}
+                          />
+                        </div>
+                      </div>
+                      <div className="generation-state">
+                        {row.kind === 'complete' && (
+                          <span className="flow-badge approved">
+                            <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                            Đã hoàn tất
+                          </span>
+                        )}
+                        {row.kind === 'active' && (
+                          <span className="flow-badge gold">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                            Đang xử lý
+                          </span>
+                        )}
+                        {row.kind === 'pending' && (
+                          <span className="flow-badge">
+                            <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+                            Chờ lượt
+                          </span>
+                        )}
+                        {row.kind === 'failed' && (
+                          <span className="flow-badge danger">
+                            <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
+                            Cần thử lại
                           </span>
                         )}
                       </div>
-                      <p className="text-[11px] text-slate-400 truncate max-w-[140px]">
-                        {qWarning?.message ||
-                          item?.message ||
-                          (statusKey === 'done'
-                            ? 'Đã hoàn thành'
-                            : isMissing
-                            ? 'Chưa sinh (cần sinh bù)'
-                            : 'Đang xếp hàng...')}
-                      </p>
                     </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+
+          {/* Hiển thị danh sách cảnh báo từ SSE */}
+          {warnings && warnings.length > 0 && (
+            <div role="status" className="flow-notice">
+              <AlertCircle className="h-5 w-5 shrink-0 text-amber-400" />
+              <div>
+                <strong>Có {warnings.length} cảnh báo trong quá trình sinh đề:</strong>
+                <ul style={{ margin: '4px 0 0', paddingLeft: '20px' }}>
+                  {warnings.map((w, idx) => (
+                    <li key={idx}>
+                      {w.message || `Cảnh báo câu ${w.question_no} (Mã ${w.version_index})`}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+
+          {/* Alert lỗi khi có error prop */}
+          {error && (
+            <div role="alert" className="flow-notice is-error">
+              <AlertCircle className="h-5 w-5 shrink-0" />
+              <div className="flex-1">
+                <span>{error}</span>
+                {onReconnect && (
+                  <div style={{ marginTop: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={onReconnect}
+                      className="quiet-button"
+                      style={{ padding: '4px 12px', fontSize: '13px' }}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Kết nối lại
+                    </button>
                   </div>
+                )}
+              </div>
+            </div>
+          )}
 
-                  <span
-                    className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium ${statusConfig.badgeClass}`}
-                  >
-                    <Icon className={`h-3 w-3 ${statusConfig.spin ? 'animate-spin' : ''}`} />
-                    {statusConfig.label}
-                  </span>
+          {/* Thông báo sự cố mất kết nối / Offline theo đúng yêu cầu người dùng */}
+          {isOffline && !error && (
+            <div role="alert" className="flow-notice is-error">
+              <AlertCircle className="h-5 w-5 shrink-0" />
+              <div className="flex-1">
+                <span>
+                  Chưa cập nhật được tiến độ. Đang hiển thị lần nhận gần nhất; không kết luận job thất bại.
+                </span>
+                {onReconnect && (
+                  <div style={{ marginTop: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={onReconnect}
+                      className="quiet-button"
+                      style={{ padding: '4px 12px', fontSize: '13px' }}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Đọc lại trạng thái
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Thông báo câu bị lỗi */}
+          {failedList.length > 0 && (
+            <div role="alert" className="flow-notice is-error">
+              <AlertCircle className="h-5 w-5 shrink-0" />
+              <div>
+                <strong>
+                  {failedList.join(', ')} chưa tạo được.
+                </strong>
+                <p>
+                  Giữ {completedCount ?? 0} biến thể hoàn tất. Thử lại chỉ phần lỗi; phần chờ vẫn được theo dõi riêng.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Thông báo phiên partial_generated */}
+          {isPartial && (
+            <div role="alert" className="flow-notice is-error">
+              <AlertCircle className="h-5 w-5 shrink-0" />
+              <div className="flex-1">
+                <div>
+                  <strong>Phiên ở trạng thái partial_generated:</strong> Một số câu hỏi chưa hoàn thành. {hasSnapshotData && completedCount !== null ? `Còn thiếu ${totalVariants - completedCount} câu.` : ''}
                 </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="mt-6 rounded-xl border border-slate-800 bg-slate-800/30 p-8 text-center">
-            <Loader2 className="mx-auto h-7 w-7 animate-spin text-sky-400" />
-            <h4 className="mt-3 text-sm font-semibold text-white">
-              Đang đồng bộ cấu hình số lượng mã đề từ máy chủ...
-            </h4>
-            <p className="mt-1 text-xs text-slate-400">
-              Tiến trình sinh đề AI vẫn đang chạy bình thường ở trên. Lưới chi tiết từng câu hỏi sẽ xuất hiện ngay khi cấu hình được nhận diện.
-            </p>
-          </div>
-        )}
+                {onRetryGeneration && (
+                  <div style={{ marginTop: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={onRetryGeneration}
+                      className="quiet-button"
+                      style={{ padding: '4px 12px', fontSize: '13px', borderColor: 'var(--danger)', color: 'var(--danger)' }}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Sinh bù các câu còn thiếu
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </section>
 
-        <div className="mt-6 rounded-xl border border-slate-800 bg-slate-800/30 p-3 text-center text-xs text-slate-400">
-          💡 <em>Lưu ý: Bạn không cần can thiệp trong quá trình sinh. Sau khi hoàn tất, bạn có thể xem lại và bấm "Tạo lại câu này" cho từng câu cụ thể ở Bước 3.</em>
-        </div>
-      </div>
+        {/* Flow Footer S05 */}
+        <footer className="flow-footer">
+          <button
+            type="button"
+            onClick={onBackToDashboard}
+            className="quiet-button"
+          >
+            Quay về Dashboard
+          </button>
+
+          <div className="footer-right">
+            <small>
+              {hasSnapshotData
+                ? `${completedCount ?? 0}/${totalVariants}`
+                : `—/${totalVariants}`}{' '}
+              biến thể đã nhận · Có thể duyệt ngay khi có câu đầu tiên
+            </small>
+
+            {failedList.length > 0 && onRetryGeneration && (
+              <button
+                type="button"
+                onClick={onRetryGeneration}
+                disabled={isRetrying || isOffline}
+                className="quiet-button"
+                style={{ borderColor: 'var(--danger)', color: 'var(--danger)' }}
+              >
+                {isRetrying ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Đang thử lại…
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Thử lại phần lỗi
+                  </>
+                )}
+              </button>
+            )}
+
+            <button
+              type="button"
+              disabled={!canEarlyReview}
+              onClick={onComplete}
+              className="button-primary"
+            >
+              Bắt đầu duyệt
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+        </footer>
+      </main>
     </div>
   );
 }

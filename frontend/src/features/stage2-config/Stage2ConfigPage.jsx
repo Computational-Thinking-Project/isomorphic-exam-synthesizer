@@ -818,6 +818,7 @@ export default function Stage2ConfigPage({
           onRetryGeneration={handleRetryGeneration}
           isRetrying={isRetryingGeneration}
           onComplete={handleCompleteRedirect}
+          onBackToDashboard={() => navigate('/dashboard')}
         />
       ) : (
         <Stage2ConfigCard
