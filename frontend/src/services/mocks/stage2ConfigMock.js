@@ -12,6 +12,7 @@ export const mockStage2Session = {
   status: 'blueprinted',
   created_at: '2026-10-27T08:00:00Z',
   blueprint_summary: {
+    is_ready: true,
     total_questions: 10,
     supported_modes: [
       {
@@ -122,37 +123,27 @@ export async function saveStage2Config(sessionId, configPayload, { scenario = 's
     throw error;
   }
 
-  const { num_versions, variation_modes, ordering_preferences } = configPayload || {};
+  const nVersions = Number(configPayload?.n_versions ?? configPayload?.num_versions);
 
-  if (!num_versions || num_versions < 1 || num_versions > 4) {
+  if (!nVersions || nVersions < 1 || nVersions > 4) {
     const error = new Error('Số lượng mã đề phải nằm trong khoảng từ 1 đến 4.');
     error.status = 422;
     throw error;
   }
 
-  if (!Array.isArray(variation_modes) || variation_modes.length === 0) {
-    const error = new Error('Vui lòng chọn ít nhất một chế độ biến thể.');
-    error.status = 422;
-    throw error;
-  }
-
-  // Không cho phép chọn chế độ không khả dụng
-  const unavailableSelected = variation_modes.some(
-    (modeId) => modeId === 'variable_inversion',
-  );
-  if (unavailableSelected) {
-    const error = new Error('Chế độ biến thể được chọn không khả dụng cho đề thi này.');
-    error.code = 'ERR_CONFIG_CONFLICT';
-    error.status = 400;
-    error.conflicting_modes = ['variable_inversion'];
-    throw error;
-  }
+  const rawModes = Array.isArray(configPayload?.active_variation_modes)
+    ? configPayload.active_variation_modes
+    : Array.isArray(configPayload?.variation_modes)
+    ? configPayload.variation_modes
+    : [];
 
   const updatedConfig = {
-    num_versions: Number(num_versions),
-    variation_modes: [...variation_modes],
+    n_versions: nVersions,
+    num_versions: nVersions,
+    active_variation_modes: rawModes,
     ordering_preferences: {
-      shuffle_questions: Boolean(ordering_preferences?.shuffle_questions ?? false),
+      shuffle_questions: Boolean(configPayload?.ordering_preferences?.shuffle_questions ?? false),
+      shuffle_options: Boolean(configPayload?.ordering_preferences?.shuffle_options ?? false),
     },
   };
 

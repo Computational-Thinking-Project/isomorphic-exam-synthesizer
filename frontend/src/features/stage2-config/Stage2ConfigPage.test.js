@@ -339,6 +339,13 @@ test('Stage2ConfigPage xử lý lỗi Axios 400 có ERR_CONFIG_CONFLICT: đọc 
     });
   });
 
+  const confirmBtn = harness.container.querySelector('.flow-modal')?.querySelector('.button-primary');
+  if (confirmBtn) {
+    await act(async () => {
+      confirmBtn.click();
+    });
+  }
+
   const alertBox = harness.container.querySelector('[role="alert"]');
   assert.ok(alertBox, 'Phải xuất hiện alert box thông báo lỗi');
   assert.ok(alertBox.textContent.includes('ERR_CONFIG_CONFLICT'), 'Phải nhận diện được mã lỗi ERR_CONFIG_CONFLICT từ Axios response');
@@ -502,6 +509,12 @@ test('Stage2ConfigPage cô lập submit: chuyển A đang lưu sang B thì form 
       preventDefault: () => {},
     });
   });
+  const confirmBtnA = harness.container.querySelector('.flow-modal')?.querySelector('.button-primary');
+  if (confirmBtnA) {
+    await act(async () => {
+      confirmBtnA.click();
+    });
+  }
 
   // Chuyển sang phiên B khi saveConfig(A) còn đang pending
   await harness.navigate('session-B');
@@ -624,31 +637,38 @@ test('Stage 2 seeds only new forms from Settings and keeps persisted, edited, an
     useAuthStore.setState(originalAuth);
     delete window.localStorage;
   });
-  const selected = () => harness.container.querySelector('button[aria-pressed="true"]');
+  const getCountInput = () => harness.container.querySelector('#code-count');
   await harness.render();
-  assert.match(selected().textContent, /^2/);
+  assert.equal(getCountInput().value, '2');
 
   writeDefaultNumVersions('teacher-stage2', 4);
   await harness.navigate('unconfigured-with-preference');
-  assert.match(selected().textContent, /^4/);
+  assert.equal(getCountInput().value, '4');
 
   await harness.navigate('saved');
-  assert.match(selected().textContent, /^1/);
+  assert.equal(getCountInput().value, '1');
 
   await harness.navigate('locked');
-  assert.equal(selected(), null);
+  assert.equal(getCountInput(), null);
   assert.equal(saveConfig.mock.callCount(), 0);
   assert.equal(startGen.mock.callCount(), 0);
 
   await harness.navigate('unconfigured-with-preference');
-  assert.match(selected().textContent, /^4/);
-  const three = harness.container.querySelectorAll('button')
-    .find((button) => button.textContent.trim().startsWith('3'));
-  await act(async () => three.click());
+  assert.equal(getCountInput().value, '4');
+  const input = getCountInput();
+  await act(async () => {
+    input.value = '3';
+    input.dispatchEvent({ type: 'input', bubbles: true, target: input });
+    input.dispatchEvent({ type: 'change', bubbles: true, target: input });
+  });
   const form = harness.container.querySelector('form');
   await act(async () => form.dispatchEvent({
     type: 'submit', bubbles: true, cancelable: true, preventDefault() {},
   }));
+  const confirmBtn = harness.container.querySelector('.flow-modal')?.querySelector('.button-primary');
+  if (confirmBtn) {
+    await act(async () => confirmBtn.click());
+  }
   assert.equal(saveConfig.mock.calls[0].arguments[1].n_versions, 3);
   assert.equal(readDefaultNumVersions('teacher-stage2'), 4);
 });
@@ -695,8 +715,78 @@ test('Stage2ConfigPage phiên generating thiếu config: SSE báo lỗi hiển t
     b.textContent.includes('Kết nối lại'),
   );
   assert.ok(reconnectBtn, 'Phải có nút Kết nối lại');
-  reconnectBtn.click();
+  await act(async () => {
+    reconnectBtn.click();
+  });
   assert.equal(reconnected, true, 'Bấm nút phải gọi hàm reconnect của hook');
+
+  await harness.unmount();
+});
+
+test('F108-08: Bấm Đọc lại trạng thái khi offline gọi fetchGenSnapshot tải snapshot mới và kích hoạt sseState.reconnect', async () => {
+  let reconnected = false;
+  let snapshotFetched = false;
+
+  const mockLoadSession = async () => ({
+    id: 'session-offline-resync',
+    title: 'Đề offline',
+    status: 'generating',
+    source_questions: [{ id: 'q1', question_no: 1 }, { id: 'q2', question_no: 2 }],
+    config: { n_versions: 2 },
+    exam_versions: [],
+    blueprint_summary: {
+      total_questions: 2,
+      supported_modes: [],
+      is_ready: true,
+    },
+  });
+
+  const mockFetchGenSnapshot = async () => {
+    snapshotFetched = true;
+    return {
+      session_status: 'generating',
+      progress: {
+        percent: 60,
+        completed_count: 3,
+        total_count: 4,
+      },
+      question_statuses: {
+        '1-1': { status: 'done' },
+      },
+    };
+  };
+
+  const mockUseSSE = () => ({
+    connectionState: 'offline',
+    progress: { percent: 50 },
+    questionStatuses: {},
+    warnings: [],
+    isDone: false,
+    error: null,
+    reconnectCount: 1,
+    reconnect: () => {
+      reconnected = true;
+    },
+  });
+
+  const harness = renderPage('session-offline-resync', {
+    loadSession: mockLoadSession,
+    fetchGenSnapshot: mockFetchGenSnapshot,
+    useSSEHook: mockUseSSE,
+  });
+  await harness.render();
+
+  const readStatusBtn = Array.from(harness.container.querySelectorAll('button')).find((b) =>
+    b.textContent.includes('Đọc lại trạng thái'),
+  );
+  assert.ok(readStatusBtn, 'Phải có nút Đọc lại trạng thái khi offline');
+
+  await act(async () => {
+    readStatusBtn.click();
+  });
+
+  assert.equal(snapshotFetched, true, 'Phải gọi fetchGenSnapshot để lấy snapshot có thẩm quyền');
+  assert.equal(reconnected, true, 'Phải gọi sseState.reconnect để kết nối lại SSE');
 
   await harness.unmount();
 });
@@ -1882,6 +1972,10 @@ test('Issue 80: saved config survives startup error with backend details', async
     harness.container.querySelector('form').dispatchEvent({ type: 'submit', bubbles: true,
       cancelable: true, preventDefault() {} });
   });
+  const confirmBtn = harness.container.querySelector('.flow-modal')?.querySelector('.button-primary');
+  if (confirmBtn) {
+    await act(async () => confirmBtn.click());
+  }
   assert.equal(saves, 1);
   const text = harness.container.textContent;
   assert.match(text, /Đã lưu cấu hình/);

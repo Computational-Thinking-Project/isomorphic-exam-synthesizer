@@ -7,7 +7,6 @@ import { ensureDomEnvironment } from '../../test-support/domHarness.js';
 
 ensureDomEnvironment();
 
-// Đăng ký test-loader để Node import component .jsx
 register('../../test-loader.mjs', import.meta.url);
 const { default: Stage2ConfigCard } = await import('./Stage2ConfigCard.jsx');
 
@@ -31,24 +30,8 @@ const sampleSession = {
       {
         id: 'parameter_variation',
         label: 'Thay đổi số liệu / tham số',
-        description: 'Biến thiên tham số số học',
         question_count: 5,
         is_available: true,
-      },
-      {
-        id: 'context_swap',
-        label: 'Đổi ngữ cảnh thực tế',
-        description: 'Đổi tình huống thực tế',
-        question_count: 5,
-        is_available: true,
-      },
-      {
-        id: 'variable_inversion',
-        label: 'Hoán đổi ẩn số',
-        description: 'Đổi vị trí ẩn số',
-        question_count: 2,
-        is_available: false,
-        unavailable_reason: 'Chưa đủ điều kiện cho đề này',
       },
     ],
   },
@@ -73,79 +56,57 @@ function renderCard(props) {
   };
 }
 
-test('Stage2ConfigCard hiển thị đầy đủ thông tin đề nguồn và 4 lựa chọn số lượng mã đề', async () => {
+test('Stage2ConfigCard hiển thị đúng Stepper 3 bước chuẩn và thông tin đề gốc đã xác nhận', async () => {
   const harness = renderCard({ session: sampleSession });
   await harness.render();
 
   const text = harness.container.textContent;
-  assert.ok(text.includes('Đề kiểm tra Giải tích 12'), 'Phải hiển thị tiêu đề phiên');
-  assert.ok(text.includes('5 câu hỏi'), 'Phải hiển thị số câu hỏi đề nguồn');
-  assert.ok(text.includes('Toán • Khối 12'), 'Phải hiển thị môn học và khối');
-
-  // Kiểm tra 4 nút lựa chọn N in [1, 4]
-  const buttons = harness.container.querySelectorAll('button');
-  const nButtons = buttons.filter((b) => ['1', '2', '3', '4'].includes(b.textContent.trim().charAt(0)));
-  assert.equal(nButtons.length, 4, 'Phải có 4 nút chọn số lượng mã đề');
+  assert.ok(text.includes('01. Chuẩn bị đề gốc'), 'Phải có bước 1');
+  assert.ok(text.includes('02. Cấu hình và tạo mã'), 'Phải có bước 2');
+  assert.ok(text.includes('03. Duyệt và sử dụng'), 'Phải có bước 3');
+  assert.ok(text.includes('5 câu gốc đã xác nhận'), 'Phải hiển thị 5 câu gốc đã xác nhận');
+  assert.ok(text.includes('Tạo mã đề'), 'Phải có tiêu đề Tạo mã đề');
 
   await harness.unmount();
 });
 
-test('Stage2ConfigCard không hiển thị chế độ tự động như tùy chọn chỉnh sửa', async () => {
-  const harness = renderCard({ session: sampleSession });
-  await harness.render();
-  assert.equal(harness.container.querySelector('#mode-badge-variable_inversion'), null);
-  assert.ok(!harness.container.textContent.includes('Hoán đổi ẩn số'));
-  assert.equal(harness.container.querySelectorAll('input[type="checkbox"]').length, 2);
-  await harness.unmount();
-});
-
-test('Stage2ConfigCard cung cấp cả hai tùy chọn shuffle_questions và shuffle_options', async () => {
+test('Stage2ConfigCard hiển thị ô nhập duy nhất với nhãn Số mã đề (N ∈ [1, 4]) * và thẻ Workload', async () => {
   const harness = renderCard({ session: sampleSession });
   await harness.render();
 
-  const text = harness.container.textContent;
-  assert.ok(text.includes('Xáo trộn thứ tự câu hỏi'), 'Phải có tùy chọn shuffle_questions');
-  assert.ok(text.includes('Xáo trộn thứ tự các đáp án'), 'Phải có tùy chọn shuffle_options theo yêu cầu');
+  const label = harness.container.querySelector('label[for="code-count"]');
+  assert.ok(label, 'Phải có label cho code-count');
+  assert.ok(label.textContent.includes('Số mã đề (N ∈ [1, 4])'), 'Nhãn phải chứa Số mã đề (N ∈ [1, 4])');
 
-  const shuffleCb = harness.container.querySelector('#shuffle-questions-checkbox');
-  assert.ok(shuffleCb, 'Phải có checkbox id shuffle-questions-checkbox');
-  assert.equal(shuffleCb.checked, false, 'shuffle_questions mặc định là Tắt (false) theo Issue #45');
+  const input = harness.container.querySelector('#code-count');
+  assert.ok(input, 'Phải có ô nhập #code-count');
+  assert.equal(input.value, '2', 'Mặc định ban đầu là 2 mã đề');
 
-  const shuffleOptCb = harness.container.querySelector('#shuffle-options-checkbox');
-  assert.ok(shuffleOptCb, 'Phải có checkbox id shuffle-options-checkbox');
-  assert.equal(shuffleOptCb.checked, false, 'shuffle_options mặc định là Tắt (false) theo Issue #45');
+  const workload = harness.container.querySelector('.workload');
+  assert.ok(workload, 'Phải có thẻ workload');
+  assert.ok(workload.textContent.includes('5 câu/mã × 2 mã đề = 10 biến thể'));
 
   await harness.unmount();
 });
 
-test('Stage2ConfigCard tự động cập nhật thẻ tóm tắt khi thay đổi số lượng mã đề', async () => {
+test('Stage2ConfigCard TUYỆT ĐỐI KHÔNG có checkbox shuffle hay variation mode selector trên UI (Issue #94)', async () => {
   const harness = renderCard({ session: sampleSession });
   await harness.render();
 
-  // Mặc định N = 2, total = 5 -> tổng 10 câu
-  let text = harness.container.textContent;
-  assert.ok(text.includes('2 mã đề'), 'Mặc định chọn 2 mã đề');
-  assert.ok(text.includes('10 câu hỏi biến thể'), 'Tổng số câu biến thể: 2 * 5 = 10');
+  const shuffleQuestionsCb = harness.container.querySelector('#shuffle-questions-checkbox');
+  assert.equal(shuffleQuestionsCb, null, 'Không được có checkbox shuffle-questions');
 
-  // Bấm chọn N = 4
-  const buttons = harness.container.querySelectorAll('button');
-  const btn4 = buttons.find((b) => b.textContent.includes('4 mã đề so le') || b.textContent.trim().startsWith('4'));
-  assert.ok(btn4, 'Tìm thấy nút chọn 4 mã đề');
+  const shuffleOptionsCb = harness.container.querySelector('#shuffle-options-checkbox');
+  assert.equal(shuffleOptionsCb, null, 'Không được có checkbox shuffle-options');
 
-  await act(async () => {
-    btn4.click();
-  });
-
-  text = harness.container.textContent;
-  assert.ok(text.includes('4 mã đề'), 'Đã cập nhật sang 4 mã đề');
-  assert.ok(text.includes('20 câu hỏi biến thể'), 'Tổng số câu biến thể: 4 * 5 = 20');
+  const modeBadges = harness.container.querySelectorAll('[id^="mode-badge-"]');
+  assert.equal(modeBadges.length, 0, 'Không được có danh sách variation mode selector');
 
   await harness.unmount();
 });
 
-test('Stage2ConfigCard nộp cấu hình thành công với đúng payload quy ước', async () => {
+test('Stage2ConfigCard gửi đúng payload chuẩn: n_versions, active_variation_modes: [], ordering_preferences', async () => {
   let submittedPayload = null;
-
   const harness = renderCard({
     session: sampleSession,
     onSubmit: async (payload) => {
@@ -154,21 +115,27 @@ test('Stage2ConfigCard nộp cấu hình thành công với đúng payload quy �
   });
   await harness.render();
 
-  const form = harness.container.querySelector('form');
-  assert.ok(form, 'Phải có form element');
-
+  const input = harness.container.querySelector('#code-count');
   await act(async () => {
-    form.dispatchEvent({
-      type: 'submit',
-      bubbles: true,
-      cancelable: true,
-      preventDefault: () => {},
-    });
+    input.value = '3';
+    input.dispatchEvent({ type: 'input', bubbles: true, target: input });
+    input.dispatchEvent({ type: 'change', bubbles: true, target: input });
   });
 
-  assert.ok(submittedPayload, 'onSubmit phải được gọi');
-  assert.equal(submittedPayload.n_versions, 2);
-  assert.deepEqual(submittedPayload.active_variation_modes, [], 'Gửi active_variation_modes: [] theo Issue #45');
+  const form = harness.container.querySelector('form');
+  await act(async () => {
+    form.dispatchEvent({ type: 'submit', bubbles: true, cancelable: true, preventDefault: () => {} });
+  });
+
+  const confirmBtn = harness.container.querySelector('.flow-modal')?.querySelector('.button-primary');
+  assert.ok(confirmBtn, 'Phải mở modal xác nhận và có nút Tạo biến thể');
+  await act(async () => {
+    confirmBtn.click();
+  });
+
+  assert.ok(submittedPayload, 'Form phải submit thành công sau khi xác nhận');
+  assert.equal(submittedPayload.n_versions, 3);
+  assert.deepEqual(submittedPayload.active_variation_modes, [], 'Gửi mảng rỗng active_variation_modes');
   assert.deepEqual(submittedPayload.ordering_preferences, {
     shuffle_questions: false,
     shuffle_options: false,
@@ -177,376 +144,177 @@ test('Stage2ConfigCard nộp cấu hình thành công với đúng payload quy �
   await harness.unmount();
 });
 
-test('Stage2ConfigCard bấm trực tiếp checkbox chỉ đổi lựa chọn đúng 1 lần (không double-toggle)', async () => {
-  let submittedPayload = null;
-  const harness = renderCard({
-    session: sampleSession,
-    onSubmit: async (payload) => {
-      submittedPayload = payload;
-    },
-  });
-  await harness.render();
-
-  // Tìm checkbox shuffle_questions
-  const shuffleCb = harness.container.querySelector('#shuffle-questions-checkbox');
-  assert.ok(shuffleCb, 'Phải tìm thấy checkbox shuffle-questions-checkbox');
-  assert.equal(shuffleCb.checked, false, 'Ban đầu shuffle_questions tắt theo Issue #45');
-
-  // Bấm trực tiếp vào checkbox
-  await act(async () => {
-    shuffleCb.click();
-  });
-
-  assert.equal(shuffleCb.checked, true, 'Sau khi click 1 lần, shuffle_questions bật lên true (không bị double toggle trở lại false)');
-
-  // Nộp form để kiểm tra payload thực tế
-  const form = harness.container.querySelector('form');
-  await act(async () => {
-    form.dispatchEvent({
-      type: 'submit',
-      bubbles: true,
-      cancelable: true,
-      preventDefault: () => {},
-    });
-  });
-
-  assert.ok(submittedPayload);
-  assert.equal(submittedPayload.ordering_preferences.shuffle_questions, true);
-  assert.equal(submittedPayload.ordering_preferences.shuffle_options, false);
-
-  await harness.unmount();
-});
-
-test('Stage2ConfigCard giữ nguyên lựa chọn rỗng đã lưu (active_variation_modes: []) và cho phép bỏ chọn toàn bộ', async () => {
+test('Stage2ConfigCard hiển thị thông báo chỉ đọc khi phiên cũ có shuffle_options = true và bảo toàn trong payload', async () => {
   let submittedPayload = null;
   const harness = renderCard({
     session: sampleSession,
     initialConfig: {
       n_versions: 2,
-      active_variation_modes: [],
-    },
-    onSubmit: async (payload) => {
-      submittedPayload = payload;
-    },
-  });
-  await harness.render();
-
-  const text = harness.container.textContent;
-  assert.ok(text.includes('Giữ cấu trúc đề nguồn'), 'Hiển thị thẻ tóm tắt phù hợp');
-
-  // Nộp form khi cấu hình rỗng
-  const form = harness.container.querySelector('form');
-  await act(async () => {
-    form.dispatchEvent({
-      type: 'submit',
-      bubbles: true,
-      cancelable: true,
-      preventDefault: () => {},
-    });
-  });
-
-  assert.ok(submittedPayload, 'Form phải cho phép nộp với active_variation_modes: []');
-  assert.deepEqual(submittedPayload.active_variation_modes, []);
-
-  await harness.unmount();
-});
-
-test('Stage2ConfigCard khôi phục đúng cấu hình đã lưu (initialConfig n_versions: 4 sau khi F5/reload)', async () => {
-  const harness = renderCard({
-    session: sampleSession,
-    initialConfig: {
-      n_versions: 4,
-      active_variation_modes: [],
       ordering_preferences: {
         shuffle_questions: true,
         shuffle_options: true,
       },
     },
-  });
-  await harness.render();
-
-  const text = harness.container.textContent;
-  assert.ok(text.includes('4 mã đề'), 'Phải nạp số lượng 4 mã đề từ initialConfig');
-  assert.ok(text.includes('20 câu hỏi biến thể'), '4 * 5 = 20 câu');
-
-  const shuffleCb = harness.container.querySelector('#shuffle-questions-checkbox');
-  const shuffleOptCb = harness.container.querySelector('#shuffle-options-checkbox');
-  assert.equal(shuffleCb.checked, true, 'shuffle_questions được khôi phục là true');
-  assert.equal(shuffleOptCb.checked, true, 'shuffle_options được khôi phục là true');
-
-  await harness.unmount();
-});
-
-test('Stage2ConfigCard: khôi phục cấu hình thiếu ordering_preferences vẫn mặc định tắt cả 2 checkbox và payload nộp giữ false/false', async () => {
-  let submittedPayload = null;
-  const harness = renderCard({
-    session: sampleSession,
-    initialConfig: {
-      n_versions: 3,
-      active_variation_modes: [],
-      // ordering_preferences bị thiếu hoặc nullish
-    },
     onSubmit: async (payload) => {
       submittedPayload = payload;
     },
   });
-  await harness.render();
-
-  const shuffleCb = harness.container.querySelector('#shuffle-questions-checkbox');
-  const shuffleOptCb = harness.container.querySelector('#shuffle-options-checkbox');
-  assert.equal(shuffleCb.checked, false, 'shuffle_questions phải mặc định tắt khi initialConfig thiếu field này');
-  assert.equal(shuffleOptCb.checked, false, 'shuffle_options phải mặc định tắt khi initialConfig thiếu field này');
-
-  // Submit form
-  const form = harness.container.querySelector('form');
-  await act(async () => {
-    form.dispatchEvent({
-      type: 'submit',
-      bubbles: true,
-      cancelable: true,
-      preventDefault: () => {},
-    });
-  });
-
-  assert.ok(submittedPayload, 'Form phải submit thành công');
-  assert.deepEqual(
-    submittedPayload.ordering_preferences,
-    { shuffle_questions: false, shuffle_options: false },
-    'Payload submit phải gửi false/false khi không có preference được bật',
-  );
-
-  await harness.unmount();
-});
-
-test('Stage2ConfigCard hiển thị thông báo chờ và vô hiệu hóa nút submit khi Blueprint chưa sẵn sàng', async () => {
-  const sessionWithoutBlueprint = {
-    id: 'test-no-blueprint',
-    title: 'Đề chưa có Blueprint',
-    subject: 'Toán',
-    grade: 12,
-    status: 'uploaded',
-    source_questions: [{ id: 'q1', question_no: 1 }],
-    blueprint_summary: null,
-  };
-
-  const harness = renderCard({ session: sessionWithoutBlueprint });
-  await harness.render();
-
-  const text = harness.container.textContent;
-  assert.ok(text.includes('Chưa có thông tin cấu trúc đề khả dụng'), 'Phải hiển thị thông báo chưa có Blueprint');
-
-  const submitBtn = harness.container.querySelector('button[type="submit"]');
-  assert.equal(submitBtn.getAttribute('disabled') !== null, true, 'Nút submit phải bị vô hiệu hóa');
-
-  await harness.unmount();
-});
-
-test('Stage2ConfigCard chỉ hiển thị chế độ thật mà Blueprint hỗ trợ (không tự tạo thêm chế độ mẫu)', async () => {
-  const sessionWithSingleMode = {
-    id: 'test-single-mode',
-    title: 'Đề chỉ hỗ trợ 1 chế độ',
-    subject: 'Toán',
-    grade: 12,
-    status: 'blueprinted',
-    source_questions: [{ id: 'q1', question_no: 1 }],
-    blueprint_summary: {
-      is_ready: true,
-      total_questions: 1,
-      supported_modes: [
-        {
-          id: 'parameter_variation',
-          label: 'Thay đổi số liệu / tham số',
-          description: 'Chỉ hỗ trợ thay số',
-          question_count: 1,
-          is_available: true,
-        },
-      ],
-    },
-  };
-
-  const harness = renderCard({ session: sessionWithSingleMode });
-  await harness.render();
-
-  const text = harness.container.textContent;
-  assert.ok(!text.includes('Thay đổi số liệu / tham số'));
-  assert.equal(text.includes('Đổi ngữ cảnh thực tế'), false, 'Không được tự bịa chế độ Đổi ngữ cảnh');
-  assert.equal(text.includes('Hoán đổi ẩn số'), false, 'Không được tự bịa chế độ Hoán đổi ẩn số');
-
-  await harness.unmount();
-});
-
-test('Stage2ConfigCard hiển thị cảnh báo lỗi khi có xung đột ERR_CONFIG_CONFLICT', async () => {
-  const harness = renderCard({
-    session: sampleSession,
-    error: 'Cấu hình xung đột với Blueprint của đề bài (ERR_CONFIG_CONFLICT)',
-  });
-  await harness.render();
-
-  const alertBox = harness.container.querySelector('[role="alert"]');
-  assert.ok(alertBox, 'Phải có role="alert" thông báo lỗi');
-  assert.ok(alertBox.textContent.includes('ERR_CONFIG_CONFLICT'));
-
-  await harness.unmount();
-});
-
-test('Stage2ConfigCard khóa nút nộp khi isSubmitting = true', async () => {
-  const harness = renderCard({
-    session: sampleSession,
-    isSubmitting: true,
-  });
-  await harness.render();
-
-  const submitBtn = harness.container.querySelector('button[type="submit"]');
-  assert.ok(submitBtn, 'Có nút submit');
-  assert.equal(submitBtn.getAttribute('disabled') !== null, true, 'Nút submit phải bị disabled');
-  assert.ok(submitBtn.textContent.includes('Đang lưu cấu hình'));
-
-  await harness.unmount();
-});
-
-test('Stage2ConfigCard cho phép gửi active_variation_modes: [] khi Blueprint chỉ có NONE và is_ready = true', async () => {
-  let submittedPayload = null;
-  const sessionNoneOnly = {
-    id: 'test-none-only',
-    title: 'Đề chỉ có NONE',
-    subject: 'Toán',
-    grade: 12,
-    status: 'blueprinted',
-    source_questions: [
-      { id: 'q1', question_no: 1, variation_modes: ['NONE'] },
-      { id: 'q2', question_no: 2, variation_modes: ['NONE'] },
-    ],
-    blueprint_summary: {
-      total_questions: 2,
-      supported_modes: [],
-      is_ready: true,
-    },
-  };
-
-  const harness = renderCard({
-    session: sessionNoneOnly,
-    initialConfig: { active_variation_modes: [] },
-    onSubmit: async (payload) => {
-      submittedPayload = payload;
-    },
-  });
-  await harness.render();
-
-  const text = harness.container.textContent;
-  assert.ok(text.includes('Giữ cấu trúc đề nguồn'), 'Phải thông báo đề giữ nguyên nội dung gốc');
-  assert.equal(text.includes('Chưa có thông tin cấu trúc đề khả dụng'), false, 'Không được báo thiếu Blueprint');
-
-  const submitBtn = harness.container.querySelector('button[type="submit"]');
-  assert.equal(submitBtn.getAttribute('disabled'), null, 'Nút submit không được bị disabled');
-
-  const form = harness.container.querySelector('form');
-  await act(async () => {
-    form.dispatchEvent({
-      type: 'submit',
-      bubbles: true,
-      cancelable: true,
-      preventDefault: () => {},
-    });
-  });
-
-  assert.ok(submittedPayload, 'Form phải submit thành công');
-  assert.deepEqual(submittedPayload.active_variation_modes, [], 'Gửi mảng rỗng active_variation_modes');
-
-  await harness.unmount();
-});
-
-test('Stage2ConfigCard hỗ trợ bật/tắt xáo trộn đáp án shuffle_options để tránh trùng vị trí đáp án giữa các mã đề', async () => {
-  let submittedPayload = null;
-  const harness = renderCard({
-    session: sampleSession,
-    initialConfig: {
-      ordering_preferences: {
-        shuffle_questions: true,
-        shuffle_options: false,
-      },
-    },
-    onSubmit: async (payload) => {
-      submittedPayload = payload;
-    },
-  });
-  await harness.render();
-
-  const shuffleOptionsCb = harness.container.querySelector('#shuffle-options-checkbox');
-  assert.ok(shuffleOptionsCb, 'Phải có checkbox #shuffle-options-checkbox');
-  assert.equal(shuffleOptionsCb.checked, false, 'Mặc định lấy từ initialConfig là false');
-
-  // Click để bật lên true
-  await act(async () => {
-    shuffleOptionsCb.click();
-  });
-  assert.equal(shuffleOptionsCb.checked, true, 'Sau khi click thì checked = true');
-
-  // Submit form
-  const form = harness.container.querySelector('form');
-  await act(async () => {
-    form.dispatchEvent({
-      type: 'submit',
-      bubbles: true,
-      cancelable: true,
-      preventDefault: () => {},
-    });
-  });
-
-  assert.ok(submittedPayload);
-  assert.equal(submittedPayload.ordering_preferences.shuffle_options, true, 'Payload phải gửi shuffle_options: true');
-
-  await harness.unmount();
-});
-
-test('F04: Stage2ConfigCard hiển thị đúng Hỗ trợ 0/N câu khi mode.question_count === 0', async () => {
-  const customSession = {
-    ...sampleSession,
-    blueprint_summary: {
-      is_ready: true,
-      total_questions: 5,
-      supported_modes: [
-        {
-          id: 'zero_mode',
-          label: 'Chế độ không có câu hỗ trợ',
-          is_available: true,
-          question_count: 0,
-        },
-      ],
-    },
-  };
-
-  const harness = renderCard({ session: customSession });
   await harness.render();
 
   const text = harness.container.textContent;
   assert.ok(
-    !text.includes('Hỗ trợ 5/5 câu'),
-    'Phải hiển thị Hỗ trợ 0/5 câu thay vì fallback về 5/5 câu',
+    text.includes('Phiên này đang bật xáo trộn đáp án trong toàn bộ mã đề'),
+    'Phải có thông báo chỉ đọc khi phiên cũ bật shuffle_options',
   );
+  // Không có checkbox
+  assert.equal(harness.container.querySelector('input[type="checkbox"]'), null);
+
+  const form = harness.container.querySelector('form');
+  await act(async () => {
+    form.dispatchEvent({ type: 'submit', bubbles: true, cancelable: true, preventDefault: () => {} });
+  });
+
+  const confirmBtn = harness.container.querySelector('.flow-modal')?.querySelector('.button-primary');
+  assert.ok(confirmBtn, 'Phải mở modal xác nhận');
+  await act(async () => {
+    confirmBtn.click();
+  });
+
+  assert.ok(submittedPayload);
+  assert.equal(submittedPayload.ordering_preferences.shuffle_questions, true);
+  assert.equal(submittedPayload.ordering_preferences.shuffle_options, true);
 
   await harness.unmount();
 });
 
-test('Stage2ConfigCard khóa submit và hiển thị cảnh báo khi blueprint_summary thiếu is_ready (INT-02 strict readiness)', async () => {
-  const sessionMissingIsReady = {
+test('Stage2ConfigCard báo lỗi inline khi nhập số ngoài khoảng [1, 4] hoặc không phải số', async () => {
+  const harness = renderCard({ session: sampleSession });
+  await harness.render();
+
+  const input = harness.container.querySelector('#code-count');
+  await act(async () => {
+    input.value = '5';
+    input.dispatchEvent({ type: 'input', bubbles: true, target: input });
+    input.dispatchEvent({ type: 'change', bubbles: true, target: input });
+    input.dispatchEvent({ type: 'blur', bubbles: true, target: input });
+  });
+
+  const text = harness.container.textContent;
+  assert.ok(text.includes('Số mã đề (N) phải nằm trong khoảng từ 1 đến 4.'));
+
+  const submitBtn = harness.container.querySelector('button[type="submit"]');
+  assert.equal(submitBtn.getAttribute('disabled') !== null, true, 'Nút submit phải bị vô hiệu hóa khi N=5');
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigCard hỗ trợ fallback initialNumVersions từ Cài đặt cá nhân (PR #106)', async () => {
+  const harness = renderCard({
+    session: sampleSession,
+    initialNumVersions: 4,
+  });
+  await harness.render();
+
+  const input = harness.container.querySelector('#code-count');
+  assert.equal(input.value, '4', 'Ưu tiên lấy initialNumVersions = 4');
+
+  await harness.unmount();
+});
+
+test('Stage2ConfigCard khóa submit và hiển thị cảnh báo khi Blueprint chưa sẵn sàng', async () => {
+  const sessionUnready = {
     ...sampleSession,
     blueprint_summary: {
+      is_ready: false,
       total_questions: 5,
-      supported_modes: [
-        { id: 'parameter_variation', label: 'Thay đổi số liệu', is_available: true },
-      ],
-      // is_ready bị thiếu (legacy hoặc unready metadata)
     },
   };
 
-  const harness = renderCard({ session: sessionMissingIsReady });
+  const harness = renderCard({ session: sessionUnready });
   await harness.render();
 
   const text = harness.container.textContent;
-  assert.ok(text.includes('Chưa có thông tin cấu trúc đề khả dụng'), 'Phải cảnh báo Blueprint chưa sẵn sàng');
+  assert.ok(text.includes('Chưa có thông tin cấu trúc đề khả dụng') || text.includes('Chưa có thông tin Blueprint khả dụng'));
 
   const submitBtn = harness.container.querySelector('button[type="submit"]');
-  assert.equal(submitBtn.getAttribute('disabled') !== null, true, 'Nút submit phải bị vô hiệu hóa khi thiếu is_ready');
+  assert.equal(submitBtn.getAttribute('disabled') !== null, true);
+
+  await harness.unmount();
+});
+
+test('F108-06: Mọi submit hợp lệ đều mở confirmation modal, bấm Hủy đóng modal và không submit', async () => {
+  let submitted = false;
+  const harness = renderCard({
+    session: sampleSession,
+    onSubmit: async () => {
+      submitted = true;
+    },
+  });
+  await harness.render();
+
+  const form = harness.container.querySelector('form');
+  // Submit synthetic
+  await act(async () => {
+    form.dispatchEvent({ type: 'submit', bubbles: true, cancelable: true, preventDefault: () => {} });
+  });
+
+  // Modal phải xuất hiện
+  const modal = harness.container.querySelector('.flow-modal');
+  assert.ok(modal, 'Modal xác nhận phải xuất hiện');
+  assert.equal(submitted, false, 'Chưa được gọi onSubmit khi chưa bấm xác nhận trong modal');
+
+  // Bấm nút Hủy
+  const cancelBtn = Array.from(modal.querySelectorAll('button')).find((b) => b.textContent.includes('Hủy'));
+  assert.ok(cancelBtn, 'Phải có nút Hủy');
+  await act(async () => {
+    cancelBtn.click();
+  });
+
+  // Modal phải đóng
+  assert.equal(harness.container.querySelector('.flow-modal'), null, 'Modal phải đóng sau khi bấm Hủy');
+  assert.equal(submitted, false, 'onSubmit tuyệt đối không được gọi');
+
+  await harness.unmount();
+});
+
+test('F108-06: Nhấn Enter trong ô nhập hoặc bấm submit đều mở modal, và chống double-submit khi isSubmitting', async () => {
+  let submitCount = 0;
+  const harness = renderCard({
+    session: sampleSession,
+    isSubmitting: false,
+    onSubmit: async () => {
+      submitCount++;
+    },
+  });
+  await harness.render();
+
+  // Nhấn Enter / submit trên form
+  const form = harness.container.querySelector('form');
+  await act(async () => {
+    form.dispatchEvent({ type: 'submit', bubbles: true, cancelable: true, preventDefault: () => {} });
+  });
+
+  const confirmBtn = harness.container.querySelector('.flow-modal')?.querySelector('.button-primary');
+  assert.ok(confirmBtn, 'Phải có nút Tạo biến thể trong modal');
+
+  // Bấm xác nhận
+  await act(async () => {
+    confirmBtn.click();
+  });
+  assert.equal(submitCount, 1, 'onSubmit được gọi đúng 1 lần');
+
+  // Re-render với isSubmitting = true
+  await harness.render({
+    session: sampleSession,
+    isSubmitting: true,
+    onSubmit: async () => {
+      submitCount++;
+    },
+  });
+
+  // Nút submit chính phải bị disabled khi isSubmitting
+  const mainSubmitBtn = harness.container.querySelector('button[type="submit"]');
+  assert.equal(mainSubmitBtn.getAttribute('disabled') !== null, true, 'Nút submit chính bị khóa khi đang submit');
 
   await harness.unmount();
 });

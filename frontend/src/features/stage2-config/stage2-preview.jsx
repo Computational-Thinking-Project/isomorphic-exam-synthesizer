@@ -36,6 +36,11 @@ function Stage2PreviewApp() {
       });
       setLastSubmittedPayload(payload);
       setSession(res.session);
+
+      // Tự động điều hướng sang màn hình theo dõi tiến trình SSE sau 1.5 giây
+      setTimeout(() => {
+        window.location.href = '/sse-progress-preview.html';
+      }, 1500);
     } catch (err) {
       setError(err.message || 'Lỗi lưu cấu hình');
     } finally {
@@ -80,9 +85,24 @@ function Stage2PreviewApp() {
         </div>
 
         {lastSubmittedPayload && (
-          <div className="mt-4 rounded-lg bg-emerald-950/40 border border-emerald-500/40 p-3 text-xs text-emerald-200">
-            <strong>Payload đã gửi thành công:</strong>
-            <pre className="mt-1 overflow-x-auto text-[11px] text-emerald-300">
+          <div className="mt-4 rounded-lg bg-emerald-950/40 border border-emerald-500/40 p-4 text-xs text-emerald-200">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="font-bold text-sm text-emerald-300">
+                  ✓ Gửi payload thành công! Đang chuyển hướng sang màn hình theo dõi tiến trình SSE (S05)...
+                </p>
+                <p className="mt-1 text-slate-300">
+                  (Nếu trình duyệt không tự chuyển sau 1.5s, bấm nút bên phải để sang ngay)
+                </p>
+              </div>
+              <a
+                href="/sse-progress-preview.html"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 font-semibold text-white shadow hover:bg-emerald-500 transition-colors"
+              >
+                Đến màn hình SSE Progress ngay →
+              </a>
+            </div>
+            <pre className="mt-3 overflow-x-auto rounded bg-slate-900/80 p-2 text-[11px] text-emerald-300">
               {JSON.stringify(lastSubmittedPayload, null, 2)}
             </pre>
           </div>
@@ -94,7 +114,12 @@ function Stage2PreviewApp() {
         onSubmit={handleSubmit}
         isSubmitting={isSubmitting}
         error={error}
-        onBack={() => alert('Quay lại Bước 1')}
+        onBack={() => {
+          window.location.href = '/dashboard-preview.html';
+        }}
+        onReturnToStage1={() => {
+          alert('Đề gốc đã được chuẩn bị và xác nhận ở Bước 1. Bạn đang ở Bước 2 để cấu hình số lượng mã đề cần tạo.');
+        }}
       />
     </div>
   );
