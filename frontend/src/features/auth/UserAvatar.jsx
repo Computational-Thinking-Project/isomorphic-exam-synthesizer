@@ -1,7 +1,8 @@
 import { useState } from 'react';
 
-export default function UserAvatar({ src, name }) {
+export default function UserAvatar({ src, name, size = 'sm' }) {
   const [failed, setFailed] = useState(false);
+  const dimensions = size === 'lg' ? 'h-16 w-16 text-xl sm:h-20 sm:w-20 sm:text-2xl' : 'h-10 w-10 text-sm';
 
   const words = name.trim().split(/\s+/).filter(Boolean);
   const initials = (
@@ -13,7 +14,7 @@ export default function UserAvatar({ src, name }) {
   return (
     <span
       aria-hidden="true"
-      className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-support-bg text-sm font-semibold text-highlight border border-support-line shadow-soft"
+      className={`flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-support-line bg-support-bg font-semibold text-highlight shadow-soft ${dimensions}`}
     >
       {src && !failed ? (
         <img
