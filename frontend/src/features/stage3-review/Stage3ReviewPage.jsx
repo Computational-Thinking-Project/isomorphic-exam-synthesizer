@@ -1254,7 +1254,7 @@ export default function Stage3ReviewPage({
                 type="button"
                 onClick={handleRetryAllMissing}
                 disabled={isRetryingAll}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-accent-border bg-accent px-3.5 py-2 text-xs font-semibold text-strong shadow-soft hover:bg-[#f0c23d] disabled:opacity-50 transition-colors"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-accent-border bg-accent px-3.5 py-2 text-xs font-semibold text-strong shadow-soft hover:opacity-90 disabled:opacity-50 transition-colors"
               >
                 {isRetryingAll ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1963,7 +1963,7 @@ export default function Stage3ReviewPage({
                 type="button"
                 disabled={isRetryingAll}
                 onClick={handleRetryAllMissing}
-                className="inline-flex items-center gap-2 rounded-xl border border-accent-border bg-accent-soft px-4 py-2.5 text-xs font-semibold text-accent-ink hover:bg-[#f0c23d] hover:text-strong transition-all disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-xl border border-accent-border bg-accent-soft px-4 py-2.5 text-xs font-semibold text-accent-ink hover:bg-accent hover:text-strong transition-all disabled:opacity-50"
               >
                 {isRetryingAll ? (
                   <>

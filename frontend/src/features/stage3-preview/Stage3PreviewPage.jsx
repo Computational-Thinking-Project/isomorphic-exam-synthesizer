@@ -56,6 +56,7 @@ export default function Stage3PreviewPage({
   const isMountedRef = useRef(true);
   const requestIdRef = useRef(0);
   const activeSessionIdRef = useRef(sessionId);
+  const reliablePrefsSessionRef = useRef(null);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -67,6 +68,7 @@ export default function Stage3PreviewPage({
   // F05, R1 & F02: Reset trạng thái, đóng modal và hủy cờ khi sessionId thay đổi để tránh stale data và approve/shuffle nhầm phiên
   useEffect(() => {
     activeSessionIdRef.current = sessionId;
+    reliablePrefsSessionRef.current = null;
     setPreviewData(null);
     setSelectedTab('');
     setError(null);
@@ -116,28 +118,38 @@ export default function Stage3PreviewPage({
       }
       const previewPrefs = extractReliableOrderingPreferences(data.ordering_preferences);
       if (previewPrefs) {
+        reliablePrefsSessionRef.current = sessionId;
         setShuffleQuestions(previewPrefs.shuffle_questions);
         setShuffleOptions(previewPrefs.shuffle_options);
         setHasReliablePrefs(true);
-      } else if (!data.is_finalized && typeof loadPreferences === 'function') {
+      } else if (data.is_finalized && reliablePrefsSessionRef.current === sessionId) {
+        setHasReliablePrefs(true);
+      } else if (typeof loadPreferences === 'function') {
         try {
           const prefs = await loadPreferences(sessionId);
           if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
           if (hasReliableOrderingPreferences(prefs)) {
+            reliablePrefsSessionRef.current = sessionId;
             setShuffleQuestions(Boolean(prefs.shuffle_questions ?? false));
             setShuffleOptions(Boolean(prefs.shuffle_options));
             setHasReliablePrefs(true);
           } else {
+            reliablePrefsSessionRef.current = null;
+            setShuffleOptions(false);
             setHasReliablePrefs(false);
           }
-          if (prefs?.status) {
+          if (!data.status && prefs?.status) {
             setSessionStatus(prefs.status);
           }
         } catch {
           if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
+          reliablePrefsSessionRef.current = null;
+          setShuffleOptions(false);
           setHasReliablePrefs(false);
         }
       } else {
+        reliablePrefsSessionRef.current = null;
+        setShuffleOptions(false);
         setHasReliablePrefs(false);
       }
       if (data.versions?.length > 0) {
@@ -158,6 +170,7 @@ export default function Stage3PreviewPage({
           err.response?.data?.ordering_preferences || err.data?.ordering_preferences,
         );
         if (errPrefs) {
+          reliablePrefsSessionRef.current = sessionId;
           setShuffleQuestions(errPrefs.shuffle_questions);
           setShuffleOptions(errPrefs.shuffle_options);
           setHasReliablePrefs(true);
@@ -166,10 +179,12 @@ export default function Stage3PreviewPage({
             const prefs = await loadPreferences(sessionId);
             if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
             if (hasReliableOrderingPreferences(prefs)) {
+              reliablePrefsSessionRef.current = sessionId;
               setShuffleQuestions(Boolean(prefs.shuffle_questions ?? false));
               setShuffleOptions(Boolean(prefs.shuffle_options));
               setHasReliablePrefs(true);
             } else {
+              reliablePrefsSessionRef.current = null;
               setHasReliablePrefs(false);
             }
             if (prefs?.status) {
@@ -177,12 +192,14 @@ export default function Stage3PreviewPage({
             }
           } catch {
             if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
+            reliablePrefsSessionRef.current = null;
             setHasReliablePrefs(false);
             setNeedsShuffle(false);
             setError('Không thể tải cấu hình xáo trộn đã lưu. Vui lòng thử lại.');
             return null;
           }
         } else {
+          reliablePrefsSessionRef.current = null;
           setHasReliablePrefs(false);
         }
         setShuffleRecovery(null);
@@ -438,7 +455,7 @@ export default function Stage3PreviewPage({
                 data-testid="btn-open-approve"
                 onClick={() => setIsApproveModalOpen(true)}
                 disabled={shuffling || approving}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-approved-ink hover:bg-[#1e4b30] text-white font-semibold text-sm transition-colors shadow-sm disabled:opacity-50"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-approved-ink hover:opacity-90 text-white font-semibold text-sm transition-colors shadow-sm disabled:opacity-50"
               >
                 <CheckCircle2 className="w-4 h-4" />
                 <span>Phê duyệt & Khóa đề</span>

@@ -897,10 +897,20 @@ test('Stage3PreviewPage: Hiển thị thông báo lỗi mạng và nút "Thử l
 test('F01 & F02: Không render nút "Xáo trộn lại" và chỉ cho phép approve khi preview đã tải thành công', async () => {
   const originalGet = api.get;
   let resolveGet;
-  api.get = () =>
-    new Promise((resolve) => {
-      resolveGet = resolve;
+  api.get = (url) => {
+    if (url.includes('/finalize/preview')) {
+      return new Promise((resolve) => {
+        resolveGet = resolve;
+      });
+    }
+    return Promise.resolve({
+      data: {
+        id: 'sess-f01-f02',
+        status: 'reviewed',
+        ordering_preferences: { shuffle_questions: false, shuffle_options: false },
+      },
     });
+  };
 
   const harness = renderPreviewPage('sess-f01-f02');
   try {
@@ -992,9 +1002,18 @@ test('F03: Khi GET preview trả HTTP 409 khác mã ERR_SHUFFLE_REQUIRED, không
 test('F04: Chuyển đổi giữa các tab không gọi lại API GET preview', async () => {
   const originalGet = api.get;
   let getCallCount = 0;
-  api.get = async () => {
-    getCallCount += 1;
-    return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'sess-f04-tabs' } };
+  api.get = async (url) => {
+    if (url.includes('/finalize/preview')) {
+      getCallCount += 1;
+      return { data: { ...GOLDEN_PREVIEW_FIXTURE, session_id: 'sess-f04-tabs' } };
+    }
+    return {
+      data: {
+        id: 'sess-f04-tabs',
+        status: 'reviewed',
+        ordering_preferences: { shuffle_questions: false, shuffle_options: false },
+      },
+    };
   };
 
   const harness = renderPreviewPage('sess-f04-tabs');
@@ -2133,5 +2152,150 @@ test('F91-04 / S86-D: late shuffle POST for session A leaves session B unchanged
     api.patch = originalPatch;
     api.post = originalPost;
     await harness.unmount();
+  }
+});
+
+test('F105-01: Cold-load / F5 phiên đã finalized (status reviewed, is_finalized=true) không có ordering_preferences trong preview snapshot vẫn gọi GET /sessions/:id và hiển thị readonly-shuffle-options-notice, không gửi PATCH/POST', async () => {
+  const originalGet = api.get;
+  const originalPatch = api.patch;
+  const originalPost = api.post;
+  let detailReads = 0;
+  let mutationCount = 0;
+
+  api.get = async (url) => {
+    if (url.includes('/finalize/preview')) {
+      return {
+        data: {
+          ...GOLDEN_PREVIEW_FIXTURE,
+          session_id: 'session-f105-finalized',
+          status: 'reviewed',
+          is_finalized: true,
+        },
+      };
+    }
+    if (url === '/sessions/session-f105-finalized') {
+      detailReads += 1;
+      return {
+        data: {
+          id: 'session-f105-finalized',
+          status: 'reviewed',
+          ordering_preferences: {
+            shuffle_questions: false,
+            shuffle_options: true,
+          },
+        },
+      };
+    }
+    throw new Error(`Unexpected GET ${url}`);
+  };
+  api.patch = async () => {
+    mutationCount += 1;
+    return { data: {} };
+  };
+  api.post = async () => {
+    mutationCount += 1;
+    return { data: {} };
+  };
+
+  const harness = renderPreviewPage('session-f105-finalized');
+  try {
+    await harness.render();
+
+    assert.equal(detailReads, 1, 'Phải gọi read-only GET /sessions/:id khi preview snapshot không chứa ordering_preferences');
+    assert.equal(mutationCount, 0, 'Không được gửi PATCH hoặc POST khi mở lại phiên finalized');
+
+    const notice = harness.container.querySelector('[data-testid="readonly-shuffle-options-notice"]');
+    assert.ok(notice, 'Phải hiển thị readonly-shuffle-options-notice sau F5 trên phiên finalized');
+    assert.match(notice.textContent, /Đang bật xáo trộn đáp án \(chỉ đọc\)/);
+    assert.ok(harness.container.querySelector('[data-testid="btn-open-approve"]'), 'Nút Phê duyệt & Khóa đề vẫn sẵn sàng');
+  } finally {
+    api.get = originalGet;
+    api.patch = originalPatch;
+    api.post = originalPost;
+    await harness.unmount();
+  }
+});
+
+test('F105-01: Cold-load phiên đã approved (locked) với shuffle_options=true khôi phục readonly-shuffle-options-notice và khi GET /sessions/:id lỗi vẫn hiển thị preview an toàn, 0 PATCH/POST', async () => {
+  const originalGet = api.get;
+  const originalPatch = api.patch;
+  const originalPost = api.post;
+  let mutationCount = 0;
+
+  api.patch = async () => {
+    mutationCount += 1;
+    return { data: {} };
+  };
+  api.post = async () => {
+    mutationCount += 1;
+    return { data: {} };
+  };
+
+  // Subcase A: GET /sessions/:id trả về shuffle_options=true cho phiên approved (locked)
+  api.get = async (url) => {
+    if (url.includes('/finalize/preview')) {
+      return {
+        data: {
+          ...GOLDEN_PREVIEW_FIXTURE,
+          session_id: 'session-f105-approved',
+          status: 'approved',
+          is_finalized: true,
+        },
+      };
+    }
+    return {
+      data: {
+        id: 'session-f105-approved',
+        status: 'approved',
+        ordering_preferences: {
+          shuffle_questions: true,
+          shuffle_options: true,
+        },
+      },
+    };
+  };
+
+  const harnessA = renderPreviewPage('session-f105-approved');
+  try {
+    await harnessA.render();
+
+    const notice = harnessA.container.querySelector('[data-testid="readonly-shuffle-options-notice"]');
+    assert.ok(notice, 'Phiên approved cũ có shuffle_options=true phải hiển thị readonly notice');
+    assert.match(notice.textContent, /Đang bật xáo trộn đáp án \(chỉ đọc\)/);
+    assert.ok(harnessA.container.querySelector('[data-testid="btn-goto-export"]'));
+    assert.equal(harnessA.container.querySelector('[data-testid="btn-open-approve"]'), null);
+    assert.equal(mutationCount, 0);
+  } finally {
+    await harnessA.unmount();
+  }
+
+  // Subcase B: GET /sessions/:id lỗi -> preview vẫn hiển thị an toàn, ẩn notice, không ghi
+  api.get = async (url) => {
+    if (url.includes('/finalize/preview')) {
+      return {
+        data: {
+          ...GOLDEN_PREVIEW_FIXTURE,
+          session_id: 'session-f105-approved',
+          status: 'approved',
+          is_finalized: true,
+        },
+      };
+    }
+    throw new Error('detail unavailable');
+  };
+
+  const harnessB = renderPreviewPage('session-f105-approved');
+  try {
+    await harnessB.render();
+
+    assert.match(harnessB.container.textContent, /Bản xem trước — Mã đề 101/);
+    assert.equal(harnessB.container.querySelector('[data-testid="readonly-shuffle-options-notice"]'), null);
+    assert.ok(harnessB.container.querySelector('[data-testid="btn-goto-export"]'));
+    assert.equal(mutationCount, 0);
+  } finally {
+    api.get = originalGet;
+    api.patch = originalPatch;
+    api.post = originalPost;
+    await harnessB.unmount();
   }
 });

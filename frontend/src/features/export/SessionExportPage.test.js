@@ -96,7 +96,7 @@ test('SessionExportPage hiển thị trạng thái unwired khi chưa truyền Q1
 
   assert.match(view.container.textContent, /Đề Đại số 12/);
   assert.match(view.container.textContent, /chưa được nối vào giao diện/);
-  assert.match(view.container.textContent, /Quay về Dashboard/);
+  assert.match(view.container.textContent, /Thư viện đề/);
   await view.unmount();
 });
 

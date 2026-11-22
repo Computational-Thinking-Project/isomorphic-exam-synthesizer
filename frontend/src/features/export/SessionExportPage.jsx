@@ -3,9 +3,9 @@ import { Link, useParams } from 'react-router-dom';
 import {
   AlertCircle,
   AlertTriangle,
-  ArrowLeft,
   BookOpen,
   CheckCircle2,
+  ChevronLeft,
   Download,
   FileArchive,
   FileText,
@@ -125,10 +125,10 @@ function SessionExportView({
             <div className="flex flex-wrap items-center gap-2">
               <Link
                 to="/dashboard"
-                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-semibold text-highlight hover:bg-support-bg transition-colors"
+                className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-semibold text-highlight hover:bg-support-bg transition-colors"
               >
-                <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
-                <span>Quay về Dashboard</span>
+                <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>Thư viện đề</span>
               </Link>
               <span className="text-line" aria-hidden="true">/</span>
               <span className="inline-flex shrink-0 items-center rounded-full border border-support-line bg-support-bg px-2.5 py-0.5 text-xs font-semibold text-highlight">
