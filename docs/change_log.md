@@ -1,3 +1,36 @@
+## DEC-97-001 — Issue #97: Teacher usage statistics — 20/11/2026
+
+- Decision owner: Issue #97 assignee. Status: proposed for review.
+- Add a caller-scoped usage statistics API over stored session statuses. Use one invoker RPC snapshot so the four overview counts and the distribution reconcile.
+- Statistics links from the Dashboard and adds a protected Vietnamese overview. The contract explains why Gemini and retry counters are omitted. [API contract](api/statistics-endpoint.md)
+
+---
+
+## DEC-EXPORT-92-V2 — Combined per-version documents — 20/11/2026
+
+- Hùng yêu cầu thống nhất mỗi mã đề một PDF/TeX/MD: đề → ma trận đáp án riêng mã → lời giải; PDF/TeX ngắt trang trước ma trận. Giữ ZIP và đường dẫn `exam_<code>`; bỏ PDF lời giải/ma trận riêng khỏi bundle. Đây là thay đổi bố cục theo yêu cầu mới, không phải chỉ sửa glyph.
+- Bump `PACKAGER_VERSION=w4-export-v2` để không replay ZIP v1 khi xin v2; giữ nguyên ledger/object lịch sử, không migration/backfill. API tải/Storage ACL không đổi. File đề kết hợp có đáp án: chỉ chia sẻ phần trang đề cho thí sinh.
+- FE bỏ grant cache khi nhận ready snapshot mới để không hiển thị receipt v2 nhưng tải URL v1 còn hạn. Footer PDF kết hợp chỉ ghi số trang hiện tại, tránh hiểu sai tổng trang khi tách phần đề. Philip review phần controller dùng chung.
+- Tác động: compiler/pipeline, bundler, source renderers/template, contract và tests. Cần Tâm/Đạt/Duy peer review theo [plan](tasks/ISSUE-92-PACKAGING.md); chưa là rollout hoặc live acceptance.
+
+---
+
+## Issue #92 — Vietnamese PDF heading glyphs (partial scope) — 20/11/2026
+
+- Hùng bổ sung `fonts-liberation2` và `TYPST_FONT_PATHS` trong backend Docker để Typst0.11.1 dùng Liberation Serif đã khai báo, thay fallback bold-italic làm mất thân chữ `ờ`. Cần rebuild image; không sửa PDF cũ. Font metrics có thể đổi ngắt dòng.
+- Thêm fixture NFC/NFD, regression kiểm font nhúng và kiểm ảnh PDF thật. Không đổi compiler/converter, API, migration hoặc cách đóng gói ZIP. Kết quả/giới hạn ở [plan92](tasks/ISSUE-92.md); lựa chọn packaging còn ngoài phạm vi.
+
+---
+
+## Issue #70 — Per-question generation policy (PR #101, proposed for review) — 19/11/2026
+
+- Đạt thay intersection toàn đề bằng policy theo câu cho job mới: values/context riêng từng Blueprint; chỉ Clone câu có policy hợp lệ nhưng không có chiều được hỗ trợ. Empty/malformed/stale vẫn fail closed. Public request giữ `active_variation_modes: []`.
+- Forward migration 026 dùng mapping_version 1.1 hiện có, freeze `question_policies` trong snapshot JSONB; config modes/dimensions là union để giữ receipt. Không thêm bảng/cột, không backfill job lịch sử. SQL/Python kiểm kết quả theo policy từng câu; writer/claim/read/finish giữ auth, parent lock, fencing và idempotency.
+- Worker dùng full source order cho seed/hash/fingerprint; Clone không reserve quota/call Gemini. Resume giữ nguyên snapshot1.0 hoặc1.1, bỏ slot AI/Clone/fallback đã commit. Original Clone khác fallback AI sau4attempt.
+- Contract cập nhật: [config](api/generation-config-endpoint.md), [worker](api/generation-job-endpoints.md), [input handoff](api/generation-integration-inputs.md). Môi trường kiểm và giới hạn ghi ở [plan70](tasks/TASK-70-PER-QUESTION-GENERATION.md). Chưa là reviewer acceptance hay bằng chứng áp migration vào shared Supabase.
+
+---
+
 ## TASK-306 / RENDER12-01: Typst math converter integral & multi-letter variable fix — 16/11/2026
 
 - Fixed `latex_math_to_typst()` in `backend/app/services/exporter/typst_converter.py` so real Golden math fixtures (`\int_{0}^{1}`, `dx`, `Oxyz`) compile cleanly under Typst `v0.11.1`:

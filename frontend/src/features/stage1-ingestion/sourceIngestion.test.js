@@ -1216,3 +1216,243 @@ test('F84-02-D: Re-ingest thành công sau dirty cập nhật baseline và mở 
   await f.controller.confirm();
   assert.equal(f.confirms.length, 1);
 });
+
+test('Issue #55: corrupt intent -> recovery A -> POST ingest B OK, GET fails -> reload retrieves B unlocks confirm without second POST', async () => {
+  let stored = null;
+  let clearCalls = 0;
+  const store = {
+    read: () => {
+      if (!stored) throw Object.assign(new Error('Corrupt'), { code: 'ERR_CONFIRM_STORAGE_CORRUPT' });
+      return stored;
+    },
+    saveRecovery: (sourceRevision) => { stored = { kind: 'replace-required', sourceRevision }; },
+    save: (value) => { stored = value; },
+    clear: () => { clearCalls++; stored = null; },
+  };
+  let server = detail({ source_revision: revA, source_questions: a });
+  let ingests = 0;
+  let reads = 0;
+  let failReads = false;
+  const f = confirmationFixture({
+    initialDetail: server,
+    confirmationStore: store,
+    ingestText: async () => {
+      ingests++;
+      server = detail({ source_revision: revB, source_questions: b });
+      return { session_id: 'session-a', questions: b };
+    },
+    load: async () => {
+      reads++;
+      if (failReads) throw httpError(503);
+      return server;
+    },
+  });
+
+  await f.controller.recoverConfirmationStorage();
+  assert.equal(reads, 1);
+  assert.deepEqual(stored, { kind: 'replace-required', sourceRevision: revA });
+  assert.equal(f.controller.canSubmit(), true);
+  assert.equal(f.controller.canConfirm(), false);
+
+  f.controller.setText('Nguồn B hợp lệ');
+  failReads = true;
+  await f.controller.submit();
+  assert.equal(ingests, 1);
+  assert.equal(reads, 2);
+  assert.equal(f.controller.canConfirm(), false);
+  assert.match(f.controller.getSnapshot().error, /Đã nạp đề nhưng chưa đọc được bản mới/);
+
+  // First reload still fails transiently, second reload succeeds with revB.
+  await f.controller.reload();
+  assert.equal(reads, 3);
+  assert.equal(f.controller.canConfirm(), false);
+
+  failReads = false;
+  await f.controller.reload();
+  assert.equal(reads, 4);
+  assert.equal(stored, null);
+  assert.equal(clearCalls, 1);
+  assert.equal(f.controller.getSnapshot().detail.source_revision, revB);
+  assert.equal(f.controller.getSnapshot().detail.source_questions, b);
+  assert.equal(f.controller.getSnapshot().isInputDirty, false);
+  assert.equal(f.controller.getSnapshot().confirmationError, '');
+  assert.equal(f.controller.canConfirm(), true, 'Must allow confirm after reload retrieves revB');
+
+  await f.controller.confirm();
+  assert.equal(ingests, 1, 'Must NOT require a second ingest POST');
+  assert.equal(f.confirms.length, 1);
+  assert.equal(f.confirms[0][1].sourceRevision, revB);
+});
+
+test('Issue #55 guards: stale revA reload, unsubmitted reload, uncertain POST reload, and post-ingest dirty edits stay locked', async () => {
+  // 1) POST succeeded + follow-up GET fails, manual reload returns stale revA, then later GET revB recovers without a second POST.
+  let stored = null;
+  const corruptStore = () => ({
+    read: () => {
+      if (!stored) throw Object.assign(new Error('Corrupt'), { code: 'ERR_CONFIRM_STORAGE_CORRUPT' });
+      return stored;
+    },
+    saveRecovery: (sourceRevision) => { stored = { kind: 'replace-required', sourceRevision }; },
+    save: (value) => { stored = value; },
+    clear: () => { stored = null; },
+  });
+  let failRead = false;
+  let staleIngests = 0;
+  let staleRev = revA;
+  const staleF = confirmationFixture({
+    initialDetail: detail({ source_revision: revA }),
+    confirmationStore: corruptStore(),
+    ingestText: async () => {
+      staleIngests++;
+      return { session_id: 'session-a', questions: b };
+    },
+    load: async () => {
+      if (failRead) throw httpError(503);
+      return staleRev === revB
+        ? detail({ source_revision: revB, source_questions: b })
+        : detail({ source_revision: revA, source_questions: a });
+    },
+  });
+  await staleF.controller.recoverConfirmationStorage();
+  staleF.controller.setText('Nguồn B hợp lệ');
+  failRead = true;
+  await staleF.controller.submit();
+  failRead = false;
+  await staleF.controller.reload();
+  assert.equal(stored.kind, 'replace-required');
+  assert.equal(staleF.controller.canConfirm(), false);
+
+  staleRev = revB;
+  await staleF.controller.reload();
+  assert.equal(stored, null);
+  assert.equal(staleF.controller.getSnapshot().detail.source_revision, revB);
+  assert.equal(staleF.controller.getSnapshot().isInputDirty, false);
+  assert.equal(staleF.controller.canConfirm(), true, 'Later GET of committed B should recover without another POST');
+  await staleF.controller.confirm();
+  assert.equal(staleIngests, 1);
+  assert.equal(staleF.confirms.length, 1);
+  assert.equal(staleF.confirms[0][1].sourceRevision, revB);
+
+  // 2) No explicit ingest POST succeeded (or uncertain POST): ordinary reload seeing revB must NOT clear fence.
+  for (const afterUncertainPost of [false, true]) {
+    stored = null;
+    let recovered = false;
+    const f = confirmationFixture({
+      initialDetail: detail({ source_revision: revA }),
+      confirmationStore: corruptStore(),
+      ingestText: async () => { throw new Error('Network lost before response'); },
+      load: async () => (recovered ? detail({ source_revision: revB, source_questions: b }) : detail({ source_revision: revA })),
+    });
+    await f.controller.recoverConfirmationStorage();
+    recovered = true;
+    if (afterUncertainPost) {
+      f.controller.setText('Nguồn chưa rõ');
+      await f.controller.submit();
+      assert.equal(f.controller.getSnapshot().uncertain, true);
+    }
+    await f.controller.reload();
+    assert.deepEqual(stored, { kind: 'replace-required', sourceRevision: revA });
+    assert.equal(f.controller.canConfirm(), false);
+  }
+
+  // 3) POST succeeded + follow-up GET failed, then teacher edits textarea before reload -> dirty guard still blocks confirm.
+  stored = null;
+  let dirtyReadFail = false;
+  let dirtyServer = detail({ source_revision: revA, source_questions: a });
+  const dirtyF = confirmationFixture({
+    initialDetail: dirtyServer,
+    confirmationStore: corruptStore(),
+    ingestText: async () => {
+      dirtyServer = detail({ source_revision: revB, source_questions: b });
+      return { session_id: 'session-a', questions: b };
+    },
+    load: async () => {
+      if (dirtyReadFail) throw httpError(503);
+      return dirtyServer;
+    },
+  });
+  await dirtyF.controller.recoverConfirmationStorage();
+  dirtyF.controller.setText('Nguồn B đã gửi');
+  dirtyReadFail = true;
+  await dirtyF.controller.submit();
+  dirtyF.controller.setText('Bản sửa C chưa gửi');
+  dirtyReadFail = false;
+  await dirtyF.controller.reload();
+  assert.equal(stored, null);
+  assert.equal(dirtyF.controller.getSnapshot().isInputDirty, true);
+  assert.equal(dirtyF.controller.canConfirm(), false);
+});
+
+test('F99-R01: immediate GET returning stale A inside submit() preserves receipt until GET B, and keeps dirty guard after stale read', async () => {
+  let stored = null;
+  const store = {
+    read: () => {
+      if (!stored) throw Object.assign(new Error('Corrupt'), { code: 'ERR_CONFIRM_STORAGE_CORRUPT' });
+      return stored;
+    },
+    saveRecovery: (sourceRevision) => { stored = { kind: 'replace-required', sourceRevision }; },
+    save: (value) => { stored = value; },
+    clear: () => { stored = null; },
+  };
+  let ingests = 0;
+  let server = detail({ source_revision: revA, source_questions: a });
+  const f = confirmationFixture({
+    initialDetail: server,
+    confirmationStore: store,
+    ingestText: async () => {
+      ingests++;
+      return { session_id: 'session-a', questions: b };
+    },
+    load: async () => server,
+  });
+
+  await f.controller.recoverConfirmationStorage();
+  f.controller.setText('Nguồn B hợp lệ');
+  // Immediate GET inside submit() still returns stale A.
+  await f.controller.submit();
+  assert.equal(ingests, 1);
+  assert.deepEqual(stored, { kind: 'replace-required', sourceRevision: revA });
+  assert.equal(f.controller.canConfirm(), false);
+  assert.match(f.controller.getSnapshot().error, /bản đọc về chưa cập nhật/);
+
+  // Later reload sees revB without another POST -> clears fence and confirms revB.
+  server = detail({ source_revision: revB, source_questions: b });
+  await f.controller.reload();
+  assert.equal(stored, null);
+  assert.equal(f.controller.getSnapshot().detail.source_revision, revB);
+  assert.equal(f.controller.getSnapshot().isInputDirty, false);
+  assert.equal(f.controller.canConfirm(), true);
+  await f.controller.confirm();
+  assert.equal(ingests, 1);
+  assert.equal(f.confirms.length, 1);
+  assert.equal(f.confirms[0][1].sourceRevision, revB);
+
+  // Variant: edit text after stale GET A before GET B -> baseline stays submitted input B so dirty guard still blocks C.
+  stored = null;
+  let failOnce = false;
+  let dirtyServer = detail({ source_revision: revA, source_questions: a });
+  const dirtyAfterStale = confirmationFixture({
+    initialDetail: dirtyServer,
+    confirmationStore: store,
+    ingestText: async () => ({ session_id: 'session-a', questions: b }),
+    load: async () => {
+      if (failOnce) throw httpError(503);
+      return dirtyServer;
+    },
+  });
+  await dirtyAfterStale.controller.recoverConfirmationStorage();
+  dirtyAfterStale.controller.setText('Nguồn B gửi lần 1');
+  failOnce = true;
+  await dirtyAfterStale.controller.submit();
+  failOnce = false;
+  // Stale A arrives first
+  await dirtyAfterStale.controller.reload();
+  assert.equal(dirtyAfterStale.controller.canConfirm(), false);
+  // Teacher edits text locally before B arrives
+  dirtyAfterStale.controller.setText('Bản sửa C chưa gửi');
+  dirtyServer = detail({ source_revision: revB, source_questions: b });
+  await dirtyAfterStale.controller.reload();
+  assert.equal(stored, null);
+  assert.equal(dirtyAfterStale.controller.getSnapshot().isInputDirty, true);
+  assert.equal(dirtyAfterStale.controller.canConfirm(), false);
+});

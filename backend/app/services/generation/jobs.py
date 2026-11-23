@@ -212,6 +212,15 @@ class GenerationJobRunner:
                             await self._emit(plan, "question_done", len(completed), target=target)
                             await self._emit(plan, "progress", len(completed))
                 elif isinstance(plan.inputs, AIBatchInputs):
+                    for target in plan.targets:
+                        if (
+                            str(target.source_question_id) in plan.inputs.clone_source_ids
+                            and target not in completed
+                        ):
+                            await store.save_clone(plan, target)
+                            completed.add(target)
+                            await self._emit(plan, "question_done", len(completed), target=target)
+                            await self._emit(plan, "progress", len(completed))
                     if self._batch is None:
                         raise RuntimeError("AI batch service is unavailable.")
                     async def on_result(result: PreparedAIResult) -> None:

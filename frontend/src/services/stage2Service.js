@@ -14,6 +14,9 @@ export async function fetchSessionDetail(sessionId) {
 
   // Lấy cấu hình đã lưu (nếu có) từ backend để phục hồi state khi F5/reload
   const rawConfig = data.generation_config || data.config || null;
+  // Track a real saved count separately from the normalized progress fallback.
+  const savedNumVersions = [rawConfig?.n_versions, rawConfig?.num_versions, data.n_versions]
+    .find((value) => Number.isInteger(value) && value >= 1 && value <= 4) ?? null;
   const savedConfig = rawConfig
     ? {
         n_versions: rawConfig.n_versions ?? rawConfig.num_versions ?? 2,
@@ -382,6 +385,7 @@ export async function fetchSessionDetail(sessionId) {
     ...data,
     blueprint_summary: blueprintSummary,
     config: savedConfig,
+    savedNumVersions,
     progress: restoredProgress,
     question_statuses: restoredQuestionStatuses,
     stream_epoch: data.stream_epoch || null,

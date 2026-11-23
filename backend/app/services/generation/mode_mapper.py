@@ -1,4 +1,4 @@
-"""The explicitly published Stage 2 mode profile (mapping version 1.0)."""
+"""Published mode aliases and the version 1.1 per-question policy."""
 
 from typing import Any
 
@@ -7,6 +7,31 @@ PUBLIC_TO_CANONICAL_DIMENSIONS = {
     "parameter_variation": "values",
     "context_swap": "context",
 }
+PER_QUESTION_MAPPING_VERSION = "1.1"
+
+
+def question_policy(blueprint: dict[str, Any]) -> dict[str, Any]:
+    """Derive a new-job decision; malformed/empty policies never imply Clone."""
+    from app.services.generation.config_service import (
+        GenerationConfigError,
+        validate_canonical_policy,
+    )
+
+    try:
+        validate_canonical_policy(blueprint)
+    except GenerationConfigError as exc:
+        raise ValueError("Malformed canonical variation policy") from exc
+    supported = {
+        item["dimension"]
+        for item in blueprint["requirement"]["variation_policy"]["allowed_transformations"]
+    }
+    dimensions = [dimension for dimension in ("values", "context") if dimension in supported]
+    return {
+        "canonical_dimensions": dimensions,
+        "result_kind": "AI_RESULT" if dimensions else "ORIGINAL_CLONE",
+    }
+
+
 MODE_LABELS = {
     "NUMERICAL": "Thay đổi số liệu",
     "parameter_variation": "Thay đổi số liệu / tham số",

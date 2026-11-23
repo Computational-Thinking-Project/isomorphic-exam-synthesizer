@@ -1001,6 +1001,75 @@ test('Issue #93: SourceQuestionPreview empty checklist, missing key badge, long 
   }
 });
 
+test('Issue #55 UI: recovery marker -> submit B with failed/stale GET -> manual reload unlocks confirm without duplicate ingest', async () => {
+  const revB = '20000000-0000-4000-8000-000000000009';
+  const key = `stage1-confirm:${JSON.stringify(['account-a', confirmSessionId])}`;
+  window.sessionStorage.setItem(key, '{broken');
+  let ingestCalls = 0;
+  let confirmCalls = 0;
+  let serverDetail = confirmDetail();
+  let getStep = 0;
+
+  api.defaults.adapter = async (config) => {
+    if (config.url.endsWith('/ingest-text')) {
+      ingestCalls++;
+      serverDetail = {
+        ...confirmDetail(),
+        source_revision: revB,
+        source_questions: [question('qb', confirmSessionId)],
+      };
+      getStep = 1;
+      return response(config, { session_id: confirmSessionId, total_questions: 1, questions: [question('qb', confirmSessionId)] });
+    }
+    if (config.url.endsWith('/confirm-source')) {
+      confirmCalls++;
+      return confirmedResponse(config);
+    }
+    if (config.url.endsWith('/source-artifacts')) {
+      return response(config, { session_id: confirmSessionId, ready: false, canonical_status: 'pending', supported_modes: null });
+    }
+    if (getStep === 1) {
+      getStep = 2;
+      throw { config, response: { status: 503, data: {} } };
+    }
+    if (getStep === 2) {
+      getStep = 0;
+      return response(config, confirmDetail());
+    }
+    return response(config, serverDetail);
+  };
+
+  const app = mount(confirmSessionId);
+  try {
+    await app.render();
+    await act(async () => button(app.container, 'Khôi phục thông tin xác nhận').click());
+    assert.notEqual(button(app.container, confirmLabel).getAttribute('disabled'), null);
+
+    await act(async () => input(app.container, 'Nội dung nguồn B'));
+    await act(async () => submit(app.container));
+    assert.equal(ingestCalls, 1);
+    assert.match(app.container.textContent, /Đã nạp đề nhưng chưa đọc được bản mới/);
+    assert.notEqual(button(app.container, confirmLabel).getAttribute('disabled'), null);
+
+    // First manual reload still reads stale revA -> keep fence & preserve receipt.
+    await act(async () => button(app.container, 'Đọc lại nguồn đã lưu').click());
+    assert.match(app.container.textContent, /Không khôi phục được mã xác nhận cũ/);
+    assert.notEqual(button(app.container, confirmLabel).getAttribute('disabled'), null);
+
+    // Second manual reload observes revB -> clear recovery fence & confirm without another POST.
+    await act(async () => button(app.container, 'Đọc lại nguồn đã lưu').click());
+    assert.match(app.container.textContent, /Nguồn qb/);
+    assert.equal(button(app.container, confirmLabel).getAttribute('disabled'), null);
+
+    await act(async () => button(app.container, confirmLabel).click());
+    assert.equal(ingestCalls, 1, 'Must confirm revB without a duplicate ingest POST');
+    assert.equal(confirmCalls, 1);
+    assert.match(app.container.textContent, /Đang chờ chuẩn bị cấu trúc đề/);
+  } finally {
+    await app.unmount();
+  }
+});
+
 test('Issue #93: React StrictMode effect replay does not deadlock blueprinted status polling', async () => {
   api.defaults.adapter = async (config) => {
     if (config.url.endsWith('/source-artifacts')) {

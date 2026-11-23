@@ -2631,3 +2631,65 @@ test('Task T3 / Issue #85: Canonical review snapshot (versions[].slots[].candida
     }
   }
 });
+
+test('ISSUE-95 Review UX: hiển thị header Bước 3/3, thanh điều hướng câu 4 trạng thái và chọn câu tự mở đối chiếu', async () => {
+  const harness = renderStage3Page('sess-95-nav', {
+    loadSession: async () => ({
+      id: 'sess-95-nav',
+      status: 'partial_generated',
+      config: { n_versions: 1 },
+      source_questions: [
+        { id: 'sq-1', question_no: 1, content: 'Câu gốc 1', correct_key: 'A', options: ['1', '2', '3', '4'] },
+        { id: 'sq-2', question_no: 2, content: 'Câu gốc 2', correct_key: 'B', options: ['1', '2', '3', '4'] },
+        { id: 'sq-3', question_no: 3, content: 'Câu gốc 3', correct_key: 'C', options: ['1', '2', '3', '4'] },
+        { id: 'sq-4', question_no: 4, content: 'Câu gốc 4', correct_key: 'D', options: ['1', '2', '3', '4'] },
+      ],
+      exam_versions: [
+        {
+          version_index: 1,
+          version_code: '101',
+          questions: [
+            { id: 'cand-1', question_no: 1, status: 'approved', content: 'Biến thể 1', correct_key: 'A', options: ['1', '2', '3', '4'] },
+            { id: 'cand-2', question_no: 2, status: 'pending_review', has_warning: true, warning_message: 'Cần đối chiếu nghiệm', content: 'Biến thể 2', correct_key: 'B', options: ['1', '2', '3', '4'] },
+            { id: 'cand-3', question_no: 3, status: 'pending_review', content: 'Biến thể 3', correct_key: 'C', options: ['1', '2', '3', '4'] },
+          ],
+        },
+      ],
+    }),
+  });
+
+  try {
+    await harness.render();
+    assert.match(harness.container.textContent, /Bước 3\/3 · Duyệt câu hỏi/);
+
+    const nav1 = harness.container.querySelector('[data-review-nav-q="1"]');
+    const nav2 = harness.container.querySelector('[data-review-nav-q="2"]');
+    const nav3 = harness.container.querySelector('[data-review-nav-q="3"]');
+    const nav4 = harness.container.querySelector('[data-review-nav-q="4"]');
+    assert.ok(nav1 && nav2 && nav3 && nav4, 'Phải hiển thị đủ 4 nút điều hướng câu');
+    assert.equal(nav1.getAttribute('aria-label'), 'Câu 1: Đã duyệt');
+    assert.equal(nav2.getAttribute('aria-label'), 'Câu 2: Có cảnh báo');
+    assert.equal(nav3.getAttribute('aria-label'), 'Câu 3: Chờ duyệt');
+    assert.equal(nav4.getAttribute('aria-label'), 'Câu 4: Thiếu câu');
+
+    // Lọc sang "Đã duyệt", rồi bấm Câu 3 trên navigator -> tự reset về "Tất cả" và mở đối chiếu Câu 3
+    const approvedFilterBtn = Array.from(harness.container.querySelectorAll('button')).find((b) =>
+      b.textContent.includes('Đã duyệt (1)'),
+    );
+    assert.ok(approvedFilterBtn);
+    await act(async () => approvedFilterBtn.click());
+    assert.equal(harness.container.querySelector('#review-1-3'), null);
+
+    await act(async () => nav3.click());
+    assert.equal(nav3.getAttribute('aria-current'), 'true');
+    assert.ok(harness.container.querySelector('#review-1-3'), 'Card Câu 3 phải hiển thị sau khi chọn từ navigator');
+    assert.ok(harness.container.querySelector('#solution-1-3'), 'Panel đối chiếu Câu 3 phải được mở');
+
+    const allFilterBtn = Array.from(harness.container.querySelectorAll('button')).find((b) =>
+      b.textContent.includes('Tất cả ('),
+    );
+    assert.equal(allFilterBtn?.getAttribute('aria-pressed'), 'true');
+  } finally {
+    await harness.unmount();
+  }
+});
