@@ -1,5 +1,21 @@
 # W4-MVP-12 — Security/negative baseline và regression tích hợp
 
+## Peer review và tiếp nhận input — 23/11/2026
+
+- Đạt kiểm độc lập đúng candidate `ffeb4f0` (base `ad7c313`): security và
+  statistics API **273 PASS**, gồm Golden full/empty, Windows + Typst0.11.1.
+  [Review COMMENTED](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/73#pullrequestreview-6018152739)
+  không có finding cần sửa fixture. Không phải GitHub Approve hoặc kiểm lại PG/live;
+  số273 của Đạt không cộng với các lượt author/agent bên dưới. CI candidate5/5 PASS.
+- I-W412-03: [Quỳnh đã giao kế hoạch kiểm](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/101#issuecomment-7081748500),
+  nhận đủ để phối hợp thứ tự SSE/F5/reconnect, partial/retry và fallback riêng.
+  **Chưa nhận live evidence**, chưa Accepted/Integrated cho mục tiêu runtime.
+  Kế hoạch chạy còn cần runtime/proxy, DB/applied receipts, principals, quota và
+  fault scope được xác nhận; ETA TBD. Giữ ID và trao đổi tại handoff chuẩn #101.
+- DB0/I-W412-01/02 chưa có receipt/quyết định mới thay checkpoint22/11.
+  Chỉ cập nhật tiếp nhận bằng chứng; không đổi contract hoặc tự chọn frozen head.
+  PR73 vẫn Draft, G0 BLOCKED, G1/G2 NOT RUN; không apply shared DB/bật export.
+
 ## Current integration checkpoint — 22/11/2026
 
 - Author; workflow v0.1 proposed + INPUT-20261109 (docs baseline `7b7387f`).
