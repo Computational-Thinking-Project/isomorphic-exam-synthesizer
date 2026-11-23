@@ -1,3 +1,12 @@
+## Issue #95 — Stage 3 comparison layout and review order — 23/11/2026
+
+- Trạng thái: **plan / đề xuất contract để review trên Draft PR**, chưa triển khai UI hoặc thay API. Nhánh `fix/stage3-ui`; [plan và input](tasks/ISSUE-95.md#6-plan-sửa-s06-trên-fixstage3-ui--23112026).
+- User chốt: nguồn chỉ đọc ở cột trái, biến thể có tabs mã ở cột phải; duyệt hết các mã của một câu rồi mới sang câu tiếp theo (Câu 1/Mã 1 → Câu 1/Mã 2 → Câu 2/Mã 1). Giữ chuẩn bố cục/màu walkthrough và các guard candidate identity/read-only/khóa phiên.
+- Contract còn mở: phục hồi đúng missing slot khi chưa có candidate ID, quyền duyệt cặp khỏe trong partial/read-only và ngoại lệ giữ revert như hành động phụ. Chưa chốt endpoint/payload hoặc nới quyền ghi; retry hiện tại vẫn cấp phiên. Chi tiết đề xuất tại mục 6.9 của plan.
+- Commit tài liệu phục vụ Draft/thống nhất đầu vào; không là kết quả visual QA, tích hợp FE–BE–DB hoặc approval của owner API.
+
+---
+
 ## DEC-97-001 — Issue #97: Teacher usage statistics — 20/11/2026
 
 - Decision owner: Issue #97 assignee. Status: proposed for review.
