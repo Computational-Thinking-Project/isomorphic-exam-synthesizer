@@ -1,6 +1,6 @@
 # PR #109 — gói kiểm chứng C5
 
-**Source Windows8a6f600:** targeted65/65, mutation bắt gate warning, lint/build đạt. Full suite Windows bị automatic approval review chặn do HTTPS telemetry Visual Studio với payload chưa rõ; chưa xác nhận full-pass và không thử workaround. Full621Linux c7044d6 là evidence riêng. Cần native/reviewer QA và CI trên head Windows sau push.
+**Source Windows8a6f600:** targeted65/65, mutation bắt gate warning, lint/build đạt. Sau xác nhận user, full suite Windows chạy lại tại HEAD72adb9f đạt **621/621**,2suites,0fail/skip/cancel/108.27s/exit0; source không đổi. [Checkpoint6.25](../../tasks/ISSUE-95.md) và log workspace tmp/pr109-windows-r1-full-approved.log là bằng chứng mới thay lần chạy bị auto-review chặn trước. Full621Linux c7044d6 là evidence riêng. Cần native/reviewer QA và CI trên head Windows sau push.
 
 **Lượt áp delta Windows25/11:** nội dung source R1 c7044d6 được áp lại trên parent c2b680a và docs a1b0ddb hợp nhất nội dung với plan Windows, không nhập nguyên object Linux hoặc overwrite docs local. [Checkpoint6.24](../../tasks/ISSUE-95.md) là trạng thái/checks Windows mới nhất; các dòng chưa nhập R1 bên dưới là lịch sử trước lượt này. Native/reviewer verification vẫn còn mở, không mặc định source author-fixed là đã resolved.
 
@@ -92,5 +92,5 @@ Khi bổ sung bằng chứng, ghi browser/version, code head, viewport/zoom, fix
 ## M5 dự thảo cho bản Windows, chưa gửi
 
 - F109-R1-03: source8a6f600 áp delta c7044d6 theo Q01; xóa reviewPairIssue/hasInvalidVariants và gate FE tự tính. Giữ BE warning/evidence, missing/read_only/busy/lock/identity/reconciliation/explicit approval. Author-fixed, chưa reviewer-verified/resolve.
-- Windows targeted65/lint/build đạt, mutation bắt gate warning; full suite bị auto-review chặn vì telemetry/payload chưa rõ. Full621Linux không thay proof Windows; không tự báo checks hoàn tất.
+- Windows targeted65/lint/build đạt, mutation bắt gate warning; full621/621 đạt sau user xác nhận chạy lại, source8a6f600/HEAD72adb9f. Evidence Windows tách khỏi full621Linux; native/CI/reviewer verification chưa hoàn tất.
 - F01–F04 giữ sourceebab331; Q02 giữ navigator đã duyệt/CSS flex/overflow-x:auto. Native delta/40câu/zoom200% chưa có bằng chứng mới. Cần CI/reviewer kiểm đúng head sau push, không thêm API hoặc mở C4b/C4c.

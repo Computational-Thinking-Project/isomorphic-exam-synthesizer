@@ -1,3 +1,10 @@
+## PR #109 — Windows full regression passed — 25/11/2026
+
+- Sau xác nhận của Philip về khả năng phát sinh telemetry, full frontend Windows **621/621 pass**,0fail/skip/cancel/108.27s, HEAD72adb9f/source8a6f600. [Checkpoint6.25](tasks/ISSUE-95.md) thay trạng thái full bị chặn/chưa xác nhận trước đó bằng kết quả mới.
+- Source không đổi: targeted65/mutation/lint/build trước đó vẫn áp dụng. Lượt này chỉ docs; native/reviewer QA/CI/Approve trên head sau push còn mở, chưa push/resolve/merge.
+
+---
+
 ## PR #109 — R1 applied on Windows and docs reconciled — 25/11/2026
 
 - Áp lại delta R1 Linux c7044d6 lên Windows parent c2b680a vì bundle/object chưa có tại máy này. Bỏ validator/gate FE tự tính, giữ BE warnings/guards và cập nhật regression; không thay backend/API.
