@@ -1609,19 +1609,21 @@ export default function Stage3ReviewPage({
             </Link>
             <button type="button" onClick={() => navigate(stage2Path(sessionId))}
               className="rounded-lg border border-line px-3 py-2 text-sm text-highlight">Xem thông tin lần sinh</button>
-            <span
-              className={`flex h-2.5 w-2.5 rounded-full ${
-                approvedCount === totalExpectedSlots && totalExpectedSlots > 0
-                  ? 'bg-approved-ink'
-                  : 'bg-accent'
-              }`}
-            />
-            <span className="text-sm font-medium text-ink">
-              Đã duyệt{' '}
-              <strong className="font-bold text-strong">
-                {approvedCount}/{totalExpectedSlots}
-              </strong>{' '}
-              câu
+            <span className="stage3-review-progress">
+              <span aria-hidden="true"
+                className={`flex h-2.5 w-2.5 rounded-full ${
+                  approvedCount === totalExpectedSlots && totalExpectedSlots > 0
+                    ? 'bg-approved-ink'
+                    : 'bg-accent'
+                }`}
+              />
+              <span className="text-sm font-medium text-ink">
+                Đã duyệt{' '}
+                <strong className="font-bold text-strong">
+                  {approvedCount}/{totalExpectedSlots}
+                </strong>{' '}
+                câu
+              </span>
             </span>
           </div>
 

@@ -58,6 +58,7 @@
 .stage3-panel-body { flex: 1 0 auto; padding: 16px; }
 .stage3-panel-body:focus-visible { outline: 2px solid var(--highlight); outline-offset: -3px; }
 .stage3-variant-card { min-width: 0; }
+.stage3-variant-card > .stage3-question-content { margin-top: 16px; }
 .stage3-question-content { font-size: 18px; line-height: 1.5; }
 .stage3-question-content > :first-child, .stage3-option > div { min-width: 0; overflow-x: auto; }
 .stage3-question-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; margin-top: 16px; }
@@ -68,6 +69,7 @@
 .stage3-option-keyed .stage3-option-letter { color: var(--strong); font-weight: 600; }
 .stage3-shell > .stage3-footer { margin-top: 0; border-top: 1px solid var(--line); padding-top: 12px; background: var(--surface); }
 .stage3-footer > div { gap: 8px 16px; }
+.stage3-review-progress { display: inline-flex; align-items: center; gap: 12px; flex-shrink: 0; white-space: nowrap; }
 .stage3-pair-actions { display: flex; justify-content: flex-end; }
 .stage3-toast-region { position: fixed; top: 72px; right: 16px; z-index: 30; width: min(360px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
 .stage3-toast { display: flex; align-items: start; gap: 8px; padding: 12px; border: 1px solid var(--support-line); border-radius: 8px; background: var(--support-bg); color: var(--support-text); box-shadow: var(--shadow-float); pointer-events: auto; }
@@ -78,9 +80,11 @@
 .stage3-inspection::backdrop { background: #27272a66; }
 .stage3-inspection-header { display: flex; justify-content: space-between; align-items: start; gap: 16px; padding: 16px 24px; border-bottom: 1px solid var(--line); }
 .stage3-inspection-header h2 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 20px; font-weight: 600; }
+.stage3-inspection-header h2:focus { outline: 2px solid var(--highlight); outline-offset: 4px; border-radius: 4px; }
 .stage3-inspection-header button { flex-shrink: 0; font-size: 24px; }
 .stage3-inspection-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 24px; overscroll-behavior: contain; }
 .stage3-inspection-body > p { margin-bottom: 16px; }
+.stage3-inspection .math-renderer a[href] { color: var(--highlight); text-decoration: underline; text-underline-offset: .15em; overflow-wrap: anywhere; }
 .stage3-inspection-body [role=alert] { color: var(--danger); background: var(--danger-soft); padding: 12px; border-radius: 8px; }
 .stage3-inspection-columns { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 24px; }
 .stage3-inspection-columns > section { min-width: 0; }
