@@ -1102,3 +1102,7 @@ giới hạn. Các chữ ký RPC và semantics hiện hành ở [contract08](api
 - AI validation remains required. Clone/fallback/Revert use the agreed missing-solution disclosure.
 - New Revert actions restore frozen sources pending teacher review; historical receipts remain immutable.
 - Deploy with workers drained and matched backend; use forward fixes rather than replaying historical migrations.
+
+## 24/11/2026 — Proposed generation batching và xuất file riêng
+
+Theo yêu cầu Đạt và phối hợp PR #109, gom các biến thể của một câu vào một request, xử lý theo câu nguồn/mã đề. UI chọn PDF/LaTeX/Markdown, thêm API tải file riêng từ artifact private hiện có. Gate xác thực, approval và checksum tiếp tục dùng logic hiện hành. Xem [plan và giới hạn](tasks/DAT-question-batch-formats.md). Chờ review và kiểm tích hợp live.

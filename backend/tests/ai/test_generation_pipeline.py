@@ -127,10 +127,10 @@ async def test_bad_schema_and_known_validator_error_retry_but_unknown_does_not(p
 async def test_duplicate_source_and_duplicate_across_versions_are_retried(pipeline):
     p = pipeline
     original = {**p.candidates[0], "question_text": p.source.question_text}
-    p.responses[:] = [original, p.candidates[0], p.candidates[0], p.candidates[1]]
+    p.responses[:] = [{"variants": [{"version_index": 1, "candidate": original}, {"version_index": 2, "candidate": p.candidates[0]}]}, p.candidates[0], p.candidates[1]]
     result = await p.service.generate_exam_drafts([p.source], {p.source.id: p.blueprint},
         confirmed_source_hash=p.confirmed, n_versions=2, context=p.context)
-    assert result.status == "generated" and p.budget.used == 4
+    assert result.status == "generated" and p.budget.used == 3
     assert len({r.candidate.question_text for r in result.results}) == 2
 
 
@@ -138,6 +138,7 @@ async def test_duplicate_source_and_duplicate_across_versions_are_retried(pipeli
 async def test_quota_failure_returns_partial_and_resume_only_calls_missing_slots(pipeline):
     p = pipeline
     p.budget.limit = 1
+    p.responses[:] = [{"variants": [{"version_index": 1, "candidate": p.candidates[0]}, {"version_index": 2, "candidate": p.candidates[0]}]}, p.candidates[1]]
     first = await p.service.generate_exam_drafts([p.source], {p.source.id: p.blueprint},
         confirmed_source_hash=p.confirmed, n_versions=2, context=p.context)
     assert first.status == "partial_generated"
@@ -225,7 +226,7 @@ async def test_deadline_and_nonretryable_error_are_bounded(pipeline):
 @pytest.mark.asyncio
 async def test_persistence_failure_is_propagated_not_reported_as_success(pipeline):
     p = pipeline
-    with pytest.raises(ExceptionGroup):
+    with pytest.raises(RuntimeError, match="database unavailable"):
         await p.service.generate_exam_drafts([p.source], {p.source.id: p.blueprint},
             confirmed_source_hash=p.confirmed, n_versions=1, context=p.context,
             on_result=AsyncMock(side_effect=RuntimeError("database unavailable")))
@@ -630,3 +631,65 @@ async def test_f02_real_processes_never_exceed_three(pipeline, monkeypatch):
                              return_exceptions=True)
         assert await validator.aclose(timeout_seconds=2)
     assert not {child.pid for child in multiprocessing.active_children()} - before
+
+@pytest.mark.asyncio
+async def test_four_versions_share_one_request_and_persist_in_order(pipeline):
+    p = pipeline
+    variants = []
+    for version in range(1, 5):
+        candidate = {**p.candidates[0], "question_text": f"Biến thể {version}"}
+        variants.append({"version_index": version, "candidate": candidate})
+    p.responses[:] = [{"variants": list(reversed(variants))}]
+    saved = []
+    async def persist(result):
+        saved.append(result.version_index)
+    result = await p.service.generate_exam_drafts(
+        [p.source], {p.source.id: p.blueprint}, confirmed_source_hash=p.confirmed,
+        n_versions=4, context=p.context, on_result=persist,
+    )
+    assert result.status == "generated"
+    assert p.budget.used == len(p.calls) == 1
+    assert saved == [1, 2, 3, 4]
+    assert [r.version_index for r in result.results] == saved
+
+@pytest.mark.asyncio
+async def test_sources_are_generated_question_first_before_next_source(pipeline):
+    p = pipeline
+    other = p.source.model_copy(update={"id": "q2"})
+    blueprint = copy.deepcopy(p.blueprint)
+    old_id = source_to_item(p.source)["source"]["question_id"]
+    new_id = source_to_item(other)["source"]["question_id"]
+    blueprint = json.loads(json.dumps(blueprint).replace(old_id, new_id))
+    payload = {"variants": [
+        {"version_index": version, "candidate": {
+            **p.candidates[0], "question_text": f"Câu {version}",
+        }} for version in (1, 2)
+    ]}
+    p.responses[:] = [payload, payload]
+    saved = []
+    async def persist(result):
+        saved.append((result.source_question_id, result.version_index))
+    result = await p.service.generate_exam_drafts(
+        [p.source, other], {p.source.id: p.blueprint, other.id: blueprint},
+        confirmed_source_hash=source_fingerprint(prepare_sources([p.source, other])),
+        n_versions=2, context=p.context, on_result=persist,
+    )
+    assert result.status == "generated"
+    assert p.budget.used == 2
+    assert saved == [(p.source.id, 1), (p.source.id, 2), ("q2", 1), ("q2", 2)]
+
+
+@pytest.mark.asyncio
+async def test_wrong_batch_version_ids_fail_without_saving_candidates(pipeline):
+    p = pipeline
+    p.responses[:] = [{"variants": [
+        {"version_index": 1, "candidate": p.candidates[0]},
+        {"version_index": 1, "candidate": p.candidates[1]},
+    ]}]
+    result = await p.service.generate_exam_drafts(
+        [p.source], {p.source.id: p.blueprint}, confirmed_source_hash=p.confirmed,
+        n_versions=2, context=p.context,
+    )
+    assert result.status == "failed"
+    assert all(r.candidate is None for r in result.results)
+    assert p.budget.used == 1

@@ -6,6 +6,7 @@ from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -63,6 +64,7 @@ async def test_service_dispatches_only_each_questions_dimensions_and_keeps_seed_
         )
 
     monkeypatch.setattr(service, "_generate", generate)
+    monkeypatch.setattr(service, "_request_versions", AsyncMock(return_value={}))
     modes = {
         key: tuple(question_policy(value)["canonical_dimensions"])
         for key, value in blueprints.items()

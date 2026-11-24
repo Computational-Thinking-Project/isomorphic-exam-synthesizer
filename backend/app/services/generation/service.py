@@ -14,6 +14,7 @@ from app.models.generation import (
     BatchResult,
     CandidatePayload,
     GeneratedQuestion,
+    QuestionCandidates,
     QuestionResult,
     StepByStepSolution,
     render_solution,
@@ -83,6 +84,51 @@ class GenerationService:
             "model": self.gateway.model, "prompt_version": PROMPT_VERSION,
         })
 
+    async def _request_candidate(
+        self, prompt: str, context: RequestContext, repair: CandidatePayload | None,
+    ) -> CandidatePayload:
+        response = await self.gateway.generate_content(
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM, response_mime_type="application/json",
+                response_json_schema=(
+                    StepByStepSolution if repair else CandidatePayload
+                ).model_json_schema(),
+                max_output_tokens=16384,
+            ),
+            context=context,
+        )
+        text = reply_from_response(response).text
+        if repair:
+            return repair.model_copy(update={"solution": parse_model_output(text, StepByStepSolution)})
+        return parse_model_output(text, CandidatePayload)
+
+    async def _request_versions(
+        self, blueprint: dict[str, Any], modes: list[str], seeds: dict[int, int],
+        context: RequestContext,
+    ) -> dict[int, CandidatePayload]:
+        prompt = build_prompt(blueprint=blueprint, seed=next(iter(seeds.values())), variation_modes=modes)
+        prompt += (
+            "\nSinh các biến thể khác nhau cho cùng câu nguồn trong MỘT JSON variants. "
+            "Mỗi phần tử gồm version_index và candidate theo schema. "
+            "Trả đúng các version_index được yêu cầu, không trùng mã. "
+            "Mỗi candidate tuân thủ đầy đủ quy tắc câu hỏi, đáp án và lời giải.\n"
+            + canonical({"versions": [{"version_index": v, "seed": seed} for v, seed in seeds.items()],
+                         })
+        )
+        response = await self.gateway.generate_content(
+            contents=prompt, context=context,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM, response_mime_type="application/json",
+                response_json_schema=QuestionCandidates.model_json_schema(), max_output_tokens=32768,
+            ),
+        )
+        batch = parse_model_output(reply_from_response(response).text, QuestionCandidates)
+        indices = [entry.version_index for entry in batch.variants]
+        if len(indices) != len(set(indices)) or set(indices) != set(seeds):
+            raise ToolError("GENERATION_INVALID", "Batch không khớp các mã đề được yêu cầu.")
+        return {entry.version_index: entry.candidate for entry in batch.variants}
+
     async def generate_question(
         self, source: SourceQuestion, blueprint: dict[str, Any], *,
         confirmed_source_hash: str, context: RequestContext, seed: int = 100,
@@ -101,6 +147,7 @@ class GenerationService:
         context: RequestContext, seed: int, version_index: int, variation_modes: list[str],
         previous: GeneratedQuestion | None = None, accept: AcceptCandidate | None = None,
         excluded_identities: set[str] | None = None, max_math_retries: int | None = None,
+        initial_candidate: CandidatePayload | None = None,
     ) -> QuestionResult:
         result = QuestionResult(
             version_index=version_index, source_question_id=source.id,
@@ -128,26 +175,10 @@ class GenerationService:
                         repair_solution=repair_candidate is not None,
                     )
                     try:
-                        response = await self.gateway.generate_content(
-                            contents=prompt,
-                            config=types.GenerateContentConfig(
-                                system_instruction=SYSTEM, response_mime_type="application/json",
-                                # JSON Schema transport preserves Pydantic's extra=forbid.
-                                # response_schema maps additionalProperties to a provider
-                                # field unsupported by the Gemini endpoint in use.
-                                response_json_schema=(
-                                    StepByStepSolution if repair_candidate else CandidatePayload
-                                ).model_json_schema(),
-                                max_output_tokens=16384,
-                            ),
-                            context=context,
-                        )
-                        reply = reply_from_response(response)
-                        if repair_candidate:
-                            solution = parse_model_output(reply.text, StepByStepSolution)
-                            candidate = repair_candidate.model_copy(update={"solution": solution})
+                        if attempt == 1 and initial_candidate is not None:
+                            candidate = initial_candidate
                         else:
-                            candidate = parse_model_output(reply.text, CandidatePayload)
+                            candidate = await self._request_candidate(prompt, context, repair_candidate)
                     except (GatewayError, ProviderError) as exc:
                         last_code = exc.code
                         result._exhausted_attempts = exc.retryable and attempt == self.MAX_ATTEMPTS
@@ -302,8 +333,8 @@ class GenerationService:
             self._prepare(source, blueprints[source.id], per_source_modes[source.id])
         slots = [
             (version, index, source, base_seed + version * 1000 + index)
-            for version in range(1, n_versions + 1)
             for index, source in enumerate(sources)
+            for version in range(1, n_versions + 1)
         ]
         cached = {(r.version_index, r.source_question_id): r.model_copy(deep=True) for r in completed or []}
         slot_keys = {(version, source.id) for version, _, source, _ in slots}
@@ -332,39 +363,57 @@ class GenerationService:
                 if identity in seen[source.id]:
                     raise ToolError("RESUME_MISMATCH", "Kết quả lưu trùng câu giữa các mã đề.")
                 seen[source.id].add(identity)
-        lock = asyncio.Lock()
-        semaphore = asyncio.Semaphore(3)
         results: list[QuestionResult | None] = [None] * len(slots)
-
-        async def one(position: int, version: int, index: int, source: SourceQuestion, seed: int):
-            saved = cached.get((version, source.id))
-            if saved:
-                results[position] = saved
-                return
-
+        for index, source in enumerate(sources):
+            pending = [
+                (position, version, seed)
+                for position, (version, source_index, _, seed) in enumerate(slots)
+                if source_index == index
+                and (version, source.id) not in committed_fallbacks | clone_slots
+                and (version, source.id) not in cached
+            ]
+            for position, (version, source_index, _, _) in enumerate(slots):
+                if source_index == index and (version, source.id) in cached:
+                    results[position] = cached[(version, source.id)]
+            if not pending:
+                continue
+            initial: dict[int, CandidatePayload] = {}
+            batch_error: str | None = None
+            if len(pending) > 1:
+                try:
+                    async with asyncio.timeout_at(context.deadline):
+                        initial = await self._request_versions(
+                            blueprints[source.id], per_source_modes[source.id],
+                            {version: seed for _, version, seed in pending}, context,
+                        )
+                except (GatewayError, ProviderError, ToolError) as exc:
+                    batch_error = exc.code
+                except TimeoutError:
+                    batch_error = "JOB_DEADLINE"
             async def accept(candidate: CandidatePayload) -> bool:
-                async with lock:
-                    identity = candidate_identity(candidate)
-                    if identity in seen[source.id]:
-                        return False
-                    seen[source.id].add(identity)
-                    return True
+                identity = candidate_identity(candidate)
+                if identity in seen[source.id]:
+                    return False
+                seen[source.id].add(identity)
+                return True
 
-            async with semaphore:
-                result = await self._generate(
-                    source, items[index], blueprints[source.id], context,
-                    seed, version, per_source_modes[source.id], accept=accept,
-                )
+            for position, version, seed in pending:
+                if batch_error:
+                    result = QuestionResult(
+                        version_index=version, source_question_id=source.id,
+                        request_fingerprint=self._request_fingerprint(
+                            items[index], blueprints[source.id], seed, per_source_modes[source.id],
+                        ), error_code=batch_error, attempts=1,
+                    )
+                else:
+                    result = await self._generate(
+                        source, items[index], blueprints[source.id], context,
+                        seed, version, per_source_modes[source.id], accept=accept,
+                        initial_candidate=initial.get(version),
+                    )
                 if on_result:
-                    # Await persistence before declaring this slot complete. Failure cancels siblings.
                     await on_result(result.model_copy(deep=True))
                 results[position] = result
-
-        async with asyncio.TaskGroup() as group:
-            for position, slot in enumerate(slots):
-                version, _, source, _ = slot
-                if (version, source.id) not in committed_fallbacks | clone_slots:
-                    group.create_task(one(position, *slot))
         ordered = [result for result in results if result is not None]
         count = len(committed_fallbacks) + len(clone_slots) + sum(result.candidate is not None for result in ordered)
         status: Literal["generated", "partial_generated", "failed"] = (

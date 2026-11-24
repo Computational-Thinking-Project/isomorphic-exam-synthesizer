@@ -16,12 +16,12 @@ from .private_repository import SupabaseExportLedger
 from .private_service import PrivateExportService, user_snapshot_loader
 from .private_storage import SupabasePrivateExportStore
 
-ExportOperation = Literal["export", "status", "download"]
+ExportOperation = Literal["export", "status", "download", "files"]
 
 
 def run_private_export(
     operation: ExportOperation, session_id: str, owner_id: str, user_db: Client
-) -> ExportResult | DownloadGrant:
+) -> ExportResult | DownloadGrant | dict[str, bytes]:
     """Called via to_thread; a disconnected caller does not roll back the worker."""
     rpc_timeout = settings.PRIVATE_EXPORT_RPC_TIMEOUT_SECONDS
     storage_timeout = settings.PRIVATE_EXPORT_STORAGE_TIMEOUT_SECONDS

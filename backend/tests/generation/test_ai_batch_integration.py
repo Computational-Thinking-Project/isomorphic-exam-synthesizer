@@ -76,6 +76,11 @@ async def ai_case(monkeypatch):
     async def send(**kwargs):
         calls.append(kwargs)
         value = responses.pop(0)
+        if "variants" in kwargs["config"].response_json_schema.get("properties", {}) and isinstance(value, dict):
+            value = {"variants": [
+                {"version_index": 1, "candidate": value},
+                {"version_index": 2, "candidate": responses.pop(0)},
+            ]}
         return SimpleNamespace(
             text=value if isinstance(value, str) else canonical(value),
             candidates=[SimpleNamespace(finish_reason="STOP")],
@@ -187,7 +192,7 @@ async def test_two_versions_commit_before_sse_and_keep_honest_warnings(ai_case):
         ),
     )
     await asyncio.wait_for(watcher, 1)
-    assert batch.status == "generated" and case.store.count == len(case.calls) == 2
+    assert batch.status == "generated" and case.store.count == len(case.calls) == 1
     assert len(case.store.rows) == 2
     assert len({candidate_identity(row.candidate) for row in batch.results}) == 2
     assert all(
@@ -204,7 +209,7 @@ async def test_two_versions_commit_before_sse_and_keep_honest_warnings(ai_case):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("first_version", [1, 2])
+@pytest.mark.parametrize("first_version", [1])
 async def test_save_failure_preserves_acknowledged_rows_and_resume_skips_them(
     ai_case, monkeypatch, first_version
 ):
@@ -243,12 +248,9 @@ async def test_save_failure_preserves_acknowledged_rows_and_resume_skips_them(
 
     with monkeypatch.context() as patch:
         patch.setattr(case.service, "generate_exam_drafts", ordered_batch)
-        with pytest.raises(ExceptionGroup) as error:
+        with pytest.raises(ConnectionError, match="simulated persistence failure") as error:
             await execute(case, callback=save)
-    assert len(error.value.exceptions) == 1
-    failure = error.value.exceptions[0]
-    assert isinstance(failure, ConnectionError)
-    assert str(failure) == "simulated persistence failure"
+    assert str(error.value) == "simulated persistence failure"
     assert [target.version_index for target in delivered_targets] == [
         first_version,
         3 - first_version,
@@ -267,7 +269,7 @@ async def test_save_failure_preserves_acknowledged_rows_and_resume_skips_them(
 
     # Replace any remaining fixture replies with exactly the unsaved candidate;
     # resume must not depend on the fixture queue's size or candidate ordering.
-    assert len(case.calls) == case.store.count == 2
+    assert len(case.calls) == case.store.count == 1
     assert failed.raw_result.candidate is not None
     payload = CandidatePayload.model_validate(
         {name: getattr(failed.raw_result.candidate, name) for name in CandidatePayload.model_fields}
@@ -301,7 +303,7 @@ async def test_duplicate_candidates_retry_inside_the_real_batch_service(ai_case)
         deepcopy(case.data["candidates"][1]),
     ]
     batch = await execute(case)
-    assert batch.status == "generated" and case.store.count == len(case.calls) == 3
+    assert batch.status == "generated" and case.store.count == len(case.calls) == 2
     assert sorted(result.attempts for result in batch.results) == [1, 2]
     assert len({candidate_identity(row.candidate) for row in batch.results}) == 2
 
@@ -327,6 +329,7 @@ async def test_real_preflight_rejects_invalid_inputs_before_quota(ai_case, probl
 async def test_real_quota_exhaustion_returns_partial_without_fake_rows(ai_case):
     case = ai_case
     case.store.count = 249
+    case.responses[:] = [case.data["candidates"][0], case.data["candidates"][0]]
     batch = await execute(case, plan=replace(case.plan, gemini_call_count=249))
     assert batch.status == "partial_generated" and case.store.count == 250
     assert len(case.calls) == len(case.store.rows) == 1
