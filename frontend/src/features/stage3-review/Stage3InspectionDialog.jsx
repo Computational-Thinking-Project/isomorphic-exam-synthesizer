@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ReviewQuestionContent, reviewPairIssue } from './Stage3Comparison.jsx';
+import { ReviewQuestionContent } from './Stage3Comparison.jsx';
 import MathRenderer from '../../components/MathRenderer.jsx';
 
 export default function Stage3InspectionDialog({ selection, versionLabel, message, readOnly, approved,
@@ -10,7 +10,9 @@ export default function Stage3InspectionDialog({ selection, versionLabel, messag
   const [confirmation, setConfirmation] = useState(null);
   const { variant, qNo } = selection;
   const candidateId = variant.candidate_id || variant.id || variant.question_id;
-  const issue = reviewPairIssue(variant);
+  const warning = [variant.warning_message, variant.validation_report?.warning, variant.validation_report?.message]
+    .find(value => typeof value === 'string' && value.trim())
+    || (variant.has_warning ? 'Có cảnh báo kiểm định; vui lòng kiểm tra đáp án và lời giải.' : null);
   useEffect(() => {
     mounted.current = true;
     const node = dialog.current;
@@ -55,7 +57,7 @@ export default function Stage3InspectionDialog({ selection, versionLabel, messag
       </header>
       <div className="stage3-inspection-body">
         {message && <p role={message.type === 'error' ? 'alert' : 'status'}>{message.text}</p>}
-        {issue && <p role="alert">{issue}</p>}
+        {warning && <p role="status">{warning}</p>}
         {confirmation ? <p>Thao tác chỉ áp dụng Câu {qNo} · {versionLabel}. Kết quả mới phải được kiểm tra và duyệt lại; các cặp khác được giữ nguyên.</p> :
           <div className="stage3-inspection-columns">
             <section aria-label="Biến thể đang xem"><h3>Biến thể · Câu {qNo}</h3><ReviewQuestionContent question={variant} /></section>
@@ -76,7 +78,7 @@ export default function Stage3InspectionDialog({ selection, versionLabel, messag
           {canRevert && <button type="button" className="stage3-revert" data-review-revert disabled={busy} onClick={() => setConfirmation('revert')}>Khôi phục đề gốc</button>}
           <div className="stage3-primary-actions">
             <button type="button" data-review-regenerate disabled={busy || !candidateId} onClick={() => setConfirmation('regenerate')}>Tạo lại</button>
-            <button type="button" data-review-approve disabled={busy || approved || !candidateId || Boolean(issue)} onClick={() => void onApprove()}>{busy ? 'Đang xử lý…' : approved ? 'Đã duyệt' : 'Duyệt biến thể'}</button>
+            <button type="button" data-review-approve disabled={busy || approved || !candidateId} onClick={() => void onApprove()}>{busy ? 'Đang xử lý…' : approved ? 'Đã duyệt' : 'Duyệt biến thể'}</button>
             {approved && <button type="button" onClick={onNext} disabled={busy}>Đến câu chưa duyệt tiếp theo</button>}
           </div>
         </>)}

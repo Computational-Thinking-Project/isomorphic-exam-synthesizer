@@ -18,7 +18,7 @@ import {
 import Stage3InspectionDialog from './Stage3InspectionDialog.jsx';
 import Stage3ReviewNotifications from './Stage3ReviewNotifications.jsx';
 import BrandLogo from '../../components/BrandLogo.jsx';
-import Stage3Comparison, { ReviewQuestionContent, reviewPairIssue } from './Stage3Comparison.jsx';
+import Stage3Comparison, { ReviewQuestionContent } from './Stage3Comparison.jsx';
 import './stage3Review.css';
 import { getSessionDetail } from '../../services/sessions.js';
 import { retryGeneration } from '../../services/stage2Service.js';
@@ -41,7 +41,6 @@ function getVariantWarningFlags(variant) {
   ) && variant?.origin !== 'original_clone';
 
   const hasWarning = Boolean(
-    reviewPairIssue(variant) ||
     variant?.has_warning ||
     variant?.warning_flag ||
     variant?.status === 'warning' ||
@@ -656,9 +655,6 @@ export default function Stage3ReviewPage({
       return;
     }
 
-    const issue = reviewPairIssue(variant);
-    if (issue) { setActionMessage({ type: 'error', text: issue }); return; }
-
     const currentOp = ++mutationOperationRef.current;
     const targetSessionId = sessionId;
 
@@ -1122,12 +1118,8 @@ export default function Stage3ReviewPage({
     setApprovalFocus(null);
   }, [approvalFocus, selectedSolution]);
 
-  const hasInvalidVariants = (session?.exam_versions || []).some(version =>
-    (version.questions || version.version_questions || []).some(question => Boolean(reviewPairIssue(question)))
-  ) || (session?.version_questions || []).some(question => Boolean(reviewPairIssue(question)));
-
   const isFinalizeDisabled =
-    totalExpectedSlots === 0 || approvedCount < totalExpectedSlots || isPartial || isReviewReadOnly || reviewSyncRequired || hasInvalidVariants || isApprovingSingle || isRegeneratingSingle || isRevertingSingle || isRetryingAll;
+    totalExpectedSlots === 0 || approvedCount < totalExpectedSlots || isPartial || isReviewReadOnly || reviewSyncRequired || isApprovingSingle || isRegeneratingSingle || isRevertingSingle || isRetryingAll;
 
   const isSelectedVariantApproved = useMemo(() => {
     return isVariantApproved(selectedSolution?.variant, approvedVariantIds);
@@ -1472,7 +1464,6 @@ export default function Stage3ReviewPage({
           const { isFallback, hasWarning } = getVariantWarningFlags(variant);
 
           const warningMsg =
-            reviewPairIssue(variant) ||
             variant.warning_message ||
             variant.validation_report?.warning ||
             variant.validation_report?.message ||
@@ -1651,7 +1642,7 @@ export default function Stage3ReviewPage({
             )}
             {isFinalizeDisabled ? (
               <p className="text-xs sm:text-sm text-muted" role="status">
-                {reviewSyncRequired ? 'Cần đọc lại trạng thái review.' : isReviewReadOnly ? 'Phiên đang chỉ xem hoặc đã khóa.' : hasInvalidVariants ? 'Còn biến thể lỗi cần tạo lại trước khi rà bộ đề.' : totalExpectedSlots === 0 ? 'Chưa có đủ dữ liệu câu hỏi.' : isPartial ? 'Cần sinh đủ câu và duyệt tất cả câu hỏi.' : `Còn ${Math.max(0, totalExpectedSlots - approvedCount)} câu chưa duyệt.`}
+                {reviewSyncRequired ? 'Cần đọc lại trạng thái review.' : isReviewReadOnly ? 'Phiên đang chỉ xem hoặc đã khóa.' : totalExpectedSlots === 0 ? 'Chưa có đủ dữ liệu câu hỏi.' : isPartial ? 'Cần sinh đủ câu và duyệt tất cả câu hỏi.' : `Còn ${Math.max(0, totalExpectedSlots - approvedCount)} câu chưa duyệt.`}
               </p>
             ) : (
               <p className="text-xs font-semibold text-approved-ink" role="status">

@@ -2938,28 +2938,54 @@ test('C5: popup chỉ xem giữ liên kết Markdown trong thứ tự Tab', asyn
   } finally { await harness.unmount(); }
 });
 
-test('C4a: cặp lỗi rõ ràng khóa accept và gate, warning không đồng nghĩa lỗi cứng', async () => {
-  for (const invalid of [true, false]) {
-    const data = comparisonSession(`pair-validation-${invalid}`);
-    data.exam_versions[0].questions[0].has_warning = true;
-    if (invalid) data.exam_versions[0].questions[0].options = ['Một','Hai','Hai','Bốn'];
+test('R1: evidence và provenance không tự cấm Accept, warning vẫn hiển thị', async () => {
+  const reports = [
+    ['ai_generated', null],
+    ['regenerated', { is_valid: false, message: 'Báo cáo cần giáo viên kiểm tra' }],
+    ['reverted', { validation_status: 'not_validated' }],
+    ['original_clone', { math_verified: false }],
+    ['confirmed_source_fallback', { checks: [{ status: 'unknown', passed: false }] }],
+  ];
+  for (const [origin, report] of reports) {
+    const data = comparisonSession(`review-evidence-${origin}`);
+    const candidate = data.exam_versions[0].questions[0];
+    Object.assign(candidate, { origin, has_warning: true, validation_report: report });
     let calls = 0;
     const harness = renderStage3Page(data.id, { loadSession: async () => structuredClone(data),
-      acceptQuestionFn: async () => { calls++; return { question_status: 'approved' }; },
+      acceptQuestionFn: async () => {
+        calls++;
+        candidate.status = 'approved';
+        return { question_id: candidate.id, question_status: 'approved' };
+      },
     });
     try {
       await harness.render();
       await act(async () => harness.container.querySelector('[data-review-inspect]').click());
-      const approve = harness.container.querySelector('[data-review-approve]');
-      assert.equal(approve.getAttribute('disabled') !== null, invalid);
-      if (invalid) {
-        assert.match(harness.container.querySelector('[role="dialog"]').textContent, /trùng nhau/);
-        await act(async () => approve.click());
-        assert.equal(calls, 0);
-        assert.notEqual(harness.container.querySelector('[data-review-finalize]').getAttribute('disabled'), null);
-      }
+      const modal = harness.container.querySelector('[role="dialog"]');
+      assert.match(modal.textContent, /kiểm tra|kiểm định/);
+      const approve = modal.querySelector('[data-review-approve]');
+      assert.equal(approve.getAttribute('disabled'), null, origin);
+      await act(async () => approve.click());
+      assert.equal(calls, 1, 'Accept phải được gửi tới BE theo guard hiện hành');
+      assert.equal(harness.container.querySelector('[data-review-nav-q="1"]').getAttribute('aria-label'), 'Câu 1: Chờ duyệt');
+      assert.equal(harness.container.querySelector('[data-review-version="2"]').getAttribute('aria-selected'), 'true');
     } finally { await harness.unmount(); }
   }
+});
+
+test('R1: đủ approval và snapshot editable thì warning/report không khóa Rà bộ đề', async () => {
+  const data = comparisonSession('review-warning-ready');
+  for (const version of data.exam_versions) for (const candidate of version.questions) {
+    Object.assign(candidate, { status: 'approved', has_warning: true, validation_report: { is_valid: false } });
+  }
+  const harness = renderStage3Page(data.id, { loadSession: async () => data });
+  try {
+    await harness.render();
+    const finalize = harness.container.querySelector('[data-review-finalize]');
+    assert.equal(finalize.getAttribute('disabled'), null);
+    await act(async () => finalize.click());
+    assert.match(harness.getLocation(), /stage3\/preview$/);
+  } finally { await harness.unmount(); }
 });
 
 test('C4a: accept thành công nhưng snapshot thất lạc thì giữ modal và khóa ghi đến khi đọc lại', async () => {

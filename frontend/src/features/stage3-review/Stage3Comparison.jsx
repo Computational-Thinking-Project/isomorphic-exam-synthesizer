@@ -1,22 +1,6 @@
 import MathRenderer from '../../components/MathRenderer.jsx';
 import { normalizeOptions } from '../../services/stage3Service.js';
 
-// Only clear structural failures; warnings/unknown mathematical checks are not proof of failure.
-export function reviewPairIssue(question) {
-  if (!question) return null;
-  if (question.validation_report?.is_valid === false) return 'Biến thể không hợp lệ. Cần tạo lại trước khi duyệt.';
-  const options = normalizeOptions(question.options);
-  const values = Object.values(options).map(value => String(value).trim());
-  if (values.length === 4 && (values.some(value => !value) || new Set(values).size !== 4)) {
-    return 'Có phương án rỗng hoặc trùng nhau. Cần tạo lại trước khi duyệt.';
-  }
-  const key = String(question.correct_key || question.answer || '').trim().toUpperCase();
-  if ((values.length === 4 && !key) || (key && values.length && !Object.hasOwn(options, key))) {
-    return 'Khóa đáp án thiếu hoặc không khớp phương án. Cần tạo lại trước khi duyệt.';
-  }
-  return null;
-}
-
 export function ReviewQuestionContent({ question }) {
   const options = normalizeOptions(question?.options);
   const key = String(question?.correct_key || question?.answer || '').trim().toUpperCase();
