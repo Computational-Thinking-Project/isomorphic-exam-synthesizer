@@ -33,8 +33,10 @@ export default function Stage3InspectionDialog({ selection, versionLabel, messag
   const keyDown = (event) => {
     if (event.key === 'Escape') { event.preventDefault(); close(); }
     if (event.key !== 'Tab') return;
-    const buttons = Array.from(dialog.current.querySelectorAll('button')).filter(button => !button.disabled);
-    const first = buttons[0], last = buttons[buttons.length - 1];
+    // Markdown solutions can contain links, including in a read-only dialog with no footer actions.
+    const focusable = Array.from(dialog.current.querySelectorAll('button, a[href], [tabindex]'))
+      .filter(element => !element.disabled && Number(element.getAttribute('tabindex') ?? 0) >= 0);
+    const first = focusable[0], last = focusable[focusable.length - 1];
     if (!first) { event.preventDefault(); return; }
     if (event.shiftKey && (document.activeElement === first || document.activeElement === heading.current)) {
       event.preventDefault(); last.focus();

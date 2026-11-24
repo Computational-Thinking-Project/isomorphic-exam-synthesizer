@@ -2891,6 +2891,39 @@ test('C3: focus giữ trong popup, Escape trả focus về nút mở', async () 
   } finally { await harness.unmount(); }
 });
 
+test('C5: popup chỉ xem giữ liên kết Markdown trong thứ tự Tab', async () => {
+  const data = comparisonSession('dialog-readonly-link');
+  data.read_only = true;
+  data.exam_versions[0].questions[0].solution_md = '[Tham khảo](https://example.test/solution)';
+  const harness = renderStage3Page(data.id, { loadSession: async () => data });
+  try {
+    await harness.render();
+    const opener = harness.container.querySelector('[data-review-inspect]');
+    opener.focus();
+    await act(async () => opener.click());
+    const modal = harness.container.querySelector('[role="dialog"]');
+    const close = modal.querySelector('button');
+    const link = modal.querySelector('a[href]');
+    assert.ok(link, 'Lời giải Markdown có liên kết thật');
+    assert.ok(modal.querySelector('[data-review-approve]') === null, 'Chỉ xem không có mutation');
+    let prevented = false;
+    close.focus();
+    await act(async () => close.dispatchEvent({ type: 'keydown', key: 'Tab', bubbles: true,
+      preventDefault() { prevented = true; } }));
+    assert.equal(prevented, false, 'Tab từ nút đóng phải cho phép browser đi tiếp đến link');
+    link.focus();
+    await act(async () => link.dispatchEvent({ type: 'keydown', key: 'Tab', bubbles: true,
+      preventDefault() {} }));
+    assert.ok(document.activeElement === close, 'Tab từ link cuối quay về nút đóng');
+    await act(async () => close.dispatchEvent({ type: 'keydown', key: 'Tab', shiftKey: true,
+      bubbles: true, preventDefault() {} }));
+    assert.ok(document.activeElement === link, 'Shift+Tab từ nút đóng quay về link cuối');
+    await act(async () => modal.dispatchEvent({ type: 'keydown', key: 'Escape', bubbles: true,
+      preventDefault() {} }));
+    assert.ok(document.activeElement === opener, 'Escape trả focus về nút mở');
+  } finally { await harness.unmount(); }
+});
+
 test('C4a: cặp lỗi rõ ràng khóa accept và gate, warning không đồng nghĩa lỗi cứng', async () => {
   for (const invalid of [true, false]) {
     const data = comparisonSession(`pair-validation-${invalid}`);
