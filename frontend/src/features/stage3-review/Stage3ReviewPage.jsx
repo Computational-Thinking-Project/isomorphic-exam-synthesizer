@@ -16,8 +16,9 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import Stage3InspectionDialog from './Stage3InspectionDialog.jsx';
+import Stage3ReviewNotifications from './Stage3ReviewNotifications.jsx';
 import BrandLogo from '../../components/BrandLogo.jsx';
-import Stage3Comparison, { ReviewQuestionContent } from './Stage3Comparison.jsx';
+import Stage3Comparison, { ReviewQuestionContent, reviewPairIssue } from './Stage3Comparison.jsx';
 import './stage3Review.css';
 import { getSessionDetail } from '../../services/sessions.js';
 import { retryGeneration } from '../../services/stage2Service.js';
@@ -40,6 +41,7 @@ function getVariantWarningFlags(variant) {
   ) && variant?.origin !== 'original_clone';
 
   const hasWarning = Boolean(
+    reviewPairIssue(variant) ||
     variant?.has_warning ||
     variant?.warning_flag ||
     variant?.status === 'warning' ||
@@ -224,6 +226,7 @@ export default function Stage3ReviewPage({
   const [selectedQuestionNo, setSelectedQuestionNo] = useState(1);
   const [isRetryingAll, setIsRetryingAll] = useState(false);
   const [actionMessage, setActionMessage] = useState(null);
+  const [reviewSyncRequired, setReviewSyncRequired] = useState(false);
 
   // Trạng thái modal Kiểm tra đáp án (SolutionDialog)
   const [selectedSolution, setSelectedSolution] = useState(null);
@@ -270,6 +273,8 @@ export default function Stage3ReviewPage({
         return;
       }
       const data = adaptReviewSnapshot(rawData);
+      setReviewSyncRequired(false);
+      setSelectedSolution(null);
       setSession(data);
       setLockedDetail(null);
 
@@ -365,6 +370,7 @@ export default function Stage3ReviewPage({
     setSelectedQuestionNo(1);
     setReviewFilter('all');
     setIsRetryingAll(false);
+    setReviewSyncRequired(false);
     setSelectedSolution(null);
     setApprovalFocus(null);
     setApprovedVariantIds(new Set());
@@ -470,7 +476,7 @@ export default function Stage3ReviewPage({
 
   // Xử lý Tạo lại câu hỏi trong SolutionDialog (Reject & Targeted Regeneration)
   const handleRegenerateSingle = useCallback(async () => {
-    if (!selectedSolution?.variant || isRegeneratingSingle || isReviewReadOnly) return;
+    if (!selectedSolution?.variant || isRegeneratingSingle || isReviewReadOnly || reviewSyncRequired) return;
     const { variant, qNo, versionIndex } = selectedSolution;
     const targetQId = variant.candidate_id || variant.id || variant.question_id;
     if (!targetQId) {
@@ -522,7 +528,7 @@ export default function Stage3ReviewPage({
         question_no: variant.question_no ?? qNo,
         number: variant.number ?? qNo,
         version_index: versionIndex,
-        status: res?.status || 'pending_review',
+        status: 'pending_review',
         content: res?.content || res?.stem_latex || res?.stem || variant.content,
         options: newOptions,
         correct_key: res?.correct_key || variant.correct_key,
@@ -643,11 +649,11 @@ export default function Stage3ReviewPage({
         setIsRegeneratingSingle(false);
       }
     }
-  }, [selectedSolution, isRegeneratingSingle, isReviewReadOnly, regenerateQuestionFn, sessionId, updateVariantInSession, loadSession]);
+  }, [selectedSolution, isRegeneratingSingle, isReviewReadOnly, reviewSyncRequired, regenerateQuestionFn, sessionId, updateVariantInSession, loadSession]);
 
   // Xử lý Duyệt biến thể trong SolutionDialog
   const handleApproveSingle = useCallback(async () => {
-    if (!selectedSolution?.variant || isApprovingSingle || isReviewReadOnly) return;
+    if (!selectedSolution?.variant || isApprovingSingle || isReviewReadOnly || reviewSyncRequired) return;
     const { variant, qNo, versionIndex } = selectedSolution;
     const targetQId = variant.candidate_id || variant.id || variant.question_id;
     if (!targetQId) {
@@ -657,6 +663,9 @@ export default function Stage3ReviewPage({
       });
       return;
     }
+
+    const issue = reviewPairIssue(variant);
+    if (issue) { setActionMessage({ type: 'error', text: issue }); return; }
 
     const currentOp = ++mutationOperationRef.current;
     const targetSessionId = sessionId;
@@ -716,6 +725,7 @@ export default function Stage3ReviewPage({
       // Refetch current snapshot sau accept để cập nhật persisted review progress và freshness token
       try {
         const latestRaw = await loadSession(targetSessionId);
+        if (!latestRaw) throw new Error('Missing review snapshot');
         if (
           isMountedRef.current &&
           mutationOperationRef.current === currentOp &&
@@ -791,7 +801,10 @@ export default function Stage3ReviewPage({
 
         }
       } catch {
-        // Refetch thất bại trong nền không làm hỏng optimistic update đã hiển thị cho người dùng
+        if (isMountedRef.current && mutationOperationRef.current === currentOp && activeSessionIdRef.current === targetSessionId) {
+          setReviewSyncRequired(true);
+          setActionMessage({ type: 'error', text: 'Đã nhận phản hồi duyệt nhưng chưa đối soát được trạng thái. Đọc lại trạng thái trước khi tiếp tục.' });
+        }
       }
     } catch (err) {
       if (
@@ -814,11 +827,11 @@ export default function Stage3ReviewPage({
         setIsApprovingSingle(false);
       }
     }
-  }, [selectedSolution, isApprovingSingle, isReviewReadOnly, acceptQuestionFn, sessionId, updateVariantInSession, loadSession]);
+  }, [selectedSolution, isApprovingSingle, isReviewReadOnly, reviewSyncRequired, acceptQuestionFn, sessionId, updateVariantInSession, loadSession]);
 
   // Xử lý Khôi phục đề gốc (Revert candidate)
   const handleRevertSingle = useCallback(async () => {
-    if (!selectedSolution?.variant || isRevertingSingle || isReviewReadOnly) return;
+    if (!selectedSolution?.variant || isRevertingSingle || isReviewReadOnly || reviewSyncRequired) return;
     const { variant, qNo, versionIndex } = selectedSolution;
     const targetQId = variant.candidate_id || variant.id || variant.question_id;
     if (!targetQId) {
@@ -960,7 +973,7 @@ export default function Stage3ReviewPage({
         setIsRevertingSingle(false);
       }
     }
-  }, [selectedSolution, isRevertingSingle, isReviewReadOnly, revertQuestionFn, sessionId, session, updateVariantInSession, loadSession]);
+  }, [selectedSolution, isRevertingSingle, isReviewReadOnly, reviewSyncRequired, revertQuestionFn, sessionId, session, updateVariantInSession, loadSession]);
 
   const handleRetryAllMissing = async () => {
     if (!canRetryPartial || isRetryingAll) return;
@@ -1127,8 +1140,12 @@ export default function Stage3ReviewPage({
     setApprovalFocus(null);
   }, [approvalFocus, selectedSolution]);
 
+  const hasInvalidVariants = (session?.exam_versions || []).some(version =>
+    (version.questions || version.version_questions || []).some(question => Boolean(reviewPairIssue(question)))
+  ) || (session?.version_questions || []).some(question => Boolean(reviewPairIssue(question)));
+
   const isFinalizeDisabled =
-    totalExpectedSlots === 0 || approvedCount < totalExpectedSlots || isPartial || isReviewReadOnly || isApprovingSingle || isRegeneratingSingle || isRetryingAll;
+    totalExpectedSlots === 0 || approvedCount < totalExpectedSlots || isPartial || isReviewReadOnly || reviewSyncRequired || hasInvalidVariants || isApprovingSingle || isRegeneratingSingle || isRevertingSingle || isRetryingAll;
 
   const isSelectedVariantApproved = useMemo(() => {
     return isVariantApproved(selectedSolution?.variant, approvedVariantIds);
@@ -1268,19 +1285,11 @@ export default function Stage3ReviewPage({
           className="rounded-lg bg-approved-ink px-4 py-2 text-xs font-semibold text-white">Tới màn hình Xuất bản</button>}
       </header>
 
-      {/* Thông báo thao tác */}
-      {actionMessage && (
-        <div
-          role="status"
-          className={`stage3-session-notice rounded-xl border text-xs font-medium ${
-            actionMessage.type === 'success'
-              ? 'border-approved-border bg-approved-bg text-approved-ink'
-              : 'border-danger-border bg-danger-soft text-danger'
-          }`}
-        >
-          {actionMessage.text}
-        </div>
-      )}
+      <Stage3ReviewNotifications key={sessionId} message={actionMessage} />
+      {reviewSyncRequired && <div role="alert" className="stage3-session-notice">
+        Chưa đối soát được trạng thái review.
+        <button type="button" className="text-highlight underline" onClick={() => void loadData()}>Đọc lại trạng thái</button>
+      </div>}
 
       {/* Cảnh báo phiên đã khóa nội dung (approved / exported) */}
       {isFinalLocked && (
@@ -1514,6 +1523,7 @@ export default function Stage3ReviewPage({
           const { isFallback, hasWarning } = getVariantWarningFlags(variant);
 
           const warningMsg =
+            reviewPairIssue(variant) ||
             variant.warning_message ||
             variant.validation_report?.warning ||
             variant.validation_report?.message ||
@@ -1622,7 +1632,7 @@ export default function Stage3ReviewPage({
       {selectedSolution && <Stage3InspectionDialog
         key={`${sessionId}-${selectedSolution.qNo}-${selectedSolution.versionIndex}`}
         selection={selectedSolution} versionLabel={versionLabel(session, selectedSolution.versionIndex)}
-        message={actionMessage} readOnly={isReviewReadOnly} approved={isSelectedVariantApproved}
+        message={actionMessage} readOnly={isReviewReadOnly || reviewSyncRequired} approved={isSelectedVariantApproved}
         busy={isRegeneratingSingle || isApprovingSingle || isRevertingSingle}
         canRevert={Boolean(session?.confirmation_id && session?.job_snapshot_id && (selectedSolution.variant.candidate_id || selectedSolution.variant.id || selectedSolution.variant.question_id))}
         onClose={() => setSelectedSolution(null)} onApprove={handleApproveSingle}
@@ -1691,7 +1701,7 @@ export default function Stage3ReviewPage({
             )}
             {isFinalizeDisabled ? (
               <p className="text-xs sm:text-sm text-muted" role="status">
-                {totalExpectedSlots === 0 ? 'Chưa có đủ dữ liệu câu hỏi.' : isPartial ? 'Cần sinh đủ câu và duyệt tất cả câu hỏi.' : `Còn ${Math.max(0, totalExpectedSlots - approvedCount)} câu chưa duyệt.`}
+                {reviewSyncRequired ? 'Cần đọc lại trạng thái review.' : isReviewReadOnly ? 'Phiên đang chỉ xem hoặc đã khóa.' : hasInvalidVariants ? 'Còn biến thể lỗi cần tạo lại trước khi rà bộ đề.' : totalExpectedSlots === 0 ? 'Chưa có đủ dữ liệu câu hỏi.' : isPartial ? 'Cần sinh đủ câu và duyệt tất cả câu hỏi.' : `Còn ${Math.max(0, totalExpectedSlots - approvedCount)} câu chưa duyệt.`}
               </p>
             ) : (
               <p className="text-xs font-semibold text-approved-ink" role="status">

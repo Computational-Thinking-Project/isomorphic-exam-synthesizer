@@ -2891,6 +2891,74 @@ test('C3: focus giữ trong popup, Escape trả focus về nút mở', async () 
   } finally { await harness.unmount(); }
 });
 
+test('C4a: cặp lỗi rõ ràng khóa accept và gate, warning không đồng nghĩa lỗi cứng', async () => {
+  for (const invalid of [true, false]) {
+    const data = comparisonSession(`pair-validation-${invalid}`);
+    data.exam_versions[0].questions[0].has_warning = true;
+    if (invalid) data.exam_versions[0].questions[0].options = ['Một','Hai','Hai','Bốn'];
+    let calls = 0;
+    const harness = renderStage3Page(data.id, { loadSession: async () => structuredClone(data),
+      acceptQuestionFn: async () => { calls++; return { question_status: 'approved' }; },
+    });
+    try {
+      await harness.render();
+      await act(async () => harness.container.querySelector('[data-review-inspect]').click());
+      const approve = harness.container.querySelector('[data-review-approve]');
+      assert.equal(approve.getAttribute('disabled') !== null, invalid);
+      if (invalid) {
+        assert.match(harness.container.querySelector('[role="dialog"]').textContent, /trùng nhau/);
+        await act(async () => approve.click());
+        assert.equal(calls, 0);
+        assert.notEqual(harness.container.querySelector('[data-review-finalize]').getAttribute('disabled'), null);
+      }
+    } finally { await harness.unmount(); }
+  }
+});
+
+test('C4a: accept thành công nhưng snapshot thất lạc thì giữ modal và khóa ghi đến khi đọc lại', async () => {
+  const data = comparisonSession('review-sync');
+  let loads = 0;
+  const harness = renderStage3Page(data.id, {
+    loadSession: async () => { if (++loads === 2) throw new Error('Network failure'); return structuredClone(data); },
+    acceptQuestionFn: async () => ({ question_status: 'approved' }),
+  });
+  try {
+    await harness.render();
+    await act(async () => harness.container.querySelector('[data-review-inspect]').click());
+    await act(async () => harness.container.querySelector('[data-review-approve]').click());
+    const modal = harness.container.querySelector('[role="dialog"]');
+    assert.ok(modal);
+    assert.match(modal.textContent, /chưa đối soát/);
+    assert.ok(modal.querySelector('[data-review-regenerate]') === null);
+    assert.notEqual(harness.container.querySelector('[data-review-finalize]').getAttribute('disabled'), null);
+    await act(async () => modal.querySelector('[aria-label="Đóng kiểm tra đáp án"]').click());
+    const reload = Array.from(harness.container.querySelectorAll('button')).find(b => b.textContent === 'Đọc lại trạng thái');
+    await act(async () => reload.click());
+    assert.equal(loads, 3);
+    await act(async () => harness.container.querySelector('[data-review-inspect]').click());
+    assert.ok(harness.container.querySelector('[data-review-regenerate]'));
+  } finally { await harness.unmount(); }
+});
+
+test('C4a: toast giới hạn hai, chống trùng, dismiss và tự ẩn sau 5s', async (t) => {
+  const { default: Notifications } = await import('./Stage3ReviewNotifications.jsx');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const container = document.createElement('div'), root = createRoot(container);
+  const render = async text => act(async () => root.render(React.createElement(React.StrictMode, null,
+    React.createElement(Notifications, { message: { type: 'error', text } }))));
+  try {
+    await render('A'); await render('B'); await render('B'); await render('C');
+    assert.equal(container.querySelectorAll('[data-review-toast]').length, 2);
+    assert.equal(container.textContent.includes('A'), false);
+    await act(async () => container.querySelector('[aria-label="Đóng thông báo"]').click());
+    assert.equal(container.querySelectorAll('[data-review-toast]').length, 1);
+    await act(async () => t.mock.timers.tick(4999));
+    assert.equal(container.querySelectorAll('[data-review-toast]').length, 1);
+    await act(async () => t.mock.timers.tick(1));
+    assert.equal(container.querySelectorAll('[data-review-toast]').length, 0);
+  } finally { await act(async () => root.unmount()); t.mock.timers.reset(); }
+});
+
 test('C2: chọn ô thiếu vẫn đọc được nguồn, key marker tách biệt với approval', async () => {
   const data = comparisonSession('comparison-missing');
   data.status = 'partial_generated';

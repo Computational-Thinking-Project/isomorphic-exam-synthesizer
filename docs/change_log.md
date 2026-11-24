@@ -1,3 +1,11 @@
+## Issue #95 — C4a feedback and review guards — 24/11/2026
+
+- Thông báo toast tối đa hai, dedupe/dismiss/tự ẩn 5s, không làm nhảy bố cục; thông tin lỗi vẫn giữ tại cặp/modal. Các lỗi rõ ràng ở report/phương án/key chặn accept và Rà bộ đề; warning không tự thành hard failure.
+- Accept đã có phản hồi nhưng snapshot chưa đối soát được thì giữ popup và khóa ghi/chuyển bước đến khi đọc lại trạng thái. Giữ read-only/lock và retry cấp phiên hiện hành; không thêm API recovery hoặc mở partial-write.
+- [Checkpoint C4a](tasks/ISSUE-95.md) ghi checks, self-review/mutation audit và giới hạn. Chưa native visual hoặc live FE–BE–DB; C4b/C4c tiếp tục chờ contract BE.
+
+---
+
 ## Issue #95 — C3 inspection dialog — 24/11/2026
 
 - S06 mở một modal kiểm tra đáp án, xác nhận tạo lại/khôi phục trong cùng cửa sổ; revert là hành động phụ bên trái. Sau thay nội dung phải kiểm và duyệt chủ động. Busy khóa đóng, hỗ trợ focus/Tab/Escape; native visual chưa kiểm.

@@ -76,6 +76,10 @@
 .stage3-shell > .stage3-footer { margin-top: 0; border-top: 1px solid var(--line); padding-top: 12px; background: var(--surface); }
 .stage3-footer > div { gap: 8px 16px; }
 .stage3-pair-actions { display: flex; justify-content: flex-end; }
+.stage3-toast-region { position: fixed; top: 72px; right: 16px; z-index: 30; width: min(360px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.stage3-toast { display: flex; align-items: start; gap: 8px; padding: 12px; border: 1px solid var(--support-line); border-radius: 8px; background: var(--support-bg); color: var(--support-text); box-shadow: var(--shadow-float); pointer-events: auto; }
+.stage3-toast p { flex: 1; min-width: 0; overflow-wrap: anywhere; max-height: 24dvh; overflow: auto; }
+.stage3-toast-error { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
 .stage3-inspection { width: min(1080px, calc(100vw - 32px)); max-width: none; max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); overflow: hidden; }
 .stage3-inspection[open] { display: flex; flex-direction: column; }
 .stage3-inspection::backdrop { background: #27272a66; }
