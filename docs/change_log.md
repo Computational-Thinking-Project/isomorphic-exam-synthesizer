@@ -1,3 +1,11 @@
+## PR #109 — R1 applied on Windows and docs reconciled — 25/11/2026
+
+- Áp lại delta R1 Linux c7044d6 lên Windows parent c2b680a vì bundle/object chưa có tại máy này. Bỏ validator/gate FE tự tính, giữ BE warnings/guards và cập nhật regression; không thay backend/API.
+- [Checkpoint6.24](tasks/ISSUE-95.md) ghi SHA Windows/checks khi hoàn tất; docs Linux được hợp nhất nội dung với các plan/input Windows hiện có, không overwrite lịch sử hoặc nhận hai object gốc đã được nhập. Native/reviewer QA/CI sau push còn mở.
+- Source Windows **8a6f600**, tương ứng delta c7044d6; targeted65/mutation/lint/build đạt. Full Windows bị auto-review chặn vì telemetry Visual Studio/payload chưa rõ, không nhận full621Linux thành proof Windows hoặc rerun bằng workaround.
+
+---
+
 ## PR #109 — Windows docs and cross-checkout commit status — 25/11/2026
 
 - [Checkpoint6.23](tasks/ISSUE-95.md): Windows/PR hiện9f5a04d; R1 c7044d6 và docs a1b0ddb tạo ở Linux chưa được nhập, chưa push. Commit tài liệu Windows giữ input Q01/plan và phân biệt trạng thái source ở hai checkout.

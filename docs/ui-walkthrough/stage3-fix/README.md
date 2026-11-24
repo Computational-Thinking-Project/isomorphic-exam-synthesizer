@@ -1,5 +1,9 @@
 # PR #109 — gói kiểm chứng C5
 
+**Source Windows8a6f600:** targeted65/65, mutation bắt gate warning, lint/build đạt. Full suite Windows bị automatic approval review chặn do HTTPS telemetry Visual Studio với payload chưa rõ; chưa xác nhận full-pass và không thử workaround. Full621Linux c7044d6 là evidence riêng. Cần native/reviewer QA và CI trên head Windows sau push.
+
+**Lượt áp delta Windows25/11:** nội dung source R1 c7044d6 được áp lại trên parent c2b680a và docs a1b0ddb hợp nhất nội dung với plan Windows, không nhập nguyên object Linux hoặc overwrite docs local. [Checkpoint6.24](../../tasks/ISSUE-95.md) là trạng thái/checks Windows mới nhất; các dòng chưa nhập R1 bên dưới là lịch sử trước lượt này. Native/reviewer verification vẫn còn mở, không mặc định source author-fixed là đã resolved.
+
 **Trạng thái checkout Windows25/11:** local/remote PR vẫn9f5a04d; hai object R1 c7044d6/docs a1b0ddb của lượt Linux chưa có trong repo Windows, chưa push. Kết quả targeted65/full621/lint/build thuộc lượt Linux, không thay proof cho Windows/PR hiện tại. [Checkpoint6.23](../../tasks/ISSUE-95.md) ghi việc cần nhập/đối chiếu bundle và giữ các docs Windows đang sửa. Tài liệu Windows này chưa nhận R1 Integrated/reviewer-verified hoặc native QA sau fix đã đạt.
 
 **Cập nhật25/11 — Q01 đã đủ input:** [Duy7137928390](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/109#issuecomment-7137928390) chốt bỏ validation policy FE, giữ guard hiện hành và evidence/provenance BE; hard failure được xử lý trước persistence. [Plan6.21](../../tasks/ISSUE-95.md) nhận Accepted cho R1, thay trạng thái pending input bên dưới. R1 chưa triển khai/kiểm/reviewer xác minh; R2 vẫn cần native delta QA. Không nhận PR đã đủ merge từ việc input được cung cấp.
@@ -83,4 +87,10 @@ Khi bổ sung bằng chứng, ghi browser/version, code head, viewport/zoom, fix
 
 - Output: implementation C2/C3/C4a, bản sửa F109-C5-01 và checks ở trên. Hai giới hạn API vẫn công khai: không targeted retry ô thiếu không ID; không duyệt cặp khỏe khi session đang read-only.
 - PR hiện Ready với title/body cập nhật ở854709d; Philip đã xác nhận manual QA. Sau các fix mới phải cập nhật head/checks và trạng thái từng finding, không kế thừa manual pass cho delta chưa kiểm. Lượt sửa R2 chưa cập nhật metadata hoặc gửi comment lên GitHub.
-- Duy đang Request changes F109-R1-03, Tâm Commented UI; chưa Approve. Cần làm rõ Q01, native/reviewer kiểm lại delta và CI trên head sau push, ít nhất một thành viên khác GitHub Approve theo CONTRIBUTING trước merge. Không đóng toàn Issue #95 hoặc nhận live FE–BE–DB từ báo cáo này.
+- Duy đang Request changes F109-R1-03, Tâm Commented UI; chưa Approve. Q01 đã rõ theo Duy7137928390; cần native/reviewer kiểm lại delta và CI trên head sau push, ít nhất một thành viên khác GitHub Approve trước merge. Không đóng toàn Issue95 hoặc nhận live FE–BE–DB từ báo cáo này.
+
+## M5 dự thảo cho bản Windows, chưa gửi
+
+- F109-R1-03: source8a6f600 áp delta c7044d6 theo Q01; xóa reviewPairIssue/hasInvalidVariants và gate FE tự tính. Giữ BE warning/evidence, missing/read_only/busy/lock/identity/reconciliation/explicit approval. Author-fixed, chưa reviewer-verified/resolve.
+- Windows targeted65/lint/build đạt, mutation bắt gate warning; full suite bị auto-review chặn vì telemetry/payload chưa rõ. Full621Linux không thay proof Windows; không tự báo checks hoàn tất.
+- F01–F04 giữ sourceebab331; Q02 giữ navigator đã duyệt/CSS flex/overflow-x:auto. Native delta/40câu/zoom200% chưa có bằng chứng mới. Cần CI/reviewer kiểm đúng head sau push, không thêm API hoặc mở C4b/C4c.
