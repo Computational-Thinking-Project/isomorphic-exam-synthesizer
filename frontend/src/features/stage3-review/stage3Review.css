@@ -76,6 +76,25 @@
 .stage3-shell > .stage3-footer { margin-top: 0; border-top: 1px solid var(--line); padding-top: 12px; background: var(--surface); }
 .stage3-footer > div { gap: 8px 16px; }
 .stage3-pair-actions { display: flex; justify-content: flex-end; }
+.stage3-inspection { width: min(1080px, calc(100vw - 32px)); max-width: none; max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); overflow: hidden; }
+.stage3-inspection[open] { display: flex; flex-direction: column; }
+.stage3-inspection::backdrop { background: #27272a66; }
+.stage3-inspection-header { display: flex; justify-content: space-between; align-items: start; gap: 16px; padding: 16px 24px; border-bottom: 1px solid var(--line); }
+.stage3-inspection-header h2 { font-family: 'Plus Jakarta Sans', sans-serif; font-size: 20px; font-weight: 600; }
+.stage3-inspection-header button { flex-shrink: 0; font-size: 24px; }
+.stage3-inspection-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 24px; overscroll-behavior: contain; }
+.stage3-inspection-body > p { margin-bottom: 16px; }
+.stage3-inspection-body [role=alert] { color: var(--danger); background: var(--danger-soft); padding: 12px; border-radius: 8px; }
+.stage3-inspection-columns { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 24px; }
+.stage3-inspection-columns > section { min-width: 0; }
+.stage3-inspection-columns h3 { font-weight: 600; margin-bottom: 16px; }
+.stage3-inspection-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 16px 24px; border-top: 1px solid var(--line); }
+.stage3-primary-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-left: auto; }
+.stage3-inspection-actions button { padding: 8px 12px; border: 1px solid var(--control-border); border-radius: 8px; }
+.stage3-inspection-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.stage3-inspection-actions [data-review-approve], .stage3-inspection-actions [data-review-confirm] { background: var(--accent); border-color: var(--gold-border); color: var(--strong); }
+.stage3-inspection-actions .stage3-revert { border-color: transparent; color: var(--muted); }
+@media (max-width: 767px) { .stage3-inspection-columns { grid-template-columns: minmax(0,1fr); } .stage3-inspection-body, .stage3-inspection-header, .stage3-inspection-actions { padding: 12px; } }
 .stage3-empty { padding: 16px; color: var(--muted); }
 
 @media (max-width: 1023px) {

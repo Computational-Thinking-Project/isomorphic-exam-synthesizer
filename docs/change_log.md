@@ -1,3 +1,11 @@
+## Issue #95 — C3 inspection dialog — 24/11/2026
+
+- S06 mở một modal kiểm tra đáp án, xác nhận tạo lại/khôi phục trong cùng cửa sổ; revert là hành động phụ bên trái. Sau thay nội dung phải kiểm và duyệt chủ động. Busy khóa đóng, hỗ trợ focus/Tab/Escape; native visual chưa kiểm.
+- Sau accept và đối soát đúng candidate, đóng popup và chọn cặp tiếp theo theo câu trước/mã sau, không tự sang S07. Candidate bị thay trong refetch không thừa hưởng approval.
+- Dùng API/guard hiện hành; retry ô thiếu và partial-write vẫn chờ contract. [Plan/checks](tasks/ISSUE-95.md): 59 tests Review/service, lint/build đạt; chưa live integration.
+
+---
+
 ## Issue #95 — C2 persistent source/variant workspace — 24/11/2026
 
 - S06 hiển thị một nguồn bên trái và một biến thể bên phải; tabs mã trong panel biến thể. Đổi mã giữ câu nguồn, chọn câu không tự mở lời giải. Navigator và hai vùng đọc cuộn cục bộ, layout xếp dọc dưới 1024px; key đáp án tách màu khỏi approval.
