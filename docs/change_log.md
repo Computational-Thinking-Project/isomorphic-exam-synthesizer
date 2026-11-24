@@ -1,3 +1,18 @@
+## PR #109 — C5 keyboard fix and verification handoff — 24/11/2026
+
+- Sửa vòng Tab của inspection chỉ xem để đọc được link trong lời giải Markdown; vẫn wrap/restore focus và không mở mutation. Thêm regression và hỗ trợ selector nhóm trong DOM test harness, không đổi API hoặc quyền backend.
+- Code `5e890f9`: full frontend **619/619**, lint/build đạt; mutation bắt đúng lỗi trước khi restore/checks cuối. [Gói C5](ui-walkthrough/stage3-fix/README.md) ghi cảnh báo, nguồn walkthrough, audit và checklist native QA còn mở.
+- Chưa có kết nối browser/screenshot/live FE–BE–DB; chưa nhận visual passed, C5 hoàn tất hoặc PR Ready/merged. Scope FE và follow-up BE theo [plan6.6/6.16–6.17](tasks/ISSUE-95.md); title/body GitHub còn plan-only, chưa chỉnh trong lượt này.
+
+---
+
+## PR #109 — FE acceptance scope clarified — 24/11/2026
+
+- User chốt PR này sửa FE S06 theo walkthrough và giữ tương thích API hiện hành. C4b targeted missing-slot recovery và C4c partial-write chuyển sang follow-up ngoài PR; không yêu cầu hai API mới hoặc PR110 merge để nghiệm thu/merge phần FE.
+- Giữ guard/read-only và fallback retry cấp phiên đúng phạm vi. Còn C5 native visual/browser, checks/CI và review theo workflow; không nhận đầy đủ mọi nghiệp vụ walkthrough hoặc live integration từ tests DOM. [Plan/acceptance và follow-up](tasks/ISSUE-95.md), mục6.6/6.16.
+
+---
+
 ## Issue #95 — C4a feedback and review guards — 24/11/2026
 
 - Thông báo toast tối đa hai, dedupe/dismiss/tự ẩn 5s, không làm nhảy bố cục; thông tin lỗi vẫn giữ tại cặp/modal. Các lỗi rõ ràng ở report/phương án/key chặn accept và Rà bộ đề; warning không tự thành hard failure.
