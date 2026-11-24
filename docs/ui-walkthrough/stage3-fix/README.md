@@ -1,6 +1,8 @@
 # PR #109 — gói kiểm chứng C5
 
-Ngày 24/11/2026, author tự kiểm trên nhánh `fix/stage3-ui`. C5 đã có kiểm tự động và checklist bàn giao; **chưa hoàn tất nghiệm thu visual/native browser**, chưa đề nghị Ready hoặc nhận GitHub Approve.
+**Checkpoint lịch sử trước xác nhận manual QA, ngày24/11/2026:** author tự kiểm trên nhánh `fix/stage3-ui`. Khi đó C5 có kiểm tự động/checklist bàn giao, chưa hoàn tất native visual, chưa đề nghị Ready hoặc nhận GitHub Approve. Trạng thái mới ở đoạn kế tiếp.
+
+**Cập nhật sau checkpoint trên:** Philip đã xác nhận manual test và duyệt bản854709d trong conversation; PR hiện Ready for review. [Duy Request changes](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/109#pullrequestreview-6038442931) còn F109-R1-03; [Tâm Commented](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/109#pullrequestreview-6040588696) đã kiểm6viewport/long content/native focus trên Chromium với API/auth mock, chưa Approve. Các dòng pending/checks bên dưới giữ nguyên như lịch sử trước xác nhận và không thay kết quả reviewer. [Plan sửa6.19](../../tasks/ISSUE-95.md) chia R1/R2/R3; chưa có code fix mới. Bản sửa tiếp theo cần kiểm lại delta trên head mới, không kế thừa visual pass854709d cho mọi thay đổi.
 
 **Feedback UI mới cùng ngày, sau commit `787b338`:** user yêu cầu logo nhỏ hơn, bỏ metadata/legend/nhãn điều hướng phụ và bộ lọc trạng thái, tăng chiều cao panel và cho nở theo nội dung/cuộn trang. Các quy tắc cuộn/chiều cao mới bên dưới thay fixed-viewport của mốc C2; không thay contract backend. Bằng chứng 619tests/code `5e890f9` bên dưới là checkpoint trước feedback này; checks mới ghi tại mục6.18 của plan.
 
@@ -44,6 +46,13 @@ Baseline `787b338` + delta header/notes/filter/page-scroll, cùng môi trường
 
 ## Finding và audit
 
+**Lượt R2 sau review Tâm:** source fixes F01–F04 tại [plan6.20](../../tasks/ISSUE-95.md), commit `ebab331`/parent854709d, chỉ Page/CSS. Có khoảng cách nội dung biến thể, dot/counter cùng cụm, link inspection gạch chân và heading focus dùng màu theme. Checks R2 ghi dưới; native visual/focus trên bản sau sửa chưa kiểm, chưa reviewer-verified. F109-R1-03/Q01 vẫn open và validator/guard chưa đổi.
+
+- Trên source `ebab331`: full `node --test --test-concurrency=1` **620/620 pass**,2suites,0fail/skip/cancel/118.23s; lint exit0/0warning; build exit0/32.30s, JS1157.37kB/gzip335.89kB còn chunk warning. Tests có warning DOM/Router/MockTimers/act. Delta sau checks chỉ docs. Logs `tmp/stage3-r2-full-tests.log`, `tmp/stage3-r2-lint.log`, `tmp/stage3-r2-build.log` từ workspace root.
+- Cần kiểm lại375/320, desktop, plain/warning/long content, nhận diện link trước focus, heading keyboard focus/Tab/Shift+Tab/Escape/restore. Q02 cần ca40câu native; CSS hiện cuộn ngang, chưa có bằng chứng wrap. Không dùng review Chromium tại854709d làm kết quả mới cho R2.
+
+**M5 dự thảo cho Philip sau push, chưa gửi:** F01–F04 đã sửa source trong commit `ebab331`, checks như trên, native/reviewer verification còn mở. F04 chọn outline theo theme và giữ keyboard visibility. F109-R1-03 chưa nhận fixed; nhờ làm rõ Q01 bằng contract/invariant BE hiện hành. Q02 giữ navigator đã được Philip duyệt theo6.18, chưa tái hiện wrap và cần case40câu để kết luận.
+
 **F109-C5-01 — lỗi accessibility được đưa vào từ C3, đã sửa và tự kiểm.** Popup chỉ xem có một nút đóng, còn lời giải Markdown có thể có link. Trap chỉ liệt kê button nên Tab từ nút đóng bị vòng về chính nó, bỏ qua link; Shift+Tab cũng không tới link cuối. Selector mới bao gồm link và phần tử có tabindex không âm, vẫn loại nút disabled và heading tabindex -1. Test kiểm không chặn Tab ở nút đóng, wrap từ link cuối, Shift+Tab và Escape/restore focus. Đây là kiểm handler bằng DOM harness; native traversal vẫn nằm trong checklist dưới.
 
 File chung ngoài feature: `frontend/src/test-support/domHarness.js` bổ sung selector nhóm đơn giản để test button/link theo thứ tự cây DOM. Không thay runtime sản phẩm hoặc thêm dependency. Full suite được chạy vì file hỗ trợ này dùng chung.
@@ -69,6 +78,5 @@ Khi bổ sung bằng chứng, ghi browser/version, code head, viewport/zoom, fix
 ## Bàn giao review
 
 - Output: implementation C2/C3/C4a, bản sửa F109-C5-01 và checks ở trên. Hai giới hạn API vẫn công khai: không targeted retry ô thiếu không ID; không duyệt cặp khỏe khi session đang read-only.
-- PR title đề xuất: `fix(stage3): align review workspace and inspection with walkthrough`.
-- Mô tả GitHub hiện còn plan-only; sau push cần cập nhật scope/head/checks, link report này và giữ visual pending cho tới khi có kết quả. Lượt này chưa sửa metadata hoặc gửi comment lên GitHub.
-- Reviewer chưa được phân công mới. Cần native QA còn mở, CI áp dụng trên head sau push và ít nhất một thành viên khác review/Approve theo CONTRIBUTING trước merge. Không đóng toàn Issue #95 hoặc nhận live FE–BE–DB từ báo cáo này.
+- PR hiện Ready với title/body cập nhật ở854709d; Philip đã xác nhận manual QA. Sau các fix mới phải cập nhật head/checks và trạng thái từng finding, không kế thừa manual pass cho delta chưa kiểm. Lượt sửa R2 chưa cập nhật metadata hoặc gửi comment lên GitHub.
+- Duy đang Request changes F109-R1-03, Tâm Commented UI; chưa Approve. Cần làm rõ Q01, native/reviewer kiểm lại delta và CI trên head sau push, ít nhất một thành viên khác GitHub Approve theo CONTRIBUTING trước merge. Không đóng toàn Issue #95 hoặc nhận live FE–BE–DB từ báo cáo này.

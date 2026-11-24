@@ -394,3 +394,60 @@ Source chính: [GenerationService](https://github.com/Computational-Thinking-Pro
 - Tests cập nhật theo việc bỏ filter, giữ coverage phân loại cảnh báo/ô thiếu, đọc lại cặp approved, đổi mã giữ nguồn, chọn cặp và identity. Thêm ca sessionStorage legacy `filter:approved` không giấu câu pending và chỉ lưu câu/mã mới. Focused8/8 đạt; mutation đảo điều kiện chọn câu khiến ca resume fail đúng nguồn, đã restore trước checks cuối.
 - Checks cuối trên delta code từ `787b338`: full `node --test --test-concurrency=1` **620/620 pass**,2suites,0fail/skip/cancel,142.77s; gồm Review/service/Preview/Export và legacy-storage. Lint exit0/0warning; build exit0/51.05s, JS1157.29kB/gzip335.87kB còn chunk >500kB. Tests còn warning DOM/Router/MockTimers/act như checkpoint trước. Delta sau checks chỉ docs. Native visual/zoom/scroll/keyboard sau sửa chưa kiểm do chưa có công cụ kết nối browser; không nhận visual passed/Ready.
 - Author audit correctness/architecture/readability/security/performance: selection vẫn theo vị trí và candidate identity; không đổi mutation/permission; CSS chỉ scoped Stage3 và không còn filter dead code; không thêm dependency hoặc ghi nội dung đề vào storage. [Checklist C5](../ui-walkthrough/stage3-fix/README.md) đã đổi theo page scroll, cần user nghiệm thu lại đúng bản sau rebuild. Chưa push/GitHub write/Ready/merge.
+
+### 6.19. Plan commit sửa review PR109 — 24/11/2026
+
+**Baseline và bằng chứng mới:** local/remote head `854709d`, base `efed79b`, tree sạch trước lượt plan. PR đã Ready for review. Philip xác nhận manual test và duyệt trong conversation sau checkpoint6.18; không tự bổ sung kết quả từng viewport hoặc live backend từ xác nhận này. [Duy Request changes](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/109#pullrequestreview-6038442931) còn một blocker; [Tâm Commented](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/109#pullrequestreview-6040588696) xác nhận layout/6 viewport/long content/native focus bằng Chromium với API/auth mock, chưa Approve. Đây là kết quả reviewer báo, không phải agent chạy lại.
+
+**Nguồn review và phân loại:**
+
+| ID | Scope / trạng thái | Cách đưa vào lượt sửa |
+|---|---|---|
+| [F109-R1-03](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/109#discussion_r4679365695) | P2 bắt buộc, open; trong scope vì hard gate được thêm trong FE PR này. | R1 bỏ policy validation FE tự triển khai, tách cảnh báo khỏi quyền thao tác; giữ guard API hiện hành. Kết thúc phần quyết định blocked sau khi Q01 được làm rõ. |
+| Tâm Q01 | Câu hỏi contract còn mở; không tự chọn field permission. | Chốt phân biệt warning/report và trạng thái thật sự không cho duyệt với Duy/BE owner do Duy xác nhận, phối hợp Bội Anh; chưa gửi câu hỏi/reply, owner/ETA xác nhận cụ thể TBD. |
+| Tâm Q02 | Giải trình navigator theo user6.18; chưa có bug wrap được tái hiện. | Giữ chips/nav đã được user duyệt. CSS hiện display:flex/overflow-x:auto/button flex-shrink:0, không đặt flex-wrap. R3 thu ca40câu để trả lời, không tự xây lại select/prev-next/equal-width tabs. |
+| Tâm F01/F02/F03 | Trong scope, non-blocking; đề xuất tiếp thu. | R2 sửa khoảng cách divider, gom dot/label tiến độ và nhận diện link. |
+| Tâm F04 | Trong scope, non-blocking; tiếp thu theo hướng giữ accessibility. | R2 đổi outline heading phù hợp theme, kiểm mouse/keyboard; không xóa focus ring toàn cục hoặc thay Tab trap. |
+
+Các lo ngại approval transaction/thiếu options không còn được Duy giữ làm finding; không tạo task sửa mới cho chúng. C4b/C4c vẫn ngoài PR theo6.16; không đợi PR110 hoặc API key mới.
+
+**Quyết định R1/Q01 cần làm rõ trước khi chốt thay đổi quyền:**
+
+- Giữ yêu cầu user: cặp tạo lỗi phải có thông báo và không được duyệt trước khi xử lý. Plan này chưa tự thay yêu cầu đó bằng quyết định review.
+- Tiếp thu vấn đề kiến trúc: `reviewPairIssue()` kiểm options/key/report rồi chặn handler Accept, nút dialog và Rà bộ đề; đây là policy mới ở FE. Không tiếp tục dùng phép so trùng/rỗng/key để quyết định quyền duyệt, không dời cùng validator sang helper khác.
+- Contract snapshot hiện mô tả `has_warning`, `validation_report`, `validation_source` như evidence; chưa có định nghĩa chúng là permission per-candidate. Không tự coi `has_warning:true` hoặc `validation_report.is_valid:false` tương đương `can_accept:false`, không tự thêm field hoặc API.
+- Đề xuất hỏi rõ: trong contract hiện có, BE ngăn candidate hard-failed xuất hiện như candidate có thể duyệt bằng invariant nào; nếu candidate vẫn xuất hiện, FE dựa vào trạng thái/quyền đã định nghĩa nào để chặn? Phân biệt ô thiếu/null/read_only với một candidate có warning. Cần dẫn contract/mẫu/test; không mặc định phải làm API mới.
+- Nếu contract hiện chưa biểu đạt yêu cầu blocked, ghi nhận khoảng trống để owner/user chốt hướng trong phạm vi hiện hành hoặc follow-up riêng. Không lặng lẽ cho phép cặp lỗi để đóng finding, cũng không tự sửa BE. Khi chưa chốt, R1 chưa được đánh dấu ready-to-implement toàn bộ; R2 không phụ thuộc và có thể làm trước.
+
+**Các commit dự kiến, chưa tạo ở lượt plan:**
+
+| Commit | File dự kiến thay đổi | Scope và điều kiện đạt | Đầu vào / verification |
+|---|---|---|---|
+| **R1 — `fix(stage3): defer review validation decisions to backend`** | `Stage3Comparison.jsx`, `Stage3ReviewPage.jsx`, `Stage3InspectionDialog.jsx`, `Stage3Review.test.js` trong feature Stage3 | Bỏ quy tắc validation FE khỏi quyết định Accept/finalize; giữ presentation theo evidence BE. Chỉ dùng guard/permission đã có contract; giữ candidate identity, read_only/lock/busy, idempotency, receipt/refetch và thứ tự duyệt. Không sửa cơ chế approval đã được reviewer rút finding. | **Chốt Q01 trước khi hoàn tất hard-gate delta.** Review/service tests theo ma trận dưới, mutation kiểm guard liên quan và restore; lint/build theo delta. |
+| **R2 — `fix(stage3): polish review spacing and keyboard focus`** | `Stage3ReviewPage.jsx`, `stage3Review.css` | F01 thêm khoảng cách giữa divider và nội dung biến thể; F02 gom dot + counter thành cùng cụm inline-flex không tách nhau; F03 link lời giải có underline/màu nhận biết trong popup; F04 focus heading dùng theme và giữ chỉ báo khi bàn phím. Không sửa MathRenderer/index.css/BrandLogo dùng chung, không đổi focus flow/modal/CTA hoặc navigator đã duyệt. | **Đủ input, độc lập R1, có thể làm trước.** Native375/320 và desktop, long content/warning, link/focus/Tab/Escape/restore; chạy existing focus regression. Không thêm tests chỉ kiểm tên class hoặc màu CSS. |
+| **R3 — `docs(stage3): record review fixes and verification`** | `docs/tasks/ISSUE-95.md`, `docs/change_log.md`, `docs/ui-walkthrough/stage3-fix/README.md` | Gắn finding → commit → checks → trạng thái fix/reviewer xác minh; ghi câu trả lời Q01/Q02 đủ căn cứ. Giữ lịch sử manual approval tại854709d và yêu cầu kiểm lại delta trên head mới; cập nhật evidence đúng code cuối. | Sau R1/R2 và checks. Full frontend một lượt trên source cuối, lint/build; native fixture và API thật ghi tách. Docs links/diff. Chuẩn bị M5 cùng thread/ID cho Philip; chưa push hoặc gửi GitHub nếu chưa được giao. |
+
+Đường dẫn bốn file R1/hai file R2 tính từ `frontend/src/features/stage3-review/`. Nếu có finding mới ngoài các file này, nêu delta trước khi mở scope. Kế hoạch/task list giữ tại mục này, không tạo tracker hoặc plan cạnh tranh.
+
+**Checklist implementation và kiểm chứng dự kiến:**
+
+- [ ] Làm rõ Q01 bằng contract/evidence hiện hành, ghi kết luận và giới hạn; không suy ra input mới.
+- [ ] R1: warning/evidence không tự trở thành quyền cấm thao tác; RPC vẫn quyết định kết quả; UI phản ánh lỗi backend, không optimistic approve sai.
+- [ ] R1: giữ coverage read_only/locked/missing-ID/busy,409/423, candidate bị thay, idempotency, refetch failure/reload, explicit approve và thứ tự câu trước/mã sau.
+- [ ] R1: sửa ca C4a hiện đang coi fixture options trùng là luật quyền duyệt FE; thay bằng ca contract đã chốt, warning/unavailable evidence và phản hồi lỗi BE. Không xóa regression identity/recovery; case blocked chỉ thêm theo field/invariant đã được xác nhận.
+- [ ] R2: source/variant spacing nhất quán; dot không rơi riêng khỏi nhãn375/320; link nhận biết trước focus; focus còn rõ khi bàn phím, không mất trap/Escape/restore. Không test CSS bằng assertions mirror implementation.
+- [ ] R3/Q02: kiểm40câu tại desktop/mobile, giữ một hàng nav cuộn ngang và chọn được câu cuối; nếu không tái hiện wrap, phản hồi bằng code/ảnh đúng head thay vì tự redesign.
+- [ ] Final checks từ `frontend/`: targeted Review/service `node --test --test-concurrency=1 src/features/stage3-review/Stage3Review.test.js src/services/stage3Service.test.js`; existing focus tests, rồi full `node --test --test-concurrency=1`, `npm run lint`, `npm run build` trên source cuối. Restore mutation trước build/checks cuối.
+- [ ] Native QA sau fix: bộ6viewport theo6.7, nội dung dài, warning/missing theo contract; bổ sung zoom200% và các ca chưa được Tâm kiểm nếu môi trường cho phép. Không nhận Firefox/Safari/screen-reader/live DB đã đạt từ Chromium/mock. Nếu browser unavailable, ghi pending và nhờ nghiệm thu trên bản mới; không dùng DOM/build làm bằng chứng visual.
+- [ ] Author audit đủ correctness/readability/architecture/security/performance và dead code; full suite/lint/build/docs checks; peer xác minh từng finding sau push và CI trên head cuối trước merge. Không tự mark resolved/Approve từ việc lên plan hoặc sửa local.
+
+**Trạng thái lượt này:** chỉ lập plan/cập nhật docs và handoff. Chưa sửa source, chạy lại product tests, tạo commit, push hoặc reply GitHub. Kết quả620tests tại6.18 và trong review Tâm là bằng chứng854709d, không phải kết quả lượt plan hoặc head sửa tương lai.
+
+### 6.20. R2 triển khai trước; R1/Q01 còn thiếu input — 24/11/2026
+
+- User giao bắt đầu các commit. Đọc lại timeline PR109 trên854709d: không có reply mới sau review Tâm14:01:56Z giải quyết Q01. Triển khai R2 độc lập như6.19; chưa sửa `reviewPairIssue`, guard validation hoặc permission. Philip xác nhận trong conversation **chưa được cung cấp input Q01** và yêu cầu soạn comment để tự gửi. Chưa gửi comment GitHub hoặc tự gán field permission.
+- **R2 commit `ebab331` — `fix(stage3): polish review spacing and keyboard focus`**, parent854709d. Scope đúng hai file: `Stage3ReviewPage.jsx`, `stage3Review.css`. F01 thêm margin-top16px cho nội dung biến thể sau header/warning; F02 wrap dot + counter trong một cụm inline-flex/nowrap, dot aria-hidden; F03 link Markdown trong inspection có màu highlight/underline/underline-offset và wrap URL dài; F04 heading focus dùng outline highlight2px, giữ rõ focus kể cả programmatic, không áp `outline:none` hoặc đổi Tab trap/restore.
+- Không đổi text progress, candidate/state/handler/guard/CTA, luồng duyệt, source renderer hoặc global CSS. Không thêm dependency/test chỉ soi class CSS. R2 không thêm điều kiện logic mới để mutation-test; giữ nguyên các ca focus, counter/identity/read_only/refetch trong full suite.
+- Checks trên code R2 `ebab331`: full `node --test --test-concurrency=1` **620/620 pass**,2suites,0fail/skip/cancel/118.23s, gồm regression focus/identity/progress/read_only/Preview/Export. Lint exit0/0warning; build exit0/32.30s, JS1157.37kB/gzip335.89kB còn chunk >500kB. Tests vẫn có warning DOM/Router/MockTimers/act. Logs workspace `tmp/stage3-r2-full-tests.log`, `tmp/stage3-r2-lint.log`, `tmp/stage3-r2-build.log`; source không đổi sau checks, các delta sau đó chỉ docs.
+- Author audit correctness (progress/render/focus), readability (một cụm tiến độ), architecture (CSS scoped inspection/Stage3), security (không đổi renderer/raw HTML/quyền), performance (không thêm query/state/effect). Native375/320/desktop/link/focus sau sửa chưa kiểm do phiên không có công cụ browser; source fix không đồng nghĩa reviewer đã xác minh F01–F04.
+- **R1 chưa triển khai:** thiếu kết luận Q01 như6.19, không tự nới/chặn thêm quyền để đóng F109-R1-03. R3 chỉ ghi evidence R2/phần còn mở ở lượt này; tổng kết cuối R1 và re-review sẽ cập nhật sau khi có contract và code tương ứng. Q02 có căn cứ CSS cuộn ngang, chưa chạy ca40câu trên native browser; không tự nhận đã tái hiện hoặc sửa wrap.

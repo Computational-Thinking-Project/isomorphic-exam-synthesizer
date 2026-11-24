@@ -1,3 +1,19 @@
+## PR #109 — R2 UI review fixes; validation input pending — 24/11/2026
+
+- Triển khai F01–F04 trong hai file Stage3: khoảng cách sau divider, cụm dot/counter tiến độ không tách, link inspection có underline/màu, focus heading dùng outline theo theme và giữ keyboard visibility. Không đổi validator/guard/API/permission hoặc renderer toàn ứng dụng.
+- [Checkpoint6.20](tasks/ISSUE-95.md) ghi checks/audit và giới hạn native QA. R1/F109-R1-03 vẫn open vì chưa có câu trả lời contract Q01; R3 chỉ tổng hợp evidence R2, không nhận toàn vòng review đã hoàn tất. Chưa push/reply/resolve/merge.
+- Source `ebab331`: full frontend **620/620**, lint/build đạt; chưa native visual/focus sau sửa. Không thêm test mirror CSS hoặc nhận reviewer đã xác minh từ source fix.
+
+---
+
+## PR #109 — proposed commits for review findings — 24/11/2026
+
+- [Plan6.19](tasks/ISSUE-95.md) ghi F109-R1-03 bắt buộc/trong scope, Q01 contract cần làm rõ, Q02 giải trình navigator và bốn UI suggestion không chặn merge. Chia R1 validation boundary, R2 UI/focus polish, R3 verification/docs; chưa triển khai hoặc tạo commit.
+- Giữ yêu cầu user về cặp lỗi, không tự suy `has_warning`/`is_valid` thành quyền Accept, không sửa BE hoặc thêm API. R2 đủ input để làm trước; R1 cần chốt Q01 trước khi hoàn tất hard-gate delta. C4b/C4c vẫn ngoài PR.
+- Philip đã xác nhận manual QA ở854709d; Duy Request changes/Tâm Commented, chưa approval. Evidence Tâm là Chromium/API-auth mock; cần kiểm lại head sau sửa. Lượt plan chỉ kiểm docs, không chạy lại product tests hoặc gửi GitHub.
+
+---
+
 ## PR #109 — UI feedback: compact header and expanding comparison — 24/11/2026
 
 - Theo ảnh/feedback user: logo header rộng180px/144px mobile, không bị flex-grow; bỏ metadata, legend/nhãn điều hướng phụ và bộ lọc trạng thái. Giữ navigator câu, tabs mã và trạng thái từng cặp; bỏ qua filter còn lưu từ bản cũ.
