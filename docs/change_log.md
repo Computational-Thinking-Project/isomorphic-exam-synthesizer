@@ -1,3 +1,24 @@
+## PR #109 — Windows docs and cross-checkout commit status — 25/11/2026
+
+- [Checkpoint6.23](tasks/ISSUE-95.md): Windows/PR hiện9f5a04d; R1 c7044d6 và docs a1b0ddb tạo ở Linux chưa được nhập, chưa push. Commit tài liệu Windows giữ input Q01/plan và phân biệt trạng thái source ở hai checkout.
+- Targeted65/full621/lint/build là evidence lượt Linux, không phải kiểm mới trên Windows. Lượt này chỉ docs/link/diff; không đổi source, resolve finding hoặc merge. Cần đối chiếu docs Windows khi nhập bundle, không ghi đè các cập nhật đã chuẩn bị.
+
+---
+
+## PR #109 — remaining commit and verification plan — 25/11/2026
+
+- [Plan6.22](tasks/ISSUE-95.md) chốt hai commit còn lại: R1 bỏ FE business-validation gates/sửa regression theo input Q01 đã đủ; R3b ghi evidence/M5/handoff trên source cuối. R2 đã commit, không làm lại hoặc đợi API mới.
+- Ma trận checks giữ missing/read_only/lock/identity/reconciliation/approval, phân biệt warning/evidence với permission; native delta F01–F04 và navigator40câu, CI/reviewer xác minh/Approve trước merge. Chỉ plan/static/docs checks ở lượt này, chưa source/tests/commit/GitHub write.
+
+---
+
+## PR #109 — Q01 accepted for R1 implementation — 25/11/2026
+
+- [Duy7137928390](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/109#issuecomment-7137928390) xác nhận hard failure được xử lý trước persistence, warning/report là evidence và guard hiện hành điều khiển review; không thêm permission/API/validator trong PR UI.
+- [Plan6.21](tasks/ISSUE-95.md): Q01 Accepted/đủ triển khai R1, chưa Integrated. R1 chưa code, F109-R1-03 chưa được xác minh đã sửa; vẫn cần checks/re-review/CI/approval sau fix. Lượt này chỉ docs/static inspection, chưa rerun tests hoặc GitHub write.
+
+---
+
 ## PR #109 — R2 UI review fixes; validation input pending — 24/11/2026
 
 - Triển khai F01–F04 trong hai file Stage3: khoảng cách sau divider, cụm dot/counter tiến độ không tách, link inspection có underline/màu, focus heading dùng outline theo theme và giữ keyboard visibility. Không đổi validator/guard/API/permission hoặc renderer toàn ứng dụng.
