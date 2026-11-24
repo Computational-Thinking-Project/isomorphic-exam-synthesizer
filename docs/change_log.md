@@ -1,3 +1,12 @@
+## PR #109 — UI feedback: compact header and expanding comparison — 24/11/2026
+
+- Theo ảnh/feedback user: logo header rộng180px/144px mobile, không bị flex-grow; bỏ metadata, legend/nhãn điều hướng phụ và bộ lọc trạng thái. Giữ navigator câu, tabs mã và trạng thái từng cặp; bỏ qua filter còn lưu từ bản cũ.
+- Vùng đối chiếu có chiều cao tối thiểu lớn hơn, nở theo câu dài và cuộn trang thay khung viewport/cuộn dọc riêng từng panel. Giữ hai cột desktop, xếp dọc trên màn hẹp và modal hiện có. Đây là điều chỉnh user yêu cầu so với fixed-viewport của walkthrough.
+- [Plan6.18](tasks/ISSUE-95.md) và [gói C5](ui-walkthrough/stage3-fix/README.md) ghi checks/audit và checklist cập nhật. Chưa native visual sau sửa hoặc live FE–BE–DB; không nhận Ready/merge từ checks tự động.
+- Full frontend **620/620**, lint/build đạt; focused8/8 và mutation bắt lỗi lựa chọn câu trước khi restore/checks cuối. Không đổi API, quyền hoặc dependency.
+
+---
+
 ## PR #109 — C5 keyboard fix and verification handoff — 24/11/2026
 
 - Sửa vòng Tab của inspection chỉ xem để đọc được link trong lời giải Markdown; vẫn wrap/restore focus và không mở mutation. Thêm regression và hỗ trợ selector nhóm trong DOM test harness, không đổi API hoặc quyền backend.

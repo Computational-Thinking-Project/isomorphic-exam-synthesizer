@@ -1972,7 +1972,7 @@ test('F01: Response 423/getSessionDetail chậm của phiên A không ghi đè t
   await harness.unmount();
 });
 
-test('R78-02: warning counts, cards and indicators share classification across versions', async () => {
+test('R78-02: warning indicators and all question positions stay reachable across versions', async () => {
   const flags = [
     { has_warning: true }, { status: 'needs_review' }, { status: 'warning' },
     { validation_report: { is_valid: false } }, { is_fallback: true },
@@ -1993,35 +1993,31 @@ test('R78-02: warning counts, cards and indicators share classification across v
   };
   const harness = renderStage3Page(session.id, { loadSession: async () => session });
   const buttons = () => Array.from(harness.container.querySelectorAll('button'));
-  const warningButton = () => buttons().find(b => b.textContent.startsWith('Có cảnh báo'));
   const cards = () => Array.from(harness.container.querySelectorAll('div')).filter(el => el.id?.startsWith('review-1-'));
   try {
     await harness.render();
-    assert.equal(warningButton().textContent, 'Có cảnh báo (10)');
     assert.equal(cards().length, 1, 'Workspace chỉ hiển thị một cặp');
     assert.equal(buttons().filter(b => b.getAttribute('data-review-nav-q')).length, 13);
-    await act(async () => { warningButton().click(); });
-    assert.equal(cards().length, 1);
-    for (let i = 1; i <= 10; i++) {
-      await act(async () => harness.container.querySelector(`[data-review-nav-q="${i}"]`).click());
+    for (let i = 1; i <= 13; i++) {
+      const nav = harness.container.querySelector(`[data-review-nav-q="${i}"]`);
+      const status = i <= 10 ? 'Có cảnh báo' : i === 13 ? 'Thiếu câu' : 'Chờ duyệt';
+      assert.equal(nav.getAttribute('aria-label'), `Câu ${i}: ${status}`);
+      await act(async () => nav.click());
       assert.ok(harness.container.querySelector(`#review-1-${i}`));
-      assert.equal(warningButton().getAttribute('aria-pressed'), 'true');
+      assert.equal(cards().length, 1);
     }
-    for (let i = 11; i <= 13; i++) assert.equal(harness.container.querySelector(`#review-1-${i}`), null);
     await act(async () => harness.container.querySelector('[data-review-nav-q="9"]').click());
     assert.match(harness.container.querySelector('#review-1-9').textContent, /Có cảnh báo/);
     await act(async () => { buttons().find(b => b.textContent.startsWith('Đề 2')).click(); });
-    assert.equal(warningButton().textContent, 'Có cảnh báo (1)');
     assert.equal(Array.from(harness.container.querySelectorAll('div')).filter(el => el.id?.startsWith('review-2-')).length, 1);
-    await act(async () => { buttons().find(b => b.textContent.startsWith('Đã duyệt (')).click(); });
-    assert.equal(Array.from(harness.container.querySelectorAll('div')).filter(el => el.id?.startsWith('review-2-')).length, 0);
-    await act(async () => { buttons().find(b => b.textContent.startsWith('Chưa duyệt (')).click(); });
-    assert.equal(buttons().find(b => b.textContent.startsWith('Chưa duyệt (')).textContent, 'Chưa duyệt (13)');
-    assert.equal(Array.from(harness.container.querySelectorAll('div')).filter(el => el.id?.startsWith('review-2-')).length, 1);
+    assert.match(harness.container.querySelector('#review-2-9').textContent, /Chưa được sinh thành công/);
+    await act(async () => harness.container.querySelector('[data-review-nav-q="1"]').click());
+    assert.match(harness.container.querySelector('#review-2-1').textContent, /Second version warning/);
+    assert.equal(harness.container.querySelector('[data-review-nav-q="1"]').getAttribute('aria-label'), 'Câu 1: Có cảnh báo');
   } finally { await harness.unmount(); }
 });
 
-test('R78-02: accept reconciled closes inspection and preserves accurate filter counts', async () => {
+test('R78-02: accept reconciled closes inspection and keeps the approved pair readable', async () => {
   const harness = renderStage3Page('pinned-filter', {
     loadSession: async () => ({ id: 'pinned-filter', status: 'generated', config: { n_versions: 1 },
       source_questions: [{ question_no: 1 }], exam_versions: [{ version_index: 1,
@@ -2031,16 +2027,14 @@ test('R78-02: accept reconciled closes inspection and preserves accurate filter 
     }),
     acceptQuestionFn: async () => ({ question_id: 'pinned-candidate', question_status: 'approved' }),
   });
-  const buttons = () => Array.from(harness.container.querySelectorAll('button'));
   try {
     await harness.render();
-    await act(async () => { buttons().find(b => b.textContent.startsWith('Chưa duyệt (')).click(); });
     await act(async () => { harness.container.querySelector('[data-review-inspect="true"]').click(); });
     await act(async () => { harness.container.querySelector('[data-review-approve="true"]').click(); });
-    assert.equal(buttons().find(b => b.textContent.startsWith('Chưa duyệt (')).textContent, 'Chưa duyệt (0)');
     assert.equal(harness.container.querySelector('[role="dialog"]'), null);
     assert.ok(harness.container.querySelector('#review-1-1'), 'Cặp cuối vẫn đọc được sau khi duyệt đủ');
-    assert.equal(buttons().find(b => b.textContent.startsWith('Tất cả (')).getAttribute('aria-pressed'), 'true');
+    assert.equal(harness.container.querySelector('[data-review-nav-q="1"]').getAttribute('aria-label'), 'Câu 1: Đã duyệt');
+    assert.equal(harness.container.querySelector('[data-review-finalize]').getAttribute('disabled'), null);
   } finally { await harness.unmount(); }
 });
 
@@ -2512,7 +2506,7 @@ test('Issue #85: accept candidate A succeeds but refetch returns replacement can
     // 1. Candidate B PHẢI ở trạng thái pending_review, KHÔNG được bị ép thành approved
     const text = harness.container.textContent;
     assert.ok(
-      text.includes('0/1 câu') || text.includes('Chưa duyệt (1)'),
+      text.includes('0/1 câu'),
       `Số lượng duyệt không được tính là 1/1 khi candidate B đang pending. Text: ${text}`,
     );
     assert.ok(!text.includes('Đã duyệt 1/1 câu'), 'Không được báo đã duyệt 1/1 câu');
@@ -2601,7 +2595,7 @@ test('Task T3 / Issue #85: Canonical review snapshot (versions[].slots[].candida
 
       const text = harness1.container.textContent;
       assert.ok(
-        text.includes('0/1 câu') || text.includes('Chưa duyệt (1)'),
+        text.includes('0/1 câu'),
         `Candidate B đang pending không được tính là approved. Text: ${text}`,
       );
       assert.ok(!text.includes('Đã duyệt 1/1 câu'));
@@ -2642,7 +2636,7 @@ test('Task T3 / Issue #85: Canonical review snapshot (versions[].slots[].candida
 
       const text = harness2.container.textContent;
       assert.ok(
-        text.includes('1/1 câu') || text.includes('Đã duyệt (1)'),
+        text.includes('1/1 câu'),
         `Candidate A đã approved phải được tính 1/1. Text: ${text}`,
       );
 
@@ -2695,23 +2689,17 @@ test('ISSUE-95 Review UX: chọn câu trên navigator giữ trạng thái rõ v�
     assert.equal(nav3.getAttribute('aria-label'), 'Câu 3: Chờ duyệt');
     assert.equal(nav4.getAttribute('aria-label'), 'Câu 4: Thiếu câu');
 
-    // Chọn câu ngoài filter sẽ về Tất cả, nhưng không tự mở inspection.
-    const approvedFilterBtn = Array.from(harness.container.querySelectorAll('button')).find((b) =>
-      b.textContent.includes('Đã duyệt (1)'),
-    );
-    assert.ok(approvedFilterBtn);
-    await act(async () => approvedFilterBtn.click());
-    assert.equal(harness.container.querySelector('#review-1-3'), null);
-
+    // Navigator luôn tới được câu pending, approved và missing, không tự mở inspection.
     await act(async () => nav3.click());
     assert.equal(nav3.getAttribute('aria-current'), 'true');
     assert.ok(harness.container.querySelector('#review-1-3'), 'Card Câu 3 phải hiển thị sau khi chọn từ navigator');
     assert.equal(harness.container.querySelector('#solution-1-3'), null, 'Chọn câu không tự mở lời giải');
 
-    const allFilterBtn = Array.from(harness.container.querySelectorAll('button')).find((b) =>
-      b.textContent.includes('Tất cả ('),
-    );
-    assert.equal(allFilterBtn?.getAttribute('aria-pressed'), 'true');
+    await act(async () => nav1.click());
+    assert.ok(harness.container.querySelector('#review-1-1'));
+    await act(async () => nav4.click());
+    assert.match(harness.container.querySelector('#review-1-4').textContent, /Chưa được sinh thành công/);
+    assert.ok(harness.container.querySelector('[aria-label="Lọc câu hỏi"]') === null);
   } finally {
     await harness.unmount();
   }
@@ -2764,19 +2752,20 @@ test('C2: nguồn luôn hiện, đổi mã giữ câu và chỉ render một bi�
   } finally { await harness.unmount(); }
 });
 
-test('C2: đổi mã giữ câu nguồn kể cả khi filter ở mã mới không còn khớp', async () => {
+test('C2: đổi mã giữ câu nguồn khi trạng thái cảnh báo khác nhau, không còn bộ lọc và note phụ', async () => {
   const data = comparisonSession('comparison-filter');
   data.exam_versions[0].questions[1].has_warning = true;
   const harness = renderStage3Page(data.id, { loadSession: async () => data });
   try {
     await harness.render();
-    const filters = () => Array.from(harness.container.querySelector('[aria-label="Lọc câu hỏi"]').querySelectorAll('button'));
-    await act(async () => filters().find(b => b.textContent.startsWith('Có cảnh báo')).click());
+    assert.ok(harness.container.querySelector('[aria-label="Lọc câu hỏi"]') === null);
+    assert.doesNotMatch(harness.container.textContent, /câu\/mã|Xanh lá:|Điều hướng nhanh theo câu/);
+    await act(async () => harness.container.querySelector('[data-review-nav-q="2"]').click());
     assert.match(harness.container.querySelector('[data-review-source]').textContent, /Nguồn riêng 2/);
     await act(async () => harness.container.querySelector('[data-review-version="2"]').click());
     assert.match(harness.container.querySelector('[data-review-source]').textContent, /Nguồn riêng 2/);
     assert.match(harness.container.querySelector('[data-review-variant]').textContent, /Biến thể riêng 2\/2/);
-    assert.equal(filters().find(b => b.textContent.startsWith('Tất cả')).getAttribute('aria-pressed'), 'true');
+    assert.equal(harness.container.querySelector('[data-review-nav-q="2"]').getAttribute('aria-current'), 'true');
   } finally { await harness.unmount(); }
 });
 
@@ -2797,6 +2786,31 @@ test('C2: tabs mã điều hướng bằng phím và giữ câu, không mở l�
       assert.equal(harness.container.querySelector('[aria-label="Lời giải và thao tác duyệt"]'), null);
     }
   } finally { await harness.unmount(); }
+});
+
+test('UI109: khôi phục câu và mã đã chọn, bỏ qua filter lưu từ phiên bản cũ', async () => {
+  const data = comparisonSession('legacy-filter-view');
+  const storageKey = `review-view:${data.id}`;
+  const previousStorage = Object.getOwnPropertyDescriptor(globalThis, 'sessionStorage');
+  const values = new Map([[storageKey, JSON.stringify({ version: 2, question: 2, filter: 'approved' })]]);
+  Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: {
+    getItem: key => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+  } });
+  const harness = renderStage3Page(data.id, { loadSession: async () => data });
+  try {
+    await harness.render();
+    assert.match(harness.container.querySelector('[data-review-source]').textContent, /Nguồn riêng 2/);
+    assert.match(harness.container.querySelector('[data-review-variant]').textContent, /Biến thể riêng 2\/2/);
+    assert.equal(harness.container.querySelector('[data-review-version="2"]').getAttribute('aria-selected'), 'true');
+    assert.ok(harness.container.querySelector('[aria-label="Lọc câu hỏi"]') === null);
+    const saved = JSON.parse(values.get(storageKey));
+    assert.deepEqual(saved, { version: 2, question: 2 });
+  } finally {
+    await harness.unmount();
+    if (previousStorage) Object.defineProperty(globalThis, 'sessionStorage', previousStorage);
+    else delete globalThis.sessionStorage;
+  }
 });
 
 test('C2: thao tác đến cặp chưa duyệt tiếp theo đi hết mã của một câu và giữ ô thiếu trong thứ tự', async () => {

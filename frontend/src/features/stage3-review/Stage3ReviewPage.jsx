@@ -74,13 +74,6 @@ function isVariantApproved(variant, approvedSet) {
   return Boolean(candId && approvedSet?.has(candId));
 }
 
-function matchesReviewFilter(variant, filter, approvedIds) {
-  const approved = isVariantApproved(variant, approvedIds);
-  const { hasWarning, isFallback } = getVariantWarningFlags(variant);
-  return filter === 'all' || (filter === 'pending' && !approved) ||
-    (filter === 'approved' && approved) || (filter === 'warning' && (hasWarning || isFallback));
-}
-
 /**
  * Thu thập toàn bộ ID, candidate_id của các câu đã được duyệt
  */
@@ -368,7 +361,6 @@ export default function Stage3ReviewPage({
     setIsShuffle409(false);
     setActiveVersionTab(1);
     setSelectedQuestionNo(1);
-    setReviewFilter('all');
     setIsRetryingAll(false);
     setReviewSyncRequired(false);
     setSelectedSolution(null);
@@ -791,7 +783,6 @@ export default function Stage3ReviewPage({
               }
             }
             setSelectedSolution(null);
-            setReviewFilter('all');
             if (nextPair) {
               setActiveVersionTab(nextPair.version);
               setSelectedQuestionNo(nextPair.number);
@@ -1026,7 +1017,6 @@ export default function Stage3ReviewPage({
     }
   };
 
-  const [reviewFilter, setReviewFilter] = useState('all');
   const numVersions = session?.config?.n_versions || session?.exam_versions?.length || 1;
   const totalSourceQuestions = session?.source_questions?.length || 0;
   const totalLoadedVariants = countTotalLoadedVariants(session);
@@ -1055,13 +1045,11 @@ export default function Stage3ReviewPage({
     return count;
   }, [session, numVersions, totalSourceQuestions, approvedVariantIds]);
 
-  const visibleQuestions = Array.from({ length: totalSourceQuestions }, (_, i) => i + 1).filter((qNo) =>
-    matchesReviewFilter(findVariantInSession(session, activeVersionTab, qNo), reviewFilter, approvedVariantIds)
-  );
-  // An open inspection stays on its candidate when accept changes the filter membership.
+  // All source positions stay reachable, including missing and already approved pairs.
   const currentQuestionNo = selectedSolution?.versionIndex === activeVersionTab
     ? selectedSolution.qNo
-    : visibleQuestions.includes(selectedQuestionNo) ? selectedQuestionNo : visibleQuestions[0];
+    : selectedQuestionNo >= 1 && selectedQuestionNo <= totalSourceQuestions
+      ? selectedQuestionNo : totalSourceQuestions > 0 ? 1 : null;
   const currentVariant = findVariantInSession(session, activeVersionTab, currentQuestionNo);
   const inspectionOpen = selectedSolution?.qNo === currentQuestionNo && selectedSolution?.versionIndex === activeVersionTab;
   const currentSource = session?.source_questions?.find((source) =>
@@ -1071,9 +1059,6 @@ export default function Stage3ReviewPage({
   const selectVersion = (version) => {
     if (isApprovingSingle || isRegeneratingSingle || isRevertingSingle || isRetryingAll) return;
     const question = currentQuestionNo ?? selectedQuestionNo;
-    if (!matchesReviewFilter(findVariantInSession(session, version, question), reviewFilter, approvedVariantIds)) {
-      setReviewFilter('all');
-    }
     setSelectedQuestionNo(question);
     setActiveVersionTab(version);
     setSelectedSolution(null);
@@ -1095,7 +1080,6 @@ export default function Stage3ReviewPage({
       const number = Math.floor(position / numVersions) + 1;
       const candidate = findVariantInSession(session, version, number);
       if (!isVariantApproved(candidate, approvedVariantIds)) {
-        setReviewFilter('all');
         setSelectedQuestionNo(number);
         setActiveVersionTab(version);
         setSelectedSolution(null);
@@ -1107,7 +1091,6 @@ export default function Stage3ReviewPage({
 
   const handleSelectNavigatorQuestion = (qNo) => {
     if (isApprovingSingle || isRegeneratingSingle || isRevertingSingle || isRetryingAll) return;
-    if (!visibleQuestions.includes(qNo)) setReviewFilter('all');
     setSelectedQuestionNo(qNo);
     setSelectedSolution(null);
   };
@@ -1121,17 +1104,16 @@ export default function Stage3ReviewPage({
       if (!saved) return;
       if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= numVersions) setActiveVersionTab(saved.version);
       if (Number.isInteger(saved.question) && saved.question >= 1 && saved.question <= totalSourceQuestions) setSelectedQuestionNo(saved.question);
-      setReviewFilter(['all', 'pending', 'warning', 'approved'].includes(saved.filter) ? saved.filter : 'all');
     } catch { /* View restoration is optional; server data remains authoritative. */ }
   }, [session, sessionId, numVersions, totalSourceQuestions]);
   useEffect(() => {
     if (!session || session.id !== sessionId || restoredViewRef.current !== sessionId) return;
     try {
       sessionStorage.setItem(`review-view:${sessionId}`, JSON.stringify({
-        version: activeVersionTab, filter: reviewFilter, question: currentQuestionNo,
+        version: activeVersionTab, question: currentQuestionNo,
       }));
     } catch { /* Storage may be unavailable. */ }
-  }, [session, sessionId, activeVersionTab, reviewFilter, currentQuestionNo]);
+  }, [session, sessionId, activeVersionTab, currentQuestionNo]);
 
   useEffect(() => {
     if (approvalFocus === null || selectedSolution) return;
@@ -1272,14 +1254,13 @@ export default function Stage3ReviewPage({
     <div ref={workspaceRef} className="paper-ui stage3-review-workspace bg-canvas text-ink">
       <main className="stage3-shell">
       <header className="stage3-session-header">
-        <BrandLogo size="sm" />
-        <div>
+        <BrandLogo size="sm" className="stage3-brand" />
+        <div className="stage3-header-details">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h1 className="font-semibold text-strong break-words">{session?.title || 'Đối chiếu và duyệt'}</h1>
             <span className="text-sm font-semibold text-highlight">Bước 3/3 · Duyệt câu hỏi</span>
             <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${headerBadge.className}`}>{headerBadge.label}</span>
           </div>
-          <p className="text-xs text-muted">{numVersions} mã đề · {totalSourceQuestions} câu/mã · Môn: {session?.subject || 'Toán'} · Khối {session?.grade || 12}</p>
         </div>
         {isFinalLocked && <button type="button" data-testid="stage3-btn-goto-export" onClick={() => navigate(exportPath(sessionId))}
           className="rounded-lg bg-approved-ink px-4 py-2 text-xs font-semibold text-white">Tới màn hình Xuất bản</button>}
@@ -1352,15 +1333,6 @@ export default function Stage3ReviewPage({
       <section aria-label="Điều hướng mã đề và câu hỏi" className="stage3-controls">
         {/* Điều hướng nhanh theo từng câu của mã đề đang xem (theo mẫu SourceNavigator S06) */}
         {totalSourceQuestions > 0 && (
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-strong">
-                Điều hướng nhanh theo câu ({versionLabel(session, activeVersionTab)})
-              </span>
-              <span className="text-[11px] text-muted">
-                Xanh lá: Đã duyệt · Vàng: Cảnh báo · Đỏ: Thiếu câu · Xám: Chờ duyệt
-              </span>
-            </div>
             <nav aria-label="Điều hướng câu hỏi" className="stage3-question-nav">
               {Array.from({ length: totalSourceQuestions }, (_, i) => i + 1).map((qNo) => {
                 const navVariant = findVariantInSession(session, activeVersionTab, qNo);
@@ -1417,27 +1389,7 @@ export default function Stage3ReviewPage({
                 );
               })}
             </nav>
-          </div>
         )}
-
-        <div role="group" aria-label="Lọc câu hỏi" className="stage3-filters">
-          {[['all','Tất cả'],['pending','Chưa duyệt'],['warning','Có cảnh báo'],['approved','Đã duyệt']].map(([value,label]) => {
-            const count = Array.from({length:totalSourceQuestions},(_,i)=>findVariantInSession(session,activeVersionTab,i+1))
-              .filter((variant) => matchesReviewFilter(variant, value, approvedVariantIds)).length;
-            return (
-              <button
-                type="button"
-                key={value}
-                aria-pressed={reviewFilter===value}
-                disabled={isApprovingSingle || isRegeneratingSingle || isRevertingSingle}
-                onClick={()=>{setReviewFilter(value);setSelectedSolution(null);}}
-                className="rounded-xl border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-rail aria-pressed:border-support-line aria-pressed:bg-support-bg aria-pressed:text-highlight"
-              >
-                {label} ({count})
-              </button>
-            );
-          })}
-        </div>
       </section>
 
       <Stage3Comparison source={currentSource} questionNo={currentQuestionNo} versionIndex={activeVersionTab} tabs={<>
@@ -1463,15 +1415,12 @@ export default function Stage3ReviewPage({
             );
           })}
       </>}>
-        {!currentQuestionNo && <div className="stage3-empty" role="status">Không có câu hỏi phù hợp với bộ lọc hiện tại.
-          <button type="button" onClick={() => setReviewFilter('all')} className="block text-highlight">Xem tất cả câu hỏi</button>
-        </div>}
+        {!currentQuestionNo && <div className="stage3-empty" role="status">Chưa có câu nguồn để đối chiếu.</div>}
         {[currentQuestionNo].filter(Boolean).map((qNo) => {
           const variant = selectedSolution?.qNo === qNo && selectedSolution?.versionIndex === activeVersionTab ? selectedSolution.variant : findVariantInSession(session, activeVersionTab, qNo);
           const isMissing = !variant;
 
           if (isMissing) {
-            if (['approved', 'warning'].includes(reviewFilter)) return null;
             if (!hasLoadedAnyVariants) {
               return <p key={qNo} role="status">Đang tải nội dung biến thể để đối chiếu…</p>;
             }
@@ -1531,7 +1480,6 @@ export default function Stage3ReviewPage({
 
           const pinned = selectedSolution?.qNo === qNo && selectedSolution?.versionIndex === activeVersionTab;
           const isCardBusy = pinned && (isRegeneratingSingle || isApprovingSingle || isRevertingSingle);
-          if (!pinned && ((reviewFilter === 'pending' && isApproved) || (reviewFilter === 'approved' && !isApproved) || (reviewFilter === 'warning' && !hasWarning && !isFallback))) return null;
           return (
             <div
               key={qNo}

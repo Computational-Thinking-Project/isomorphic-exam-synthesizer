@@ -2,15 +2,17 @@
 
 Ngày 24/11/2026, author tự kiểm trên nhánh `fix/stage3-ui`. C5 đã có kiểm tự động và checklist bàn giao; **chưa hoàn tất nghiệm thu visual/native browser**, chưa đề nghị Ready hoặc nhận GitHub Approve.
 
+**Feedback UI mới cùng ngày, sau commit `787b338`:** user yêu cầu logo nhỏ hơn, bỏ metadata/legend/nhãn điều hướng phụ và bộ lọc trạng thái, tăng chiều cao panel và cho nở theo nội dung/cuộn trang. Các quy tắc cuộn/chiều cao mới bên dưới thay fixed-viewport của mốc C2; không thay contract backend. Bằng chứng 619tests/code `5e890f9` bên dưới là checkpoint trước feedback này; checks mới ghi tại mục6.18 của plan.
+
 ## Phiên bản và scope
 
 - Task/plan: [Issue #95, mục 6.6 và 6.16](../../tasks/ISSUE-95.md). Workflow v0.1 + INPUT-20261109, trạng thái proposed theo [WORKFLOW](../../review/WORKFLOW.md).
-- Base PR đọc trực tiếp từ GitHub: `efed79b1662f63d1bc083eb147dc55421684ea16`. Remote head khi đọc: `1b661406006eda228eee6f804490a78e0e18afdf`; code cuối local `5e890f9ab43d15c55b994f1f1f634caaacb0d321` đã kiểm bên dưới, commit evidence sau đó chỉ sửa docs. Chưa push; khi yêu cầu review phải dùng head sau push.
+- Mốc C5 trước feedback: base PR đọc từ GitHub `efed79b1662f63d1bc083eb147dc55421684ea16`, remote head lúc đó `1b661406006eda228eee6f804490a78e0e18afdf`, code kiểm `5e890f9ab43d15c55b994f1f1f634caaacb0d321`, docs `787b338`. Lượt feedback mới bắt đầu từ local/tracking `787b338`, không đọc lại head GitHub; khi yêu cầu review phải dùng head sau push.
 - Tham chiếu: [walkthrough](../README.md), [PREVIEW.html](../PREVIEW.html), package `UI-WALKTHROUGH-20261102-TRANSPARENT-BRAND-HANDOFF-V2`. Đã kiểm lại SHA256 `8f9d6ebca4ad42b3ebddc15cf2fb4119b9599b8eb175c1b2c4d749b5f779dfaa`.
 - PR sửa FE S06: nguồn trái/biến thể phải, tabs mã, modal inspection/confirmation, thứ tự câu trước/mã sau, lỗi/toast và guard API hiện hành. Không redesign S07/Export, đổi auth/router/service/backend hoặc tích hợp API mới.
 - C4b retry ô thiếu và C4c partial-write là follow-up ngoài PR, không chờ PR #110 hoặc Gemini key mới. Bảng input/owner còn thiếu và ETA TBD giữ tại [mục 6.5/6.16 của plan](../../tasks/ISSUE-95.md); không tạo tracker hay tự gán owner khác.
 
-## Checks thực tế
+## Checks checkpoint C5 trước feedback UI
 
 Môi trường Windows, Node `v22.20.0`, npm `10.9.3`; lệnh dưới chạy từ `frontend/`. Tests component dùng DOM harness và services giả lập, không có browser layout engine hoặc API/DB thật.
 
@@ -31,6 +33,15 @@ Tests còn warning KaTeX quirks-mode của DOM giả, React Router future flags,
 
 Raw logs local: `tmp/stage3-c5-focus-tests.log`, `tmp/stage3-c5-mutation.log`, `tmp/stage3-c5-full-tests.log`, `tmp/stage3-c5-lint.log`, `tmp/stage3-c5-build.log` tính từ workspace root. Không commit raw logs hoặc dữ liệu phiên.
 
+## Kiểm lại sau feedback UI
+
+Baseline `787b338` + delta header/notes/filter/page-scroll, cùng môi trường Windows/Node/npm bên trên. Scope và bốn thay đổi ở [plan6.18](../../tasks/ISSUE-95.md); code không đổi sau checks, các delta còn lại chỉ docs. Đây vẫn là DOM/service mock, không phải browser layout hoặc API thật.
+
+- Focused: 8/8 pass, lệnh `node --test --test-name-pattern='R78-02:|UI109:|C2:' src/features/stage3-review/Stage3Review.test.js`.
+- Mutation đảo điều kiện chọn câu bị ca legacy-storage bắt đúng lỗi nguồn câu2 thành câu1; đã restore trong `finally` trước checks cuối.
+- Full `node --test --test-concurrency=1`: **620/620 pass**,2suites,0fail/skip/cancel/142.77s, gồm Review/service/Preview/Export. Lint exit0/0warning; build exit0/51.05s, JS1157.29kB/gzip335.87kB còn chunk warning. Tests còn warning DOM/Router/MockTimers/act như mốc trước.
+- Logs: `tmp/stage3-ui109-focused.log`, `tmp/stage3-ui109-mutation.log`, `tmp/stage3-ui109-full-tests.log`, `tmp/stage3-ui109-lint.log`, `tmp/stage3-ui109-build.log` từ workspace root. Native QA sau sửa vẫn mở; ảnh user gửi là bản trước sửa.
+
 ## Finding và audit
 
 **F109-C5-01 — lỗi accessibility được đưa vào từ C3, đã sửa và tự kiểm.** Popup chỉ xem có một nút đóng, còn lời giải Markdown có thể có link. Trap chỉ liệt kê button nên Tab từ nút đóng bị vòng về chính nó, bỏ qua link; Shift+Tab cũng không tới link cuối. Selector mới bao gồm link và phần tử có tabindex không âm, vẫn loại nút disabled và heading tabindex -1. Test kiểm không chặn Tab ở nút đóng, wrap từ link cuối, Shift+Tab và Escape/restore focus. Đây là kiểm handler bằng DOM harness; native traversal vẫn nằm trong checklist dưới.
@@ -45,9 +56,9 @@ Phiên này không có công cụ kết nối browser để kiểm bản chạy.
 
 | Viewport / thao tác | Điều kiện đạt | Trạng thái |
 |---|---|---|
-| 1440×900, 1366×768, 1024×768 | Nguồn trái, một biến thể phải; tabs trong panel phải; palette/type/hierarchy theo walkthrough; vùng đọc cuộn riêng, header/nav/CTA truy cập được. | Chưa kiểm native. |
-| 768×1024, 375×812, 320×768 | Reflow dọc; đọc nguồn/biến thể và tabs/nav được; CTA không mất hoặc chồng nội dung; không cuộn ngang toàn trang. | Chưa kiểm native. |
-| Zoom 200%, công thức/phương án/lời giải dài, nhiều câu/mã | Nội dung không bị cắt mất, cuộn tới cuối; footer và modal actions dùng được. | Chưa kiểm native. |
+| 1440×900, 1366×768, 1024×768 | Logo không giãn theo header; bỏ note/filter phụ; nguồn trái, một biến thể phải, tabs trong panel phải. Panel cao hơn và tự nở theo nội dung, cuộn trang để tới nội dung/CTA; palette/type/hierarchy theo walkthrough. | Chưa kiểm native sau sửa; ảnh user là bằng chứng finding trước sửa. |
+| 768×1024, 375×812, 320×768 | Reflow dọc và cuộn trang; logo không tràn; đọc nguồn/biến thể và tabs/nav được; CTA không chồng nội dung; không cuộn ngang toàn trang. | Chưa kiểm native. |
+| Zoom 200%, công thức/phương án/lời giải dài, nhiều câu/mã | Nội dung tăng chiều cao panel, không bị ép vào khung thấp; cuộn trang tới cuối và dùng được CTA. Modal vẫn có body cuộn riêng và actions truy cập được. | Chưa kiểm native. |
 | Modal editable và chỉ xem có link Markdown | Focus vào heading; Tab/Shift+Tab qua đầy đủ controls/link; Escape/nút đóng/backdrop trả focus; busy chặn đóng và mutation khác. Confirmation không mở modal thứ hai. | Chưa kiểm native; có DOM regression. |
 | Hai câu × hai mã | Đổi mã giữ nguồn; accept đúng candidate mới chọn Q1/M1 → Q1/M2 → Q2/M1 → Q2/M2; regenerate/revert cần duyệt lại, không tự qua S07. | Chưa kiểm native; có DOM regression. |
 | Lỗi/toast, read-only, mất snapshot, conflict/lock | Toast không đẩy layout; lỗi còn truy cập khi toast ẩn; các guard và “Đọc lại trạng thái” hoạt động; ô thiếu ghi đúng retry cấp phiên. | Chưa kiểm native; có DOM/service regression. |
