@@ -83,7 +83,7 @@ function renderStage3Page(
   };
 }
 
-test('Stage3ReviewPage hiển thị cảnh báo partial_generated, khóa xuất bản và hiển thị nút Sinh bù câu này cho câu thiếu', async () => {
+test('Stage3ReviewPage cảnh báo partial_generated, khóa xuất bản và phục hồi câu thiếu qua retry cấp phiên', async () => {
   const retryCalls = [];
   const mockLoadSession = async (sId) => ({
     id: sId,
@@ -145,12 +145,13 @@ test('Stage3ReviewPage hiển thị cảnh báo partial_generated, khóa xuất 
   assert.ok(text.includes('Câu 1 (Đề 1)'), 'Phải hiển thị Câu 1');
   assert.ok(!text.includes('Đạt chuẩn'), 'Không đánh giá chất lượng khi chưa duyệt');
 
-  // 4. Kiểm tra câu 2 bị thiếu hiển thị nút Sinh bù câu này
-  assert.ok(text.includes('Câu 2 (Đề 1) — Chưa được sinh thành công'), 'Phải báo Câu 2 chưa hoàn tất');
+  // Ô thiếu phải chọn được; API hiện chỉ phục hồi cấp phiên.
+  await act(async () => harness.container.querySelector('[data-review-nav-q="2"]').click());
+  assert.ok(harness.container.textContent.includes('Câu 2 (Đề 1) — Chưa được sinh thành công'), 'Phải báo Câu 2 chưa hoàn tất');
   const retryBtn = Array.from(harness.container.querySelectorAll('button')).find(
-    (b) => b.textContent.includes('Sinh bù câu này'),
+    (b) => b.textContent.includes('Sinh bổ sung các câu còn thiếu'),
   );
-  assert.ok(retryBtn, 'Câu thiếu phải có nút Sinh bù câu này');
+  assert.ok(retryBtn, 'Câu thiếu phải có đường phục hồi cấp phiên');
 
   // Bấm nút "Sinh bù câu này" trên câu 2 bị thiếu
   await act(async () => {
@@ -1409,11 +1410,13 @@ test('PR #54 Contract: Initial load dựng đúng ma trận câu hỏi và ứng
 
   // Nội dung ứng viên của Mã đề #101
   assert.ok(text.includes('Biến thể 101-1: Tìm đạo hàm'));
-  assert.ok(text.includes('Biến thể 101-2: Tính tích phân'));
+  assert.equal(text.includes('Biến thể 101-2: Tính tích phân'), false, 'Chỉ hiện biến thể đang chọn');
   assert.ok(text.includes('12x^2'));
   const inspect = harness.container.querySelectorAll('button').find((button) => button.textContent.includes('Xem lời giải'));
   await act(async () => inspect.click());
   assert.ok(harness.container.querySelector('[role="region"]').textContent.includes('Đạo hàm là'));
+  await act(async () => harness.container.querySelector('[data-review-nav-q="2"]').click());
+  assert.ok(harness.container.textContent.includes('Biến thể 101-2: Tính tích phân'));
 
   // Tiến độ ban đầu
   assert.ok(text.includes('Đã duyệt 0/4 câu'));
@@ -1494,10 +1497,11 @@ test('PR #54 Contract: Approved state hiển thị đúng trạng thái đã duy
   assert.ok(harness.container.textContent.includes('Đã duyệt 1/2 câu'));
 
   // Mở modal kiểm tra đáp án của câu 2
+  await act(async () => harness.container.querySelector('[data-review-nav-q="2"]').click());
   const inspectButtons = harness.container.querySelectorAll('[data-review-inspect="true"]');
-  assert.equal(inspectButtons.length, 2);
+  assert.equal(inspectButtons.length, 1);
   await act(async () => {
-    inspectButtons[1].click(); // Câu 2
+    inspectButtons[0].click(); // Câu 2 đang chọn
   });
 
   const dialog = harness.container.querySelector('[role="region"]');
@@ -1706,15 +1710,16 @@ test('PR #54 Contract: Missing slot (candidate: null) hiển thị trạng thái
   // 1. Câu 1 hiển thị bình thường với badge Đã duyệt
   assert.ok(text.includes('Biến thể câu 1 đã sinh xong và được duyệt'));
 
-  // 2. Câu 2 (candidate: null) hiển thị card chưa sinh và nút Sinh bù câu này
+  // 2. Chọn Câu 2 (candidate: null), vẫn giữ nguồn và đường phục hồi cấp phiên.
+  await act(async () => harness.container.querySelector('[data-review-nav-q="2"]').click());
   assert.ok(
-    text.includes('Câu 2 (Mã đề #101) — Chưa được sinh thành công'),
+    harness.container.textContent.includes('Câu 2 (Mã đề #101) — Chưa được sinh thành công'),
     'candidate: null phải hiển thị trạng thái Chưa được sinh thành công'
   );
   const retryBtn = Array.from(harness.container.querySelectorAll('button')).find(
-    (b) => b.textContent.includes('Sinh bù câu này')
+    (b) => b.textContent.includes('Sinh bổ sung các câu còn thiếu')
   );
-  assert.ok(retryBtn, 'Missing slot phải có nút Sinh bù câu này');
+  assert.ok(retryBtn, 'Missing slot phải có đường sinh bổ sung');
 
   // 3. Approved count: chỉ tính 1/2 câu (slot missing KHÔNG ĐƯỢC tính vào approvedCount)
   assert.ok(text.includes('Đã duyệt 1/2 câu'), 'Missing slot tuyệt đối không được tính là approved');
@@ -1983,11 +1988,17 @@ test('R78-02: warning counts, cards and indicators share classification across v
   try {
     await harness.render();
     assert.equal(warningButton().textContent, 'Có cảnh báo (10)');
-    assert.equal(cards().length, 13, 'All filter includes missing placeholder');
+    assert.equal(cards().length, 1, 'Workspace chỉ hiển thị một cặp');
+    assert.equal(buttons().filter(b => b.getAttribute('data-review-nav-q')).length, 13);
     await act(async () => { warningButton().click(); });
-    assert.equal(cards().length, 10);
-    for (let i = 1; i <= 10; i++) assert.ok(harness.container.querySelector(`#review-1-${i}`));
+    assert.equal(cards().length, 1);
+    for (let i = 1; i <= 10; i++) {
+      await act(async () => harness.container.querySelector(`[data-review-nav-q="${i}"]`).click());
+      assert.ok(harness.container.querySelector(`#review-1-${i}`));
+      assert.equal(warningButton().getAttribute('aria-pressed'), 'true');
+    }
     for (let i = 11; i <= 13; i++) assert.equal(harness.container.querySelector(`#review-1-${i}`), null);
+    await act(async () => harness.container.querySelector('[data-review-nav-q="9"]').click());
     assert.match(harness.container.querySelector('#review-1-9').textContent, /Có cảnh báo/);
     await act(async () => { buttons().find(b => b.textContent.startsWith('Đề 2')).click(); });
     assert.equal(warningButton().textContent, 'Có cảnh báo (1)');
@@ -1995,7 +2006,8 @@ test('R78-02: warning counts, cards and indicators share classification across v
     await act(async () => { buttons().find(b => b.textContent.startsWith('Đã duyệt (')).click(); });
     assert.equal(Array.from(harness.container.querySelectorAll('div')).filter(el => el.id?.startsWith('review-2-')).length, 0);
     await act(async () => { buttons().find(b => b.textContent.startsWith('Chưa duyệt (')).click(); });
-    assert.equal(Array.from(harness.container.querySelectorAll('div')).filter(el => el.id?.startsWith('review-2-')).length, 13);
+    assert.equal(buttons().find(b => b.textContent.startsWith('Chưa duyệt (')).textContent, 'Chưa duyệt (13)');
+    assert.equal(Array.from(harness.container.querySelectorAll('div')).filter(el => el.id?.startsWith('review-2-')).length, 1);
   } finally { await harness.unmount(); }
 });
 
@@ -2632,7 +2644,7 @@ test('Task T3 / Issue #85: Canonical review snapshot (versions[].slots[].candida
   }
 });
 
-test('ISSUE-95 Review UX: hiển thị header Bước 3/3, thanh điều hướng câu 4 trạng thái và chọn câu tự mở đối chiếu', async () => {
+test('ISSUE-95 Review UX: chọn câu trên navigator giữ trạng thái rõ và không tự mở lời giải', async () => {
   const harness = renderStage3Page('sess-95-nav', {
     loadSession: async () => ({
       id: 'sess-95-nav',
@@ -2672,7 +2684,7 @@ test('ISSUE-95 Review UX: hiển thị header Bước 3/3, thanh điều hướn
     assert.equal(nav3.getAttribute('aria-label'), 'Câu 3: Chờ duyệt');
     assert.equal(nav4.getAttribute('aria-label'), 'Câu 4: Thiếu câu');
 
-    // Lọc sang "Đã duyệt", rồi bấm Câu 3 trên navigator -> tự reset về "Tất cả" và mở đối chiếu Câu 3
+    // Chọn câu ngoài filter sẽ về Tất cả, nhưng không tự mở inspection.
     const approvedFilterBtn = Array.from(harness.container.querySelectorAll('button')).find((b) =>
       b.textContent.includes('Đã duyệt (1)'),
     );
@@ -2683,7 +2695,7 @@ test('ISSUE-95 Review UX: hiển thị header Bước 3/3, thanh điều hướn
     await act(async () => nav3.click());
     assert.equal(nav3.getAttribute('aria-current'), 'true');
     assert.ok(harness.container.querySelector('#review-1-3'), 'Card Câu 3 phải hiển thị sau khi chọn từ navigator');
-    assert.ok(harness.container.querySelector('#solution-1-3'), 'Panel đối chiếu Câu 3 phải được mở');
+    assert.equal(harness.container.querySelector('#solution-1-3'), null, 'Chọn câu không tự mở lời giải');
 
     const allFilterBtn = Array.from(harness.container.querySelectorAll('button')).find((b) =>
       b.textContent.includes('Tất cả ('),
@@ -2692,4 +2704,127 @@ test('ISSUE-95 Review UX: hiển thị header Bước 3/3, thanh điều hướn
   } finally {
     await harness.unmount();
   }
+});
+
+function comparisonSession(id) {
+  return {
+    id, status: 'generated', config: { n_versions: 2 },
+    source_questions: [1, 2].map((number) => ({
+      id: `source-${number}`, question_no: number, content: `Nguồn riêng ${number}`,
+      options: ['Một', 'Hai', 'Ba', 'Bốn'], correct_key: 'B',
+    })),
+    exam_versions: [1, 2].map((version) => ({
+      version_index: version, version_code: String(100 + version),
+      questions: [1, 2].map((number) => ({
+        id: `candidate-${version}-${number}`, source_question_id: `source-${number}`,
+        question_no: number, status: 'pending_review', content: `Biến thể riêng ${number}/${version}`,
+        options: ['Một', 'Hai', 'Ba', 'Bốn'], correct_key: 'C', solution_md: 'Lời giải riêng',
+      })),
+    })),
+  };
+}
+
+test('C2: nguồn luôn hiện, đổi mã giữ câu và chỉ render một biến thể, chọn câu không mở inspection', async () => {
+  const harness = renderStage3Page('comparison-pair', { loadSession: async () => comparisonSession('comparison-pair') });
+  try {
+    await harness.render();
+    const source = harness.container.querySelector('[data-review-source]');
+    const variant = harness.container.querySelector('[data-review-variant]');
+    assert.ok(source, 'Phải đọc được nguồn trước khi mở lời giải');
+    assert.match(source.textContent, /Nguồn riêng 1/);
+    assert.match(variant.textContent, /Biến thể riêng 1\/1/);
+    assert.equal(harness.container.textContent.includes('Biến thể riêng 2/1'), false);
+    assert.equal(harness.container.querySelector('[aria-label="Lời giải và thao tác duyệt"]'), null);
+    assert.equal(variant.querySelector('[data-review-inspect]'), null, 'CTA ở ngoài vùng đọc cuộn');
+
+    await act(async () => harness.container.querySelector('[data-review-version="2"]').click());
+    assert.match(source.textContent, /Nguồn riêng 1/);
+    assert.match(variant.textContent, /Biến thể riêng 1\/2/);
+    await act(async () => harness.container.querySelector('[data-review-nav-q="2"]').click());
+    assert.match(source.textContent, /Nguồn riêng 2/);
+    assert.match(variant.textContent, /Biến thể riêng 2\/2/);
+    assert.equal(harness.container.querySelector('[aria-label="Lời giải và thao tác duyệt"]'), null);
+    await act(async () => harness.container.querySelector('[data-review-inspect="true"]').click());
+    assert.ok(harness.container.querySelector('#solution-2-2'));
+    await act(async () => harness.container.querySelector('[data-review-version="1"]').click());
+    assert.match(source.textContent, /Nguồn riêng 2/);
+    assert.match(variant.textContent, /Biến thể riêng 2\/1/);
+    assert.equal(harness.container.querySelector('#solution-2-2'), null);
+  } finally { await harness.unmount(); }
+});
+
+test('C2: đổi mã giữ câu nguồn kể cả khi filter ở mã mới không còn khớp', async () => {
+  const data = comparisonSession('comparison-filter');
+  data.exam_versions[0].questions[1].has_warning = true;
+  const harness = renderStage3Page(data.id, { loadSession: async () => data });
+  try {
+    await harness.render();
+    const filters = () => Array.from(harness.container.querySelector('[aria-label="Lọc câu hỏi"]').querySelectorAll('button'));
+    await act(async () => filters().find(b => b.textContent.startsWith('Có cảnh báo')).click());
+    assert.match(harness.container.querySelector('[data-review-source]').textContent, /Nguồn riêng 2/);
+    await act(async () => harness.container.querySelector('[data-review-version="2"]').click());
+    assert.match(harness.container.querySelector('[data-review-source]').textContent, /Nguồn riêng 2/);
+    assert.match(harness.container.querySelector('[data-review-variant]').textContent, /Biến thể riêng 2\/2/);
+    assert.equal(filters().find(b => b.textContent.startsWith('Tất cả')).getAttribute('aria-pressed'), 'true');
+  } finally { await harness.unmount(); }
+});
+
+test('C2: tabs mã điều hướng bằng phím và giữ câu, không mở lời giải', async () => {
+  const harness = renderStage3Page('comparison-keyboard', { loadSession: async () => comparisonSession('comparison-keyboard') });
+  try {
+    await harness.render();
+    await act(async () => harness.container.querySelector('[data-review-nav-q="2"]').click());
+    for (const [key, from, to] of [['ArrowRight', 1, 2], ['Home', 2, 1], ['End', 1, 2], ['ArrowLeft', 2, 1]]) {
+      await act(async () => harness.container.querySelector(`[data-review-version="${from}"]`).dispatchEvent({
+        type: 'keydown', key, bubbles: true, preventDefault() {},
+      }));
+      const selected = harness.container.querySelector(`[data-review-version="${to}"]`);
+      assert.equal(selected.getAttribute('aria-selected'), 'true');
+      assert.equal(document.activeElement, selected);
+      assert.match(harness.container.querySelector('[data-review-source]').textContent, /Nguồn riêng 2/);
+      assert.match(harness.container.querySelector('[data-review-variant]').textContent, new RegExp(`Biến thể riêng 2/${to}`));
+      assert.equal(harness.container.querySelector('[aria-label="Lời giải và thao tác duyệt"]'), null);
+    }
+  } finally { await harness.unmount(); }
+});
+
+test('C2: thao tác đến cặp chưa duyệt tiếp theo đi hết mã của một câu và giữ ô thiếu trong thứ tự', async () => {
+  const data = comparisonSession('comparison-next');
+  data.exam_versions[0].questions[0].status = 'approved';
+  // Ô kế tiếp trong thứ tự đúng là Câu 1/Mã 2, dù chưa có candidate.
+  data.exam_versions[1].questions.shift();
+  const harness = renderStage3Page(data.id, { loadSession: async () => data });
+  try {
+    await harness.render();
+    await act(async () => harness.container.querySelector('[data-review-inspect="true"]').click());
+    const next = Array.from(harness.container.querySelectorAll('button')).find(b => b.textContent.includes('Đến câu chưa duyệt tiếp theo'));
+    await act(async () => next.click());
+    assert.match(harness.container.querySelector('[data-review-source]').textContent, /Nguồn riêng 1/);
+    assert.equal(harness.container.querySelector('[data-review-version="2"]').getAttribute('aria-selected'), 'true');
+    assert.match(harness.container.querySelector('[data-review-variant]').textContent, /Chưa được sinh thành công/);
+    assert.equal(harness.container.querySelector('[aria-label="Lời giải và thao tác duyệt"]'), null);
+    assert.equal(harness.getLocation(), '/session/comparison-next/stage3');
+  } finally { await harness.unmount(); }
+});
+
+test('C2: chọn ô thiếu vẫn đọc được nguồn, key marker tách biệt với approval', async () => {
+  const data = comparisonSession('comparison-missing');
+  data.status = 'partial_generated';
+  data.exam_versions[1].questions.pop();
+  const harness = renderStage3Page(data.id, { loadSession: async () => data });
+  try {
+    await harness.render();
+    const sourceKey = harness.container.querySelector('[data-review-source]').querySelector('[data-answer-key="B"]');
+    const variantKey = harness.container.querySelector('[data-review-variant]').querySelector('[data-answer-key="C"]');
+    assert.ok(sourceKey && variantKey);
+    assert.match(sourceKey.textContent, /Đáp án/);
+    assert.match(variantKey.textContent, /Đáp án/);
+    assert.equal(variantKey.getAttribute('class').includes('approved'), false);
+    await act(async () => harness.container.querySelector('[data-review-version="2"]').click());
+    await act(async () => harness.container.querySelector('[data-review-nav-q="2"]').click());
+    assert.match(harness.container.querySelector('[data-review-source]').textContent, /Nguồn riêng 2/);
+    assert.match(harness.container.querySelector('[data-review-variant]').textContent, /Chưa được sinh thành công/);
+    assert.equal(harness.container.querySelector('[data-review-approve]'), null);
+    assert.notEqual(harness.container.querySelector('[data-review-finalize]').getAttribute('disabled'), null);
+  } finally { await harness.unmount(); }
 });

@@ -1,3 +1,12 @@
+## Issue #95 — C2 persistent source/variant workspace — 24/11/2026
+
+- S06 hiển thị một nguồn bên trái và một biến thể bên phải; tabs mã trong panel biến thể. Đổi mã giữ câu nguồn, chọn câu không tự mở lời giải. Navigator và hai vùng đọc cuộn cục bộ, layout xếp dọc dưới 1024px; key đáp án tách màu khỏi approval.
+- Thao tác “Đến câu chưa duyệt tiếp theo” đi theo câu trước/mã sau, giữ ô thiếu trong thứ tự. Auto-select sau accept và popup mới vẫn thuộc C3; commit này giữ vùng lời giải và handler mutation hiện hành.
+- Không đổi API/auth/schema/read-only; sinh bổ sung vẫn cấp phiên. Contract per-slot recovery/partial-write/revert chưa được owner xác nhận trong lượt này. [Scope, checks và giới hạn C2](tasks/ISSUE-95.md).
+- Full frontend 612/612, lint/build đạt; chưa visual browser hoặc live FE–BE–DB. Không nhận UI parity/Ready toàn nhánh từ checkpoint này.
+
+---
+
 ## Issue #95 — Stage 3 comparison layout and review order — 23/11/2026
 
 - Trạng thái: **plan / đề xuất contract để review trên Draft PR**, chưa triển khai UI hoặc thay API. Nhánh `fix/stage3-ui`; [plan và input](tasks/ISSUE-95.md#6-plan-sửa-s06-trên-fixstage3-ui--23112026).

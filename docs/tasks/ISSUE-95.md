@@ -1,6 +1,6 @@
 # ISSUE-95 — Plan và bàn giao Redesign UI/UX Giai đoạn 3 (Review, Final Preview & Export)
 
-> **Lượt sửa 23/11/2026 — `fix/stage3-ui`:** xem mục 6. Bàn giao mục 5 là lịch sử của lượt #95; các kết quả test ở đó không chứng minh bố cục S06 hiện tại khớp walkthrough. Lượt này mới đánh giá và lập plan, chưa sửa source UI.
+> **Lượt sửa `fix/stage3-ui`:** plan ngày 23/11 tại mục 6; checkpoint code C2 ngày 24/11 tại mục 6.10. Bàn giao mục 5 là lịch sử của lượt #95; test/build không thay bằng chứng visual của S06. C3/C4 và các input contract chưa được nhận là hoàn tất từ việc triển khai C2.
 
 - **Nguồn giao việc:** [Issue #95](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/issues/95) (`[UI/UX][Giai đoạn 3] Thiết kế lại màn hình duyệt đề, xem trước bản cuối & xuất file`), đối chiếu tại `dev@e7e0088` ngày 20/11/2026.
 - **Phụ trách:** Trung Anh (`philip-kkk`, FE1).
@@ -196,7 +196,7 @@ Nơi tổng hợp input lượt sửa là bảng này; không suy câu trả l�
 
 ### 6.6. Thứ tự commit dự kiến và phạm vi file
 
-C1 là commit tài liệu chuẩn bị Draft PR theo yêu cầu user; C2–C5 vẫn là kế hoạch, chưa triển khai. Giữ React JSX và service hiện có. Chỉ tách component có nhiệm vụ rõ, không viết lại toàn bộ controller khi sửa layout.
+C1 là commit tài liệu `e3ec20b` chuẩn bị Draft PR theo yêu cầu user; kết quả C2 tại mục 6.10. C3–C5 vẫn là kế hoạch, chưa triển khai đầy đủ. Giữ React JSX và service hiện có. Chỉ tách component có nhiệm vụ rõ, không viết lại toàn bộ controller khi sửa layout.
 
 | Lượt / commit dự kiến | File dự kiến | Công việc và tiêu chí hoàn tất | Phụ thuộc / kiểm |
 |---|---|---|---|
@@ -240,4 +240,27 @@ Không sửa `index.css`, `App.jsx`, `sessionDestination.js`, services/backend t
 | `I-95-FIX-REVERT` | Giữ “Khôi phục đề gốc” như hành động phụ trong inspection; hai CTA chính vẫn Tạo lại/Duyệt biến thể. | Philip chốt ngoại lệ so với walkthrough sau phản hồi nghiệp vụ của Bội Anh; không coi đây là phương án thay cho tạo lại câu lỗi. |
 
 - Reply trên Draft PR dùng đúng ID input, ghi phần đồng ý/đề nghị sửa, link contract + phiên bản/mẫu và ETA người cung cấp xác nhận. Bảng mục 6.5 vẫn là nơi tổng hợp input duy nhất; mục này mô tả hướng đề xuất, không tự nâng input thành Accepted/Integrated.
-- Draft ở trạng thái **plan và thảo luận contract**, chưa yêu cầu nghiệm thu code UI hoặc chuyển Ready. C2 layout có thể làm độc lập; chỉ nối hành vi phụ thuộc API sau khi có đầu vào tương ứng.
+- Tại mốc C1, Draft được chuẩn bị ở trạng thái **plan và thảo luận contract**, chưa yêu cầu nghiệm thu code UI hoặc chuyển Ready. C2 layout làm độc lập; checkpoint triển khai mới nhất tại mục 6.10. Chỉ nối hành vi phụ thuộc API sau khi có đầu vào tương ứng.
+
+### 6.10. Checkpoint C2 — workspace đối chiếu thường trực, 24/11/2026
+
+- **Baseline:** `fix/stage3-ui@e3ec20b`; user giao triển khai và commit C2. Các mục 6.8–6.9 ghi trạng thái lúc lập plan/thảo luận, không thay checkpoint này. Commit C2 chưa bao gồm push, GitHub reply hoặc xác nhận contract từ owner.
+- **File code:** `Stage3ReviewPage.jsx`, `Stage3Review.test.js`, thêm `Stage3Comparison.jsx` và `stage3Review.css` tại `frontend/src/features/stage3-review/`. Dùng `BrandLogo`, MathRenderer và palette hiện hành, không thêm dependency.
+- **Đã triển khai:** một câu nguồn trái/biến thể phải; tabs mã thuộc panel phải; chọn câu độc lập mở lời giải; đổi mã giữ nguồn, kể cả khi phải reset filter không còn khớp. Tabs hỗ trợ ArrowLeft/ArrowRight/Home/End và roving focus. Nguồn vẫn đọc được khi chọn ô thiếu.
+- **Bố cục trong code:** khung 100dvh, hai body panel cuộn độc lập ở desktop; dưới 1024px nguồn/biến thể xếp dọc trong vùng đọc chung. Navigator cuộn ngang; CTA Kiểm tra đáp án ở ngoài vùng đọc cuộn. Header/metadata được thu gọn; footer có đường về Thư viện, Stage 2 và Rà bộ đề. Cửa sổ thấp có fallback cuộn trong workspace để không cắt mất nội dung. Key đáp án dùng lam xám/navy và nhãn riêng, không dùng màu approval xanh lá.
+- **Thứ tự:** thao tác hiện có “Đến câu chưa duyệt tiếp theo” đi theo câu trước/mã sau và không bỏ qua ô thiếu. **Chưa thêm auto-select sau accept hoặc modal mới**; phần này thuộc C3. Vùng lời giải mở rộng hiện hành vẫn được giữ trong panel phải để các thao tác cũ tiếp tục dùng được ở commit C2.
+- **Bảo toàn contract:** vùng handler regenerate/accept/revert/retry đối chiếu nguyên văn với baseline và không đổi. Cờ read-only/lock, identity/idempotency và recovery tiếp tục hiện hành. Bỏ nhãn ẩn “Sinh bù câu này” gây hiểu nhầm; thao tác vẫn ghi đúng sinh bổ sung các câu còn thiếu cấp phiên. Không nối API targeted retry chưa được cung cấp.
+
+**Kiểm đã chạy trên candidate C2 trước commit:**
+
+| Kiểm | Kết quả / mức bằng chứng |
+|---|---|
+| C2 focused `node --test --test-concurrency=1 --test-name-pattern="C2:" src/features/stage3-review/Stage3Review.test.js` | 5/5 pass ở lượt focused; cùng 5 ca cũng được chạy lại trong full suite trên source cuối. Kiểm một cặp, giữ nguồn, missing/key marker, filter khi đổi mã, bàn phím và next theo câu trước. |
+| Full frontend `node --test --test-concurrency=1` | **612/612 pass**, 0 fail/skip/cancel, 2 suites, khoảng 100.4s; gồm các ca Review, Preview/Export và service. Test DOM/mock, chưa phải browser hay API/DB thật. |
+| `npm run lint` | Exit 0, không lỗi/cảnh báo lint. |
+| `npm run build` | Exit 0, 1930 modules, 19.43s; JS chunk 1158.81kB, có cảnh báo chunk >500kB. Không mở rộng task sang code splitting. |
+| Self-review/audit | Kiểm correctness/readability/architecture/security/performance trong scope C2; handler mutation không đổi, CSS theo màn, không đổi auth/API/shared tokens. Phép thử mutation tạm reset câu về 1 khi đổi mã khiến test giữ nguồn fail đúng chỗ; đã phục hồi trước full suite/build. Không phải GitHub approval hoặc review độc lập. |
+| Docs/diff | `git diff --check` và kiểm liên kết mới trước commit. |
+
+- **Giới hạn:** chưa có công cụ browser điều khiển khả dụng trong lượt C2 để chụp/đo bản chạy. Chưa kiểm native desktop/mobile/zoom/focus/scroll, không nhận visual parity đạt từ class CSS hoặc test DOM. Chưa live FE–BE–DB/Docker smoke. Các cảnh báo KaTeX test DOM/React Router future flags vẫn xuất hiện.
+- **Bước tiếp:** kiểm visual trên môi trường có đăng nhập khi khả dụng; tiếp C3 khi user giao. Giữ các input `I-95-FIX-MISSING-RETRY`, `I-95-FIX-PARTIAL-WRITE`, `I-95-FIX-REVERT` ở trạng thái chờ phản hồi, không tự nâng Accepted/Integrated. C2 là checkpoint implementation/checks, chưa phải nghiệm thu toàn bộ #95 hoặc Ready cho toàn nhánh.
