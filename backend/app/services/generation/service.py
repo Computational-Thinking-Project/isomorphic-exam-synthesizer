@@ -106,8 +106,12 @@ class GenerationService:
     async def _request_versions(
         self, blueprint: dict[str, Any], modes: list[str], seeds: dict[int, int],
         context: RequestContext,
+        *, feedback: list[dict[str, str]] | None = None,
     ) -> dict[int, CandidatePayload]:
-        prompt = build_prompt(blueprint=blueprint, seed=next(iter(seeds.values())), variation_modes=modes)
+        prompt = build_prompt(
+            blueprint=blueprint, seed=next(iter(seeds.values())), variation_modes=modes,
+            feedback=feedback,
+        )
         prompt += (
             "\nSinh các biến thể khác nhau cho cùng câu nguồn trong MỘT JSON variants. "
             "Mỗi phần tử gồm version_index và candidate theo schema. "
@@ -382,6 +386,8 @@ class GenerationService:
             batch_error: str | None = None
             batch_attempt = 1
             batch_exhausted = False
+            schema_failures = 0
+            batch_feedback: list[dict[str, str]] = []
             if len(pending) > 1:
                 try:
                     async with asyncio.timeout_at(context.deadline):
@@ -390,6 +396,7 @@ class GenerationService:
                                 initial = await self._request_versions(
                                     blueprints[source.id], per_source_modes[source.id],
                                     {version: seed for _, version, seed in pending}, context,
+                                    feedback=batch_feedback,
                                 )
                                 batch_error = None
                                 break
@@ -401,7 +408,11 @@ class GenerationService:
                                 await asyncio.sleep(min(2 ** (batch_attempt - 1), 4))
                             except ToolError as exc:
                                 batch_error = exc.code
-                                break
+                                schema_failures += 1
+                                batch_feedback = [{"check": "output_schema", "code": exc.code}]
+                                batch_exhausted = batch_attempt == self.MAX_ATTEMPTS
+                                if schema_failures > 2:
+                                    break
                 except TimeoutError:
                     batch_error = "JOB_DEADLINE"
                     batch_exhausted = False

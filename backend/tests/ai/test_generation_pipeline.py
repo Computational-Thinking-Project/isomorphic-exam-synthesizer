@@ -680,19 +680,107 @@ async def test_sources_are_generated_question_first_before_next_source(pipeline)
 
 
 @pytest.mark.asyncio
-async def test_wrong_batch_version_ids_fail_without_saving_candidates(pipeline):
+async def test_repeated_wrong_batch_version_ids_stop_at_schema_limit_without_candidates(pipeline):
     p = pipeline
     p.responses[:] = [{"variants": [
         {"version_index": 1, "candidate": p.candidates[0]},
         {"version_index": 1, "candidate": p.candidates[1]},
-    ]}]
+    ]}] * 3
     result = await p.service.generate_exam_drafts(
         [p.source], {p.source.id: p.blueprint}, confirmed_source_hash=p.confirmed,
         n_versions=2, context=p.context,
     )
     assert result.status == "failed"
     assert all(r.candidate is None for r in result.results)
-    assert p.budget.used == 1
+    assert p.budget.used == 3
+    assert all(r.attempts == 3 and not r.exhausted_attempts for r in result.results)
+    p.validator.validate.assert_not_awaited()
+
+
+def four_version_payload(p):
+    return {"variants": [
+        {"version_index": version, "candidate": {
+            **copy.deepcopy(p.candidates[0]), "question_text": f"Biến thể mới {version}",
+        }} for version in range(1, 5)
+    ]}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", ["json", "solution", "duplicate_version", "missing_version"])
+async def test_invalid_four_version_batch_recovers_before_any_candidate_is_saved(pipeline, invalid):
+    p = pipeline
+    bad = four_version_payload(p)
+    code = "GENERATION_INVALID"
+    if invalid == "json":
+        bad = "{invalid"
+        code = "INVALID_JSON"
+    elif invalid == "solution":
+        del bad["variants"][2]["candidate"]["solution"]
+        code = "AI_SCHEMA_INVALID"
+    elif invalid == "duplicate_version":
+        bad["variants"][2]["version_index"] = 1
+    else:
+        bad["variants"].pop()
+    valid = four_version_payload(p)
+    valid["variants"].reverse()
+    p.responses[:] = [bad, valid]
+    saved = []
+    async def persist(result):
+        assert len(p.calls) == 2 and result.candidate is not None
+        saved.append(result.version_index)
+    result = await p.service.generate_exam_drafts(
+        [p.source], {p.source.id: p.blueprint}, confirmed_source_hash=p.confirmed,
+        n_versions=4, context=p.context, on_result=persist,
+    )
+    assert result.status == "generated" and p.budget.used == 2
+    assert saved == [1, 2, 3, 4]
+    assert all(r.attempts == 2 for r in result.results)
+    assert p.validator.validate.await_count == 4
+    assert code in p.calls[1]["contents"] and "output_schema" in p.calls[1]["contents"]
+
+
+@pytest.mark.asyncio
+async def test_repeated_malformed_batch_stops_after_three_schema_failures(pipeline):
+    p = pipeline
+    p.responses[:] = ["{invalid"] * 3 + [four_version_payload(p)]
+    result = await generate_batch(p)
+    assert result.status == "failed" and p.budget.used == len(p.calls) == 3
+    assert len(p.responses) == 1
+    assert all(r.candidate is None and r.error_code == "INVALID_JSON"
+               and r.attempts == 3 and not r.exhausted_attempts for r in result.results)
+    p.validator.validate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_schema_and_transport_failures_share_four_attempts(pipeline, monkeypatch):
+    p = pipeline
+    monkeypatch.setattr("app.services.generation.service.asyncio.sleep", AsyncMock())
+    p.responses[:] = ["{invalid", GatewayError("API_TIMEOUT", retryable=True), "{invalid", "{invalid"]
+    result = await generate_batch(p)
+    assert result.status == "failed" and p.budget.used == len(p.calls) == 4
+    assert all(r.attempts == 4 and r.exhausted_attempts and r.candidate is None for r in result.results)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop", ["quota", "deadline"])
+async def test_schema_recovery_respects_shared_budget_and_deadline(pipeline, stop):
+    p = pipeline
+    p.responses[:] = ["{invalid", batch_payload(p)]
+    if stop == "quota":
+        p.budget.limit = 1
+    else:
+        p.context = RequestContext(time.monotonic() + 0.02, p.budget.reserve)
+        original = p.gateway.generate_content.side_effect
+        async def stalled(**kwargs):
+            if p.calls:
+                await asyncio.sleep(1)
+            return await original(**kwargs)
+        p.gateway.generate_content.side_effect = stalled
+    result = await generate_batch(p)
+    code = "REQUEST_BUDGET_EXHAUSTED" if stop == "quota" else "JOB_DEADLINE"
+    assert result.status == "failed" and p.budget.used == 1
+    assert all(r.error_code == code and not r.exhausted_attempts for r in result.results)
+    p.validator.validate.assert_not_awaited()
 
 
 def batch_payload(p):

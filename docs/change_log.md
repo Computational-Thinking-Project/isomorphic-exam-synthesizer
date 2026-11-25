@@ -1,5 +1,6 @@
 ## PR #110 — Bounded batch retry and export request lifetime — 25/11/2026
 
+- F110-04 bổ sung recovery JSON/schema/tập version bằng prompt đầy đủ cùng feedback, giữ giới hạn ba schema failures và tổng bốn attempts. Không lưu một phần batch lỗi. Sửa mô tả fail-fast trước đó trong producer handoff; không thay contract/persistence hoặc orchestration.
 - Đạt sửa F110-01, batch retry lỗi transport/provider retryable trong deadline và budget chung; tổng batch + repair tối đa bốn attempts mỗi ô. Hết bốn lỗi retryable giữ metadata cho worker fallback; quota/auth/deadline không đủ điều kiện exhaustion.
 - Sửa F110-02, hủy listing/download khi rời export hoặc đổi phiên, guard response muộn trước khi tải file/cập nhật UI. Bổ sung regression pipeline, worker fallback và React StrictMode.
 - Producer handoff ghi rõ response/error semantics và F110-03, thứ tự question-first áp dụng các callback AI; Clone precommit/SSE hiện có được giữ, chờ Duy xác nhận phạm vi và Hùng cập nhật canonical contract. [Plan](tasks/DAT-question-batch-formats.md). Trạng thái author sửa, chưa là reviewer acceptance hoặc live acceptance.
