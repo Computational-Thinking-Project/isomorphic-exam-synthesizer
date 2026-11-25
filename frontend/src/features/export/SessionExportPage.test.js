@@ -96,7 +96,7 @@ test('SessionExportPage hiển thị trạng thái unwired khi chưa truyền Q1
 
   assert.match(view.container.textContent, /Đề Đại số 12/);
   assert.match(view.container.textContent, /chưa được nối vào giao diện/);
-  assert.match(view.container.textContent, /Quay về Dashboard/);
+  assert.match(view.container.textContent, /Thư viện đề/);
   await view.unmount();
 });
 
@@ -275,6 +275,128 @@ test('SessionExportPage chạy trọn luồng qua exportService mặc định v�
     url: 'https://storage.example.test/exam_bundle_s1.zip?sig=q10',
     filename: 'exam_bundle_s1.zip',
   }]);
+
+  await view.unmount();
+});
+
+test('SessionExportPage: hiển thị Bước 3/3, link preview URL-encoded, hộp cấu trúc w4-export-v2, dung lượng ZIP và không rò rỉ signed URL', async () => {
+  const signedUrl = 'https://storage.example.test/signed/exam_bundle_special.zip?token=secret-sig';
+  const opened = [];
+  const view = await mountExportPage(
+    {
+      loadSession: async () => ({
+        id: 'sess with/1',
+        title: 'Đề kiểm tra Đại số 10',
+        subject: 'Toán',
+        grade: 10,
+        status: 'exported',
+        question_count: 10,
+        variant_count: 4,
+      }),
+      getStatus: async () => ({
+        status: 'ready',
+        filename: 'exam_bundle_special.zip',
+        size_bytes: 5120,
+      }),
+      issueDownloadUrl: async () => ({
+        url: signedUrl,
+        expires_in: 3600,
+        filename: 'exam_bundle_special.zip',
+      }),
+      openDownload: (url, filename) => opened.push({ url, filename }),
+    },
+    '/session/sess%20with%2F1/export',
+  );
+
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 10));
+  });
+
+  const textBeforeDownload = view.container.textContent;
+  assert.ok(textBeforeDownload.includes('Bước 3/3 · Xuất đề & Tải gói ZIP'));
+  assert.ok(textBeforeDownload.includes('Đã xuất gói đề'));
+  assert.ok(textBeforeDownload.includes('5.0 KB'));
+  assert.ok(!textBeforeDownload.includes(signedUrl), 'Không được lộ signed URL trực tiếp trong DOM');
+
+  const previewLink = view.container.querySelector('[data-testid="export-link-preview"]');
+  assert.ok(previewLink, 'Phải có link quay lại Stage 3 Preview');
+  assert.equal(previewLink.getAttribute('href'), '/session/sess%20with%2F1/stage3/preview');
+
+  const zipInfo = view.container.querySelector('[data-testid="zip-structure-info"]');
+  assert.ok(zipInfo, 'Phải hiển thị hộp thông tin cấu trúc gói ZIP w4-export-v2');
+  assert.ok(zipInfo.textContent.includes('w4-export-v2'));
+  assert.ok(zipInfo.textContent.includes('pdf/exam_<mã>.pdf'));
+  assert.ok(zipInfo.textContent.includes('latex/exam_<mã>.tex'));
+  assert.ok(zipInfo.textContent.includes('markdown/exam_<mã>.md'));
+  assert.ok(zipInfo.textContent.includes('không hỗ trợ tải lẻ từng file hoặc từng mã'));
+
+  // Không có nút tải lẻ PDF/TeX/MD
+  const allButtons = [];
+  const collectButtons = (node) => {
+    if (!node) return;
+    if (node.nodeName === 'BUTTON') allButtons.push(node.textContent);
+    if (Array.isArray(node.childNodes)) node.childNodes.forEach(collectButtons);
+  };
+  collectButtons(view.container);
+  assert.deepEqual(
+    allButtons.map((b) => b.trim()),
+    ['Tải gói ZIP', 'Làm mới trạng thái'],
+  );
+
+  const downloadBtn = findButtons(view.container, 'Tải gói ZIP')[0];
+  assert.ok(downloadBtn);
+  await act(async () => {
+    downloadBtn.click();
+    await Promise.resolve();
+  });
+
+  assert.deepEqual(opened, [{ url: signedUrl, filename: 'exam_bundle_special.zip' }]);
+  assert.ok(!view.container.textContent.includes(signedUrl), 'Không được lộ signed URL sau khi tải');
+
+  await view.unmount();
+});
+
+test('SessionExportPage: pha failed cho phép Thử đóng gói lại và chuyển sang sẵn sàng tải khi retry thành công', async () => {
+  let startCalls = 0;
+  const view = await mountExportPage({
+    loadSession: async () => ({
+      id: 's1',
+      title: 'Đề cuối kỳ',
+      subject: 'Toán',
+      grade: 11,
+      status: 'approved',
+    }),
+    getStatus: async () => ({
+      status: 'failed',
+      error_code: 'ERR_EXPORT_BUILD_FAILED',
+    }),
+    triggerExport: async () => {
+      startCalls += 1;
+      return {
+        status: 'ready',
+        filename: 'exam_bundle_retry.zip',
+        size_bytes: 2048,
+      };
+    },
+  });
+
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 10));
+  });
+
+  assert.ok(view.container.textContent.includes('Quá trình đóng gói đề thi gặp lỗi. Bạn có thể bấm thử đóng gói lại.'));
+  const retryBtn = findButtons(view.container, 'Thử đóng gói lại')[0];
+  assert.ok(retryBtn, 'Phải hiển thị nút Thử đóng gói lại khi export failed');
+
+  await act(async () => {
+    retryBtn.click();
+    await Promise.resolve();
+  });
+
+  assert.equal(startCalls, 1);
+  assert.ok(view.container.textContent.includes('exam_bundle_retry.zip'));
+  assert.ok(view.container.textContent.includes('2.0 KB'));
+  assert.ok(findButtons(view.container, 'Tải gói ZIP').length > 0);
 
   await view.unmount();
 });

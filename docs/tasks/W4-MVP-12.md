@@ -1,5 +1,27 @@
 # W4-MVP-12 — Security/negative baseline và regression tích hợp
 
+## Current integration checkpoint — 25/11/2026
+
+- Author; workflow v0.1 proposed + INPUT-20261109, docs baseline `7b7387f`.
+  Đồng bộ `origin/dev@efed79b` vào TASK12 từ `95d957a`, không conflict.
+  Candidate đã gồm PR105 Stage3 UI, PR99 recovery marker và PR100 Stage1 UI.
+  PR109/110 còn mở và **không nằm trong candidate này**; proposed batching/
+  tải file riêng của110 chưa thay contract export của TASK12.
+- Delta dev kể từ base tích hợp `ad7c313` chỉ có frontend/docs; backend và SQL
+  không đổi. Không chạy lại PG để biến bằng chứng22/11 thành nghiệm thu mới.
+  PostgreSQL full chain027/Storage-double trước đó vẫn là receipt có ngày.
+- Docker candidate25/11: Ruff PASS; mypy128 files PASS;
+  security/API/services/exporter **1349 passed, 2 skipped**,6 cảnh báo, có
+  Typst/XeLaTeX thật. Hai module asyncpg thiếu dependency vẫn skip, không phải PG
+  hoặc live PASS. Frontend Node22 **607 passed**, lint/build PASS (chunk warning).
+- Working delta TASK12 tiếp tục chỉ gồm tests/docs, không đổi production contract.
+  Review Đạt273 PASS thuộc `ffeb4f0`, CI5/5 trước đó thuộc `95d957a`; không tự
+  gán review/checks đó cho merge head mới. Review độc lập và CI mới ghi tại PR73.
+- Chưa có DB0/runtime receipt mới tại handoff chuẩn #101 hoặc Golden #74 so với
+  lần tiếp nhận23/11. I-W412-01/02 chưa đủ; I-W412-03 mới nhận kế hoạch, chưa live
+  evidence. Giữ PR73 Draft, G0 BLOCKED, G1/G2 NOT RUN; không apply shared DB,
+  chọn frozen head thay Duy, bật export hoặc gọi Gemini thật.
+
 ## Peer review và tiếp nhận input — 23/11/2026
 
 - Đạt kiểm độc lập đúng candidate `ffeb4f0` (base `ad7c313`): security và
@@ -16,7 +38,7 @@
   Chỉ cập nhật tiếp nhận bằng chứng; không đổi contract hoặc tự chọn frozen head.
   PR73 vẫn Draft, G0 BLOCKED, G1/G2 NOT RUN; không apply shared DB/bật export.
 
-## Current integration checkpoint — 22/11/2026
+## Integration checkpoint — lịch sử 22/11/2026
 
 - Author; workflow v0.1 proposed + INPUT-20261109 (docs baseline `7b7387f`).
   Đồng bộ `origin/dev@ad7c313` vào TASK12 từ `bf04c31`, merge không conflict.

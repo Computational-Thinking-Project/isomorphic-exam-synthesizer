@@ -131,6 +131,48 @@ export const GOLDEN_PREVIEW_FIXTURE = {
   ],
 };
 
+const RELIABLE_ORDERING_PREFS_SYMBOL = Symbol('reliableOrderingPreferences');
+
+function attachOrderingPrefsReliability(target, reliable) {
+  Object.defineProperty(target, RELIABLE_ORDERING_PREFS_SYMBOL, {
+    value: Boolean(reliable),
+    enumerable: false,
+    configurable: true,
+  });
+  return target;
+}
+
+/**
+ * Kiểm tra cấu hình ordering_preferences có đọc được đáng tin cậy (ít nhất có boolean shuffle_options) hay không.
+ * @param {unknown} prefs
+ * @returns {boolean}
+ */
+export function hasReliableOrderingPreferences(prefs) {
+  if (!prefs || typeof prefs !== 'object') return false;
+  if (RELIABLE_ORDERING_PREFS_SYMBOL in prefs) {
+    return Boolean(prefs[RELIABLE_ORDERING_PREFS_SYMBOL]);
+  }
+  return typeof prefs.shuffle_options === 'boolean' && prefs.reliable !== false;
+}
+
+/**
+ * Trích xuất ordering_preferences đáng tin cậy từ object snapshot/error nếu có đủ boolean hợp lệ.
+ * @param {unknown} rawPrefs
+ * @returns {{ shuffle_questions: boolean, shuffle_options: boolean } | null}
+ */
+export function extractReliableOrderingPreferences(rawPrefs) {
+  if (!rawPrefs || typeof rawPrefs !== 'object' || typeof rawPrefs.shuffle_options !== 'boolean') {
+    return null;
+  }
+  return attachOrderingPrefsReliability(
+    {
+      shuffle_questions: Boolean(rawPrefs.shuffle_questions ?? false),
+      shuffle_options: rawPrefs.shuffle_options,
+    },
+    true,
+  );
+}
+
 /**
  * Chuẩn hóa đối tượng snapshot trả về từ server, đảm bảo các trường cần thiết cho UI
  * @param {object} raw
@@ -178,6 +220,12 @@ export function adaptPreviewSnapshot(raw) {
       })
     : [];
 
+  const rawOrderingPrefs =
+    raw.ordering_preferences ||
+    raw.generation_config?.ordering_preferences ||
+    raw.config?.ordering_preferences ||
+    null;
+
   return {
     session_id: raw.session_id,
     status: raw.status || 'reviewed',
@@ -186,11 +234,7 @@ export function adaptPreviewSnapshot(raw) {
     total_questions: raw.total_questions || (versions[0]?.questions?.length ?? 0),
     versions,
     matrix: Array.isArray(raw.matrix) ? raw.matrix : [],
-    ordering_preferences:
-      raw.ordering_preferences ||
-      raw.generation_config?.ordering_preferences ||
-      raw.config?.ordering_preferences ||
-      null,
+    ordering_preferences: extractReliableOrderingPreferences(rawOrderingPrefs) || rawOrderingPrefs,
   };
 }
 
@@ -255,18 +299,25 @@ export async function fetchOrderingPreferences(sessionId, config = {}) {
     data?.config?.ordering_preferences ||
     data?.ordering_preferences;
 
-  if (rawPrefs && typeof rawPrefs === 'object') {
-    return {
-      shuffle_questions: Boolean(rawPrefs.shuffle_questions ?? false),
-      shuffle_options: Boolean(rawPrefs.shuffle_options ?? false),
-      status: data?.status,
-    };
+  const extracted = extractReliableOrderingPreferences(rawPrefs);
+  if (extracted) {
+    return attachOrderingPrefsReliability(
+      {
+        shuffle_questions: extracted.shuffle_questions,
+        shuffle_options: extracted.shuffle_options,
+        status: data?.status,
+      },
+      true,
+    );
   }
-  return {
-    shuffle_questions: false,
-    shuffle_options: false,
-    status: data?.status,
-  };
+  return attachOrderingPrefsReliability(
+    {
+      shuffle_questions: false,
+      shuffle_options: false,
+      status: data?.status,
+    },
+    false,
+  );
 }
 
 /**

@@ -1,13 +1,15 @@
 import useDialogFocus from '../../hooks/useDialogFocus.js';
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
   Check,
   CheckCircle2,
+  ChevronLeft,
   Eye,
   FileText,
   Grid,
+  Info,
   Loader2,
   Lock,
   RefreshCw,
@@ -21,6 +23,8 @@ import MathRenderer from '../../components/MathRenderer.jsx';
 import {
   fetchFinalizePreview,
   fetchOrderingPreferences,
+  extractReliableOrderingPreferences,
+  hasReliableOrderingPreferences,
   executeFinalizeShuffle,
   triggerFinalizeApprove,
 } from '../../services/stage3PreviewService.js';
@@ -46,11 +50,13 @@ export default function Stage3PreviewPage({
   const [shuffleRecovery, setShuffleRecovery] = useState(null);
   const [shuffleQuestions, setShuffleQuestions] = useState(false);
   const [shuffleOptions, setShuffleOptions] = useState(false);
+  const [hasReliablePrefs, setHasReliablePrefs] = useState(false);
   const [sessionStatus, setSessionStatus] = useState('reviewed');
   const [isTeacherMode, setIsTeacherMode] = useState(false);
   const isMountedRef = useRef(true);
   const requestIdRef = useRef(0);
   const activeSessionIdRef = useRef(sessionId);
+  const reliablePrefsSessionRef = useRef(null);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -62,6 +68,7 @@ export default function Stage3PreviewPage({
   // F05, R1 & F02: Reset trạng thái, đóng modal và hủy cờ khi sessionId thay đổi để tránh stale data và approve/shuffle nhầm phiên
   useEffect(() => {
     activeSessionIdRef.current = sessionId;
+    reliablePrefsSessionRef.current = null;
     setPreviewData(null);
     setSelectedTab('');
     setError(null);
@@ -73,6 +80,7 @@ export default function Stage3PreviewPage({
     setApproving(false);
     setShuffleQuestions(false);
     setShuffleOptions(false);
+    setHasReliablePrefs(false);
     setSessionStatus('reviewed');
   }, [sessionId]);
 
@@ -108,9 +116,41 @@ export default function Stage3PreviewPage({
       if (data.status) {
         setSessionStatus(data.status);
       }
-      if (data.ordering_preferences) {
-        setShuffleQuestions(Boolean(data.ordering_preferences.shuffle_questions ?? false));
-        setShuffleOptions(Boolean(data.ordering_preferences.shuffle_options ?? false));
+      const previewPrefs = extractReliableOrderingPreferences(data.ordering_preferences);
+      if (previewPrefs) {
+        reliablePrefsSessionRef.current = sessionId;
+        setShuffleQuestions(previewPrefs.shuffle_questions);
+        setShuffleOptions(previewPrefs.shuffle_options);
+        setHasReliablePrefs(true);
+      } else if (data.is_finalized && reliablePrefsSessionRef.current === sessionId) {
+        setHasReliablePrefs(true);
+      } else if (typeof loadPreferences === 'function') {
+        try {
+          const prefs = await loadPreferences(sessionId);
+          if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
+          if (hasReliableOrderingPreferences(prefs)) {
+            reliablePrefsSessionRef.current = sessionId;
+            setShuffleQuestions(Boolean(prefs.shuffle_questions ?? false));
+            setShuffleOptions(Boolean(prefs.shuffle_options));
+            setHasReliablePrefs(true);
+          } else {
+            reliablePrefsSessionRef.current = null;
+            setShuffleOptions(false);
+            setHasReliablePrefs(false);
+          }
+          if (!data.status && prefs?.status) {
+            setSessionStatus(prefs.status);
+          }
+        } catch {
+          if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
+          reliablePrefsSessionRef.current = null;
+          setShuffleOptions(false);
+          setHasReliablePrefs(false);
+        }
+      } else {
+        reliablePrefsSessionRef.current = null;
+        setShuffleOptions(false);
+        setHasReliablePrefs(false);
       }
       if (data.versions?.length > 0) {
         setSelectedTab((prev) => prev || data.versions[0].version_code);
@@ -125,28 +165,42 @@ export default function Stage3PreviewPage({
           return null;
         }
 
-        // Khôi phục ordering_preferences đã lưu ở backend theo Issue #45
-        const errPrefs = err.response?.data?.ordering_preferences || err.data?.ordering_preferences;
-        if (errPrefs && typeof errPrefs === 'object') {
-          setShuffleQuestions(Boolean(errPrefs.shuffle_questions ?? false));
-          setShuffleOptions(Boolean(errPrefs.shuffle_options ?? false));
+        // Khôi phục ordering_preferences đáng tin cậy từ backend (Issue #45 / Issue #95)
+        const errPrefs = extractReliableOrderingPreferences(
+          err.response?.data?.ordering_preferences || err.data?.ordering_preferences,
+        );
+        if (errPrefs) {
+          reliablePrefsSessionRef.current = sessionId;
+          setShuffleQuestions(errPrefs.shuffle_questions);
+          setShuffleOptions(errPrefs.shuffle_options);
+          setHasReliablePrefs(true);
         } else if (typeof loadPreferences === 'function') {
           try {
             const prefs = await loadPreferences(sessionId);
             if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
-            if (prefs && typeof prefs === 'object') {
+            if (hasReliableOrderingPreferences(prefs)) {
+              reliablePrefsSessionRef.current = sessionId;
               setShuffleQuestions(Boolean(prefs.shuffle_questions ?? false));
-              setShuffleOptions(Boolean(prefs.shuffle_options ?? false));
-              if (prefs.status) {
-                setSessionStatus(prefs.status);
-              }
+              setShuffleOptions(Boolean(prefs.shuffle_options));
+              setHasReliablePrefs(true);
+            } else {
+              reliablePrefsSessionRef.current = null;
+              setHasReliablePrefs(false);
+            }
+            if (prefs?.status) {
+              setSessionStatus(prefs.status);
             }
           } catch {
             if (!isMountedRef.current || currentRequestId !== requestIdRef.current) return null;
+            reliablePrefsSessionRef.current = null;
+            setHasReliablePrefs(false);
             setNeedsShuffle(false);
             setError('Không thể tải cấu hình xáo trộn đã lưu. Vui lòng thử lại.');
             return null;
           }
+        } else {
+          reliablePrefsSessionRef.current = null;
+          setHasReliablePrefs(false);
         }
         setShuffleRecovery(null);
         setNeedsShuffle(true);
@@ -172,10 +226,10 @@ export default function Stage3PreviewPage({
     loadData();
   }, [loadData]);
 
-  // Xử lý hoàn tất sắp xếp / xáo trộn mã đề (F02: cô lập targetSessionId; hỗ trợ cả 4 tổ hợp Boolean theo Issue #45)
+  // Xử lý hoàn tất sắp xếp / xáo trộn mã đề (chỉ cho chỉnh shuffle_questions, bảo toàn shuffle_options đã lưu theo Issue #95)
   const handleShuffle = async (preferences = { shuffle_questions: false, shuffle_options: false }) => {
     const targetSessionId = sessionId;
-    if (shuffling || shuffleRecovery || activeSessionIdRef.current !== targetSessionId) return;
+    if (shuffling || shuffleRecovery || !hasReliablePrefs || activeSessionIdRef.current !== targetSessionId) return;
     const sanitizedPrefs = {
       shuffle_questions: Boolean(preferences.shuffle_questions),
       shuffle_options: Boolean(preferences.shuffle_options),
@@ -289,7 +343,7 @@ export default function Stage3PreviewPage({
   const currentVersion = previewData?.versions?.find((v) => v.version_code === selectedTab);
 
   return (
-    <div className="paper-ui min-h-screen bg-surface text-strong flex flex-col font-sans">
+    <div className="paper-ui min-h-screen bg-canvas text-strong flex flex-col font-sans">
       {/* Toast Notification */}
       {toast && (
         <div
@@ -309,18 +363,26 @@ export default function Stage3PreviewPage({
         </div>
       )}
 
-      {/* Header bar */}
+      {/* Header bar (đồng bộ PR #100 + ui-walkthrough S07) */}
       <header className="border-b border-line bg-surface sticky top-0 z-20 backdrop-blur">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 min-h-16 py-3 flex flex-wrap gap-3 items-center justify-between">
-          <div className="flex flex-wrap items-center gap-4">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <Link
+              to="/dashboard"
+              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-semibold text-highlight hover:bg-support-bg transition-colors"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>Thư viện đề</span>
+            </Link>
+            <span className="text-line" aria-hidden="true">/</span>
             {isLocked ? (
               <button
                 type="button"
                 data-testid="btn-back"
                 onClick={() => navigate(exportPath(sessionId))}
-                className="inline-flex items-center gap-2 text-sm text-highlight hover:underline py-1.5 px-2.5 rounded-lg hover:bg-rail font-semibold"
+                className="inline-flex items-center gap-1.5 text-xs text-highlight hover:underline py-1.5 px-2.5 rounded-lg hover:bg-rail font-semibold"
               >
-                <ArrowLeft className="w-4 h-4" />
+                <ArrowLeft className="w-3.5 h-3.5" />
                 <span>Đi tới xuất đề</span>
               </button>
             ) : (
@@ -328,15 +390,18 @@ export default function Stage3PreviewPage({
                 type="button"
                 data-testid="btn-back"
                 onClick={() => navigate(stage3Path(sessionId))}
-                className="inline-flex items-center gap-2 text-sm text-muted hover:text-ink transition-colors py-1.5 px-2.5 rounded-lg hover:bg-rail"
+                className="inline-flex items-center gap-1.5 text-xs text-muted hover:text-ink transition-colors py-1.5 px-2.5 rounded-lg border border-line bg-surface hover:bg-rail font-semibold"
               >
-                <ArrowLeft className="w-4 h-4" />
+                <ArrowLeft className="w-3.5 h-3.5" />
                 <span>Quay lại duyệt từng câu</span>
               </button>
             )}
-            <div className="h-4 w-px bg-rail" />
-            <h1 className="text-base sm:text-lg font-semibold text-strong flex items-center gap-2">
-              <span>Xem trước và phê duyệt</span>
+            <span className="text-line" aria-hidden="true">/</span>
+            <span className="inline-flex shrink-0 items-center rounded-full border border-support-line bg-support-bg px-2.5 py-0.5 text-xs font-semibold text-highlight">
+              Bước 3/3 · Xem trước bản cuối
+            </span>
+            <h1 className="text-base sm:text-lg font-bold text-strong">
+              Xem trước và phê duyệt
             </h1>
           </div>
 
@@ -390,7 +455,7 @@ export default function Stage3PreviewPage({
                 data-testid="btn-open-approve"
                 onClick={() => setIsApproveModalOpen(true)}
                 disabled={shuffling || approving}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-approved-ink hover:bg-approved-ink text-white font-medium text-sm transition-colors shadow-sm disabled:opacity-50"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-approved-ink hover:opacity-90 text-white font-semibold text-sm transition-colors shadow-sm disabled:opacity-50"
               >
                 <CheckCircle2 className="w-4 h-4" />
                 <span>Phê duyệt & Khóa đề</span>
@@ -402,7 +467,7 @@ export default function Stage3PreviewPage({
                 type="button"
                 data-testid="btn-goto-export"
                 onClick={() => navigate(exportPath(sessionId))}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-highlight hover:bg-highlight text-white font-medium text-sm transition-colors shadow-sm"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-highlight hover:bg-[#253b57] text-white font-semibold text-sm transition-colors shadow-sm"
               >
                 <FileText className="w-4 h-4" />
                 <span>Đi đến xuất đề</span>
@@ -440,7 +505,7 @@ export default function Stage3PreviewPage({
               data-testid="btn-check-status"
               onClick={() => loadData(shuffleRecovery)}
               disabled={loading}
-              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg bg-highlight hover:bg-highlight text-white text-sm font-semibold transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-highlight hover:bg-[#253b57] text-white text-sm font-semibold transition-colors disabled:opacity-50"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
               <span>Kiểm tra trạng thái</span>
@@ -455,110 +520,163 @@ export default function Stage3PreviewPage({
               type="button"
               data-testid="btn-retry"
               onClick={() => loadData()}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-danger hover:bg-danger text-white text-sm font-medium transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-danger hover:bg-danger text-white text-sm font-medium transition-colors"
             >
               <RefreshCw className="w-4 h-4" />
               <span>Thử lại</span>
             </button>
           </div>
         ) : needsShuffle ? (
-          /* Trạng thái chưa chốt thứ tự: Hai tùy chọn xáo trộn độc lập theo Issue #45 */
-          <div className="max-w-xl mx-auto my-16 p-8 rounded-2xl bg-surface border border-line shadow-paper">
-            <div className="w-16 h-16 rounded-2xl bg-accent-soft border border-accent-border text-accent-ink flex items-center justify-center mx-auto mb-5">
-              <Sparkles className="w-8 h-8" />
+          /* Trạng thái chưa chốt thứ tự: Issue #95 chỉ chọn shuffle_questions, bảo toàn shuffle_options */
+          <div className="max-w-xl mx-auto my-12 p-6 sm:p-8 rounded-2xl bg-surface border border-line shadow-paper">
+            <div className="w-14 h-14 rounded-2xl bg-accent-soft border border-accent-border text-accent-ink flex items-center justify-center mx-auto mb-5">
+              <Sparkles className="w-7 h-7" />
             </div>
             <h2 className="text-xl font-bold text-strong text-center mb-2">
               Toàn bộ câu hỏi đã được duyệt thành công
             </h2>
             <p className="text-sm text-muted text-center leading-relaxed mb-6">
-              Các câu hỏi đã được duyệt. Tùy chỉnh xáo trộn câu hỏi và đáp án để chuẩn bị bản xem trước.
+              Chọn có xáo trộn thứ tự câu hỏi giữa các mã đề hay không trước khi xem trước và phê duyệt bản cuối.
             </p>
 
-            {/* Hai tùy chọn xáo trộn độc lập theo Issue #45 */}
-            <div className="space-y-3 mb-6">
-              <div className="rounded-xl border border-line bg-rail p-4">
-                <label className="flex cursor-pointer items-start gap-3">
-                  <input
-                    type="checkbox"
-                    id="shuffle-questions-checkbox"
-                    data-testid="checkbox-shuffle-questions"
-                    checked={shuffleQuestions}
-                    disabled={shuffling || isLocked}
-                    onChange={(e) => setShuffleQuestions(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded border-line bg-surface text-highlight focus:ring-highlight focus:ring-offset-surface disabled:opacity-50"
-                  />
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-strong">
-                        Xáo trộn thứ tự câu hỏi giữa các mã đề
-                      </span>
-                      <Shuffle className="h-3.5 w-3.5 text-muted" />
-                    </div>
-                    <p className="mt-0.5 text-xs text-muted">
-                      Đổi vị trí câu hỏi giữa các mã đề thi độc lập.
-                    </p>
-                  </div>
-                </label>
-              </div>
-
-              <div className="rounded-xl border border-line bg-rail p-4">
-                <label className="flex cursor-pointer items-start gap-3">
-                  <input
-                    type="checkbox"
-                    id="shuffle-options-checkbox"
-                    data-testid="checkbox-shuffle-options"
-                    checked={shuffleOptions}
-                    disabled={shuffling || isLocked}
-                    onChange={(e) => setShuffleOptions(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded border-line bg-surface text-highlight focus:ring-highlight focus:ring-offset-surface disabled:opacity-50"
-                  />
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-strong">
-                        Xáo trộn thứ tự các đáp án A, B, C, D
-                      </span>
-                      <Shuffle className="h-3.5 w-3.5 text-highlight" />
-                    </div>
-                    <p className="mt-0.5 text-xs text-muted">
-                      Đổi vị trí 4 phương án; đáp án đúng được cập nhật tương ứng trên từng đề.
-                    </p>
-                  </div>
-                </label>
-              </div>
-            </div>
-
-            {/* Nút hành động duy nhất: Áp dụng & Xem trước */}
-            <div className="flex justify-center">
-              <button
-                type="button"
-                id="btn-apply-shuffle"
-                data-testid="btn-shuffle"
-                onClick={() =>
-                  handleShuffle({
-                    shuffle_questions: shuffleQuestions,
-                    shuffle_options: shuffleOptions,
-                  })
-                }
-                disabled={shuffling || isLocked}
-                className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-3 rounded-xl bg-highlight hover:bg-highlight text-white font-semibold text-sm transition-all shadow-md disabled:opacity-50"
+            {!hasReliablePrefs ? (
+              <div
+                role="alert"
+                data-testid="unreliable-prefs-notice"
+                className="rounded-xl border border-accent-border bg-accent-soft p-4 text-xs text-accent-ink space-y-3"
               >
-                {shuffling ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Đang hoàn tất...</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" />
-                    <span>Áp dụng & Xem trước</span>
-                  </>
-                )}
-              </button>
-            </div>
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-accent-ink mt-0.5" />
+                  <div>
+                    <p className="font-semibold">
+                      Chưa đọc được cấu hình xáo trộn đáp án đáng tin cậy từ máy chủ.
+                    </p>
+                    <p className="mt-1 leading-relaxed">
+                      Thao tác lưu/chốt thứ tự tạm khóa để tránh ghi đè cấu hình đã lưu. Hãy kiểm tra lại trạng thái phiên trước khi tiếp tục.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex justify-center pt-1">
+                  <button
+                    type="button"
+                    data-testid="btn-reconcile-prefs"
+                    disabled={loading}
+                    onClick={() => loadData()}
+                    className="inline-flex items-center gap-2 rounded-xl bg-highlight px-5 py-2 text-xs font-semibold text-white hover:bg-[#253b57] transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+                    <span>Kiểm tra trạng thái</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-3 mb-6">
+                  <div className="rounded-xl border border-line bg-rail p-4">
+                    <label className="flex cursor-pointer items-start gap-3">
+                      <input
+                        type="checkbox"
+                        id="shuffle-questions-checkbox"
+                        data-testid="checkbox-shuffle-questions"
+                        checked={shuffleQuestions}
+                        disabled={shuffling || isLocked}
+                        onChange={(e) => setShuffleQuestions(e.target.checked)}
+                        className="mt-0.5 h-4 w-4 rounded border-line bg-surface text-highlight focus:ring-highlight focus:ring-offset-surface disabled:opacity-50"
+                      />
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-strong">
+                            Xáo trộn thứ tự câu hỏi giữa các mã đề
+                          </span>
+                          <Shuffle className="h-3.5 w-3.5 text-muted" />
+                        </div>
+                        <p className="mt-0.5 text-xs text-muted">
+                          Đổi vị trí câu hỏi giữa các mã đề thi độc lập trước khi xem trước bản cuối.
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+
+                  {shuffleOptions && (
+                    <div
+                      role="status"
+                      data-testid="readonly-shuffle-options-notice"
+                      className="rounded-xl border border-support-line bg-support-bg p-3.5 text-xs text-highlight flex items-start gap-2.5"
+                    >
+                      <Info className="h-4 w-4 shrink-0 text-highlight mt-0.5" />
+                      <div>
+                        <p className="font-semibold">
+                          Xáo trộn thứ tự đáp án (A, B, C, D) đang được bật từ cấu hình đã lưu của phiên này.
+                        </p>
+                        <p className="mt-0.5 text-muted">
+                          Thiết lập này được giữ nguyên ở chế độ chỉ đọc và sẽ được bảo toàn khi bạn áp dụng thứ tự câu hỏi.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Nút hành động duy nhất: Áp dụng & Xem trước */}
+                <div className="flex justify-center">
+                  <button
+                    type="button"
+                    id="btn-apply-shuffle"
+                    data-testid="btn-shuffle"
+                    onClick={() =>
+                      handleShuffle({
+                        shuffle_questions: shuffleQuestions,
+                        shuffle_options: shuffleOptions,
+                      })
+                    }
+                    disabled={shuffling || isLocked || !hasReliablePrefs}
+                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-3 rounded-xl bg-highlight hover:bg-[#253b57] text-white font-semibold text-sm transition-all shadow-md disabled:opacity-50"
+                  >
+                    {shuffling ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Đang hoàn tất...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4" />
+                        <span>Áp dụng & Xem trước</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         ) : (
           /* Bản xem trước hoàn chỉnh khi đã xáo trộn */
           <div className="space-y-6">
+            {/* Tóm tắt bản rà cuối theo mẫu S07 */}
+            <div className="rounded-2xl border border-line bg-surface p-4 shadow-soft flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+                <span className="font-semibold text-strong">
+                  {previewData?.n_versions || previewData?.versions?.length || 0} mã đề
+                </span>
+                <span>·</span>
+                <span>{previewData?.total_questions || previewData?.versions?.[0]?.questions?.length || 0} câu/mã</span>
+                {shuffleOptions && (
+                  <>
+                    <span>·</span>
+                    <span
+                      data-testid="readonly-shuffle-options-notice"
+                      className="inline-flex items-center gap-1 rounded-full border border-support-line bg-support-bg px-2.5 py-0.5 font-medium text-highlight"
+                    >
+                      Đang bật xáo trộn đáp án (chỉ đọc)
+                    </span>
+                  </>
+                )}
+              </div>
+              <span className="text-xs text-muted">
+                {isTeacherMode
+                  ? 'Đang xem chế độ Giáo viên (hiện đáp án, lời giải & bảng đáp án)'
+                  : 'Đang xem chế độ Đề học sinh (ẩn đáp án & lời giải)'}
+              </span>
+            </div>
+
             {/* Locked Notice Banner */}
             {isLocked && (
               <div
