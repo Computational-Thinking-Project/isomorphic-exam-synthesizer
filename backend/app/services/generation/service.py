@@ -148,6 +148,7 @@ class GenerationService:
         previous: GeneratedQuestion | None = None, accept: AcceptCandidate | None = None,
         excluded_identities: set[str] | None = None, max_math_retries: int | None = None,
         initial_candidate: CandidatePayload | None = None,
+        initial_attempt: int = 1,
     ) -> QuestionResult:
         result = QuestionResult(
             version_index=version_index, source_question_id=source.id,
@@ -167,7 +168,7 @@ class GenerationService:
         last_code = "GENERATION_INVALID"
         try:
             async with asyncio.timeout_at(context.deadline):
-                for attempt in range(1, self.MAX_ATTEMPTS + 1):
+                for attempt in range(initial_attempt, self.MAX_ATTEMPTS + 1):
                     result.attempts = attempt
                     prompt = build_prompt(
                         blueprint=blueprint, seed=seed, variation_modes=variation_modes,
@@ -175,7 +176,7 @@ class GenerationService:
                         repair_solution=repair_candidate is not None,
                     )
                     try:
-                        if attempt == 1 and initial_candidate is not None:
+                        if attempt == initial_attempt and initial_candidate is not None:
                             candidate = initial_candidate
                         else:
                             candidate = await self._request_candidate(prompt, context, repair_candidate)
@@ -379,17 +380,31 @@ class GenerationService:
                 continue
             initial: dict[int, CandidatePayload] = {}
             batch_error: str | None = None
+            batch_attempt = 1
+            batch_exhausted = False
             if len(pending) > 1:
                 try:
                     async with asyncio.timeout_at(context.deadline):
-                        initial = await self._request_versions(
-                            blueprints[source.id], per_source_modes[source.id],
-                            {version: seed for _, version, seed in pending}, context,
-                        )
-                except (GatewayError, ProviderError, ToolError) as exc:
-                    batch_error = exc.code
+                        for batch_attempt in range(1, self.MAX_ATTEMPTS + 1):
+                            try:
+                                initial = await self._request_versions(
+                                    blueprints[source.id], per_source_modes[source.id],
+                                    {version: seed for _, version, seed in pending}, context,
+                                )
+                                batch_error = None
+                                break
+                            except (GatewayError, ProviderError) as exc:
+                                batch_error = exc.code
+                                batch_exhausted = exc.retryable and batch_attempt == self.MAX_ATTEMPTS
+                                if not exc.retryable or batch_attempt == self.MAX_ATTEMPTS:
+                                    break
+                                await asyncio.sleep(min(2 ** (batch_attempt - 1), 4))
+                            except ToolError as exc:
+                                batch_error = exc.code
+                                break
                 except TimeoutError:
                     batch_error = "JOB_DEADLINE"
+                    batch_exhausted = False
             async def accept(candidate: CandidatePayload) -> bool:
                 identity = candidate_identity(candidate)
                 if identity in seen[source.id]:
@@ -403,13 +418,15 @@ class GenerationService:
                         version_index=version, source_question_id=source.id,
                         request_fingerprint=self._request_fingerprint(
                             items[index], blueprints[source.id], seed, per_source_modes[source.id],
-                        ), error_code=batch_error, attempts=1,
+                        ), error_code=batch_error, attempts=batch_attempt,
                     )
+                    result._exhausted_attempts = batch_exhausted
                 else:
                     result = await self._generate(
                         source, items[index], blueprints[source.id], context,
                         seed, version, per_source_modes[source.id], accept=accept,
                         initial_candidate=initial.get(version),
+                        initial_attempt=batch_attempt,
                     )
                 if on_result:
                     await on_result(result.model_copy(deep=True))

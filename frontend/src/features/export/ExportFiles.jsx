@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { listExportFiles, downloadExportFile } from '../../services/exportService.js';
 
 export default function ExportFiles({ sessionId, isCurrent }) {
@@ -8,25 +8,31 @@ export default function ExportFiles({ sessionId, isCurrent }) {
   const [busy, setBusy] = useState(null);
   const [error, setError] = useState('');
   const [reload, setReload] = useState(0);
+  const request = useRef(null);
 
   useEffect(() => {
     const abort = new AbortController();
+    request.current = abort;
+    setBusy(null);
     setFiles([]);
     setError('');
     setLoading(true);
     listExportFiles(sessionId, format, { signal: abort.signal })
       .then((items) => { if (!abort.signal.aborted && isCurrent()) setFiles(items); })
-      .catch(() => { if (!abort.signal.aborted) setError('Không tải được danh sách tài liệu. Vui lòng thử lại.'); })
-      .finally(() => { if (!abort.signal.aborted) setLoading(false); });
+      .catch(() => { if (!abort.signal.aborted && isCurrent()) setError('Không tải được danh sách tài liệu. Vui lòng thử lại.'); })
+      .finally(() => { if (!abort.signal.aborted && isCurrent()) setLoading(false); });
     return () => abort.abort();
   }, [sessionId, format, isCurrent, reload]);
 
   async function download(filename) {
+    const abort = request.current;
+    const current = () => abort && !abort.signal.aborted && isCurrent();
+    if (!current()) return;
     setBusy(filename);
     setError('');
     try {
-      const blob = await downloadExportFile(sessionId, format, filename);
-      if (!isCurrent()) return;
+      const blob = await downloadExportFile(sessionId, format, filename, { signal: abort.signal });
+      if (!current()) return;
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -34,9 +40,9 @@ export default function ExportFiles({ sessionId, isCurrent }) {
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch {
-      if (isCurrent()) setError('Không tải được tài liệu. Vui lòng thử lại.');
+      if (current()) setError('Không tải được tài liệu. Vui lòng thử lại.');
     } finally {
-      setBusy(null);
+      if (current()) setBusy(null);
     }
   }
 

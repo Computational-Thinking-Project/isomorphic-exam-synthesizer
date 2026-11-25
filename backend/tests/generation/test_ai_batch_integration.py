@@ -25,7 +25,7 @@ from app.models.generation import (
 )
 from app.models.generation_events import GenerationEventData
 from app.models.schemas import SourceQuestion
-from app.services.ai.gateway import GeminiGateway
+from app.services.ai.gateway import GatewayError, GeminiGateway
 from app.services.blueprint.adapters import prepare_sources
 from app.services.blueprint.common import ToolError, canonical
 from app.services.blueprint.service import source_fingerprint
@@ -39,6 +39,7 @@ from app.services.generation.job_contracts import (
     IncompleteGenerationSource,
     QuestionTarget,
 )
+from app.services.generation.jobs import GenerationJobRunner
 from app.services.generation.service import GenerationService, candidate_identity
 from app.services.observability.runtime_registry import RuntimeRegistry
 from app.services.validator.base import CheckResult
@@ -144,6 +145,29 @@ async def execute(case, *, plan=None, inputs=None, callback=None, deadline=None)
         deadline=time.monotonic() + 30 if deadline is None else deadline,
         on_result=case.store.save if callback is None else callback,
     )
+
+
+@pytest.mark.asyncio
+async def test_batch_transport_exhaustion_reaches_workers_confirmed_source_fallback(ai_case, monkeypatch):
+    case = ai_case
+    monkeypatch.setattr("app.services.generation.service.asyncio.sleep", AsyncMock())
+    case.sdk_send.side_effect = GatewayError("API_TIMEOUT", retryable=True)
+    plan = replace(case.plan, inputs=case.inputs)
+    case.store.fail_stale = AsyncMock()
+    case.store.claim = AsyncMock(return_value=plan)
+    case.store.save_fallback = AsyncMock()
+    case.store.save_draft = AsyncMock()
+    case.store.finish = AsyncMock()
+    registry = RuntimeRegistry()
+    registry.start()
+    runner = GenerationJobRunner(None, GenerationEventBroker(), registry, batch=case.adapter)
+    claimed = await runner.claim(case.store, plan.session_id)
+    outcome = await runner.run(claimed, case.store)
+    assert outcome.status == "generated" and outcome.completed == 2
+    assert case.sdk_send.await_count == case.store.count == 4
+    assert case.store.save_fallback.await_count == 2
+    assert [call.args[1].target for call in case.store.save_fallback.await_args_list] == list(plan.targets)
+    case.store.save_draft.assert_not_awaited()
 
 
 @pytest.mark.asyncio

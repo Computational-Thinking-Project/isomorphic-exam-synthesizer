@@ -693,3 +693,87 @@ async def test_wrong_batch_version_ids_fail_without_saving_candidates(pipeline):
     assert result.status == "failed"
     assert all(r.candidate is None for r in result.results)
     assert p.budget.used == 1
+
+
+def batch_payload(p):
+    return {"variants": [
+        {"version_index": version, "candidate": p.candidates[version - 1]}
+        for version in (1, 2)
+    ]}
+
+
+async def generate_batch(p, **kwargs):
+    return await p.service.generate_exam_drafts(
+        [p.source], {p.source.id: p.blueprint}, confirmed_source_hash=p.confirmed,
+        n_versions=2, context=p.context, **kwargs,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["API_TIMEOUT", "API_RATE_LIMIT", "API_TRANSPORT"])
+async def test_transient_batch_error_retries_shared_request_before_validation(pipeline, monkeypatch, code):
+    p = pipeline
+    sleep = AsyncMock()
+    monkeypatch.setattr("app.services.generation.service.asyncio.sleep", sleep)
+    p.responses[:] = [GatewayError(code, retryable=True), batch_payload(p)]
+    saved = AsyncMock()
+    result = await generate_batch(p, on_result=saved)
+    assert result.status == "generated" and p.budget.used == len(p.calls) == 2
+    assert [r.attempts for r in result.results] == [2, 2]
+    assert saved.await_count == p.validator.validate.await_count == 2
+    sleep.assert_awaited_once_with(1)
+
+
+@pytest.mark.asyncio
+async def test_batch_retries_count_toward_each_slots_four_attempt_limit(pipeline, monkeypatch):
+    p = pipeline
+    monkeypatch.setattr("app.services.generation.service.asyncio.sleep", AsyncMock())
+    payload = batch_payload(p)
+    payload["variants"][0]["candidate"] = {
+        **p.candidates[0], "question_text": p.source.question_text,
+    }
+    p.responses[:] = [GatewayError("API_TIMEOUT", retryable=True)] * 3 + [payload]
+    result = await generate_batch(p)
+    first, second = result.results
+    assert result.status == "partial_generated" and p.budget.used == len(p.calls) == 4
+    assert first.attempts == second.attempts == 4
+    assert first.error_code == "DUPLICATE_CANDIDATE" and first._exhausted_attempts
+    assert second.candidate is not None
+
+
+@pytest.mark.asyncio
+async def test_four_retryable_batch_failures_mark_all_slots_exhausted(pipeline, monkeypatch):
+    p = pipeline
+    sleep = AsyncMock()
+    monkeypatch.setattr("app.services.generation.service.asyncio.sleep", sleep)
+    p.responses[:] = [GatewayError("API_RATE_LIMIT", retryable=True)] * 4
+    result = await generate_batch(p)
+    assert result.status == "failed" and p.budget.used == len(p.calls) == 4
+    assert all(r.attempts == 4 and r._exhausted_attempts for r in result.results)
+    assert all(r.error_code == "API_RATE_LIMIT" for r in result.results)
+    assert [call.args[0] for call in sleep.await_args_list] == [1, 2, 4]
+    p.validator.validate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop", ["quota", "deadline", "auth", "cancel"])
+async def test_batch_retry_stops_without_fallback_on_quota_deadline_auth_or_cancel(pipeline, monkeypatch, stop):
+    p = pipeline
+    if stop == "deadline":
+        p.context = RequestContext(time.monotonic() + 0.02, p.budget.reserve)
+    else:
+        monkeypatch.setattr("app.services.generation.service.asyncio.sleep", AsyncMock())
+    p.responses[:] = [GatewayError("API_TIMEOUT", retryable=True), batch_payload(p)]
+    if stop == "quota":
+        p.budget.limit = 1
+    elif stop == "auth":
+        p.responses[:] = [GatewayError("API_AUTH")]
+    elif stop == "cancel":
+        p.gateway.generate_content.side_effect = asyncio.CancelledError()
+        with pytest.raises(asyncio.CancelledError):
+            await generate_batch(p)
+        return
+    result = await generate_batch(p)
+    code = {"quota": "REQUEST_BUDGET_EXHAUSTED", "deadline": "JOB_DEADLINE", "auth": "API_AUTH"}[stop]
+    assert result.status == "failed" and len(p.calls) == 1
+    assert all(r.error_code == code and not r._exhausted_attempts for r in result.results)
