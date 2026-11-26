@@ -22,9 +22,9 @@ from tests.generation.test_config_repository import (
     saved_receipt,
 )
 
-ROOT = Path(__file__).resolve().parents[3]
+# Relative to backend/tests so it also resolves inside the backend container (/backend).
 BLUEPRINT = json.loads(
-    (ROOT / "backend/tests/fixtures/ai_pipeline.json").read_text(encoding="utf-8-sig")
+    (Path(__file__).resolve().parents[1] / "fixtures/ai_pipeline.json").read_text(encoding="utf-8-sig")
 )["blueprint"]
 
 
