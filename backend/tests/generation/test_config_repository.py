@@ -245,6 +245,7 @@ def test_save_passes_exact_manifest_to_one_rpc_and_validates_receipt() -> None:
             "p_active_variation_modes": [],
             "p_ordering_preferences": {"shuffle_questions": False, "shuffle_options": False},
             "p_expected_snapshot": manifest,
+            "p_generation_mode": "ai_generation",
         },
     )
     for query in queries.values():

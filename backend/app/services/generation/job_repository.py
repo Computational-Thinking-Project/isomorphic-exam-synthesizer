@@ -31,9 +31,11 @@ from app.services.generation.job_contracts import (
     QuestionTarget,
 )
 from app.services.generation.mode_mapper import (
+    MODE_MAPPING_VERSION,
     PER_QUESTION_MAPPING_VERSION,
     PUBLIC_TO_CANONICAL_DIMENSIONS,
-    question_policy,
+    frozen_generation_mode,
+    mode_question_policy,
 )
 
 
@@ -76,7 +78,8 @@ def _check_frozen_config(config: dict[str, Any], context: dict[str, Any]) -> tup
             for prefs in (preferences, frozen_preferences)
             for key in ("shuffle_questions", "shuffle_options")
         )
-        or context["mapping_version"] not in {"1.0", PER_QUESTION_MAPPING_VERSION}
+        or context["mapping_version"]
+        not in {"1.0", PER_QUESTION_MAPPING_VERSION, MODE_MAPPING_VERSION}
     ):
         raise ValueError("Claim configuration differs from its frozen context.")
     if (
@@ -328,11 +331,16 @@ class GenerationJobRepository:
             if type(count) is not int or not 0 <= count <= 250:
                 raise ValueError("Invalid durable quota count.")
             dimensions = _check_frozen_config(config, context)
+            mode = frozen_generation_mode(config, context)
             sources = _check_frozen_sources(context, session_id)
             policies = None
-            if context["mapping_version"] == PER_QUESTION_MAPPING_VERSION:
+            if context["mapping_version"] in {PER_QUESTION_MAPPING_VERSION, MODE_MAPPING_VERSION}:
+                # shuffle_only freezes every slot as ORIGINAL_CLONE, so the plan below
+                # takes the clone-only path: no AI client call and no quota reservation.
                 policies = {
-                    row["source_question_id"]: question_policy(_object(row["canonical_blueprint"]))
+                    row["source_question_id"]: mode_question_policy(
+                        mode, _object(row["canonical_blueprint"])
+                    )
                     for row in sources
                 }
                 if context.get("question_policies") != policies or set(dimensions) != {

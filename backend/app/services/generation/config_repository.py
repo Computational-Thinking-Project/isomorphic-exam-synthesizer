@@ -216,6 +216,7 @@ class GenerationConfigRepository:
             "p_active_variation_modes": [],
             "p_ordering_preferences": config.ordering_preferences.model_dump(),
             "p_expected_snapshot": deepcopy(expected_snapshot),
+            "p_generation_mode": config.generation_mode,
         }
         try:
             data = self._db.rpc("save_generation_config", parameters).execute().data
@@ -236,6 +237,8 @@ class GenerationConfigRepository:
                 or result.config.ordering_preferences != config.ordering_preferences
                 or result.config.source_manifest != expected_snapshot
                 or dimensions != ordered_dimensions
+                or result.config.generation_mode != config.generation_mode
+                or (config.generation_mode == "shuffle_only" and dimensions)
             ):
                 raise ValueError(
                     "Saved configuration receipt does not match the request and W4 contract."
