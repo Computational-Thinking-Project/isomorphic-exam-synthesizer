@@ -6,20 +6,20 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
-  BookOpen,
   Check,
   CheckCircle,
-  CheckCircle2,
-  ChevronLeft,
   Eye,
-  GraduationCap,
   Info,
   Loader2,
   Lock,
   RefreshCw,
   RotateCcw,
 } from 'lucide-react';
-import MathRenderer from '../../components/MathRenderer.jsx';
+import Stage3InspectionDialog from './Stage3InspectionDialog.jsx';
+import Stage3ReviewNotifications from './Stage3ReviewNotifications.jsx';
+import BrandLogo from '../../components/BrandLogo.jsx';
+import Stage3Comparison, { ReviewQuestionContent } from './Stage3Comparison.jsx';
+import './stage3Review.css';
 import { getSessionDetail } from '../../services/sessions.js';
 import { retryGeneration } from '../../services/stage2Service.js';
 import {
@@ -215,11 +215,15 @@ export default function Stage3ReviewPage({
   const [error, setError] = useState(null);
 
   const [activeVersionTab, setActiveVersionTab] = useState(1);
+  const [selectedQuestionNo, setSelectedQuestionNo] = useState(1);
   const [isRetryingAll, setIsRetryingAll] = useState(false);
   const [actionMessage, setActionMessage] = useState(null);
+  const [reviewSyncRequired, setReviewSyncRequired] = useState(false);
 
   // Trạng thái modal Kiểm tra đáp án (SolutionDialog)
   const [selectedSolution, setSelectedSolution] = useState(null);
+  const [approvalFocus, setApprovalFocus] = useState(null);
+  const workspaceRef = useRef(null);
   const [isRegeneratingSingle, setIsRegeneratingSingle] = useState(false);
   const [isApprovingSingle, setIsApprovingSingle] = useState(false);
   const [isRevertingSingle, setIsRevertingSingle] = useState(false);
@@ -261,6 +265,8 @@ export default function Stage3ReviewPage({
         return;
       }
       const data = adaptReviewSnapshot(rawData);
+      setReviewSyncRequired(false);
+      setSelectedSolution(null);
       setSession(data);
       setLockedDetail(null);
 
@@ -353,8 +359,11 @@ export default function Stage3ReviewPage({
     setError(null);
     setIsShuffle409(false);
     setActiveVersionTab(1);
+    setSelectedQuestionNo(1);
     setIsRetryingAll(false);
+    setReviewSyncRequired(false);
     setSelectedSolution(null);
+    setApprovalFocus(null);
     setApprovedVariantIds(new Set());
     setActionMessage(null);
     setIsRegeneratingSingle(false);
@@ -437,6 +446,7 @@ export default function Stage3ReviewPage({
     ) || session?.source_questions?.find(
       (sq) => (sq.question_no ?? sq.number) === qNo
     );
+    setSelectedQuestionNo(qNo);
     setSelectedSolution({
       variant: {
         ...variant,
@@ -457,7 +467,7 @@ export default function Stage3ReviewPage({
 
   // Xử lý Tạo lại câu hỏi trong SolutionDialog (Reject & Targeted Regeneration)
   const handleRegenerateSingle = useCallback(async () => {
-    if (!selectedSolution?.variant || isRegeneratingSingle || isReviewReadOnly) return;
+    if (!selectedSolution?.variant || isRegeneratingSingle || isReviewReadOnly || reviewSyncRequired) return;
     const { variant, qNo, versionIndex } = selectedSolution;
     const targetQId = variant.candidate_id || variant.id || variant.question_id;
     if (!targetQId) {
@@ -509,7 +519,7 @@ export default function Stage3ReviewPage({
         question_no: variant.question_no ?? qNo,
         number: variant.number ?? qNo,
         version_index: versionIndex,
-        status: res?.status || 'pending_review',
+        status: 'pending_review',
         content: res?.content || res?.stem_latex || res?.stem || variant.content,
         options: newOptions,
         correct_key: res?.correct_key || variant.correct_key,
@@ -630,11 +640,11 @@ export default function Stage3ReviewPage({
         setIsRegeneratingSingle(false);
       }
     }
-  }, [selectedSolution, isRegeneratingSingle, isReviewReadOnly, regenerateQuestionFn, sessionId, updateVariantInSession, loadSession]);
+  }, [selectedSolution, isRegeneratingSingle, isReviewReadOnly, reviewSyncRequired, regenerateQuestionFn, sessionId, updateVariantInSession, loadSession]);
 
   // Xử lý Duyệt biến thể trong SolutionDialog
   const handleApproveSingle = useCallback(async () => {
-    if (!selectedSolution?.variant || isApprovingSingle || isReviewReadOnly) return;
+    if (!selectedSolution?.variant || isApprovingSingle || isReviewReadOnly || reviewSyncRequired) return;
     const { variant, qNo, versionIndex } = selectedSolution;
     const targetQId = variant.candidate_id || variant.id || variant.question_id;
     if (!targetQId) {
@@ -703,6 +713,7 @@ export default function Stage3ReviewPage({
       // Refetch current snapshot sau accept để cập nhật persisted review progress và freshness token
       try {
         const latestRaw = await loadSession(targetSessionId);
+        if (!latestRaw) throw new Error('Missing review snapshot');
         if (
           isMountedRef.current &&
           mutationOperationRef.current === currentOp &&
@@ -751,9 +762,36 @@ export default function Stage3ReviewPage({
             if (variant.question_id) merged.add(variant.question_id);
             return merged;
           });
+          const latestCandidate = findVariantInSession(adapted, versionIndex, qNo);
+          const latestId = latestCandidate?.candidate_id || latestCandidate?.id || latestCandidate?.question_id;
+          if (latestId === targetCandidateId && isVariantApproved(latestCandidate, authoritativeApproved)) {
+            const versions = adapted.config?.n_versions || adapted.exam_versions?.length || 1;
+            const questions = adapted.source_questions?.length || 0;
+            const total = versions * questions;
+            const start = (qNo - 1) * versions + versionIndex;
+            let nextPair = null;
+            for (let offset = 0; offset < total; offset++) {
+              const position = (start + offset) % total;
+              const version = position % versions + 1;
+              const number = Math.floor(position / versions) + 1;
+              if (!isVariantApproved(findVariantInSession(adapted, version, number), authoritativeApproved)) {
+                nextPair = { version, number }; break;
+              }
+            }
+            setSelectedSolution(null);
+            if (nextPair) {
+              setActiveVersionTab(nextPair.version);
+              setSelectedQuestionNo(nextPair.number);
+            }
+            setApprovalFocus(nextPair ? nextPair.number : 'finalize');
+          }
+
         }
       } catch {
-        // Refetch thất bại trong nền không làm hỏng optimistic update đã hiển thị cho người dùng
+        if (isMountedRef.current && mutationOperationRef.current === currentOp && activeSessionIdRef.current === targetSessionId) {
+          setReviewSyncRequired(true);
+          setActionMessage({ type: 'error', text: 'Đã nhận phản hồi duyệt nhưng chưa đối soát được trạng thái. Đọc lại trạng thái trước khi tiếp tục.' });
+        }
       }
     } catch (err) {
       if (
@@ -776,11 +814,11 @@ export default function Stage3ReviewPage({
         setIsApprovingSingle(false);
       }
     }
-  }, [selectedSolution, isApprovingSingle, isReviewReadOnly, acceptQuestionFn, sessionId, updateVariantInSession, loadSession]);
+  }, [selectedSolution, isApprovingSingle, isReviewReadOnly, reviewSyncRequired, acceptQuestionFn, sessionId, updateVariantInSession, loadSession]);
 
   // Xử lý Khôi phục đề gốc (Revert candidate)
   const handleRevertSingle = useCallback(async () => {
-    if (!selectedSolution?.variant || isRevertingSingle || isReviewReadOnly) return;
+    if (!selectedSolution?.variant || isRevertingSingle || isReviewReadOnly || reviewSyncRequired) return;
     const { variant, qNo, versionIndex } = selectedSolution;
     const targetQId = variant.candidate_id || variant.id || variant.question_id;
     if (!targetQId) {
@@ -788,10 +826,6 @@ export default function Stage3ReviewPage({
         type: 'error',
         text: 'Thiếu định danh câu hỏi để thao tác. Hãy tải lại trang để đồng bộ dữ liệu.',
       });
-      return;
-    }
-
-    if (!window.confirm(`Thay biến thể này (Câu ${qNo} · Đề ${versionIndex}) bằng đề gốc đã xác nhận. Câu sẽ cần được duyệt lại. Tiếp tục?`)) {
       return;
     }
 
@@ -926,7 +960,7 @@ export default function Stage3ReviewPage({
         setIsRevertingSingle(false);
       }
     }
-  }, [selectedSolution, isRevertingSingle, isReviewReadOnly, revertQuestionFn, sessionId, session, updateVariantInSession, loadSession]);
+  }, [selectedSolution, isRevertingSingle, isReviewReadOnly, reviewSyncRequired, revertQuestionFn, sessionId, session, updateVariantInSession, loadSession]);
 
   const handleRetryAllMissing = async () => {
     if (!canRetryPartial || isRetryingAll) return;
@@ -979,7 +1013,6 @@ export default function Stage3ReviewPage({
     }
   };
 
-  const [reviewFilter, setReviewFilter] = useState('all');
   const numVersions = session?.config?.n_versions || session?.exam_versions?.length || 1;
   const totalSourceQuestions = session?.source_questions?.length || 0;
   const totalLoadedVariants = countTotalLoadedVariants(session);
@@ -1008,54 +1041,55 @@ export default function Stage3ReviewPage({
     return count;
   }, [session, numVersions, totalSourceQuestions, approvedVariantIds]);
 
+  // All source positions stay reachable, including missing and already approved pairs.
+  const currentQuestionNo = selectedSolution?.versionIndex === activeVersionTab
+    ? selectedSolution.qNo
+    : selectedQuestionNo >= 1 && selectedQuestionNo <= totalSourceQuestions
+      ? selectedQuestionNo : totalSourceQuestions > 0 ? 1 : null;
+  const currentVariant = findVariantInSession(session, activeVersionTab, currentQuestionNo);
+  const inspectionOpen = selectedSolution?.qNo === currentQuestionNo && selectedSolution?.versionIndex === activeVersionTab;
+  const currentSource = session?.source_questions?.find((source) =>
+    currentVariant?.source_question_id && (source.source_question_id || source.id) === currentVariant.source_question_id
+  ) || session?.source_questions?.find((source) => (source.question_no ?? source.number) === currentQuestionNo);
+
+  const selectVersion = (version) => {
+    if (isApprovingSingle || isRegeneratingSingle || isRevertingSingle || isRetryingAll) return;
+    const question = currentQuestionNo ?? selectedQuestionNo;
+    setSelectedQuestionNo(question);
+    setActiveVersionTab(version);
+    setSelectedSolution(null);
+  };
+  const handleVersionKeyDown = (event, version) => {
+    const next = event.key === 'ArrowRight' ? version % numVersions + 1
+      : event.key === 'ArrowLeft' ? (version + numVersions - 2) % numVersions + 1
+      : event.key === 'Home' ? 1 : event.key === 'End' ? numVersions : null;
+    if (next === null) return;
+    event.preventDefault();
+    selectVersion(next);
+    event.currentTarget.parentNode?.querySelector(`[data-review-version="${next}"]`)?.focus();
+  };
   const goToNextUnreviewed = () => {
-    const start = selectedSolution ? (selectedSolution.versionIndex - 1) * totalSourceQuestions + selectedSolution.qNo : 0;
+    const start = ((currentQuestionNo ?? 1) - 1) * numVersions + activeVersionTab;
     for (let offset = 0; offset < totalExpectedSlots; offset++) {
       const position = (start + offset) % totalExpectedSlots;
-      const version = Math.floor(position / totalSourceQuestions) + 1;
-      const number = position % totalSourceQuestions + 1;
+      const version = position % numVersions + 1;
+      const number = Math.floor(position / numVersions) + 1;
       const candidate = findVariantInSession(session, version, number);
-      if (candidate && !isVariantApproved(candidate, approvedVariantIds)) {
-        setReviewFilter('all');
+      if (!isVariantApproved(candidate, approvedVariantIds)) {
+        setSelectedQuestionNo(number);
         setActiveVersionTab(version);
-        handleOpenSolutionModal(candidate, number, version);
-        setTimeout(() => document.getElementById(`review-${version}-${number}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 0);
+        setSelectedSolution(null);
         return;
       }
     }
-    setActionMessage({type: 'success', text: 'Không còn câu chưa duyệt.'});
+    setActionMessage({ type: 'success', text: 'Không còn câu chưa duyệt.' });
   };
 
-  const handleSelectNavigatorQuestion = useCallback((qNo) => {
-    if (isApprovingSingle || isRegeneratingSingle || isRevertingSingle) return;
-    const variant = findVariantInSession(session, activeVersionTab, qNo);
-    const isApproved = isVariantApproved(variant, approvedVariantIds);
-    const { isFallback, hasWarning } = getVariantWarningFlags(variant);
-    const matchesCurrentFilter =
-      reviewFilter === 'all' ||
-      (!variant && reviewFilter === 'pending') ||
-      (variant && (
-        (reviewFilter === 'pending' && !isApproved) ||
-        (reviewFilter === 'approved' && isApproved) ||
-        (reviewFilter === 'warning' && (hasWarning || isFallback))
-      ));
-    if (!matchesCurrentFilter) {
-      setReviewFilter('all');
-    }
-    if (variant) {
-      handleOpenSolutionModal(variant, qNo, activeVersionTab);
-    } else {
-      setSelectedSolution(null);
-    }
-    setTimeout(() => {
-      if (isMountedRef.current && typeof document !== 'undefined' && typeof document.getElementById === 'function') {
-        document.getElementById(`review-${activeVersionTab}-${qNo}`)?.scrollIntoView?.({
-          block: 'nearest',
-          behavior: 'smooth',
-        });
-      }
-    }, 0);
-  }, [session, activeVersionTab, approvedVariantIds, reviewFilter, isApprovingSingle, isRegeneratingSingle, isRevertingSingle, handleOpenSolutionModal]);
+  const handleSelectNavigatorQuestion = (qNo) => {
+    if (isApprovingSingle || isRegeneratingSingle || isRevertingSingle || isRetryingAll) return;
+    setSelectedQuestionNo(qNo);
+    setSelectedSolution(null);
+  };
 
   const restoredViewRef = useRef(null);
   useEffect(() => {
@@ -1064,26 +1098,28 @@ export default function Stage3ReviewPage({
     try {
       const saved = JSON.parse(sessionStorage.getItem(`review-view:${sessionId}`) || 'null');
       if (!saved) return;
-      const version = Math.min(numVersions, Math.max(1, saved.version || 1));
-      setActiveVersionTab(version);
-      setReviewFilter(['all','pending','warning','approved'].includes(saved.filter) ? saved.filter : 'all');
-      const candidate = findVariantInSession(session, version, saved.question);
-      if (candidate) handleOpenSolutionModal(candidate, saved.question, version);
-      requestAnimationFrame(() => window.scrollTo(0, saved.scroll || 0));
+      if (Number.isInteger(saved.version) && saved.version >= 1 && saved.version <= numVersions) setActiveVersionTab(saved.version);
+      if (Number.isInteger(saved.question) && saved.question >= 1 && saved.question <= totalSourceQuestions) setSelectedQuestionNo(saved.question);
     } catch { /* View restoration is optional; server data remains authoritative. */ }
-  }, [session, sessionId, numVersions, handleOpenSolutionModal]);
+  }, [session, sessionId, numVersions, totalSourceQuestions]);
   useEffect(() => {
-    if (restoredViewRef.current !== sessionId) return;
-    const save = () => {
-      try { sessionStorage.setItem(`review-view:${sessionId}`, JSON.stringify({version: activeVersionTab, filter: reviewFilter, question: selectedSolution?.qNo, scroll: window.scrollY})); }
-      catch { /* Storage may be unavailable. */ }
-    };
-    window.addEventListener('scroll', save, {passive:true});
-    return () => { save(); window.removeEventListener('scroll', save); };
-  }, [sessionId, activeVersionTab, reviewFilter, selectedSolution?.qNo]);
+    if (!session || session.id !== sessionId || restoredViewRef.current !== sessionId) return;
+    try {
+      sessionStorage.setItem(`review-view:${sessionId}`, JSON.stringify({
+        version: activeVersionTab, question: currentQuestionNo,
+      }));
+    } catch { /* Storage may be unavailable. */ }
+  }, [session, sessionId, activeVersionTab, currentQuestionNo]);
+
+  useEffect(() => {
+    if (approvalFocus === null || selectedSolution) return;
+    const selector = approvalFocus === 'finalize' ? '[data-review-finalize]' : `[data-review-nav-q="${approvalFocus}"]`;
+    workspaceRef.current?.querySelector(selector)?.focus();
+    setApprovalFocus(null);
+  }, [approvalFocus, selectedSolution]);
 
   const isFinalizeDisabled =
-    totalExpectedSlots === 0 || approvedCount < totalExpectedSlots || isPartial || isReviewReadOnly || isApprovingSingle || isRegeneratingSingle || isRetryingAll;
+    totalExpectedSlots === 0 || approvedCount < totalExpectedSlots || isPartial || isReviewReadOnly || reviewSyncRequired || isApprovingSingle || isRegeneratingSingle || isRevertingSingle || isRetryingAll;
 
   const isSelectedVariantApproved = useMemo(() => {
     return isVariantApproved(selectedSolution?.variant, approvedVariantIds);
@@ -1207,104 +1243,26 @@ export default function Stage3ReviewPage({
     : { label: 'Đang duyệt', className: 'border-support-line bg-support-bg text-highlight' };
 
   return (
-    <div className="paper-ui min-h-screen bg-canvas text-ink">
-      <div className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6 lg:p-8">
-      {/* Top Session Bar & Step Badge (đồng bộ PR #100 + ui-walkthrough S06) */}
-      <header className="space-y-3 border-b border-line pb-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <Link
-              to="/dashboard"
-              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-semibold text-highlight hover:bg-support-bg transition-colors"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Thư viện đề</span>
-            </Link>
-            <span className="text-line" aria-hidden="true">/</span>
-            <button
-              type="button"
-              onClick={() => navigate(stage2Path(sessionId))}
-              className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-lg border border-line bg-surface px-2.5 py-1 text-xs font-semibold text-muted hover:bg-rail hover:text-ink transition-colors"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Xem thông tin lần sinh</span>
-            </button>
-            <span className="text-line" aria-hidden="true">/</span>
-            <span className="inline-flex shrink-0 items-center rounded-full border border-support-line bg-support-bg px-2.5 py-0.5 text-xs font-semibold text-highlight">
-              Bước 3/3 · Duyệt câu hỏi
-            </span>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${headerBadge.className}`}>
-              {headerBadge.label}
-            </span>
-            {isFinalLocked ? (
-              <button
-                type="button"
-                data-testid="stage3-btn-goto-export"
-                onClick={() => navigate(exportPath(sessionId))}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-approved-ink px-4 py-2 text-xs font-semibold text-white shadow-soft hover:bg-approved-ink transition-colors"
-              >
-                <Lock className="h-3.5 w-3.5" />
-                Tới màn hình Xuất bản
-              </button>
-            ) : canRetryPartial && hasLoadedAnyVariants && totalLoadedVariants < totalExpectedSlots ? (
-              <button
-                type="button"
-                onClick={handleRetryAllMissing}
-                disabled={isRetryingAll}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-accent-border bg-accent px-3.5 py-2 text-xs font-semibold text-strong shadow-soft hover:opacity-90 disabled:opacity-50 transition-colors"
-              >
-                {isRetryingAll ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-3.5 w-3.5" />
-                )}
-                Sinh bù tất cả câu thiếu
-              </button>
-            ) : null}
+    <div ref={workspaceRef} className="paper-ui stage3-review-workspace bg-canvas text-ink">
+      <main className="stage3-shell">
+      <header className="stage3-session-header">
+        <BrandLogo size="sm" className="stage3-brand" />
+        <div className="stage3-header-details">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h1 className="font-semibold text-strong break-words">{session?.title || 'Đối chiếu và duyệt'}</h1>
+            <span className="text-sm font-semibold text-highlight">Bước 3/3 · Duyệt câu hỏi</span>
+            <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${headerBadge.className}`}>{headerBadge.label}</span>
           </div>
         </div>
-
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="break-words text-xl sm:text-2xl font-bold tracking-tight text-strong">
-              {session?.title || 'Xem & Duyệt Đề Thi Đẳng Cấu'}
-            </h1>
-            <p className="mt-1 text-xs text-muted">
-              Đối chiếu từng cặp đề gốc và biến thể theo mã đề trước khi chuyển sang bước xem trước bản cuối.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
-            <span className="inline-flex items-center gap-1 rounded-full border border-support-line bg-support-bg px-2.5 py-0.5 font-medium text-highlight">
-              <BookOpen className="h-3 w-3" aria-hidden="true" />
-              Môn: {session?.subject || 'Toán'}
-            </span>
-            <span className="inline-flex items-center gap-1 rounded-full border border-support-line bg-support-bg px-2.5 py-0.5 font-medium text-highlight">
-              <GraduationCap className="h-3 w-3" aria-hidden="true" />
-              Khối {session?.grade || 12}
-            </span>
-            <span className="inline-flex items-center rounded-full border border-line bg-surface px-2.5 py-0.5 font-medium text-ink">
-              {numVersions} mã đề · {totalSourceQuestions} câu/mã
-            </span>
-          </div>
-        </div>
+        {isFinalLocked && <button type="button" data-testid="stage3-btn-goto-export" onClick={() => navigate(exportPath(sessionId))}
+          className="rounded-lg bg-approved-ink px-4 py-2 text-xs font-semibold text-white">Tới màn hình Xuất bản</button>}
       </header>
 
-      {/* Thông báo thao tác */}
-      {actionMessage && (
-        <div
-          role="status"
-          className={`rounded-xl border p-4 text-xs font-medium ${
-            actionMessage.type === 'success'
-              ? 'border-approved-border bg-approved-bg text-approved-ink'
-              : 'border-danger-border bg-danger-soft text-danger'
-          }`}
-        >
-          {actionMessage.text}
-        </div>
-      )}
+      <Stage3ReviewNotifications key={sessionId} message={actionMessage} />
+      {reviewSyncRequired && <div role="alert" className="stage3-session-notice">
+        Chưa đối soát được trạng thái review.
+        <button type="button" className="text-highlight underline" onClick={() => void loadData()}>Đọc lại trạng thái</button>
+      </div>}
 
       {/* Cảnh báo phiên đã khóa nội dung (approved / exported) */}
       {isFinalLocked && (
@@ -1332,7 +1290,7 @@ export default function Stage3ReviewPage({
       {isPartial && (
         <div
           role="alert"
-          className="rounded-2xl border border-accent-border bg-accent-soft p-6 text-accent-ink shadow-paper"
+          className="stage3-session-notice rounded-xl border border-accent-border bg-accent-soft text-accent-ink"
         >
           <div className="flex items-start gap-3">
             <AlertTriangle className="mt-0.5 h-6 w-6 shrink-0 text-accent-ink" />
@@ -1351,7 +1309,7 @@ export default function Stage3ReviewPage({
 
       {/* Thông báo khi backend chưa nạp dữ liệu chi tiết câu hỏi */}
       {!hasLoadedAnyVariants && (
-        <div className="rounded-2xl border border-line bg-surface p-8 text-center text-ink">
+        <div className="stage3-session-notice rounded-xl border border-line bg-surface text-center text-ink">
           <Info className="mx-auto h-8 w-8 text-highlight" />
           <h3 className="mt-3 text-base font-semibold text-strong">
             Đang tải nội dung các mã đề
@@ -1364,49 +1322,16 @@ export default function Stage3ReviewPage({
         </div>
       )}
 
-      {/* Khối điều khiển: Chọn mã đề, Điều hướng câu (S06), và Bộ lọc trạng thái */}
-      <section aria-label="Điều hướng mã đề và câu hỏi" className="rounded-2xl border border-line bg-surface p-4 shadow-soft space-y-3">
-        {/* Thanh chọn Tab mã đề */}
-        <div className="flex items-center gap-2 overflow-x-auto border-b border-line pb-3">
-          {Array.from({ length: numVersions }, (_, i) => i + 1).map((vIdx) => {
-            const isTabActive = activeVersionTab === vIdx;
-            return (
-              <button
-                key={vIdx}
-                type="button"
-                disabled={isApprovingSingle || isRegeneratingSingle || isRevertingSingle}
-                onClick={() => {setActiveVersionTab(vIdx);setSelectedSolution(null);}}
-                aria-pressed={isTabActive}
-                className={`shrink-0 whitespace-nowrap rounded-xl px-4 py-2 text-xs font-semibold transition-all ${
-                  isTabActive
-                    ? 'bg-highlight text-white shadow-soft'
-                    : 'border border-line bg-rail text-ink hover:bg-support-bg hover:text-highlight'
-                }`}
-              >
-                {versionLabel(session, vIdx)} · {Array.from({length: totalSourceQuestions}, (_, i) => i+1).filter(n => isVariantApproved(findVariantInSession(session,vIdx,n), approvedVariantIds)).length}/{totalSourceQuestions}
-              </button>
-            );
-          })}
-        </div>
-
+      <section aria-label="Điều hướng mã đề và câu hỏi" className="stage3-controls">
         {/* Điều hướng nhanh theo từng câu của mã đề đang xem (theo mẫu SourceNavigator S06) */}
         {totalSourceQuestions > 0 && (
-          <div className="space-y-2 border-b border-line pb-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-strong">
-                Điều hướng nhanh theo câu ({versionLabel(session, activeVersionTab)})
-              </span>
-              <span className="text-[11px] text-muted">
-                Xanh lá: Đã duyệt · Vàng: Cảnh báo · Đỏ: Thiếu câu · Xám: Chờ duyệt
-              </span>
-            </div>
-            <nav aria-label="Điều hướng câu hỏi" className="flex flex-wrap gap-1.5">
+            <nav aria-label="Điều hướng câu hỏi" className="stage3-question-nav">
               {Array.from({ length: totalSourceQuestions }, (_, i) => i + 1).map((qNo) => {
                 const navVariant = findVariantInSession(session, activeVersionTab, qNo);
                 const isNavMissing = !navVariant;
                 const isNavApproved = isVariantApproved(navVariant, approvedVariantIds);
                 const { isFallback: navFallback, hasWarning: navWarning } = getVariantWarningFlags(navVariant);
-                const isNavSelected = selectedSolution?.qNo === qNo && selectedSolution?.versionIndex === activeVersionTab;
+                const isNavSelected = currentQuestionNo === qNo;
                 const isNavBusy = isNavSelected && (isRegeneratingSingle || isApprovingSingle || isRevertingSingle);
 
                 const statusText = isNavMissing
@@ -1456,84 +1381,40 @@ export default function Stage3ReviewPage({
                 );
               })}
             </nav>
-          </div>
         )}
+      </section>
 
-        <div role="group" aria-label="Lọc câu hỏi" className="flex flex-wrap gap-2">
-          {[['all','Tất cả'],['pending','Chưa duyệt'],['warning','Có cảnh báo'],['approved','Đã duyệt']].map(([value,label]) => {
-            const count = Array.from({length:totalSourceQuestions},(_,i)=>findVariantInSession(session,activeVersionTab,i+1)).filter((v)=>{
-              const { hasWarning, isFallback } = getVariantWarningFlags(v);
-              const approved = isVariantApproved(v, approvedVariantIds);
-              return value === 'all' || (value === 'pending' && !approved) || (value === 'approved' && approved) || (value === 'warning' && (hasWarning || isFallback));
-            }).length;
+      <Stage3Comparison source={currentSource} questionNo={currentQuestionNo} versionIndex={activeVersionTab} tabs={<>
+{Array.from({ length: numVersions }, (_, i) => i + 1).map((vIdx) => {
+            const isTabActive = activeVersionTab === vIdx;
             return (
               <button
+                key={vIdx}
                 type="button"
-                key={value}
-                aria-pressed={reviewFilter===value}
-                disabled={isApprovingSingle || isRegeneratingSingle || isRevertingSingle}
-                onClick={()=>{setReviewFilter(value);setSelectedSolution(null);}}
-                className="rounded-xl border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-rail aria-pressed:border-support-line aria-pressed:bg-support-bg aria-pressed:text-highlight"
+                disabled={isApprovingSingle || isRegeneratingSingle || isRevertingSingle || isRetryingAll}
+                id={`stage3-version-${vIdx}`}
+                data-review-version={vIdx}
+                role="tab"
+                aria-controls="stage3-variant-panel"
+                tabIndex={isTabActive ? 0 : -1}
+                onKeyDown={(event) => handleVersionKeyDown(event, vIdx)}
+                onClick={() => selectVersion(vIdx)}
+                aria-selected={isTabActive}
+
               >
-                {label} ({count})
+                {versionLabel(session, vIdx)} · {Array.from({length: totalSourceQuestions}, (_, i) => i+1).filter(n => isVariantApproved(findVariantInSession(session,vIdx,n), approvedVariantIds)).length}/{totalSourceQuestions}
               </button>
             );
           })}
-        </div>
-      </section>
-
-      {/* Thông báo bộ lọc rỗng */}
-      {(() => {
-        const visibleQuestions = Array.from({ length: totalSourceQuestions }, (_, i) => i + 1).filter((qNo) => {
-          const variant = findVariantInSession(session, activeVersionTab, qNo);
-          const isMissing = !variant;
-          if (isMissing) {
-            return reviewFilter === 'all' || reviewFilter === 'pending';
-          }
-          const isApproved = isVariantApproved(variant, approvedVariantIds);
-          const { isFallback, hasWarning } = getVariantWarningFlags(variant);
-          return (
-            reviewFilter === 'all' ||
-            (reviewFilter === 'pending' && !isApproved) ||
-            (reviewFilter === 'approved' && isApproved) ||
-            (reviewFilter === 'warning' && (hasWarning || isFallback))
-          );
-        });
-
-        if (visibleQuestions.length === 0 && reviewFilter !== 'all') {
-          const filterName =
-            reviewFilter === 'pending'
-              ? 'chưa duyệt'
-              : reviewFilter === 'warning'
-              ? 'có cảnh báo'
-              : 'đã duyệt';
-          return (
-            <div className="rounded-2xl border border-line bg-surface p-8 text-center">
-              <p className="text-sm text-muted">
-                Không có câu hỏi nào trong mục {filterName}.
-              </p>
-              <button
-                type="button"
-                onClick={() => setReviewFilter('all')}
-                className="mt-3 inline-flex items-center gap-1.5 rounded-xl border border-line bg-rail px-4 py-2 text-xs font-semibold text-strong hover:bg-support-bg"
-              >
-                Xem tất cả
-              </button>
-            </div>
-          );
-        }
-        return null;
-      })()}
-      {/* Danh sách các câu hỏi trong mã đề được chọn */}
-      <div className="space-y-4">
-        {Array.from({ length: totalSourceQuestions }, (_, i) => i + 1).map((qNo) => {
+      </>}>
+        {!currentQuestionNo && <div className="stage3-empty" role="status">Chưa có câu nguồn để đối chiếu.</div>}
+        {[currentQuestionNo].filter(Boolean).map((qNo) => {
           const variant = selectedSolution?.qNo === qNo && selectedSolution?.versionIndex === activeVersionTab ? selectedSolution.variant : findVariantInSession(session, activeVersionTab, qNo);
           const isMissing = !variant;
 
           if (isMissing) {
-            if (['approved', 'warning'].includes(reviewFilter)) return null;
             if (!hasLoadedAnyVariants) {
-              return null;
+              return <p key={qNo} role="status">Đang tải nội dung biến thể để đối chiếu…</p>;
             }
 
             return (
@@ -1570,7 +1451,7 @@ export default function Stage3ReviewPage({
                       <RefreshCw className="h-3.5 w-3.5" />
                     )}
                     <span>Sinh bổ sung các câu còn thiếu</span>
-                    <span className="sr-only"> (Sinh bù câu này)</span>
+
                   </button>
                 </div>
               </div>
@@ -1578,8 +1459,6 @@ export default function Stage3ReviewPage({
           }
 
           // Hiển thị câu hỏi đã hoàn tất
-          const options = normalizeOptions(variant.options);
-          const correctKey = variant.correct_key || variant.answer;
           const isApproved = isVariantApproved(variant, approvedVariantIds);
 
           const { isFallback, hasWarning } = getVariantWarningFlags(variant);
@@ -1592,20 +1471,11 @@ export default function Stage3ReviewPage({
 
           const pinned = selectedSolution?.qNo === qNo && selectedSolution?.versionIndex === activeVersionTab;
           const isCardBusy = pinned && (isRegeneratingSingle || isApprovingSingle || isRevertingSingle);
-          if (!pinned && ((reviewFilter === 'pending' && isApproved) || (reviewFilter === 'approved' && !isApproved) || (reviewFilter === 'warning' && !hasWarning && !isFallback))) return null;
           return (
             <div
               key={qNo}
               style={{scrollMarginTop: 24}} id={`review-${activeVersionTab}-${qNo}`}
-              className={`rounded-2xl border p-5 shadow-soft transition-all ${
-                pinned
-                  ? 'border-highlight bg-surface ring-2 ring-highlight/20'
-                  : isApproved
-                  ? 'border-approved-border bg-surface'
-                  : hasWarning
-                  ? 'border-accent-border bg-surface'
-                  : 'border-line bg-surface'
-              }`}
+              className="stage3-variant-card"
             >
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-3">
                 <div className="flex flex-wrap items-center gap-2.5">
@@ -1668,24 +1538,6 @@ export default function Stage3ReviewPage({
 
                 </div>
 
-                {/* Nút Kiểm tra đáp án (Mở vùng đối chiếu S06) */}
-                <button
-                  type="button"
-                  data-review-inspect={true}
-                  disabled={isRegeneratingSingle || isApprovingSingle || isRevertingSingle}
-                  aria-expanded={pinned}
-                  aria-controls={`solution-${activeVersionTab}-${qNo}`}
-                  onClick={() => pinned ? setSelectedSolution(null) : handleOpenSolutionModal(variant, qNo, activeVersionTab)}
-                  className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-all shadow-sm ${
-                    pinned
-                      ? 'border-highlight bg-highlight text-white hover:bg-[#253b57]'
-                      : 'border-support-line bg-support-bg text-highlight hover:bg-highlight hover:text-white'
-                  }`}
-                >
-                  <Eye className="h-3.5 w-3.5" />
-                  <span>{pinned ? 'Đóng đối chiếu' : 'Đối chiếu và duyệt'}</span>
-                  <span className="sr-only"> (Xem lời giải)</span>
-                </button>
               </div>
 
               {/* Badge Fallback */}
@@ -1707,253 +1559,62 @@ export default function Stage3ReviewPage({
                 </div>
               )}
 
-              {/* Nội dung đề bài */}
-              <div className="mt-3 text-sm text-ink">
-                <MathRenderer content={variant.content || variant.raw_content || ''} />
-              </div>
-
-              {/* Các lựa chọn đáp án */}
-              {Object.keys(options).length > 0 && (
-                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {Object.entries(options).map(([key, optVal]) => {
-                    const isCorrect =
-                      String(key).toUpperCase() === String(correctKey).toUpperCase();
-                    return (
-                      <div
-                        key={key}
-                        className={`flex items-start gap-2 rounded-xl border p-2.5 text-xs ${
-                          isCorrect
-                            ? 'border-approved-border bg-approved-bg text-approved-ink'
-                            : 'border-line bg-rail text-ink'
-                        }`}
-                      >
-                        <span
-                          className={`font-bold ${
-                            isCorrect ? 'text-approved-ink' : 'text-muted'
-                          }`}
-                        >
-                          {key}.
-                        </span>
-                        <div className="flex-1 min-w-0 overflow-x-auto">
-                          <MathRenderer content={String(optVal)} inline />
-                        </div>
-                        {isCorrect && (
-                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-approved-ink" />
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              <ReviewQuestionContent question={variant} />
 
 
-              {selectedSolution?.qNo === qNo && selectedSolution?.versionIndex === activeVersionTab && (
-                <div id={`solution-${activeVersionTab}-${qNo}`} role="region" aria-label="Lời giải và thao tác duyệt" className="solution-dialog mt-4 space-y-4 border-t border-line pt-4">
-                  {actionMessage && (
-                    <p
-                      role="status"
-                      className={`rounded-xl border px-3.5 py-2.5 text-xs font-medium ${
-                        actionMessage.type === 'success'
-                          ? 'border-approved-border bg-approved-bg text-approved-ink'
-                          : 'border-danger-border bg-danger-soft text-danger'
-                      }`}
-                    >
-                      {actionMessage.text}
-                    </p>
-                  )}
-
-                  <div className="solution-columns grid grid-cols-1 xl:grid-cols-2 gap-4">
-                    {/* Cột 1: Đề gốc đối chiếu */}
-                    {selectedSolution.originalQuestion ? (
-                      <section className="rounded-xl border border-line bg-canvas p-4 space-y-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-2.5">
-                          <div className="flex items-center gap-2">
-                            <h3 className="text-xs font-bold uppercase tracking-wider text-muted">
-                              Đề gốc (Câu {selectedSolution.originalQuestion.question_no ?? selectedSolution.originalQuestion.number ?? qNo})
-                            </h3>
-                            <span className="rounded-full border border-line bg-surface px-2 py-0.5 text-[10px] font-semibold text-muted">
-                              Chỉ đọc
-                            </span>
-                          </div>
-                          <span className="text-xs font-semibold text-highlight">
-                            Đáp án đúng: {selectedSolution.originalQuestion.correct_key || selectedSolution.originalQuestion.answer || '—'}
-                          </span>
-                        </div>
-                        <div className="text-xs text-ink leading-relaxed min-w-0 overflow-x-auto">
-                          <MathRenderer content={selectedSolution.originalQuestion.raw_content || selectedSolution.originalQuestion.content || ''} />
-                        </div>
-                        {selectedSolution.originalQuestion.options && Object.keys(selectedSolution.originalQuestion.options).length > 0 && (
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-1">
-                            {Object.entries(selectedSolution.originalQuestion.options).map(([k, v]) => {
-                              const isOrigCorrect = String(k).toUpperCase() === String(selectedSolution.originalQuestion.correct_key || selectedSolution.originalQuestion.answer).toUpperCase();
-                              return (
-                                <div key={k} className={`p-2 rounded-lg border text-xs flex items-start gap-1.5 ${isOrigCorrect ? 'border-support-line bg-support-bg font-semibold text-highlight' : 'border-line bg-rail text-ink'}`}>
-                                  <span className="font-bold">{k}.</span>
-                                  <div className="flex-1 min-w-0 overflow-x-auto"><MathRenderer content={String(v)} inline /></div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                        <div className="border-t border-line pt-2 text-xs leading-relaxed text-muted min-w-0 overflow-x-auto">
-                          <span className="font-semibold text-strong block mb-1">Lời giải đề gốc:</span>
-                          {selectedSolution.originalQuestion.solution_md ? (
-                            <MathRenderer content={selectedSolution.originalQuestion.solution_md} />
-                          ) : (
-                            <p className="italic text-muted">Chưa có lời giải chi tiết cho đề gốc.</p>
-                          )}
-                        </div>
-                      </section>
-                    ) : (
-                      <section className="rounded-xl border border-line bg-surface p-4 text-xs text-muted">
-                        Không có dữ liệu đề gốc tương ứng.
-                      </section>
-                    )}
-
-                    {/* Cột 2: Biến thể đang xem xét */}
-                    <section className="rounded-xl border border-line bg-surface p-4 space-y-3">
-                      <div className="flex items-center justify-between border-b border-line pb-2.5">
-                        <h3 className="text-xs font-bold uppercase tracking-wider text-highlight">
-                          Biến thể ({versionLabel(session, activeVersionTab)} — Câu {qNo})
-                        </h3>
-                        <span className="text-xs font-semibold text-approved-ink">
-                          Đáp án đúng: {selectedSolution.variant.correct_key || selectedSolution.variant.answer}
-                        </span>
-                      </div>
-                      <div className="text-xs text-ink leading-relaxed min-w-0 overflow-x-auto">
-                        <MathRenderer content={selectedSolution.variant.content || selectedSolution.variant.raw_content || ''} />
-                      </div>
-                      {Object.keys(options).length > 0 && (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-1">
-                          {Object.entries(options).map(([k, v]) => {
-                            const isVarCorrect = String(k).toUpperCase() === String(selectedSolution.variant.correct_key || selectedSolution.variant.answer).toUpperCase();
-                            return (
-                              <div key={k} className={`p-2 rounded-lg border text-xs flex items-start gap-1.5 ${isVarCorrect ? 'border-approved-border bg-approved-bg font-semibold text-approved-ink' : 'border-line bg-rail text-ink'}`}>
-                                <span className="font-bold">{k}.</span>
-                                <div className="flex-1 min-w-0 overflow-x-auto"><MathRenderer content={String(v)} inline /></div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                      <div className="border-t border-line pt-2 text-xs leading-relaxed text-ink min-w-0 overflow-x-auto">
-                        <span className="font-semibold text-strong block mb-1">Lời giải biến thể:</span>
-                        {selectedSolution.variant.solution_md ? (
-                          <MathRenderer content={selectedSolution.variant.solution_md} />
-                        ) : (
-                          <p className="italic text-muted">Chưa có lời giải chi tiết cho câu hỏi này.</p>
-                        )}
-                      </div>
-                    </section>
-                  </div>
-
-                  {!isReviewReadOnly && (
-                    <div className="review-popup-actions flex flex-wrap items-center justify-end gap-3 border-t border-line bg-surface px-6 py-4">
-                      {/* Nút Khôi phục đề gốc (data-review-revert) */}
-                      {Boolean(session?.confirmation_id && session?.job_snapshot_id && (selectedSolution?.variant?.candidate_id || selectedSolution?.variant?.id || selectedSolution?.variant?.question_id)) && (
-                        <button
-                          type="button"
-                          data-review-revert={true}
-                          disabled={isRegeneratingSingle || isApprovingSingle || isRevertingSingle || isReviewReadOnly}
-                          onClick={handleRevertSingle}
-                          className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-rail px-4 py-2.5 text-xs font-semibold text-ink hover:bg-support-bg hover:text-strong disabled:opacity-50"
-                        >
-                          {isRevertingSingle ? (
-                            <>
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              Đang khôi phục…
-                            </>
-                          ) : (
-                            <>
-                              <RotateCcw className="h-3.5 w-3.5" />
-                              Khôi phục đề gốc
-                            </>
-                          )}
-                        </button>
-                      )}
-
-                      {/* Nút Tạo lại (data-review-regenerate) */}
-                      <button
-                        type="button"
-                        data-review-regenerate={true}
-                        disabled={isRegeneratingSingle || isApprovingSingle || isRevertingSingle || isReviewReadOnly || !(selectedSolution?.variant?.candidate_id || selectedSolution?.variant?.id || selectedSolution?.variant?.question_id)}
-                        onClick={() => { if (!isSelectedVariantApproved || window.confirm('Tạo lại sẽ thay nội dung và cần duyệt lại câu này. Tiếp tục?')) void handleRegenerateSingle(); }}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-rail px-4 py-2.5 text-xs font-semibold text-ink hover:bg-rail hover:text-strong disabled:opacity-50"
-                      >
-                        {isRegeneratingSingle ? (
-                          <>
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            Đang tạo lại…
-                          </>
-                        ) : (
-                          <>
-                            <RefreshCw className="h-3.5 w-3.5" />
-                            Tạo lại
-                          </>
-                        )}
-                      </button>
-
-                      {/* Nút Duyệt biến thể (data-review-approve) */}
-                      <button
-                        type="button"
-                        data-review-approve={true}
-                        disabled={isRegeneratingSingle || isApprovingSingle || isRevertingSingle || isSelectedVariantApproved || isReviewReadOnly || !(selectedSolution?.variant?.candidate_id || selectedSolution?.variant?.id || selectedSolution?.variant?.question_id)}
-                        onClick={handleApproveSingle}
-                        className={`inline-flex items-center gap-1.5 rounded-xl px-5 py-2.5 text-xs font-semibold shadow-soft transition-all ${
-                          isSelectedVariantApproved
-                            ? 'cursor-not-allowed bg-approved-bg text-approved-ink opacity-80'
-                            : 'bg-approved-ink text-white hover:bg-approved-ink disabled:opacity-50'
-                        }`}
-                      >
-                        {isApprovingSingle ? (
-                          <>
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            Đang duyệt…
-                          </>
-                        ) : isSelectedVariantApproved ? (
-                          <>
-                            <Check className="h-3.5 w-3.5" />
-                            Đã duyệt
-                          </>
-                        ) : (
-                          <>
-                            <CheckCircle className="h-3.5 w-3.5" />
-                            Duyệt biến thể
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  )}
-                  {isSelectedVariantApproved && (
-                    <button type="button" className="rounded-lg border border-line px-4 py-2 text-sm" onClick={goToNextUnreviewed}>
-                      Đến câu chưa duyệt tiếp theo
-                    </button>
-                  )}
-                </div>
-              )}
 
             </div>
           );
         })}
+      </Stage3Comparison>
+
+      {selectedSolution && <Stage3InspectionDialog
+        key={`${sessionId}-${selectedSolution.qNo}-${selectedSolution.versionIndex}`}
+        selection={selectedSolution} versionLabel={versionLabel(session, selectedSolution.versionIndex)}
+        message={actionMessage} readOnly={isReviewReadOnly || reviewSyncRequired} approved={isSelectedVariantApproved}
+        busy={isRegeneratingSingle || isApprovingSingle || isRevertingSingle}
+        canRevert={Boolean(session?.confirmation_id && session?.job_snapshot_id && (selectedSolution.variant.candidate_id || selectedSolution.variant.id || selectedSolution.variant.question_id))}
+        onClose={() => setSelectedSolution(null)} onApprove={handleApproveSingle}
+        onRegenerate={handleRegenerateSingle} onRevert={handleRevertSingle} onNext={goToNextUnreviewed}
+      />}
+
+      <div className="stage3-pair-actions">
+        <button type="button" data-review-inspect={true}
+          disabled={!currentVariant || isRegeneratingSingle || isApprovingSingle || isRevertingSingle || isRetryingAll}
+          aria-expanded={Boolean(inspectionOpen)}
+          aria-controls={currentVariant ? `solution-${activeVersionTab}-${currentQuestionNo}` : undefined}
+          onClick={() => inspectionOpen ? setSelectedSolution(null) : handleOpenSolutionModal(currentVariant, currentQuestionNo, activeVersionTab)}
+          className="inline-flex items-center gap-2 rounded-lg border border-accent-border bg-accent px-4 py-2 text-sm font-semibold text-strong hover:opacity-90 disabled:opacity-50">
+          <Eye className="h-4 w-4" aria-hidden="true" />
+          {inspectionOpen ? 'Đóng đối chiếu' : 'Kiểm tra đáp án'}
+          <span className="sr-only"> (Xem lời giải)</span>
+        </button>
       </div>
 
       {/* Thanh trạng thái dưới cùng: Tiến độ duyệt & Nút Xem trước bộ đề (PREVIEW.html layout) */}
-      <div className="sticky bottom-0 z-30 mt-8 rounded-2xl border border-line bg-surface p-4 shadow-paper backdrop-blur-md">
+      <footer className="stage3-footer">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <span
-              className={`flex h-2.5 w-2.5 rounded-full ${
-                approvedCount === totalExpectedSlots && totalExpectedSlots > 0
-                  ? 'bg-approved-ink'
-                  : 'bg-accent'
-              }`}
-            />
-            <span className="text-sm font-medium text-ink">
-              Đã duyệt{' '}
-              <strong className="font-bold text-strong">
-                {approvedCount}/{totalExpectedSlots}
-              </strong>{' '}
-              câu
+          <div className="flex flex-wrap items-center gap-3">
+            <Link to="/dashboard" className="inline-flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-sm text-highlight">
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />Thư viện đề
+            </Link>
+            <button type="button" onClick={() => navigate(stage2Path(sessionId))}
+              className="rounded-lg border border-line px-3 py-2 text-sm text-highlight">Xem thông tin lần sinh</button>
+            <span className="stage3-review-progress">
+              <span aria-hidden="true"
+                className={`flex h-2.5 w-2.5 rounded-full ${
+                  approvedCount === totalExpectedSlots && totalExpectedSlots > 0
+                    ? 'bg-approved-ink'
+                    : 'bg-accent'
+                }`}
+              />
+              <span className="text-sm font-medium text-ink">
+                Đã duyệt{' '}
+                <strong className="font-bold text-strong">
+                  {approvedCount}/{totalExpectedSlots}
+                </strong>{' '}
+                câu
+              </span>
             </span>
           </div>
 
@@ -1981,7 +1642,7 @@ export default function Stage3ReviewPage({
             )}
             {isFinalizeDisabled ? (
               <p className="text-xs sm:text-sm text-muted" role="status">
-                {totalExpectedSlots === 0 ? 'Chưa có đủ dữ liệu câu hỏi.' : isPartial ? 'Cần sinh đủ câu và duyệt tất cả câu hỏi.' : `Còn ${Math.max(0, totalExpectedSlots - approvedCount)} câu chưa duyệt.`}
+                {reviewSyncRequired ? 'Cần đọc lại trạng thái review.' : isReviewReadOnly ? 'Phiên đang chỉ xem hoặc đã khóa.' : totalExpectedSlots === 0 ? 'Chưa có đủ dữ liệu câu hỏi.' : isPartial ? 'Cần sinh đủ câu và duyệt tất cả câu hỏi.' : `Còn ${Math.max(0, totalExpectedSlots - approvedCount)} câu chưa duyệt.`}
               </p>
             ) : (
               <p className="text-xs font-semibold text-approved-ink" role="status">
@@ -1993,16 +1654,16 @@ export default function Stage3ReviewPage({
               data-review-finalize={true}
               disabled={isFinalizeDisabled}
               onClick={() => navigate(stage3PreviewPath(sessionId))}
-              className="inline-flex items-center gap-2 rounded-xl bg-highlight px-6 py-2.5 text-xs font-semibold text-white shadow-soft hover:bg-[#253b57] focus:outline-none focus:ring-2 focus:ring-highlight disabled:cursor-not-allowed disabled:opacity-50 transition-all"
+              className="inline-flex items-center gap-2 rounded-lg border border-accent-border bg-accent px-6 py-2.5 text-sm font-semibold text-strong hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Xem trước bộ đề
+              Rà bộ đề
               <ArrowRight className="h-4 w-4" />
             </button>
           </div>
         </div>
-      </div>
+      </footer>
 
-    </div>
+    </main>
   </div>
 );
 }
