@@ -75,7 +75,18 @@ Integration order from EXT v3.1: EXT-01/02 → EXT-04 → EXT-03. Schedule risk:
 
 ## 6. Handoff — to fill with real results
 
-- PR/commit/output: TBD.
-- Done / checked: plan only.
-- Accepted: none yet.
-- Pending: Q05 numbering, I-EXT-01, I-EXT-02, feedback from Quynh and Dat on the I-EXT-03 fixture.
+Phase 1 (26/11, author self-check, not reviewed or accepted). Base `dev@b292443`.
+
+- **Done (code):** migration `backend/migrations/028_generation_mode.sql`; `generation_mode` in `GenerationConfigRequest` / saved config / claim receipt; job repository reads the mode from the frozen snapshot (`frozen_generation_mode`, `mode_question_policy`); Stage 2 mode choice "Sinh đề tương tự" / "Chỉ xáo trộn"; [DEC-EXT02-001](../change_log.md) (proposed).
+- **Checked (local, Windows, PostgreSQL 15 in Docker, no live Gemini/Supabase):**
+  - `backend/tests/migrations/test_generation_mode_pg.py` (real PostgreSQL): legacy 1.0/1.1 → `ai_generation` without rewriting history; 1.2 null/unknown/inconsistent → `ERR_CONFIG_CONFLICT`; shuffle-only with an AI-capable Blueprint → every slot `ORIGINAL_CLONE`, `reserve_generation_quota` and AI results rejected, quota 0, also after an interrupted retry; changed mode on retry → conflict; 1 and 20 questions accepted, 0 and 21 rejected before claim (no job, no quota); old payload without the mode works; single `save_generation_config` signature with unchanged grants; replay of 028 is idempotent; preferences locked once versions are finalized; the real job runner on shuffle-only makes 0 AI calls and 0 reservations and the result goes through review accept, shuffle and export.
+  - Python unit/API tests for the model, config repository, frozen-mode reader and route; Stage 2 card and service tests.
+- **Shuffle flags (D):** no new fields. `ordering_preferences.shuffle_questions` / `shuffle_options` (019) are the EXT v3.1 flags; `PATCH /sessions/{id}/ordering-preferences` already allows changes only in `reviewed` and is locked once `finalize_persist_shuffle` marks versions finalized; "both off keeps order" is covered by the existing shuffler tests.
+- **Design notes:**
+  - Claim also counts 1-20 source questions on the legacy pre-confirmation path; before 028 that path accepted 0 sources.
+  - The identical-versions warning is shown only in shuffle-only mode with N > 1 and both flags off; in AI mode the versions differ anyway.
+  - Stage 2 has no shuffle checkboxes (Issue #94); the flags are still edited at Preview before the permutation is persisted.
+  - Migration number `028` is tentative until Q05 on #111; the EXT-01 Review guard must come after it.
+- **Not done in phase 1:** backend confirmation of shuffle-only copies to `reviewed` (step 3, needs I-EXT-01); Bank reuse endpoint (step 7, needs I-EXT-02). Until step 3 lands, Review still shows per-question Accept for shuffle-only sessions, and reject/regenerate on a clone slot is guarded only by the EXT-01 Q04 work.
+- **Accepted:** none yet.
+- **Pending:** Q05 numbering, I-EXT-01, I-EXT-02, feedback from Quynh and Dat on the I-EXT-03 fixture, reviewer check of this head.

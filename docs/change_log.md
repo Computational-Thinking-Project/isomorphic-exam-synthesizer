@@ -1,3 +1,12 @@
+## DEC-EXT02-001 — Explicit generation_mode frozen per job (proposed, 26/11/2026)
+
+- **Proposer / owner:** Tam (`@AI-WFox`), EXT-02, PR #112. Status: **proposed**, not yet reviewed or accepted.
+- **Context:** EXT v3.1 needs a "Chỉ xáo trộn" path with zero AI calls and zero quota, even when a Blueprint allows AI. Inferring it from an empty `active_variation_modes` or an all-clone policy is ambiguous and is forbidden by the plan.
+- **Decision:** migration `028_generation_mode.sql` (number tentative, may change with Q05 on #111) adds `generation_configs.generation_mode` (`ai_generation` default / `shuffle_only`) and a nullable frozen `generation_job_snapshots.generation_mode`; new claims write `mapping_version='1.2'` plus `snapshot_payload.generation_mode`. `public._generation_job_mode(job)` is the only reader: 1.0/1.1 resolve to `ai_generation`, 1.2 with null/unknown/inconsistent values raises `ERR_CONFIG_CONFLICT`. In `shuffle_only` every `question_policies` entry is `ORIGINAL_CLONE`; `reserve_generation_quota` raises `ERR_MODE_SHUFFLE_ONLY` and `persist_generation_result` already rejects AI results for clone slots. Retry compares the frozen mode with the config. `save_generation_config` gains `p_generation_mode text DEFAULT 'ai_generation'` (the 5-argument signature is dropped; grants unchanged; `NOTIFY pgrst`). Claim also enforces 1-20 source questions, including the legacy pre-confirmation path that did not count them. API: `POST /sessions/{id}/config` accepts optional `generation_mode`; the saved config and claim receipt return it.
+- **Impact:** `backend/migrations/028_generation_mode.sql`, `backend/app/models/generation_config.py`, `backend/app/services/generation/{config_repository,job_repository,mode_mapper}.py`, Stage 2 UI/service; consumers EXT-01 (Review guard reads `_generation_job_mode`), EXT-04/EXT-03 via I-EXT-03. Historical snapshots are not rewritten. Details: [EXT-02 plan](tasks/EXT-02.md).
+
+---
+
 ## PR #109 — Windows full regression passed — 25/11/2026
 
 - Sau xác nhận của Philip về khả năng phát sinh telemetry, full frontend Windows **621/621 pass**,0fail/skip/cancel/108.27s, HEAD72adb9f/source8a6f600. [Checkpoint6.25](tasks/ISSUE-95.md) thay trạng thái full bị chặn/chưa xác nhận trước đó bằng kết quả mới.
