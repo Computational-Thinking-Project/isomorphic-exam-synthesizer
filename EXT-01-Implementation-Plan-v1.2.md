@@ -37,13 +37,13 @@ Giữ một nơi sửa mỗi nội dung: thiết kế chi tiết ở gói tươn
 | Phụ trách | Duy — EXT-01 và điều phối M1 |
 | Reviewer / dự phòng | Đề xuất `@nhatquynh1107` (DB/ACL), `@AI-WFox` (AI/policy), `@benalexx007` (FE); chưa phân công chính thức; dự phòng TBD |
 | Repository | [isomorphic-exam-synthesizer](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer) |
-| Base đã kiểm | `dev@efed79b1662f63d1bc083eb147dc55421684ea16` |
-| Baseline UI tham chiếu | `fix/stage3-ui@1072d1ceee8e126640b2d03a10545f94cac70475` — [PR #109](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/109) (đã merge ngày 26/11; merge commit `b29244346094811eaa038fd31fea67969f8f5b7f`) |
-| Branch / PR dự kiến | `feat/ext-01-review` → `dev`; [Draft PR #111](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/111); HEAD triển khai đang cập nhật |
+| Base đã kiểm | `dev@efed79b1662f63d1bc083eb147dc55421684ea16` (đã đồng bộ `origin/dev@b29244346094811eaa038fd31fea67969f8f5b7f`) |
+| Baseline UI tham chiếu | `fix/stage3-ui@1072d1ceee8e126640b2d03a10545f94cac70475` — [PR #109](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/109) (đã merge ngày 26/11; merge commit `b29244346094811eaa038fd31fea67969f8f5b7f`, khớp tree `1072d1c`) |
+| Branch / PR dự kiến | `feat/ext-01-review` → `dev`; [Draft PR #111](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/111); Integration HEAD local `57e900bb920bbef70a9aefe9de3f47c81c500be3` (push remote ở M6) |
 | Workflow | [v0.1 proposed + INPUT-20261109](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/7b7387f/docs/review/WORKFLOW.md); [M2 template trên baseline](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/efed79b/docs/review/TEMPLATES.md#m2) |
 | Mốc đợt | M2/Draft PR 26/11; code từ 27/11; báo kết quả tối 01/12/2026 |
 | ETA task | 29–45 giờ công trực tiếp, dự toán hiệu chỉnh chưa được Duy xác nhận; thời gian chờ input/review không nằm trong số này |
-| Trạng thái | Draft PR #111 đã mở; G1 đủ thiết kế để bắt đầu; G0/G2–G5 còn pending. Môi trường local do chủ trì báo đã chuẩn bị, chưa được lượt hiệu chỉnh này kiểm runtime |
+| Trạng thái | Draft PR #111 đã mở; G0 đã đồng bộ local tại `57e900b` (chờ push M6); G1 đủ thiết kế để bắt đầu; G2–G5 còn pending. Môi trường local chưa kiểm runtime product/DB/AI trong M0 |
 
 > Kiểm chứng ngày 26/11/2026: PR #109 đã merge, merge commit `b29244346094811eaa038fd31fea67969f8f5b7f`; PR #111 vẫn Draft (đã đăng [comment chốt Q04–Q08](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/111#issuecomment-7181001101), đang chờ owner phản hồi). Các ID `V/R` là finding kế hoạch, không phải implementation đã đạt; chưa chạy product/DB/AI tests cho EXT-01 mới.
 
@@ -55,7 +55,7 @@ Plan này dùng để triển khai phần EXT-01 đã rõ; không thay xác nh�
 
 | Gate | Công việc và tiêu chí đủ | Phần được mở khóa | Trạng thái tại lần hiệu chỉnh |
 |---|---|---|---|
-| G0 — Baseline | Bảo toàn working tree; đưa plan và nguồn phân công vào gói review chia sẻ được hoặc dẫn nguồn đã được owner xác nhận; đồng bộ nhánh với `dev` chứa merge #109; ghi integration HEAD và diff | Thay đổi UI dựa trên #109 và kết luận regression theo head mới | Chưa đồng bộ; không tự nhận SHA merge #109 là HEAD hiện tại của dev |
+| G0 — Baseline | Bảo toàn working tree; đưa plan và nguồn phân công vào gói review chia sẻ được hoặc dẫn nguồn đã được owner xác nhận; đồng bộ nhánh với `dev` chứa merge #109; ghi integration HEAD và diff | Thay đổi UI dựa trên #109 và kết luận regression theo head mới | Đạt đồng bộ local (`29f1378` split docs, merge `origin/dev@b2924434` tại `57e900b`, đã kiểm line-ref); push remote ở M6 |
 | G1 — Nội bộ | Q01–Q03 theo [§3](docs/tasks/EXT-01/00-baseline.md#section-3), gồm thứ tự owner check trước service-role recovery; fixture/unit test local | API reasons, receipt/replay, recovery, inline UI/navigation độc lập | Đủ thiết kế để bắt đầu; implementation/tests chưa thực hiện |
 | G2 — Mode/policy | Tâm xác nhận Q04: frozen mode, phân biệt legacy/new snapshot, slot policy, mã lỗi và projection UI; bổ sung vào contract chuẩn | Guard mode/clone và tích hợp targeted policy | Pending owner confirmation |
 | G3 — DB rollout | Quỳnh và các owner xác nhận Q05: số migration thực tế, thứ tự dependency, signature/ACL, deployment window, rehearsal và phương án phục hồi | Chốt migration để tích hợp/deploy; không chặn soạn migration local tên tạm | Pending owner confirmation |
@@ -122,18 +122,18 @@ Mặc định một Draft PR `feat/ext-01-review` với commit plan trước, c�
 
 ## 9. Bàn giao — cập nhật theo kết quả thật
 
-- Lượt tách file: tạo 10 gói trong `docs/tasks/EXT-01/`, chuyển nội dung thay vì giữ hai bản; kiểm liên kết/anchor, code fences và bảo toàn đủ 14 ca A01 + 30 ca A02. Chưa commit/push bản tách, chưa thay đổi code sản phẩm.
-- PR/commit/output: [Draft PR #111](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/111) trên nhánh `feat/ext-01-review` (từ `dev@efed79b`).
+- Lượt tách file & G0 local: đã commit 10 gói `docs/tasks/EXT-01/`, `EXT-01-Implementation-Plan-v1.2.md` và `Ke-hoach-phan-cong-EXT-v3.1-final.md` tại `29f1378`, merge `origin/dev` (`b2924434`, PR #109) vào `feat/ext-01-review` tại Integration HEAD `57e900b`, và đối chiếu lại line-ref Stage 3 / backend / migration; chưa push remote (push ở M6) và chưa thay đổi code sản phẩm.
+- PR/commit/output: [Draft PR #111](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/111) trên nhánh `feat/ext-01-review` (Integration HEAD local `57e900b` + commit cập nhật baseline `00-baseline.md`).
 - Đã có trước lượt hiệu chỉnh: plan và Draft PR #111. Lượt 26/11 cập nhật gates G0–G5, Q01 body contract, Q03 authorization, Q04 frozen mode/policy, Q05 deployment/dependency/recovery, Q06 reader/classifier/provenance, ma trận A02-25–30, và đã đăng [comment chốt Q04–Q08](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/111#issuecomment-7181001101) lên PR #111.
-- Đã kiểm: code và metadata GitHub; PR #109 đã merge tại `b2924434`; môi trường local/test do chủ trì báo đã chuẩn bị, lượt hiệu chỉnh này chưa kiểm runtime; chưa chạy bộ test ứng dụng hay DB/AI cho code EXT-01 mới.
+- Đã kiểm: code, metadata GitHub và đồng bộ G0 local (`b2924434` là ancestor của `HEAD`); chưa chạy bộ test ứng dụng hay DB/AI cho code EXT-01 mới.
 - Đã chấp nhận: chưa có xác nhận M2 từ reviewer/consumer (`Q04–Q08`).
-- Còn chờ: đồng bộ `feat/ext-01-review` với dev đã chứa #109 và ghi integration HEAD, xác nhận của các owner cho `Q04–Q08` và thứ tự migration sau `027`.
+- Còn chờ: push cập nhật `feat/ext-01-review` ở M6, xác nhận của các owner cho `Q04–Q08` và thứ tự migration sau `027`.
 
 <a id="section-10"></a>
 
 ## 10. Tài liệu tham chiếu
 
-- EXT v3.1: `Ke-hoach-phan-cong-EXT-v3.1-final.md` (file phân công cung cấp ngày 25/11/2026; repo link TBD).
+- EXT v3.1: [Ke-hoach-phan-cong-EXT-v3.1-final.md](Ke-hoach-phan-cong-EXT-v3.1-final.md) (file phân công cung cấp ngày 25/11/2026; đã tracked trong nhánh `feat/ext-01-review` tại `29f1378`).
 - [AGENTS.md](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/efed79b/AGENTS.md), [CONTRIBUTING.md](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/efed79b/CONTRIBUTING.md), [WORKFLOW](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/efed79b/docs/review/WORKFLOW.md), [TEMPLATES — M2](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/efed79b/docs/review/TEMPLATES.md#m2).
 - [Review RPC Contract](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/efed79b/docs/api/review-rpc-contract.md), [Review Snapshot Contract](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/efed79b/docs/api/review-snapshot.md), [Targeted Regeneration](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/efed79b/docs/ai-w3-targeted-regeneration.md).
 - [PR #109](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/109), [ISSUE-95 plan](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/1072d1c/docs/tasks/ISSUE-95.md), [Compare dev...fix/stage3-ui](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/compare/efed79b...1072d1c).
