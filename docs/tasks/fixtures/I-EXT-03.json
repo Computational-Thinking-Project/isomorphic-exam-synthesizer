@@ -5,7 +5,7 @@
     "EXT-04 (Quynh)",
     "EXT-03 (Dat)"
   ],
-  "status": "proposed; synthetic data for contract agreement only, not evidence (EXT v3.1 section 5)",
+  "status": "proposed; synthetic data for contract agreement only, not evidence (EXT v3.1 section 5). v1 accepted for planning by EXT-04 at 88eb197.",
   "base": "dev@b292443",
   "conventions": {
     "ids": "All UUIDs are synthetic placeholders.",
@@ -15,7 +15,10 @@
     "solution_placeholder": "Không có lời giải cho câu hỏi này.",
     "solution_rule": "Shuffle copies solution_md unchanged, including the placeholder; solution_is_placeholder marks it for Preview/Export (Q06 on #111).",
     "legacy_mode": "mapping_version 1.0/1.1 resolve to ai_generation; 1.2 with null/unknown generation_mode is ERR_CONFIG_CONFLICT. Read through public._generation_job_mode(job).",
-    "ai_slot_content": "In the ai_generation case the AI_RESULT slot shows the source text for brevity; real data holds the validated AI variant with its own options, key and solution."
+    "ai_slot_content": "In the ai_generation case the AI_RESULT slot shows the source text for brevity; real data holds the validated AI variant with its own options, key and solution.",
+    "aliases": "Aliases follow the I-EXT-02 sample in #114 (bank_A, session_A, version_A1..). UUIDs are synthetic.",
+    "solution_label_sync": "On persist, solution text that names the answer label (e.g. 'đáp án đúng là C') is rewritten to the display label by public._finalize_sync_solution (migration 008). Other text is copied unchanged.",
+    "new_source_order": "new_source_order lists canonical_question_no of the OLD projection in display order ([3,1,2] = old display 1,2,3). In the new source these become question_no 1,2,3."
   },
   "canonical_source": {
     "original": "Immutable confirmed source of the first round: source_order, confirmed_source_hash and per-question source_revision_id from generation_job_snapshots. Blueprint is reused only if content and mode match.",
@@ -32,7 +35,7 @@
           "10"
         ],
         "canonical_correct_key": "C",
-        "canonical_solution_md": "4 + 5 = 9.",
+        "canonical_solution_md": "4 + 5 = 9, nên đáp án đúng là C.",
         "solution_missing_in_source": false
       },
       {
@@ -93,6 +96,12 @@
               "result_kind": "ORIGINAL_CLONE"
             }
           }
+        },
+        "confirmation_id": "00000000-0000-4000-8000-0000000000c1",
+        "source_revision_ids": {
+          "00000000-0000-4000-8000-000000000101": "00000000-0000-4000-8000-000000000301",
+          "00000000-0000-4000-8000-000000000102": "00000000-0000-4000-8000-000000000302",
+          "00000000-0000-4000-8000-000000000103": "00000000-0000-4000-8000-000000000303"
         }
       },
       "ai_calls_expected": "at least 1, only for AI_RESULT slots",
@@ -172,7 +181,9 @@
               ],
               "display_correct_key": "C",
               "solution_md": "10 / 2 = 5.",
-              "solution_is_placeholder": false
+              "solution_is_placeholder": false,
+              "canonical_solution_md": "10 / 2 = 5.",
+              "solution_label_rewritten": false
             },
             {
               "display_no": 2,
@@ -200,8 +211,10 @@
                 "8"
               ],
               "display_correct_key": "A",
-              "solution_md": "4 + 5 = 9.",
-              "solution_is_placeholder": false
+              "solution_md": "4 + 5 = 9, nên đáp án đúng là A.",
+              "solution_is_placeholder": false,
+              "canonical_solution_md": "4 + 5 = 9, nên đáp án đúng là C.",
+              "solution_label_rewritten": true
             },
             {
               "display_no": 3,
@@ -230,11 +243,18 @@
               ],
               "display_correct_key": "D",
               "solution_md": "Không có lời giải cho câu hỏi này.",
-              "solution_is_placeholder": true
+              "solution_is_placeholder": true,
+              "canonical_solution_md": "Không có lời giải cho câu hỏi này.",
+              "solution_label_rewritten": false
             }
-          ]
+          ],
+          "version_id": "00000000-0000-4000-8000-00000000b101",
+          "version_alias": "version_A1"
         }
-      ]
+      ],
+      "session_alias": "session_A",
+      "bank_item_alias": "bank_A",
+      "bank_item_id": "00000000-0000-4000-8000-00000000d001"
     },
     {
       "case": "shuffle_only_one_version",
@@ -261,6 +281,12 @@
               "result_kind": "ORIGINAL_CLONE"
             }
           }
+        },
+        "confirmation_id": "00000000-0000-4000-8000-0000000000c1",
+        "source_revision_ids": {
+          "00000000-0000-4000-8000-000000000101": "00000000-0000-4000-8000-000000000301",
+          "00000000-0000-4000-8000-000000000102": "00000000-0000-4000-8000-000000000302",
+          "00000000-0000-4000-8000-000000000103": "00000000-0000-4000-8000-000000000303"
         }
       },
       "ai_calls_expected": 0,
@@ -340,7 +366,9 @@
               ],
               "display_correct_key": "C",
               "solution_md": "10 / 2 = 5.",
-              "solution_is_placeholder": false
+              "solution_is_placeholder": false,
+              "canonical_solution_md": "10 / 2 = 5.",
+              "solution_label_rewritten": false
             },
             {
               "display_no": 2,
@@ -368,8 +396,10 @@
                 "8"
               ],
               "display_correct_key": "A",
-              "solution_md": "4 + 5 = 9.",
-              "solution_is_placeholder": false
+              "solution_md": "4 + 5 = 9, nên đáp án đúng là A.",
+              "solution_is_placeholder": false,
+              "canonical_solution_md": "4 + 5 = 9, nên đáp án đúng là C.",
+              "solution_label_rewritten": true
             },
             {
               "display_no": 3,
@@ -398,11 +428,18 @@
               ],
               "display_correct_key": "D",
               "solution_md": "Không có lời giải cho câu hỏi này.",
-              "solution_is_placeholder": true
+              "solution_is_placeholder": true,
+              "canonical_solution_md": "Không có lời giải cho câu hỏi này.",
+              "solution_label_rewritten": false
             }
-          ]
+          ],
+          "version_id": "00000000-0000-4000-8000-00000000b201",
+          "version_alias": "version_S1"
         }
-      ]
+      ],
+      "session_alias": "session_S",
+      "bank_item_alias": "bank_S",
+      "bank_item_id": "00000000-0000-4000-8000-00000000d002"
     }
   ],
   "reuse_examples": [
@@ -410,7 +447,7 @@
       "case": "reuse_approved_version_shuffle_only",
       "request": {
         "method": "POST",
-        "path": "/exam-bank/{bank_item_id}/reuse",
+        "path": "/exam-bank/00000000-0000-4000-8000-00000000d001/reuse",
         "headers": {
           "Idempotency-Key": "reuse-7f3c"
         },
@@ -432,17 +469,92 @@
             1,
             2
           ]
-        }
+        },
+        "session_alias": "session_B"
       },
       "retry_same_key_same_body": "200 with the same session_id",
       "retry_same_key_other_body": "409 ERR_IDEMPOTENCY_CONFLICT",
-      "reopen_state": "New draft session opens at the first step whose evidence is missing (confirm_source, analysis or stage2_config); the source session is never reopened."
+      "reopen_state": "New draft session opens at the first step whose evidence is missing (confirm_source, analysis or stage2_config); the source session is never reopened.",
+      "source_round": {
+        "bank_item_alias": "bank_A",
+        "bank_item_id": "00000000-0000-4000-8000-00000000d001",
+        "session_alias": "session_A",
+        "session_id": "00000000-0000-4000-8000-00000000a001",
+        "version_alias": "version_A1",
+        "version_id": "00000000-0000-4000-8000-00000000b101",
+        "version_status": "approved"
+      },
+      "new_source": {
+        "confirmation_id": "00000000-0000-4000-8000-0000000000c2",
+        "source_revision_id_per_question": "one new source_artifact_revisions row per question, new source_question_id",
+        "confirmed_source_hash": "computed by the server over the new confirmed inputs; value omitted",
+        "old_shuffle_seed_applied": false,
+        "blueprint": "ai_generation needs a blueprint for the new source; it may be reused only if content matches the selected version",
+        "questions": [
+          {
+            "question_no": 1,
+            "from_version_id": "00000000-0000-4000-8000-00000000b101",
+            "from_display_no": 1,
+            "from_canonical_question_no": 3,
+            "source_question_id": "00000000-0000-4000-8000-000000000201",
+            "content": "What is 10 / 2?",
+            "options": [
+              "20",
+              "10",
+              "5",
+              "2"
+            ],
+            "correct_key": "C",
+            "solution_md": "10 / 2 = 5.",
+            "solution_missing_in_source": false
+          },
+          {
+            "question_no": 2,
+            "from_version_id": "00000000-0000-4000-8000-00000000b101",
+            "from_display_no": 2,
+            "from_canonical_question_no": 1,
+            "source_question_id": "00000000-0000-4000-8000-000000000202",
+            "content": "Compute 4 + 5.",
+            "options": [
+              "9",
+              "7",
+              "10",
+              "8"
+            ],
+            "correct_key": "A",
+            "solution_md": "4 + 5 = 9, nên đáp án đúng là A.",
+            "solution_missing_in_source": false
+          },
+          {
+            "question_no": 3,
+            "from_version_id": "00000000-0000-4000-8000-00000000b101",
+            "from_display_no": 3,
+            "from_canonical_question_no": 2,
+            "source_question_id": "00000000-0000-4000-8000-000000000203",
+            "content": "Which number is even?",
+            "options": [
+              "5",
+              "9",
+              "3",
+              "8"
+            ],
+            "correct_key": "D",
+            "solution_md": "Không có lời giải cho câu hỏi này.",
+            "solution_missing_in_source": true
+          }
+        ]
+      },
+      "checks": [
+        "owner of bank_A == caller, else 404",
+        "version_A1 belongs to bank_A and its round is approved/exported, else 409/422",
+        "new session never reopens session_A"
+      ]
     },
     {
       "case": "reuse_original_ai_generation",
       "request": {
         "method": "POST",
-        "path": "/exam-bank/{bank_item_id}/reuse",
+        "path": "/exam-bank/00000000-0000-4000-8000-00000000d001/reuse",
         "headers": {
           "Idempotency-Key": "reuse-91ad"
         },
@@ -458,6 +570,33 @@
       }
     },
     {
+      "case": "reuse_reopen_missing_evidence",
+      "variants": [
+        {
+          "missing": "source confirmation for the new source (e.g. preparation interrupted before confirm)",
+          "response": {
+            "status": "draft",
+            "next_step": "confirm_source"
+          }
+        },
+        {
+          "missing": "analysis/blueprint for ai_generation",
+          "response": {
+            "status": "draft",
+            "next_step": "analysis"
+          }
+        },
+        {
+          "missing": "nothing; config not saved yet",
+          "response": {
+            "status": "draft",
+            "next_step": "stage2_config"
+          }
+        }
+      ],
+      "rule": "Server returns the real session status and the first step whose evidence is missing; Dashboard opens that step. Retrying the same key while preparation runs returns the same session_id with status preparing."
+    },
+    {
       "case": "reuse_rejected_too_many_questions",
       "source_question_count": 21,
       "response": "422 before any job, quota reservation or AI call; UI shows the count and lets the teacher edit or choose another source"
@@ -465,6 +604,8 @@
   ],
   "open_points": [
     "Error code names for idempotency conflict and size limit are proposals until agreed with EXT-04.",
-    "bank_item_id / version ID shape depends on I-EXT-02 (Quynh)."
-  ]
+    "Public version codes and target bank (append/create_new) come from I-EXT-02 (Quynh).",
+    "next_step names (confirm_source, analysis, stage2_config) to be matched with Dashboard routes by Hung."
+  ],
+  "revision": "v2 (adds version/source identity, new source after reuse, reopen cases, label-changing solution)"
 }

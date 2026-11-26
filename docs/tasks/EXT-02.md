@@ -55,7 +55,7 @@ Already in `dev@b292443` (checked by reading code):
 |---|---|---|---|---|
 | I-EXT-01 | Duy → Tam | Readiness and accept/revert contract (step 3) | Contract 26/11 per #111; ETA TBD | Requested; reading #111 plan v1.2 |
 | I-EXT-02 | Quynh → Tam | Bank item / version IDs, source/target rules, metadata null, receipts (step 7) | Before step 7; ETA TBD | Requested |
-| I-EXT-03 | **Tam → Quynh, Dat** | Canonical source rules, reopen state, post-shuffle projection with keys/solutions | Decision 26–27/11 | Contract proposed in §4 below; fixture attached 26/11: `docs/tasks/fixtures/I-EXT-03.json` |
+| I-EXT-03 | **Tam → Quynh, Dat** | Canonical source rules, reopen state, post-shuffle projection with keys/solutions | Decision 26–27/11 | Contract proposed in §4 below; fixture v1 accepted for planning by EXT-04 at 88eb197; v2 (26/11) adds version/source identity, new source, reopen cases and a label-changing solution: `docs/tasks/fixtures/I-EXT-03.json` |
 | Q04 (#111) | Duy ↔ Tam | Mode guard in Review | 26/11 | Answered on #111 (see link in PR conversation) |
 
 Integration order from EXT v3.1: EXT-01/02 → EXT-04 → EXT-03. Schedule risk: steps 1–3 and 7 are the critical path; step 7 depends on I-EXT-02. Overlap risk: Draft PR #110 (Dat) also changes `backend/app/services/generation/service.py` and `test_per_question_policy.py`; step 2 will rebase on it or agree the split with Dat before editing the same functions. If I-EXT-02 is late, steps 1–6 are delivered and accepted independently and step 7 is reported as pending.
@@ -88,5 +88,6 @@ Phase 1 (26/11, author self-check, not reviewed or accepted). Base `dev@b292443`
   - Stage 2 has no shuffle checkboxes (Issue #94); the flags are still edited at Preview before the permutation is persisted.
   - Migration number `028` is tentative until Q05 on #111; the EXT-01 Review guard must come after it.
 - **Not done in phase 1:** backend confirmation of shuffle-only copies to `reviewed` (step 3, needs I-EXT-01); Bank reuse endpoint (step 7, needs I-EXT-02). Until step 3 lands, Review still shows per-question Accept for shuffle-only sessions, and reject/regenerate on a clone slot is guarded only by the EXT-01 Q04 work.
+- I-EXT-03 v2 delivered on 26/11 after EXT-04 feedback; Integrated: not yet (needs the real DB projection after step 7).
 - **Accepted:** none yet.
 - **Pending:** Q05 numbering, I-EXT-01, I-EXT-02, feedback from Quynh and Dat on the I-EXT-03 fixture, reviewer check of this head.
