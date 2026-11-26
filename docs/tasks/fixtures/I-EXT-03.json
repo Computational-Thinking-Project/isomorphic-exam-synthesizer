@@ -1,0 +1,470 @@
+{
+  "fixture": "I-EXT-03",
+  "owner": "EXT-02 (Tam)",
+  "consumers": [
+    "EXT-04 (Quynh)",
+    "EXT-03 (Dat)"
+  ],
+  "status": "proposed; synthetic data for contract agreement only, not evidence (EXT v3.1 section 5)",
+  "base": "dev@b292443",
+  "conventions": {
+    "ids": "All UUIDs are synthetic placeholders.",
+    "permutation_map": "Maps canonical option label to display label, as validated in migration 008: display_correct_key = permutation_map[canonical_correct_key]; options[display_label] = canonical_options[canonical_label].",
+    "permutations": "Same shape as exam_versions.permutations written by migration 008 (question_order, display_to_canonical, canonical_to_display, option_permutations keyed by display_no).",
+    "version_code": "Internal MVP code 100 + version_index (migration 026). Public codes are EXT-04 (I-EXT-02).",
+    "solution_placeholder": "Không có lời giải cho câu hỏi này.",
+    "solution_rule": "Shuffle copies solution_md unchanged, including the placeholder; solution_is_placeholder marks it for Preview/Export (Q06 on #111).",
+    "legacy_mode": "mapping_version 1.0/1.1 resolve to ai_generation; 1.2 with null/unknown generation_mode is ERR_CONFIG_CONFLICT. Read through public._generation_job_mode(job).",
+    "ai_slot_content": "In the ai_generation case the AI_RESULT slot shows the source text for brevity; real data holds the validated AI variant with its own options, key and solution."
+  },
+  "canonical_source": {
+    "original": "Immutable confirmed source of the first round: source_order, confirmed_source_hash and per-question source_revision_id from generation_job_snapshots. Blueprint is reused only if content and mode match.",
+    "approved_version": "The post-shuffle projection of one approved version (display order, options, display key, solution) becomes a NEW confirmed source with a new source ID; the old shuffle_seed is not applied.",
+    "source_questions": [
+      {
+        "canonical_question_no": 1,
+        "source_question_id": "00000000-0000-4000-8000-000000000101",
+        "content": "Compute 4 + 5.",
+        "canonical_options": [
+          "7",
+          "8",
+          "9",
+          "10"
+        ],
+        "canonical_correct_key": "C",
+        "canonical_solution_md": "4 + 5 = 9.",
+        "solution_missing_in_source": false
+      },
+      {
+        "canonical_question_no": 2,
+        "source_question_id": "00000000-0000-4000-8000-000000000102",
+        "content": "Which number is even?",
+        "canonical_options": [
+          "3",
+          "5",
+          "8",
+          "9"
+        ],
+        "canonical_correct_key": "C",
+        "canonical_solution_md": "Không có lời giải cho câu hỏi này.",
+        "solution_missing_in_source": true
+      },
+      {
+        "canonical_question_no": 3,
+        "source_question_id": "00000000-0000-4000-8000-000000000103",
+        "content": "What is 10 / 2?",
+        "canonical_options": [
+          "2",
+          "5",
+          "10",
+          "20"
+        ],
+        "canonical_correct_key": "B",
+        "canonical_solution_md": "10 / 2 = 5.",
+        "solution_missing_in_source": false
+      }
+    ]
+  },
+  "cases": [
+    {
+      "case": "ai_generation_one_version",
+      "session_id": "00000000-0000-4000-8000-00000000a001",
+      "session_status_after_review": "reviewed",
+      "job_snapshot": {
+        "mapping_version": "1.2",
+        "generation_mode": "ai_generation",
+        "n_versions": 1,
+        "base_seed": 100,
+        "snapshot_payload": {
+          "generation_mode": "ai_generation",
+          "question_policies": {
+            "00000000-0000-4000-8000-000000000101": {
+              "canonical_dimensions": [
+                "values"
+              ],
+              "result_kind": "AI_RESULT"
+            },
+            "00000000-0000-4000-8000-000000000102": {
+              "canonical_dimensions": [],
+              "result_kind": "ORIGINAL_CLONE"
+            },
+            "00000000-0000-4000-8000-000000000103": {
+              "canonical_dimensions": [],
+              "result_kind": "ORIGINAL_CLONE"
+            }
+          }
+        }
+      },
+      "ai_calls_expected": "at least 1, only for AI_RESULT slots",
+      "quota_reserved_expected": true,
+      "shuffle_preferences": {
+        "shuffle_questions": true,
+        "shuffle_options": true,
+        "locked_after_persist": true
+      },
+      "versions": [
+        {
+          "version_index": 1,
+          "version_code": "101",
+          "shuffle_seed": "sha256(session_id + '_' + version_code), hex; computed by the server, value omitted here",
+          "permutations": {
+            "question_order": [
+              3,
+              1,
+              2
+            ],
+            "display_to_canonical": {
+              "1": 3,
+              "2": 1,
+              "3": 2
+            },
+            "canonical_to_display": {
+              "1": 2,
+              "2": 3,
+              "3": 1
+            },
+            "option_permutations": {
+              "1": {
+                "A": "D",
+                "B": "C",
+                "C": "B",
+                "D": "A"
+              },
+              "2": {
+                "A": "B",
+                "B": "D",
+                "C": "A",
+                "D": "C"
+              },
+              "3": {
+                "A": "C",
+                "B": "A",
+                "C": "D",
+                "D": "B"
+              }
+            }
+          },
+          "questions": [
+            {
+              "display_no": 1,
+              "canonical_question_no": 3,
+              "source_question_id": "00000000-0000-4000-8000-000000000103",
+              "result_kind": "ORIGINAL_CLONE",
+              "content": "What is 10 / 2?",
+              "canonical_options": [
+                "2",
+                "5",
+                "10",
+                "20"
+              ],
+              "canonical_correct_key": "B",
+              "permutation_map": {
+                "A": "D",
+                "B": "C",
+                "C": "B",
+                "D": "A"
+              },
+              "options": [
+                "20",
+                "10",
+                "5",
+                "2"
+              ],
+              "display_correct_key": "C",
+              "solution_md": "10 / 2 = 5.",
+              "solution_is_placeholder": false
+            },
+            {
+              "display_no": 2,
+              "canonical_question_no": 1,
+              "source_question_id": "00000000-0000-4000-8000-000000000101",
+              "result_kind": "AI_RESULT",
+              "content": "Compute 4 + 5.",
+              "canonical_options": [
+                "7",
+                "8",
+                "9",
+                "10"
+              ],
+              "canonical_correct_key": "C",
+              "permutation_map": {
+                "A": "B",
+                "B": "D",
+                "C": "A",
+                "D": "C"
+              },
+              "options": [
+                "9",
+                "7",
+                "10",
+                "8"
+              ],
+              "display_correct_key": "A",
+              "solution_md": "4 + 5 = 9.",
+              "solution_is_placeholder": false
+            },
+            {
+              "display_no": 3,
+              "canonical_question_no": 2,
+              "source_question_id": "00000000-0000-4000-8000-000000000102",
+              "result_kind": "ORIGINAL_CLONE",
+              "content": "Which number is even?",
+              "canonical_options": [
+                "3",
+                "5",
+                "8",
+                "9"
+              ],
+              "canonical_correct_key": "C",
+              "permutation_map": {
+                "A": "C",
+                "B": "A",
+                "C": "D",
+                "D": "B"
+              },
+              "options": [
+                "5",
+                "9",
+                "3",
+                "8"
+              ],
+              "display_correct_key": "D",
+              "solution_md": "Không có lời giải cho câu hỏi này.",
+              "solution_is_placeholder": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case": "shuffle_only_one_version",
+      "session_id": "00000000-0000-4000-8000-00000000a002",
+      "session_status_after_review": "reviewed",
+      "job_snapshot": {
+        "mapping_version": "1.2",
+        "generation_mode": "shuffle_only",
+        "n_versions": 1,
+        "base_seed": 100,
+        "snapshot_payload": {
+          "generation_mode": "shuffle_only",
+          "question_policies": {
+            "00000000-0000-4000-8000-000000000101": {
+              "canonical_dimensions": [],
+              "result_kind": "ORIGINAL_CLONE"
+            },
+            "00000000-0000-4000-8000-000000000102": {
+              "canonical_dimensions": [],
+              "result_kind": "ORIGINAL_CLONE"
+            },
+            "00000000-0000-4000-8000-000000000103": {
+              "canonical_dimensions": [],
+              "result_kind": "ORIGINAL_CLONE"
+            }
+          }
+        }
+      },
+      "ai_calls_expected": 0,
+      "quota_reserved_expected": false,
+      "shuffle_preferences": {
+        "shuffle_questions": true,
+        "shuffle_options": true,
+        "locked_after_persist": true
+      },
+      "versions": [
+        {
+          "version_index": 1,
+          "version_code": "101",
+          "shuffle_seed": "sha256(session_id + '_' + version_code), hex; computed by the server, value omitted here",
+          "permutations": {
+            "question_order": [
+              3,
+              1,
+              2
+            ],
+            "display_to_canonical": {
+              "1": 3,
+              "2": 1,
+              "3": 2
+            },
+            "canonical_to_display": {
+              "1": 2,
+              "2": 3,
+              "3": 1
+            },
+            "option_permutations": {
+              "1": {
+                "A": "D",
+                "B": "C",
+                "C": "B",
+                "D": "A"
+              },
+              "2": {
+                "A": "B",
+                "B": "D",
+                "C": "A",
+                "D": "C"
+              },
+              "3": {
+                "A": "C",
+                "B": "A",
+                "C": "D",
+                "D": "B"
+              }
+            }
+          },
+          "questions": [
+            {
+              "display_no": 1,
+              "canonical_question_no": 3,
+              "source_question_id": "00000000-0000-4000-8000-000000000103",
+              "result_kind": "ORIGINAL_CLONE",
+              "content": "What is 10 / 2?",
+              "canonical_options": [
+                "2",
+                "5",
+                "10",
+                "20"
+              ],
+              "canonical_correct_key": "B",
+              "permutation_map": {
+                "A": "D",
+                "B": "C",
+                "C": "B",
+                "D": "A"
+              },
+              "options": [
+                "20",
+                "10",
+                "5",
+                "2"
+              ],
+              "display_correct_key": "C",
+              "solution_md": "10 / 2 = 5.",
+              "solution_is_placeholder": false
+            },
+            {
+              "display_no": 2,
+              "canonical_question_no": 1,
+              "source_question_id": "00000000-0000-4000-8000-000000000101",
+              "result_kind": "ORIGINAL_CLONE",
+              "content": "Compute 4 + 5.",
+              "canonical_options": [
+                "7",
+                "8",
+                "9",
+                "10"
+              ],
+              "canonical_correct_key": "C",
+              "permutation_map": {
+                "A": "B",
+                "B": "D",
+                "C": "A",
+                "D": "C"
+              },
+              "options": [
+                "9",
+                "7",
+                "10",
+                "8"
+              ],
+              "display_correct_key": "A",
+              "solution_md": "4 + 5 = 9.",
+              "solution_is_placeholder": false
+            },
+            {
+              "display_no": 3,
+              "canonical_question_no": 2,
+              "source_question_id": "00000000-0000-4000-8000-000000000102",
+              "result_kind": "ORIGINAL_CLONE",
+              "content": "Which number is even?",
+              "canonical_options": [
+                "3",
+                "5",
+                "8",
+                "9"
+              ],
+              "canonical_correct_key": "C",
+              "permutation_map": {
+                "A": "C",
+                "B": "A",
+                "C": "D",
+                "D": "B"
+              },
+              "options": [
+                "5",
+                "9",
+                "3",
+                "8"
+              ],
+              "display_correct_key": "D",
+              "solution_md": "Không có lời giải cho câu hỏi này.",
+              "solution_is_placeholder": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "reuse_examples": [
+    {
+      "case": "reuse_approved_version_shuffle_only",
+      "request": {
+        "method": "POST",
+        "path": "/exam-bank/{bank_item_id}/reuse",
+        "headers": {
+          "Idempotency-Key": "reuse-7f3c"
+        },
+        "body": {
+          "source_type": "version",
+          "source_version_id": "00000000-0000-4000-8000-00000000b101",
+          "generation_mode": "shuffle_only"
+        }
+      },
+      "response_201": {
+        "session_id": "00000000-0000-4000-8000-00000000c001",
+        "status": "draft",
+        "next_step": "stage2_config",
+        "source": {
+          "source_type": "version",
+          "source_version_id": "00000000-0000-4000-8000-00000000b101",
+          "new_source_order": [
+            3,
+            1,
+            2
+          ]
+        }
+      },
+      "retry_same_key_same_body": "200 with the same session_id",
+      "retry_same_key_other_body": "409 ERR_IDEMPOTENCY_CONFLICT",
+      "reopen_state": "New draft session opens at the first step whose evidence is missing (confirm_source, analysis or stage2_config); the source session is never reopened."
+    },
+    {
+      "case": "reuse_original_ai_generation",
+      "request": {
+        "method": "POST",
+        "path": "/exam-bank/{bank_item_id}/reuse",
+        "headers": {
+          "Idempotency-Key": "reuse-91ad"
+        },
+        "body": {
+          "source_type": "original",
+          "generation_mode": "ai_generation"
+        }
+      },
+      "response_201": {
+        "session_id": "00000000-0000-4000-8000-00000000c002",
+        "status": "draft",
+        "next_step": "stage2_config"
+      }
+    },
+    {
+      "case": "reuse_rejected_too_many_questions",
+      "source_question_count": 21,
+      "response": "422 before any job, quota reservation or AI call; UI shows the count and lets the teacher edit or choose another source"
+    }
+  ],
+  "open_points": [
+    "Error code names for idempotency conflict and size limit are proposals until agreed with EXT-04.",
+    "bank_item_id / version ID shape depends on I-EXT-02 (Quynh)."
+  ]
+}

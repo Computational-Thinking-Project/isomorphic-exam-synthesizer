@@ -1,10 +1,10 @@
 # EXT-02 — Reuse and shuffle: plan and handoff (M2)
 
 - Assignment source: `Ke-hoach-phan-cong-EXT-v3.1-final.md` (EXT v3.1, 25/11/2026), sections 1, 3 (EXT-02), 4 and acceptance rows A03–A08, A11, A12, A20. Repository link TBD (the file is not in the repo yet).
-- Owner: Tam (`@AI-WFox`). Reviewer: proposed `@nhatquynh1107` (DB/ACL, EXT-04 boundary) and `@johannguyen015` (Review boundary); to be confirmed on M1.
+- Owner: Tam (`@AI-WFox`). Reviewers: `@nhatquynh1107` (DB/ACL, EXT-04 boundary) and `@johannguyen015` (Review boundary), requested on this PR.
 - Repo / branch: `isomorphic-exam-synthesizer`, `feat/ext-02-reuse-shuffle` → `dev`. Draft PR: this PR.
 - Base checked: `dev@b292443` (after #109).
-- Batch deadline: results report Tuesday evening 01/12/2026. ETA for this task: estimate 30–40 h of direct work (not yet confirmed); integration time with EXT-04/EXT-01 is extra and depends on I-EXT-01 / I-EXT-02 dates.
+- Batch deadline: results report Tuesday evening 01/12/2026. ETA for this task: 30–40 h of direct work (confirmed by owner on 26/11), coding 27/11–01/12; integration time with EXT-04/EXT-01 is extra and depends on I-EXT-01 / I-EXT-02 dates.
 - Status: **plan only (proposed)**. No product code in this PR yet. Statements about current code are static inspection of `dev@b292443`.
 
 ## 1. What this task must deliver
@@ -55,7 +55,7 @@ Already in `dev@b292443` (checked by reading code):
 |---|---|---|---|---|
 | I-EXT-01 | Duy → Tam | Readiness and accept/revert contract (step 3) | Contract 26/11 per #111; ETA TBD | Requested; reading #111 plan v1.2 |
 | I-EXT-02 | Quynh → Tam | Bank item / version IDs, source/target rules, metadata null, receipts (step 7) | Before step 7; ETA TBD | Requested |
-| I-EXT-03 | **Tam → Quynh, Dat** | Canonical source rules, reopen state, post-shuffle projection with keys/solutions | Decision 26–27/11; fixture ETA proposed 28/11 | Contract proposed in §4 below; fixture TBD |
+| I-EXT-03 | **Tam → Quynh, Dat** | Canonical source rules, reopen state, post-shuffle projection with keys/solutions | Decision 26–27/11 | Contract proposed in §4 below; fixture attached 26/11: `docs/tasks/fixtures/I-EXT-03.json` |
 | Q04 (#111) | Duy ↔ Tam | Mode guard in Review | 26/11 | Answered on #111 (see link in PR conversation) |
 
 Integration order from EXT v3.1: EXT-01/02 → EXT-04 → EXT-03. Schedule risk: steps 1–3 and 7 are the critical path; step 7 depends on I-EXT-02. Overlap risk: Draft PR #110 (Dat) also changes `backend/app/services/generation/service.py` and `test_per_question_policy.py`; step 2 will rebase on it or agree the split with Dat before editing the same functions. If I-EXT-02 is late, steps 1–6 are delivered and accepted independently and step 7 is reported as pending.
@@ -65,7 +65,7 @@ Integration order from EXT v3.1: EXT-01/02 → EXT-04 → EXT-03. Schedule risk:
 - **Frozen mode:** `generation_job_snapshots.generation_mode` and `snapshot_payload.generation_mode`, `mapping_version='1.2'`. Legacy = `mapping_version IN ('1.0','1.1')` → `ai_generation`. Read through `public._generation_job_mode(job)` only; never through live `generation_configs`.
 - **Per-slot policy:** `snapshot_payload.question_policies[source_question_id] = {canonical_dimensions, result_kind}`; shuffle-only → every slot `ORIGINAL_CLONE`, `canonical_dimensions=[]`.
 - **Reopen state:** reuse creates a new draft session at the first step whose evidence is missing (confirm source / analysis / Stage 2); never reopens the source session.
-- **Post-shuffle projection:** read from persisted permutation (question order, option order, display key, solution) per `version_id`; the canonical key is unchanged. Fixture with one AI slot, one clone slot with missing solution, and one shuffled version will be attached here.
+- **Post-shuffle projection:** read from persisted permutation (question order, option order, display key, solution) per `version_id`; the canonical key is unchanged. Fixture: `docs/tasks/fixtures/I-EXT-03.json` (synthetic, for contract agreement only): one AI slot, one clone slot with missing solution, one shuffled version in both modes, and reuse request/response examples (idempotent retry, 409, 21-question rejection).
 
 ## 5. Self-check plan
 
@@ -78,4 +78,4 @@ Integration order from EXT v3.1: EXT-01/02 → EXT-04 → EXT-03. Schedule risk:
 - PR/commit/output: TBD.
 - Done / checked: plan only.
 - Accepted: none yet.
-- Pending: Q05 numbering, I-EXT-01, I-EXT-02.
+- Pending: Q05 numbering, I-EXT-01, I-EXT-02, feedback from Quynh and Dat on the I-EXT-03 fixture.
