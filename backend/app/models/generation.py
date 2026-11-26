@@ -42,6 +42,17 @@ class CandidatePayload(BaseModel):
     solution: StepByStepSolution
 
 
+class VersionCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version_index: int = Field(ge=1, le=4)
+    candidate: CandidatePayload
+
+
+class QuestionCandidates(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    variants: list[VersionCandidate] = Field(min_length=1, max_length=4)
+
+
 def render_solution(solution: StepByStepSolution) -> str:
     paragraphs = []
     for index, step in enumerate(solution.steps, 1):

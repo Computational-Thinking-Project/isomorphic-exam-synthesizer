@@ -32,6 +32,9 @@ class SupabasePrivateExportStore:
         )
 
     def verify(self, artifact: ReadyExport) -> None:
+        self.read(artifact)
+
+    def read(self, artifact: ReadyExport) -> bytes:
         try:
             data = self.bucket.download(artifact.object_path)
         except StorageApiError as exc:
@@ -47,6 +50,8 @@ class SupabasePrivateExportStore:
             or hashlib.sha256(data).hexdigest() != artifact.sha256
         ):
             raise ExportFailure("ERR_EXPORT_CHECKSUM_MISMATCH")
+
+        return data
 
     def sign(self, artifact: ReadyExport) -> str:
         response = self.bucket.create_signed_url(

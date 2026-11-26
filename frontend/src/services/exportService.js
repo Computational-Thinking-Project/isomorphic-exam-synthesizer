@@ -107,3 +107,22 @@ export async function issueDownloadUrl(sessionId, { signal } = {}) {
     filename: data.filename,
   };
 }
+
+export async function listExportFiles(sessionId, format, { signal } = {}) {
+  const { data } = await api.get(`/sessions/${encodeSessionId(sessionId)}/export/files`, {
+    params: { format }, signal, headers: NO_STORE_HEADERS,
+  });
+  if (!Array.isArray(data.files) || data.files.some((file) =>
+    typeof file.filename !== 'string' || !file.filename.endsWith('.' + format)
+    || !Number.isInteger(file.size_bytes) || file.size_bytes < 0)) {
+    throw new Error('Danh sách tài liệu không hợp lệ.');
+  }
+  return data.files;
+}
+
+export async function downloadExportFile(sessionId, format, filename, { signal } = {}) {
+  const { data } = await api.get(`/sessions/${encodeSessionId(sessionId)}/export/files`, {
+    params: { format, filename }, signal, headers: NO_STORE_HEADERS, responseType: 'blob',
+  });
+  return data;
+}

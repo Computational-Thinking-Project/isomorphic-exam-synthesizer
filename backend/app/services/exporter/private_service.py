@@ -8,13 +8,17 @@ import hashlib
 import re
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
+from pathlib import PurePosixPath
 from uuid import UUID
+from zipfile import ZipFile
 
 from pydantic import ValidationError
 from supabase import Client
 
 from app.models.schemas import ReviewDomainException
 
+from .bundle_builder import MAX_BUNDLE_BYTES
 from .bundle_models import (
     ApprovedExportSnapshot,
     BundleArtifact,
@@ -228,6 +232,34 @@ class PrivateExportService:
             except Exception:
                 pass
             raise ExportFailure("ERR_EXPORT_OUTCOME_UNKNOWN") from None
+
+    def files(self, session_id: str, owner_id: str) -> dict[str, bytes]:
+        result = self.status(session_id, owner_id)
+        if result.state != "ready" or result.artifact is None:
+            raise ExportFailure("ERR_EXPORT_NOT_READY", 409)
+        try:
+            payload = self.store.read(result.artifact)
+            root = f"exam_bundle_{result.artifact.identity.session_id}/"
+            files: dict[str, bytes] = {}
+            with ZipFile(BytesIO(payload)) as archive:
+                if sum(info.file_size for info in archive.infolist()) > MAX_BUNDLE_BYTES:
+                    raise ExportFailure("ERR_EXPORT_METADATA_INVALID")
+                for info in archive.infolist():
+                    path = PurePosixPath(info.filename)
+                    if path.suffix not in {".pdf", ".tex", ".md"}:
+                        continue
+                    if (
+                        not info.filename.startswith(root) or path.is_absolute()
+                        or ".." in path.parts or "\\" in info.filename
+                        or path.name in files or re.fullmatch(r"[A-Za-z0-9_.-]+", path.name) is None
+                    ):
+                        raise ExportFailure("ERR_EXPORT_METADATA_INVALID")
+                    files[path.name] = archive.read(info)
+            return files
+        except ExportFailure:
+            raise
+        except Exception:
+            raise ExportFailure("ERR_EXPORT_STORAGE_UNAVAILABLE") from None
 
     def download(self, session_id: str, owner_id: str) -> DownloadGrant:
         result = self.status(session_id, owner_id)  # authorizes on EVERY issuance

@@ -1,9 +1,9 @@
 """Accepted Q10 routes. Runtime remains opt-in until the OPS handoff."""
 
 import asyncio
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from supabase import Client
 
@@ -93,3 +93,36 @@ async def export_download_endpoint(
     db: Client = Depends(get_user_db),
 ) -> JSONResponse:
     return await _handle("download", request, session_id, user, db)
+
+
+@router.get("/{session_id}/export/files")
+async def export_files_endpoint(
+    session_id: str,
+    format: Literal["pdf", "tex", "md"],
+    filename: str | None = None,
+    user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_user_db),
+) -> Response:
+    try:
+        files = await asyncio.to_thread(run_private_export, "files", session_id, user.id, db)
+        if not isinstance(files, dict):
+            raise ExportFailure("ERR_EXPORT_METADATA_INVALID")
+        selected = {name: data for name, data in files.items() if name.endswith("." + format)}
+        if filename is None:
+            return JSONResponse(
+                {"files": [{"filename": name, "size_bytes": len(data)} for name, data in sorted(selected.items())]},
+                headers=NO_STORE,
+            )
+        if filename not in selected:
+            raise ExportFailure("ERR_EXPORT_FILE_NOT_FOUND", 404)
+        media = {"pdf": "application/pdf", "tex": "application/x-tex", "md": "text/markdown"}
+        return Response(
+            selected[filename], media_type=media[format],
+            headers={**NO_STORE, "Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except ReviewDomainException as exc:
+        return JSONResponse({"error_code": exc.error_code}, exc.status_code, headers=NO_STORE)
+    except ExportFailure as exc:
+        return JSONResponse({"error_code": exc.code}, exc.http_status, headers=NO_STORE)
+    except Exception:
+        return JSONResponse({"error_code": "ERR_EXPORT_UNAVAILABLE"}, 503, headers=NO_STORE)

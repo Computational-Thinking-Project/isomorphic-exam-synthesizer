@@ -1,3 +1,12 @@
+## PR #110 — Bounded batch retry and export request lifetime — 25/11/2026
+
+- F110-04 bổ sung recovery JSON/schema/tập version bằng prompt đầy đủ cùng feedback, giữ giới hạn ba schema failures và tổng bốn attempts. Không lưu một phần batch lỗi. Sửa mô tả fail-fast trước đó trong producer handoff; không thay contract/persistence hoặc orchestration.
+- Đạt sửa F110-01, batch retry lỗi transport/provider retryable trong deadline và budget chung; tổng batch + repair tối đa bốn attempts mỗi ô. Hết bốn lỗi retryable giữ metadata cho worker fallback; quota/auth/deadline không đủ điều kiện exhaustion.
+- Sửa F110-02, hủy listing/download khi rời export hoặc đổi phiên, guard response muộn trước khi tải file/cập nhật UI. Bổ sung regression pipeline, worker fallback và React StrictMode.
+- Producer handoff ghi rõ response/error semantics và F110-03, thứ tự question-first áp dụng các callback AI; Clone precommit/SSE hiện có được giữ, chờ Duy xác nhận phạm vi và Hùng cập nhật canonical contract. [Plan](tasks/DAT-question-batch-formats.md). Trạng thái author sửa, chưa là reviewer acceptance hoặc live acceptance.
+
+---
+
 ## PR #109 — Windows full regression passed — 25/11/2026
 
 - Sau xác nhận của Philip về khả năng phát sinh telemetry, full frontend Windows **621/621 pass**,0fail/skip/cancel/108.27s, HEAD72adb9f/source8a6f600. [Checkpoint6.25](tasks/ISSUE-95.md) thay trạng thái full bị chặn/chưa xác nhận trước đó bằng kết quả mới.
@@ -1212,3 +1221,7 @@ giới hạn. Các chữ ký RPC và semantics hiện hành ở [contract08](api
 - AI validation remains required. Clone/fallback/Revert use the agreed missing-solution disclosure.
 - New Revert actions restore frozen sources pending teacher review; historical receipts remain immutable.
 - Deploy with workers drained and matched backend; use forward fixes rather than replaying historical migrations.
+
+## 24/11/2026 — Proposed generation batching và xuất file riêng
+
+Theo yêu cầu Đạt và phối hợp PR #109, gom các biến thể của một câu vào một request, xử lý theo câu nguồn/mã đề. UI chọn PDF/LaTeX/Markdown, thêm API tải file riêng từ artifact private hiện có. Gate xác thực, approval và checksum tiếp tục dùng logic hiện hành. Xem [plan và giới hạn](tasks/DAT-question-batch-formats.md). Chờ review và kiểm tích hợp live.

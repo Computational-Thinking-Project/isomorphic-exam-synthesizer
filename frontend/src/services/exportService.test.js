@@ -225,3 +225,25 @@ test('401 trên exportService dùng refresh/retry chung tối đa một lần', 
   assert.equal(calls, 2);
   assert.equal(refreshCalls, 1);
 });
+
+test('individual export files send format and exact filename using authenticated API', async () => {
+  const { listExportFiles, downloadExportFile } = await import('./exportService.js');
+  const original = api.get;
+  const calls = [];
+  api.get = async (url, config) => {
+    calls.push({ url, ...config });
+    return { data: config.responseType === 'blob'
+      ? new Blob(['%PDF-test'])
+      : { files: [{ filename: 'exam_101.tex', size_bytes: 7 }] } };
+  };
+  try {
+    assert.deepEqual(await listExportFiles('s/1', 'tex'), [{ filename: 'exam_101.tex', size_bytes: 7 }]);
+    const blob = await downloadExportFile('s/1', 'pdf', 'exam_101.pdf');
+    assert.equal(await blob.text(), '%PDF-test');
+    assert.equal(calls[0].url, '/sessions/s%2F1/export/files');
+    assert.deepEqual(calls[1].params, { format: 'pdf', filename: 'exam_101.pdf' });
+    assert.equal(calls[1].responseType, 'blob');
+  } finally {
+    api.get = original;
+  }
+});

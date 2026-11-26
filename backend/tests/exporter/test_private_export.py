@@ -99,6 +99,10 @@ class Store:
         if self.corrupt or hashlib.sha256(data).hexdigest() != artifact.sha256:
             raise ValueError("corrupt object")
 
+    def read(self, artifact):
+        self.verify(artifact)
+        return self.objects[artifact.object_path]
+
     def sign(self, artifact):
         self.signs += 1
         return "https://storage.example/short-lived-bearer"
@@ -326,3 +330,23 @@ def test_invalid_metadata_cannot_sign_foreign_path(workflow):
     with pytest.raises(ExportFailure, match="ERR_EXPORT_METADATA_INVALID"):
         service.download(*args(workflow))
     assert store.signs == 0
+
+def test_individual_files_preserve_bytes_and_reauthorize(workflow):
+    service, _, store, loader, _ = workflow
+    service.export(*args(workflow))
+    files = service.files(*args(workflow))
+    assert {"exam_101.pdf", "exam_101.tex", "exam_101.md"} <= files.keys()
+    assert files["exam_101.pdf"].startswith(b"%PDF")
+    assert all(name.endswith((".pdf", ".tex", ".md")) for name in files)
+    loader.side_effect = ReviewDomainException(403, "ERR_FORBIDDEN", "forbidden")
+    with pytest.raises(ReviewDomainException):
+        service.files(*args(workflow))
+    assert store.signs == 0
+
+
+def test_individual_files_reject_corrupt_object(workflow):
+    service, _, store, _, _ = workflow
+    service.export(*args(workflow))
+    store.corrupt = True
+    with pytest.raises(ExportFailure):
+        service.files(*args(workflow))

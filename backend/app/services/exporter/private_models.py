@@ -97,6 +97,10 @@ class ExportLedger(Protocol):
 
 
 class PrivateExportStore(Protocol):
+    def read(self, artifact: ReadyExport) -> bytes:
+        """Return bytes after verifying length and SHA256."""
+        ...
+
     def upload(self, path: str, artifact: BundleArtifact) -> None:
         """Create immutable private object. Never overwrite another attempt."""
         ...

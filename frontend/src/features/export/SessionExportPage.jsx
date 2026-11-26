@@ -22,20 +22,13 @@ import {
   triggerExport as defaultTriggerExport,
   issueDownloadUrl as defaultIssueDownloadUrl,
 } from '../../services/exportService.js';
+import ExportFiles from './ExportFiles.jsx';
 import { createExportController } from './exportController.js';
 
 const buttonClass =
   'inline-flex items-center gap-2 rounded-xl border border-line bg-surface px-4 py-2 text-sm font-semibold text-strong hover:bg-rail disabled:cursor-not-allowed disabled:opacity-50 transition-colors shadow-sm';
 const primaryButtonClass =
   'inline-flex items-center gap-2 rounded-xl bg-highlight px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#253b57] disabled:cursor-not-allowed disabled:opacity-50 transition-all shadow-soft';
-
-function formatBundleSize(sizeBytes) {
-  if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) return '';
-  if (sizeBytes < 1024) return `${sizeBytes} B`;
-  const kb = sizeBytes / 1024;
-  if (kb < 1024) return `${kb.toFixed(1)} KB`;
-  return `${(kb / 1024).toFixed(2)} MB`;
-}
 
 function defaultOpenDownload(url, filename) {
   if (typeof document === 'undefined') return;
@@ -108,13 +101,12 @@ function SessionExportView({
 
   const isBusy = state.busyAction !== null;
   const previewLink = sessionId ? stage3PreviewPath(sessionId) : '/dashboard';
-  const showZipContents = ['ready_to_export', 'preparing', 'poll_timeout', 'ready_to_download', 'failed'].includes(state.phase);
+  const showDocumentContents = ['ready_to_export', 'preparing', 'poll_timeout', 'ready_to_download', 'failed'].includes(state.phase);
   const statusLabel = state.detail?.status === 'exported'
-    ? 'Đã xuất gói đề'
+    ? 'Đã xuất tài liệu'
     : state.detail?.status === 'approved'
     ? 'Đã phê duyệt cuối'
     : state.detail?.status;
-  const artifactSizeText = formatBundleSize(state.artifact?.size_bytes ?? state.artifact?.size);
 
   return (
     <div className="paper-ui min-h-screen bg-canvas text-strong font-sans py-6 sm:py-8 px-4 sm:px-6 lg:px-8">
@@ -132,7 +124,7 @@ function SessionExportView({
               </Link>
               <span className="text-line" aria-hidden="true">/</span>
               <span className="inline-flex shrink-0 items-center rounded-full border border-support-line bg-support-bg px-2.5 py-0.5 text-xs font-semibold text-highlight">
-                Bước 3/3 · Xuất đề &amp; Tải gói ZIP
+                Bước 3/3 · Xuất đề &amp; Tải tài liệu
               </span>
             </div>
             <Link
@@ -146,9 +138,9 @@ function SessionExportView({
           </div>
 
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-strong">Xuất đề &amp; Tải gói ZIP</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold text-strong">Xuất đề &amp; Tải tài liệu</h1>
             <p className="mt-1 text-sm text-muted leading-relaxed">
-              Đóng gói và tải về một gói ZIP duy nhất chứa đề thi PDF, nguồn LaTeX, Markdown cùng ma trận đáp án và lời giải chi tiết đã được khóa.
+              Chọn PDF, LaTeX hoặc Markdown để tải từng mã đề đã duyệt. Mỗi tài liệu gồm đề thi, ma trận đáp án và lời giải.
             </p>
           </div>
         </header>
@@ -182,21 +174,21 @@ function SessionExportView({
               </span>
             </div>
 
-            {showZipContents && (
+            {showDocumentContents && (
               <div
-                data-testid="zip-structure-info"
+                data-testid="document-structure-info"
                 className="rounded-xl border border-line bg-canvas p-4 space-y-2 text-xs text-ink"
               >
                 <div className="flex items-center gap-2 font-semibold text-strong">
                   <FileArchive className="h-4 w-4 text-highlight shrink-0" aria-hidden="true" />
-                  <span>Nội dung gói ZIP (w4-export-v2 · chỉ tải trọn gói)</span>
+                  <span>Nội dung tài liệu</span>
                 </div>
                 <ul className="list-disc pl-5 space-y-1 text-muted">
                   <li>
                     Mỗi mã đề có 1 file PDF (<code className="text-strong">pdf/exam_&lt;mã&gt;.pdf</code>), 1 nguồn XeLaTeX (<code className="text-strong">latex/exam_&lt;mã&gt;.tex</code>) và 1 Markdown (<code className="text-strong">markdown/exam_&lt;mã&gt;.md</code>).
                   </li>
                   <li>
-                    Cấu trúc mỗi tài liệu gồm: <strong>đề thi</strong> &rarr; <strong>ma trận đáp án</strong> &rarr; <strong>lời giải chi tiết</strong> (không hỗ trợ tải lẻ từng file hoặc từng mã).
+                    Cấu trúc mỗi tài liệu gồm: <strong>đề thi</strong> &rarr; <strong>ma trận đáp án</strong> &rarr; <strong>lời giải chi tiết</strong> .
                   </li>
                   <li>
                     Lưu ý khi phát đề: file đã kèm ma trận đáp án và lời giải ở các trang sau; chỉ gửi phần trang đề thi cho thí sinh.
@@ -224,7 +216,7 @@ function SessionExportView({
             {state.phase === 'ready_to_export' && (
               <div className="space-y-4">
                 <p className="text-sm text-ink leading-relaxed">
-                  Đề thi đã được duyệt cuối. Bấm nút bên dưới để đóng gói PDF, LaTeX, Markdown và đáp án thành file ZIP.
+                  Đề thi đã được duyệt cuối. Bấm nút bên dưới để chuẩn bị tài liệu PDF, LaTeX và Markdown.
                 </p>
                 <div>
                   <button
@@ -236,12 +228,12 @@ function SessionExportView({
                     {state.busyAction === 'export' ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Đang khởi tạo đóng gói…</span>
+                        <span>Đang chuẩn bị tài liệu…</span>
                       </>
                     ) : (
                       <>
                         <Download className="w-4 h-4" />
-                        <span>Tạo gói ZIP</span>
+                        <span>Chuẩn bị tài liệu</span>
                       </>
                     )}
                   </button>
@@ -254,7 +246,7 @@ function SessionExportView({
                 <div role="status" className="rounded-xl border border-support-line bg-support-bg p-4 text-xs text-highlight flex items-center gap-3">
                   <Loader2 className="w-4 h-4 animate-spin text-highlight shrink-0" />
                   <p>
-                    Đang biên dịch PDF và đóng gói đề thi… Vui lòng giữ nguyên trang hoặc quay lại sau.
+                    Đang biên dịch PDF và chuẩn bị tài liệu… Vui lòng giữ nguyên trang hoặc quay lại sau.
                   </p>
                 </div>
                 <div>
@@ -315,34 +307,12 @@ function SessionExportView({
                   <CheckCircle2 className="w-5 h-5 text-approved-ink shrink-0 mt-0.5" />
                   <div className="space-y-1">
                     <p className="font-semibold">
-                      Gói đề thi đã sẵn sàng để tải xuống ({state.artifact?.filename}).
+                      Tài liệu đã sẵn sàng. Chọn định dạng và file cần tải.
                     </p>
-                    {artifactSizeText && (
-                      <p className="text-[11px] text-approved-ink">
-                        Dung lượng gói ZIP: <strong>{artifactSizeText}</strong>
-                      </p>
-                    )}
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-3">
-                  <button
-                    type="button"
-                    disabled={isBusy}
-                    onClick={() => void controller.download()}
-                    className={primaryButtonClass}
-                  >
-                    {state.busyAction === 'download' ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Đang lấy liên kết tải…</span>
-                      </>
-                    ) : (
-                      <>
-                        <Download className="w-4 h-4" />
-                        <span>Tải gói ZIP</span>
-                      </>
-                    )}
-                  </button>
+                <div className="flex flex-col items-start gap-3">
+                  <ExportFiles sessionId={sessionId} isCurrent={isCurrent} />
                   <button
                     type="button"
                     disabled={isBusy}
@@ -377,7 +347,7 @@ function SessionExportView({
                     ) : (
                       <>
                         <RefreshCw className="w-4 h-4" />
-                        <span>Thử đóng gói lại</span>
+                        <span>Thử chuẩn bị lại</span>
                       </>
                     )}
                   </button>
