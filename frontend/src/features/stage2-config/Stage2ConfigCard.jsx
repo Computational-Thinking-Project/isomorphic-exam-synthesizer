@@ -18,6 +18,8 @@ import './stage2.css';
  * 4. Popup xác nhận trước khi sinh đề
  * 5. KHÔNG có checkbox shuffle hay Blueprint variation selector trên UI
  * 6. Tương thích fallback initialNumVersions từ Cài đặt cá nhân (PR #106)
+ * 7. EXT-02: chọn "Sinh đề tương tự" (ai_generation) hoặc "Chỉ xáo trộn" (shuffle_only),
+ *    gửi generation_mode; cảnh báo khi chỉ xáo trộn, N > 1 và hai cờ xáo trộn đều tắt.
  */
 export default function Stage2ConfigCard({
   session,
@@ -44,6 +46,11 @@ export default function Stage2ConfigCard({
     2;
 
   const [rawInput, setRawInput] = useState(String(defaultNumVersions));
+  // EXT-02: explicit mode; a saved draft reopens with the mode it was saved with.
+  const [generationMode, setGenerationMode] = useState(
+    initialConfig?.generation_mode === 'shuffle_only' ? 'shuffle_only' : 'ai_generation',
+  );
+  const isShuffleOnly = generationMode === 'shuffle_only';
   const [isTouched, setIsTouched] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [submitError, setSubmitError] = useState('');
@@ -82,6 +89,12 @@ export default function Stage2ConfigCard({
 
   // Issue #94: Kiểm tra nếu phiên cũ từng lưu shuffle_options = true
   const hadShuffleOptions = Boolean(initialConfig?.ordering_preferences?.shuffle_options);
+  // Both flags off in shuffle-only mode: every code would be an identical copy.
+  const identicalVersionsWarning =
+    isShuffleOnly &&
+    numVersions > 1 &&
+    !initialConfig?.ordering_preferences?.shuffle_questions &&
+    !initialConfig?.ordering_preferences?.shuffle_options;
 
   async function executeSubmit() {
     if (isSubmitting) return;
@@ -92,6 +105,7 @@ export default function Stage2ConfigCard({
     const payload = {
       n_versions: numVersions,
       active_variation_modes: [],
+      generation_mode: generationMode,
       ordering_preferences: {
         shuffle_questions: Boolean(initialConfig?.ordering_preferences?.shuffle_questions ?? false),
         shuffle_options: Boolean(initialConfig?.ordering_preferences?.shuffle_options ?? false),
@@ -219,6 +233,37 @@ export default function Stage2ConfigCard({
             disabled={!isBlueprintReady || isSubmitting}
             style={{ border: 'none', margin: 0, padding: 0 }}
           >
+            <fieldset className="generation-mode" aria-describedby="generation-mode-hint">
+              <legend>Cách tạo mã đề</legend>
+              <label className="generation-mode-option">
+                <input
+                  type="radio"
+                  name="generation_mode"
+                  value="ai_generation"
+                  data-generation-mode="ai_generation"
+                  checked={!isShuffleOnly}
+                  onChange={() => setGenerationMode('ai_generation')}
+                />
+                <span>Sinh đề tương tự</span>
+              </label>
+              <label className="generation-mode-option">
+                <input
+                  type="radio"
+                  name="generation_mode"
+                  value="shuffle_only"
+                  data-generation-mode="shuffle_only"
+                  checked={isShuffleOnly}
+                  onChange={() => setGenerationMode('shuffle_only')}
+                />
+                <span>Chỉ xáo trộn</span>
+              </label>
+              <p id="generation-mode-hint" className="generation-mode-hint">
+                {isShuffleOnly
+                  ? 'Mỗi mã đề giữ nguyên câu hỏi gốc, chỉ đổi thứ tự câu và phương án. Không dùng AI.'
+                  : 'AI tạo câu hỏi tương tự cho từng mã đề; bạn duyệt từng câu ở bước sau.'}
+              </p>
+            </fieldset>
+
             <div className="configure-question">
               <div>
                 <h2>Bạn cần bao nhiêu mã đề?</h2>
@@ -262,6 +307,15 @@ export default function Stage2ConfigCard({
                 </strong>
               </p>
             </section>
+
+            {identicalVersionsWarning && (
+              <div className="flow-notice is-read-only" role="note" data-identical-versions-warning>
+                <Info className="h-5 w-5 shrink-0 text-amber-400" />
+                <div>
+                  <strong>Các mã đề sẽ giống nhau:</strong> xáo trộn câu hỏi và xáo trộn đáp án đang tắt, nên {numVersions} mã đề có cùng thứ tự câu và phương án. Bạn có thể bật xáo trộn ở bước Rà bộ đề trước khi chốt.
+                </div>
+              </div>
+            )}
 
             {/* Issue #94: Thông báo chỉ đọc nếu phiên cũ từng bật xáo trộn đáp án */}
             {hadShuffleOptions && (
@@ -342,7 +396,10 @@ export default function Stage2ConfigCard({
           >
             <h2 id="confirm-modal-title">Tạo biến thể</h2>
             <p>
-              {totalQuestions} câu gốc × {numVersions} mã = {totalVariants} biến thể. Tạo lượt mới sẽ thay bản nháp và các dấu duyệt, dấu rà hiện tại.
+              {isShuffleOnly
+                ? `${totalQuestions} câu gốc × ${numVersions} mã, chỉ xáo trộn, không dùng AI.`
+                : `${totalQuestions} câu gốc × ${numVersions} mã = ${totalVariants} biến thể.`}{' '}
+              Tạo lượt mới sẽ thay bản nháp và các dấu duyệt, dấu rà hiện tại.
             </p>
             <div className="modal-actions">
               <button

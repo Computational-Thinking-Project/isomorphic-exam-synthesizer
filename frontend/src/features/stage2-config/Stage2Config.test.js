@@ -318,3 +318,87 @@ test('F108-06: Nhấn Enter trong ô nhập hoặc bấm submit đều mở moda
 
   await harness.unmount();
 });
+
+async function submitCard(harness, versions) {
+  const input = harness.container.querySelector('#code-count');
+  await act(async () => {
+    input.value = String(versions);
+    input.dispatchEvent({ type: 'input', bubbles: true, target: input });
+    input.dispatchEvent({ type: 'change', bubbles: true, target: input });
+  });
+  const form = harness.container.querySelector('form');
+  await act(async () => {
+    form.dispatchEvent({ type: 'submit', bubbles: true, cancelable: true, preventDefault: () => {} });
+  });
+  const confirmBtn = harness.container.querySelector('.flow-modal')?.querySelector('.button-primary');
+  assert.ok(confirmBtn, 'Phải mở modal xác nhận');
+  await act(async () => {
+    confirmBtn.click();
+  });
+}
+
+function modeRadio(harness, mode) {
+  return harness.container.querySelector(`[data-generation-mode=${mode}]`);
+}
+
+function chooseMode(harness, mode) {
+  // The shared DOM harness only toggles checkboxes on click; drive the radio the same way.
+  const radio = modeRadio(harness, mode);
+  const propsKey = Object.keys(radio).find((key) => key.startsWith('__reactProps'));
+  radio[propsKey].onChange({ target: radio, currentTarget: radio });
+}
+
+test('EXT-02: mặc định Sinh đề tương tự và gửi generation_mode ai_generation', async () => {
+  let submittedPayload = null;
+  const harness = renderCard({ session: sampleSession, onSubmit: async (payload) => { submittedPayload = payload; } });
+  await harness.render();
+  assert.match(harness.container.textContent, /Sinh đề tương tự/);
+  assert.match(harness.container.textContent, /Chỉ xáo trộn/);
+  assert.equal(modeRadio(harness, 'ai_generation').checked, true);
+  await submitCard(harness, 2);
+  assert.equal(submittedPayload.generation_mode, 'ai_generation');
+  assert.deepEqual(submittedPayload.active_variation_modes, []);
+  await harness.unmount();
+});
+
+test('EXT-02: chọn Chỉ xáo trộn gửi generation_mode shuffle_only và cảnh báo mã đề giống nhau', async () => {
+  let submittedPayload = null;
+  const harness = renderCard({ session: sampleSession, onSubmit: async (payload) => { submittedPayload = payload; } });
+  await harness.render();
+  assert.equal(harness.container.querySelector('[data-identical-versions-warning]'), null);
+  await act(async () => {
+    chooseMode(harness, 'shuffle_only');
+  });
+  assert.equal(modeRadio(harness, 'shuffle_only').checked, true);
+  assert.ok(harness.container.querySelector('[data-identical-versions-warning]'), 'N=2, hai cờ tắt: phải cảnh báo');
+  assert.match(harness.container.textContent, /Không dùng AI/);
+  await submitCard(harness, 3);
+  assert.equal(submittedPayload.generation_mode, 'shuffle_only');
+  assert.deepEqual(submittedPayload.active_variation_modes, [], 'Không suy chế độ từ mảng biến thể');
+  await harness.unmount();
+});
+
+test('EXT-02: không cảnh báo khi N=1 hoặc đã bật xáo trộn, và khôi phục chế độ đã lưu', async () => {
+  const single = renderCard({ session: sampleSession, initialConfig: { n_versions: 1, generation_mode: 'shuffle_only' } });
+  await single.render();
+  assert.equal(modeRadio(single, 'shuffle_only').checked, true, 'Phải khôi phục chế độ đã lưu');
+  assert.equal(single.container.querySelector('[data-identical-versions-warning]'), null);
+  await single.unmount();
+
+  const shuffled = renderCard({
+    session: sampleSession,
+    initialConfig: {
+      n_versions: 3,
+      generation_mode: 'shuffle_only',
+      ordering_preferences: { shuffle_questions: true, shuffle_options: false },
+    },
+  });
+  await shuffled.render();
+  assert.equal(shuffled.container.querySelector('[data-identical-versions-warning]'), null);
+  await shuffled.unmount();
+
+  const unknown = renderCard({ session: sampleSession, initialConfig: { n_versions: 2, generation_mode: 'bogus' } });
+  await unknown.render();
+  assert.equal(modeRadio(unknown, 'ai_generation').checked, true, 'Giá trị lạ quay về ai_generation');
+  await unknown.unmount();
+});

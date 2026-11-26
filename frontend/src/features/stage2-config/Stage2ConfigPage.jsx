@@ -985,6 +985,7 @@ export default function Stage2ConfigPage({
           <p className="mt-2 text-sm text-muted">Cấu hình đã dùng cho bộ đề hiện tại · Chỉ đọc</p>
           <dl className="mt-4 flex flex-wrap gap-6 text-sm">
             <div><dt>Số mã đề</dt><dd className="font-semibold">{derivedNumVersions}</dd></div>
+            <div><dt>Cách tạo</dt><dd className="font-semibold">{session?.config?.generation_mode === 'shuffle_only' ? 'Chỉ xáo trộn' : 'Sinh đề tương tự'}</dd></div>
             <div><dt>Số câu mỗi đề</dt><dd className="font-semibold">{session?.source_questions?.length ?? 'Chưa có dữ liệu'}</dd></div>
             <div><dt>Xáo trộn câu hỏi</dt><dd>{session?.config?.ordering_preferences?.shuffle_questions ? 'Bật' : 'Tắt'}</dd></div>
             <div><dt>Xáo trộn đáp án</dt><dd>{session?.config?.ordering_preferences?.shuffle_options ? 'Bật' : 'Tắt'}</dd></div>

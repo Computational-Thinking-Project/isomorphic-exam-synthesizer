@@ -1,5 +1,12 @@
 import { api } from './api.js';
 
+// EXT-02: explicit generation mode. Never inferred from empty variation modes.
+export const GENERATION_MODES = ['ai_generation', 'shuffle_only'];
+
+function savedGenerationMode(value) {
+  return GENERATION_MODES.includes(value) ? value : 'ai_generation';
+}
+
 /**
  * Service giao tiếp API cho Stage 2: Cấu hình và Sinh đề bất đồng bộ.
  */
@@ -23,6 +30,7 @@ export async function fetchSessionDetail(sessionId) {
         num_versions: rawConfig.num_versions ?? rawConfig.n_versions ?? 2,
         active_variation_modes: rawConfig.active_variation_modes ?? rawConfig.variation_modes ?? [],
         variation_modes: rawConfig.variation_modes ?? rawConfig.active_variation_modes ?? [],
+        generation_mode: savedGenerationMode(rawConfig.generation_mode),
         ordering_preferences: rawConfig.ordering_preferences
           ? {
               shuffle_questions: Boolean(rawConfig.ordering_preferences.shuffle_questions ?? false),
@@ -36,6 +44,7 @@ export async function fetchSessionDetail(sessionId) {
         num_versions: data.n_versions,
         active_variation_modes: data.active_variation_modes || [],
         variation_modes: data.active_variation_modes || [],
+        generation_mode: savedGenerationMode(data.generation_mode),
         ordering_preferences: data.ordering_preferences
           ? {
               shuffle_questions: Boolean(data.ordering_preferences.shuffle_questions ?? false),
@@ -423,6 +432,10 @@ export async function saveSessionConfig(sessionId, configPayload) {
       ),
     },
   };
+  // Old callers omit the mode; the backend then keeps ai_generation.
+  if (GENERATION_MODES.includes(configPayload.generation_mode)) {
+    payload.generation_mode = configPayload.generation_mode;
+  }
 
   const response = await api.post(
     `/sessions/${encodeURIComponent(sessionId)}/config`,

@@ -178,6 +178,43 @@
   margin-bottom: 6px;
 }
 
+/* EXT-02: generation mode choice */
+.generation-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  border: none;
+  margin: 0 0 20px;
+  padding: 0;
+}
+
+.generation-mode legend {
+  width: 100%;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--strong);
+  margin-bottom: 8px;
+}
+
+.generation-mode-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--strong);
+  cursor: pointer;
+}
+
+.generation-mode-option input {
+  accent-color: var(--accent);
+}
+
+.generation-mode-hint {
+  width: 100%;
+  font-size: 13px;
+  color: var(--muted);
+}
+
 .count-input {
   border: 1px solid var(--control-border);
   background: var(--surface);
