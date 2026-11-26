@@ -47,3 +47,10 @@ Kết quả author ngày 25/11 trên Windows, Python .venv và Node 24.14.1
 - Chưa chạy live Gemini, DB, Storage hoặc compile thật cho lần sửa này. Các mock worker không chứng minh RLS/SQL atomicity.
 
 Sau finding F110-04 ngày 25/11, `python -m pytest backend/tests/ai backend/tests/generation -q -p no:cacheprovider` đạt 483 passed trên Windows/Python .venv; Ruff, mypy 128 source files và diff --check pass. Regression gồm batch bốn mã với JSON hỏng/thiếu solution/trùng hoặc thiếu version rồi recovery thành công, lặp lỗi schema dừng ở ba lần, lỗi schema xen transport không vượt bốn attempts, quota/deadline dừng không giả exhaustion. Không có thay đổi frontend/API/persistence trong lượt sửa này; chưa chạy live provider/DB.
+
+## Đồng bộ sau #109 — 26/11/2026
+
+- Nhập `dev@b292443` (Stage 3 #109) vào cùng nhánh #110. Conflict duy nhất ở changelog được giải quyết bằng cách giữ cả hai lịch sử; không sửa source của Stage 3 hay batching/export.
+- Windows: AI/generation/direct-files/exporter **803 passed, 16 skipped** (host thiếu Typst/XeLaTeX); toàn bộ frontend tests, lint và build pass. Ruff và mypy **128 files** pass. Build vẫn có cảnh báo chunk size hiện hữu.
+- Đây là regression local sau tích hợp source, chưa là kiểm browser/live Gemini/DB/Storage hoặc reviewer acceptance. Approval của Duy ở `9d86a17` thuộc head trước đồng bộ; cần CI/review trên head mới. F110-01/02 vẫn chờ Hùng xác minh; F110-03 và files extension còn cần xác nhận contract rõ ràng.
+- EXT-02 #112 chạm `generation/service.py`: Đạt giữ batching/retry/budget/seed-resume; Tâm phụ trách frozen mode/quota/clone. Đề xuất ghép trên dev có #110 hoặc chốt hunk trước sửa song song; chưa nhận đề xuất này đã được Tâm chấp nhận. Trao đổi input ở #111/#112, không sửa nhánh người khác.

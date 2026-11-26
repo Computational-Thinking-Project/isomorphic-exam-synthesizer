@@ -155,7 +155,7 @@ export class DOMElement extends DOMNode {
 
     function walk(el) {
       for (const child of el.childNodes) {
-        if (matches(child, selector)) {
+        if (selector.split(',').some(sel => matches(child, sel.trim()))) {
           results.push(child);
         }
         walk(child);

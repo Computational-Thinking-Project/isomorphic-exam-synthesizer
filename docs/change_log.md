@@ -7,6 +7,116 @@
 
 ---
 
+## PR #109 — Windows full regression passed — 25/11/2026
+
+- Sau xác nhận của Philip về khả năng phát sinh telemetry, full frontend Windows **621/621 pass**,0fail/skip/cancel/108.27s, HEAD72adb9f/source8a6f600. [Checkpoint6.25](tasks/ISSUE-95.md) thay trạng thái full bị chặn/chưa xác nhận trước đó bằng kết quả mới.
+- Source không đổi: targeted65/mutation/lint/build trước đó vẫn áp dụng. Lượt này chỉ docs; native/reviewer QA/CI/Approve trên head sau push còn mở, chưa push/resolve/merge.
+
+---
+
+## PR #109 — R1 applied on Windows and docs reconciled — 25/11/2026
+
+- Áp lại delta R1 Linux c7044d6 lên Windows parent c2b680a vì bundle/object chưa có tại máy này. Bỏ validator/gate FE tự tính, giữ BE warnings/guards và cập nhật regression; không thay backend/API.
+- [Checkpoint6.24](tasks/ISSUE-95.md) ghi SHA Windows/checks khi hoàn tất; docs Linux được hợp nhất nội dung với các plan/input Windows hiện có, không overwrite lịch sử hoặc nhận hai object gốc đã được nhập. Native/reviewer QA/CI sau push còn mở.
+- Source Windows **8a6f600**, tương ứng delta c7044d6; targeted65/mutation/lint/build đạt. Full Windows bị auto-review chặn vì telemetry Visual Studio/payload chưa rõ, không nhận full621Linux thành proof Windows hoặc rerun bằng workaround.
+
+---
+
+## PR #109 — Windows docs and cross-checkout commit status — 25/11/2026
+
+- [Checkpoint6.23](tasks/ISSUE-95.md): Windows/PR hiện9f5a04d; R1 c7044d6 và docs a1b0ddb tạo ở Linux chưa được nhập, chưa push. Commit tài liệu Windows giữ input Q01/plan và phân biệt trạng thái source ở hai checkout.
+- Targeted65/full621/lint/build là evidence lượt Linux, không phải kiểm mới trên Windows. Lượt này chỉ docs/link/diff; không đổi source, resolve finding hoặc merge. Cần đối chiếu docs Windows khi nhập bundle, không ghi đè các cập nhật đã chuẩn bị.
+
+---
+
+## PR #109 — remaining commit and verification plan — 25/11/2026
+
+- [Plan6.22](tasks/ISSUE-95.md) chốt hai commit còn lại: R1 bỏ FE business-validation gates/sửa regression theo input Q01 đã đủ; R3b ghi evidence/M5/handoff trên source cuối. R2 đã commit, không làm lại hoặc đợi API mới.
+- Ma trận checks giữ missing/read_only/lock/identity/reconciliation/approval, phân biệt warning/evidence với permission; native delta F01–F04 và navigator40câu, CI/reviewer xác minh/Approve trước merge. Chỉ plan/static/docs checks ở lượt này, chưa source/tests/commit/GitHub write.
+
+---
+
+## PR #109 — Q01 accepted for R1 implementation — 25/11/2026
+
+- [Duy7137928390](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/109#issuecomment-7137928390) xác nhận hard failure được xử lý trước persistence, warning/report là evidence và guard hiện hành điều khiển review; không thêm permission/API/validator trong PR UI.
+- [Plan6.21](tasks/ISSUE-95.md): Q01 Accepted/đủ triển khai R1, chưa Integrated. R1 chưa code, F109-R1-03 chưa được xác minh đã sửa; vẫn cần checks/re-review/CI/approval sau fix. Lượt này chỉ docs/static inspection, chưa rerun tests hoặc GitHub write.
+
+---
+
+## PR #109 — R2 UI review fixes; validation input pending — 24/11/2026
+
+- Triển khai F01–F04 trong hai file Stage3: khoảng cách sau divider, cụm dot/counter tiến độ không tách, link inspection có underline/màu, focus heading dùng outline theo theme và giữ keyboard visibility. Không đổi validator/guard/API/permission hoặc renderer toàn ứng dụng.
+- [Checkpoint6.20](tasks/ISSUE-95.md) ghi checks/audit và giới hạn native QA. R1/F109-R1-03 vẫn open vì chưa có câu trả lời contract Q01; R3 chỉ tổng hợp evidence R2, không nhận toàn vòng review đã hoàn tất. Chưa push/reply/resolve/merge.
+- Source `ebab331`: full frontend **620/620**, lint/build đạt; chưa native visual/focus sau sửa. Không thêm test mirror CSS hoặc nhận reviewer đã xác minh từ source fix.
+
+---
+
+## PR #109 — proposed commits for review findings — 24/11/2026
+
+- [Plan6.19](tasks/ISSUE-95.md) ghi F109-R1-03 bắt buộc/trong scope, Q01 contract cần làm rõ, Q02 giải trình navigator và bốn UI suggestion không chặn merge. Chia R1 validation boundary, R2 UI/focus polish, R3 verification/docs; chưa triển khai hoặc tạo commit.
+- Giữ yêu cầu user về cặp lỗi, không tự suy `has_warning`/`is_valid` thành quyền Accept, không sửa BE hoặc thêm API. R2 đủ input để làm trước; R1 cần chốt Q01 trước khi hoàn tất hard-gate delta. C4b/C4c vẫn ngoài PR.
+- Philip đã xác nhận manual QA ở854709d; Duy Request changes/Tâm Commented, chưa approval. Evidence Tâm là Chromium/API-auth mock; cần kiểm lại head sau sửa. Lượt plan chỉ kiểm docs, không chạy lại product tests hoặc gửi GitHub.
+
+---
+
+## PR #109 — UI feedback: compact header and expanding comparison — 24/11/2026
+
+- Theo ảnh/feedback user: logo header rộng180px/144px mobile, không bị flex-grow; bỏ metadata, legend/nhãn điều hướng phụ và bộ lọc trạng thái. Giữ navigator câu, tabs mã và trạng thái từng cặp; bỏ qua filter còn lưu từ bản cũ.
+- Vùng đối chiếu có chiều cao tối thiểu lớn hơn, nở theo câu dài và cuộn trang thay khung viewport/cuộn dọc riêng từng panel. Giữ hai cột desktop, xếp dọc trên màn hẹp và modal hiện có. Đây là điều chỉnh user yêu cầu so với fixed-viewport của walkthrough.
+- [Plan6.18](tasks/ISSUE-95.md) và [gói C5](ui-walkthrough/stage3-fix/README.md) ghi checks/audit và checklist cập nhật. Chưa native visual sau sửa hoặc live FE–BE–DB; không nhận Ready/merge từ checks tự động.
+- Full frontend **620/620**, lint/build đạt; focused8/8 và mutation bắt lỗi lựa chọn câu trước khi restore/checks cuối. Không đổi API, quyền hoặc dependency.
+
+---
+
+## PR #109 — C5 keyboard fix and verification handoff — 24/11/2026
+
+- Sửa vòng Tab của inspection chỉ xem để đọc được link trong lời giải Markdown; vẫn wrap/restore focus và không mở mutation. Thêm regression và hỗ trợ selector nhóm trong DOM test harness, không đổi API hoặc quyền backend.
+- Code `5e890f9`: full frontend **619/619**, lint/build đạt; mutation bắt đúng lỗi trước khi restore/checks cuối. [Gói C5](ui-walkthrough/stage3-fix/README.md) ghi cảnh báo, nguồn walkthrough, audit và checklist native QA còn mở.
+- Chưa có kết nối browser/screenshot/live FE–BE–DB; chưa nhận visual passed, C5 hoàn tất hoặc PR Ready/merged. Scope FE và follow-up BE theo [plan6.6/6.16–6.17](tasks/ISSUE-95.md); title/body GitHub còn plan-only, chưa chỉnh trong lượt này.
+
+---
+
+## PR #109 — FE acceptance scope clarified — 24/11/2026
+
+- User chốt PR này sửa FE S06 theo walkthrough và giữ tương thích API hiện hành. C4b targeted missing-slot recovery và C4c partial-write chuyển sang follow-up ngoài PR; không yêu cầu hai API mới hoặc PR110 merge để nghiệm thu/merge phần FE.
+- Giữ guard/read-only và fallback retry cấp phiên đúng phạm vi. Còn C5 native visual/browser, checks/CI và review theo workflow; không nhận đầy đủ mọi nghiệp vụ walkthrough hoặc live integration từ tests DOM. [Plan/acceptance và follow-up](tasks/ISSUE-95.md), mục6.6/6.16.
+
+---
+
+## Issue #95 — C4a feedback and review guards — 24/11/2026
+
+- Thông báo toast tối đa hai, dedupe/dismiss/tự ẩn 5s, không làm nhảy bố cục; thông tin lỗi vẫn giữ tại cặp/modal. Các lỗi rõ ràng ở report/phương án/key chặn accept và Rà bộ đề; warning không tự thành hard failure.
+- Accept đã có phản hồi nhưng snapshot chưa đối soát được thì giữ popup và khóa ghi/chuyển bước đến khi đọc lại trạng thái. Giữ read-only/lock và retry cấp phiên hiện hành; không thêm API recovery hoặc mở partial-write.
+- [Checkpoint C4a](tasks/ISSUE-95.md) ghi checks, self-review/mutation audit và giới hạn. Chưa native visual hoặc live FE–BE–DB; C4b/C4c tiếp tục chờ contract BE.
+
+---
+
+## Issue #95 — C3 inspection dialog — 24/11/2026
+
+- S06 mở một modal kiểm tra đáp án, xác nhận tạo lại/khôi phục trong cùng cửa sổ; revert là hành động phụ bên trái. Sau thay nội dung phải kiểm và duyệt chủ động. Busy khóa đóng, hỗ trợ focus/Tab/Escape; native visual chưa kiểm.
+- Sau accept và đối soát đúng candidate, đóng popup và chọn cặp tiếp theo theo câu trước/mã sau, không tự sang S07. Candidate bị thay trong refetch không thừa hưởng approval.
+- Dùng API/guard hiện hành; retry ô thiếu và partial-write vẫn chờ contract. [Plan/checks](tasks/ISSUE-95.md): 59 tests Review/service, lint/build đạt; chưa live integration.
+
+---
+
+## Issue #95 — C2 persistent source/variant workspace — 24/11/2026
+
+- S06 hiển thị một nguồn bên trái và một biến thể bên phải; tabs mã trong panel biến thể. Đổi mã giữ câu nguồn, chọn câu không tự mở lời giải. Navigator và hai vùng đọc cuộn cục bộ, layout xếp dọc dưới 1024px; key đáp án tách màu khỏi approval.
+- Thao tác “Đến câu chưa duyệt tiếp theo” đi theo câu trước/mã sau, giữ ô thiếu trong thứ tự. Auto-select sau accept và popup mới vẫn thuộc C3; commit này giữ vùng lời giải và handler mutation hiện hành.
+- Không đổi API/auth/schema/read-only; sinh bổ sung vẫn cấp phiên. Contract per-slot recovery/partial-write/revert chưa được owner xác nhận trong lượt này. [Scope, checks và giới hạn C2](tasks/ISSUE-95.md).
+- Full frontend 612/612, lint/build đạt; chưa visual browser hoặc live FE–BE–DB. Không nhận UI parity/Ready toàn nhánh từ checkpoint này.
+
+---
+
+## Issue #95 — Stage 3 comparison layout and review order — 23/11/2026
+
+- Trạng thái: **plan / đề xuất contract để review trên Draft PR**, chưa triển khai UI hoặc thay API. Nhánh `fix/stage3-ui`; [plan và input](tasks/ISSUE-95.md#6-plan-sửa-s06-trên-fixstage3-ui--23112026).
+- User chốt: nguồn chỉ đọc ở cột trái, biến thể có tabs mã ở cột phải; duyệt hết các mã của một câu rồi mới sang câu tiếp theo (Câu 1/Mã 1 → Câu 1/Mã 2 → Câu 2/Mã 1). Giữ chuẩn bố cục/màu walkthrough và các guard candidate identity/read-only/khóa phiên.
+- Contract còn mở: phục hồi đúng missing slot khi chưa có candidate ID, quyền duyệt cặp khỏe trong partial/read-only và ngoại lệ giữ revert như hành động phụ. Chưa chốt endpoint/payload hoặc nới quyền ghi; retry hiện tại vẫn cấp phiên. Chi tiết đề xuất tại mục 6.9 của plan.
+- Commit tài liệu phục vụ Draft/thống nhất đầu vào; không là kết quả visual QA, tích hợp FE–BE–DB hoặc approval của owner API.
+
+---
+
 ## DEC-97-001 — Issue #97: Teacher usage statistics — 20/11/2026
 
 - Decision owner: Issue #97 assignee. Status: proposed for review.
