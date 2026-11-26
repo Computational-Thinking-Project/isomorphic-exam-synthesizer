@@ -216,8 +216,11 @@ class GenerationConfigRepository:
             "p_active_variation_modes": [],
             "p_ordering_preferences": config.ordering_preferences.model_dump(),
             "p_expected_snapshot": deepcopy(expected_snapshot),
-            "p_generation_mode": config.generation_mode,
         }
+        # Send the mode only when it differs from the default, so an API deployed
+        # before migration 028 keeps saving AI configs; shuffle_only then fails closed.
+        if config.generation_mode != "ai_generation":
+            parameters["p_generation_mode"] = config.generation_mode
         try:
             data = self._db.rpc("save_generation_config", parameters).execute().data
             result = GenerationConfigResponse.model_validate(data)

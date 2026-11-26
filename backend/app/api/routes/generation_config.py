@@ -29,6 +29,9 @@ def create_generation_config_router(
     @router.post(
         "/{session_id}/config",
         response_model=GenerationConfigResponse,
+        # A receipt from a database before migration 028 has no generation_mode;
+        # do not invent one in the response (EXT-02).
+        response_model_exclude_unset=True,
         status_code=200,
         summary="Save generation configuration for an owned session",
     )
@@ -64,7 +67,11 @@ def create_generation_config_router(
             config = validate_generation_config(payload, context)
             saved = repository.save_config(session_id, config, context.expected_snapshot)
             # Revalidate model instances too: models can be mutated internally.
-            saved_data: object = saved.model_dump() if isinstance(saved, GenerationConfigResponse) else saved
+            saved_data: object = (
+                saved.model_dump(exclude_unset=True)
+                if isinstance(saved, GenerationConfigResponse)
+                else saved
+            )
             result = GenerationConfigResponse.model_validate(saved_data)
             if result.session_id != session_id:
                 raise ValueError("Saved configuration does not match the requested session.")

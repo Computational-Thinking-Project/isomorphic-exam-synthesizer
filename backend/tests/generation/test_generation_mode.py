@@ -161,3 +161,11 @@ def test_api_rejects_unknown_mode_before_storage(api: ApiHarness) -> None:
     response = api.post(payload(generation_mode="bogus"))
     assert response.status_code == 422
     assert api.store.save_calls == []
+
+
+def test_repository_omits_default_mode_for_pre_028_databases() -> None:
+    db, _ = make_db(make_rows())
+    manifest = canonical_snapshot()["manifest"]
+    db.rpc.return_value.execute.return_value = SimpleNamespace(data=saved_receipt(manifest, []))
+    GenerationConfigRepository(db).save_config(SESSION_ID, GenerationConfigRequest(n_versions=2), manifest)
+    assert "p_generation_mode" not in db.rpc.call_args.args[1]
