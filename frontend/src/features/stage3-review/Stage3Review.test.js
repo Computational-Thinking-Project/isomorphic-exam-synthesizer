@@ -3172,3 +3172,30 @@ test('A02-13 reject keeps the binding on uncertainty and retires terminal keys',
     assert.notEqual(calls[2].key, calls[0].key);
   } finally { await harness.unmount(); }
 });
+
+test('A01-13 older same-session read cannot undo a later confirmed accept', async () => {
+  const data = comparisonSession('read-order');
+  let reads = 0, finishOldRead;
+  const harness = renderStage3Page(data.id, {
+    loadSession: async () => {
+      const snapshot = structuredClone(data);
+      if (++reads === 2) return new Promise(resolve => { finishOldRead = () => resolve(snapshot); });
+      return snapshot;
+    },
+    acceptQuestionFn: async (_sid, id) => {
+      data.exam_versions[0].questions.find(q => q.id === id).status = 'approved';
+      return { question_id: id };
+    },
+  });
+  try {
+    await harness.render();
+    await act(async () => harness.container.querySelector('[data-review-inline-approve]').click());
+    await act(async () => harness.container.querySelector('[data-review-nav-q="2"]').click());
+    const approve = harness.container.querySelector('[data-review-inline-approve]');
+    assert.equal(approve.getAttribute('disabled'), null);
+    await act(async () => approve.click());
+    assert.equal(reads, 3);
+    await act(async () => finishOldRead());
+    assert.match(harness.container.textContent, /Đã duyệt 2\/4 câu/);
+  } finally { await harness.unmount(); }
+});

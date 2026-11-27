@@ -688,9 +688,17 @@
                 ],
                 "correct_key": "A",
                 "solution_md": "Không có lời giải cho câu hỏi này.",
-                "has_warning": false,
-                "validation_report": null,
-                "validation_source": "unavailable",
+                "has_warning": true,
+                "validation_report": {
+                  "fallback_source": true,
+                  "reason": "GENERATION_RETRIES_EXHAUSTED",
+                  "validation_status": "not_validated",
+                  "attempts": 4,
+                  "source_revision_id": "b0000000-0000-0000-0000-000000000001",
+                  "source_fingerprint": "7b286e6bd144452a399f5fd6e1a6c5645fad5a8efbf02749fcf4424eee2fcdb3",
+                  "confirmed_source_hash": "7b286e6bd144452a399f5fd6e1a6c5645fad5a8efbf02749fcf4424eee2fcdb3"
+                },
+                "validation_source": "version_question",
                 "origin": "confirmed_source_fallback",
                 "is_reverted": false,
                 "updated_at": "2026-11-27T03:10:00Z"
@@ -699,7 +707,7 @@
           ]
         }
       ],
-      "freshness_token": "a5388058ec0a1912be66cec54e55dccb6a949fdd61106e9ca39b587964625118"
+      "freshness_token": "7d4c2a611e3541af80090603a689b6ca1212cf0c8e27b200f0b5f5d882177557"
     },
     "reverted_with_solution": {
       "session_id": "10000000-0000-0000-0000-000000000001",

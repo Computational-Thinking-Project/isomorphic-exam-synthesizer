@@ -29,7 +29,6 @@ import {
   fetchReviewSnapshot,
   recoverReviewSession,
   adaptReviewSnapshot,
-  normalizeOptions,
 } from '../../services/stage3Service.js';
 
 function getVariantWarningFlags(variant) {
@@ -239,12 +238,13 @@ export default function Stage3ReviewPage({
   const [reviewSyncRequired, setReviewSyncRequired] = useState(false);
 
   // Trạng thái modal Kiểm tra đáp án (SolutionDialog)
-  const [selectedSolution, setSelectedSolution] = useState(null);
+  const [inspection, setInspection] = useState(null);
+  const inspectedVariant = inspection && findVariantInSession(session, inspection.versionIndex, inspection.qNo);
+  const selectedSolution = useMemo(() => inspectedVariant ? { ...inspection, variant: inspectedVariant } : null,
+    [inspection, inspectedVariant]);
   const [approvalFocus, setApprovalFocus] = useState(null);
   const workspaceRef = useRef(null);
-  const [isRegeneratingSingle, setIsRegeneratingSingle] = useState(false);
-  const [isApprovingSingle, setIsApprovingSingle] = useState(false);
-  const [isRevertingSingle, setIsRevertingSingle] = useState(false);
+  const [pendingActions, setPendingActions] = useState(new Map());
   const [isShuffle409, setIsShuffle409] = useState(false);
   const [approvedVariantIds, setApprovedVariantIds] = useState(new Set());
 
@@ -255,7 +255,7 @@ export default function Stage3ReviewPage({
   const activeSessionIdRef = useRef(sessionId);
   const navigationTimerRef = useRef(null);
   const navigationEpoch = useRef(0);
-  const pendingMutation = useRef(null);
+  const pendingRef = useRef(new Map());
   const [activeRecovery, setActiveRecovery] = useState(false);
   const actionKeysRef = useRef(new Map());
 
@@ -296,7 +296,7 @@ export default function Stage3ReviewPage({
       }
       setActiveRecovery(Boolean(active));
       setReviewSyncRequired(false);
-      if (!background) setSelectedSolution(null);
+      if (!background) setInspection(null);
       setSession(data);
       setLockedDetail(null);
 
@@ -397,15 +397,13 @@ export default function Stage3ReviewPage({
     setSelectedQuestionNo(1);
     setIsRetryingAll(false);
     setReviewSyncRequired(false);
-    setSelectedSolution(null);
+    setInspection(null);
     setApprovalFocus(null);
     setApprovedVariantIds(new Set());
     setActionMessage(null);
-    setIsRegeneratingSingle(false);
-    setIsApprovingSingle(false);
-    setIsRevertingSingle(false);
+    setPendingActions(new Map());
     actionKeysRef.current.clear();
-    pendingMutation.current = null;
+    pendingRef.current.clear();
     setActiveRecovery(false);
 
     loadData();
@@ -422,47 +420,31 @@ export default function Stage3ReviewPage({
     };
   }, [loadData, sessionId]);
 
-  const handleOpenSolutionModal = useCallback((variant, qNo, versionIndex) => {
-    const originalQuestion = session?.source_questions?.find(
-      (sq) => (sq.source_question_id && sq.source_question_id === variant.source_question_id) || (sq.id && sq.id === variant.source_question_id)
-    ) || session?.source_questions?.find(
-      (sq) => (sq.question_no ?? sq.number) === qNo
-    );
+  const handleOpenSolutionModal = (_variant, qNo, versionIndex) => {
     setSelectedQuestionNo(qNo);
-    setSelectedSolution({
-      variant: {
-        ...variant,
-        options: normalizeOptions(variant.options),
-      },
-      qNo,
-      versionIndex,
-      originalQuestion: originalQuestion ? {
-        ...originalQuestion,
-        options: normalizeOptions(originalQuestion.options),
-      } : null,
-    });
-  }, [session]);
+    setInspection({ qNo, versionIndex });
+  };
 
   const isFinalLocked = ['approved', 'exported'].includes(session?.status);
   const isReviewReadOnly = isFinalLocked || Boolean(session?.read_only);
   const canRetryPartial = session?.status === 'partial_generated' && !isFinalLocked;
 
   async function mutate(action, selection, reasons = []) {
-    if (!selection || pendingMutation.current || isReviewReadOnly || reviewSyncRequired || activeRecovery) return;
+    if (!selection || isReviewReadOnly || reviewSyncRequired || isRetryingAll) return;
     const { variant, versionIndex, qNo } = selection;
     const id = variant.candidate_id || variant.id || variant.question_id;
-    if (!id || variant.status === 'regenerating') return;
-    const op = ++mutationOperationRef.current;
+    if (!id || pendingRef.current.has(id) || variant.status === 'regenerating') return;
+    if (action === 'reject' && (activeRecovery || [...pendingRef.current.values()].includes('reject'))) return;
+    const op = mutationOperationRef.current;
     const epoch = navigationEpoch.current;
     const current = () => isMountedRef.current && activeSessionIdRef.current === sessionId && mutationOperationRef.current === op;
     const binding = JSON.stringify([action, id]);
     const attempt = actionKeysRef.current.get(binding) || { key: generateClientUUID(), reasons };
     const { key } = attempt;
     actionKeysRef.current.set(binding, attempt);
-    pendingMutation.current = id;
+    pendingRef.current.set(id, action);
+    setPendingActions(new Map(pendingRef.current));
     ++loadOperationRef.current;
-    const setBusy = { accept: setIsApprovingSingle, reject: setIsRegeneratingSingle, revert: setIsRevertingSingle }[action];
-    setBusy(true);
     setActionMessage(null);
     let response;
     let failure;
@@ -484,9 +466,6 @@ export default function Stage3ReviewPage({
       if (!latest) return;
       const candidate = findVariantInSession(latest, versionIndex, qNo);
       const latestId = candidate?.candidate_id || candidate?.id || candidate?.question_id;
-      if (navigationEpoch.current === epoch) {
-        setSelectedSolution(open => open && candidate ? { ...open, variant: candidate } : null);
-      }
       if (failure) return;
       const confirmed = action === 'accept' ? latestId === id && candidate.status === 'approved'
         : latestId && latestId === response?.question_id && (action === 'reject' ? latestId !== id : candidate.is_reverted);
@@ -496,7 +475,7 @@ export default function Stage3ReviewPage({
       }
       actionKeysRef.current.delete(binding);
       if (action === 'accept' && epoch === navigationEpoch.current && !latest.read_only) {
-        setSelectedSolution(null);
+        setInspection(null);
         const next = findNextUnreviewed(latest, versionIndex, qNo);
         if (next) {
           setActiveVersionTab(next.version);
@@ -506,8 +485,8 @@ export default function Stage3ReviewPage({
       }
     } finally {
       if (current()) {
-        pendingMutation.current = null;
-        setBusy(false);
+        pendingRef.current.delete(id);
+        setPendingActions(new Map(pendingRef.current));
       }
     }
   }
@@ -607,7 +586,7 @@ export default function Stage3ReviewPage({
     const question = currentQuestionNo ?? selectedQuestionNo;
     setSelectedQuestionNo(question);
     setActiveVersionTab(version);
-    setSelectedSolution(null);
+    setInspection(null);
   };
   const handleVersionKeyDown = (event, version) => {
     const next = event.key === 'ArrowRight' ? version % numVersions + 1
@@ -624,7 +603,7 @@ export default function Stage3ReviewPage({
     if (next) {
       setSelectedQuestionNo(next.number);
       setActiveVersionTab(next.version);
-      setSelectedSolution(null);
+      setInspection(null);
       return;
     }
     setActionMessage({ type: 'success', text: 'Không còn câu chưa duyệt.' });
@@ -633,7 +612,7 @@ export default function Stage3ReviewPage({
   const handleSelectNavigatorQuestion = (qNo) => {
     ++navigationEpoch.current;
     setSelectedQuestionNo(qNo);
-    setSelectedSolution(null);
+    setInspection(null);
   };
 
   const restoredViewRef = useRef(null);
@@ -664,7 +643,7 @@ export default function Stage3ReviewPage({
   }, [approvalFocus, selectedSolution]);
 
   const isFinalizeDisabled =
-    session?.progress?.ready !== true || session?.status !== 'reviewed' || activeRecovery || isReviewReadOnly || reviewSyncRequired || isApprovingSingle || isRegeneratingSingle || isRevertingSingle || isRetryingAll;
+    session?.progress?.ready !== true || session?.status !== 'reviewed' || activeRecovery || isReviewReadOnly || reviewSyncRequired || pendingActions.size > 0 || isRetryingAll;
 
   const isSelectedVariantApproved = useMemo(() => {
     return isVariantApproved(selectedSolution?.variant, approvedVariantIds);
@@ -879,7 +858,7 @@ export default function Stage3ReviewPage({
                 const isNavApproved = isVariantApproved(navVariant, approvedVariantIds);
                 const { isFallback: navFallback, hasWarning: navWarning } = getVariantWarningFlags(navVariant);
                 const isNavSelected = currentQuestionNo === qNo;
-                const isNavBusy = Boolean(navVariant && pendingMutation.current && pendingMutation.current === (navVariant.candidate_id || navVariant.id || navVariant.question_id));
+                const isNavBusy = Boolean(navVariant && pendingActions.has(navVariant.candidate_id || navVariant.id || navVariant.question_id));
 
                 const statusText = isNavMissing
                   ? 'Thiếu câu'
@@ -1016,8 +995,8 @@ export default function Stage3ReviewPage({
             variant.validation_report?.message ||
             'Câu hỏi có cảnh báo nghiệm hoặc ràng buộc cần lưu ý.';
 
-          const pinned = Boolean(pendingMutation.current && pendingMutation.current === (variant.candidate_id || variant.id || variant.question_id));
-          const isCardBusy = pinned && (isRegeneratingSingle || isApprovingSingle || isRevertingSingle);
+          const busyAction = pendingActions.get(variant.candidate_id || variant.id || variant.question_id);
+          const isCardBusy = Boolean(busyAction) || variant.status === 'regenerating';
           return (
             <div
               key={qNo}
@@ -1037,7 +1016,7 @@ export default function Stage3ReviewPage({
                   {isCardBusy ? (
                     <span className="inline-flex items-center gap-1 rounded-full border border-support-line bg-support-bg px-2.5 py-0.5 text-[11px] font-medium text-highlight">
                       <Loader2 className="h-3 w-3 animate-spin" />
-                      {isRegeneratingSingle ? 'Đang tạo lại' : isRevertingSingle ? 'Đang khôi phục' : 'Đang duyệt'}
+                      {busyAction === 'reject' || variant.status === 'regenerating' ? 'Đang tạo lại' : busyAction === 'revert' ? 'Đang khôi phục' : 'Đang duyệt'}
                     </span>
                   ) : isApproved ? (
                     <span className="inline-flex items-center gap-1 rounded-full border border-approved-border bg-approved-bg px-2.5 py-0.5 text-[11px] font-medium text-approved-ink">
@@ -1110,8 +1089,7 @@ export default function Stage3ReviewPage({
               <ReviewSolution question={variant} />
               {!isReviewReadOnly && <button type="button" data-review-inline-approve
                 className="rounded-lg border border-accent-border bg-accent px-4 py-2"
-                disabled={isApproved || reviewSyncRequired || activeRecovery || isApprovingSingle ||
-                  isRegeneratingSingle || isRevertingSingle || !currentVariant || !(
+                disabled={isApproved || reviewSyncRequired || isCardBusy || isRetryingAll || !currentVariant || !(
                     variant.candidate_id || variant.id || variant.question_id)}
                 onClick={() => void mutate('accept', { variant, qNo, versionIndex: activeVersionTab })}>
                 {isApproved ? 'Đã duyệt' : 'Duyệt biến thể'}
@@ -1129,19 +1107,20 @@ export default function Stage3ReviewPage({
         boundReasons={actionKeysRef.current.get(JSON.stringify(['reject', selectedSolution.variant.candidate_id ||
           selectedSolution.variant.id || selectedSolution.variant.question_id]))?.reasons}
         selection={selectedSolution} versionLabel={versionLabel(session, selectedSolution.versionIndex)}
-        message={actionMessage} readOnly={isReviewReadOnly || reviewSyncRequired || activeRecovery} approved={isSelectedVariantApproved}
-        busy={isRegeneratingSingle || isApprovingSingle || isRevertingSingle}
+        message={actionMessage} readOnly={isReviewReadOnly || reviewSyncRequired || selectedSolution.variant.status === 'regenerating'} approved={isSelectedVariantApproved}
+        busy={pendingActions.has(selectedSolution.variant.candidate_id || selectedSolution.variant.id || selectedSolution.variant.question_id)}
+        rejectBusy={activeRecovery || [...pendingActions.values()].includes('reject')}
         canRevert={Boolean(session?.confirmation_id && session?.job_snapshot_id && (selectedSolution.variant.candidate_id || selectedSolution.variant.id || selectedSolution.variant.question_id))}
-        onClose={() => setSelectedSolution(null)} onApprove={() => mutate('accept', selectedSolution)}
+        onClose={() => setInspection(null)} onApprove={() => mutate('accept', selectedSolution)}
         onRegenerate={reasons => mutate('reject', selectedSolution, reasons)} onRevert={() => mutate('revert', selectedSolution)} onNext={goToNextUnreviewed}
       />}
 
       <div className="stage3-pair-actions">
         <button type="button" data-review-inspect={true}
-          disabled={!currentVariant || isRegeneratingSingle || isApprovingSingle || isRevertingSingle || isRetryingAll}
+          disabled={!currentVariant || isRetryingAll}
           aria-expanded={Boolean(inspectionOpen)}
           aria-controls={currentVariant ? `solution-${activeVersionTab}-${currentQuestionNo}` : undefined}
-          onClick={() => inspectionOpen ? setSelectedSolution(null) : handleOpenSolutionModal(currentVariant, currentQuestionNo, activeVersionTab)}
+          onClick={() => inspectionOpen ? setInspection(null) : handleOpenSolutionModal(currentVariant, currentQuestionNo, activeVersionTab)}
           className="inline-flex items-center gap-2 rounded-lg border border-accent-border bg-accent px-4 py-2 text-sm font-semibold text-strong hover:opacity-90 disabled:opacity-50">
           <Eye className="h-4 w-4" aria-hidden="true" />
           {inspectionOpen ? 'Đóng đối chiếu' : 'Kiểm tra đáp án'}

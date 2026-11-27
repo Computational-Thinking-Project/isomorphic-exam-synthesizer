@@ -616,3 +616,20 @@ def test_ext01_transition_fixture_schema_and_lineage():
         assert a.versions[0].slots[0].candidate.candidate_id == b.versions[0].slots[0].candidate.candidate_id
     assert snapshots["initial"].versions[0].slots[0].candidate.correct_key == "B"
     assert snapshots["regenerated"].versions[0].slots[0].candidate.correct_key == "A"
+
+
+def test_compatibility_fixture_matches_frozen_policy_projection():
+    from app.services.generation.mode_mapper import question_policy
+
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/ext01_policy_compatibility.json").read_text(encoding="utf-8")
+    )
+    assert fixture["legacy_snapshot"]["mapping_version"] == "1.0"
+    job = fixture["mixed_snapshot"]
+    assert job["mapping_version"] == "1.1"
+    frozen = job["snapshot_payload"]
+    for slot, source in zip(fixture["slots"], frozen["confirmed_sources"], strict=True):
+        assert slot["source_question_id"] == source["source_question_id"]
+        policy = frozen["question_policies"][slot["source_question_id"]]
+        assert slot["result_kind"] == policy["result_kind"]
+        assert question_policy(source["canonical_blueprint"]) == policy

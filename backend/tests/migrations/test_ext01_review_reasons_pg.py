@@ -602,6 +602,25 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
         self.assertEqual(sorted(p["replayed"] for p in parsed), [False, True])
         self.assertTrue(all(p["reasons"] == ["EQUIVALENT_OPTIONS"] for p in parsed))
 
+    def test_recovery_checks_locked_and_shuffled_sessions_under_db_lock(self):
+        self._apply_migrations(max_prefix="028")
+        self._seed_session()
+        op = uuid4()
+        self.reserve(op, "'[]'::jsonb")
+        self.sql(f"UPDATE public.review_operations SET expires_at=clock_timestamp()-interval '1 second' WHERE operation_id='{op}';")
+        recover = f"SELECT public.review_recover_session('{SID}');"
+        for status, expected in [("approved", "REVIEW_LOCKED"), ("reviewed", "REVIEW_POST_SHUFFLE_LOCKED")]:
+            self.sql(f"UPDATE public.exam_sessions SET status='{status}' WHERE id='{SID}';"
+                     f"UPDATE public.exam_versions SET is_finalized=true WHERE id='{VERSION}';")
+            denied = self.call_raw(recover, role="service_role", check=False)
+            self.assertNotEqual(denied.returncode, 0)
+            self.assertIn(expected, denied.stderr)
+            self.assertEqual(self.lookup(op, "'[]'::jsonb")["reservation"]["operation_status"], "active")
+        self.sql(f"UPDATE public.exam_sessions SET status='generated' WHERE id='{SID}';"
+                 f"UPDATE public.exam_versions SET is_finalized=false WHERE id='{VERSION}';")
+        self.assertEqual(self.call_json(recover, role="service_role")["recovered_count"], 1)
+        self.assertEqual(self.call_json(recover, role="service_role")["recovered_count"], 0)
+
     def test_non_empty_reasons_end_to_end_lifecycle_a02_19(self) -> None:
         self._apply_migrations(max_prefix="028")
         self._seed_session()
