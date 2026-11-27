@@ -7,7 +7,7 @@
 - **Thứ tự làm:** Inline answer/solution/Accept; read epoch và navigation epoch; bỏ optimistic overwrite; next-unreviewed theo mã; nối reasons/recovery sau gói 01–04; giữ focus, lock và routing.
 - **Đầu ra / điều kiện hoàn thành gói:** UI và component/service tests trên baseline đã đồng bộ. Reasons chỉ mở khi backend/AI đã tích hợp; capability mode và consumer readiness mới chờ G2/G4.
 - **Kiểm chứng:** A01-01–14; A02-11/13/14/15/24 phối hợp backend/consumer. Xem [ma trận và lệnh kiểm](08-verification.md).
-- **Trạng thái thực thi:** chưa xác nhận code/test của gói. Theo dõi input/owner/ETA tại [09 — Inputs và bàn giao](09-inputs-handoff.md), không lập bảng trạng thái song song.
+- **Trạng thái thực thi:** đã có bản G0/G1 của author. Xem [bằng chứng và giới hạn ngày 27/11](08-verification.md#evidence-20261127). Theo dõi input/owner/ETA tại [09 — Inputs và bàn giao](09-inputs-handoff.md), không lập bảng trạng thái song song.
 
 Các số mục cũ được giữ để truy vết review; đường dẫn code trong backtick tính từ root repository. Tách file không đổi phân công, quyền hoặc chiến lược PR.
 

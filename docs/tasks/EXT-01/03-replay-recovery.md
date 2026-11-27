@@ -7,7 +7,7 @@
 - **Thứ tự làm:** Dùng completion payload cho cả ba response path; phân loại active/terminal/uncertain; thêm recovery route với owner check trước worker RPC; đối soát snapshot; test crash, expiry, race và lost response.
 - **Đầu ra / điều kiện hoàn thành gói:** Response/recovery contract và tests để gói 05 nối client; không giữ lock xuyên AI hoặc coi local lock là DB authority.
 - **Kiểm chứng:** A02-10/11/12/13/19/20/25; A01-14 phối hợp UI. Xem [ma trận và lệnh kiểm](08-verification.md).
-- **Trạng thái thực thi:** chưa xác nhận code/test của gói. Theo dõi input/owner/ETA tại [09 — Inputs và bàn giao](09-inputs-handoff.md), không lập bảng trạng thái song song.
+- **Trạng thái thực thi:** đã có bản G0/G1 của author. Xem [bằng chứng và giới hạn ngày 27/11](08-verification.md#evidence-20261127). Theo dõi input/owner/ETA tại [09 — Inputs và bàn giao](09-inputs-handoff.md), không lập bảng trạng thái song song.
 
 Các số mục cũ được giữ để truy vết review; đường dẫn code trong backtick tính từ root repository. Tách file không đổi phân công, quyền hoặc chiến lược PR.
 

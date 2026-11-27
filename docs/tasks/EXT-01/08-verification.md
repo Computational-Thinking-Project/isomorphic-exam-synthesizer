@@ -7,9 +7,71 @@
 - **Thứ tự làm:** Mỗi gói chạy subset liên quan; ghi command/head/môi trường/pass-fail-skip; DB disposable/full chain/PostgREST theo gate; kiểm UI/AI/artifact thật khi đủ; review độc lập trước Ready.
 - **Đầu ra / điều kiện hoàn thành gói:** M3/M5 và evidence tại integration HEAD; chưa tick Done cho test chưa chạy, chưa gọi CI xanh là live pass.
 - **Kiểm chứng:** Toàn bộ A01/A02, A03/A20 phối hợp; không nhân bản ma trận sang file khác. Xem [ma trận và lệnh kiểm](08-verification.md).
-- **Trạng thái thực thi:** chưa xác nhận code/test của gói. Theo dõi input/owner/ETA tại [09 — Inputs và bàn giao](09-inputs-handoff.md), không lập bảng trạng thái song song.
+- **Trạng thái thực thi:** đã có bản G0/G1 của author. Xem [bằng chứng và giới hạn ngày 27/11](08-verification.md#evidence-20261127). Theo dõi input/owner/ETA tại [09 — Inputs và bàn giao](09-inputs-handoff.md), không lập bảng trạng thái song song.
 
 Các số mục cũ được giữ để truy vết review; đường dẫn code trong backtick tính từ root repository. Tách file không đổi phân công, quyền hoặc chiến lược PR.
+
+<a id="evidence-20261127"></a>
+
+## Kết quả kiểm của author · 27/11/2026
+
+Windows, PowerShell, Python 3.14, Node 24.16, Docker Desktop / PostgreSQL 15 Alpine. Checkpoint M2 là `49cd9b7`. Code tích hợp và ca nghiệm thu cuối là `7144d33`. Bản bàn giao tiếp sau chỉ sửa Markdown. A01 có 14 ca đạt ở mức UI local. A02 có 17 ca đạt ở mức ghi trong bảng, 8 ca có bằng chứng một phần và 5 ca chưa chạy do gate. Suite dùng mock, PG cô lập, Gemini thật và Edge local có phạm vi riêng.
+
+| Lượt kiểm | SHA / môi trường | Kết quả thực tế |
+|---|---|---|
+| API, service, AI sau M3–M4 | Working tree sau M2 | 268 pass. Đường Q02 và prompt retry được kiểm trước khi nối UI. |
+| Regression toàn backend | `93672c3`, Windows UTF-8 | 2296 pass, 797 skip theo điều kiện của suite. Lượt trước dùng code page Windows có 14 lỗi đọc fixture và 1 timeout validator. Chạy lại toàn bộ với UTF-8 đạt. Từ SHA này đến `7144d33`, backend chỉ bổ sung bước assert trong test PG opt-in. |
+| Review API, service, targeted AI | `7144d33`, ASGI/RPC doubles, Gemini mock | 278 pass, 1 skip là Gemini opt-in. |
+| Provider Gemini thật | Working tree có test live sau `3ebd333`, cùng mã adapter và test live ở `7144d33` | 15/15 test trong file targeted khi bật live, gồm 1 test gửi fixture Toán qua Gemini và validator thật, giới hạn 4 call. Permit dùng fixture bộ nhớ. |
+| PostgreSQL 15 disposable | `93672c3` | 35 pass gồm 8 migration EXT-01, 4 service asyncpg và 23 snapshot. Regression RPC/chain upstream riêng đạt 47 pass và 7 subtest. |
+| Migration 028 và archived replay | `652b5e7`, cùng backend/test PG với `7144d33` | 8/8 pass. Đã chạy full chain 002–028 trên DB test, rerun 028, kiểm role/signature, race, recover khóa/expiry và replay candidate B sau khi accept B rồi sinh C. |
+| Frontend regression, ESLint, build | `7144d33`, Node DOM harness / Vite | 631/631 pass, 0 fail/skip/cancel. ESLint và build pass. Vite cảnh báo chunk lớn hơn 500 kB. |
+| Browser native | Edge headless trên Windows, fixture I-EXT-01; source ngay trước `93672c3` | Pass. Mở dialog, kiểm 8 checkbox, chọn lý do, đóng dialog, Accept inline, xác minh focus Preview và readiness trước/sau. Các thay đổi UI sau lần này chỉ là câu báo chờ readiness. |
+| Static | `93672c3`, cùng backend/app với `7144d33` | Ruff pass. Mypy pass trên 128 source file. |
+
+**Lệnh kiểm đã chạy.** Từ root, dùng `$env:PYTHONUTF8='1'` khi chạy toàn backend. Mỗi nhóm opt-in PG chạy trên database/container riêng do fixture tạo. Lượt PG legacy còn đặt `PYTHONPATH=backend;backend/tests/migrations`.
+
+```powershell
+python -m ruff check backend/app scripts/blueprint
+python -m mypy backend/app --ignore-missing-imports
+python -m pytest backend/tests scripts/blueprint/tests -q -s --disable-warnings --tb=line
+python -X utf8 -m pytest backend/tests/api/test_ext01_reject_api.py backend/tests/api/test_review_api.py backend/tests/api/test_review_rpc_http.py backend/tests/services/test_review_lifecycle.py backend/tests/services/test_review_receipts.py backend/tests/services/test_review_contract_parsers.py backend/tests/services/test_review_flow.py backend/tests/services/test_ext01_durable_reasons.py backend/tests/ai/test_targeted_regeneration.py -q --disable-warnings --tb=line
+
+# Suite opt-in Gemini, fixture tổng hợp
+$env:RUN_EXT01_LIVE_AI='1'
+python -X utf8 -m pytest backend/tests/ai/test_targeted_regeneration.py -q -s --tb=line --disable-warnings
+
+# Các suite PostgreSQL disposable
+$env:RUN_POSTGRES_MIGRATION_TESTS='1'
+$env:RUN_TASK305_REAL_DB_TESTS='1'
+$env:EXAM_TEST_DB_DESTRUCTIVE='1'
+python -X utf8 -m pytest backend/tests/migrations/test_ext01_review_reasons_pg.py backend/tests/services/test_review_real_db_integration.py backend/tests/migrations/test_review_snapshot_pg.py -q -s --tb=line
+$env:RUN_UPSTREAM_MIGRATION_TESTS='1'
+$env:PYTHONPATH='backend;backend/tests/migrations'
+python -X utf8 -m pytest backend/tests/migrations/test_review_rpcs.py backend/tests/migrations/test_review_migration_chain.py -q -s --tb=line
+
+# Từ frontend/
+node --test --test-concurrency=1 src/features/stage3-review/Stage3Review.test.js src/services/stage3Service.test.js
+npm test -- --test-concurrency=1
+npm run lint
+npm run build
+```
+
+**A01.** File `frontend/src/features/stage3-review/Stage3Review.test.js` kiểm thứ tự 2×3, vòng lại mã hiện tại và biên 1×1/4×20 (01/02/12), điều hướng khi pending, A→B→A và hai read cùng session trả ngược thứ tự (03/04/13), lỗi/mất response và mismatch candidate (05/06/14), reload fixture accept/regenerate/revert và trạng thái khóa (07/10), server ready true/false (08/09), đáp án, lời giải, dialog, focus và xác nhận (11). Edge kiểm bổ sung đường tương tác nêu trên. Chưa có phiên đăng nhập hosted chạy đủ 14 ca với DB thật.
+
+| A02 | Mức kiểm | Bằng chứng hoặc điều kiện còn thiếu |
+|---|---|---|
+| 01–03, 29 | Pass API | Body cũ, enum, canonicalization và payload sai trước side effect. |
+| 04–08, 17 | Pass service/PG | Binding ở lookup/reserve, receipt vắng/malformed, conflict, race, role ACL, signature và migration replay trên DB disposable. |
+| 09 | Pass mock và provider smoke | Đã kiểm prompt đầu, retry schema, duplicate và solution repair. Một operation với Gemini thật qua validator. |
+| 10, 13, 14, 19, 20 | Pass theo lớp | Permit/quota, timeout/cancel, failed/recovered, FE key retry/retire, complete/settle/replay và candidate mới pending. PG thật có Accept rồi regenerate tiếp. |
+| 25 | Pass ASGI/service và PG | Owner denial trước worker, pre-read guard, lỗi post-read, active/expired, khóa approve/post-shuffle và gọi recover lần hai. |
+| 11, 12 | Một phần | PG kiểm lease, recovery sau reserve và replay sau Accept + regeneration kế tiếp. Worker crash được mô phỏng bằng operation còn trong ledger. Chưa kill process live hoặc chạy replay sau một lượt shuffle thật trong cùng kịch bản. |
+| 15, 18, 21, 22 | Một phần | Có fixture revert có/thiếu lời giải, clone 1.0/1.1 mixed và fallback; regression Preview/Export, approve khi active, Stage 2 saved-result resume đạt trong các suite riêng. Chưa kiểm delete race liên EXT, job hosted cũ, hay xác nhận provenance và mode từ owner. |
+| 24, 30 | Một phần | Đã kiểm đến candidate thay thế, đáp án/lời giải và accept, cùng migration fresh/legacy/rerun. Chưa có file export của chính operation sau shuffle/approve liên EXT, hoặc diễn tập coordinated rollback/roll-forward sau lỗi deploy. |
+| 16, 23, 26, 27, 28 | Skip theo gate | Q04 chặn mode/slot guard, Q05 chặn rollout và PostgREST schema cache dùng chung, Q06–Q08 chặn chứng nhận classifier/reader/provenance của consumer. |
+
+Fixture policy chứa projected fields phục vụ đối chiếu 1.0/1.1. Chưa có consumer xác nhận các fixture đủ dùng cho Preview/Export. A20 và GitHub Approve/CI thuộc các bước tiếp theo.
 
 <a id="section-5"></a>
 

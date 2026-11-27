@@ -7,7 +7,7 @@
 - **Thứ tự làm:** Hoàn thiện fixture từ mẫu; ghi revision/head; lấy xác nhận còn thiếu trong thread hiện có; cập nhật contract chuẩn và dẫn lại; ghi need-by/ETA theo owner.
 - **Đầu ra / điều kiện hoàn thành gói:** I-EXT-01 Delivered/Accepted theo phạm vi; G2/G3/G4 chỉ mở khi đủ evidence. Không đăng tin từ việc đọc file này.
 - **Kiểm chứng:** Schema validation fixture; consumer acknowledgement; integrated evidence sau API/DB thật. Xem [ma trận và lệnh kiểm](08-verification.md).
-- **Trạng thái thực thi:** chưa xác nhận code/test của gói. Theo dõi input/owner/ETA tại [09 — Inputs và bàn giao](09-inputs-handoff.md), không lập bảng trạng thái song song.
+- **Trạng thái thực thi:** đã có bản G0/G1 của author. Xem [bằng chứng và giới hạn ngày 27/11](08-verification.md#evidence-20261127). Theo dõi input/owner/ETA tại [09 — Inputs và bàn giao](09-inputs-handoff.md), không lập bảng trạng thái song song.
 
 Các số mục cũ được giữ để truy vết review; đường dẫn code trong backtick tính từ root repository. Tách file không đổi phân công, quyền hoặc chiến lược PR.
 
@@ -19,7 +19,7 @@ Nơi tổng hợp input duy nhất: bảng M2 dưới đây (sau khi tạo PR c�
 
 | ID / nguồn | Provider → Consumer | Điều kiện đủ dùng | Need-by / ETA | Mức hiện tại / bước tiếp |
 |---|---|---|---|---|
-| I-EXT-01 (EXT v3.1 §1) | Duy → Tâm, Đạt, Quỳnh | Contract current candidate, accept/revert, readiness, missing solution và fixture đúng schema; sau đó evidence từ DB/API thật | Contract 26/11; code/evidence dự kiến 30/11; ETA xác nhận TBD | Requested theo phân công; cần consumer xác nhận |
+| I-EXT-01 (EXT v3.1 §1) | Duy → Tâm, Đạt, Quỳnh | Contract current candidate, accept/revert, readiness, missing solution và fixture đúng schema; sau đó evidence từ DB/API thật | Contract 26/11; code/evidence dự kiến 30/11; ETA xác nhận TBD | Có [fixture Review revision 1](../../../backend/tests/fixtures/ext01_review_transitions.json) và [fixture policy](../../../backend/tests/fixtures/ext01_policy_compatibility.json) trên nhánh Draft PR. Chờ consumer xác nhận đủ dùng và integration head. |
 | I-EXT-02 (EXT v3.1 §1) | Quỳnh → Tâm, Đạt | Mẫu nguồn/đích, metadata nullable, receipt/snapshot, miền và sức chứa mã sản phẩm, cặp ID/mã của hai lượt; Duy cần phối hợp migration/session lock cho Review | Contract 26/11; ETA TBD | Theo M1; không đổi owner hoặc ranh giới input |
 | I-EXT-03 (EXT v3.1 §1) | Tâm → Quỳnh, Đạt | Canonical source, trạng thái mở lại, projection hậu shuffle có đáp án/lời giải; Duy cần mode guard/slot policy thống nhất với Tâm | Quyết định 26–27/11; ETA TBD | Theo M1; cần thống nhất điểm nối Review |
 | I-EXT-04 (EXT v3.1 §1) | Đạt → Quỳnh | Tập con mã/số câu OMR đã kiểm; miền mã sản phẩm từ I-EXT-02 | Trước mở OMR; ETA TBD | Không chặn EXT-01 |
@@ -107,3 +107,22 @@ Mỗi snapshot chỉ chứa candidate current của slot, không chứa cả ba 
 A02-24 dùng nhánh candidate …0002: hoán vị options sang `["x = -3", "x = 5", "x = 3", "x = -5"]` thì display key `C`, lời giải đồng bộ `Chọn C`, canonical key vẫn A. Preview/Approve/Export phải dùng projection hậu shuffle và đúng version ID; file xuất không được lấy câu 3x + 6 = 0. Dùng seed fixture hợp lệ có mapping làm đổi nhãn, hoặc chọn case thực tế có mapping đó; chạy shuffler thật, kiểm projection dựa trên mapping đã persist (ví dụ hoán vị trên chỉ minh họa, không mặc định mọi seed cho C). Nhánh revert thiếu solution kiểm độc lập. Mã công khai do EXT-04 cấp, không giả định luôn là 101.
 
 Bàn giao thêm mẫu AI-mode original clone/fallback với pending_review, legacy clone null/mixed-policy và case source có solution. Người nhận xác nhận đủ dùng theo contract, sau đó test thật. Không đánh dấu Decided/Delivered/Accepted/Integrated chỉ vì mẫu đã nằm trong plan.
+
+<a id="handoff-20261127"></a>
+
+## Bàn giao author ngày 27/11/2026
+
+Draft PR #111 hướng đến `dev`. Workflow v0.1 proposed, tài liệu `7b7387f`. Nhánh `feat/ext-01-review` kế thừa PR #109 qua `b2924434`, baseline `a128bf4`, M1–M2 `49cd9b7`. Code/test/fixture của đợt đầu ở `7144d33`. Xem [kết quả nghiệm thu](08-verification.md#evidence-20261127).
+
+| Đầu việc còn lại sau M2 | Đầu ra author |
+|---|---|
+| M3 replay | Complete, replay và đối soát sau mất response dựng cùng projection từ receipt. Lookup kiểm binding và dùng ID cũ kể cả khi candidate đã bị thay. |
+| M3 recovery | Q03 kiểm owner, đọc snapshot trước worker, kiểm trạng thái dưới DB lock, settle theo DB clock rồi đọc snapshot mới. Retry key active đối soát trước kiểm adapter AI. |
+| M4 feedback | Tám reason codes có chỉ dẫn cố định từ receipt, đi cùng feedback động của validator qua retry. Fingerprint và prompt version Stage 2 giữ tương thích. |
+| M5 hiển thị | So sánh nguồn/biến thể có đáp án và lời giải, Accept inline, chuẩn hóa placeholder và giữ dialog cho lý do/revert. |
+| M5 điều hướng | Slot đang chờ được khóa riêng. Người dùng chuyển câu/mã được. Snapshot quyết định trạng thái, epoch bảo vệ đọc muộn và auto-advance. Preview cần reviewed và ready. |
+| M5 nối API | Reject gắn key với reasons, giữ binding khi chưa rõ kết quả, bỏ key khi terminal. Reload và Kiểm tra lại dùng Q03. |
+| M6 fixture/nghiệm thu | I-EXT-01 revision 1 có 12 snapshot typed. Fixture 1.0/1.1 cung cấp ví dụ policy theo slot và các biến thể âm cho consumer. Mức kiểm trong gói 08. |
+| M6 bàn giao | Contract RPC local, changelog, bảng input và giới hạn triển khai đã cập nhật trong cùng Draft PR. |
+
+**G2 / Q04** chờ Tâm xác nhận frozen mode, discriminator legacy và slot policy. **G3 / Q05** chờ Quỳnh cùng các owner xác nhận thứ tự migration và rollout chung. **G4 / Q06–Q08** chờ các owner Preview/Export/Finalize/Delete xác nhận provenance, lock và readiness liên task. ETA và Accepted/Integrated của consumer vẫn TBD. G5 gồm nghiệm thu tích hợp có consumer, CI và review độc lập trên head phù hợp.

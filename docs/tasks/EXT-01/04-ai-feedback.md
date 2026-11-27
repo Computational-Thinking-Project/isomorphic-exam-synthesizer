@@ -7,7 +7,7 @@
 - **Thứ tự làm:** Thêm teacher feedback cố định tách repair feedback; truyền từ validated receipt; giữ qua mọi retry; giữ permit/timeout/fingerprint Stage 2; cập nhật mocks và targeted tests.
 - **Đầu ra / điều kiện hoàn thành gói:** Targeted feedback chạy end-to-end với gói 02/03. Phần thay variation modes/clone guard thuộc gói 06 và chỉ tích hợp sau G2.
 - **Kiểm chứng:** A02-09/10/21; live AI khi đủ môi trường, chưa được thay bằng mock evidence. Xem [ma trận và lệnh kiểm](08-verification.md).
-- **Trạng thái thực thi:** chưa xác nhận code/test của gói. Theo dõi input/owner/ETA tại [09 — Inputs và bàn giao](09-inputs-handoff.md), không lập bảng trạng thái song song.
+- **Trạng thái thực thi:** đã có bản G0/G1 của author. Xem [bằng chứng và giới hạn ngày 27/11](08-verification.md#evidence-20261127). Theo dõi input/owner/ETA tại [09 — Inputs và bàn giao](09-inputs-handoff.md), không lập bảng trạng thái song song.
 
 Các số mục cũ được giữ để truy vết review; đường dẫn code trong backtick tính từ root repository. Tách file không đổi phân công, quyền hoặc chiến lược PR.
 

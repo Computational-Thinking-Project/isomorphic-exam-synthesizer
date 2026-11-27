@@ -2,6 +2,8 @@
 
 **M2 Implementation Plan · v1.2, hiệu chỉnh sau review ngày 26/11/2026 · proposed tại ranh giới liên task**
 
+**Cập nhật author ngày 27/11/2026.** Draft PR #111 đã có bản triển khai G0/G1 tại `7144d33`. M0–M2 dùng checkpoint `49cd9b7`. M3–M5 và fixture M6 nằm trong diff sau checkpoint. Kết quả kiểm theo môi trường và các tiêu chí còn mở nằm ở [gói 08](docs/tasks/EXT-01/08-verification.md#evidence-20261127). Trạng thái consumer và G2–G4 nằm ở [gói 09](docs/tasks/EXT-01/09-inputs-handoff.md#handoff-20261127). Các bảng kế hoạch ngày 26/11 bên dưới giữ mốc dự kiến ban đầu.
+
 ## Bắt đầu từ đâu?
 
 Bộ plan được tách từ bản đã commit `4618075` ngày 26/11/2026; giữ các cập nhật và link comment PR hiện có. Trạng thái remote/acknowledgement bên dưới được kế thừa từ bản đó, chưa kiểm lại GitHub trong lượt tách file. Đây là các gói của cùng EXT-01, không phải phân công thành viên hay PR mới. “Bắt đầu ngay” nghĩa đủ đầu vào để chuẩn bị/kiểm local; lịch code từ 27/11 vẫn giữ nguyên.

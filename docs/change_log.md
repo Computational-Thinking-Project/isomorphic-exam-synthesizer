@@ -1,3 +1,13 @@
+## DEC-EXT01-001 · Receipt bất biến và phục hồi Review theo phiên
+
+Ngày 27/11/2026. EXT-01, Duy phụ trách. Bản triển khai G0/G1 trong Draft PR #111. Rollout DB dùng chung ở trạng thái proposed.
+
+- **Bối cảnh.** Sau khi mất response, candidate hiện tại có thể đã được duyệt hoặc thay thế. Reload tab cũng có thể mất key của operation đang giữ lease.
+- **Quyết định.** Migration 028 local chiếu candidate đã commit và ràng buộc reasons vào receipt. Reject dùng cùng projection cho ba đường trả kết quả. POST recovery xác minh owner và guard, dùng DB clock, trả snapshot. Targeted regeneration nhận feedback cố định từ receipt. Stage 3 đọc lại snapshot sau thao tác và mở Preview theo readiness của server.
+- **Ảnh hưởng.** Worker và owner tiếp tục dùng hai quyền RPC riêng. Consumer có fixture Review revision 1 và mẫu tương thích. Deployment và các contract Q04–Q08 còn chờ owner. [Contract](api/review-rpc-contract.md) · [Bàn giao](tasks/EXT-01/09-inputs-handoff.md#handoff-20261127)
+
+---
+
 ## PR #109 — Windows full regression passed — 25/11/2026
 
 - Sau xác nhận của Philip về khả năng phát sinh telemetry, full frontend Windows **621/621 pass**,0fail/skip/cancel/108.27s, HEAD72adb9f/source8a6f600. [Checkpoint6.25](tasks/ISSUE-95.md) thay trạng thái full bị chặn/chưa xác nhận trước đó bằng kết quả mới.
