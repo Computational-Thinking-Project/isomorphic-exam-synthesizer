@@ -915,7 +915,7 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
         """)
         op = uuid4()
         self.reserve(op)
-        candidate = dict(candidate_payload(0), correct_key="C", solution_md="Ta co x = 5. Chọn C.")
+        candidate = dict(candidate_payload(0), solution_md="Ta co x = 5. Chọn C.")
         result = self.call_json(
             f"SELECT public.review_complete_regeneration('{op}', {literal(json.dumps(candidate))}::jsonb);",
             role="service_role",
@@ -945,6 +945,7 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
         self.assertIn("REVIEW_POST_SHUFFLE_LOCKED", self.call_raw(read_snapshot, check=False).stderr)
         self.assertEqual(self.lookup(op)["reservation"]["completion_candidate"], candidate)
         self.assertEqual(self.call_json(f"SELECT public.finalize_approve_session('{SID}');")["status"], "approved")
+        self.assertEqual(self.lookup(op)["reservation"]["completion_candidate"], candidate)
 
         exported = build_approved_snapshot(RawSnapshotRows(
             session=rows(f"SELECT * FROM public.exam_sessions WHERE id='{SID}'")[0],
