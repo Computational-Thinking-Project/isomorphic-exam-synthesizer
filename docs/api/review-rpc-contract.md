@@ -28,8 +28,8 @@ payloads/results JSONB. Each mutation is one short transaction; AI runs outside 
 
 | RPC | Parameters after `p_` | Allowed caller | Main result |
 |---|---|---|---|
-| `review_lookup_regeneration` | `session_id UUID, question_id UUID, operation_id UUID, reasons JSONB` (028) | Owner JWT only | `{found:false}` or `{found:true,reservation:<stored receipt with current operation_status/settlement>}`; read only |
-| `review_reserve_regeneration` | `session_id UUID, question_id UUID, operation_id UUID, reasons JSONB` (028) | Owner JWT | `operation_id, question_id, expires_at, max_attempts, snapshot, operation_status` |
+| `review_lookup_regeneration` | `session_id UUID, question_id UUID, operation_id UUID, reasons JSONB` (029) | Owner JWT only | `{found:false}` or `{found:true,reservation:<stored receipt with current operation_status/settlement>}`; read only |
+| `review_reserve_regeneration` | `session_id UUID, question_id UUID, operation_id UUID, reasons JSONB` (029) | Owner JWT | `operation_id, question_id, expires_at, max_attempts, snapshot, operation_status` |
 | `review_acquire_attempt` | `operation_id UUID, attempt_id UUID` | Worker | The six-field permit below |
 | `review_complete_regeneration` | `operation_id UUID, candidate JSONB` | Worker | `operation_id, previous_question_id, question_id, api_calls_used, invalidated_version_ids, progress` |
 | `review_fail_regeneration` | `operation_id UUID, error_code TEXT` | Worker | `operation_id, question_id, api_calls_used, operation_status, recovered, progress` |
@@ -238,7 +238,7 @@ failure retains `REVIEW_SOURCE_MISMATCH`; the pinned strict caller maps invalid
 frozen evidence to HTTP 422 `ERR_SOURCE_NOT_CONFIRMED`. TASK-301's producer maps
 artifact errors at the public boundary; raw SQL/provider exceptions are not public payloads.
 
-### EXT-01 local contract (migration 028, shared rollout pending Q05)
+### EXT-01 local contract (migration 029, shared rollout pending Q05)
 
 The four SQL arguments use the `p_` prefix. Both authenticated RPCs require canonicalizable reasons. Historical reservations without a reasons field bind to the empty set. A different set on the same key returns HTTP 409 `ERR_ATTEMPT_REPLAYED`. Completed owner receipts include the ledger's `completion_candidate` and `settlement`. The first response, uncertain completion and replay project these fields with the original pending-review status. Clients read the snapshot for current state.
 

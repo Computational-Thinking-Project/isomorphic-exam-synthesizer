@@ -1,3 +1,7 @@
+## EXT-01 · Q05 migration numbering
+
+`029_ext01_review_reasons.sql` tiếp sau `028_generation_mode.sql` của EXT-02. Lượt đổi số giữ nguyên SQL. Applied ledger dùng chung chưa xác minh và rollout chờ G3. [Phương án rollout](tasks/EXT-01/02-durable-reasons.md#section-3-2-1)
+
 ## DEC-EXT01-001 · Receipt bất biến và phục hồi Review theo phiên
 
 Ngày 27/11/2026. EXT-01, Duy phụ trách. Bản triển khai G0/G1 trong Draft PR #111. Rollout DB dùng chung ở trạng thái proposed.

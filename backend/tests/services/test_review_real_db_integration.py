@@ -270,7 +270,7 @@ async def setup_real_postgres_database(isolated_pg_dsn):  # noqa: F811
             "007_finalize_approve_session_rpc.sql",
             "008_finalize_persist_shuffle_rpc.sql",
             "009_finalize_security_boundary.sql",
-            "028_ext01_review_reasons.sql",
+            "029_ext01_review_reasons.sql",
         ):
             path = os.path.abspath(
                 os.path.join(os.path.dirname(__file__), "../../migrations", migration)

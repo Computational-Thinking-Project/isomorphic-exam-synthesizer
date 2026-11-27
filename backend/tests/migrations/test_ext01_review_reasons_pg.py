@@ -1,4 +1,4 @@
-"""PostgreSQL 15 migration chain and RPC tests for EXT-01 Package 02 (028_ext01_review_reasons.sql).
+"""PostgreSQL 15 migration chain and RPC tests for EXT-01 Package 02 (029_ext01_review_reasons.sql).
 
 Opt in with RUN_POSTGRES_MIGRATION_TESTS=1:
     RUN_POSTGRES_MIGRATION_TESTS=1 python -m pytest backend/tests/migrations/test_ext01_review_reasons_pg.py -v -s
@@ -176,7 +176,7 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
     def value(cls, sql_expr: str) -> str:
         return cls.sql(sql_expr).stdout.strip()
 
-    def _apply_migrations(self, *, max_prefix: str = "028") -> None:
+    def _apply_migrations(self, *, max_prefix: str = "029") -> None:
         migration_files = sorted(
             [f for f in MIGRATIONS_DIR.glob("*.sql") if f.is_file()],
             key=lambda p: p.name,
@@ -190,7 +190,7 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
             if content.strip():
                 self.sql(content)
                 applied.append(mig.name)
-        self.assertIn("028_ext01_review_reasons.sql" if max_prefix >= "028" else "027_my_session_status_counts.sql", applied)
+        self.assertIn("029_ext01_review_reasons.sql" if max_prefix >= "029" else "027_my_session_status_counts.sql", applied)
 
     def _seed_session(self) -> None:
         artifact, publication = artifact_payload(SOURCE)
@@ -340,8 +340,8 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
             return self.call_raw(expr, role=role, actor=actor, check=False)
         return self.call_json(expr, role=role, actor=actor)
 
-    def test_full_chain_002_through_028_signatures_acls_and_idempotent_rerun(self) -> None:
-        self._apply_migrations(max_prefix="028")
+    def test_full_chain_002_through_029_signatures_acls_and_idempotent_rerun(self) -> None:
+        self._apply_migrations(max_prefix="029")
         self._seed_session()
 
         def assert_metadata() -> None:
@@ -396,8 +396,8 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
             "SELECT pg_get_functiondef('public.review_reserve_regeneration(uuid,uuid,uuid,jsonb)'::regprocedure);"
         )
 
-        # Idempotent re-run of 028 (A02-17)
-        self.sql((MIGRATIONS_DIR / "028_ext01_review_reasons.sql").read_text(encoding="utf-8"))
+        # Idempotent re-run of 029 (A02-17)
+        self.sql((MIGRATIONS_DIR / "029_ext01_review_reasons.sql").read_text(encoding="utf-8"))
         assert_metadata()
         self.assertEqual(
             self.value(
@@ -413,7 +413,7 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
         )
 
     def test_canonicalization_and_invalid_payloads(self) -> None:
-        self._apply_migrations(max_prefix="028")
+        self._apply_migrations(max_prefix="029")
         self._seed_session()
 
         for bad_sql in (
@@ -454,7 +454,7 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
         )
 
     def test_legacy_absent_reasons_upgrade_and_malformed_stored_reasons_fail_closed(self) -> None:
-        # Apply up to 027 (legacy 3-arg RPCs), create a legacy reservation without 'reasons', then apply 028.
+        # Apply up to 027 (legacy 3-arg RPCs), create a legacy reservation without 'reasons', then apply 029.
         self._apply_migrations(max_prefix="027")
         self._seed_session()
 
@@ -464,7 +464,7 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
         )
         self.assertNotIn("reasons", legacy_res)
 
-        self.sql((MIGRATIONS_DIR / "028_ext01_review_reasons.sql").read_text(encoding="utf-8"))
+        self.sql((MIGRATIONS_DIR / "029_ext01_review_reasons.sql").read_text(encoding="utf-8"))
 
         # Legacy row missing 'reasons' replays as []
         looked = self.lookup(legacy_op, "'[]'::jsonb")
@@ -501,7 +501,7 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
                 self.assertIn("55000", err.stderr)
 
     def test_conflict_checked_before_locked_and_stale_guards_a02_05(self) -> None:
-        self._apply_migrations(max_prefix="028")
+        self._apply_migrations(max_prefix="029")
         self._seed_session()
 
         op = uuid4()
@@ -524,7 +524,7 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
         self.assertTrue(self.reserve(op, "'[\"INCORRECT_ANSWER\"]'::jsonb")["replayed"])
 
     def test_cross_owner_and_role_concealment_a02_07_08(self) -> None:
-        self._apply_migrations(max_prefix="028")
+        self._apply_migrations(max_prefix="029")
         self._seed_session()
 
         op = uuid4()
@@ -555,7 +555,7 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
                 self.assertIn("permission denied", denied.stderr)
 
     def test_concurrent_same_key_race_a02_06(self) -> None:
-        self._apply_migrations(max_prefix="028")
+        self._apply_migrations(max_prefix="029")
         self._seed_session()
 
         def run_concurrent(script_a: str, script_b: str) -> list[subprocess.CompletedProcess[str]]:
@@ -603,7 +603,7 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
         self.assertTrue(all(p["reasons"] == ["EQUIVALENT_OPTIONS"] for p in parsed))
 
     def test_recovery_checks_locked_and_shuffled_sessions_under_db_lock(self):
-        self._apply_migrations(max_prefix="028")
+        self._apply_migrations(max_prefix="029")
         self._seed_session()
         op = uuid4()
         self.reserve(op, "'[]'::jsonb")
@@ -622,7 +622,7 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
         self.assertEqual(self.call_json(recover, role="service_role")["recovered_count"], 0)
 
     def test_non_empty_reasons_end_to_end_lifecycle_a02_19(self) -> None:
-        self._apply_migrations(max_prefix="028")
+        self._apply_migrations(max_prefix="029")
         self._seed_session()
 
         op = uuid4()
