@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { register } from 'node:module';
+import { readFileSync } from 'node:fs';
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes, useNavigate, useLocation } from 'react-router-dom';
@@ -3215,5 +3216,43 @@ test('A01-08 all slots approved still requires server readiness', async () => {
     await harness.render();
     assert.match(harness.container.textContent, /Đã duyệt 4\/4 câu/);
     assert.notEqual(harness.container.querySelector('[data-review-finalize]').getAttribute('disabled'), null);
+  } finally { await harness.unmount(); }
+});
+
+test('A01-07 refresh reads the current accepted, regenerated or reverted slot', async () => {
+  const url = new URL('../../../../backend/tests/fixtures/ext01_review_transitions.json', import.meta.url);
+  const { snapshots } = JSON.parse(readFileSync(url, 'utf8'));
+  for (const name of ['accepted', 'regenerated', 'reverted', 'reverted_accepted']) {
+    const snapshot = snapshots[name];
+    const candidate = snapshot.versions[0].slots[0].candidate;
+    const harness = renderStage3Page(snapshot.session_id, { loadSession: async () => structuredClone(snapshot) });
+    try {
+      await harness.render();
+      const panel = harness.container.querySelector('[data-review-variant]');
+      assert.ok(panel.textContent.includes(candidate.content));
+      assert.equal(panel.querySelector('[data-answer-key]').getAttribute('data-answer-key'), candidate.correct_key);
+      assert.equal(panel.querySelector('[data-review-inline-approve]').getAttribute('disabled') !== null,
+        candidate.status === 'approved');
+      if (candidate.is_reverted) assert.match(panel.textContent, /Chưa có lời giải/);
+    } finally { await harness.unmount(); }
+  }
+});
+
+test('A01-13 first visit cannot overwrite a new read after A to B to A', async () => {
+  let finishFirst, reads = 0;
+  const harness = renderStage3Page('A', {
+    loadSession: async id => {
+      const data = comparisonSession(id);
+      data.title = reads++ === 0 ? 'First visit' : 'Latest visit';
+      if (reads === 1) return new Promise(resolve => { finishFirst = () => resolve(data); });
+      return data;
+    },
+  });
+  try {
+    await harness.render();
+    await harness.navigate('B');
+    await harness.navigate('A');
+    await act(async () => finishFirst());
+    assert.equal(harness.container.querySelector('h1').textContent, 'Latest visit');
   } finally { await harness.unmount(); }
 });
