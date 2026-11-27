@@ -192,8 +192,13 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
                 applied.append(mig.name)
         self.assertIn("029_ext01_review_reasons.sql" if max_prefix >= "029" else "027_my_session_status_counts.sql", applied)
 
-    def _seed_session(self) -> None:
+    def _seed_session(self, *, clone_only: bool = False) -> None:
         artifact, publication = artifact_payload(SOURCE)
+        if clone_only:
+            policy = publication["canonical_blueprint"]["requirement"]["variation_policy"]
+            policy["allowed_transformations"] = [
+                rule for rule in policy["allowed_transformations"] if rule["dimension"] == "wording"
+            ]
         source = artifact["confirmed_input"]
         confirmation_id = str(uuid4())
         receipt = {
@@ -775,7 +780,6 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
         self.assertEqual(self.reserve(legacy_op)["variation_dimensions"], ["values", "context"])
         self.call_json(f"SELECT public.review_fail_regeneration('{legacy_op}', 'GENERATION_FAILED');", role="service_role")
 
-
         snapshot_sql = f"SELECT public.get_review_current_snapshot('{SID}');"
         revert = f"SELECT public.review_revert_question('{SID}', '{QID}', '{uuid4()}');"
         self.sql(f"""
@@ -820,6 +824,30 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
         """)
         self.assertTrue(json.loads(policy))
         self.assertEqual(self.reserve(uuid4())["variation_dimensions"], json.loads(policy))
+
+    def test_q04_frozen_v12_clone_slot_allows_accept_and_revert(self) -> None:
+        if not (MIGRATIONS_DIR / "028_generation_mode.sql").is_file():
+            self.skipTest("EXT-02 migration 028 not present in this checkout")
+        self._apply_migrations(max_prefix="029b")
+        self._seed_session(clone_only=True)
+        self._seed_policy_job()
+        self.sql(f"""
+            UPDATE public.generation_job_snapshots
+            SET mapping_version='1.2', generation_mode='ai_generation',
+                snapshot_payload=snapshot_payload || jsonb_build_object(
+                  'generation_mode', 'ai_generation', 'question_policies',
+                  jsonb_build_object('{SOURCE}', '{{"result_kind":"ORIGINAL_CLONE","canonical_dimensions":[]}}'::jsonb))
+            WHERE session_id='{SID}';
+        """)
+        denied = self.reserve(uuid4(), check=False)
+        self.assertIn("ERR_SLOT_POLICY_CLONE_ONLY", denied.stderr)
+        self.assertEqual(self.value("SELECT count(*) FROM public.review_operations;"), "0")
+        snap = self.call_json(f"SELECT public.get_review_current_snapshot('{SID}');")
+        self.assertEqual(snap["versions"][0]["slots"][0]["result_kind"], "ORIGINAL_CLONE")
+        accepted = self.call_json(f"SELECT public.review_accept_question('{SID}', '{QID}', '{uuid4()}');")
+        self.assertEqual(accepted["question_status"], "approved")
+        reverted = self.call_json(f"SELECT public.review_revert_question('{SID}', '{QID}', '{uuid4()}');")
+        self.assertEqual(reverted["question_status"], "pending_review")
 
     def test_non_empty_reasons_end_to_end_lifecycle_a02_19(self) -> None:
         self._apply_migrations(max_prefix="029")
@@ -870,6 +898,72 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
         conflict = self.lookup(op, "'[]'::jsonb", check=False)
         self.assertNotEqual(conflict.returncode, 0)
         self.assertIn("REVIEW_IDEMPOTENCY_CONFLICT", conflict.stderr)
+
+
+    def test_regenerated_candidate_remains_replayable_after_real_shuffle_and_approval(self):
+        from app.services.exporter.snapshot_builder import build_approved_snapshot
+        from app.services.exporter.snapshot_rows import RawSnapshotRows
+        from app.services.exporter.source_renderer import render_markdown
+        from app.services.finalize.shuffle_input import prepare_shuffle
+
+        self._apply_migrations(max_prefix="029b")
+        self._seed_session()
+        self._seed_policy_job()
+        self.sql(f"""
+          UPDATE public.generation_configs SET ordering_preferences =
+            '{{"shuffle_questions":false,"shuffle_options":true}}'::jsonb WHERE session_id='{SID}';
+        """)
+        op = uuid4()
+        self.reserve(op)
+        candidate = dict(candidate_payload(0), correct_key="C", solution_md="Ta co x = 5. Chọn C.")
+        result = self.call_json(
+            f"SELECT public.review_complete_regeneration('{op}', {literal(json.dumps(candidate))}::jsonb);",
+            role="service_role",
+        )
+        new_id = result["question_id"]
+        self.call_json(f"SELECT public.review_accept_question('{SID}', '{new_id}', '{uuid4()}');")
+        read_snapshot = f"SELECT public.get_review_current_snapshot('{SID}');"
+        self.assertTrue(self.call_json(read_snapshot)["progress"]["ready"])
+
+        def rows(query):
+            return json.loads(self.value(f"SELECT jsonb_agg(to_jsonb(r)) FROM ({query}) r;"))
+
+        inputs = dict(
+            config=rows(f"SELECT id,session_id,n_versions,ordering_preferences FROM public.generation_configs WHERE session_id='{SID}'")[0],
+            versions=rows(f"SELECT id,session_id,version_code FROM public.exam_versions WHERE session_id='{SID}'"),
+            sources=rows(f"SELECT id,session_id,question_no FROM public.source_questions WHERE session_id='{SID}'"),
+            questions=rows(f"""SELECT id,version_id,source_question_id,content,canonical_question_no,
+              canonical_options,canonical_correct_key,canonical_solution_md,status,is_current
+              FROM public.version_questions WHERE id='{new_id}'"""),
+        )
+        shuffled = prepare_shuffle(SID, **inputs)[0]
+        payload = {"actor_id": OWNER, "snapshot": inputs, "versions": [shuffled.model_dump(mode="json")]}
+        self.call_json(
+            f"SELECT public.finalize_persist_shuffle('{SID}', {literal(json.dumps(payload))}::jsonb);",
+            role="service_role",
+        )
+        self.assertIn("REVIEW_POST_SHUFFLE_LOCKED", self.call_raw(read_snapshot, check=False).stderr)
+        self.assertEqual(self.lookup(op)["reservation"]["completion_candidate"], candidate)
+        self.assertEqual(self.call_json(f"SELECT public.finalize_approve_session('{SID}');")["status"], "approved")
+
+        exported = build_approved_snapshot(RawSnapshotRows(
+            session=rows(f"SELECT * FROM public.exam_sessions WHERE id='{SID}'")[0],
+            n_versions=1,
+            source_question_ids=(SOURCE,),
+            versions=tuple(rows(f"SELECT * FROM public.exam_versions WHERE id='{VERSION}'")),
+            questions=tuple(rows(f"SELECT * FROM public.version_questions WHERE id='{new_id}'")),
+            answer_keys=tuple(rows(f"SELECT * FROM public.answer_keys WHERE version_id='{VERSION}'")),
+        ))
+        version = exported.versions[0]
+        question = version.questions[0]
+        display = shuffled.questions[0]
+        self.assertEqual(str(question.id), new_id)
+        self.assertNotEqual(display.display_correct_key, candidate["correct_key"])
+        self.assertEqual(question.correct_key, display.display_correct_key)
+        self.assertEqual(question.solution_md, display.solution_md)
+        markdown = render_markdown(exported, version)
+        self.assertIn(f"| 1 | {display.display_correct_key} |", markdown)
+        self.assertIn(display.solution_md, markdown)
 
 
 if __name__ == "__main__":
