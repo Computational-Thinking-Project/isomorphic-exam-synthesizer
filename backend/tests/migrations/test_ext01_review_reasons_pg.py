@@ -650,7 +650,19 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
         self.assertNotIn("reasons", looked["reservation"]["snapshot"])
         original = looked["reservation"]["completion_candidate"]
         self.assertEqual(original, candidate_payload(1))
-        self.sql(f"UPDATE public.version_questions SET status='approved', content='Later edit' WHERE id='{completed['question_id']}';")
+        old_id = completed["question_id"]
+        accepted = self.call_json(f"SELECT public.review_accept_question('{SID}', '{old_id}', '{uuid4()}');")
+        self.assertEqual(accepted["question_status"], "approved")
+        next_op = uuid4()
+        self.reserve(next_op, question_id=old_id)
+        self.call_json(f"SELECT public.review_acquire_attempt('{next_op}', '{uuid4()}');", role="service_role")
+        later_candidate = dict(candidate_payload(1), stem_latex="Later replacement")
+        later = self.call_json(
+            f"SELECT public.review_complete_regeneration('{next_op}', {literal(json.dumps(later_candidate))}::jsonb);",
+            role="service_role",
+        )
+        self.assertNotEqual(later["question_id"], old_id)
+        self.assertEqual(self.value(f"SELECT is_current FROM public.version_questions WHERE id='{old_id}';"), "f")
         replay = self.lookup(op, """'["INCORRECT_SOLUTION","EQUIVALENT_OPTIONS"]'::jsonb""")
         self.assertEqual(replay["reservation"]["completion_candidate"], original)
         self.assertEqual(replay["reservation"]["settlement"], completed)

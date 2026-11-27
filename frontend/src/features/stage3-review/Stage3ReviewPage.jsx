@@ -1179,7 +1179,7 @@ export default function Stage3ReviewPage({
             )}
             {isFinalizeDisabled ? (
               <p className="text-xs sm:text-sm text-muted" role="status">
-                {reviewSyncRequired ? 'Cần đọc lại trạng thái review.' : isReviewReadOnly ? 'Phiên đang chỉ xem hoặc đã khóa.' : totalExpectedSlots === 0 ? 'Chưa có đủ dữ liệu câu hỏi.' : isPartial ? 'Cần sinh đủ câu và duyệt tất cả câu hỏi.' : `Còn ${Math.max(0, totalExpectedSlots - approvedCount)} câu chưa duyệt.`}
+                {reviewSyncRequired ? 'Cần đọc lại trạng thái review.' : isReviewReadOnly ? 'Phiên đang chỉ xem hoặc đã khóa.' : totalExpectedSlots === 0 ? 'Chưa có đủ dữ liệu câu hỏi.' : isPartial ? 'Cần sinh đủ câu và duyệt tất cả câu hỏi.' : approvedCount === totalExpectedSlots ? 'Đang chờ phiên sẵn sàng xem trước.' : `Còn ${Math.max(0, totalExpectedSlots - approvedCount)} câu chưa duyệt.`}
               </p>
             ) : (
               <p className="text-xs font-semibold text-approved-ink" role="status">

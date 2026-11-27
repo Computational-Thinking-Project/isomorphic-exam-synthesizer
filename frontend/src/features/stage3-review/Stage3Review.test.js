@@ -2869,25 +2869,30 @@ test('C3: xác nhận tạo lại không gọi API khi hủy, busy khóa đóng,
 
 test('C3: accept đúng candidate đóng popup, đi câu trước mã sau và không tự chuyển S07', async () => {
   const data = comparisonSession('dialog-next');
+  data.source_questions.push({ id: 'source-3', question_no: 3, content: 'Nguồn riêng 3' });
+  for (const version of data.exam_versions) version.questions.push({
+    id: `candidate-${version.version_index}-3`, source_question_id: 'source-3',
+    question_no: 3, content: 'Biến thể 3', status: 'pending_review',
+  });
   const calls = [];
   const harness = renderStage3Page(data.id, { loadSession: async () => structuredClone(data),
     acceptQuestionFn: async (_session, id) => {
       calls.push(id);
       for (const v of data.exam_versions) for (const q of v.questions) if (q.id === id) q.status = 'approved';
-      if (calls.length === 4) Object.assign(data, { status: 'reviewed', progress: { ready: true } });
+      if (calls.length === 6) Object.assign(data, { status: 'reviewed', progress: { ready: true } });
       return { question_id: id, question_status: 'approved' };
     },
   });
   try {
     await harness.render();
-    for (const [question, version] of [[1,1],[2,1],[1,2],[2,2]]) {
+    for (const [question, version] of [[1,1],[2,1],[3,1],[1,2],[2,2],[3,2]]) {
       assert.equal(harness.container.querySelector(`[data-review-nav-q="${question}"]`).getAttribute('aria-current'), 'true');
       assert.equal(harness.container.querySelector(`[data-review-version="${version}"]`).getAttribute('aria-selected'), 'true');
       await act(async () => harness.container.querySelector('[data-review-inspect]').click());
       await act(async () => harness.container.querySelector('[data-review-approve]').click());
       assert.ok(harness.container.querySelector('[role="dialog"]') === null, 'Duyệt đúng candidate phải đóng popup');
     }
-    assert.deepEqual(calls, ['candidate-1-1','candidate-1-2','candidate-2-1','candidate-2-2']);
+    assert.deepEqual(calls, ['candidate-1-1','candidate-1-2','candidate-1-3','candidate-2-1','candidate-2-2','candidate-2-3']);
     assert.equal(harness.getLocation(), '/session/dialog-next/stage3');
     assert.equal(harness.container.querySelector('[data-review-finalize]').getAttribute('disabled'), null);
   } finally { await harness.unmount(); }
@@ -3197,5 +3202,18 @@ test('A01-13 older same-session read cannot undo a later confirmed accept', asyn
     assert.equal(reads, 3);
     await act(async () => finishOldRead());
     assert.match(harness.container.textContent, /Đã duyệt 2\/4 câu/);
+  } finally { await harness.unmount(); }
+});
+
+test('A01-08 all slots approved still requires server readiness', async () => {
+  const data = comparisonSession('not-ready');
+  data.status = 'reviewed';
+  data.progress = { ready: false };
+  for (const version of data.exam_versions) for (const question of version.questions) question.status = 'approved';
+  const harness = renderStage3Page(data.id, { loadSession: async () => data });
+  try {
+    await harness.render();
+    assert.match(harness.container.textContent, /Đã duyệt 4\/4 câu/);
+    assert.notEqual(harness.container.querySelector('[data-review-finalize]').getAttribute('disabled'), null);
   } finally { await harness.unmount(); }
 });
