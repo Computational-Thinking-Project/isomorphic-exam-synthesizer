@@ -11,6 +11,58 @@
 
 Các số mục cũ được giữ để truy vết review; đường dẫn code trong backtick tính từ root repository. Tách file không đổi phân công, quyền hoặc chiến lược PR.
 
+<a id="evidence-q04"></a>
+
+## Q04 · Frozen mode và slot policy
+
+Baseline EXT-01 `d27364e`, provider #112 `68ed813`. Code Q04 `40bb555`, ca clone-only 1.2 và replay sau shuffle `b607878`, cập nhật fixture Finalize `07c7ca8`, assertion replay sau Approve `e3c44e2` và fixture TCP-ready `1fcf8a5`. Checkout ghép là archive tạm. Các file runtime khác biệt của #112 được kiểm tra không chồng đường dẫn với EXT-01 và xác minh byte-for-byte sau khi chép. Hai nhánh và DB dùng chung giữ nguyên trong lượt kiểm.
+
+| Lượt kiểm | Bằng chứng |
+|---|---|
+| A02-16 · shuffle-only | PostgreSQL kiểm Reject/Revert mới trả `ERR_MODE_SHUFFLE_ONLY`. Frontend kiểm chỉ xem và vẫn mở Preview khi server sẵn sàng. |
+| A02-26 · frozen policy | PostgreSQL kiểm 1.0 theo dimensions của job, 1.1/1.2 theo policy slot, mode lưu lệch live config, mode vắng/không nhất quán, mapping lạ và policy sai. AI mock kiểm dimensions đi đến targeted prompt. |
+| A02-27 · clone-only | Reject trực tiếp bị chặn trên slot 1.2 AI clone. Accept/Revert chạy qua RPC thật. UI ẩn Reject theo policy slot. |
+| A02-12 / A02-24 · replay và artifact | Reject/complete/Accept trên PostgreSQL, chạy shuffler thật, persist shuffle, replay lịch sử và Approve. Key hiển thị đổi C → A, lời giải và Markdown được dựng từ dữ liệu hậu shuffle đã lưu. A02-24 vẫn cần đối soát full Preview → ZIP/PDF trên integration head liên task. |
+| Backend standalone, `40bb555` | Python 3.14 UTF-8, toàn bộ backend + Blueprint **2297 pass, 800 skip**. Ruff và mypy pass. |
+| Backend checkout ghép, `40bb555` + `68ed813` | Generation mode / config / Review snapshot / Review service / AI mock **189 pass, 1 skip**. |
+| PostgreSQL 15 ghép, `b607878` + `68ed813` | **13 pass** cho EXT-01. Suite mode của #112 chạy riêng với role bootstrap **28 pass**. Lượt đầu thiếu role `anon` đã chạy lại trên cluster tạm mới. |
+| PostgreSQL 15 standalone | Migration EXT-01 **11 pass, 2 skip** dành cho mapping 1.2 khi thiếu #112. Snapshot **23 pass**, Review asyncpg **4 pass**. Lượt sau sửa TCP-ready đạt **16 pass** gồm 7 Finalize, 4 Review asyncpg và 5 fixture guards. Ca replay sau Approve chạy lại riêng **1 pass**. |
+| Frontend, `40bb555` | **633 pass, 0 fail/skip** trên host Node 24 và container Node 22 qua mount fixture canonical read-only. Lint/build pass ở cả hai môi trường. |
+
+Hai lỗi fixture Finalize tái hiện tại `d27364e`. Harness chỉ áp 006–009 trong khi Review caller gọi reserve bốn tham số. Ca Preview seed session thành reviewed trước khi dữ liệu đủ readiness. Sau khi áp 029 trong fixture và gọi `_review_recalculate` sau seed, suite Finalize đạt **7/7** với cùng assertions. Một lượt gộp sau đó bắt được race khởi động test cluster trên Windows. Asyncpg kết nối khi server tạm chỉ lắng nghe Unix socket. Fixture nay dùng `pg_isready -h 127.0.0.1` để đợi TCP sẵn sàng. Regression asyncpg và fixture pass khi chạy lại.
+
+```powershell
+$env:PYTHONUTF8='1'
+python -m pytest backend/tests scripts/blueprint/tests -q -s --disable-warnings --tb=line
+python -m ruff check backend/app scripts/blueprint
+python -m mypy backend/app --ignore-missing-imports
+
+$env:RUN_POSTGRES_MIGRATION_TESTS='1'
+$env:RUN_TASK305_REAL_DB_TESTS='1'
+$env:EXAM_TEST_DB_DESTRUCTIVE='1'
+python -X utf8 -m pytest backend/tests/services/test_finalize_real_db_integration.py backend/tests/services/test_review_real_db_integration.py backend/tests/migrations/test_review_snapshot_pg.py backend/tests/migrations/test_ext01_review_reasons_pg.py -q -s --tb=short
+python -X utf8 -m pytest backend/tests/migrations/test_ext01_review_reasons_pg.py -q -s -k real_shuffle --tb=short
+python -X utf8 -m pytest backend/tests/services/test_isolated_postgres_fixture.py backend/tests/services/test_finalize_real_db_integration.py backend/tests/services/test_review_real_db_integration.py -q -s --tb=short
+
+# Trên checkout ghép, dùng TASK207_TEST_DSN loopback của container PostgreSQL tạm.
+# Bootstrap anon, authenticated và service_role BYPASSRLS cho cluster tạm.
+$env:RUN_TASK207_REAL_DB_TESTS='1'
+python -X utf8 -m pytest backend/tests/migrations/test_ext01_review_reasons_pg.py backend/tests/migrations/test_generation_mode_pg.py -q -s --tb=short
+python -X utf8 -m pytest backend/tests/migrations/test_generation_mode_pg.py -q -s --tb=short
+python -X utf8 -m pytest backend/tests/generation/test_generation_mode.py backend/tests/api/test_generation_config.py backend/tests/ai/test_targeted_regeneration.py backend/tests/api/test_review_snapshot.py backend/tests/services/test_review_flow.py -q --disable-warnings
+
+# Trong frontend/
+npm test
+npm run lint
+npm run build
+
+# Lượt Compose frontend chạy từ root với project ext01-review-q04-verification.
+$fixture=Join-Path (Get-Location).Path 'backend/tests/fixtures/ext01_review_transitions.json'
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.dev.yml run --build --rm --no-deps --volume "${fixture}:/backend/tests/fixtures/ext01_review_transitions.json:ro" frontend sh -c 'npm run test && npm run lint && npm run build'
+```
+
+Q04 đạt các ca kiểm author trên head ghép cô lập. Chờ review/consumer trên integration head chính thức, CI sau push và G3 cho DB dùng chung. G4 vẫn gồm production DELETE của EXT-04 và provenance R09 của Preview/Export.
+
 <a id="stabilization-q05-q07-docker"></a>
 
 ## Q05, Q07 và regression Docker CI
