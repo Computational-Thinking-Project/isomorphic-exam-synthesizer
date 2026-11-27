@@ -244,6 +244,20 @@ The four SQL arguments use the `p_` prefix. Both authenticated RPCs require cano
 
 `POST /api/sessions/{session_id}/review/recover` authenticates the session owner, checks the owner snapshot before the worker call, then returns `{recovered_count, has_active_operation, snapshot}` after a fresh snapshot read. The worker checks editability and the post-shuffle boundary under the database session lock. A failed final read can be retried. An active keyed Reject attempts expiry recovery and looks up the original binding again before testing AI availability. A live lease returns `ERR_QUESTION_BUSY`, a failed or recovered operation returns `ERR_OPERATION_FINISHED`.
 
+### Q07 private recovery for EXT-04 DELETE
+
+`public._review_recover_expired_locked(uuid) → jsonb` returns the same recovery receipt array used by the worker RPC, or `[]` when no active lease has expired. The helper locks the operation after the caller has locked and authorized the parent session row. It calls `public._review_finish_failure_locked(public.review_operations, text, boolean) → jsonb`, which consumes the locked row and enforces the existing settlement invariants. Both helpers are security invoker. EXECUTE is revoked from PUBLIC, anon, authenticated and service_role. The trusted SECURITY DEFINER entry point must run as the migration owner or a trusted database owner with equivalent access. Confirm effective ownership in the target before rollout.
+
+Inside the future DELETE transaction, authenticate, lock `exam_sessions` and verify ownership under that lock. Reject approved/exported or non-null `approved_at` with 423 and active generation with 409. Then invoke the helper using the locked session ID:
+
+```sql
+PERFORM public._review_recover_expired_locked(locked_session.id);
+```
+
+Recheck session eligibility and the operation ledger under the same lock. If an active operation remains, return 409 `ERR_REVIEW_OPERATION_ACTIVE`. Continue with EXT-04 deletion checks and deletion in that transaction. A failed transaction rolls back recovery with deletion. Draft cleanup with no active operation returns `[]`. Live leases stay active. Expired operations must pass the existing session and current-candidate invariants, restore prior status, retain charged calls and audit actor, and recalculate readiness.
+
+The public worker session RPC retains its authorization, session guards and response shape. Operation failure and recovery continue through the worker-authorized wrapper. EXT-04 consumer acceptance and tests against production DELETE are pending.
+
 ### Caller recovery order (R1)
 
 Adopt worker `review_recover_session(session_id)` before **every new Reject

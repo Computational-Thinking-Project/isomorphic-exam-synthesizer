@@ -621,6 +621,89 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
         self.assertEqual(self.call_json(recover, role="service_role")["recovered_count"], 1)
         self.assertEqual(self.call_json(recover, role="service_role")["recovered_count"], 0)
 
+    def test_trusted_recovery_acl_and_transaction(self) -> None:
+        self._apply_migrations()
+        self._seed_session()
+        for role in ("public", "anon", "authenticated", "service_role"):
+            for signature in (
+                "_review_recover_expired_locked(uuid)",
+                "_review_finish_failure_locked(public.review_operations,text,boolean)",
+            ):
+                self.assertEqual(self.value(
+                    f"SELECT has_function_privilege('{role}', 'public.{signature}', 'EXECUTE');"
+                ), "f")
+        for name in ("review_recover_session(uuid)", "review_recover_regeneration(uuid)",
+                     "review_fail_regeneration(uuid,text)"):
+            for role, allowed in (("anon", "f"), ("authenticated", "f"), ("service_role", "t")):
+                self.assertEqual(self.value(
+                    f"SELECT has_function_privilege('{role}', 'public.{name}', 'EXECUTE');"
+                ), allowed)
+        self.sql("""
+            CREATE FUNCTION public.test_owner_recover(p_session_id uuid)
+            RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+            SET search_path = pg_catalog, public, pg_temp AS $$
+            BEGIN
+              PERFORM public._review_lock_session(p_session_id,true);
+              RETURN public._review_recover_expired_locked(p_session_id);
+            END $$;
+            REVOKE ALL ON FUNCTION public.test_owner_recover(uuid) FROM PUBLIC;
+            GRANT EXECUTE ON FUNCTION public.test_owner_recover(uuid) TO authenticated;
+        """)
+        owner_recover = f"SELECT public.test_owner_recover('{SID}');"
+        self.sql(f"UPDATE public.exam_sessions SET status='draft' WHERE id='{SID}';")
+        self.assertEqual(self.call_json(owner_recover), [])
+        self.sql(f"UPDATE public.exam_sessions SET status='generated' WHERE id='{SID}';")
+        op = uuid4()
+        self.reserve(op)
+        self.call_json(f"SELECT public.review_acquire_attempt('{op}','{uuid4()}');", role="service_role")
+        self.assertEqual(self.call_json(owner_recover), [])
+        self.sql(f"UPDATE public.review_operations SET expires_at=clock_timestamp()-interval '1 second' WHERE operation_id='{op}';")
+
+        denied = self.call_raw(owner_recover, actor=FOREIGN, check=False)
+        self.assertIn("REVIEW_NOT_FOUND", denied.stderr)
+        for role in ("anon", "authenticated", "service_role"):
+            denied = self.call_raw(
+                f"SELECT public._review_recover_expired_locked('{SID}');", role=role, check=False
+            )
+            self.assertIn("42501", denied.stderr)
+
+        # A malformed candidate binding must fail the existing operation invariant.
+        self.sql(f"UPDATE public.version_questions SET status='pending_review' WHERE id='{QID}';")
+        self.assertIn("REVIEW_STALE", self.call_raw(owner_recover, check=False).stderr)
+        self.sql(f"UPDATE public.version_questions SET status='regenerating' WHERE id='{QID}';")
+        audit_count = f"SELECT count(*) FROM public.review_logs WHERE session_id='{SID}' AND reason='STALE_RECOVERY';"
+        rolled_back = self.sql("BEGIN;" + self.auth() + owner_recover + "ROLLBACK;")
+        self.assertEqual(json.loads(rolled_back.stdout)[0]["api_calls_used"], 1)
+        self.assertEqual(self.lookup(op)["reservation"]["operation_status"], "active")
+        self.assertEqual(self.value(audit_count), "0")
+
+        # Both entry points serialize on the session row and settle only once.
+        worker_recover = f"SELECT public.review_recover_session('{SID}') -> 'recoveries';"
+        barrier = Barrier(2)
+
+        def recover(script: str) -> list:
+            barrier.wait(timeout=10)
+            return json.loads(self.sql(script).stdout)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(recover, (
+                self.auth() + owner_recover, self.auth("service_role") + worker_recover,
+            )))
+        self.assertEqual(sorted(map(len, outcomes)), [0, 1])
+        receipt = (outcomes[0] or outcomes[1])[0]
+        self.assertEqual((receipt["operation_status"], receipt["api_calls_used"]), ("recovered", 1))
+        self.assertEqual(self.lookup(op)["reservation"]["settlement"], receipt)
+        self.assertEqual(self.value(audit_count), "1")
+        self.assertEqual(self.value(f"SELECT user_id FROM public.review_logs WHERE session_id='{SID}' AND reason='STALE_RECOVERY';"), OWNER)
+        self.assertEqual(self.value(f"SELECT status, is_current, content FROM public.version_questions WHERE id='{QID}';"), "pending_review|t|Candidate")
+        self.assertEqual(self.value(f"SELECT gemini_review_calls FROM public.exam_sessions WHERE id='{SID}';"), "1")
+        self.assertEqual(self.call_json(owner_recover), [])
+        late = self.call_raw(
+            f"SELECT public.review_complete_regeneration('{op}', {literal(json.dumps(candidate_payload(1)))}::jsonb);",
+            role="service_role", check=False,
+        )
+        self.assertIn("REVIEW_STALE", late.stderr)
+
     def test_non_empty_reasons_end_to_end_lifecycle_a02_19(self) -> None:
         self._apply_migrations(max_prefix="029")
         self._seed_session()

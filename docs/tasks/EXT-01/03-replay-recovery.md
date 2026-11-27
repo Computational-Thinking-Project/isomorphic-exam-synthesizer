@@ -45,3 +45,8 @@ Endpoint recovery mới là mutation, không chỉ một snapshot read. `session
 5. Với retry reject có key active: owner-bound lookup trước, recover rồi lookup lại dưới lock trước AI availability/busy handling. Nếu terminal thì trả Q02; nếu vẫn active thì busy. Không giữ session lock xuyên AI call. Nếu snapshot bị khóa bởi approve/shuffle thắng race, FE dùng routing tương ứng thay vì cố mở Review.
 
 Bổ sung DTO recovery vào `models/schemas.py`, route và service adapter FE; status/error codes đi qua mapping repository/API hiện hữu. Mã lỗi mới phải có mapping/test rõ ràng, không để lỗi domain mới rơi về 500. Authentication không thay authorization.
+
+
+### Q07 · Recovery trong transaction DELETE tương lai
+
+Migration `029` cung cấp helper private `public._review_recover_expired_locked(uuid) → jsonb` cho trusted entry point của EXT-04. Dùng sau khi khóa và xác thực owner trên session. Settlement, audit, quota và rollback cùng nằm trong transaction. [Contract chuẩn và thứ tự gọi](../../api/review-rpc-contract.md#q07-private-recovery-for-ext-04-delete)

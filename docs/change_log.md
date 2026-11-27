@@ -1,3 +1,7 @@
+## EXT-01 · Q07 recovery dưới khóa session
+
+Migration `029` cung cấp recovery private cho transaction DELETE của EXT-04 và dùng lại settlement của worker. Quyền EXECUTE của các RPC worker và response public được giữ. EXT-04 chờ nối và kiểm consumer. [Contract](api/review-rpc-contract.md#q07-private-recovery-for-ext-04-delete)
+
 ## EXT-01 · Q05 migration numbering
 
 `029_ext01_review_reasons.sql` tiếp sau `028_generation_mode.sql` của EXT-02. Lượt đổi số giữ nguyên SQL. Applied ledger dùng chung chưa xác minh và rollout chờ G3. [Phương án rollout](tasks/EXT-01/02-durable-reasons.md#section-3-2-1)

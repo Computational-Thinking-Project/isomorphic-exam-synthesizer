@@ -251,10 +251,78 @@ GRANT EXECUTE ON FUNCTION
   public.review_reserve_regeneration(UUID, UUID, UUID, JSONB)
   TO authenticated;
 
+-- Internal primitives run as the trusted caller. The caller already holds the
+-- session lock and, for settlement, has locked the operation after its parent.
+CREATE OR REPLACE FUNCTION public._review_finish_failure_locked(o public.review_operations, p_error_code TEXT, p_recovery BOOLEAN)
+RETURNS JSONB LANGUAGE plpgsql
+SET search_path = pg_catalog, public, pg_temp AS $$
+DECLARE used INT; progress JSONB; result JSONB; session_status TEXT;
+BEGIN
+  IF p_recovery AND o.status='recovered' THEN RETURN o.settlement_result || jsonb_build_object('replayed',true); END IF;
+  IF NOT p_recovery AND o.status='failed' THEN
+    IF o.error_code IS DISTINCT FROM p_error_code THEN RAISE EXCEPTION 'REVIEW_IDEMPOTENCY_CONFLICT' USING ERRCODE='22023'; END IF;
+    RETURN o.settlement_result || jsonb_build_object('replayed',true);
+  END IF;
+  IF p_recovery AND (o.status<>'active' OR o.expires_at>clock_timestamp()) THEN
+    SELECT status::text INTO session_status FROM public.exam_sessions WHERE id=o.session_id;
+    SELECT count(*) INTO used FROM public.review_attempts WHERE operation_id=o.operation_id AND dispatch_permitted;
+    RETURN jsonb_build_object('session_id',o.session_id,'session_status',session_status,'replayed',false,'operation_id',o.operation_id,
+      'question_id',o.question_id,'operation_status',o.status,'recovered',false,'api_calls_used',used);
+  END IF;
+  IF p_error_code IS NULL OR p_error_code !~ '^[A-Z][A-Z0-9_]{0,79}$' THEN
+    RAISE EXCEPTION 'REVIEW_INVALID_PAYLOAD' USING ERRCODE='22023';
+  END IF;
+  PERFORM public._review_assert_operation(o.operation_id,false);
+  SELECT count(*) INTO used FROM public.review_attempts WHERE operation_id=o.operation_id AND dispatch_permitted;
+  UPDATE public.version_questions SET status=o.prior_status,updated_at=clock_timestamp() WHERE id=o.question_id;
+  INSERT INTO public.review_logs(version_question_id,session_id,user_id,action_type,reason,api_calls_used)
+    VALUES(o.question_id,o.session_id,o.actor_id,'REJECT_FAILED',p_error_code,used);
+  UPDATE public.review_operations SET status=CASE WHEN p_recovery THEN 'recovered' ELSE 'failed' END,error_code=p_error_code
+    WHERE operation_id=o.operation_id;
+  progress := public._review_recalculate(o.session_id);
+  SELECT status::text INTO session_status FROM public.exam_sessions WHERE id=o.session_id;
+  result := jsonb_build_object('session_id',o.session_id,'session_status',session_status,'replayed',false,
+    'operation_id',o.operation_id,'question_id',o.question_id,'api_calls_used',used,'operation_status',
+    CASE WHEN p_recovery THEN 'recovered' ELSE 'failed' END,'recovered',p_recovery,'progress',progress);
+  UPDATE public.review_operations SET settlement_result=result WHERE operation_id=o.operation_id;
+  RETURN result;
+END $$;
+
+CREATE OR REPLACE FUNCTION public._review_finish_failure(p_operation_id UUID, p_error_code TEXT, p_recovery BOOLEAN)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp AS $$
+DECLARE o public.review_operations;
+BEGIN
+  o := public._review_worker_operation(p_operation_id);
+  RETURN public._review_finish_failure_locked(o,p_error_code,p_recovery);
+END $$;
+
+CREATE OR REPLACE FUNCTION public._review_recover_expired_locked(p_session_id UUID)
+RETURNS JSONB LANGUAGE plpgsql
+SET search_path = pg_catalog, public, pg_temp AS $$
+DECLARE o public.review_operations; outcome JSONB; outcomes JSONB := '[]'::jsonb;
+BEGIN
+  SELECT * INTO o FROM public.review_operations
+    WHERE session_id=p_session_id AND status='active' AND expires_at<=clock_timestamp()
+    FOR UPDATE;
+  IF FOUND THEN
+    outcome := public._review_finish_failure_locked(o,'STALE_RECOVERY',true);
+    IF outcome->'recovered'='true'::jsonb AND outcome->'replayed'='false'::jsonb THEN
+      outcomes := jsonb_build_array(outcome);
+    END IF;
+  END IF;
+  RETURN outcomes;
+END $$;
+
+REVOKE ALL ON FUNCTION
+  public._review_finish_failure_locked(public.review_operations,TEXT,BOOLEAN),
+  public._review_recover_expired_locked(UUID)
+  FROM PUBLIC, anon, authenticated, service_role;
+
 CREATE OR REPLACE FUNCTION public.review_recover_session(p_session_id UUID)
 RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, public, pg_temp AS $$
-DECLARE s public.exam_sessions; op UUID; outcome JSONB; outcomes JSONB := '[]'::jsonb;
+DECLARE s public.exam_sessions; outcomes JSONB;
 BEGIN
   IF auth.role() IS DISTINCT FROM 'service_role' THEN
     RAISE EXCEPTION 'REVIEW_WORKER_REQUIRED' USING ERRCODE='42501';
@@ -272,15 +340,7 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'REVIEW_POST_SHUFFLE_LOCKED' USING ERRCODE='55000';
   END IF;
-  SELECT operation_id INTO op FROM public.review_operations
-    WHERE session_id=s.id AND status='active' AND expires_at<=clock_timestamp()
-    FOR UPDATE;
-  IF FOUND THEN
-    outcome := public._review_finish_failure(op,'STALE_RECOVERY',true);
-    IF outcome->'recovered'='true'::jsonb AND outcome->'replayed'='false'::jsonb THEN
-      outcomes := jsonb_build_array(outcome);
-    END IF;
-  END IF;
+  outcomes := public._review_recover_expired_locked(s.id);
   SELECT * INTO s FROM public.exam_sessions WHERE id=p_session_id;
   RETURN jsonb_build_object('session_id',s.id,'session_status',s.status,
     'recovered_count',jsonb_array_length(outcomes),'recoveries',outcomes);
