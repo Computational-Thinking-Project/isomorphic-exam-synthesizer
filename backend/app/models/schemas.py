@@ -1,3 +1,4 @@
+from collections.abc import Iterable, Mapping
 from enum import Enum, StrEnum
 from typing import Annotated, Any, Dict, List, Literal, Optional
 from uuid import UUID
@@ -377,6 +378,53 @@ class RollbackErrorCode(StrEnum):
     CLIENT_CANCELLED = "CLIENT_CANCELLED"
     SOURCE_NOT_CONFIRMED = "SOURCE_NOT_CONFIRMED"
     AMBIGUOUS_STATE = "AMBIGUOUS_STATE"
+
+
+class ReviewReasonCode(StrEnum):
+    """Canonical rejection reason codes for Stage 3 targeted regeneration (EXT-01 Q01)."""
+
+    INCORRECT_ANSWER = "INCORRECT_ANSWER"
+    NO_CORRECT_ANSWER = "NO_CORRECT_ANSWER"
+    MULTIPLE_CORRECT_ANSWERS = "MULTIPLE_CORRECT_ANSWERS"
+    EQUIVALENT_OPTIONS = "EQUIVALENT_OPTIONS"
+    INVALID_QUESTION = "INVALID_QUESTION"
+    ISOMORPHISM_MISMATCH = "ISOMORPHISM_MISMATCH"
+    DIFFICULTY_MISMATCH = "DIFFICULTY_MISMATCH"
+    INCORRECT_SOLUTION = "INCORRECT_SOLUTION"
+
+
+def canonicalize_review_reasons(
+    reasons: Optional[Iterable[ReviewReasonCode | str]],
+) -> list[ReviewReasonCode]:
+    """Return deduplicated, lexicographically sorted canonical review reason codes."""
+    if reasons is None:
+        return []
+    if isinstance(reasons, (str, bytes, Mapping)):
+        raise TypeError("reasons must be an iterable of ReviewReasonCode, not a string or mapping")
+    normalized: set[ReviewReasonCode] = set()
+    for reason in reasons:
+        if isinstance(reason, ReviewReasonCode):
+            normalized.add(reason)
+        elif isinstance(reason, str):
+            normalized.add(ReviewReasonCode(reason))
+        else:
+            raise TypeError(
+                f"reason must be ReviewReasonCode or exact str, got {type(reason).__name__}"
+            )
+    return sorted(normalized)
+
+
+class RejectQuestionRequest(BaseModel):
+    """Optional request payload for Stage 3 reject & regenerate (EXT-01 Q01)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reasons: list[ReviewReasonCode] = Field(default_factory=list)
+
+    @field_validator("reasons", mode="after")
+    @classmethod
+    def _canonicalize_reasons(cls, value: list[ReviewReasonCode]) -> list[ReviewReasonCode]:
+        return canonicalize_review_reasons(value)
 
 
 class ReviewActionResponse(BaseModel):
@@ -778,6 +826,9 @@ __all__ = [
     "ReserveResult",
     "ReviewErrorCode",
     "RollbackErrorCode",
+    "ReviewReasonCode",
+    "canonicalize_review_reasons",
+    "RejectQuestionRequest",
     "ReviewActionResponse",
     "RegeneratedQuestionResponse",
     "ReviewProgressResponse",

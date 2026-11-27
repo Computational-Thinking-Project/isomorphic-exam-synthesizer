@@ -7,6 +7,7 @@ never refunded. TASK-301 publishes the confirmed source/canonical artifacts.
 import asyncio
 import logging
 import weakref
+from collections.abc import Iterable
 from typing import Any, Callable
 from uuid import UUID, uuid4
 
@@ -19,8 +20,10 @@ from app.models.schemas import (
     ReviewActionResponse,
     ReviewDomainException,
     ReviewProgressResponse,
+    ReviewReasonCode,
     ReviewSnapshotResponse,
     RollbackErrorCode,
+    canonicalize_review_reasons,
 )
 from app.services.review.receipts import ReservationReceipt, completion_receipt
 from app.services.review.repository import ReviewRepository
@@ -194,7 +197,9 @@ class ReviewService:
             # A completion may have committed while its response was lost. The
             # owner receipt lookup uses the same IDs and the DB session lock.
             try:
-                replay = await self.repo.lookup_regeneration(sid, qid, op)
+                replay = await self.repo.lookup_regeneration(
+                    sid, qid, op, reasons=reservation.reasons
+                )
                 if replay is not None and replay.operation_status == "completed":
                     result = completion_receipt(replay.settlement, sid, qid, op)
                     return result.question_id
@@ -205,7 +210,11 @@ class ReviewService:
             raise uncertain
 
     async def _reserve_receipt(
-        self, session_id: str, question_id: str, operation_id: UUID
+        self,
+        session_id: str,
+        question_id: str,
+        operation_id: UUID,
+        reasons: Iterable[ReviewReasonCode | str] | None = None,
     ) -> ReservationReceipt:
         """Reconcile uncertain reservation responses without authorizing replay.
 
@@ -213,10 +222,19 @@ class ReviewService:
         returned active replay may already belong to another request with this
         key, so the caller must still refuse to dispatch or fail that operation.
         """
+        try:
+            canonical_reasons = canonicalize_review_reasons(reasons)
+        except (TypeError, ValueError) as exc:
+            raise ReviewDomainException(
+                422, "ERR_INVALID_PAYLOAD", "Invalid rejection reasons"
+            ) from exc
         for attempt in range(3):
             try:
                 return await self.repo.reserve_regeneration(
-                    session_id, question_id, operation_id
+                    session_id,
+                    question_id,
+                    operation_id,
+                    reasons=canonical_reasons,
                 )
             except ReviewDomainException as exc:
                 if exc.status_code != 503:
@@ -230,7 +248,24 @@ class ReviewService:
                 await asyncio.sleep(0.1 * 2**attempt)
         raise AssertionError("Reservation retry loop did not return")
 
-    async def _replay(self, reservation: ReservationReceipt) -> RegeneratedQuestionResponse:
+    async def _replay(
+        self,
+        reservation: ReservationReceipt,
+        expected_reasons: Iterable[ReviewReasonCode | str] | None = None,
+    ) -> RegeneratedQuestionResponse:
+        if expected_reasons is not None:
+            try:
+                canonical_expected = canonicalize_review_reasons(expected_reasons)
+            except (TypeError, ValueError) as exc:
+                raise ReviewDomainException(
+                    422, "ERR_INVALID_PAYLOAD", "Invalid rejection reasons"
+                ) from exc
+            if reservation.reasons != canonical_expected:
+                raise ReviewDomainException(
+                    409,
+                    "ERR_ATTEMPT_REPLAYED",
+                    "Xung đột idempotency: ID đã được gắn với lý do từ chối khác",
+                )
         if reservation.operation_status == "completed":
             result = completion_receipt(
                 reservation.settlement, str(reservation.session_id),
@@ -246,14 +281,27 @@ class ReviewService:
         )
 
     async def reject_question(
-        self, session_id: str, question_id: str, user_id: str, idempotency_key: str | None = None
+        self,
+        session_id: str,
+        question_id: str,
+        user_id: str,
+        idempotency_key: str | None = None,
+        reasons: Iterable[ReviewReasonCode | str] | None = None,
     ) -> RegeneratedQuestionResponse:
+        try:
+            canonical_reasons = canonicalize_review_reasons(reasons)
+        except (TypeError, ValueError) as exc:
+            raise ReviewDomainException(
+                422, "ERR_INVALID_PAYLOAD", "Invalid rejection reasons"
+            ) from exc
         op = action_key(idempotency_key)
         await self._question(session_id, question_id)
         if idempotency_key is not None:
-            existing = await self.repo.lookup_regeneration(session_id, question_id, op)
+            existing = await self.repo.lookup_regeneration(
+                session_id, question_id, op, reasons=canonical_reasons
+            )
             if existing is not None:
-                return await self._replay(existing)
+                return await self._replay(existing, expected_reasons=canonical_reasons)
         # Without a key there cannot be a receipt to replay. With a key, the RPC
         # checks for its receipt before the edit guard, including after approval.
         if self.ai_generator is None:
@@ -264,9 +312,17 @@ class ReviewService:
         lock = session_lock_registry.get_lock(UUID(session_id))
         async with lock:
             await self.repo.recover_stale_operations(session_id)
-            reservation = await self._reserve_receipt(session_id, question_id, op)
+            reservation = await self._reserve_receipt(
+                session_id, question_id, op, reasons=canonical_reasons
+            )
         if reservation.replayed or reservation.operation_status != "active":
-            return await self._replay(reservation)
+            return await self._replay(reservation, expected_reasons=canonical_reasons)
+        if reservation.reasons != canonical_reasons:
+            raise ReviewDomainException(
+                503,
+                "ERR_INVALID_RESERVATION",
+                "Reservation could not be confirmed; retry with the same key",
+            )
 
         committed_id: UUID
         try:

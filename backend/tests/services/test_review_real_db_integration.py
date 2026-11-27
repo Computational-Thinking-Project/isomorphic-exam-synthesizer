@@ -193,7 +193,18 @@ async def setup_real_postgres_database(isolated_pg_dsn):  # noqa: F811
     """Initializes schema, roles, and migration 006 on real PostgreSQL."""
     global PG_DSN
     PG_DSN, expected_database = isolated_pg_dsn
-    conn = await asyncpg.connect(PG_DSN)
+    import asyncio
+
+    conn = None
+    for attempt in range(10):
+        try:
+            conn = await asyncpg.connect(PG_DSN)
+            break
+        except (ConnectionError, OSError):
+            if attempt == 9:
+                raise
+            await asyncio.sleep(0.5)
+    assert conn is not None
     try:
         await assert_disposable_database(conn, expected_database)
     except Exception:
@@ -259,6 +270,7 @@ async def setup_real_postgres_database(isolated_pg_dsn):  # noqa: F811
             "007_finalize_approve_session_rpc.sql",
             "008_finalize_persist_shuffle_rpc.sql",
             "009_finalize_security_boundary.sql",
+            "028_ext01_review_reasons.sql",
         ):
             path = os.path.abspath(
                 os.path.join(os.path.dirname(__file__), "../../migrations", migration)

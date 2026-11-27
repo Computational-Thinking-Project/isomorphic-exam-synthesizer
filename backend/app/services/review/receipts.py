@@ -1,6 +1,7 @@
 """Strict, durable lifecycle receipts; no authorization metadata is inferred."""
 
-from typing import Annotated, Any, Literal
+from collections.abc import Iterable
+from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
 from pydantic import (
@@ -10,10 +11,13 @@ from pydantic import (
     Field,
     StrictBool,
     StrictInt,
+    field_validator,
     model_validator,
 )
 
-from app.models.schemas import ReviewDomainException
+from app.models.schemas import ReviewDomainException, ReviewReasonCode, canonicalize_review_reasons
+
+_UNSET = object()
 
 Count = Annotated[StrictInt, Field(ge=0)]
 SessionState = Literal[
@@ -70,9 +74,20 @@ class ReservationReceipt(BaseModel):
     question_id: UUID
     expires_at: AwareDatetime
     max_attempts: Annotated[StrictInt, Field(ge=4, le=4)]
+    reasons: list[ReviewReasonCode] = Field(default_factory=list)
     snapshot: dict[str, Any]
     operation_status: Literal["active", "completed", "failed", "recovered"]
     settlement: dict[str, Any] | None = None
+
+    @field_validator("reasons", mode="before")
+    @classmethod
+    def _validate_reasons(cls, value: Any) -> list[ReviewReasonCode]:
+        if not isinstance(value, list):
+            raise ValueError("Reservation reasons must be a JSON array")
+        try:
+            return canonicalize_review_reasons(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(str(exc)) from exc
 
     @model_validator(mode="after")
     def consistent(self) -> "ReservationReceipt":
@@ -121,7 +136,11 @@ class ProgressReceipt(BaseModel):
 
 
 def reservation_receipt(
-    value: Any, session_id: str, question_id: str, operation_id: UUID
+    value: Any,
+    session_id: str,
+    question_id: str,
+    operation_id: UUID,
+    reasons: Iterable[ReviewReasonCode | str] | None | object = _UNSET,
 ) -> ReservationReceipt:
     try:
         result = ReservationReceipt.model_validate(rpc_object(value))
@@ -131,6 +150,12 @@ def reservation_receipt(
             operation_id,
         ):
             raise ValueError("Reservation identity mismatch")
+        if reasons is not _UNSET:
+            expected_reasons = canonicalize_review_reasons(
+                cast(Iterable[ReviewReasonCode | str] | None, reasons)
+            )
+            if result.reasons != expected_reasons:
+                raise ValueError("Reservation reasons mismatch")
         if result.operation_status == "completed":
             completion_receipt(result.settlement, session_id, question_id, operation_id)
         elif result.operation_status in ("failed", "recovered"):
