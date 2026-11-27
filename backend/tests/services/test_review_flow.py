@@ -433,7 +433,7 @@ def test_success_uses_frozen_receipt_and_worker_permit(state):
 def test_real_targeted_callable_uses_frozen_source_and_durable_permit(state):
     seen = []
 
-    async def generate(source, blueprint, *, confirmed_source_hash, context, excluded_identities, teacher_feedback):
+    async def generate(source, blueprint, *, confirmed_source_hash, context, excluded_identities, teacher_feedback, variation_modes):
         seen.append((source.model_dump(), deepcopy(blueprint), confirmed_source_hash))
         assert excluded_identities
         await context.reserve_request()
@@ -475,7 +475,7 @@ def test_real_targeted_callable_denied_permit_settles_without_completion(state):
             )
         return original(role, name, params)
 
-    async def generate(source, blueprint, *, confirmed_source_hash, context, excluded_identities, teacher_feedback):
+    async def generate(source, blueprint, *, confirmed_source_hash, context, excluded_identities, teacher_feedback, variation_modes):
         try:
             await context.reserve_request()
         except GatewayError as exc:

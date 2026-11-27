@@ -704,6 +704,123 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
         )
         self.assertIn("REVIEW_STALE", late.stderr)
 
+    def _seed_policy_job(self) -> None:
+        self.sql(f"""
+            INSERT INTO public.generation_job_snapshots(
+                session_id, job_token, confirmation_id, source_order, confirmed_source_hash,
+                base_seed, n_versions, public_modes, canonical_dimensions, mapping_version, snapshot_payload
+            )
+            SELECT '{SID}', gen_random_uuid(), r.confirmation_id, jsonb_build_array(r.source_question_id),
+                r.source_fingerprint, 100, 1, '["NUMERICAL"]', '["values"]', '1.0',
+                jsonb_build_object('confirmed_sources', jsonb_build_array(jsonb_build_object(
+                  'source_question_id', r.source_question_id, 'question_no', 1,
+                  'source_revision_id', r.source_revision_id, 'source_fingerprint', r.source_fingerprint,
+                  'confirmed_input', r.confirmed_input, 'blueprint_revision_id', b.blueprint_revision_id,
+                  'canonical_blueprint', b.canonical_blueprint
+                )))
+            FROM public.source_artifact_revisions r JOIN public.canonical_blueprint_revisions b USING (source_revision_id)
+            WHERE r.source_question_id = '{SOURCE}';
+        """)
+
+    def test_q04_legacy_policy_and_receipt_replay(self) -> None:
+        self._apply_migrations(max_prefix="029b")
+        self._seed_session()
+        self._seed_policy_job()
+        snapshot_sql = f"SELECT public.get_review_current_snapshot('{SID}');"
+        original = self.call_json(snapshot_sql)
+        self.assertEqual(original["generation_mode"], "ai_generation")
+        self.assertEqual(original["versions"][0]["slots"][0]["result_kind"], "AI_RESULT")
+        self.assertIn("42501", self.call_raw(
+            f"SELECT public._review_current_snapshot_base('{SID}');", check=False
+        ).stderr)
+        self.assertIn("REVIEW_NOT_FOUND", self.call_raw(snapshot_sql, actor=FOREIGN, check=False).stderr)
+        op = uuid4()
+        self.assertEqual(self.reserve(op)["variation_dimensions"], ["values"])
+        self.call_json(f"SELECT public.review_acquire_attempt('{op}', '{uuid4()}');", role="service_role")
+        result = self.call_json(
+            f"SELECT public.review_complete_regeneration('{op}', {literal(json.dumps(candidate_payload(1)))}::jsonb);",
+            role="service_role",
+        )
+        current = result["question_id"]
+
+        # A genuine legacy clone and malformed mapping affect new writes only.
+        self.sql(f"UPDATE public.generation_job_snapshots SET canonical_dimensions='[]', public_modes='[]' WHERE session_id='{SID}';")
+        self.assertIn("ERR_SLOT_POLICY_CLONE_ONLY", self.reserve(uuid4(), question_id=current, check=False).stderr)
+        clone_snapshot = self.call_json(snapshot_sql)
+        self.assertEqual(clone_snapshot["versions"][0]["slots"][0]["result_kind"], "ORIGINAL_CLONE")
+        self.assertNotEqual(clone_snapshot["freshness_token"], original["freshness_token"])
+        action = uuid4()
+        revert = f"SELECT public.review_revert_question('{SID}', '{current}', '{action}');"
+        self.assertEqual(self.call_json(revert)["question_status"], "pending_review")
+        self.sql(f"UPDATE public.generation_job_snapshots SET mapping_version='unsupported' WHERE session_id='{SID}';")
+        self.assertIn("ERR_CONFIG_CONFLICT", self.call_raw(snapshot_sql, check=False).stderr)
+        self.assertTrue(self.call_json(revert)["replayed"])
+        self.assertEqual(self.reserve(op)["completion_candidate"], candidate_payload(1))
+
+    def test_q04_frozen_v12_guards_and_dimensions(self) -> None:
+        if not (MIGRATIONS_DIR / "028_generation_mode.sql").is_file():
+            self.skipTest("EXT-02 migration 028 not present in this checkout")
+        self._apply_migrations(max_prefix="029b")
+        self._seed_session()
+        self._seed_policy_job()
+        self.sql(f"""
+            UPDATE public.generation_job_snapshots
+            SET mapping_version='1.1',
+                snapshot_payload=jsonb_set(snapshot_payload, '{{question_policies}}',
+                  jsonb_build_object('{SOURCE}', public._generation_question_policy(
+                    snapshot_payload#>'{{confirmed_sources,0,canonical_blueprint}}')))
+            WHERE session_id='{SID}';
+        """)
+        legacy_op = uuid4()
+        self.assertEqual(self.reserve(legacy_op)["variation_dimensions"], ["values", "context"])
+        self.call_json(f"SELECT public.review_fail_regeneration('{legacy_op}', 'GENERATION_FAILED');", role="service_role")
+
+
+        snapshot_sql = f"SELECT public.get_review_current_snapshot('{SID}');"
+        revert = f"SELECT public.review_revert_question('{SID}', '{QID}', '{uuid4()}');"
+        self.sql(f"""
+            UPDATE public.generation_job_snapshots
+            SET mapping_version='1.2', generation_mode='shuffle_only',
+                snapshot_payload=snapshot_payload || jsonb_build_object(
+                  'generation_mode', 'shuffle_only', 'question_policies',
+                  jsonb_build_object('{SOURCE}', '{{"result_kind":"ORIGINAL_CLONE","canonical_dimensions":[]}}'::jsonb))
+            WHERE session_id='{SID}';
+        """)
+        self.assertIn("ERR_MODE_SHUFFLE_ONLY", self.reserve(uuid4(), check=False).stderr)
+        self.assertIn("ERR_MODE_SHUFFLE_ONLY", self.call_raw(revert, check=False).stderr)
+        shuffle = self.call_json(snapshot_sql)
+        self.assertEqual(shuffle["generation_mode"], "shuffle_only")
+        self.assertEqual(shuffle["versions"][0]["slots"][0]["result_kind"], "ORIGINAL_CLONE")
+
+        # Frozen mode wins even when live configuration has drifted.
+        self.sql(f"UPDATE public.generation_configs SET generation_mode='shuffle_only' WHERE session_id='{SID}';")
+        for mode in ("NULL", "'ai_generation'"):
+            self.sql(f"UPDATE public.generation_job_snapshots SET generation_mode={mode} WHERE session_id='{SID}';")
+            self.assertIn("ERR_CONFIG_CONFLICT", self.reserve(uuid4(), check=False).stderr)
+            self.assertIn("ERR_CONFIG_CONFLICT", self.call_raw(revert, check=False).stderr)
+        self.sql(f"""
+            UPDATE public.generation_job_snapshots
+            SET snapshot_payload = jsonb_set(snapshot_payload, '{{generation_mode}}', '"ai_generation"')
+            WHERE session_id='{SID}';
+        """)
+        self.assertIn("ERR_CONFIG_CONFLICT", self.reserve(uuid4(), check=False).stderr)
+        self.assertEqual(self.value("SELECT count(*) FROM public.review_operations;"), "1")
+        self.assertEqual(self.value("SELECT count(*) FROM public.review_logs;"), "1")
+        self.assertEqual(self.value(f"SELECT gemini_review_calls FROM public.exam_sessions WHERE id='{SID}';"), "0")
+
+        self.sql(f"""
+            UPDATE public.generation_job_snapshots
+            SET snapshot_payload = jsonb_set(snapshot_payload, '{{question_policies,{SOURCE}}}',
+              public._generation_question_policy(snapshot_payload#>'{{confirmed_sources,0,canonical_blueprint}}'))
+            WHERE session_id='{SID}';
+        """)
+        policy = self.value(f"""
+            SELECT snapshot_payload#>'{{question_policies,{SOURCE},canonical_dimensions}}'
+            FROM public.generation_job_snapshots WHERE session_id='{SID}';
+        """)
+        self.assertTrue(json.loads(policy))
+        self.assertEqual(self.reserve(uuid4())["variation_dimensions"], json.loads(policy))
+
     def test_non_empty_reasons_end_to_end_lifecycle_a02_19(self) -> None:
         self._apply_migrations(max_prefix="029")
         self._seed_session()

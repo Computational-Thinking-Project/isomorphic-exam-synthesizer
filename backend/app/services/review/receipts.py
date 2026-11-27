@@ -75,6 +75,7 @@ class ReservationReceipt(BaseModel):
     expires_at: AwareDatetime
     max_attempts: Annotated[StrictInt, Field(ge=4, le=4)]
     reasons: list[ReviewReasonCode] = Field(default_factory=list)
+    variation_dimensions: list[Literal["values", "context"]] | None = None
     snapshot: dict[str, Any]
     operation_status: Literal["active", "completed", "failed", "recovered"]
     completion_candidate: dict[str, Any] | None = None

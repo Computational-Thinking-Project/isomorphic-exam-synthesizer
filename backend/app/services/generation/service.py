@@ -220,15 +220,17 @@ class GenerationService:
         confirmed_source_hash: str, context: RequestContext,
         excluded_identities: set[str],
         teacher_feedback: list[dict[str, str]] | None = None,
+        variation_modes: list[str] | None = None,
     ) -> QuestionResult:
         """Regenerate persisted content without inventing old structured solutions."""
         source = source.model_copy(deep=True)
         blueprint = deepcopy(blueprint)
-        item = self._prepare(source, blueprint, [])
+        modes = list(variation_modes or [])
+        item = self._prepare(source, blueprint, modes)
         if not confirmed_source_hash or source_fingerprint([item]) != confirmed_source_hash:
             raise ToolError("SOURCE_NOT_CONFIRMED", "Nguồn chưa được xác nhận hoặc đã thay đổi.")
         return await self._generate(
-            source, item, blueprint, context, secrets.randbelow(2 ** 31), 1, [],
+            source, item, blueprint, context, secrets.randbelow(2 ** 31), 1, modes,
             excluded_identities=set(excluded_identities), max_math_retries=2, teacher_feedback=teacher_feedback,
         )
 

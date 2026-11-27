@@ -12,7 +12,7 @@ const reasons = {
 };
 
 export default function Stage3InspectionDialog({ selection, boundReasons, versionLabel, message, readOnly, approved,
-  busy, rejectBusy, canRevert, onClose, onApprove, onRegenerate, onRevert, onNext }) {
+  busy, rejectBusy, canRevert, canRegenerate, onClose, onApprove, onRegenerate, onRevert, onNext }) {
   const dialog = useRef(null);
   const heading = useRef(null);
   const mounted = useRef(false);
@@ -89,13 +89,13 @@ export default function Stage3InspectionDialog({ selection, boundReasons, versio
       <footer className="stage3-inspection-actions">
         {!readOnly && (confirmation ? <div className="stage3-primary-actions">
           <button type="button" disabled={busy} onClick={() => setConfirmation(null)}>Hủy {confirmation === 'revert' ? 'khôi phục' : 'tạo lại'}</button>
-          <button type="button" data-review-confirm disabled={busy} onClick={() => void confirm()}>
+          <button type="button" data-review-confirm disabled={busy || (confirmation === 'regenerate' && !canRegenerate)} onClick={() => void confirm()}>
             {busy ? 'Đang xử lý…' : confirmation === 'revert' ? 'Khôi phục đúng cặp' : 'Tạo lại đúng cặp'}
           </button>
         </div> : <>
           {canRevert && <button type="button" className="stage3-revert" data-review-revert disabled={busy} onClick={() => setConfirmation('revert')}>Khôi phục đề gốc</button>}
           <div className="stage3-primary-actions">
-            <button type="button" data-review-regenerate disabled={busy || rejectBusy || !candidateId} onClick={() => setConfirmation('regenerate')}>Tạo lại</button>
+            {canRegenerate && <button type="button" data-review-regenerate disabled={busy || rejectBusy || !candidateId} onClick={() => setConfirmation('regenerate')}>Tạo lại</button>}
             <button type="button" data-review-approve disabled={busy || approved || !candidateId} onClick={() => void onApprove()}>{busy ? 'Đang xử lý…' : approved ? 'Đã duyệt' : 'Duyệt biến thể'}</button>
             {approved && <button type="button" onClick={onNext} disabled={busy}>Đến câu chưa duyệt tiếp theo</button>}
           </div>

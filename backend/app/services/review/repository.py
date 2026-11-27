@@ -66,6 +66,13 @@ def _map_rpc_exception(exc: Exception, rpc_name: Optional[str] = None) -> Review
         return ReviewDomainException(
             404, "ERR_QUESTION_NOT_FOUND", "Không tìm thấy câu hỏi hoặc phiên thi"
         )
+    for code, detail in (
+        ("ERR_MODE_SHUFFLE_ONLY", "Phiên chỉ xáo đề không cho phép tạo lại hoặc khôi phục câu."),
+        ("ERR_SLOT_POLICY_CLONE_ONLY", "Câu này giữ nguyên đề gốc và không cho phép tạo lại."),
+        ("ERR_CONFIG_CONFLICT", "Cấu hình sinh đề đã khóa không hợp lệ hoặc không khớp."),
+    ):
+        if code in msg:
+            return ReviewDomainException(409, code, detail)
     if "REVIEW_BUSY" in msg:
         return ReviewDomainException(
             409,

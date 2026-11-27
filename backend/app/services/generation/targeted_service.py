@@ -70,6 +70,7 @@ class TargetedRegenerator:
         current_variant: dict[str, Any], peer_variants: list[dict[str, Any]],
         *, operation_id: UUID | str | None = None, acquire_attempt: AcquireAttempt | None = None,
         teacher_reasons: tuple[ReviewReasonCode, ...] = (),
+        variation_modes: list[str] | None = None,
     ) -> RegeneratedVariantResult:
         budget: DurableAttemptBudget | None = None
         try:
@@ -96,6 +97,7 @@ class TargetedRegenerator:
                 source, blueprint, confirmed_source_hash=source_snapshot.get("content_hash", ""),
                 context=RequestContext(time.monotonic() + self.timeout_seconds, budget.reserve),
                 excluded_identities=excluded,
+                variation_modes=variation_modes,
                 teacher_feedback=[
                     {"check": "teacher_review", "code": reason.value, "detail": TEACHER_FEEDBACK[reason]}
                     for reason in teacher_reasons
@@ -135,6 +137,7 @@ async def mock_regenerate_question_variant(
     blueprint: dict[str, Any], current_variant: dict[str, Any], peer_variants: list[dict[str, Any]],
     *, operation_id: UUID | str | None = None, acquire_attempt: AcquireAttempt | None = None,
     teacher_reasons: tuple[ReviewReasonCode, ...] = (),
+    variation_modes: list[str] | None = None,
 ) -> dict[str, Any]:
     """Explicit integration fixture: no Gemini calls, no mathematical verification."""
     return RegeneratedVariantResult(

@@ -1,3 +1,7 @@
+## EXT-01 · Q04 guard theo frozen generation policy
+
+Migration `029b` áp dụng sau ledger/recovery `029` và schema mode `028` của EXT-02 trên head ghép. Reject/Revert mới dùng frozen mode dưới session lock. Reject dùng slot policy, lưu dimensions trong reservation receipt và chuyển đến targeted prompt. Snapshot chiếu capabilities cho Review UI. Replay giữ ràng buộc đã ghi trước khi xét guard mới. [Contract API](api/review-snapshot.md#3-cấu-trúc-response-200-ok)
+
 ## EXT-01 · Q07 recovery dưới khóa session
 
 Migration `029` cung cấp recovery private cho transaction DELETE của EXT-04 và dùng lại settlement của worker. Quyền EXECUTE của các RPC worker và response public được giữ. EXT-04 chờ nối và kiểm consumer. [Contract](api/review-rpc-contract.md#q07-private-recovery-for-ext-04-delete)

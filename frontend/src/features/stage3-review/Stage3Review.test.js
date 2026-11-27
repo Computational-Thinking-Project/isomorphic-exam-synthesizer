@@ -3256,3 +3256,38 @@ test('A01-13 first visit cannot overwrite a new read after A to B to A', async (
     assert.equal(harness.container.querySelector('h1').textContent, 'Latest visit');
   } finally { await harness.unmount(); }
 });
+
+
+test('Q04 shuffle-only Review is read-only and keeps server-ready Preview available', async () => {
+  const url = new URL('../../../../backend/tests/fixtures/ext01_review_transitions.json', import.meta.url);
+  const { snapshots } = JSON.parse(readFileSync(url, 'utf8'));
+  const snapshot = structuredClone(snapshots.accepted);
+  snapshot.generation_mode = 'shuffle_only';
+  snapshot.versions[0].slots[0].result_kind = 'ORIGINAL_CLONE';
+  const harness = renderStage3Page(snapshot.session_id, { loadSession: async () => snapshot });
+  try {
+    await harness.render();
+    assert.equal(harness.container.querySelector('[data-review-inline-approve]'), null);
+    await act(async () => harness.container.querySelector('[data-review-inspect]').click());
+    for (const action of ['approve', 'regenerate', 'revert']) {
+      assert.equal(harness.container.querySelector(`[data-review-${action}]`), null);
+    }
+    assert.equal(harness.container.querySelector('[data-review-finalize]').getAttribute('disabled'), null);
+  } finally { await harness.unmount(); }
+});
+
+test('Q04 AI-mode clone slot permits Accept and Revert without offering Reject', async () => {
+  const url = new URL('../../../../backend/tests/fixtures/ext01_review_transitions.json', import.meta.url);
+  const { snapshots } = JSON.parse(readFileSync(url, 'utf8'));
+  const snapshot = structuredClone(snapshots.clone);
+  snapshot.generation_mode = 'ai_generation';
+  snapshot.versions[0].slots[0].result_kind = 'ORIGINAL_CLONE';
+  const harness = renderStage3Page(snapshot.session_id, { loadSession: async () => snapshot });
+  try {
+    await harness.render();
+    assert.equal(harness.container.querySelector('[data-review-inline-approve]').getAttribute('disabled'), null);
+    await act(async () => harness.container.querySelector('[data-review-inspect]').click());
+    assert.ok(harness.container.querySelector('[data-review-revert]'));
+    assert.equal(harness.container.querySelector('[data-review-regenerate]'), null);
+  } finally { await harness.unmount(); }
+});

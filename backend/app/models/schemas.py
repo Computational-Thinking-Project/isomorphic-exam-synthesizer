@@ -752,6 +752,7 @@ class ReviewSnapshotSlot(BaseModel):
 
     source_question_id: UUID = Field(..., description="Mã câu nguồn đối chiếu")
     question_no: int = Field(..., ge=1, description="Số thứ tự câu hỏi đối chiếu")
+    result_kind: Literal["AI_RESULT", "ORIGINAL_CLONE"] | None = None
     candidate: Optional[ReviewSnapshotCandidate] = Field(
         None, description="Ứng viên hiện hành duy nhất hoặc null nếu slot còn thiếu"
     )
@@ -785,6 +786,7 @@ class ReviewSnapshotResponse(BaseModel):
 
     session_id: UUID = Field(..., description="Mã phiên làm việc")
     session_status: str = Field(..., description="Trạng thái phiên làm việc")
+    generation_mode: Literal["ai_generation", "shuffle_only"] | None = None
     read_only: bool = Field(..., description="Cờ giao diện chỉ đọc")
     confirmation_id: UUID = Field(..., description="Mã xác nhận nguồn")
     job_snapshot_id: UUID = Field(..., description="Mã snapshot công việc sinh")
@@ -797,6 +799,17 @@ class ReviewSnapshotResponse(BaseModel):
     versions: List[ReviewSnapshotVersion] = Field(
         ..., description="Ma trận các phiên bản đề và slot ứng viên"
     )
+
+    @model_validator(mode="after")
+    def complete_policy_projection(self) -> "ReviewSnapshotResponse":
+        if self.generation_mode is not None:
+            for version in self.versions:
+                for slot in version.slots:
+                    if slot.result_kind is None or (
+                        self.generation_mode == "shuffle_only" and slot.result_kind != "ORIGINAL_CLONE"
+                    ):
+                        raise ValueError("Review snapshot contains an inconsistent slot policy")
+        return self
 
 
 class ReviewRecoveryResponse(BaseModel):

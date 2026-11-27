@@ -225,3 +225,10 @@ async def test_live_teacher_feedback_with_synthetic_source(handoff):
         result = await adapter(**handoff.args, teacher_reasons=(ReviewReasonCode.INCORRECT_SOLUTION,))
     assert 1 <= result["api_calls_count"] == len(handoff.grants) <= 4
     assert result["validation_report"]["is_valid"] and result["solution_md"]
+
+
+@pytest.mark.asyncio
+async def test_frozen_variation_modes_reach_targeted_prompt(handoff):
+    await handoff.adapter(**handoff.args, variation_modes=["values", "context"])
+    prompt = handoff.gateway.generate_content.await_args.kwargs["contents"]
+    assert json.loads(prompt.split("INPUT_JSON:\n", 1)[1])["variation_modes"] == ["values", "context"]

@@ -287,7 +287,7 @@ export default function Stage3ReviewPage({
       }
       let data = adaptReviewSnapshot(rawData);
       let active = data?.exam_versions?.some(v => v.questions?.some(q => q.status === 'regenerating'));
-      if (active && recover && !data.read_only) {
+      if (active && recover && !data.read_only && data.generation_mode !== 'shuffle_only') {
         const response = await recoverSession(targetSessionId);
         if (!isMountedRef.current || loadOperationRef.current !== currentOp ||
             activeSessionIdRef.current !== targetSessionId) return;
@@ -426,15 +426,17 @@ export default function Stage3ReviewPage({
   };
 
   const isFinalLocked = ['approved', 'exported'].includes(session?.status);
-  const isReviewReadOnly = isFinalLocked || Boolean(session?.read_only);
-  const canRetryPartial = session?.status === 'partial_generated' && !isFinalLocked;
+  const isPreviewBlocked = isFinalLocked || Boolean(session?.read_only);
+  const isShuffleOnly = session?.generation_mode === 'shuffle_only';
+  const isReviewReadOnly = isPreviewBlocked || isShuffleOnly;
+  const canRetryPartial = session?.status === 'partial_generated' && !isFinalLocked && !isShuffleOnly;
 
   async function mutate(action, selection, reasons = []) {
     if (!selection || isReviewReadOnly || reviewSyncRequired || isRetryingAll) return;
     const { variant, versionIndex, qNo } = selection;
     const id = variant.candidate_id || variant.id || variant.question_id;
     if (!id || pendingRef.current.has(id) || variant.status === 'regenerating') return;
-    if (action === 'reject' && (activeRecovery || [...pendingRef.current.values()].includes('reject'))) return;
+    if (action === 'reject' && (variant.result_kind === 'ORIGINAL_CLONE' || activeRecovery || [...pendingRef.current.values()].includes('reject'))) return;
     const op = mutationOperationRef.current;
     const epoch = navigationEpoch.current;
     const current = () => isMountedRef.current && activeSessionIdRef.current === sessionId && mutationOperationRef.current === op;
@@ -643,7 +645,7 @@ export default function Stage3ReviewPage({
   }, [approvalFocus, selectedSolution]);
 
   const isFinalizeDisabled =
-    session?.progress?.ready !== true || session?.status !== 'reviewed' || activeRecovery || isReviewReadOnly || reviewSyncRequired || pendingActions.size > 0 || isRetryingAll;
+    session?.progress?.ready !== true || session?.status !== 'reviewed' || activeRecovery || isPreviewBlocked || reviewSyncRequired || pendingActions.size > 0 || isRetryingAll;
 
   const isSelectedVariantApproved = useMemo(() => {
     return isVariantApproved(selectedSolution?.variant, approvedVariantIds);
@@ -1109,6 +1111,7 @@ export default function Stage3ReviewPage({
         selection={selectedSolution} versionLabel={versionLabel(session, selectedSolution.versionIndex)}
         message={actionMessage} readOnly={isReviewReadOnly || reviewSyncRequired || selectedSolution.variant.status === 'regenerating'} approved={isSelectedVariantApproved}
         busy={pendingActions.has(selectedSolution.variant.candidate_id || selectedSolution.variant.id || selectedSolution.variant.question_id)}
+        canRegenerate={selectedSolution.variant.result_kind !== 'ORIGINAL_CLONE'}
         rejectBusy={activeRecovery || [...pendingActions.values()].includes('reject')}
         canRevert={Boolean(session?.confirmation_id && session?.job_snapshot_id && (selectedSolution.variant.candidate_id || selectedSolution.variant.id || selectedSolution.variant.question_id))}
         onClose={() => setInspection(null)} onApprove={() => mutate('accept', selectedSolution)}
