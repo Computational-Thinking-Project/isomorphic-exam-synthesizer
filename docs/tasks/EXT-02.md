@@ -66,6 +66,7 @@ Integration order from EXT v3.1: EXT-01/02 → EXT-04 → EXT-03. Schedule risk:
 - **Per-slot policy:** `snapshot_payload.question_policies[source_question_id] = {canonical_dimensions, result_kind}`; shuffle-only → every slot `ORIGINAL_CLONE`, `canonical_dimensions=[]`.
 - **Reopen state:** reuse creates a new draft session at the first step whose evidence is missing (confirm source / analysis / Stage 2); never reopens the source session.
 - **Post-shuffle projection:** read from persisted permutation (question order, option order, display key, solution) per `version_id`; the canonical key is unchanged. Fixture: `docs/tasks/fixtures/I-EXT-03.json` (synthetic, for contract agreement only): one AI slot, one clone slot with missing solution, one shuffled version in both modes, and reuse request/response examples (idempotent retry, 409, 21-question rejection).
+- **Python reader:** `mode_mapper.job_generation_mode` and `mode_mapper.slot_result_kind` mirror 028 (parity-tested); consumers import them instead of re-implementing the rules.
 
 ## 5. Self-check plan
 

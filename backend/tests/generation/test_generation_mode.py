@@ -4,6 +4,7 @@ import json
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
@@ -11,7 +12,13 @@ from pydantic import ValidationError
 from app.models.generation_config import GenerationConfigRequest, GenerationConfigResponse
 from app.services.generation.config_repository import GenerationConfigRepository
 from app.services.generation.config_service import GenerationConfigError
-from app.services.generation.mode_mapper import frozen_generation_mode, mode_question_policy
+from app.services.generation.mode_mapper import (
+    GenerationModeConflict,
+    frozen_generation_mode,
+    job_generation_mode,
+    mode_question_policy,
+    slot_result_kind,
+)
 from tests.api.test_generation_config import ApiHarness, payload
 from tests.api.test_generation_config import api as api  # noqa: F401
 from tests.generation.test_config_repository import (
@@ -169,3 +176,76 @@ def test_repository_omits_default_mode_for_pre_028_databases() -> None:
     db.rpc.return_value.execute.return_value = SimpleNamespace(data=saved_receipt(manifest, []))
     GenerationConfigRepository(db).save_config(SESSION_ID, GenerationConfigRequest(n_versions=2), manifest)
     assert "p_generation_mode" not in db.rpc.call_args.args[1]
+
+
+SID_AI = "00000000-0000-4000-8000-000000000101"
+SID_CLONE = "00000000-0000-4000-8000-000000000102"
+AI_POLICY = {"canonical_dimensions": ["values"], "result_kind": "AI_RESULT"}
+CLONE_POLICY = {"canonical_dimensions": [], "result_kind": "ORIGINAL_CLONE"}
+
+
+def snapshot_row(version: str, mode: str | None = None, policies: dict | None = None, **extra) -> dict:
+    payload: dict = {"question_policies": policies or {}}
+    if mode is not None:
+        payload["generation_mode"] = mode
+    return {
+        "mapping_version": version,
+        "generation_mode": mode,
+        "public_modes": ["NUMERICAL", "parameter_variation"],
+        "canonical_dimensions": ["values"],
+        "snapshot_payload": payload,
+        **extra,
+    }
+
+
+@pytest.mark.parametrize(("public_modes", "dimensions", "expected"), [
+    ([], [], "ORIGINAL_CLONE"),
+    (["NUMERICAL", "parameter_variation"], ["values"], "AI_RESULT"),
+    ([], ["values"], "AI_RESULT"),
+])
+def test_reader_legacy_1_0_uses_session_rule(public_modes: list, dimensions: list, expected: str) -> None:
+    row = snapshot_row("1.0", public_modes=public_modes, canonical_dimensions=dimensions)
+    row["snapshot_payload"] = {}
+    assert job_generation_mode(row) == "ai_generation"
+    assert slot_result_kind(row, SID_AI) == expected
+
+
+def test_reader_1_1_uses_frozen_per_slot_policy() -> None:
+    row = snapshot_row("1.1", policies={SID_AI: AI_POLICY, SID_CLONE: CLONE_POLICY})
+    assert job_generation_mode(row) == "ai_generation"
+    assert slot_result_kind(row, SID_AI) == "AI_RESULT"
+    assert slot_result_kind(row, UUID(SID_CLONE)) == "ORIGINAL_CLONE"
+
+
+@pytest.mark.parametrize("mode", ["ai_generation", "shuffle_only"])
+def test_reader_1_2_reads_mode_and_slots(mode: str) -> None:
+    policies = {SID_AI: AI_POLICY, SID_CLONE: CLONE_POLICY} if mode == "ai_generation" else {
+        SID_AI: CLONE_POLICY, SID_CLONE: CLONE_POLICY}
+    row = snapshot_row("1.2", mode, policies)
+    assert job_generation_mode(row) == mode
+    expected = "AI_RESULT" if mode == "ai_generation" else "ORIGINAL_CLONE"
+    assert slot_result_kind(row, SID_AI) == expected
+    assert slot_result_kind(row, SID_CLONE) == "ORIGINAL_CLONE"
+
+
+@pytest.mark.parametrize("row", [
+    snapshot_row("1.2", "shuffle_only", {SID_AI: AI_POLICY}),  # shuffle_only can never be AI
+    snapshot_row("1.1", policies={}),  # missing slot
+    snapshot_row("1.1", policies={SID_AI: {"result_kind": "CONFIRMED_SOURCE_FALLBACK"}}),
+    snapshot_row("1.1", policies={SID_AI: "AI_RESULT"}),
+    snapshot_row("1.3", "ai_generation", {SID_AI: AI_POLICY}),  # unknown version
+    snapshot_row("1.2", None, {SID_AI: AI_POLICY}),  # null mode
+    {**snapshot_row("1.2", "ai_generation", {SID_AI: AI_POLICY}), "generation_mode": "shuffle_only"},
+    {**snapshot_row("1.2", "ai_generation", {SID_AI: AI_POLICY}), "snapshot_payload": None},
+])
+def test_reader_fails_closed(row: dict) -> None:
+    with pytest.raises(GenerationModeConflict):
+        slot_result_kind(row, SID_AI)
+
+
+def test_reader_mode_mismatch_between_column_and_payload() -> None:
+    row = snapshot_row("1.2", "shuffle_only", {SID_AI: CLONE_POLICY})
+    row["snapshot_payload"]["generation_mode"] = "ai_generation"
+    with pytest.raises(GenerationModeConflict):
+        job_generation_mode(row)
+    assert issubclass(GenerationModeConflict, ValueError)

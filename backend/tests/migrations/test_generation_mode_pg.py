@@ -155,6 +155,83 @@ async def test_shuffle_only_ai_capable_blueprint_is_clone_only_with_zero_quota(d
     completed = await rpc(db.owner, "load_generation_completed_results", db.sid)
     assert [row["result_kind"] for row in completed["completed"]] == ["ORIGINAL_CLONE"] * 4
     assert await quota(db) == 0
+    await assert_one_ledger_row_per_slot(db, retry["snapshot_id"], slots=4, kind="ORIGINAL_CLONE")
+
+
+async def assert_one_ledger_row_per_slot(db, snapshot_id, *, slots, kind):
+    """Ledger shape consumers (Export) rely on is unchanged for mapping 1.2 jobs."""
+    rows = await db.admin.fetch(
+        "SELECT * FROM generation_target_results WHERE session_id=$1::uuid AND is_success",
+        db.sid,
+    )
+    assert len(rows) == slots
+    assert len({(row["version_index"], row["source_question_id"]) for row in rows}) == slots
+    for row in rows:
+        assert str(row["snapshot_id"]) == snapshot_id and str(row["session_id"]) == db.sid
+        assert row["version_question_id"] is not None and row["source_question_id"] is not None
+        assert row["result_kind"] == kind
+        if kind == "ORIGINAL_CLONE":
+            assert len(row["clone_fingerprint"]) == 64
+            assert all(char in "0123456789abcdef" for char in row["clone_fingerprint"])
+        else:
+            assert row["clone_fingerprint"] is None and row["request_fingerprint"]
+
+
+async def test_ai_generation_1_2_ledger_rows_keep_dev_shape(db):
+    await migrate(db)
+    await save(db, await publish(db), versions=1)
+    job = await rpc(db.owner, "claim_generation_job", db.sid, False)
+    assert job["context"]["mapping_version"] == "1.2"
+    for index in range(2):
+        await persist(db, job, result_for(db, job, index=index))
+    await rpc(db.worker, "finish_generation_job", db.sid, "generated", job["job_id"])
+    await assert_one_ledger_row_per_slot(db, job["snapshot_id"], slots=2, kind="AI_RESULT")
+
+
+async def assert_python_reader_matches_sql(db):
+    from app.services.generation.mode_mapper import job_generation_mode, slot_result_kind
+
+    row = json.loads(await db.admin.fetchval(
+        "SELECT to_jsonb(j) FROM generation_job_snapshots j WHERE session_id=$1::uuid", db.sid
+    ))
+    assert job_generation_mode(row) == await job_mode(db)
+    for source in row["snapshot_payload"]["confirmed_sources"]:
+        sql_clone = await db.admin.fetchval(
+            "SELECT _generation_is_clone(j,$2::uuid) FROM generation_job_snapshots j WHERE session_id=$1::uuid",
+            db.sid, source["source_question_id"],
+        )
+        expected = "ORIGINAL_CLONE" if sql_clone else "AI_RESULT"
+        assert slot_result_kind(row, source["source_question_id"]) == expected
+    return row
+
+
+@pytest.mark.parametrize(
+    "setup",
+    ["legacy_1_0", "legacy_1_1_mixed", "ai_1_2_mixed", "ai_1_2_all_clone", "shuffle_only_1_2"],
+)
+async def test_python_reader_parity_with_sql_helpers(db, setup):
+    from tests.migrations.test_per_question_generation import set_dimensions
+
+    if setup.startswith("legacy"):
+        await migrate(db, latest=False)
+        if setup == "legacy_1_1_mixed":
+            await db.admin.execute(SQL_026.read_text(encoding="utf-8"))
+            set_dimensions(db, [("values",), ("wording",)])
+        await save(db, await publish(db))
+        await rpc(db.owner, "claim_generation_job", db.sid, False)
+        for number in ("026", "027", "028"):
+            (path,) = (ROOT / "backend/migrations").glob(number + "_*.sql")
+            await db.admin.execute(path.read_text(encoding="utf-8"))
+    else:
+        await migrate(db)
+        if setup == "ai_1_2_mixed":
+            set_dimensions(db, [("values", "context"), ("wording",)])
+        snapshot = await publish(db, clone=setup == "ai_1_2_all_clone")
+        await save(db, snapshot, mode="shuffle_only" if setup.startswith("shuffle") else None)
+        await rpc(db.owner, "claim_generation_job", db.sid, False)
+    row = await assert_python_reader_matches_sql(db)
+    expected_version = {"legacy_1_0": "1.0", "legacy_1_1_mixed": "1.1"}.get(setup, "1.2")
+    assert row["mapping_version"] == expected_version
 
 
 @pytest.mark.parametrize("first,second", [("ai_generation", "shuffle_only"), ("shuffle_only", "ai_generation")])
