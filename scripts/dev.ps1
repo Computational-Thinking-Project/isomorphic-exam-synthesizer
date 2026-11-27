@@ -148,7 +148,12 @@ try {
             'test' {
                 Invoke-Compose -DockerArguments @('run', '--build', '--rm', '--no-deps', 'backend', 'python', '-m', 'pytest', 'tests', '-q')
                 Invoke-Compose -DockerArguments @('run', '--rm', '--no-deps', 'backend', 'python', '-c', "from sympy.parsing.latex import parse_latex; assert str(parse_latex('x^2+1')) == 'x**2 + 1'; print('PASS: SymPy LaTeX parser')")
-                Invoke-Compose -DockerArguments @('run', '--build', '--rm', '--no-deps', 'frontend', 'sh', '-c', 'npm run test && npm run lint && npm run build')
+                $reviewFixture = Join-Path $repoRoot 'backend/tests/fixtures/ext01_review_transitions.json'
+                $fixtureMount = "${reviewFixture}:/backend/tests/fixtures/ext01_review_transitions.json:ro"
+                Invoke-Compose -DockerArguments @(
+                    'run', '--build', '--rm', '--no-deps', '--volume', $fixtureMount,
+                    'frontend', 'sh', '-c', 'npm run test && npm run lint && npm run build'
+                )
             }
             'smoke' { Test-Stack }
             'logs' { Invoke-Compose -DockerArguments @('logs', '--tail', '100') }
