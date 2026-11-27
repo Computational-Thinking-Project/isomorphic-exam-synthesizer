@@ -11,6 +11,65 @@
 
 Các số mục cũ được giữ để truy vết review; đường dẫn code trong backtick tính từ root repository. Tách file không đổi phân công, quyền hoặc chiến lược PR.
 
+<a id="stabilization-q05-q07-docker"></a>
+
+## Q05, Q07 và regression Docker CI
+
+Baseline Draft PR #111 là `350f6d8` trên `dev@b292443`. Inventory #112 `68ed813` có migration mode 028. #113 `3162313` và #114 `38aa8df` giữ inventory đến 027. Test code cuối tại `580b91f`. Bản ghi kết quả sau commit này chỉ cập nhật tài liệu.
+
+| Lượt chạy | SHA và môi trường | Kết quả |
+|---|---|---|
+| Migration EXT-01, standalone | `5271945`, Windows Python, PostgreSQL 15 Docker disposable | 8 pass. Git nhận rename 100%, giữ nguyên blob SQL. |
+| Migration EXT-01, ghép #112 | `5271945` + riêng file SQL từ `68ed813`, archive tạm, PostgreSQL 15 disposable | 8 pass, gồm legacy receipt nâng từ 027 và rerun 029. |
+| Q07 standalone | `1c52ed4`, PostgreSQL 15 disposable | 9 pass. ACL hai helper, worker RPC, draft no-op, lease còn hạn, cross-owner, candidate không hợp lệ, rollback, recovery đồng thời và late completion. |
+| Q07 ghép #112 | `580b91f` + SQL 028 từ `68ed813`, archive tạm, PostgreSQL 15 disposable | 9 pass, 0 fail/skip. Kiểm lại cùng helper Q07 và SQL mode 028 đã ghim. |
+| Regression Review RPC / chain / snapshot / asyncpg | `580b91f`, Windows Python và PostgreSQL 15 disposable | 74 pass, 7 subtest pass, 0 fail/skip. |
+| API/service/AI mock | `580b91f`, Windows Python | 241 pass, 1 skip (Gemini opt-in), 0 fail. |
+| Backend toàn bộ và Blueprint | `580b91f`, Windows Python UTF-8 | 2296 pass, 798 skip, 0 fail. Các suite PG opt-in chạy riêng. |
+| Static | `580b91f`, Windows | Ruff pass. Mypy pass trên 128 file. |
+| A01-07 | Script trong `580b91f`, chạy host Node và Compose Node 22 với cùng fixture | 1 pass trên mỗi môi trường, 0 fail/skip. |
+| Frontend toàn bộ, lint và build | `580b91f`, Windows Node | 631 pass, 0 fail/skip. ESLint và Vite build pass. Vite báo chunk vượt 500 kB. |
+| Workflow dev Docker | `580b91f`, Docker Desktop Linux containers, Compose 5.7.1, project và port riêng | Exit 0 cho setup/up/test. Smoke HTTP/API pass. Backend 2271 pass, 407 skip, 0 fail. SymPy smoke pass. Frontend 631 pass, 0 fail/skip, xác nhận lại bằng cùng mount. ESLint và build pass. |
+| Hai bước sau trong workflow Docker | `580b91f`, project riêng `ext01-verify-ci-tail111` | Standalone Blueprint 41 pass, 1 skip, Ruff pass. Static Nginx pass cho home, login, backend health và proxy auth challenge. |
+| GitHub Actions | Public head `350f6d8` | [CI Pipeline pass](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/actions/runs/45965369233). [Docker environment fail](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/actions/runs/45965369159/job/140392655295), 630 pass và 1 fail frontend do A01-07 thiếu fixture. Chưa có run cho code local. |
+
+Lệnh test từ repo root, trừ các lệnh Node/npm chạy trong `frontend/`. Hai lượt ghép dùng `git archive` của SHA EXT-01 đã ghi, trích đúng `backend/migrations/028_generation_mode.sql` bằng `git show` tại SHA #112 và chạy từ thư mục tạm. Test PostgreSQL tạo database riêng trên container disposable.
+
+```powershell
+$env:RUN_POSTGRES_MIGRATION_TESTS='1'
+python -X utf8 -m pytest backend/tests/migrations/test_ext01_review_reasons_pg.py -q -s
+$env:RUN_UPSTREAM_MIGRATION_TESTS='1'
+$env:RUN_TASK305_REAL_DB_TESTS='1'
+$env:EXAM_TEST_DB_DESTRUCTIVE='1'
+$env:PYTHONPATH='backend;backend/tests/migrations'
+python -X utf8 -m pytest backend/tests/migrations/test_review_rpcs.py backend/tests/migrations/test_review_migration_chain.py backend/tests/migrations/test_review_snapshot_pg.py backend/tests/services/test_review_real_db_integration.py -q -s
+
+# Trong shell regression riêng, dùng mặc định opt-in.
+$env:PYTHONUTF8='1'
+python -m pytest backend/tests scripts/blueprint/tests -q
+python -X utf8 -m pytest backend/tests/api/test_ext01_reject_api.py backend/tests/api/test_review_api.py backend/tests/api/test_review_rpc_http.py backend/tests/services/test_review_lifecycle.py backend/tests/services/test_review_receipts.py backend/tests/services/test_review_flow.py backend/tests/services/test_ext01_durable_reasons.py backend/tests/ai/test_targeted_regeneration.py -q
+python -m ruff check backend/app scripts/blueprint
+python -m mypy backend/app --ignore-missing-imports
+
+# Từ frontend/
+node --test --test-name-pattern=A01-07 src/features/stage3-review/Stage3Review.test.js
+npm test
+npm run lint
+npm run build
+
+# Từ root, trong Compose project ext01-verify-q07111 với port 18211/13211.
+./scripts/dev.ps1 setup
+$extFixture=Join-Path (Get-Location).Path 'backend/tests/fixtures/ext01_review_transitions.json'
+docker compose --env-file .env -f docker-compose.yml -f docker-compose.dev.yml run --build --rm --no-deps --volume "${extFixture}:/backend/tests/fixtures/ext01_review_transitions.json:ro" frontend node --test --test-name-pattern=A01-07 src/features/stage3-review/Stage3Review.test.js
+./scripts/dev.ps1 up -NoWatch
+./scripts/dev.ps1 test
+./scripts/dev.ps1 down
+```
+
+Sau dev workflow, chạy `docker compose -f docker-compose.blueprint.yml build blueprint`, `docker compose -f docker-compose.blueprint.yml run --rm -T blueprint python -m pytest /workspace/scripts/blueprint/tests -q -p no:cacheprovider` và `docker compose -f docker-compose.blueprint.yml run --rm -T blueprint ruff check --no-cache /workspace/scripts/blueprint`. Với static, chạy `docker compose up --build --detach --wait --wait-timeout 120` và kiểm HTTP bằng `curl.exe` qua port 13212/18212. Kiểm metrics proxy trả 401 và header `WWW-Authenticate: Bearer`, rồi dọn hai stack test bằng `docker compose down --remove-orphans`.
+
+Applied ledger dùng chung vẫn chưa xác minh. Q07 dùng test wrapper và chưa có test race với production DELETE của EXT-04. [Handoff Q05/Q07](09-inputs-handoff.md) · [Recovery contract](../../api/review-rpc-contract.md#q07-private-recovery-for-ext-04-delete)
+
 <a id="evidence-20261127"></a>
 
 ## Kết quả kiểm của author · 27/11/2026
