@@ -1,3 +1,12 @@
+## DEC-EXT04-001 — Metadata và Settings theo owner — 28/11/2026
+
+- **Người đề xuất:** Quỳnh. **Trạng thái:** đã kiểm API và PostgreSQL cô lập; Q05 còn mở cho rollout.
+- **Ngữ cảnh:** mặc định metadata cần tách khỏi thông tin vận hành `subject`/`grade` của lượt đề. Hai bản PATCH partial đồng thời cần giữ được các field riêng của từng bản.
+- **Quyết định:** `GET/PATCH /api/users/me/settings` dùng chung model tám trường nullable. PostgreSQL lưu theo owner, có RLS và RPC merge các field gửi trong một lần ghi. Schema Settings ở fixture rehearsal tới khi xác nhận chuỗi migration Q05.
+- **Phạm vi:** router Users, `ExamMetadata`, schema/test rehearsal và contract Settings để Hùng tích hợp ở EXT-04. Xem [M2 EXT-04](tasks/EXT-04.md).
+
+---
+
 ## PR #109 — Windows full regression passed — 25/11/2026
 
 - Sau xác nhận của Philip về khả năng phát sinh telemetry, full frontend Windows **621/621 pass**,0fail/skip/cancel/108.27s, HEAD72adb9f/source8a6f600. [Checkpoint6.25](tasks/ISSUE-95.md) thay trạng thái full bị chặn/chưa xác nhận trước đó bằng kết quả mới.

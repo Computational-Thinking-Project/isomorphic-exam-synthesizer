@@ -10,6 +10,7 @@ from supabase import Client
 
 from app.api.dependencies import get_current_user, get_user_db
 from app.core.rate_limit import crud_rate_limit
+from app.models.exam_metadata import ExamMetadata
 from app.models.schemas import (
     CurrentUser,
     SessionStatisticsResponse,
@@ -24,6 +25,64 @@ IN_PROGRESS_STATUSES = (
 )
 
 router = APIRouter()
+
+_SETTINGS_COLUMNS = ",".join(ExamMetadata.model_fields)
+
+
+def _read_exam_settings(db: Client, owner_id: str) -> ExamMetadata:
+    rows = (
+        db.table("user_exam_settings")
+        .select(_SETTINGS_COLUMNS)
+        .eq("user_id", owner_id)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not isinstance(rows, list):
+        raise ValueError("Expected exam settings rows")
+    return ExamMetadata.model_validate(rows[0]) if rows else ExamMetadata()
+
+
+@router.get("/me/settings", response_model=ExamMetadata)
+@crud_rate_limit
+async def get_my_exam_settings(
+    request: Request,
+    response: Response,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_user_db),
+) -> ExamMetadata:
+    """Return all printable defaults for the current user."""
+    try:
+        settings = _read_exam_settings(db, current_user.id)
+    except (APIError, httpx.HTTPError, ValueError) as exc:
+        logger.warning("Exam settings read failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Exam settings temporarily unavailable") from exc
+    response.headers["Cache-Control"] = "private, no-store"
+    return settings
+
+
+@router.patch("/me/settings", response_model=ExamMetadata)
+@crud_rate_limit
+async def patch_my_exam_settings(
+    request: Request,
+    response: Response,
+    payload: ExamMetadata,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_user_db),
+) -> ExamMetadata:
+    """Apply only supplied defaults, including explicit nulls, in one DB write."""
+    patch = payload.model_dump(mode="json", exclude_unset=True)
+    try:
+        if patch:
+            updated = db.rpc("patch_my_exam_settings", {"p_patch": patch}).execute().data
+            settings = ExamMetadata.model_validate(updated)
+        else:
+            settings = _read_exam_settings(db, current_user.id)
+    except (APIError, httpx.HTTPError, ValueError) as exc:
+        logger.warning("Exam settings write failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Exam settings temporarily unavailable") from exc
+    response.headers["Cache-Control"] = "private, no-store"
+    return settings
 
 
 def _session_statistics(rows: Any) -> SessionStatisticsResponse:
