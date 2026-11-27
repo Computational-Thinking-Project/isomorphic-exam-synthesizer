@@ -1,3 +1,11 @@
+## EXT-04 — Rehearsal DELETE/Q07 và mẫu receipt F-018 — 28/11/2026
+
+- **Trạng thái:** đã kiểm SQL DELETE trên PostgreSQL cô lập với 028/029/029b ghim theo head provider.
+- **Quyết định:** DELETE kiểm owner, trạng thái và các tác vụ dưới khóa phiên. Recovery Review hết lease chạy trong cùng transaction với DELETE. Việc chuyển caller, áp migration và kiểm quyền môi trường đích chờ Q05.
+- Mẫu receipt EXT/legacy và lỗi F-018 dùng cho mock UI. [M2 EXT-04](tasks/EXT-04.md#deleteq07-và-mẫu-receipt-f-018-ngày-28112026)
+
+---
+
 ## DEC-EXT04-001 — Metadata và Settings theo owner — 28/11/2026
 
 - **Người đề xuất:** Quỳnh. **Trạng thái:** đã kiểm API và PostgreSQL cô lập; Q05 còn mở cho rollout.
