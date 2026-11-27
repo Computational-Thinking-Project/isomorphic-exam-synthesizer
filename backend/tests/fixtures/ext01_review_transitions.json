@@ -1,0 +1,775 @@
+{
+  "contract": "I-EXT-01",
+  "schema": "ReviewSnapshotResponse",
+  "revision": 1,
+  "snapshots": {
+    "initial": {
+      "session_id": "10000000-0000-0000-0000-000000000001",
+      "session_status": "generated",
+      "read_only": false,
+      "confirmation_id": "90000000-0000-0000-0000-000000000001",
+      "job_snapshot_id": "a0000000-0000-0000-0000-000000000001",
+      "confirmed_source_hash": "7b286e6bd144452a399f5fd6e1a6c5645fad5a8efbf02749fcf4424eee2fcdb3",
+      "progress": {
+        "expected_slots": 1,
+        "current_slots": 1,
+        "approved_slots": 0,
+        "missing_slots": 0,
+        "ready": false
+      },
+      "sources": [
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000001",
+          "question_no": 1,
+          "source_revision_id": "b0000000-0000-0000-0000-000000000001",
+          "content": "Giải phương trình 2x + 4 = 0.",
+          "options": [
+            "x = -2",
+            "x = 2",
+            "x = -4",
+            "x = 4"
+          ],
+          "correct_key": "A",
+          "solution_md": null
+        }
+      ],
+      "versions": [
+        {
+          "version_index": 1,
+          "version_code": "101",
+          "version_id": "30000000-0000-0000-0000-000000000001",
+          "slots": [
+            {
+              "source_question_id": "20000000-0000-0000-0000-000000000001",
+              "question_no": 1,
+              "candidate": {
+                "candidate_id": "40000000-0000-0000-0000-000000000001",
+                "status": "pending_review",
+                "content": "3x + 6 = 0",
+                "options": [
+                  "x = 2",
+                  "x = -2",
+                  "x = -3",
+                  "x = 3"
+                ],
+                "correct_key": "B",
+                "solution_md": "3x = -6 nên x = -2. Chọn B.",
+                "has_warning": false,
+                "validation_report": null,
+                "validation_source": "unavailable",
+                "origin": "ai_generated",
+                "is_reverted": false,
+                "updated_at": "2026-11-27T03:00:00Z"
+              }
+            }
+          ]
+        }
+      ],
+      "freshness_token": "d66a7260162913f5cb336841a0e67292889cb27b994f69baef41a0a790f0246d"
+    },
+    "accepted": {
+      "session_id": "10000000-0000-0000-0000-000000000001",
+      "session_status": "reviewed",
+      "read_only": false,
+      "confirmation_id": "90000000-0000-0000-0000-000000000001",
+      "job_snapshot_id": "a0000000-0000-0000-0000-000000000001",
+      "confirmed_source_hash": "7b286e6bd144452a399f5fd6e1a6c5645fad5a8efbf02749fcf4424eee2fcdb3",
+      "progress": {
+        "expected_slots": 1,
+        "current_slots": 1,
+        "approved_slots": 1,
+        "missing_slots": 0,
+        "ready": true
+      },
+      "sources": [
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000001",
+          "question_no": 1,
+          "source_revision_id": "b0000000-0000-0000-0000-000000000001",
+          "content": "Giải phương trình 2x + 4 = 0.",
+          "options": [
+            "x = -2",
+            "x = 2",
+            "x = -4",
+            "x = 4"
+          ],
+          "correct_key": "A",
+          "solution_md": null
+        }
+      ],
+      "versions": [
+        {
+          "version_index": 1,
+          "version_code": "101",
+          "version_id": "30000000-0000-0000-0000-000000000001",
+          "slots": [
+            {
+              "source_question_id": "20000000-0000-0000-0000-000000000001",
+              "question_no": 1,
+              "candidate": {
+                "candidate_id": "40000000-0000-0000-0000-000000000001",
+                "status": "approved",
+                "content": "3x + 6 = 0",
+                "options": [
+                  "x = 2",
+                  "x = -2",
+                  "x = -3",
+                  "x = 3"
+                ],
+                "correct_key": "B",
+                "solution_md": "3x = -6 nên x = -2. Chọn B.",
+                "has_warning": false,
+                "validation_report": null,
+                "validation_source": "unavailable",
+                "origin": "ai_generated",
+                "is_reverted": false,
+                "updated_at": "2026-11-27T03:01:00Z"
+              }
+            }
+          ]
+        }
+      ],
+      "freshness_token": "e3b8c926841dbfaa4790d1b3de0427f7fd419f5fc738f2da165bf59fd3a3ed91"
+    },
+    "regenerating": {
+      "session_id": "10000000-0000-0000-0000-000000000001",
+      "session_status": "generated",
+      "read_only": false,
+      "confirmation_id": "90000000-0000-0000-0000-000000000001",
+      "job_snapshot_id": "a0000000-0000-0000-0000-000000000001",
+      "confirmed_source_hash": "7b286e6bd144452a399f5fd6e1a6c5645fad5a8efbf02749fcf4424eee2fcdb3",
+      "progress": {
+        "expected_slots": 1,
+        "current_slots": 1,
+        "approved_slots": 0,
+        "missing_slots": 0,
+        "ready": false
+      },
+      "sources": [
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000001",
+          "question_no": 1,
+          "source_revision_id": "b0000000-0000-0000-0000-000000000001",
+          "content": "Giải phương trình 2x + 4 = 0.",
+          "options": [
+            "x = -2",
+            "x = 2",
+            "x = -4",
+            "x = 4"
+          ],
+          "correct_key": "A",
+          "solution_md": null
+        }
+      ],
+      "versions": [
+        {
+          "version_index": 1,
+          "version_code": "101",
+          "version_id": "30000000-0000-0000-0000-000000000001",
+          "slots": [
+            {
+              "source_question_id": "20000000-0000-0000-0000-000000000001",
+              "question_no": 1,
+              "candidate": {
+                "candidate_id": "40000000-0000-0000-0000-000000000001",
+                "status": "regenerating",
+                "content": "3x + 6 = 0",
+                "options": [
+                  "x = 2",
+                  "x = -2",
+                  "x = -3",
+                  "x = 3"
+                ],
+                "correct_key": "B",
+                "solution_md": "3x = -6 nên x = -2. Chọn B.",
+                "has_warning": false,
+                "validation_report": null,
+                "validation_source": "unavailable",
+                "origin": "ai_generated",
+                "is_reverted": false,
+                "updated_at": "2026-11-27T03:02:00Z"
+              }
+            }
+          ]
+        }
+      ],
+      "freshness_token": "f4795870dc9e9081bbffea64fb78f64ce271445bd93efa81ac8688ec6d6535e4"
+    },
+    "regenerated": {
+      "session_id": "10000000-0000-0000-0000-000000000001",
+      "session_status": "generated",
+      "read_only": false,
+      "confirmation_id": "90000000-0000-0000-0000-000000000001",
+      "job_snapshot_id": "a0000000-0000-0000-0000-000000000001",
+      "confirmed_source_hash": "7b286e6bd144452a399f5fd6e1a6c5645fad5a8efbf02749fcf4424eee2fcdb3",
+      "progress": {
+        "expected_slots": 1,
+        "current_slots": 1,
+        "approved_slots": 0,
+        "missing_slots": 0,
+        "ready": false
+      },
+      "sources": [
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000001",
+          "question_no": 1,
+          "source_revision_id": "b0000000-0000-0000-0000-000000000001",
+          "content": "Giải phương trình 2x + 4 = 0.",
+          "options": [
+            "x = -2",
+            "x = 2",
+            "x = -4",
+            "x = 4"
+          ],
+          "correct_key": "A",
+          "solution_md": null
+        }
+      ],
+      "versions": [
+        {
+          "version_index": 1,
+          "version_code": "101",
+          "version_id": "30000000-0000-0000-0000-000000000001",
+          "slots": [
+            {
+              "source_question_id": "20000000-0000-0000-0000-000000000001",
+              "question_no": 1,
+              "candidate": {
+                "candidate_id": "40000000-0000-0000-0000-000000000002",
+                "status": "pending_review",
+                "content": "5x - 15 = 0",
+                "options": [
+                  "x = 3",
+                  "x = -3",
+                  "x = 5",
+                  "x = -5"
+                ],
+                "correct_key": "A",
+                "solution_md": "5x = 15 nên x = 3. Chọn A.",
+                "has_warning": false,
+                "validation_report": null,
+                "validation_source": "unavailable",
+                "origin": "regenerated",
+                "is_reverted": false,
+                "updated_at": "2026-11-27T03:03:00Z"
+              }
+            }
+          ]
+        }
+      ],
+      "freshness_token": "c12a38dcd9815a1d70fb089a2f30fc900fb7624f49b0932f69666bd90a9857a7"
+    },
+    "regenerated_accepted": {
+      "session_id": "10000000-0000-0000-0000-000000000001",
+      "session_status": "reviewed",
+      "read_only": false,
+      "confirmation_id": "90000000-0000-0000-0000-000000000001",
+      "job_snapshot_id": "a0000000-0000-0000-0000-000000000001",
+      "confirmed_source_hash": "7b286e6bd144452a399f5fd6e1a6c5645fad5a8efbf02749fcf4424eee2fcdb3",
+      "progress": {
+        "expected_slots": 1,
+        "current_slots": 1,
+        "approved_slots": 1,
+        "missing_slots": 0,
+        "ready": true
+      },
+      "sources": [
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000001",
+          "question_no": 1,
+          "source_revision_id": "b0000000-0000-0000-0000-000000000001",
+          "content": "Giải phương trình 2x + 4 = 0.",
+          "options": [
+            "x = -2",
+            "x = 2",
+            "x = -4",
+            "x = 4"
+          ],
+          "correct_key": "A",
+          "solution_md": null
+        }
+      ],
+      "versions": [
+        {
+          "version_index": 1,
+          "version_code": "101",
+          "version_id": "30000000-0000-0000-0000-000000000001",
+          "slots": [
+            {
+              "source_question_id": "20000000-0000-0000-0000-000000000001",
+              "question_no": 1,
+              "candidate": {
+                "candidate_id": "40000000-0000-0000-0000-000000000002",
+                "status": "approved",
+                "content": "5x - 15 = 0",
+                "options": [
+                  "x = 3",
+                  "x = -3",
+                  "x = 5",
+                  "x = -5"
+                ],
+                "correct_key": "A",
+                "solution_md": "5x = 15 nên x = 3. Chọn A.",
+                "has_warning": false,
+                "validation_report": null,
+                "validation_source": "unavailable",
+                "origin": "regenerated",
+                "is_reverted": false,
+                "updated_at": "2026-11-27T03:04:00Z"
+              }
+            }
+          ]
+        }
+      ],
+      "freshness_token": "65618a36af58b03f5b6baae836f6c75473192996698cf817b5e42852a1ea51d1"
+    },
+    "missing": {
+      "session_id": "10000000-0000-0000-0000-000000000001",
+      "session_status": "partial_generated",
+      "read_only": true,
+      "confirmation_id": "90000000-0000-0000-0000-000000000001",
+      "job_snapshot_id": "a0000000-0000-0000-0000-000000000001",
+      "confirmed_source_hash": "7b286e6bd144452a399f5fd6e1a6c5645fad5a8efbf02749fcf4424eee2fcdb3",
+      "progress": {
+        "expected_slots": 1,
+        "current_slots": 0,
+        "approved_slots": 0,
+        "missing_slots": 1,
+        "ready": false
+      },
+      "sources": [
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000001",
+          "question_no": 1,
+          "source_revision_id": "b0000000-0000-0000-0000-000000000001",
+          "content": "Giải phương trình 2x + 4 = 0.",
+          "options": [
+            "x = -2",
+            "x = 2",
+            "x = -4",
+            "x = 4"
+          ],
+          "correct_key": "A",
+          "solution_md": null
+        }
+      ],
+      "versions": [
+        {
+          "version_index": 1,
+          "version_code": "101",
+          "version_id": "30000000-0000-0000-0000-000000000001",
+          "slots": [
+            {
+              "source_question_id": "20000000-0000-0000-0000-000000000001",
+              "question_no": 1,
+              "candidate": null
+            }
+          ]
+        }
+      ],
+      "freshness_token": "3fd869e98d4b998cfff6b02aec42fb9702b944f799c2309714b692f9e6f7da44"
+    },
+    "reverted": {
+      "session_id": "10000000-0000-0000-0000-000000000001",
+      "session_status": "generated",
+      "read_only": false,
+      "confirmation_id": "90000000-0000-0000-0000-000000000001",
+      "job_snapshot_id": "a0000000-0000-0000-0000-000000000001",
+      "confirmed_source_hash": "7b286e6bd144452a399f5fd6e1a6c5645fad5a8efbf02749fcf4424eee2fcdb3",
+      "progress": {
+        "expected_slots": 1,
+        "current_slots": 1,
+        "approved_slots": 0,
+        "missing_slots": 0,
+        "ready": false
+      },
+      "sources": [
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000001",
+          "question_no": 1,
+          "source_revision_id": "b0000000-0000-0000-0000-000000000001",
+          "content": "Giải phương trình 2x + 4 = 0.",
+          "options": [
+            "x = -2",
+            "x = 2",
+            "x = -4",
+            "x = 4"
+          ],
+          "correct_key": "A",
+          "solution_md": null
+        }
+      ],
+      "versions": [
+        {
+          "version_index": 1,
+          "version_code": "101",
+          "version_id": "30000000-0000-0000-0000-000000000001",
+          "slots": [
+            {
+              "source_question_id": "20000000-0000-0000-0000-000000000001",
+              "question_no": 1,
+              "candidate": {
+                "candidate_id": "40000000-0000-0000-0000-000000000003",
+                "status": "pending_review",
+                "content": "Giải phương trình 2x + 4 = 0.",
+                "options": [
+                  "x = -2",
+                  "x = 2",
+                  "x = -4",
+                  "x = 4"
+                ],
+                "correct_key": "A",
+                "solution_md": "Không có lời giải cho câu hỏi này.",
+                "has_warning": true,
+                "validation_report": {
+                  "reason": "REVERT",
+                  "validation_status": "not_validated",
+                  "source_revision_id": "b0000000-0000-0000-0000-000000000001",
+                  "source_fingerprint": "7b286e6bd144452a399f5fd6e1a6c5645fad5a8efbf02749fcf4424eee2fcdb3",
+                  "confirmed_source_hash": "7b286e6bd144452a399f5fd6e1a6c5645fad5a8efbf02749fcf4424eee2fcdb3"
+                },
+                "validation_source": "version_question",
+                "origin": "reverted",
+                "is_reverted": true,
+                "updated_at": "2026-11-27T03:06:00Z"
+              }
+            }
+          ]
+        }
+      ],
+      "freshness_token": "ce9ec67c223b84a10fef326c0985353c4a3775fcc0438a525b4d4b46b998e88c"
+    },
+    "reverted_accepted": {
+      "session_id": "10000000-0000-0000-0000-000000000001",
+      "session_status": "reviewed",
+      "read_only": false,
+      "confirmation_id": "90000000-0000-0000-0000-000000000001",
+      "job_snapshot_id": "a0000000-0000-0000-0000-000000000001",
+      "confirmed_source_hash": "7b286e6bd144452a399f5fd6e1a6c5645fad5a8efbf02749fcf4424eee2fcdb3",
+      "progress": {
+        "expected_slots": 1,
+        "current_slots": 1,
+        "approved_slots": 1,
+        "missing_slots": 0,
+        "ready": true
+      },
+      "sources": [
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000001",
+          "question_no": 1,
+          "source_revision_id": "b0000000-0000-0000-0000-000000000001",
+          "content": "Giải phương trình 2x + 4 = 0.",
+          "options": [
+            "x = -2",
+            "x = 2",
+            "x = -4",
+            "x = 4"
+          ],
+          "correct_key": "A",
+          "solution_md": null
+        }
+      ],
+      "versions": [
+        {
+          "version_index": 1,
+          "version_code": "101",
+          "version_id": "30000000-0000-0000-0000-000000000001",
+          "slots": [
+            {
+              "source_question_id": "20000000-0000-0000-0000-000000000001",
+              "question_no": 1,
+              "candidate": {
+                "candidate_id": "40000000-0000-0000-0000-000000000003",
+                "status": "approved",
+                "content": "Giải phương trình 2x + 4 = 0.",
+                "options": [
+                  "x = -2",
+                  "x = 2",
+                  "x = -4",
+                  "x = 4"
+                ],
+                "correct_key": "A",
+                "solution_md": "Không có lời giải cho câu hỏi này.",
+                "has_warning": true,
+                "validation_report": {
+                  "reason": "REVERT",
+                  "validation_status": "not_validated",
+                  "source_revision_id": "b0000000-0000-0000-0000-000000000001",
+                  "source_fingerprint": "7b286e6bd144452a399f5fd6e1a6c5645fad5a8efbf02749fcf4424eee2fcdb3",
+                  "confirmed_source_hash": "7b286e6bd144452a399f5fd6e1a6c5645fad5a8efbf02749fcf4424eee2fcdb3"
+                },
+                "validation_source": "version_question",
+                "origin": "reverted",
+                "is_reverted": true,
+                "updated_at": "2026-11-27T03:07:00Z"
+              }
+            }
+          ]
+        }
+      ],
+      "freshness_token": "077fe69ee5fde1b5a05121287c7e22280ebc000cd594be475ef6af2140223d3c"
+    },
+    "clone": {
+      "session_id": "10000000-0000-0000-0000-000000000001",
+      "session_status": "generated",
+      "read_only": false,
+      "confirmation_id": "90000000-0000-0000-0000-000000000001",
+      "job_snapshot_id": "a0000000-0000-0000-0000-000000000001",
+      "confirmed_source_hash": "7b286e6bd144452a399f5fd6e1a6c5645fad5a8efbf02749fcf4424eee2fcdb3",
+      "progress": {
+        "expected_slots": 1,
+        "current_slots": 1,
+        "approved_slots": 0,
+        "missing_slots": 0,
+        "ready": false
+      },
+      "sources": [
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000001",
+          "question_no": 1,
+          "source_revision_id": "b0000000-0000-0000-0000-000000000001",
+          "content": "Giải phương trình 2x + 4 = 0.",
+          "options": [
+            "x = -2",
+            "x = 2",
+            "x = -4",
+            "x = 4"
+          ],
+          "correct_key": "A",
+          "solution_md": null
+        }
+      ],
+      "versions": [
+        {
+          "version_index": 1,
+          "version_code": "101",
+          "version_id": "30000000-0000-0000-0000-000000000001",
+          "slots": [
+            {
+              "source_question_id": "20000000-0000-0000-0000-000000000001",
+              "question_no": 1,
+              "candidate": {
+                "candidate_id": "40000000-0000-0000-0000-000000000004",
+                "status": "pending_review",
+                "content": "Giải phương trình 2x + 4 = 0.",
+                "options": [
+                  "x = -2",
+                  "x = 2",
+                  "x = -4",
+                  "x = 4"
+                ],
+                "correct_key": "A",
+                "solution_md": "Không có lời giải cho câu hỏi này.",
+                "has_warning": false,
+                "validation_report": null,
+                "validation_source": "unavailable",
+                "origin": "original_clone",
+                "is_reverted": false,
+                "updated_at": "2026-11-27T03:08:00Z"
+              }
+            }
+          ]
+        }
+      ],
+      "freshness_token": "5b4d5631ca767a16c338130cbf5bf5de2ad6b50fa82659f234b89623622c9409"
+    },
+    "legacy_clone_null": {
+      "session_id": "10000000-0000-0000-0000-000000000001",
+      "session_status": "generated",
+      "read_only": false,
+      "confirmation_id": "90000000-0000-0000-0000-000000000001",
+      "job_snapshot_id": "a0000000-0000-0000-0000-000000000001",
+      "confirmed_source_hash": "7b286e6bd144452a399f5fd6e1a6c5645fad5a8efbf02749fcf4424eee2fcdb3",
+      "progress": {
+        "expected_slots": 1,
+        "current_slots": 1,
+        "approved_slots": 0,
+        "missing_slots": 0,
+        "ready": false
+      },
+      "sources": [
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000001",
+          "question_no": 1,
+          "source_revision_id": "b0000000-0000-0000-0000-000000000001",
+          "content": "Giải phương trình 2x + 4 = 0.",
+          "options": [
+            "x = -2",
+            "x = 2",
+            "x = -4",
+            "x = 4"
+          ],
+          "correct_key": "A",
+          "solution_md": null
+        }
+      ],
+      "versions": [
+        {
+          "version_index": 1,
+          "version_code": "101",
+          "version_id": "30000000-0000-0000-0000-000000000001",
+          "slots": [
+            {
+              "source_question_id": "20000000-0000-0000-0000-000000000001",
+              "question_no": 1,
+              "candidate": {
+                "candidate_id": "40000000-0000-0000-0000-000000000005",
+                "status": "pending_review",
+                "content": "Giải phương trình 2x + 4 = 0.",
+                "options": [
+                  "x = -2",
+                  "x = 2",
+                  "x = -4",
+                  "x = 4"
+                ],
+                "correct_key": "A",
+                "solution_md": null,
+                "has_warning": false,
+                "validation_report": null,
+                "validation_source": "unavailable",
+                "origin": "original_clone",
+                "is_reverted": false,
+                "updated_at": "2026-11-27T03:09:00Z"
+              }
+            }
+          ]
+        }
+      ],
+      "freshness_token": "59feecb9ef033c59bb3e0286d9978065de12f804dae663baf766465d25b5f7b4"
+    },
+    "fallback": {
+      "session_id": "10000000-0000-0000-0000-000000000001",
+      "session_status": "generated",
+      "read_only": false,
+      "confirmation_id": "90000000-0000-0000-0000-000000000001",
+      "job_snapshot_id": "a0000000-0000-0000-0000-000000000001",
+      "confirmed_source_hash": "7b286e6bd144452a399f5fd6e1a6c5645fad5a8efbf02749fcf4424eee2fcdb3",
+      "progress": {
+        "expected_slots": 1,
+        "current_slots": 1,
+        "approved_slots": 0,
+        "missing_slots": 0,
+        "ready": false
+      },
+      "sources": [
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000001",
+          "question_no": 1,
+          "source_revision_id": "b0000000-0000-0000-0000-000000000001",
+          "content": "Giải phương trình 2x + 4 = 0.",
+          "options": [
+            "x = -2",
+            "x = 2",
+            "x = -4",
+            "x = 4"
+          ],
+          "correct_key": "A",
+          "solution_md": null
+        }
+      ],
+      "versions": [
+        {
+          "version_index": 1,
+          "version_code": "101",
+          "version_id": "30000000-0000-0000-0000-000000000001",
+          "slots": [
+            {
+              "source_question_id": "20000000-0000-0000-0000-000000000001",
+              "question_no": 1,
+              "candidate": {
+                "candidate_id": "40000000-0000-0000-0000-000000000006",
+                "status": "pending_review",
+                "content": "Giải phương trình 2x + 4 = 0.",
+                "options": [
+                  "x = -2",
+                  "x = 2",
+                  "x = -4",
+                  "x = 4"
+                ],
+                "correct_key": "A",
+                "solution_md": "Không có lời giải cho câu hỏi này.",
+                "has_warning": false,
+                "validation_report": null,
+                "validation_source": "unavailable",
+                "origin": "confirmed_source_fallback",
+                "is_reverted": false,
+                "updated_at": "2026-11-27T03:10:00Z"
+              }
+            }
+          ]
+        }
+      ],
+      "freshness_token": "a5388058ec0a1912be66cec54e55dccb6a949fdd61106e9ca39b587964625118"
+    },
+    "reverted_with_solution": {
+      "session_id": "10000000-0000-0000-0000-000000000001",
+      "session_status": "generated",
+      "read_only": false,
+      "confirmation_id": "90000000-0000-0000-0000-000000000002",
+      "job_snapshot_id": "a0000000-0000-0000-0000-000000000002",
+      "confirmed_source_hash": "90d71113f780ec0cca87e07b89b51b9b5b381ac8791acc0eb7bb798c22e519e7",
+      "progress": {
+        "expected_slots": 1,
+        "current_slots": 1,
+        "approved_slots": 0,
+        "missing_slots": 0,
+        "ready": false
+      },
+      "sources": [
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000001",
+          "question_no": 1,
+          "source_revision_id": "b0000000-0000-0000-0000-000000000002",
+          "content": "Giải phương trình 2x + 4 = 0.",
+          "options": [
+            "x = -2",
+            "x = 2",
+            "x = -4",
+            "x = 4"
+          ],
+          "correct_key": "A",
+          "solution_md": "2x = -4 nên x = -2."
+        }
+      ],
+      "versions": [
+        {
+          "version_index": 1,
+          "version_code": "101",
+          "version_id": "30000000-0000-0000-0000-000000000001",
+          "slots": [
+            {
+              "source_question_id": "20000000-0000-0000-0000-000000000001",
+              "question_no": 1,
+              "candidate": {
+                "candidate_id": "40000000-0000-0000-0000-000000000007",
+                "status": "pending_review",
+                "content": "Giải phương trình 2x + 4 = 0.",
+                "options": [
+                  "x = -2",
+                  "x = 2",
+                  "x = -4",
+                  "x = 4"
+                ],
+                "correct_key": "A",
+                "solution_md": "2x = -4 nên x = -2.",
+                "has_warning": true,
+                "validation_report": {
+                  "reason": "REVERT",
+                  "validation_status": "not_validated",
+                  "source_revision_id": "b0000000-0000-0000-0000-000000000002",
+                  "source_fingerprint": "90d71113f780ec0cca87e07b89b51b9b5b381ac8791acc0eb7bb798c22e519e7",
+                  "confirmed_source_hash": "90d71113f780ec0cca87e07b89b51b9b5b381ac8791acc0eb7bb798c22e519e7"
+                },
+                "validation_source": "version_question",
+                "origin": "reverted",
+                "is_reverted": true,
+                "updated_at": "2026-11-27T03:11:00Z"
+              }
+            }
+          ]
+        }
+      ],
+      "freshness_token": "675d8448c4dc4831b46b31780d930100810187c04234b16924a7d6876ccc1ef7"
+    }
+  }
+}

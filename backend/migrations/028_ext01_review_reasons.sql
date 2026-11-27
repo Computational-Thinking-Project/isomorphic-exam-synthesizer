@@ -131,6 +131,7 @@ BEGIN
       'reasons', stored_reasons,
       'replayed', true,
       'operation_status', o.status,
+      'completion_candidate', CASE WHEN o.status = 'completed' THEN o.completion_candidate END,
       'settlement', o.settlement_result
     )
   );
@@ -184,6 +185,7 @@ BEGIN
       'reasons', stored_reasons,
       'replayed', true,
       'operation_status', o.status,
+      'completion_candidate', CASE WHEN o.status = 'completed' THEN o.completion_candidate END,
       'settlement', o.settlement_result
     );
   END IF;
@@ -248,6 +250,41 @@ GRANT EXECUTE ON FUNCTION
   public.review_lookup_regeneration(UUID, UUID, UUID, JSONB),
   public.review_reserve_regeneration(UUID, UUID, UUID, JSONB)
   TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.review_recover_session(p_session_id UUID)
+RETURNS JSONB LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp AS $$
+DECLARE s public.exam_sessions; op UUID; outcome JSONB; outcomes JSONB := '[]'::jsonb;
+BEGIN
+  IF auth.role() IS DISTINCT FROM 'service_role' THEN
+    RAISE EXCEPTION 'REVIEW_WORKER_REQUIRED' USING ERRCODE='42501';
+  END IF;
+  s := public._review_lock_session(p_session_id,false);
+  IF s.status IN ('approved','exported') OR s.approved_at IS NOT NULL THEN
+    RAISE EXCEPTION 'REVIEW_LOCKED' USING ERRCODE='55000';
+  END IF;
+  IF s.status IN ('draft','blueprinted','configured','generating') THEN
+    RAISE EXCEPTION 'REVIEW_NOT_READY' USING ERRCODE='55000';
+  END IF;
+  IF s.status='reviewed' AND EXISTS (
+    SELECT 1 FROM public.exam_versions v WHERE v.session_id=s.id
+    AND (v.is_finalized OR EXISTS (SELECT 1 FROM public.answer_keys k WHERE k.version_id=v.id))
+  ) THEN
+    RAISE EXCEPTION 'REVIEW_POST_SHUFFLE_LOCKED' USING ERRCODE='55000';
+  END IF;
+  SELECT operation_id INTO op FROM public.review_operations
+    WHERE session_id=s.id AND status='active' AND expires_at<=clock_timestamp()
+    FOR UPDATE;
+  IF FOUND THEN
+    outcome := public._review_finish_failure(op,'STALE_RECOVERY',true);
+    IF outcome->'recovered'='true'::jsonb AND outcome->'replayed'='false'::jsonb THEN
+      outcomes := jsonb_build_array(outcome);
+    END IF;
+  END IF;
+  SELECT * INTO s FROM public.exam_sessions WHERE id=p_session_id;
+  RETURN jsonb_build_object('session_id',s.id,'session_status',s.status,
+    'recovered_count',jsonb_array_length(outcomes),'recoveries',outcomes);
+END $$;
 
 NOTIFY pgrst, 'reload schema';
 

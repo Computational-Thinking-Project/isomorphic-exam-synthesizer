@@ -20,6 +20,7 @@ from app.models.schemas import (
     RejectQuestionRequest,
     ReviewActionResponse,
     ReviewProgressResponse,
+    ReviewRecoveryResponse,
     ReviewSnapshotResponse,
     canonicalize_review_reasons,
 )
@@ -187,3 +188,15 @@ async def get_review_snapshot_endpoint(
 
     service = ReviewService(db=db)
     return await service.get_current_snapshot(session_id, current_user.id)
+
+
+@router.post("/{session_id}/review/recover", response_model=ReviewRecoveryResponse)
+async def recover_review_endpoint(
+    session_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_user_db),
+    service_db: Client = Depends(get_service_db),
+) -> ReviewRecoveryResponse:
+    resource_ids(session_id)
+    assert_ownership("exam_sessions", session_id, current_user.id, db=db)
+    return await ReviewService(db=db, service_db=service_db).recover(session_id)

@@ -1,13 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
-import { ReviewQuestionContent } from './Stage3Comparison.jsx';
-import MathRenderer from '../../components/MathRenderer.jsx';
+import { ReviewQuestionContent, ReviewSolution } from './Stage3Comparison.jsx';
+const reasons = {
+  INCORRECT_ANSWER: 'Đáp án không chính xác',
+  NO_CORRECT_ANSWER: 'Không có phương án đúng',
+  MULTIPLE_CORRECT_ANSWERS: 'Có nhiều phương án đúng',
+  EQUIVALENT_OPTIONS: 'Phương án tương đương',
+  INVALID_QUESTION: 'Nội dung đề bài sai',
+  ISOMORPHISM_MISMATCH: 'Không đảm bảo tính đẳng cấu',
+  DIFFICULTY_MISMATCH: 'Mức độ khó không tương đương',
+  INCORRECT_SOLUTION: 'Lời giải không chính xác',
+};
 
-export default function Stage3InspectionDialog({ selection, versionLabel, message, readOnly, approved,
+export default function Stage3InspectionDialog({ selection, boundReasons, versionLabel, message, readOnly, approved,
   busy, canRevert, onClose, onApprove, onRegenerate, onRevert, onNext }) {
   const dialog = useRef(null);
   const heading = useRef(null);
   const mounted = useRef(false);
   const [confirmation, setConfirmation] = useState(null);
+  const [selectedReasons, setSelectedReasons] = useState([]);
   const { variant, qNo } = selection;
   const candidateId = variant.candidate_id || variant.id || variant.question_id;
   const warning = [variant.warning_message, variant.validation_report?.warning, variant.validation_report?.message]
@@ -29,14 +39,14 @@ export default function Stage3InspectionDialog({ selection, versionLabel, messag
   useEffect(() => { heading.current?.focus(); }, [confirmation, candidateId]);
   const close = () => { if (!busy) onClose(); };
   const confirm = async () => {
-    await (confirmation === 'revert' ? onRevert() : onRegenerate());
+    await (confirmation === 'revert' ? onRevert() : onRegenerate(selectedReasons));
     if (mounted.current) setConfirmation(null);
   };
   const keyDown = (event) => {
     if (event.key === 'Escape') { event.preventDefault(); close(); }
     if (event.key !== 'Tab') return;
     // Markdown solutions can contain links, including in a read-only dialog with no footer actions.
-    const focusable = Array.from(dialog.current.querySelectorAll('button, a[href], [tabindex]'))
+    const focusable = Array.from(dialog.current.querySelectorAll('button, input, a[href], [tabindex]'))
       .filter(element => !element.disabled && Number(element.getAttribute('tabindex') ?? 0) >= 0);
     const first = focusable[0], last = focusable[focusable.length - 1];
     if (!first) { event.preventDefault(); return; }
@@ -63,9 +73,17 @@ export default function Stage3InspectionDialog({ selection, versionLabel, messag
             <section aria-label="Biến thể đang xem"><h3>Biến thể · Câu {qNo}</h3><ReviewQuestionContent question={variant} /></section>
             <section aria-label="Đáp án và lời giải"><h3>Đáp án và lời giải</h3>
               <p>Đáp án đúng: {variant.correct_key || variant.answer || 'Chưa có đáp án'}</p>
-              {variant.solution_md ? <MathRenderer content={variant.solution_md} /> : <p>Chưa có lời giải chi tiết cho câu hỏi này.</p>}
+              <ReviewSolution question={variant} />
             </section>
           </div>}
+        {confirmation === 'regenerate' && <fieldset disabled={busy || Boolean(boundReasons)}>
+          <legend>Lý do tạo lại (tùy chọn)</legend>
+          {Object.entries(reasons).map(([code, label]) => <label key={code} className="block">
+            <input type="checkbox" checked={(boundReasons || selectedReasons).includes(code)}
+              onChange={event => setSelectedReasons(event.target.checked
+                ? [...selectedReasons, code].sort() : selectedReasons.filter(value => value !== code))} /> {label}
+          </label>)}
+        </fieldset>}
         {readOnly && <p>Chỉ xem: phiên hiện không cho phép thay đổi nội dung hoặc duyệt câu.</p>}
       </div>
       <footer className="stage3-inspection-actions">

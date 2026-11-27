@@ -88,7 +88,9 @@ def _map_rpc_exception(exc: Exception, rpc_name: Optional[str] = None) -> Review
         return ReviewDomainException(
             429, "ERR_REVIEW_QUOTA_EXHAUSTED", "Đã hết quota 30 lượt sinh lại của buổi review"
         )
-    if "REVIEW_NOT_READY" in msg or "REVIEW_POST_SHUFFLE_LOCKED" in msg:
+    if "REVIEW_POST_SHUFFLE_LOCKED" in msg:
+        return ReviewDomainException(409, "ERR_SHUFFLE_REQUIRED", "Review closed after shuffle")
+    if "REVIEW_NOT_READY" in msg:
         return ReviewDomainException(
             409, "ERR_REVIEW_STATE_CONFLICT", "Trạng thái phiên thi không hợp lệ cho thao tác thẩm định"
         )

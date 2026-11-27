@@ -799,6 +799,12 @@ class ReviewSnapshotResponse(BaseModel):
     )
 
 
+class ReviewRecoveryResponse(BaseModel):
+    recovered_count: int = Field(ge=0)
+    has_active_operation: bool
+    snapshot: ReviewSnapshotResponse
+
+
 # Re-export validator schemas for convenient consumption across services and routes
 from app.services.validator.base import CheckResult, ValidationReport  # noqa: E402
 
@@ -851,4 +857,5 @@ __all__ = [
     "ReviewSnapshotVersion",
     "ReviewSnapshotProgress",
     "ReviewSnapshotResponse",
+    "ReviewRecoveryResponse",
 ]

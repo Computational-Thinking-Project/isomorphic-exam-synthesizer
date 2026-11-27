@@ -60,6 +60,13 @@ test('rejectAndRegenerateQuestion gọi đúng POST /sessions/:id/questions/:qid
     assert.ok(capturedPost);
     assert.equal(capturedPost.url, '/sessions/sess-123/questions/q-var-old/reject');
     assert.equal(capturedPost.options.timeout, 60000);
+    assert.equal(capturedPost.payload, null);
+    const reasons = ['INCORRECT_ANSWER'];
+    await rejectAndRegenerateQuestion('sess-123', 'q-var-old', 'same-key', { reasons, timeout: 5000 });
+    assert.deepEqual(capturedPost.payload, { reasons });
+    assert.equal(capturedPost.options.headers['Idempotency-Key'], 'same-key');
+    assert.equal(capturedPost.options.timeout, 5000);
+    assert.equal(capturedPost.options.reasons, undefined);
     assert.equal(res.question_id, 'q-var-new');
     assert.equal(res.status, 'pending_review');
     assert.equal(res.content, 'Cho hàm số $y = 2x + 1$');

@@ -39,7 +39,7 @@ export async function acceptQuestion(sessionId, questionId, idempotencyKey = nul
  * @param {object} config
  * @returns {Promise<object>}
  */
-export async function rejectAndRegenerateQuestion(sessionId, questionId, idempotencyKey = null, config = {}) {
+export async function rejectAndRegenerateQuestion(sessionId, questionId, idempotencyKey = null, { reasons, ...config } = {}) {
   if (!sessionId || !questionId) {
     throw new Error('Cần cung cấp sessionId và questionId hợp lệ.');
   }
@@ -47,13 +47,18 @@ export async function rejectAndRegenerateQuestion(sessionId, questionId, idempot
   const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey, ...config.headers } : { ...config.headers };
   const response = await api.post(
     `/sessions/${sessionId}/questions/${questionId}/reject`,
-    null,
+    reasons === undefined ? null : { reasons },
     {
       timeout: 60000,
       ...config,
       headers,
     }
   );
+  return response.data;
+}
+
+export async function recoverReviewSession(sessionId) {
+  const response = await api.post(`/sessions/${sessionId}/review/recover`);
   return response.data;
 }
 
@@ -167,7 +172,7 @@ export function adaptReviewSnapshot(raw, detail = null) {
     content: s.content || '',
     raw_content: s.content || '',
     options: normalizeOptions(s.options),
-    correct_key: s.correct_key || 'A',
+    correct_key: s.correct_key || '',
     solution_md: s.solution_md || '',
   }));
 

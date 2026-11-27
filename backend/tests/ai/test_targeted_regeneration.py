@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from app.models.generation import ValidationReport
-from app.models.schemas import SourceQuestion
+from app.models.schemas import ReviewReasonCode, SourceQuestion
 from app.models.targeted import RegeneratedVariantResult
 from app.services.blueprint.adapters import prepare_sources
 from app.services.blueprint.common import canonical
@@ -183,3 +183,16 @@ async def test_denied_permit_does_not_consume_candidate_or_retry(handoff):
     assert exc.value.api_calls_count == 0
     assert len(handoff.responses) == 1
     handoff.args["acquire_attempt"].assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_teacher_feedback_survives_schema_and_duplicate_retries(handoff):
+    h = handoff
+    h.responses[:] = ["broken json", h.data["candidates"][0], h.data["candidates"][1]]
+    await h.adapter(**h.args, teacher_reasons=(ReviewReasonCode.INCORRECT_ANSWER,))
+    prompts = [json.loads(call.kwargs["contents"].split("\nINPUT_JSON:\n", 1)[1]) for call in h.gateway.generate_content.await_args_list]
+    assert len(prompts) == 3
+    for prompt in prompts:
+        assert prompt["feedback"][0]["code"] == "INCORRECT_ANSWER"
+    assert len(prompts[0]["feedback"]) == 1
+    assert all(len(prompt["feedback"]) > 1 for prompt in prompts[1:])

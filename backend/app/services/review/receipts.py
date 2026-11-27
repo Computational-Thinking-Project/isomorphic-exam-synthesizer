@@ -77,6 +77,7 @@ class ReservationReceipt(BaseModel):
     reasons: list[ReviewReasonCode] = Field(default_factory=list)
     snapshot: dict[str, Any]
     operation_status: Literal["active", "completed", "failed", "recovered"]
+    completion_candidate: dict[str, Any] | None = None
     settlement: dict[str, Any] | None = None
 
     @field_validator("reasons", mode="before")

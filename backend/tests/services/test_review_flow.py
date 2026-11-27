@@ -211,7 +211,8 @@ class State:
                 invalidated_version_ids=[self.vid],
                 progress=counts(),
             )
-            record.update(operation_status="completed", settlement=deepcopy(result))
+            record.update(operation_status="completed", settlement=deepcopy(result),
+                          completion_candidate=None if self.bad_result else deepcopy(payload))
             if self.lost_completion:
                 self.lost_completion = False
                 raise ConnectionError("response lost after commit")
@@ -432,7 +433,7 @@ def test_success_uses_frozen_receipt_and_worker_permit(state):
 def test_real_targeted_callable_uses_frozen_source_and_durable_permit(state):
     seen = []
 
-    async def generate(source, blueprint, *, confirmed_source_hash, context, excluded_identities):
+    async def generate(source, blueprint, *, confirmed_source_hash, context, excluded_identities, teacher_feedback):
         seen.append((source.model_dump(), deepcopy(blueprint), confirmed_source_hash))
         assert excluded_identities
         await context.reserve_request()
@@ -474,7 +475,7 @@ def test_real_targeted_callable_denied_permit_settles_without_completion(state):
             )
         return original(role, name, params)
 
-    async def generate(source, blueprint, *, confirmed_source_hash, context, excluded_identities):
+    async def generate(source, blueprint, *, confirmed_source_hash, context, excluded_identities, teacher_feedback):
         try:
             await context.reserve_request()
         except GatewayError as exc:
@@ -639,10 +640,11 @@ def test_completed_replay_without_adapter_reads_receipt_without_mutations(state)
     key = str(uuid4())
     first = immediate(state.service().reject_question(state.sid, state.qid, "owner", key))
     state.status = "approved"
+    state.rows[first.question_id].update(status="rejected", content="later edit")
     state.calls.clear()
     offline = ReviewService(state.owner, state.worker, ai_generator=None)
     result = immediate(offline.reject_question(state.sid, state.qid, "owner", key))
-    assert result.question_id == first.question_id
+    assert result == first
     assert [n for _, n, _ in state.calls] == ["review_lookup_regeneration"]
     assert state.provider_calls == state.charges == 1
 
@@ -660,7 +662,10 @@ def test_existing_noncompleted_replay_without_adapter_has_no_mutation(state, sta
     with pytest.raises(ReviewDomainException) as error:
         immediate(ReviewService(state.owner, state.worker).reject_question(state.sid, state.qid, "owner", str(key)))
     assert error.value.status_code == 409
-    assert [n for _, n, _ in state.calls] == ["review_lookup_regeneration"]
+    expected = ["review_lookup_regeneration"]
+    if status == "active":
+        expected.extend(["review_recover_session", "review_lookup_regeneration"])
+    assert [n for _, n, _ in state.calls] == expected
     assert state.charges == state.provider_calls == 0
 
 
@@ -968,3 +973,14 @@ def test_openapi_documents_optional_key_for_all_mutations():
         ]["post"]["parameters"]
         header = next(p for p in parameters if p["name"] == "Idempotency-Key")
         assert header["in"] == "header" and header["required"] is False
+
+
+def test_expired_same_key_recovers_before_ai_availability(state):
+    key = uuid4()
+    immediate(state.service().repo.reserve_regeneration(state.sid, state.qid, key))
+    state.operations[str(key)]["expires_at"] = "2000-01-01T00:00:00+00:00"
+    with pytest.raises(ReviewDomainException) as error:
+        immediate(ReviewService(state.owner, state.worker).reject_question(state.sid, state.qid, "owner", str(key)))
+    assert error.value.error_code == "ERR_OPERATION_FINISHED"
+    assert state.operations[str(key)]["operation_status"] == "recovered"
+    assert state.charges == state.provider_calls == 0

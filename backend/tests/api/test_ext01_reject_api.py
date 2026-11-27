@@ -1,6 +1,8 @@
 """Package 01 (EXT-01 F01-1): Reject API & Reasons Canonicalization tests (A02-01, A02-02, A02-03, A02-29)."""
 
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -18,6 +20,7 @@ from app.models.schemas import (
     RejectQuestionRequest,
     ReviewDomainException,
     ReviewReasonCode,
+    ReviewSnapshotResponse,
     canonicalize_review_reasons,
 )
 from app.services.review.receipts import CompletionReceipt, ProgressCounts, ReservationReceipt
@@ -486,18 +489,12 @@ async def test_review_service_reject_question_accepts_legacy_and_canonical_reaso
         return_value=_make_active_reservation(op_uuid, reasons=expected_reasons)
     )
     service.repo.complete_regeneration = AsyncMock(return_value=_make_completion_receipt(op_uuid))
-    service.repo.load_question = AsyncMock(
-        return_value={
-            "id": NEW_QUESTION_ID,
-            "regenerated_from_id": QUESTION_ID,
-            "status": "pending_review",
-            "content": candidate_payload["stem_latex"],
-            "options": candidate_payload["options"],
-            "correct_key": candidate_payload["correct_key"],
-            "solution_md": candidate_payload["solution_md"],
-            "validation_report": candidate_payload["validation_report"],
-        }
-    )
+    completed = _make_active_reservation(op_uuid, reasons=expected_reasons).model_copy(update={
+        "replayed": True, "operation_status": "completed",
+        "settlement": _make_completion_receipt(op_uuid).model_dump(),
+        "completion_candidate": candidate_payload,
+    })
+    service.repo.lookup_regeneration.side_effect = [None, completed]
     service.repo.acquire_attempt = AsyncMock()
 
     with patch(
@@ -563,3 +560,59 @@ async def test_review_service_reject_question_invalid_reasons_fail_422_before_db
     assert service.repo.recover_stale_operations.call_count == 0
     assert service.repo.reserve_regeneration.call_count == 0
     assert mock_ai.call_count == 0
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scenario", ["not_owner", "locked", "post_shuffle", "lost_snapshot", "active", "recovered"])
+async def test_recovery_guard_order_and_result(review_api_overrides, scenario):
+    from fastapi import HTTPException
+
+    transitions = json.loads(
+        (Path(__file__).parents[1] / "fixtures/ext01_review_transitions.json").read_text(encoding="utf-8")
+    )["snapshots"]
+    active = ReviewSnapshotResponse.model_validate(transitions["regenerating"])
+    initial = ReviewSnapshotResponse.model_validate(transitions["initial"])
+    failure = {
+        "locked": ReviewDomainException(423, "ERR_SESSION_LOCKED", "locked"),
+        "post_shuffle": ReviewDomainException(409, "ERR_SHUFFLE_REQUIRED", "shuffled"),
+        "lost_snapshot": ReviewDomainException(503, "ERR_RESULT_UNAVAILABLE", "unavailable"),
+    }.get(scenario)
+    reads = [failure] if scenario in ("locked", "post_shuffle") else [
+        active, failure or (active if scenario == "active" else initial)
+    ]
+    with (
+        patch("app.api.routes.review.assert_ownership",
+              side_effect=HTTPException(404) if scenario == "not_owner" else None) as owner,
+        patch.object(ReviewService, "get_current_snapshot", new=AsyncMock(side_effect=reads)) as snapshot,
+        patch("app.services.review.repository.ReviewRepository.recover_stale_operations",
+              new=AsyncMock(return_value=int(scenario == "recovered"))) as worker,
+    ):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(f"/api/sessions/{SESSION_ID}/review/recover")
+    owner.assert_called_once_with("exam_sessions", SESSION_ID, USER_ID, db=review_api_overrides["db"])
+    if scenario == "not_owner":
+        assert response.status_code == 404
+        snapshot.assert_not_awaited()
+    if scenario in ("not_owner", "locked", "post_shuffle"):
+        worker.assert_not_awaited()
+    else:
+        worker.assert_awaited_once_with(SESSION_ID)
+    if failure:
+        assert response.status_code == failure.status_code
+    elif scenario != "not_owner":
+        assert response.status_code == 200
+        assert response.json()["has_active_operation"] is (scenario == "active")
+        assert response.json()["recovered_count"] == int(scenario == "recovered")
+
+
+def test_ext01_transition_fixture_schema_and_lineage():
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/ext01_review_transitions.json").read_text(encoding="utf-8")
+    )
+    snapshots = {k: ReviewSnapshotResponse.model_validate(v) for k, v in fixture["snapshots"].items()}
+    assert (fixture["contract"], fixture["schema"], fixture["revision"]) == ("I-EXT-01", "ReviewSnapshotResponse", 1)
+    for before, after in [("initial", "accepted"), ("regenerated", "regenerated_accepted"), ("reverted", "reverted_accepted")]:
+        a, b = snapshots[before], snapshots[after]
+        assert not a.progress.ready and b.progress.ready
+        assert a.versions[0].slots[0].candidate.candidate_id == b.versions[0].slots[0].candidate.candidate_id
+    assert snapshots["initial"].versions[0].slots[0].candidate.correct_key == "B"
+    assert snapshots["regenerated"].versions[0].slots[0].candidate.correct_key == "A"

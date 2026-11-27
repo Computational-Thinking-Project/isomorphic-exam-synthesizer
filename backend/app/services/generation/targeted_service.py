@@ -11,13 +11,24 @@ from uuid import UUID
 
 from pydantic import ValidationError
 
-from app.models.schemas import SourceQuestion
+from app.models.schemas import ReviewReasonCode, SourceQuestion
 from app.models.targeted import RegeneratedVariantResult, TargetedValidationReport
 from app.services.ai.gateway import RequestContext
 from app.services.blueprint.adapters import normalized_text
 from app.services.blueprint.common import ToolError
 from app.services.generation.attempts import AcquireAttempt, DurableAttemptBudget
 from app.services.generation.service import GenerationService, fingerprint
+
+TEACHER_FEEDBACK = {
+    ReviewReasonCode.INCORRECT_ANSWER: "Kiểm tra lại đáp án đúng.",
+    ReviewReasonCode.NO_CORRECT_ANSWER: "Bổ sung phương án đúng.",
+    ReviewReasonCode.MULTIPLE_CORRECT_ANSWERS: "Đảm bảo chỉ có một phương án đúng.",
+    ReviewReasonCode.EQUIVALENT_OPTIONS: "Loại bỏ các phương án tương đương.",
+    ReviewReasonCode.INVALID_QUESTION: "Kiểm tra tính hợp lệ của đề bài.",
+    ReviewReasonCode.ISOMORPHISM_MISMATCH: "Giữ cấu trúc toán học của câu nguồn.",
+    ReviewReasonCode.DIFFICULTY_MISMATCH: "Giữ mức độ khó tương đương câu nguồn.",
+    ReviewReasonCode.INCORRECT_SOLUTION: "Kiểm tra lại từng bước của lời giải.",
+}
 
 
 class TargetedGenerationError(RuntimeError):
@@ -58,6 +69,7 @@ class TargetedRegenerator:
         source_snapshot: dict[str, Any], blueprint: dict[str, Any],
         current_variant: dict[str, Any], peer_variants: list[dict[str, Any]],
         *, operation_id: UUID | str | None = None, acquire_attempt: AcquireAttempt | None = None,
+        teacher_reasons: tuple[ReviewReasonCode, ...] = (),
     ) -> RegeneratedVariantResult:
         budget: DurableAttemptBudget | None = None
         try:
@@ -84,6 +96,10 @@ class TargetedRegenerator:
                 source, blueprint, confirmed_source_hash=source_snapshot.get("content_hash", ""),
                 context=RequestContext(time.monotonic() + self.timeout_seconds, budget.reserve),
                 excluded_identities=excluded,
+                teacher_feedback=[
+                    {"check": "teacher_review", "code": reason.value, "detail": TEACHER_FEEDBACK[reason]}
+                    for reason in teacher_reasons
+                ],
             )
             if result.candidate is None or result.validation is None:
                 raise TargetedGenerationError(result.error_code or "GENERATION_INVALID", budget.used)
@@ -118,6 +134,7 @@ async def mock_regenerate_question_variant(
     session_id: UUID | str, question_id: UUID | str, source_snapshot: dict[str, Any],
     blueprint: dict[str, Any], current_variant: dict[str, Any], peer_variants: list[dict[str, Any]],
     *, operation_id: UUID | str | None = None, acquire_attempt: AcquireAttempt | None = None,
+    teacher_reasons: tuple[ReviewReasonCode, ...] = (),
 ) -> dict[str, Any]:
     """Explicit integration fixture: no Gemini calls, no mathematical verification."""
     return RegeneratedVariantResult(

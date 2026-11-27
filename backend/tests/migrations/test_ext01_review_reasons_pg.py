@@ -629,6 +629,12 @@ class Ext01ReviewReasonsPgTests(unittest.TestCase):
             looked["reservation"]["reasons"], ["EQUIVALENT_OPTIONS", "INCORRECT_SOLUTION"]
         )
         self.assertNotIn("reasons", looked["reservation"]["snapshot"])
+        original = looked["reservation"]["completion_candidate"]
+        self.assertEqual(original, candidate_payload(1))
+        self.sql(f"UPDATE public.version_questions SET status='approved', content='Later edit' WHERE id='{completed['question_id']}';")
+        replay = self.lookup(op, """'["INCORRECT_SOLUTION","EQUIVALENT_OPTIONS"]'::jsonb""")
+        self.assertEqual(replay["reservation"]["completion_candidate"], original)
+        self.assertEqual(replay["reservation"]["settlement"], completed)
 
         conflict = self.lookup(op, "'[]'::jsonb", check=False)
         self.assertNotEqual(conflict.returncode, 0)

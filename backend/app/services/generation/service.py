@@ -101,6 +101,7 @@ class GenerationService:
         context: RequestContext, seed: int, version_index: int, variation_modes: list[str],
         previous: GeneratedQuestion | None = None, accept: AcceptCandidate | None = None,
         excluded_identities: set[str] | None = None, max_math_retries: int | None = None,
+        teacher_feedback: list[dict[str, str]] | None = None,
     ) -> QuestionResult:
         result = QuestionResult(
             version_index=version_index, source_question_id=source.id,
@@ -124,7 +125,7 @@ class GenerationService:
                     result.attempts = attempt
                     prompt = build_prompt(
                         blueprint=blueprint, seed=seed, variation_modes=variation_modes,
-                        feedback=feedback, previous=previous_payload,
+                        feedback=[*(teacher_feedback or []), *feedback], previous=previous_payload,
                         repair_solution=repair_candidate is not None,
                     )
                     try:
@@ -218,6 +219,7 @@ class GenerationService:
         self, source: SourceQuestion, blueprint: dict[str, Any], *,
         confirmed_source_hash: str, context: RequestContext,
         excluded_identities: set[str],
+        teacher_feedback: list[dict[str, str]] | None = None,
     ) -> QuestionResult:
         """Regenerate persisted content without inventing old structured solutions."""
         source = source.model_copy(deep=True)
@@ -227,7 +229,7 @@ class GenerationService:
             raise ToolError("SOURCE_NOT_CONFIRMED", "Nguồn chưa được xác nhận hoặc đã thay đổi.")
         return await self._generate(
             source, item, blueprint, context, secrets.randbelow(2 ** 31), 1, [],
-            excluded_identities=set(excluded_identities), max_math_retries=2,
+            excluded_identities=set(excluded_identities), max_math_retries=2, teacher_feedback=teacher_feedback,
         )
 
     async def regenerate_question(

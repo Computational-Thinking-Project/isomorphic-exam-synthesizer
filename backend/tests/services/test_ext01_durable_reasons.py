@@ -97,6 +97,8 @@ def _receipt_payload(
         "operation_status": operation_status,
         "settlement": settlement,
     }
+    if operation_status == "completed":
+        payload["completion_candidate"] = _valid_candidate()
     if reasons is not ...:
         payload["reasons"] = reasons
     return payload
@@ -527,7 +529,7 @@ class TestReviewServiceDurableReasons:
         service.repo.lookup_regeneration = AsyncMock(return_value=completed)  # type: ignore[method-assign]
 
         resolved_id = await service._settle(active, "AI_TIMEOUT")
-        assert resolved_id == new_qid
+        assert resolved_id == completed
         service.repo.lookup_regeneration.assert_awaited_once_with(
             str(sid),
             str(qid),
@@ -591,7 +593,7 @@ class TestReviewServiceDurableReasons:
         ai_gen.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_dispatch_keeps_ai_generator_kwargs_unchanged_in_m2(
+    async def test_dispatch_uses_verified_teacher_reasons(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         sid, qid, op, new_qid = uuid4(), uuid4(), uuid4(), uuid4()
@@ -631,18 +633,12 @@ class TestReviewServiceDurableReasons:
         service.repo.complete_regeneration = AsyncMock(  # type: ignore[method-assign]
             return_value=SimpleNamespace(question_id=new_qid)
         )
-        service.repo.load_question = AsyncMock(  # type: ignore[method-assign]
-            return_value={
-                "id": str(new_qid),
-                "regenerated_from_id": str(qid),
-                "status": "pending_review",
-                "content": "Tinh gia tri cua $2 + 3$.",
-                "options": ["3", "4", "5", "6"],
-                "correct_key": "C",
-                "solution_md": "Ta co $2 + 3 = 5$.",
-                "validation_report": _valid_candidate()["validation_report"],
-            }
-        )
+        completed = active.model_copy(update={
+            "replayed": True, "operation_status": "completed",
+            "settlement": _valid_completion_settlement(sid, qid, op, new_qid),
+            "completion_candidate": _valid_candidate(),
+        })
+        service.repo.lookup_regeneration.side_effect = [None, completed]
 
         res = await service.reject_question(
             str(sid),
@@ -652,7 +648,7 @@ class TestReviewServiceDurableReasons:
             reasons=["INCORRECT_ANSWER"],
         )
         assert res.question_id == str(new_qid)
-        assert "reasons" not in captured_kwargs
+        assert captured_kwargs["teacher_reasons"] == (ReviewReasonCode.INCORRECT_ANSWER,)
 
     @pytest.mark.asyncio
     async def test_reserve_does_not_retry_409_conflict(self) -> None:
