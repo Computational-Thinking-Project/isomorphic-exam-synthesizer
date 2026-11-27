@@ -50,10 +50,12 @@ def isolated_pg_dsn():
             f"POSTGRES_DB={database}",
             "postgres:15-alpine",
         )
+        # The image starts a Unix-socket-only server during initialization.
         for _ in range(60):
             if (
                 run(
-                    "exec", name, "pg_isready", "-U", "postgres", "-d", database, check=False
+                    "exec", name, "pg_isready", "-h", "127.0.0.1", "-U", "postgres",
+                    "-d", database, check=False
                 ).returncode
                 == 0
             ):
