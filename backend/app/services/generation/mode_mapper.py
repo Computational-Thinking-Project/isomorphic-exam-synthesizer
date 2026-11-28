@@ -111,6 +111,13 @@ def slot_result_kind(snapshot: Mapping[str, Any], source_question_id: str | UUID
         raise GenerationModeConflict("Unknown mapping version")
     mode = job_generation_mode(snapshot)
     payload = snapshot.get("snapshot_payload")
+    sources = payload.get("confirmed_sources") if isinstance(payload, Mapping) else None
+    # Policy evidence must bind to exactly one frozen source, in both modes.
+    if not isinstance(sources, list) or sum(
+        isinstance(source, Mapping) and source.get("source_question_id") == str(source_question_id)
+        for source in sources
+    ) != 1:
+        raise GenerationModeConflict("Question policy is not bound to exactly one frozen source")
     policies = payload.get("question_policies") if isinstance(payload, Mapping) else None
     policy = policies.get(str(source_question_id)) if isinstance(policies, Mapping) else None
     kind = policy.get("result_kind") if isinstance(policy, Mapping) else None

@@ -55,6 +55,12 @@ BEGIN
   IF p_job.mapping_version IS DISTINCT FROM '1.1' AND p_job.mapping_version IS DISTINCT FROM '1.2' THEN
     RAISE EXCEPTION 'ERR_CONFIG_CONFLICT: unknown mapping version' USING ERRCODE='55006';
   END IF;
+  -- Policy evidence must bind to exactly one frozen source, in both modes.
+  IF jsonb_typeof(p_job.snapshot_payload->'confirmed_sources') IS DISTINCT FROM 'array'
+     OR (SELECT count(*) FROM jsonb_array_elements(p_job.snapshot_payload->'confirmed_sources')
+         WHERE value->>'source_question_id'=p_source_id::text) <> 1 THEN
+    RAISE EXCEPTION 'ERR_CONFIG_CONFLICT: question policy not bound to exactly one frozen source' USING ERRCODE='55006';
+  END IF;
   SELECT value INTO src FROM jsonb_array_elements(p_job.snapshot_payload->'confirmed_sources')
     WHERE value->>'source_question_id'=p_source_id::text;
   expected := public._generation_mode_policy(public._generation_job_mode(p_job),src->'canonical_blueprint');

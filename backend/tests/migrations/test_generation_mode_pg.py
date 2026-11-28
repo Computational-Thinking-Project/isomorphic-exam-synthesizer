@@ -459,3 +459,33 @@ async def test_worker_runs_shuffle_only_without_ai_or_quota(db, monkeypatch):
     loaded = await rpc(db.owner, "load_generation_completed_results", db.sid)
     assert [row["result_kind"] for row in loaded["completed"]] == ["ORIGINAL_CLONE"] * 4
     await assert_review_and_export(db)
+
+
+@pytest.mark.parametrize("mode", ["ai_generation", "shuffle_only"])
+@pytest.mark.parametrize("damage", ["absent", "duplicate"])
+async def test_policy_without_exactly_one_source_fails_closed_in_sql_and_python(db, mode, damage):
+    from app.services.generation.mode_mapper import GenerationModeConflict, slot_result_kind
+
+    await migrate(db)
+    await save(db, await publish(db), mode=None if mode == "ai_generation" else mode)
+    await rpc(db.owner, "claim_generation_job", db.sid, False)
+    target = db.rows[0]["id"]
+    change = (
+        "jsonb_path_query_array(snapshot_payload->'confirmed_sources','$[*] ? (@.source_question_id != $id)',"
+        "jsonb_build_object('id',$1::text))"
+        if damage == "absent"
+        else "(snapshot_payload->'confirmed_sources') || jsonb_path_query_array(snapshot_payload->'confirmed_sources',"
+        "'$[*] ? (@.source_question_id == $id)',jsonb_build_object('id',$1::text))"
+    )
+    await db.admin.execute(
+        f"UPDATE generation_job_snapshots SET snapshot_payload=jsonb_set(snapshot_payload,'{{confirmed_sources}}',{change})",
+        target,
+    )
+    with pytest.raises(asyncpg.PostgresError, match="exactly one frozen source"):
+        await db.admin.fetchval(
+            "SELECT _generation_is_clone(j,$2::uuid) FROM generation_job_snapshots j WHERE session_id=$1::uuid",
+            db.sid, target,
+        )
+    row = json.loads(await db.admin.fetchval("SELECT to_jsonb(j) FROM generation_job_snapshots j"))
+    with pytest.raises(GenerationModeConflict):
+        slot_result_kind(row, target)
