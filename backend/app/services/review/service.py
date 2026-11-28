@@ -313,12 +313,12 @@ class ReviewService:
                             (409, "ERR_SHUFFLE_REQUIRED"),
                         ):
                             raise
-                        # Approval or shuffle can close review after the operation completes.
+                        # Approval or shuffle can close review after the operation ends.
                         lock_error = exc
                     existing = await self.repo.lookup_regeneration(
                         session_id, question_id, op, reasons=canonical_reasons
                     )
-                    if lock_error is not None and (existing is None or existing.operation_status != "completed"):
+                    if lock_error is not None and (existing is None or existing.operation_status == "active"):
                         raise lock_error
                     if existing is None:
                         raise ReviewDomainException(503, "ERR_INVALID_RESERVATION", "Receipt unavailable")

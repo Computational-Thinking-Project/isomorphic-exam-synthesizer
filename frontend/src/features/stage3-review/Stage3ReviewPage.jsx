@@ -441,7 +441,8 @@ export default function Stage3ReviewPage({
     const epoch = navigationEpoch.current;
     const current = () => isMountedRef.current && activeSessionIdRef.current === sessionId && mutationOperationRef.current === op;
     const binding = JSON.stringify([action, id]);
-    const attempt = actionKeysRef.current.get(binding) || { key: generateClientUUID(), reasons };
+    const previousAttempt = actionKeysRef.current.get(binding);
+    const attempt = previousAttempt || { key: generateClientUUID(), reasons };
     const { key } = attempt;
     actionKeysRef.current.set(binding, attempt);
     pendingRef.current.set(id, action);
@@ -464,7 +465,9 @@ export default function Stage3ReviewPage({
         const code = failure.response?.data?.error_code ?? failure.errorCode;
         const rejectedBeforeReservation = action === 'reject' && failure.response?.status === 503
           && code === 'ERR_AI_SERVICE_UNAVAILABLE';
-        if (rejectedBeforeReservation || ['ERR_OPERATION_FINISHED', 'ERR_ATTEMPT_REPLAYED'].includes(code)) {
+        // This response only rules out a reservation for the current request.
+        if ((!previousAttempt && rejectedBeforeReservation) ||
+            ['ERR_OPERATION_FINISHED', 'ERR_ATTEMPT_REPLAYED'].includes(code)) {
           actionKeysRef.current.delete(binding);
         }
         setActionMessage({ type: 'error', text: extractErrorString(failure) });

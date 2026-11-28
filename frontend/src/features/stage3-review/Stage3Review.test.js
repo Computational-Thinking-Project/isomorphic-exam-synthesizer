@@ -3193,6 +3193,50 @@ test('F02 allows editing reasons and uses a new key after a pre-reservation fail
   } finally { await harness.unmount(); }
 });
 
+test('F05 keeps the original binding after a timeout and a pre-reservation retry failure', async () => {
+  const data = comparisonSession('reject-timeout-then-unavailable');
+  const calls = [];
+  const harness = renderStage3Page(data.id, {
+    loadSession: async () => structuredClone(data),
+    regenerateQuestionFn: async (_sid, _id, key, { reasons }) => {
+      calls.push({ key, reasons });
+      if (calls.length === 1) throw Object.assign(new Error('Request timed out'), { code: 'ECONNABORTED' });
+      if (calls.length === 2) throw { response: { status: 503, data: { error_code: 'ERR_AI_SERVICE_UNAVAILABLE' } } };
+      throw { response: { status: 409, data: { error_code: 'ERR_OPERATION_FINISHED' } } };
+    },
+  });
+  const openRegenerate = () => act(async () => harness.container.querySelector('[data-review-regenerate]').click());
+  try {
+    await harness.render();
+    await act(async () => harness.container.querySelector('[data-review-inspect]').click());
+    await openRegenerate();
+    await act(async () => harness.container.querySelector('fieldset').querySelector('input').click());
+    await confirmInspection(harness);
+    assert.deepEqual(calls[0].reasons, ['INCORRECT_ANSWER']);
+
+    await openRegenerate();
+    await confirmInspection(harness);
+    await openRegenerate();
+    const boundFieldset = harness.container.querySelector('fieldset');
+    const disabledAfterRetry = boundFieldset.getAttribute('disabled');
+    const originalReasonSelected = boundFieldset.querySelector('input').checked;
+    await confirmInspection(harness);
+    assert.deepEqual(calls.slice(1), [calls[0], calls[0]]);
+    assert.notEqual(disabledAfterRetry, null);
+    assert.equal(originalReasonSelected, true);
+
+    await openRegenerate();
+    const editableFieldset = harness.container.querySelector('fieldset');
+    assert.equal(editableFieldset.getAttribute('disabled'), null);
+    const [incorrectAnswer, noCorrectAnswer] = editableFieldset.querySelectorAll('input');
+    await act(async () => incorrectAnswer.click());
+    await act(async () => noCorrectAnswer.click());
+    await confirmInspection(harness);
+    assert.notEqual(calls[3].key, calls[0].key);
+    assert.deepEqual(calls[3].reasons, ['NO_CORRECT_ANSWER']);
+  } finally { await harness.unmount(); }
+});
+
 for (const [failure, error] of [
   ['timeout', Object.assign(new Error('Request timed out'), { code: 'ECONNABORTED' })],
   ['lost response', new Error('Lost response')],

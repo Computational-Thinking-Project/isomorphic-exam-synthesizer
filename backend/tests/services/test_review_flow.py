@@ -677,23 +677,37 @@ def test_replay_reads_completed_receipt_when_session_locks_during_recovery(state
     ("REVIEW_LOCKED", 423, "ERR_SESSION_LOCKED"),
     ("REVIEW_POST_SHUFFLE_LOCKED", 409, "ERR_SHUFFLE_REQUIRED"),
 ])
-def test_replay_preserves_recovery_lock_when_receipt_is_still_active(state, rpc_error, http_status, code):
+@pytest.mark.parametrize("receipt_status", ["active", "missing", "failed", "recovered"])
+def test_replay_after_recovery_lock_uses_final_receipt_status(state, rpc_error, http_status, code, receipt_status):
     key = uuid4()
+    reasons = ["INCORRECT_ANSWER"]
     service = state.service()
-    immediate(service.repo.reserve_regeneration(state.sid, state.qid, key))
+    immediate(service.repo.reserve_regeneration(state.sid, state.qid, key, reasons=reasons))
     original = state.rpc
+    state.calls.clear()
 
     def locked_recovery(role, name, params):
         if name == "review_recover_session":
+            state.calls.append((role, name, params))
+            if receipt_status == "missing":
+                del state.operations[str(key)]
+            elif receipt_status in ("failed", "recovered"):
+                immediate(service.repo.settle_failure(state.sid, state.qid, key, "GENERATION_FAILED"))
+                if receipt_status == "recovered":
+                    receipt = state.operations[str(key)]
+                    receipt["operation_status"] = receipt_status
+                    receipt["settlement"].update(operation_status=receipt_status, recovered=True)
             raise RuntimeError(rpc_error)
         return original(role, name, params)
 
     state.rpc = locked_recovery
     with pytest.raises(ReviewDomainException) as error:
-        immediate(service.reject_question(state.sid, state.qid, "owner", str(key)))
+        immediate(service.reject_question(state.sid, state.qid, "owner", str(key), reasons))
 
-    assert error.value.status_code == http_status
-    assert error.value.error_code == code
+    expected = (409, "ERR_OPERATION_FINISHED") if receipt_status in ("failed", "recovered") else (http_status, code)
+    assert (error.value.status_code, error.value.error_code) == expected
+    lookup = dict(p_session_id=state.sid, p_question_id=state.qid, p_operation_id=str(key), p_reasons=reasons)
+    assert [params for _, name, params in state.calls if name == "review_lookup_regeneration"] == [lookup, lookup]
     assert state.provider_calls == state.charges == 0
 
 
