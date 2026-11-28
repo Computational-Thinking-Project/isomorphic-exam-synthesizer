@@ -16,7 +16,7 @@ DECLARE
   s public.exam_sessions;
   job public.generation_job_snapshots;
   n_sources int; expected int; currents int; committed int; approved_before int;
-  progress jsonb; prior_status public.session_status;
+  progress jsonb; prior_status public.session_status; changed uuid[];
 BEGIN
   -- Same parent-first session lock as Review, claim and shuffle.
   SELECT * INTO s FROM public.exam_sessions WHERE id = p_session_id FOR UPDATE;
@@ -70,9 +70,18 @@ BEGIN
     RAISE EXCEPTION 'ERR_SHUFFLE_ONLY_NOT_READY: copies do not match the frozen source' USING ERRCODE = '55000';
   END IF;
 
-  UPDATE public.version_questions q SET status = 'approved', updated_at = clock_timestamp()
-  FROM public.exam_versions v
-  WHERE v.id = q.version_id AND v.session_id = s.id AND q.is_current AND q.status <> 'approved';
+  WITH approved AS (
+    UPDATE public.version_questions q SET status = 'approved', updated_at = clock_timestamp()
+    FROM public.exam_versions v
+    WHERE v.id = q.version_id AND v.session_id = s.id AND q.is_current AND q.status <> 'approved'
+    RETURNING q.id
+  ) SELECT coalesce(array_agg(id), '{}') INTO changed FROM approved;
+  -- Audit like a manual Accept, but only with a verified actor: review_logs forbids a NULL
+  -- actor for new rows and has no system-actor marker, so the worker path writes no row.
+  IF public.current_role() <> 'service_role' AND auth.uid() IS NOT NULL THEN
+    INSERT INTO public.review_logs(version_question_id, session_id, user_id, action_type, reason)
+    SELECT id, s.id, auth.uid(), 'ACCEPT'::public.review_action_type, 'SHUFFLE_ONLY_CONFIRM' FROM unnest(changed) id;
+  END IF;
   progress := public._review_recalculate(s.id);
   IF (progress->>'ready')::boolean IS DISTINCT FROM true THEN
     RAISE EXCEPTION 'ERR_SHUFFLE_ONLY_NOT_READY: review progress not ready' USING ERRCODE = '55000';

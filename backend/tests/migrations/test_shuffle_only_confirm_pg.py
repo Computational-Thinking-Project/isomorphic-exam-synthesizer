@@ -291,3 +291,31 @@ async def test_worker_confirms_shuffle_only_without_ai_then_shuffle_and_export(d
     exported = await asyncio.to_thread(lambda: asyncio.run(load_approved_export_snapshot(client, db.sid, OWNER)))
     assert exported.status == "approved"
     assert sum(len(version.questions) for version in exported.versions) == 4
+
+
+async def logs(db):
+    return await db.admin.fetch(
+        "SELECT user_id::text AS user_id, action_type::text AS action, reason FROM review_logs WHERE session_id=$1::uuid",
+        db.sid,
+    )
+
+
+async def test_owner_confirm_writes_one_verified_accept_log_per_copy(db):
+    await migrate(db)
+    await generated_shuffle_only(db)
+    await rpc(db.owner, "confirm_shuffle_only_copies", db.sid)
+    rows = await logs(db)
+    assert len(rows) == 4
+    assert {(row["user_id"], row["action"], row["reason"]) for row in rows} == {
+        (OWNER, "ACCEPT", "SHUFFLE_ONLY_CONFIRM")
+    }
+    await rpc(db.owner, "confirm_shuffle_only_copies", db.sid)  # replay adds nothing
+    assert len(await logs(db)) == 4
+
+
+async def test_worker_confirm_writes_no_log_without_a_verified_actor(db):
+    await migrate(db)
+    await generated_shuffle_only(db)
+    result = await rpc(db.worker, "confirm_shuffle_only_copies", db.sid)
+    assert result["session_status"] == "reviewed"
+    assert await logs(db) == []
