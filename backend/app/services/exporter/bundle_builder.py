@@ -11,6 +11,7 @@ from .bundle_models import (
     BundleBuildError,
     revalidate_snapshot,
 )
+from .print_layout import ExportConfig
 from .source_renderer import render_markdown, render_tex
 
 MAX_PDF_BYTES = 20 * 1024 * 1024
@@ -28,20 +29,36 @@ PDF/TeX bắt đầu ma trận trên trang mới sau đề. Markdown viết nố
 """
 
 
-def required_pdf_names(snapshot: ApprovedExportSnapshot) -> set[str]:
+CONFIGURED_README = (
+    "Gói có cấu hình: {formats}.\n"
+    "Mẫu in (trường hiển thị, phiếu trả lời) chỉ áp dụng cho PDF; "
+    "LaTeX/Markdown giữ bố cục MVP.\n"
+)
+
+
+def required_pdf_names(
+    snapshot: ApprovedExportSnapshot, config: ExportConfig | None = None
+) -> set[str]:
+    if config is not None and "pdf" not in config.formats:
+        return set()
     return {f"exam_{version.code}.pdf" for version in snapshot.versions}
 
 
 def build_bundle(
-    snapshot: ApprovedExportSnapshot, pdf_artifacts: Mapping[str, bytes]
+    snapshot: ApprovedExportSnapshot,
+    pdf_artifacts: Mapping[str, bytes],
+    *,
+    config: ExportConfig | None = None,
 ) -> BundleArtifact:
     """PDF mapping uses basenames, not paths. Input bytes remain caller-owned.
 
     Returns immutable bytes with no temporary file cleanup needed by the caller.
-    PDF checks screen structure, not layout/content correctness.
+    PDF checks screen structure, not layout/content correctness. ``config=None``
+    keeps the MVP bundle byte for byte; a config keeps only the chosen formats.
     """
     snapshot = revalidate_snapshot(snapshot)
-    expected = required_pdf_names(snapshot)
+    formats = config.formats if config is not None else ("pdf", "tex", "md")
+    expected = required_pdf_names(snapshot, config)
     if set(pdf_artifacts) != expected:
         raise BundleBuildError("EXPORT_PDF_MANIFEST_MISMATCH")
     entries: dict[str, bytes] = {}
@@ -66,14 +83,29 @@ def build_bundle(
             raise BundleBuildError("EXPORT_PDF_TOO_LARGE")
         add(f"pdf/{name}", pdf)
     for version in snapshot.versions:
-        add(f"latex/exam_{version.code}.tex", render_tex(snapshot, version).encode("utf-8"))
-        add(f"markdown/exam_{version.code}.md", render_markdown(snapshot, version).encode("utf-8"))
-    add("latex/README_huong_dan_bien_dich.txt", COMPILE_README.encode("utf-8"))
+        if "tex" in formats:
+            add(f"latex/exam_{version.code}.tex", render_tex(snapshot, version).encode("utf-8"))
+        if "md" in formats:
+            add(
+                f"markdown/exam_{version.code}.md",
+                render_markdown(snapshot, version).encode("utf-8"),
+            )
+    if "tex" in formats:
+        add("latex/README_huong_dan_bien_dich.txt", COMPILE_README.encode("utf-8"))
+    folders = ", ".join(
+        f"{folder}/"
+        for fmt, folder in (("pdf", "pdf"), ("tex", "latex"), ("md", "markdown"))
+        if fmt in formats
+    )
+    configured = (
+        "" if config is None else CONFIGURED_README.format(formats=", ".join(config.formats))
+    )
     add(
         "README.txt",
         (
-            f"{snapshot.title}\nSession: {snapshot.session_id}\nRevision: {snapshot.revision}\n"
-            "Mỗi mã đề có một file trong mỗi thư mục pdf/, latex/, markdown/.\n"
+            configured
+            + f"{snapshot.title}\nSession: {snapshot.session_id}\nRevision: {snapshot.revision}\n"
+            f"Mỗi mã đề có một file trong mỗi thư mục {folders}.\n"
             "Thứ tự: đề → ma trận đáp án riêng mã đề → lời giải.\n"
             "PDF/TeX ngắt trang trước ma trận; Markdown nối tiếp.\n"
             "latex/: nguồn XeLaTeX độc lập. markdown/: đề, đáp án và lời giải Markdown.\n"
