@@ -209,3 +209,20 @@ async def test_receipt_matches_i_ext_03_reuse_example_shape(db):
     assert {"source_type", "source_version_id", "new_source_order"} <= set(result["source"])
     assert set(example["source"]) <= set(result["source"])
     assert result["status"] == example["status"]
+
+
+async def test_missing_source_solution_placeholder_becomes_null_in_new_source(db):
+    """I-EXT-03 v3: the placeholder in the projection is stored as NULL in the new source input."""
+    await migrate(db)
+    db.rows[1]["solution_md"] = None
+    await db.admin.execute("UPDATE source_questions SET solution_md=NULL WHERE id=$1::uuid", db.rows[1]["id"])
+    version_id = await approved_session(db)
+    placeholders = await db.admin.fetchval(
+        "SELECT count(*) FROM version_questions WHERE version_id=$1::uuid AND is_current AND solution_md=$2",
+        version_id, PLACEHOLDER,
+    )
+    assert placeholders >= 1
+    result = await reuse(db, "version", version_id, "placeholder-key")
+    copied = await new_sources(db, result["session_id"])
+    assert sum(row["solution_md"] is None for row in copied) == placeholders
+    assert all(row["solution_md"] != PLACEHOLDER for row in copied)

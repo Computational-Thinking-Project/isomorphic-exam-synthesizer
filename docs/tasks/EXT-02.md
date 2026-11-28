@@ -100,6 +100,7 @@ Phase 1 (26/11, author self-check, not reviewed or accepted). Base `dev@b292443`
   - Same user + key + payload replays the same session; a different payload raises `ERR_IDEMPOTENCY_CONFLICT`; any failure rolls back.
   - Python: `services/generation/reuse_repository.py` validates the request and receipt and maps errors.
   - TODO hook points for EXT-04: bank item lookup/ownership and `_bank_capacity_check`. The HTTP route `exam_bank_reuse.py` waits for them.
+- I-EXT-03 v3 (28/11): `new_source` stores a missing solution as `null`, matching the reuse core; source confirmation renders the placeholder again (migration 024).
 - **A03 local rehearsal (28/11, not the agreed integration head):** EXT-02 `749c5b9` merged locally with EXT-01 `8fb21e6` (only a `change_log.md` conflict), chain 028 -> 028b -> 029 -> 029b.
   - EXT-01 PG suites: 36 passed.
   - EXT-02 suites plus A03 checks: 63 passed. These cover the worker auto-confirm to `reviewed`, Reject/Revert/Accept blocked with `ERR_MODE_SHUFFLE_ONLY`, an AI-mode clone slot with Reject `ERR_SLOT_POLICY_CLONE_ONLY` and Accept/Revert allowed, 0/21 vs 1/20 sources, and resume.

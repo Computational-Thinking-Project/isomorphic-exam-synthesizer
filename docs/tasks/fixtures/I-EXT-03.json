@@ -18,7 +18,8 @@
     "ai_slot_content": "In the ai_generation case the AI_RESULT slot shows the source text for brevity; real data holds the validated AI variant with its own options, key and solution.",
     "aliases": "Aliases follow the I-EXT-02 sample in #114 (bank_A, session_A, version_A1..). UUIDs are synthetic.",
     "solution_label_sync": "On persist, solution text that names the answer label (e.g. 'đáp án đúng là C') is rewritten to the display label by public._finalize_sync_solution (migration 008). Other text is copied unchanged.",
-    "new_source_order": "new_source_order lists canonical_question_no of the OLD projection in display order ([3,1,2] = old display 1,2,3). In the new source these become question_no 1,2,3."
+    "new_source_order": "new_source_order lists canonical_question_no of the OLD projection in display order ([3,1,2] = old display 1,2,3). In the new source these become question_no 1,2,3.",
+    "new_source_solution": "A missing solution is stored as null in the new source input; source confirmation renders the placeholder again (migration 024), so solution_missing_in_source stays true end to end."
   },
   "canonical_source": {
     "original": "Immutable confirmed source of the first round: source_order, confirmed_source_hash and per-question source_revision_id from generation_job_snapshots. Blueprint is reused only if content and mode match.",
@@ -539,7 +540,7 @@
               "8"
             ],
             "correct_key": "D",
-            "solution_md": "Không có lời giải cho câu hỏi này.",
+            "solution_md": null,
             "solution_missing_in_source": true
           }
         ]
@@ -607,5 +608,5 @@
     "Public version codes and target bank (append/create_new) come from I-EXT-02 (Quynh).",
     "next_step names (confirm_source, analysis, stage2_config) to be matched with Dashboard routes by Hung."
   ],
-  "revision": "v2 (adds version/source identity, new source after reuse, reopen cases, label-changing solution)"
+  "revision": "v3 (new_source stores a missing solution as null)"
 }
