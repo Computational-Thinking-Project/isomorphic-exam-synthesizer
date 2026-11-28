@@ -217,6 +217,10 @@ class GenerationConfigRepository:
             "p_ordering_preferences": config.ordering_preferences.model_dump(),
             "p_expected_snapshot": deepcopy(expected_snapshot),
         }
+        # Send the mode only when it differs from the default, so an API deployed
+        # before migration 028 keeps saving AI configs; shuffle_only then fails closed.
+        if config.generation_mode != "ai_generation":
+            parameters["p_generation_mode"] = config.generation_mode
         try:
             data = self._db.rpc("save_generation_config", parameters).execute().data
             result = GenerationConfigResponse.model_validate(data)
@@ -236,6 +240,8 @@ class GenerationConfigRepository:
                 or result.config.ordering_preferences != config.ordering_preferences
                 or result.config.source_manifest != expected_snapshot
                 or dimensions != ordered_dimensions
+                or result.config.generation_mode != config.generation_mode
+                or (config.generation_mode == "shuffle_only" and dimensions)
             ):
                 raise ValueError(
                     "Saved configuration receipt does not match the request and W4 contract."

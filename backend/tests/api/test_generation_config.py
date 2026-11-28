@@ -96,6 +96,7 @@ def receipt(
             "source_manifest": make_manifest(session_id) if manifest is None else manifest,
             "canonical_dimensions": ["values"] if "NUMERICAL" in modes else [],
             "mapping_version": "1.0",
+            "generation_mode": selected.get("generation_mode", "ai_generation"),
         },
     }
 

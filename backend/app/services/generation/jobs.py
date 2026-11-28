@@ -1,6 +1,7 @@
 """Durable-progress orchestrator with explicitly injected DB and AI adapters."""
 
 import asyncio
+import logging
 import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -29,6 +30,17 @@ from app.services.generation.job_repository import CloneJobInputs
 from app.services.observability.runtime_registry import RuntimeRegistry
 
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
+
+
+def _is_shuffle_only(plan: GenerationPlan) -> bool:
+    """A claimed job frozen as shuffle_only (mapping 1.2); never inferred from empty modes."""
+    inputs = plan.inputs
+    return (
+        isinstance(inputs, CloneJobInputs)
+        and inputs.context.get("mapping_version") == "1.2"
+        and inputs.context.get("generation_mode") == "shuffle_only"
+    )
 
 
 class ProviderCalls:
@@ -357,6 +369,14 @@ class GenerationJobRunner:
             except Exception:
                 persisted = False
                 code = "ERR_GENERATION_STORAGE_FAILURE"
+            if persisted and outcome == "generated" and _is_shuffle_only(plan):
+                # EXT-02 Step 3. A failure keeps the committed 'generated' state; the
+                # owner can retry through POST /sessions/{id}/shuffle-only/confirm.
+                try:
+                    async with asyncio.timeout(10):
+                        await store.confirm_shuffle_only(plan)
+                except Exception:
+                    logger.warning("Shuffle-only confirmation deferred for session %s", plan.session_id)
             try:
                 await self._emit(
                     plan,

@@ -134,6 +134,7 @@ def test_response_preserves_server_derived_modes_and_ordering() -> None:
             "source_manifest": {"sources": []},
             "canonical_dimensions": ["values"],
             "mapping_version": "1.0",
+            "generation_mode": "ai_generation",
         },
     }
 

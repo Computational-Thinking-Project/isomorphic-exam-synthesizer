@@ -31,9 +31,11 @@ from app.services.generation.job_contracts import (
     QuestionTarget,
 )
 from app.services.generation.mode_mapper import (
+    MODE_MAPPING_VERSION,
     PER_QUESTION_MAPPING_VERSION,
     PUBLIC_TO_CANONICAL_DIMENSIONS,
-    question_policy,
+    frozen_generation_mode,
+    mode_question_policy,
 )
 
 
@@ -76,7 +78,8 @@ def _check_frozen_config(config: dict[str, Any], context: dict[str, Any]) -> tup
             for prefs in (preferences, frozen_preferences)
             for key in ("shuffle_questions", "shuffle_options")
         )
-        or context["mapping_version"] not in {"1.0", PER_QUESTION_MAPPING_VERSION}
+        or context["mapping_version"]
+        not in {"1.0", PER_QUESTION_MAPPING_VERSION, MODE_MAPPING_VERSION}
     ):
         raise ValueError("Claim configuration differs from its frozen context.")
     if (
@@ -328,11 +331,16 @@ class GenerationJobRepository:
             if type(count) is not int or not 0 <= count <= 250:
                 raise ValueError("Invalid durable quota count.")
             dimensions = _check_frozen_config(config, context)
+            mode = frozen_generation_mode(config, context)
             sources = _check_frozen_sources(context, session_id)
             policies = None
-            if context["mapping_version"] == PER_QUESTION_MAPPING_VERSION:
+            if context["mapping_version"] in {PER_QUESTION_MAPPING_VERSION, MODE_MAPPING_VERSION}:
+                # shuffle_only freezes every slot as ORIGINAL_CLONE, so the plan below
+                # takes the clone-only path: no AI client call and no quota reservation.
                 policies = {
-                    row["source_question_id"]: question_policy(_object(row["canonical_blueprint"]))
+                    row["source_question_id"]: mode_question_policy(
+                        mode, _object(row["canonical_blueprint"])
+                    )
                     for row in sources
                 }
                 if context.get("question_policies") != policies or set(dimensions) != {
@@ -727,6 +735,22 @@ class GenerationJobRepository:
         ):
             raise GenerationJobError(
                 503, "ERR_GENERATION_STORAGE_FAILURE", "Invalid finish receipt."
+            )
+
+    async def confirm_shuffle_only(self, plan: GenerationPlan) -> None:
+        """EXT-02 Step 3: let the database verify shuffle-only copies and move to reviewed."""
+        receipt = _object(
+            await self._rpc("confirm_shuffle_only_copies", {"p_session_id": str(plan.session_id)})
+        )
+        if (
+            receipt.get("success") is not True
+            or _uuid(receipt.get("session_id")) != plan.session_id
+            or receipt.get("session_status") != "reviewed"
+            or receipt.get("generation_mode") != "shuffle_only"
+            or _object(receipt.get("progress")).get("ready") is not True
+        ):
+            raise GenerationJobError(
+                503, "ERR_GENERATION_STORAGE_FAILURE", "Invalid shuffle-only confirmation receipt."
             )
 
     async def fail_stale(self, session_id: UUID, *, cutoff: datetime) -> bool:

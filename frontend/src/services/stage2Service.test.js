@@ -566,3 +566,35 @@ test('fetchSessionDetail: khi session có generation_config thiếu ordering_pre
     api.get = originalGet;
   }
 });
+
+test('EXT-02: saveSessionConfig gửi generation_mode hợp lệ và bỏ qua giá trị lạ', async () => {
+  const originalPost = api.post;
+  const captured = [];
+  api.post = async (url, payload) => {
+    captured.push(payload);
+    return { data: { success: true } };
+  };
+  try {
+    await saveSessionConfig('session-mode', { n_versions: 2, generation_mode: 'shuffle_only' });
+    await saveSessionConfig('session-mode', { n_versions: 2, generation_mode: 'bogus' });
+    await saveSessionConfig('session-mode', { n_versions: 2, active_variation_modes: [] });
+    assert.equal(captured[0].generation_mode, 'shuffle_only');
+    assert.equal('generation_mode' in captured[1], false);
+    assert.equal('generation_mode' in captured[2], false, 'Mảng rỗng không suy ra shuffle_only');
+  } finally {
+    api.post = originalPost;
+  }
+});
+
+test('EXT-02: fetchSessionDetail khôi phục generation_mode đã lưu, mặc định ai_generation', async () => {
+  const originalGet = api.get;
+  try {
+    for (const [mode, expected] of [['shuffle_only', 'shuffle_only'], [undefined, 'ai_generation'], ['bogus', 'ai_generation']]) {
+      api.get = async () => ({ data: { status: 'configured', generation_config: { n_versions: 2, generation_mode: mode } } });
+      const detail = await fetchSessionDetail('saved-mode');
+      assert.equal(detail.config.generation_mode, expected);
+    }
+  } finally {
+    api.get = originalGet;
+  }
+});
