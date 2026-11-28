@@ -1,82 +1,118 @@
 # EXT-03 — Đạt: plan Export/OMR và bàn giao (M2)
 
-- Author: Đạt (`@Thanhdat3010`); phối hợp frontend Bội Anh theo I-EXT-05. Reviewer đề xuất: Quỳnh (receipt/ledger/Finalize), Hùng (canonical contract), Duy (Review integration); chưa thay phân công reviewer của leader.
+- Author: Đạt (`@Thanhdat3010`, backend); Bội Anh (`@htbaax`, giao diện, mẫu và đối soát bản in) theo EXT v3.1 §1. Reviewer đề xuất: Quỳnh (receipt/ledger/Finalize), Hùng (canonical contract), Duy (Review integration); chưa thay phân công reviewer của leader.
 - Workflow: v0.1 proposed + INPUT-20261109; [M2](../review/TEMPLATES.md#m2), [quy trình](../review/WORKFLOW.md).
 - Nhánh: `docs/ext-03-export-omr-plan` → `dev`. Base đã đối chiếu: `b29244346094811eaa038fd31fea67969f8f5b7f`, sau Stage 3 #109.
-- Trạng thái: **plan một phần, proposed; chưa code EXT-03**. PR #110 là công việc batching/files đang review riêng, không coi đã nằm trong dev.
-- Nguồn hiện đọc được: [EXT-01 v1.2 tại 4618075](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/4618075/EXT-01-Implementation-Plan-v1.2.md), §3.6.1, §4 và Q05/Q06; [EXT-02 tại 3d5577c](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/3d5577c/docs/tasks/EXT-02.md), §4. Hai plan dẫn `Ke-hoach-phan-cong-EXT-v3.1-final.md` ngày 25/11 nhưng chưa cung cấp file/link nguồn trong repo. Chưa đối chiếu được toàn bộ acceptance EXT-03; không tự gán các mã Axx.
-- Theo lịch được dẫn ở #111/#112: M2/Draft 26/11, code từ 27/11, báo kết quả tối 01/12/2026. ETA tổng task **TBD** đến khi nhận file phân công, template/miền OMR và I-EXT-02; chưa cam kết hoàn tất cả EXT-03 trong hạn báo cáo.
+- Nguồn giao việc: [`Ke-hoach-phan-cong-EXT-v3.1-final.md` tại #111 `8fb21e6`](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/8fb21e6/Ke-hoach-phan-cong-EXT-v3.1-final.md), EXT v3.1 ngày 25/11/2026: §1 (phân công, I-EXT-01…05), §EXT-03, §6 (A02, A10, A13–A18, A20). Plan tham chiếu thêm [EXT-01/07 provenance](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/350f6d8/docs/tasks/EXT-01/07-preview-export-provenance.md), [EXT-02 tại 68ed813](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/68ed813/docs/tasks/EXT-02.md) và [EXT-04 tại 38aa8df](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/38aa8df5d19a525080cab9bec39e8b52e45bec49/docs/tasks/EXT-04.md).
+- Trạng thái: **plan proposed theo EXT v3.1; chưa code EXT-03**. PR #110 (batching/files, gói mặc định) đang review riêng, không coi đã nằm trong dev.
+- Lịch đợt: M2/Draft 26/11, code từ 27/11, báo kết quả tối 01/12/2026. Hạn báo kết quả không thay ETA hoàn tất task. ETA tổng EXT-03 **TBD**: phụ thuộc I-EXT-02 (snapshot thật), Q-I01-R, #112 vào dev và mẫu OMR.
 
-## 1. Phần Đạt cần làm đã xác định
+## 1. Phạm vi EXT-03 phía Đạt (EXT v3.1)
 
-1. Chuẩn bị Export/OMR, phối hợp EXT-04 về snapshot/receipt/ID lượt và EXT-02 về nguồn cùng permutation sau shuffle. Mọi file dùng snapshot đã khóa, không đọc live config để đoán mode/policy.
-2. R09/Q06: sửa phần Export reader → provenance → builder/renderers để xử lý clone thiếu lời giải trong mixed policy bằng evidence đã xác minh. Quỳnh xác nhận phần Finalize/Preview của EXT-04; không tự sửa nhánh của Quỳnh/Duy.
-3. Thống nhất hiển thị `Chưa có lời giải` cho null/blank/đúng placeholder `Không có lời giải cho câu hỏi này.` ở presentation. Không sửa chuỗi DB, canonical content, fingerprint hoặc hash để đổi nhãn. Nhãn không cấp ngoại lệ cho AI-generated/regenerated thiếu solution.
-4. I-EXT-04: giao cho Quỳnh tập con mã/số câu OMR đã thực sự kiểm. Miền mã sản phẩm lấy từ I-EXT-02; chưa chọn định dạng mã hoặc sức chứa template khi chưa có nguồn.
-5. I-EXT-05: Đạt/Bội Anh phối hợp Hùng/Quỳnh về ID lượt, tải đáp án riêng, đọc gói cũ/mới, key và reload. Chưa tự chốt endpoint/schema ledger mới chỉ từ tên `Export ledger v2` trong Q05.
+1. **Snapshot.** Đơn vị export là một lượt đã duyệt (`session_id`). Lượt EXT đọc snapshot bất biến do Approve ghi (I-EXT-02); lượt MVP cũ giữ projection hiện tại. Không đọc live config để đoán mode/policy.
+2. **R09/Q06.** Export reader → provenance → builder/renderers xác minh câu thiếu lời giải bằng ledger và policy frozen theo slot. Placeholder `Không có lời giải cho câu hỏi này.` được coi là thiếu lời giải khi kiểm provenance, hiển thị `Chưa có lời giải`. Không sửa chuỗi DB, canonical content, fingerprint hoặc hash để đổi nhãn. Nhãn không cấp ngoại lệ cho AI-generated/regenerated thiếu lời giải.
+3. **Định danh gói.** Ba nhánh identity (MVP cũ không body/key, EXT mặc định, có cấu hình) với `packaging_key`; tên quản lý, tag và thời điểm tải không đổi identity.
+4. **Tùy chọn export.** `visible_fields`, `answer_sheet`, `formats` theo EXT v3.1 §EXT-03; 1–20 câu/đề.
+5. **Đáp án.** Định dạng đáp án và tải đáp án riêng của đề gốc hoặc từng mã, tách khỏi gói export.
+6. **Contract OMR (I-EXT-04).** Xác minh tập con mã/số câu sau khi in, tô, chấm thật; OMR đóng cho tới khi có bằng chứng. Bội Anh kiểm PDF/bản in.
 
-Ngoài phạm vi: thay pipeline Review/regenerate của Duy, mode/reuse của Tâm, Bank/Finalize/cấp mã của Quỳnh, chấm OMR trên web, sửa historical receipts, apply shared DB hoặc merge PR người khác.
+Ngoài phạm vi: Review/regenerate (Duy), mode/reuse/shuffle (Tâm), Bank/Finalize/cấp mã/receipt (Quỳnh), UI Bank/Preview (Hùng), UI Export (Bội Anh), chấm bài trên web, gộp nhiều lượt, PDF riêng cho đề gốc, trang lịch sử file, sửa historical receipts, apply shared DB hoặc merge PR người khác.
 
 ## 2. Tái sử dụng phần đang có
 
 Đã đọc tĩnh trên dev; chưa là xác nhận runtime/cloud:
 
-- `backend/app/services/exporter/snapshot_reader.py`: owner/RLS, phiên approved/exported, đọc lại session để phát hiện thay đổi; privileged client chỉ đọc provenance giới hạn theo session/question đã được xác thực.
-- `snapshot_provenance.py`: ngoại lệ solution rỗng kiểm ledger; nhánh clone hiện phụ thuộc modes/dimensions rỗng toàn phiên. Reader hiện thiếu `mapping_version`/frozen payload ở projection provenance, cần kiểm R09 qua đường reader thật.
-- `snapshot_builder.py`, `bundle_models.py`, `manifest_bundle.py`, `export_pipeline.py`: snapshot hậu shuffle, validation, artifact/manifest; không xây pipeline export song song.
-- `private_models.py`, `private_service.py`, `private_repository.py`, `private_storage.py`: identity/hash/receipt, claim/fencing/recovery, private immutable storage. `PACKAGER_VERSION` hiện là `w4-export-v2`; không đổi chỉ để trùng tên đợt EXT.
-- `source_renderer.py`, `typst_compiler.py`: renderer có sẵn cho đề/đáp án/lời giải; tái sử dụng cho presentation và file mới sau khi chốt contract.
-- `backend/app/api/routes/private_export.py`, `frontend/src/features/export/`: API/status và controller có sẵn. #110 bổ sung chọn PDF/TeX/MD và tải từng file, đang Draft/review tại [03e1504](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/110). Không chép lại delta đó vào plan PR hoặc mặc định đã merge.
+- `backend/app/services/exporter/snapshot_reader.py`: owner/RLS, phiên approved/exported, đọc lại session để phát hiện thay đổi; privileged client chỉ đọc provenance giới hạn theo session/question đã được xác thực. Hiện chỉ đọc `public_modes`, `canonical_dimensions` của job snapshot.
+- `snapshot_provenance.py`: ngoại lệ lời giải rỗng kiểm ledger; nhánh clone phụ thuộc modes/dimensions rỗng toàn phiên; chưa có nhánh revert; coi placeholder là có lời giải.
+- `snapshot_builder.py`, `snapshot_common.py`: kiểm `version_code` theo `VERSION_CODE_PATTERN`, sắp mã bằng `code_order`; sẽ chuyển sang `public_version_code` cho lượt EXT.
+- `bundle_models.py`, `manifest_bundle.py`, `export_pipeline.py`: artifact/manifest; không xây pipeline export song song.
+- `private_models.py`, `private_service.py`, `private_repository.py`, `private_storage.py`, migration 020: identity/hash/receipt, claim/fencing/recovery, storage bất biến theo `<session_id>/<packaging_key>/`. `PACKAGER_VERSION` hiện là `w4-export-v2`.
+- `source_renderer.py`, `typst_compiler.py`: renderer đề/đáp án/lời giải; tái sử dụng cho mẫu mới.
+- `backend/app/api/routes/private_export.py`, `frontend/src/features/export/`: API/status và controller; #110 bổ sung chọn PDF/TeX/MD và tải từng file cho gói mặc định.
+- `backend/app/services/generation/mode_mapper.py` (#112 `68ed813`): `job_generation_mode`, `slot_result_kind`; Export import, không viết lại quy tắc (Q-I03-b).
 
-## 3. Trình tự triển khai từ 27/11
+## 3. Trình tự triển khai
 
 | Lượt / file dự kiến | Mục đích và đầu ra | Điều kiện bắt đầu | Cách kiểm |
 |---|---|---|---|
-| G0 — file phân công, inventory contracts/migrations | Chốt acceptance, owner FE/BE, artifacts OMR, miền mã, compatibility và file chung; cập nhật chính plan này | Q-EXT03-SOURCE, I-EXT-02/05 | Đối chiếu từng yêu cầu với M1; không tạo bản phân công khác |
-| G1 — tests exporter reader/provenance/builder | Fixture mixed-policy positive/negative R09 chạy qua reader → builder, xác định lỗi compatibility thực sự | I-EXT-01/03 đủ schema/evidence; không cần đợi cả EXT-04 hoàn tất | Reproduce trước sửa; không chỉ truyền fixture giàu field thẳng vào predicate |
-| G2 — `snapshot_reader.py`, `snapshot_provenance.py`, builder/renderers khi cần | Projection frozen evidence; verifier theo mapping version; nhãn lời giải thiếu nhất quán | G1 + Q06; Quỳnh chốt ranh giới Finalize | Same evidence phải cho kết quả nhất quán Preview/Export; giữ fail closed |
-| G3 — models/ledger/repository/manifest/storage và migration mới nếu contract thực sự cần | Identity/artifact/receipt mới cùng compatibility cũ/mới theo I-EXT-02/05 | Contract fields/key/ID lượt chốt, numbering sau kiểm inventory | Replay, fencing, interrupted recovery, owner isolation; không overwrite artifact/receipt cũ |
-| G4 — renderer/template OMR và bộ fixture | Tập con mã/số câu OMR có bằng chứng, giao I-EXT-04 | Miền mã + template/tiêu chí OMR được leader/provider chốt | Biên min/max, ngoài miền, ký tự/leading zero, key A–D hậu shuffle; render và kiểm artifact thật |
-| G5 — route/controller/UI tải file, đáp án riêng | Dùng đúng round/version IDs, format, trạng thái và reload; ghép delta #110 khi merge | I-EXT-05, G3; owner Bội Anh xác nhận chia file | Owner auth, filename/format, bytes/hash, stale response/unmount, reload/retry; visual theo walkthrough |
-| G6 — tích hợp và M3 | Evidence đầu-cuối, CI và request review trên head cuối | Code EXT-01/02/04 cần cho đường chạy đã bàn giao | AI → Review → Preview → Approve → Export; shuffle-only không gọi Gemini; báo rõ mock/live/skip |
+| G0 — đối chiếu EXT v3.1, inventory contracts/migrations | Plan này theo EXT v3.1; contract I-EXT-05 đề xuất (§4) | Đã có file phân công | Đối chiếu từng yêu cầu với §EXT-03/§6; không tạo bản phân công khác |
+| G1 — tests exporter reader/provenance/builder | Fixture R09 positive/negative chạy qua reader → builder, tái hiện lỗi compatibility thực sự | Fixture I-EXT-01 `8fb21e6`, I-EXT-03 v2 `452937a`; ledger dựng theo schema (Q-I03-a) | Reproduce trước sửa; không chỉ truyền fixture giàu field thẳng vào predicate |
+| G2 — `snapshot_reader.py`, `snapshot_provenance.py`, renderers | Projection frozen evidence (`mapping_version`, `generation_mode`, `snapshot_payload`); verifier theo slot qua `mode_mapper`; nhánh revert; nhãn `Chưa có lời giải` | G1 + Q-I01-R; #112 vào dev; Quỳnh dùng cùng quy tắc ở Finalize | Cùng evidence cho cùng kết quả ở Preview/Export; fail closed |
+| G3 — đọc `approved_exam_snapshots`, identity v2, ledger/manifest, migration nếu cần | Ba nhánh identity; `public_version_code`; `snapshot_revision` trong key; gói cũ giữ nguyên | I-EXT-02 mục 1–3 + câu hỏi provenance/quyền đọc; số migration theo Q05 | Replay, fencing, interrupted recovery, owner isolation; không overwrite artifact/receipt cũ; A15/A16 |
+| G4 — mẫu PDF (`visible_fields`, `written_boxes`), OMR khi đủ điều kiện | Mẫu PDF có cấu hình; OMR chỉ cho tổ hợp đã kiểm (I-EXT-04) | Miền `101`–`999` từ I-EXT-02; phần mềm/mẫu OMR được ghi nhận | Render và xem artifact thật; biên mã/số câu, ngoài miền, key A–D hậu shuffle; A17/A18 |
+| G5 — routes export có cấu hình/key, tải đáp án riêng | API theo §4; ghép delta #110 khi merge | I-EXT-05 được Hùng/Bội Anh xác nhận; G3 | Owner auth, 422/404/409, filename/format, bytes/hash, reload/retry; A13/A14/A16 |
+| G6 — tích hợp và M3 | Evidence đầu-cuối, CI và request review trên head cuối | Code EXT-01/02/04 đã bàn giao | AI → Review → Preview → Approve → Export; shuffle-only không gọi Gemini; báo rõ mock/live/skip; A20 |
 
-Thứ tự tích hợp theo hai plan provider: EXT-01/02 → EXT-04 → EXT-03. G0/G1/renderer fixture có thể chuẩn bị độc lập khi input đủ; receipt/OMR không mở từ contract suy đoán. Thay đổi chung phải chốt trước trên PR Conversation. Không rewrite historical migration hay deploy cloud từ một plan được duyệt.
+Thứ tự tích hợp: EXT-01/02 → EXT-04 → EXT-03. G0/G1/mẫu PDF có thể làm độc lập; identity mới và OMR không mở từ contract suy đoán. Thay đổi file chung phải chốt trước trên PR Conversation. Không rewrite historical migration hay deploy cloud từ một plan được duyệt.
 
 ### R09: điều kiện không được làm mất
 
-- Một successful ledger cho đúng question, gắn đúng session/source/snapshot; kiểm fingerprint shape, report/warning và regenerated identity theo contract hiện hành.
-- Legacy mapping 1.0 giữ semantics legacy; 1.1 kiểm per-slot kind/dimensions và frozen blueprint theo 026. Mapping 1.2 đọc theo contract/helper EXT-02 khi provider bàn giao. Thiếu/unknown/malformed evidence bị từ chối.
-- Không chấp nhận chỉ vì `result_kind == ORIGINAL_CLONE`; không dùng live session-wide config để nới policy 1.1/1.2. Không nới nhánh fallback/reverted ngoài contract đã có.
+- Đúng một successful ledger cho question, gắn đúng session/source/snapshot; kiểm fingerprint shape, report/warning và regenerated identity.
+- Kiểu slot lấy từ `mode_mapper.slot_result_kind`: 1.0 giữ quy tắc legacy, 1.1/1.2 theo policy frozen từng slot, `shuffle_only` luôn `ORIGINAL_CLONE`; `GenerationModeConflict` → từ chối. Ledger `result_kind` phải khớp kiểu slot.
+- Không chấp nhận chỉ vì `result_kind == ORIGINAL_CLONE`; không dùng live config để nới policy. Nhánh revert chỉ mở theo bằng chứng chốt ở Q-I01-R.
 - Reader phải SELECT đủ frozen evidence và giới hạn provenance bằng các ID đã được owner/RLS authorize. Unit helper pass chưa chứng minh query/projection đúng.
-- Display key, question/option order và solution phải khớp permutation/answer_keys đã persist; không shuffle lại khi tải hoặc reuse seed cũ để dựng artifact.
+- Display key, thứ tự câu/phương án và lời giải khớp permutation/answer_keys đã persist hoặc snapshot đã duyệt; không shuffle lại khi tải hoặc reuse seed cũ.
 
-## 4. Nơi tổng hợp input duy nhất
+## 4. I-EXT-05 — contract đề xuất phía Export
 
-Các reply dưới đây và trên Conversation là bằng chứng của cùng ID; chỉ bảng này tổng hợp trạng thái consumer. Không coi provider Deliver/PR merge là Integrated.
+Đề xuất của Đạt để Hùng/Quỳnh/Bội Anh xác nhận; chưa triển khai. Định danh theo [đề xuất Hùng](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/113#issuecomment-7222799471): `bank_item_id` là bộ, `session_id` là lượt, `version_id` là phiên bản; mã công khai chỉ để hiển thị. Receipt theo [F-018 đã chốt](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/114#issuecomment-7225114873).
+
+**Tạo/đọc gói.** Mọi route kiểm owner qua session; client chỉ gửi cấu hình hoặc key, không gửi nội dung/owner/revision. Header `Cache-Control: no-store`.
+
+| Route | Request | Response |
+|---|---|---|
+| `POST /api/sessions/{session_id}/export` | Không body: nhánh mặc định theo loại lượt (MVP cũ → identity cũ; EXT → EXT mặc định). Có body: `{"config": {"visible_fields": [...], "answer_sheet": "none" \| "written_boxes" \| "omr_bubbles", "formats": ["pdf", "tex", "md"]}}` | `202 {state: "preparing", packaging_key, identity_kind}` hoặc `200 {state: "ready", packaging_key, identity_kind, effective_config, filename, sha256, size_bytes}` |
+| `GET /api/sessions/{session_id}/export?packaging_key=…` | Không key: nhánh mặc định theo loại lượt | `200 {state: "idle" \| "preparing" \| "ready" \| "failed", packaging_key, identity_kind, …}`; `failed` kèm `error_code` cố định |
+| `POST /api/sessions/{session_id}/export/download-url` | `{"packaging_key": "…"}`; không body: nhánh mặc định | `200 {url, expires_at, expires_in, filename}` chỉ khi gói ready |
+
+- `identity_kind`: `legacy_default`, `ext_default`, `configured`. Server chuẩn hóa tập/thứ tự `visible_fields` và `formats` trước khi tính key; cấu hình tương đương cho cùng key.
+- Lỗi đề xuất: `422 ERR_EXPORT_CONFIG_INVALID` (field lạ, chỉ chọn non-PDF mà gửi tùy chọn PDF không mặc định); `422 ERR_EXPORT_OMR_UNAVAILABLE` (tổ hợp mã/số câu chưa xác minh); `422 ERR_EXPORT_QUESTION_LIMIT` (trên 20 câu); `404 ERR_EXPORT_PACKAGE_NOT_FOUND` (key không thuộc session/user, không phân biệt với không tồn tại); `409 ERR_EXPORT_NOT_READY` (download khi chưa ready). Các mã hiện có của Private Export giữ nguyên.
+- Endpoint files của #110 nhận thêm `packaging_key` khi EXT hỗ trợ nhiều cấu hình; hiện chỉ là gói mặc định.
+
+**Tải đáp án riêng.** Đọc từ snapshot đã duyệt (lượt EXT) hoặc projection đã persist (lượt cũ); không build gói, không gọi AI.
+
+- `GET /api/sessions/{session_id}/answer-key?target=version&version_id=…` hoặc `target=original`.
+- JSON: `{session_id, target, version_id, public_version_code, questions: [{question_no, correct_key}]}`. Đề gốc dùng thứ tự và key canonical, `version_id`/`public_version_code` là `null`.
+- `&format=csv`: file đính kèm UTF-8 có BOM, cột `ma_de,cau,dap_an`, tên `dap-an_<public_version_code>.csv` hoặc `dap-an_de-goc.csv`. Định dạng nhập cho phần mềm OMR chốt riêng sau I-EXT-04.
+
+**Khôi phục sau reload.** UI lưu `{session_id, packaging_key, identity_kind, effective_config}` theo account/session, không lưu URL ký hay token. Reload chỉ gọi `GET` với key đã lưu. `404` hoặc mất key: hỏi người dùng chọn lại, hoặc chỉ `POST` lại khi người dùng bấm, với đủ cấu hình hiệu lực. Không suy ra gói mới nhất; response cũ của account/session/key khác không gây điều hướng hay tải.
+
+| Ví dụ | Request | Kết quả mong đợi |
+|---|---|---|
+| Lượt MVP cũ | `POST` không body | `identity_kind=legacy_default`, key và artifact/checksum cũ; không build lại nếu artifact còn |
+| Lượt EXT mặc định | `POST` không body | `identity_kind=ext_default`, bố cục MVP với mã công khai (ví dụ `105`–`108`) |
+| Lượt có cấu hình | `POST` với `config` | `identity_kind=configured`; cùng cấu hình chuẩn hóa → cùng key; đổi tên bộ/tag → cùng key |
+
+## 5. Nơi tổng hợp input duy nhất
+
+Các reply trên Conversation là bằng chứng của cùng ID; chỉ bảng này tổng hợp trạng thái consumer. Không coi provider Deliver/PR merge là Integrated.
 
 | ID / nguồn | Provider → consumer; cần để làm gì | Need-by / ETA | Mức nhận / phần thiếu / bước tiếp |
 |---|---|---|---|
-| Q-EXT03-SOURCE | Duy → Đạt: file EXT v3.1, acceptance đầy đủ, FE/BE/reviewer và OMR artifacts | M2 26/11; ETA provider TBD | Requested tại [#111](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/111#issuecomment-7185636499). Plan hiện một phần; chưa đủ chốt scope/ước lượng tổng |
-| I-EXT-01 / Q06 | Duy → Đạt: current candidate/accept/revert/readiness, missing solution và fixture R09 | Contract 26/11 theo #111; code/evidence dự kiến 30/11, chưa ETA owner xác nhận | Nhận hướng contract đủ lập plan; [Đạt trả Q05/Q06](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/111#issuecomment-7185636499). Chưa fixture/code/evidence runtime |
-| I-EXT-02 | Quỳnh → Đạt: nguồn/đích, metadata nullable, receipt/snapshot, miền/sức chứa mã, ID/mã hai lượt | Điểm 1–3 cần trước G3, điểm 4 trước G4; ETA provider TBD | [Mẫu `38aa8df`](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/38aa8df5d19a525080cab9bec39e8b52e45bec49/docs/tasks/EXT-04.md#L30-L45): nhận một phần, đủ lập plan. [Consumer reply 27/11](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/112#issuecomment-7207576807) chờ chốt: (1) nguồn authoritative snapshot/projection, (2) tên field mã công khai/title/metadata/ID lượt, (3) quy tắc in mã công khai + legacy giữ mã cũ, (4) định dạng mã/số 0 đầu, (5) ẩn metadata null. Chưa Integrated |
-| I-EXT-03 | Tâm → Đạt: canonical source, trạng thái phiên mới, frozen mode/policy và projection hậu shuffle kèm keys/solutions | Fixture v2 đã giao 26/11; G2 cần #112 merge + 028 trước kiểm tích hợp | [Fixture v2 `452937a`](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/452937a7215a8354a601377f5fc004ec57163306/docs/tasks/fixtures/I-EXT-03.json): Accepted cho lập plan + G1. Đã đối chiếu bằng script, không lệch ([consumer reply 27/11](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/112#issuecomment-7207576807)). Q-I03-a/b/c Decided ([Tâm](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/112#issuecomment-7208123829), [Đạt xác nhận](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/112#issuecomment-7208478586)): ledger 1.2 giữ schema dev; Export import `mode_mapper.slot_result_kind`/`job_generation_mode` (#112 `68ed813`), không viết lại quy tắc; cờ trong fixture chỉ là chú thích. G2 phụ thuộc #112 vào dev và 028 rollout trước. Chưa Integrated |
-| I-EXT-04 | Đạt → Quỳnh: tập con mã/số câu OMR có bằng chứng | Trước mở OMR; ETA TBD sau I-EXT-02 + template | Chưa Delivered; không dùng toàn miền mã sản phẩm làm miền OMR mặc định |
-| I-EXT-05 | Đạt/Bội Anh ↔ Hùng/Quỳnh: round ID, tải đáp án riêng, gói cũ/mới, key/reload | Contract 26–27/11 theo #111; ETA TBD | Cần chốt payload/route/identity, owner UI và tiêu chí compatibility trước G3/G5 |
-| Q05 | Quỳnh/Tâm/Duy ↔ Đạt: inventory/thứ tự migration và rollout | Trước migration consumer; ETA TBD | Chốt nguyên tắc dependency ở #111, chưa chốt số 028–031 hoặc deployment. #110 không thêm migration |
+| Q-EXT03-SOURCE | Duy → Đạt: file EXT v3.1 | Đã giao | **Resolved**: file có ở [#111 `8fb21e6`](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/8fb21e6/Ke-hoach-phan-cong-EXT-v3.1-final.md); plan này đã đối chiếu theo file |
+| I-EXT-01 / Q06 | Duy → Đạt: accept/revert/readiness, nguồn thiếu lời giải, fixture R09 | Fixture đã giao; Q-I01-R cần trước G2 nhánh revert | [Consumer 28/11](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/111#issuecomment-7231242497): Accepted cho lập plan + G1 với `ext01_review_transitions.json` và `ext01_policy_compatibility.json` tại `8fb21e6`. Chờ Q-I01-R (bằng chứng chính thức của revert). Chưa Integrated |
+| I-EXT-02 | Quỳnh → Đạt: snapshot sau Approve, metadata, mã công khai, miền mã | Decided 27/11; mục 1–3 + câu hỏi provenance/quyền đọc cần trước G3 | [Quỳnh Decided](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/112#issuecomment-7216662803): `approved_exam_snapshots`, `public_version_code` `101`–`999`, sắp tăng dần, legacy giữ mã. [Consumer 28/11](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/112#issuecomment-7231246520): Accepted mục 1–3, 5 cho lập plan; hỏi thêm provenance trong snapshot, quyền đọc, lượt không có snapshot. Chưa Integrated |
+| I-EXT-03 | Tâm → Đạt: projection hậu shuffle, frozen mode/policy | Fixture v2 đã giao; G2 cần #112 vào dev + 028 | [Fixture v2 `452937a`](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/blob/452937a7215a8354a601377f5fc004ec57163306/docs/tasks/fixtures/I-EXT-03.json): Accepted cho lập plan + G1, đối chiếu bằng script không lệch ([consumer](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/112#issuecomment-7207576807)). Q-I03-a/b/c Decided ([Tâm](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/112#issuecomment-7208123829), [Đạt](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/112#issuecomment-7208478586)). Chưa Integrated |
+| I-EXT-04 | Đạt → Quỳnh: tập con mã/số câu OMR đã kiểm | Trước mở OMR; ETA TBD | Chưa Delivered. Cần ghi nhận phần mềm/phiên bản, quyền dùng mẫu, khổ giấy, vùng mã đề/số câu, định dạng nhập đáp án; in, tô, chấm nhiều mã (Bội Anh kiểm bản in). Miền sản phẩm `101`–`999` không phải miền OMR mặc định |
+| I-EXT-05 / F-018 | Đạt/Bội Anh ↔ Hùng/Quỳnh: ID lượt, tải đáp án riêng, gói cũ/mới, key/reload | Contract đề xuất ở §4; cần xác nhận trước G5 | [Đề xuất Hùng](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/113#issuecomment-7222799471) nhận làm ranh giới. F-018 Decided (Quỳnh/Hùng). Contract Export đề xuất tại §4, chờ Hùng/Bội Anh xác nhận |
+| Q05 | Quỳnh/Tâm/Duy ↔ Đạt: thứ tự/số migration | Trước migration Export; ETA TBD | #111 và #112 đều đang dùng `028` tạm. Migration Export (nếu cần) lấy số sau khi integration head được ghim; #110 không thêm migration |
 
-ETA triển khai/tích hợp/review/sửa sẽ được ước lượng lại theo scope và thời điểm input giao thực tế, báo leader nếu không đủ khoảng đến tối 01/12; không cắt kiểm tra để bù dependency trễ.
+ETA triển khai/tích hợp/review/sửa ước lượng lại theo thời điểm input giao thực tế, báo Duy nếu không đủ đến tối 01/12; không cắt kiểm tra để bù dependency trễ.
 
-## 5. Tự kiểm và tiêu chí bàn giao
+## 6. Tự kiểm và tiêu chí bàn giao
 
-- R09 positive: legacy 1.0 clone; 1.1 mixed AI + clone null/blank; nguồn có solution; fallback/reverted hợp contract; 1.2 shuffle-only sau bàn giao. Negative: missing projection/policy, policy lệch frozen blueprint, sai binding, duplicate ledger, fingerprint lỗi, AI_RESULT giả clone, regenerated thiếu solution.
-- Kiểm đồng bộ Preview/Export qua repository/reader, keys và solution hậu shuffle, artifacts PDF/TeX/MD và đáp án riêng. Renderer label không thay checksum input hoặc persisted content.
-- Receipt/package compatibility: reload, lost response, repeat export, concurrent claim và stale worker; cùng immutable identity đọc lại artifact cũ, identity mới không ghi đè artifact khác. Chi tiết cũ/mới chỉ chốt sau I-EXT-05.
-- OMR: kiểm template/artifact thật, biên miền mã/số câu và ngoài miền; chưa có template thì ghi chưa kiểm, không báo hỗ trợ OMR chỉ vì tạo được PDF. Chấm ảnh/web ngoài scope.
-- Checks khi có code: pytest exporter/API và finalize integration được owner bàn giao; Ruff/mypy; frontend tests/lint/build nếu đổi UI. Compiler/PG qua Docker theo setup; không nhận skip host thành pass artifact. CI bắt buộc trước merge.
-- UI theo bố cục/palette `docs/ui-walkthrough`, kiểm browser thực tế trước yêu cầu review UI. Đạt phối hợp Bội Anh, không tự redesign hoặc nhận mock là live acceptance.
+- R09 positive: legacy 1.0 clone; 1.1 mixed AI + clone null/placeholder; nguồn có lời giải; fallback; revert theo Q-I01-R; 1.2 `shuffle_only`. Negative: thiếu projection/policy, policy lệch frozen, sai binding, duplicate ledger, fingerprint lỗi, AI_RESULT giả clone, regenerated thiếu lời giải, AI slot mang placeholder.
+- Preview/Export đồng bộ qua repository/reader; key và lời giải hậu shuffle; artifacts PDF/TeX/MD và đáp án riêng. Nhãn hiển thị không đổi checksum input hoặc nội dung đã persist.
+- Gói: reload, mất response, export lặp, hai cấu hình song song, claim đồng thời và worker cũ; cùng identity đọc lại artifact cũ, identity mới không ghi đè artifact khác (A15/A16).
+- Mã: hai lượt cùng bộ, mã nội bộ 101–104 và công khai 105–108; mã 106 khớp Preview/matrix/Bank/PDF/phiếu/đáp án theo `version_id` (A14).
+- PDF: metadata null, không trường, ô điền, nhiều format, công thức, phân trang, bản thí sinh/giáo viên; non-PDF kèm tùy chọn PDF trả 422; trên 20 câu báo lỗi (A17).
+- OMR: kiểm mẫu/artifact thật, biên mã/số câu và ngoài miền; chưa có mẫu thì ghi chưa kiểm, không báo hỗ trợ OMR chỉ vì tạo được PDF (A18).
+- Checks khi có code: pytest exporter/API và integration Finalize do owner bàn giao; Ruff/mypy; frontend tests/lint/build nếu đổi UI. Compiler/PG qua Docker; không nhận skip host thành pass artifact. CI bắt buộc trước merge.
+- UI theo bố cục/palette `docs/ui-walkthrough`, kiểm browser thực tế trước khi yêu cầu review UI; Bội Anh phụ trách UI Export.
 
-## 6. Bàn giao hiện tại — 27/11
+## 7. Bàn giao hiện tại — 28/11
 
-- Đã làm: đọc source dev và provider plans, lập plan một phần; phản hồi #111 Q05/Q06 và #112 I-EXT-03/overlap #110. Ngày 27/11 trả consumer I-EXT-03 v2 và I-EXT-02 tại [#112](https://github.com/Computational-Thinking-Project/isomorphic-exam-synthesizer/pull/112#issuecomment-7207576807). Phát hiện cho G2: verifier Export trên dev kiểm R09 theo cả phiên và chưa coi placeholder là thiếu lời giải; sẽ chuyển sang ledger + policy frozen theo slot. Chưa có code EXT-03, migration, OMR artifact hoặc consumer acceptance.
-- Kiểm plan: đường dẫn source/link tương đối và diff. Product checks của #110 được ghi tại #110, không tính thành kiểm EXT-03.
-- Còn cần: file giao việc + I-EXT-02/05 để chốt scope, code/fixture I-EXT-01/03 để tích hợp. Phần đủ input sẽ triển khai từ 27/11; phần chưa đủ giữ pending rõ theo ID.
+- Đã làm: plan đối chiếu EXT v3.1; consumer reply I-EXT-01 (#111), I-EXT-02 và I-EXT-03 (#112); Q-I03-a/b/c Decided; contract I-EXT-05 đề xuất tại §4. #110 chuyển Ready, chờ reviewer submit trên `03e1504`.
+- Phát hiện cho G2: Finalize và Export trên dev coi placeholder là có lời giải và kiểm clone theo cả phiên; Export sẽ kiểm theo slot và coi placeholder là thiếu lời giải, Quỳnh cần cùng quy tắc ở Finalize.
+- Chưa có code EXT-03, migration, mẫu OMR hoặc consumer acceptance. Kiểm plan: link và diff. Product checks của #110 ghi tại #110, không tính thành kiểm EXT-03.
+- Còn cần: Q-I01-R (Duy), câu hỏi provenance/quyền đọc snapshot (Quỳnh), xác nhận §4 (Hùng/Bội Anh), mẫu OMR (Đạt/Bội Anh), #112 vào dev.
