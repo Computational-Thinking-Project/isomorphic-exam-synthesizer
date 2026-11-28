@@ -11,6 +11,7 @@ const {
   getExportStatus,
   triggerExport,
   issueDownloadUrl,
+  fetchAnswerKey,
 } = await import('./exportService.js');
 const { api } = await import('./api.js');
 
@@ -224,4 +225,91 @@ test('401 trên exportService dùng refresh/retry chung tối đa một lần', 
   assert.equal(result.state, 'idle');
   assert.equal(calls, 2);
   assert.equal(refreshCalls, 1);
+});
+
+test('EXT-03: getExportStatus gửi packaging_key trong query param và nhận packaging_key, identity_kind, effective_config', async () => {
+  let requestedUrl = null;
+  api.defaults.adapter = async (config) => {
+    requestedUrl = config.url;
+    return response(config, {
+      state: 'ready',
+      packaging_key: 'pkg-123-abc',
+      identity_kind: 'configured',
+      effective_config: { visible_fields: ['title'], answer_sheet: 'none', formats: ['pdf'] },
+      filename: 'exam_bundle_configured.zip',
+      sha256: 'sha256-hash-value',
+      size_bytes: 54321,
+    });
+  };
+
+  const result = await getExportStatus('s1', { packagingKey: 'pkg-123-abc' });
+  assert.equal(requestedUrl, '/sessions/s1/export?packaging_key=pkg-123-abc');
+  assert.equal(result.packaging_key, 'pkg-123-abc');
+  assert.equal(result.identity_kind, 'configured');
+  assert.deepEqual(result.effective_config, { visible_fields: ['title'], answer_sheet: 'none', formats: ['pdf'] });
+});
+
+test('EXT-03: triggerExport gửi body config theo contract và nhận packaging_key', async () => {
+  let requestBody = null;
+  api.defaults.adapter = async (config) => {
+    requestBody = JSON.parse(config.data || '{}');
+    return response(config, {
+      state: 'preparing',
+      packaging_key: 'pkg-test-key',
+      identity_kind: 'configured',
+      effective_config: { visible_fields: ['title'], answer_sheet: 'written_boxes', formats: ['pdf'] },
+    }, 202);
+  };
+
+  const customConfig = {
+    visible_fields: ['title'],
+    answer_sheet: 'written_boxes',
+    formats: ['pdf'],
+  };
+  const result = await triggerExport('s1', customConfig);
+  assert.deepEqual(requestBody, { config: customConfig });
+  assert.equal(result.state, 'preparing');
+  assert.equal(result.packaging_key, 'pkg-test-key');
+  assert.equal(result.identity_kind, 'configured');
+});
+
+test('EXT-03: issueDownloadUrl gửi packaging_key trong body khi được chỉ định', async () => {
+  let requestBody = null;
+  api.defaults.adapter = async (config) => {
+    requestBody = JSON.parse(config.data || '{}');
+    return response(config, {
+      url: 'https://storage.example.test/download.zip',
+      expires_at: '2026-11-28T19:00:00Z',
+      expires_in: 3600,
+      filename: 'exam_bundle_custom.zip',
+    });
+  };
+
+  const result = await issueDownloadUrl('s1', { packagingKey: 'pkg-download-key' });
+  assert.deepEqual(requestBody, { packaging_key: 'pkg-download-key' });
+  assert.equal(result.url, 'https://storage.example.test/download.zip');
+  assert.equal(result.filename, 'exam_bundle_custom.zip');
+});
+
+test('EXT-03: fetchAnswerKey gọi GET /sessions/:id/answer-key với đúng params', async () => {
+  let requestedUrl = null;
+  api.defaults.adapter = async (config) => {
+    requestedUrl = config.url;
+    return response(config, {
+      session_id: 's1',
+      target: 'version',
+      version_id: 'ver-101',
+      public_version_code: '101',
+      questions: [{ question_no: 1, correct_key: 'A' }],
+    });
+  };
+
+  const data = await fetchAnswerKey('s1', {
+    target: 'version',
+    versionId: 'ver-101',
+    format: 'json',
+  });
+  assert.equal(requestedUrl, '/sessions/s1/answer-key?target=version&version_id=ver-101&format=json');
+  assert.equal(data.public_version_code, '101');
+  assert.equal(data.questions.length, 1);
 });
