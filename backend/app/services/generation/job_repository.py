@@ -737,6 +737,22 @@ class GenerationJobRepository:
                 503, "ERR_GENERATION_STORAGE_FAILURE", "Invalid finish receipt."
             )
 
+    async def confirm_shuffle_only(self, plan: GenerationPlan) -> None:
+        """EXT-02 Step 3: let the database verify shuffle-only copies and move to reviewed."""
+        receipt = _object(
+            await self._rpc("confirm_shuffle_only_copies", {"p_session_id": str(plan.session_id)})
+        )
+        if (
+            receipt.get("success") is not True
+            or _uuid(receipt.get("session_id")) != plan.session_id
+            or receipt.get("session_status") != "reviewed"
+            or receipt.get("generation_mode") != "shuffle_only"
+            or _object(receipt.get("progress")).get("ready") is not True
+        ):
+            raise GenerationJobError(
+                503, "ERR_GENERATION_STORAGE_FAILURE", "Invalid shuffle-only confirmation receipt."
+            )
+
     async def fail_stale(self, session_id: UUID, *, cutoff: datetime) -> bool:
         if cutoff.tzinfo is None or cutoff.utcoffset() is None:
             raise ValueError("Stale cutoff must have a timezone.")

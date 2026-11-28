@@ -5,6 +5,7 @@ from functools import partial
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from postgrest.exceptions import APIError
 from slowapi import Limiter
 from supabase import Client
 
@@ -81,7 +82,58 @@ def create_generation_config_router(
         except Exception as exc:
             raise _storage_failure() from exc
 
+    @router.post(
+        "/{session_id}/shuffle-only/confirm",
+        status_code=200,
+        summary="Recovery: confirm the copies of a generated shuffle-only session (EXT-02)",
+    )
+    @limit_crud
+    def confirm_shuffle_only_copies(
+        session_id: UUID,
+        request: Request,
+        response: Response,
+        current_user: CurrentUser = Depends(get_current_user),
+        db: Client = Depends(get_user_db),
+    ) -> dict[str, object]:
+        # The worker confirms automatically; this only retries a deferred confirmation.
+        assert_ownership("exam_sessions", str(session_id), current_user.id, db=db)
+        try:
+            data = db.rpc("confirm_shuffle_only_copies", {"p_session_id": str(session_id)}).execute().data
+        except APIError as exc:
+            raise _confirm_error(exc) from exc
+        except Exception as exc:
+            raise _storage_failure() from exc
+        if (
+            not isinstance(data, dict)
+            or data.get("success") is not True
+            or data.get("session_id") != str(session_id)
+            or data.get("session_status") != "reviewed"
+        ):
+            raise _storage_failure()
+        return data
+
     return router
+
+
+_CONFIRM_ERRORS = {
+    "ERR_MODE_NOT_SHUFFLE_ONLY": (409, "The session is not a shuffle-only generation."),
+    "ERR_SHUFFLE_ONLY_NOT_READY": (409, "The copies are not complete or do not match the source."),
+    "REVIEW_BUSY": (409, "A review operation is still running; try again later."),
+    "REVIEW_LOCKED": (423, "The session is already approved."),
+}
+
+
+def _confirm_error(exc: APIError) -> HTTPException:
+    code = str(getattr(exc, "code", "") or "").upper()
+    message = str(getattr(exc, "message", "") or "")
+    if code == "P0002":
+        return HTTPException(status_code=404, detail="Session not found")
+    if code == "42501":
+        return HTTPException(status_code=403, detail="Access denied")
+    for prefix, (status_code, text) in _CONFIRM_ERRORS.items():
+        if code in {"55000", "55006"} and message.startswith(prefix):
+            return HTTPException(status_code=status_code, detail={"code": prefix, "message": text})
+    return _storage_failure()
 
 
 def _storage_failure() -> HTTPException:

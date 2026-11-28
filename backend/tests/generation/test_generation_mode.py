@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+from postgrest.exceptions import APIError
 from pydantic import ValidationError
 
 from app.models.generation_config import GenerationConfigRequest, GenerationConfigResponse
@@ -19,6 +20,9 @@ from app.services.generation.mode_mapper import (
     mode_question_policy,
     slot_result_kind,
 )
+from tests.api.test_generation_config import HEADERS as API_HEADERS
+from tests.api.test_generation_config import OTHER_SESSION_ID as API_OTHER_SESSION_ID
+from tests.api.test_generation_config import SESSION_ID as API_SESSION_ID
 from tests.api.test_generation_config import ApiHarness, payload
 from tests.api.test_generation_config import api as api  # noqa: F401
 from tests.generation.test_config_repository import (
@@ -185,7 +189,10 @@ CLONE_POLICY = {"canonical_dimensions": [], "result_kind": "ORIGINAL_CLONE"}
 
 
 def snapshot_row(version: str, mode: str | None = None, policies: dict | None = None, **extra) -> dict:
-    payload: dict = {"question_policies": policies or {}}
+    payload: dict = {
+        "question_policies": policies or {},
+        "confirmed_sources": [{"source_question_id": SID_AI}, {"source_question_id": SID_CLONE}],
+    }
     if mode is not None:
         payload["generation_mode"] = mode
     return {
@@ -249,3 +256,59 @@ def test_reader_mode_mismatch_between_column_and_payload() -> None:
     with pytest.raises(GenerationModeConflict):
         job_generation_mode(row)
     assert issubclass(GenerationModeConflict, ValueError)
+
+
+@pytest.mark.parametrize("mode", ["ai_generation", "shuffle_only"])
+@pytest.mark.parametrize("sources", [
+    [{"source_question_id": SID_CLONE}],  # policy entry whose source is absent
+    [{"source_question_id": SID_AI}, {"source_question_id": SID_AI}],  # duplicate source
+    [],
+    None,
+])
+def test_reader_requires_exactly_one_frozen_source(mode: str, sources: list | None) -> None:
+    policy = AI_POLICY if mode == "ai_generation" else CLONE_POLICY
+    row = snapshot_row("1.2", mode, {SID_AI: policy, SID_CLONE: CLONE_POLICY})
+    row["snapshot_payload"]["confirmed_sources"] = sources
+    with pytest.raises(GenerationModeConflict):
+        slot_result_kind(row, SID_AI)
+
+
+def confirm(api: ApiHarness, session_id: object = API_SESSION_ID):
+    return api.client.post(f"/api/sessions/{session_id}/shuffle-only/confirm", headers=API_HEADERS)
+
+
+def test_confirm_api_returns_reviewed_receipt(api: ApiHarness) -> None:
+    receipt = {"success": True, "session_id": str(API_SESSION_ID), "session_status": "reviewed",
+               "generation_mode": "shuffle_only", "confirmed_slots": 4, "replayed": False,
+               "progress": {"ready": True}}
+    api.db.rpc.return_value.execute.return_value = SimpleNamespace(data=receipt)
+    response = confirm(api)
+    assert response.status_code == 200 and response.json() == receipt
+    api.db.rpc.assert_called_once_with("confirm_shuffle_only_copies", {"p_session_id": str(API_SESSION_ID)})
+
+
+@pytest.mark.parametrize(("code", "message", "status", "error"), [
+    ("55006", "ERR_MODE_NOT_SHUFFLE_ONLY", 409, "ERR_MODE_NOT_SHUFFLE_ONLY"),
+    ("55000", "ERR_SHUFFLE_ONLY_NOT_READY: copies do not match", 409, "ERR_SHUFFLE_ONLY_NOT_READY"),
+    ("55000", "REVIEW_BUSY", 409, "REVIEW_BUSY"),
+    ("55000", "REVIEW_LOCKED", 423, "REVIEW_LOCKED"),
+    ("XX000", "boom", 500, "ERR_CONFIG_STORAGE_FAILURE"),
+])
+def test_confirm_api_maps_database_errors(api: ApiHarness, code: str, message: str, status: int, error: str) -> None:
+    api.db.rpc.return_value.execute.side_effect = APIError({"code": code, "message": message})
+    response = confirm(api)
+    assert response.status_code == status
+    assert response.json()["detail"]["code"] == error
+
+
+@pytest.mark.parametrize("data", [None, {}, {"success": True, "session_id": "other", "session_status": "reviewed"},
+                                  {"success": True, "session_status": "generated"}])
+def test_confirm_api_rejects_malformed_receipt(api: ApiHarness, data: object) -> None:
+    api.db.rpc.return_value.execute.return_value = SimpleNamespace(data=data)
+    assert confirm(api).status_code == 500
+
+
+def test_confirm_api_checks_ownership_before_rpc(api: ApiHarness) -> None:
+    response = confirm(api, API_OTHER_SESSION_ID)
+    assert response.status_code in {403, 404}
+    api.db.rpc.assert_not_called()
