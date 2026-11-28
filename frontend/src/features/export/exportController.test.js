@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createExportController } from './exportController.js';
+import {
+  createExportController,
+  DEFAULT_EXPORT_CONFIG,
+  formatExportError,
+  makeStorageKey,
+} from './exportController.js';
 
 function deferred() {
   let resolve;
@@ -9,12 +14,23 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+function createMockStorage(initial = {}) {
+  const store = new Map(Object.entries(initial));
+  return {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+    removeItem: (k) => store.delete(k),
+    clear: () => store.clear(),
+  };
+}
+
 function setup(overrides = {}) {
   const calls = {
     load: [],
     status: [],
     export: [],
     downloadUrl: [],
+    answerKey: [],
     open: [],
   };
   let nowMs = 1_000_000;
@@ -27,20 +43,25 @@ function setup(overrides = {}) {
       return { id, status: 'approved', title: 'Đề kiểm tra', subject: 'Toán', grade: 12 };
     },
     getStatus: async (id, opts) => {
-      calls.status.push({ id, signal: opts?.signal });
+      calls.status.push({ id, signal: opts?.signal, packagingKey: opts?.packagingKey });
       return { status: 'idle' };
     },
-    triggerExport: async (id, opts) => {
-      calls.export.push({ id, signal: opts?.signal });
+    triggerExport: async (id, configOrOpts, maybeOpts) => {
+      const opts = maybeOpts?.signal ? maybeOpts : (configOrOpts?.signal ? configOrOpts : {});
+      calls.export.push({ id, signal: opts.signal, config: configOrOpts?.config || configOrOpts });
       return { status: 'ready', filename: `exam_bundle_${id}.zip` };
     },
     issueDownloadUrl: async (id, opts) => {
-      calls.downloadUrl.push({ id, signal: opts?.signal });
+      calls.downloadUrl.push({ id, signal: opts?.signal, packagingKey: opts?.packagingKey });
       return {
         url: `https://storage.example.test/${id}.zip?sig=1`,
         expires_at: new Date(nowMs + 3600_000).toISOString(),
         filename: `exam_bundle_${id}.zip`,
       };
+    },
+    fetchAnswerKey: async (id, opts) => {
+      calls.answerKey.push({ id, ...opts });
+      return 'question_no,answer\n1,A\n2,B';
     },
     openDownload: (url, filename) => calls.open.push({ url, filename }),
     now: () => nowMs,
@@ -319,4 +340,208 @@ test('chặn startExport khi đang ở phase error cho tới khi refreshStatus r
   await controller.refreshStatus();
   assert.equal(controller.getSnapshot().phase, 'ready_to_download');
   assert.equal(statusCheckCount, 2);
+});
+
+test('cấu hình xuất bản: setConfig cập nhật selectedConfig và resetConfig khôi phục mặc định', async () => {
+  const storage = createMockStorage();
+  const { controller } = setup({ storage });
+  await controller.load('s1', { accountKey: 'teacher_1' });
+
+  assert.deepEqual(controller.getSnapshot().selectedConfig, DEFAULT_EXPORT_CONFIG);
+
+  controller.setConfig({
+    visible_fields: ['title', 'institution', 'duration_minutes'],
+    answer_sheet: 'written_boxes',
+    formats: ['pdf', 'tex'],
+  });
+
+  const custom = controller.getSnapshot().selectedConfig;
+  assert.deepEqual(custom.visible_fields, ['title', 'institution', 'duration_minutes']);
+  assert.equal(custom.answer_sheet, 'written_boxes');
+  assert.deepEqual(custom.formats, ['pdf', 'tex']);
+
+  // Kiểm tra lưu vào storage
+  const rawSaved = storage.getItem(makeStorageKey('teacher_1', 's1'));
+  assert.ok(rawSaved);
+  const parsed = JSON.parse(rawSaved);
+  assert.equal(parsed.selectedConfig.answer_sheet, 'written_boxes');
+
+  // Khôi phục mặc định
+  controller.resetConfig();
+  assert.deepEqual(controller.getSnapshot().selectedConfig, DEFAULT_EXPORT_CONFIG);
+});
+
+test('startExport gửi cấu hình tùy chọn và lưu packagingKey, identityKind, effectiveConfig', async () => {
+  const storage = createMockStorage();
+  const { controller, calls } = setup({
+    storage,
+    triggerExport: async (id, config) => {
+      calls.export.push({ id, config });
+      return {
+        state: 'ready',
+        filename: 'exam_configured_101.zip',
+        packaging_key: 'pkg_conf_123',
+        identity_kind: 'configured',
+        effective_config: config,
+      };
+    },
+  });
+
+  await controller.load('s1', { accountKey: 'teacher_1' });
+  controller.setConfig({ answer_sheet: 'written_boxes' });
+  await controller.startExport();
+
+  const snap = controller.getSnapshot();
+  assert.equal(snap.phase, 'ready_to_download');
+  assert.equal(snap.packagingKey, 'pkg_conf_123');
+  assert.equal(snap.identityKind, 'configured');
+  assert.equal(snap.effectiveConfig?.answer_sheet, 'written_boxes');
+  assert.equal(calls.export[0].config?.answer_sheet, 'written_boxes');
+
+  // Verify persistence in storage
+  const saved = JSON.parse(storage.getItem(makeStorageKey('teacher_1', 's1')));
+  assert.equal(saved.packagingKey, 'pkg_conf_123');
+  assert.equal(saved.identityKind, 'configured');
+});
+
+test('load khôi phục trạng thái từ storage và truyền packagingKey vào getStatus', async () => {
+  const storage = createMockStorage({
+    [makeStorageKey('teacher_1', 's1')]: JSON.stringify({
+      sessionId: 's1',
+      packagingKey: 'pkg_saved_999',
+      identityKind: 'ext_default',
+      effectiveConfig: { answer_sheet: 'none' },
+      selectedConfig: { answer_sheet: 'none' },
+    }),
+  });
+
+  const { controller, calls } = setup({
+    storage,
+    getStatus: async (id, opts) => {
+      calls.status.push({ id, packagingKey: opts?.packagingKey });
+      return {
+        state: 'ready',
+        filename: 'exam_bundle_s1.zip',
+        packaging_key: opts?.packagingKey,
+        identity_kind: 'ext_default',
+      };
+    },
+  });
+
+  await controller.load('s1', { accountKey: 'teacher_1' });
+  assert.equal(calls.status[0].packagingKey, 'pkg_saved_999');
+  assert.equal(controller.getSnapshot().phase, 'ready_to_download');
+  assert.equal(controller.getSnapshot().packagingKey, 'pkg_saved_999');
+  assert.equal(controller.getSnapshot().identityKind, 'ext_default');
+});
+
+test('fail-closed khi gói cũ trả về 404: xóa storage và quay về ready_to_export, không tự POST lại', async () => {
+  const storage = createMockStorage({
+    [makeStorageKey('teacher_1', 's1')]: JSON.stringify({
+      sessionId: 's1',
+      packagingKey: 'pkg_expired_404',
+      identityKind: 'configured',
+    }),
+  });
+
+  const { controller, calls } = setup({
+    storage,
+    getStatus: async (id, opts) => {
+      calls.status.push({ id, packagingKey: opts?.packagingKey });
+      throw { response: { status: 404 }, message: 'Package expired' };
+    },
+  });
+
+  await controller.load('s1', { accountKey: 'teacher_1' });
+  const snap = controller.getSnapshot();
+
+  // Fail-closed an toàn: không tự POST export mới, quay về ready_to_export
+  assert.equal(snap.phase, 'ready_to_export');
+  assert.equal(snap.packagingKey, null);
+  assert.equal(calls.export.length, 0);
+
+  // Storage đã dọn dẹp key cũ
+  assert.equal(storage.getItem(makeStorageKey('teacher_1', 's1')), null);
+});
+
+test('download truyền packagingKey vào issueDownloadUrl', async () => {
+  const { controller, calls } = setup({
+    getStatus: async () => ({
+      state: 'ready',
+      filename: 'exam_custom.zip',
+      packaging_key: 'pkg_custom_abc',
+      identity_kind: 'configured',
+    }),
+    issueDownloadUrl: async (id, opts) => {
+      calls.downloadUrl.push({ id, packagingKey: opts?.packagingKey });
+      return {
+        url: 'https://storage.example.test/custom.zip',
+        expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        filename: 'exam_custom.zip',
+      };
+    },
+  });
+
+  await controller.load('s1');
+  await controller.download();
+
+  assert.equal(calls.downloadUrl[0].packagingKey, 'pkg_custom_abc');
+  assert.equal(calls.open[0].url, 'https://storage.example.test/custom.zip');
+});
+
+test('downloadAnswerKey gọi fetchAnswerKey và kích hoạt tải file CSV / JSON', async () => {
+  const { controller, calls } = setup({
+    fetchAnswerKey: async (id, opts) => {
+      calls.answerKey.push({ id, ...opts });
+      if (opts.format === 'json') {
+        return { session_id: id, answers: { 1: 'A', 2: 'B' } };
+      }
+      return 'question,key\n1,A\n2,B';
+    },
+  });
+
+  await controller.load('s1');
+
+  // Tải CSV
+  await controller.downloadAnswerKey({ target: 'version', versionId: 'v101', format: 'csv' });
+  assert.equal(calls.answerKey[0].target, 'version');
+  assert.equal(calls.answerKey[0].versionId, 'v101');
+  assert.equal(calls.answerKey[0].format, 'csv');
+  assert.match(calls.open[0].url, /^data:text\/csv/);
+  assert.equal(calls.open[0].filename, 'answer_key_s1_v_v101.csv');
+
+  // Tải JSON
+  await controller.downloadAnswerKey({ target: 'session', format: 'json' });
+  assert.equal(calls.answerKey[1].format, 'json');
+  assert.match(calls.open[1].url, /^data:application\/json/);
+  assert.equal(calls.open[1].filename, 'answer_key_s1_session.json');
+});
+
+test('mapping đầy đủ các mã lỗi nghiệp vụ EXT-03', () => {
+  const errQuestionLimit = formatExportError({
+    response: { status: 422, data: { error_code: 'ERR_EXPORT_QUESTION_LIMIT' } },
+  });
+  assert.equal(errQuestionLimit, 'Số lượng câu hỏi vượt quá giới hạn cho phép của mẫu xuất đề.');
+
+  const errConfigInvalid = formatExportError({
+    response: { status: 422, data: { error_code: 'ERR_EXPORT_CONFIG_INVALID' } },
+  });
+  assert.equal(errConfigInvalid, 'Cấu hình xuất bản không hợp lệ. Vui lòng kiểm tra lại các trường đã chọn.');
+
+  const errOmr = formatExportError({
+    response: { status: 422, data: { error_code: 'ERR_EXPORT_OMR_UNAVAILABLE' } },
+  });
+  assert.equal(errOmr, 'Mẫu phiếu trả lời trắc nghiệm (OMR) hiện đang được kiểm định và tạm thời chưa khả dụng.');
+
+  const errPkgNotFound = formatExportError(
+    { response: { status: 404, data: { error_code: 'ERR_EXPORT_PACKAGE_NOT_FOUND' } } },
+    'status'
+  );
+  assert.equal(errPkgNotFound, 'Không tìm thấy gói xuất đề đã lưu hoặc gói đã hết hạn. Vui lòng bấm xuất bản lại.');
+
+  const errNotReady = formatExportError(
+    { response: { status: 409, data: { error_code: 'ERR_EXPORT_NOT_READY' } } },
+    'download'
+  );
+  assert.equal(errNotReady, 'Gói đề thi chưa sẵn sàng để tải. Vui lòng kiểm tra lại trạng thái đóng gói.');
 });

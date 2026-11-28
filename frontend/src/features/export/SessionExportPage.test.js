@@ -269,7 +269,13 @@ test('SessionExportPage chạy trọn luồng qua exportService mặc định v�
       'POST /sessions/s1/export/download-url',
     ],
   );
-  assert.equal(requests[2].data, undefined);
+  assert.deepEqual(JSON.parse(requests[2].data), {
+    config: {
+      visible_fields: ['title', 'student_name', 'student_id', 'student_class'],
+      answer_sheet: 'none',
+      formats: ['pdf'],
+    },
+  });
   assert.equal(requests[3].data, undefined);
   assert.deepEqual(opened, [{
     url: 'https://storage.example.test/exam_bundle_s1.zip?sig=q10',
@@ -340,7 +346,7 @@ test('SessionExportPage: hiển thị Bước 3/3, link preview URL-encoded, h�
   collectButtons(view.container);
   assert.deepEqual(
     allButtons.map((b) => b.trim()),
-    ['Tải gói ZIP', 'Làm mới trạng thái'],
+    ['Khôi phục mặc định', 'Tải đáp án (CSV)', 'Tải đáp án (JSON)', 'Tải gói ZIP', 'Làm mới trạng thái'],
   );
 
   const downloadBtn = findButtons(view.container, 'Tải gói ZIP')[0];
@@ -397,6 +403,176 @@ test('SessionExportPage: pha failed cho phép Thử đóng gói lại và chuy�
   assert.ok(view.container.textContent.includes('exam_bundle_retry.zip'));
   assert.ok(view.container.textContent.includes('2.0 KB'));
   assert.ok(findButtons(view.container, 'Tải gói ZIP').length > 0);
+
+  await view.unmount();
+});
+
+test('SessionExportPage: form tùy chọn cấu hình cho phép chọn ô điền A/B/C/D và hiển thị written-boxes-preview', async () => {
+  let exportedConfig = null;
+  const view = await mountExportPage({
+    loadSession: async () => ({
+      id: 's1',
+      title: 'Đề Toán 12',
+      subject: 'Toán',
+      grade: 12,
+      status: 'approved',
+    }),
+    getStatus: async () => ({ status: 'idle' }),
+    triggerExport: async (id, config) => {
+      exportedConfig = config;
+      return {
+        status: 'ready',
+        filename: 'exam_boxes.zip',
+        packaging_key: 'pkg_boxes_1',
+        identity_kind: 'configured',
+      };
+    },
+    issueDownloadUrl: async () => ({
+      url: 'https://storage.example.test/boxes.zip',
+      filename: 'exam_boxes.zip',
+    }),
+  });
+
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 10));
+  });
+
+  // Ban đầu answer_sheet là none -> chưa hiển thị preview written_boxes
+  assert.equal(view.container.querySelector('[data-testid="written-boxes-preview"]'), null);
+
+  // Tìm radio Ô điền A/B/C/D
+  const writtenRadio = view.container.querySelector('[data-testid="radio-sheet-written"]');
+  assert.ok(writtenRadio, 'Phải có radio Ô điền A/B/C/D');
+
+  await act(async () => {
+    writtenRadio.click();
+    await Promise.resolve();
+  });
+
+  // Sau khi click -> written-boxes-preview xuất hiện
+  const preview = view.container.querySelector('[data-testid="written-boxes-preview"]');
+  assert.ok(preview, 'Phải hiển thị written-boxes-preview khi chọn ô điền A/B/C/D');
+  assert.ok(preview.textContent.includes('BẢNG ĐIỀN ĐÁP ÁN TRẮC NGHIỆM'));
+  assert.ok(preview.textContent.includes('Học sinh điền A, B, C hoặc D'));
+
+  // Bấm Tạo gói ZIP
+  const exportBtn = findButtons(view.container, 'Tạo gói ZIP')[0];
+  assert.ok(exportBtn);
+  await act(async () => {
+    exportBtn.click();
+    await Promise.resolve();
+  });
+
+  assert.ok(exportedConfig);
+  assert.equal(exportedConfig.answer_sheet, 'written_boxes');
+
+  await view.unmount();
+});
+
+test('SessionExportPage: tùy chọn OMR bị khóa (disabled) kèm ghi chú kiểm định mẫu in thực tế', async () => {
+  const view = await mountExportPage({
+    loadSession: async () => ({
+      id: 's1',
+      title: 'Đề Vật Lý 11',
+      subject: 'Vật Lý',
+      grade: 11,
+      status: 'approved',
+    }),
+    getStatus: async () => ({ status: 'idle' }),
+    triggerExport: async () => ({ status: 'ready', filename: 'exam.zip' }),
+    issueDownloadUrl: async () => ({ url: 'https://storage.test/exam.zip', filename: 'exam.zip' }),
+  });
+
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 10));
+  });
+
+  const omrRadio = view.container.querySelector('[data-testid="radio-sheet-omr"]');
+  assert.ok(omrRadio, 'Phải có radio OMR');
+  assert.ok(omrRadio.disabled || omrRadio.getAttribute('disabled') !== null, 'Radio OMR phải có thuộc tính disabled');
+  assert.ok(view.container.textContent.includes('Đang kiểm định mẫu in'));
+  assert.ok(view.container.textContent.includes('Tô tròn OMR'));
+
+  await view.unmount();
+});
+
+test('SessionExportPage: tải riêng bảng đáp án CSV và JSON độc lập với gói ZIP', async () => {
+  const opened = [];
+  const answerKeyCalls = [];
+
+  const view = await mountExportPage({
+    loadSession: async () => ({
+      id: 's1',
+      title: 'Đề Hóa 12',
+      subject: 'Hóa',
+      grade: 12,
+      status: 'approved',
+    }),
+    getStatus: async () => ({ status: 'idle' }),
+    triggerExport: async () => ({ status: 'ready', filename: 'exam.zip' }),
+    issueDownloadUrl: async () => ({ url: 'https://storage.test/exam.zip', filename: 'exam.zip' }),
+    fetchAnswerKey: async (id, opts) => {
+      answerKeyCalls.push({ id, ...opts });
+      if (opts.format === 'csv') return 'cau,dap_an\n1,A\n2,C';
+      return { answers: { 1: 'A', 2: 'C' } };
+    },
+    openDownload: (url, filename) => opened.push({ url, filename }),
+  });
+
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 10));
+  });
+
+  // Tải CSV
+  const csvBtn = view.container.querySelector('[data-testid="download-answer-key-csv"]');
+  assert.ok(csvBtn, 'Phải có nút tải đáp án CSV');
+  await act(async () => {
+    csvBtn.click();
+    await Promise.resolve();
+  });
+
+  assert.equal(answerKeyCalls.length, 1);
+  assert.equal(answerKeyCalls[0].format, 'csv');
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].filename, 'answer_key_s1_session.csv');
+
+  // Tải JSON
+  const jsonBtn = view.container.querySelector('[data-testid="download-answer-key-json"]');
+  assert.ok(jsonBtn, 'Phải có nút tải đáp án JSON');
+  await act(async () => {
+    jsonBtn.click();
+    await Promise.resolve();
+  });
+
+  assert.equal(answerKeyCalls.length, 2);
+  assert.equal(answerKeyCalls[1].format, 'json');
+  assert.equal(opened.length, 2);
+  assert.equal(opened[1].filename, 'answer_key_s1_session.json');
+
+  await view.unmount();
+});
+
+test('SessionExportPage: hiển thị badge định danh gói (configured, ext_default)', async () => {
+  const view = await mountExportPage({
+    loadSession: async () => ({
+      id: 's_identity',
+      title: 'Đề Sinh 12',
+      status: 'approved',
+    }),
+    getStatus: async () => ({
+      status: 'ready',
+      filename: 'bundle.zip',
+      packaging_key: 'pkg_conf_999',
+      identity_kind: 'configured',
+    }),
+  });
+
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 10));
+  });
+
+  assert.ok(view.container.textContent.includes('Gói xuất tùy chỉnh'));
+  assert.ok(view.container.textContent.includes('pkg_conf_999'));
 
   await view.unmount();
 });

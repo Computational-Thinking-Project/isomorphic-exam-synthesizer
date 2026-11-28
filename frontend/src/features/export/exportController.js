@@ -3,6 +3,48 @@ export const POLL_INTERVAL_MS = 2000;
 export const MAX_POLL_DURATION_MS = 120000;
 const URL_EXPIRY_BUFFER_MS = 5000;
 
+export const DEFAULT_EXPORT_CONFIG = {
+  visible_fields: ['title', 'student_name', 'student_id', 'student_class'],
+  answer_sheet: 'none',
+  formats: ['pdf'],
+};
+
+export function makeStorageKey(accountKey, sessionId) {
+  const safeAccount = accountKey ? String(accountKey).trim() : 'anonymous';
+  return `export_state:${safeAccount}:${sessionId}`;
+}
+
+function persistState(storage, accountKey, sessionId, data) {
+  if (!storage || !sessionId) return;
+  try {
+    const key = makeStorageKey(accountKey, sessionId);
+    storage.setItem(
+      key,
+      JSON.stringify({
+        sessionId,
+        accountKey: accountKey || null,
+        packagingKey: data.packagingKey ?? null,
+        identityKind: data.identityKind ?? null,
+        effectiveConfig: data.effectiveConfig ?? null,
+        selectedConfig: data.selectedConfig ?? null,
+        updatedAt: Date.now(),
+      })
+    );
+  } catch {
+    // Ignore storage quota or private browsing exceptions safely
+  }
+}
+
+function clearPersistedState(storage, accountKey, sessionId) {
+  if (!storage || !sessionId) return;
+  try {
+    const key = makeStorageKey(accountKey, sessionId);
+    storage.removeItem(key);
+  } catch {
+    // Ignore storage errors safely
+  }
+}
+
 function extractErrorCode(cause) {
   const data = cause?.response?.data;
   if (typeof data?.error_code === 'string' && data.error_code) return data.error_code;
@@ -21,12 +63,28 @@ export function formatExportError(cause, action = 'general') {
     return 'Bạn không có quyền thực hiện thao tác xuất đề cho phiên này.';
   }
   if (status === 404) {
+    if (code === 'ERR_EXPORT_PACKAGE_NOT_FOUND' || action === 'download' || action === 'status') {
+      return 'Không tìm thấy gói xuất đề đã lưu hoặc gói đã hết hạn. Vui lòng bấm xuất bản lại.';
+    }
+    if (action === 'answer_key') {
+      return 'Không tìm thấy dữ liệu đáp án cho phiên hoặc phiên bản này.';
+    }
     return 'Không tìm thấy phiên hoặc bạn không có quyền truy cập.';
   }
   if (status === 409) {
-    return action === 'download'
-      ? 'Gói đề thi chưa sẵn sàng để tải. Vui lòng kiểm tra lại trạng thái đóng gói.'
-      : 'Phiên chưa ở trạng thái duyệt cuối hoặc đang xung đột thao tác.';
+    if (code === 'ERR_EXPORT_NOT_READY' || action === 'download') {
+      return 'Gói đề thi chưa sẵn sàng để tải. Vui lòng kiểm tra lại trạng thái đóng gói.';
+    }
+    return 'Phiên chưa ở trạng thái duyệt cuối hoặc đang xung đột thao tác.';
+  }
+  if (code === 'ERR_EXPORT_QUESTION_LIMIT') {
+    return 'Số lượng câu hỏi vượt quá giới hạn cho phép của mẫu xuất đề.';
+  }
+  if (code === 'ERR_EXPORT_CONFIG_INVALID') {
+    return 'Cấu hình xuất bản không hợp lệ. Vui lòng kiểm tra lại các trường đã chọn.';
+  }
+  if (code === 'ERR_EXPORT_OMR_UNAVAILABLE') {
+    return 'Mẫu phiếu trả lời trắc nghiệm (OMR) hiện đang được kiểm định và tạm thời chưa khả dụng.';
   }
   if (status === 422 || code === 'ERR_EXPORT_BUILD_FAILED') {
     return 'Không thể đóng gói đề thi (lỗi tạo tệp đầu ra). Vui lòng kiểm tra dữ liệu và thử lại.';
@@ -40,6 +98,9 @@ export function formatExportError(cause, action = 'general') {
     }
     if (action === 'download') {
       return 'Tạm thời chưa cấp được liên kết tải xuống. Vui lòng thử lại sau.';
+    }
+    if (action === 'answer_key') {
+      return 'Dịch vụ tải đáp án tạm thời gián đoạn. Vui lòng thử lại.';
     }
     return 'Dịch vụ xuất đề tạm thời gián đoạn. Vui lòng thử lại.';
   }
@@ -75,15 +136,17 @@ function normalizeArtifact(payload, sessionId) {
 }
 
 /**
- * State machine cho màn hình xuất đề và tải ZIP (W4-MVP-09).
- * Nhận adapter qua dependency injection để cô lập với chi tiết HTTP adapter đang chờ Q10.
+ * State machine cho màn hình xuất đề và tải ZIP (W4-MVP-09 / EXT-03).
+ * Nhận adapter qua dependency injection để cô lập với chi tiết HTTP adapter.
  */
 export function createExportController({
   loadSession,
   getStatus,
   triggerExport,
   issueDownloadUrl,
+  fetchAnswerKey,
   openDownload = () => {},
+  storage = (typeof window !== 'undefined' && window.sessionStorage) ? window.sessionStorage : null,
   isCurrent = () => true,
   now = () => Date.now(),
   scheduleTimer = (fn, ms) => setTimeout(fn, ms),
@@ -94,9 +157,14 @@ export function createExportController({
   const initialState = {
     phase: 'idle',
     sessionId: null,
+    accountKey: null,
     detail: null,
     artifact: null,
     downloadGrant: null,
+    selectedConfig: { ...DEFAULT_EXPORT_CONFIG },
+    effectiveConfig: null,
+    packagingKey: null,
+    identityKind: null,
     error: '',
     errorCode: null,
     busyAction: null,
@@ -150,11 +218,18 @@ export function createExportController({
 
   const applyStatusSnapshot = (sessionId, snapshot, { allowStartPoll = true } = {}) => {
     const statusValue = snapshot?.state ?? snapshot?.status;
+    const packagingKey = snapshot?.packaging_key !== undefined ? snapshot.packaging_key : state.packagingKey;
+    const identityKind = snapshot?.identity_kind !== undefined ? snapshot.identity_kind : state.identityKind;
+    const effectiveConfig = snapshot?.effective_config !== undefined ? snapshot.effective_config : state.effectiveConfig;
+
     if (statusValue === 'ready') {
       stopPolling();
       publish({
         phase: 'ready_to_download',
         artifact: normalizeArtifact(snapshot, sessionId),
+        packagingKey,
+        identityKind,
+        effectiveConfig,
         // A ready refresh may select a new packager version with the same filename.
         // Reauthorize the next download instead of reusing an older artifact URL.
         downloadGrant: null,
@@ -162,18 +237,33 @@ export function createExportController({
         errorCode: null,
         busyAction: null,
       });
+      persistState(storage, state.accountKey, sessionId, {
+        packagingKey,
+        identityKind,
+        effectiveConfig,
+        selectedConfig: state.selectedConfig,
+      });
       return;
     }
     if (statusValue === 'preparing' || statusValue === 'pending') {
       publish({
         phase: 'preparing',
         artifact: null,
+        packagingKey,
+        identityKind,
+        effectiveConfig,
         error: '',
         errorCode: null,
         busyAction: null,
       });
+      persistState(storage, state.accountKey, sessionId, {
+        packagingKey,
+        identityKind,
+        effectiveConfig,
+        selectedConfig: state.selectedConfig,
+      });
       if (allowStartPoll) {
-        startPolling(sessionId);
+        startPolling(sessionId, packagingKey);
       }
       return;
     }
@@ -183,6 +273,9 @@ export function createExportController({
       publish({
         phase: 'failed',
         artifact: null,
+        packagingKey,
+        identityKind,
+        effectiveConfig,
         downloadGrant: null,
         error: 'Quá trình đóng gói đề thi gặp lỗi. Bạn có thể bấm thử đóng gói lại.',
         errorCode: typeof code === 'string' ? code : null,
@@ -194,6 +287,9 @@ export function createExportController({
     publish({
       phase: 'ready_to_export',
       artifact: null,
+      packagingKey,
+      identityKind,
+      effectiveConfig,
       downloadGrant: null,
       error: '',
       errorCode: null,
@@ -201,7 +297,7 @@ export function createExportController({
     });
   };
 
-  const startPolling = (sessionId) => {
+  const startPolling = (sessionId, key) => {
     stopPolling();
     pollStartedAt = now();
     const version = revision;
@@ -223,7 +319,10 @@ export function createExportController({
         if (revision !== version || !isCurrent()) return;
         const op = beginRequest();
         try {
-          const snapshot = await getStatus(sessionId, { signal: op.signal });
+          const snapshot = await getStatus(sessionId, {
+            packagingKey: key || state.packagingKey,
+            signal: op.signal,
+          });
           if (!op.current()) return;
           const pollStatus = snapshot?.state ?? snapshot?.status;
           if (pollStatus === 'preparing' || pollStatus === 'pending') {
@@ -242,6 +341,21 @@ export function createExportController({
           }
         } catch (cause) {
           if (!op.current()) return;
+          if ((key || state.packagingKey) && cause?.response?.status === 404) {
+            clearPersistedState(storage, state.accountKey, sessionId);
+            publish({
+              phase: 'ready_to_export',
+              packagingKey: null,
+              identityKind: null,
+              effectiveConfig: null,
+              artifact: null,
+              downloadGrant: null,
+              error: 'Gói xuất đề không còn tồn tại trên máy chủ. Vui lòng xuất lại.',
+              errorCode: 'ERR_EXPORT_PACKAGE_NOT_FOUND',
+              busyAction: null,
+            });
+            return;
+          }
           publish({
             phase: 'error',
             busyAction: null,
@@ -263,13 +377,72 @@ export function createExportController({
     },
     cancel,
 
-    async load(sessionId) {
+    setConfig(patch) {
+      if (!patch || typeof patch !== 'object') return;
+      const updated = {
+        ...state.selectedConfig,
+        ...patch,
+      };
+      if (Array.isArray(patch.visible_fields)) {
+        updated.visible_fields = [...patch.visible_fields];
+      }
+      if (Array.isArray(patch.formats)) {
+        updated.formats = [...patch.formats];
+      }
+      publish({ selectedConfig: updated });
+      persistState(storage, state.accountKey, state.sessionId, {
+        packagingKey: state.packagingKey,
+        identityKind: state.identityKind,
+        effectiveConfig: state.effectiveConfig,
+        selectedConfig: updated,
+      });
+    },
+
+    resetConfig() {
+      const reset = {
+        ...DEFAULT_EXPORT_CONFIG,
+        visible_fields: [...DEFAULT_EXPORT_CONFIG.visible_fields],
+        formats: [...DEFAULT_EXPORT_CONFIG.formats],
+      };
+      publish({ selectedConfig: reset });
+      persistState(storage, state.accountKey, state.sessionId, {
+        packagingKey: state.packagingKey,
+        identityKind: state.identityKind,
+        effectiveConfig: state.effectiveConfig,
+        selectedConfig: reset,
+      });
+    },
+
+    async load(sessionId, { accountKey } = {}) {
       revision += 1;
       const op = beginRequest();
+
+      let savedState = null;
+      if (storage) {
+        try {
+          const raw = storage.getItem(makeStorageKey(accountKey, sessionId));
+          if (raw) savedState = JSON.parse(raw);
+        } catch {
+          savedState = null;
+        }
+      }
+
+      const packagingKey = savedState?.packagingKey || null;
+      const identityKind = savedState?.identityKind || null;
+      const effectiveConfig = savedState?.effectiveConfig || null;
+      const selectedConfig = savedState?.selectedConfig
+        ? { ...DEFAULT_EXPORT_CONFIG, ...savedState.selectedConfig }
+        : { ...DEFAULT_EXPORT_CONFIG };
+
       publish({
         ...initialState,
         phase: 'loading',
         sessionId,
+        accountKey: accountKey || null,
+        packagingKey,
+        identityKind,
+        effectiveConfig,
+        selectedConfig,
         busyAction: 'load',
       });
 
@@ -298,9 +471,29 @@ export function createExportController({
         }
 
         publish({ detail });
-        const snapshot = await getStatus(sessionId, { signal: op.signal });
-        if (!op.current()) return;
-        applyStatusSnapshot(sessionId, snapshot);
+        try {
+          const snapshot = await getStatus(sessionId, { packagingKey, signal: op.signal });
+          if (!op.current()) return;
+          applyStatusSnapshot(sessionId, snapshot);
+        } catch (cause) {
+          if (!op.current()) return;
+          if (packagingKey && cause?.response?.status === 404) {
+            clearPersistedState(storage, accountKey, sessionId);
+            publish({
+              phase: 'ready_to_export',
+              packagingKey: null,
+              identityKind: null,
+              effectiveConfig: null,
+              artifact: null,
+              downloadGrant: null,
+              error: '',
+              errorCode: null,
+              busyAction: null,
+            });
+            return;
+          }
+          throw cause;
+        }
       } catch (cause) {
         if (!op.current()) return;
         publish({
@@ -312,7 +505,7 @@ export function createExportController({
       }
     },
 
-    async startExport() {
+    async startExport(customConfig) {
       if (
         state.busyAction !== null
         || !state.detail
@@ -325,11 +518,12 @@ export function createExportController({
       }
 
       const sessionId = state.sessionId;
+      const configToUse = customConfig || state.selectedConfig;
       const op = beginRequest();
       publish({ busyAction: 'export', error: '', errorCode: null });
 
       try {
-        const result = await triggerExport(sessionId, { signal: op.signal });
+        const result = await triggerExport(sessionId, configToUse, { signal: op.signal });
         if (!op.current()) return;
         const rawStatus = result?.state ?? result?.status;
         const normalizedStatus = rawStatus === 'pending' ? 'preparing' : (rawStatus || 'preparing');
@@ -365,11 +559,29 @@ export function createExportController({
       publish({ busyAction: 'refresh', error: '', errorCode: null });
 
       try {
-        const snapshot = await getStatus(sessionId, { signal: op.signal });
+        const snapshot = await getStatus(sessionId, {
+          packagingKey: state.packagingKey,
+          signal: op.signal,
+        });
         if (!op.current()) return;
         applyStatusSnapshot(sessionId, snapshot);
       } catch (cause) {
         if (!op.current()) return;
+        if (state.packagingKey && cause?.response?.status === 404) {
+          clearPersistedState(storage, state.accountKey, sessionId);
+          publish({
+            phase: 'ready_to_export',
+            packagingKey: null,
+            identityKind: null,
+            effectiveConfig: null,
+            artifact: null,
+            downloadGrant: null,
+            error: 'Gói xuất đề không còn tồn tại trên máy chủ. Vui lòng xuất lại.',
+            errorCode: 'ERR_EXPORT_PACKAGE_NOT_FOUND',
+            busyAction: null,
+          });
+          return;
+        }
         publish({
           phase: 'error',
           busyAction: null,
@@ -406,7 +618,10 @@ export function createExportController({
       publish({ busyAction: 'download', error: '', errorCode: null });
 
       try {
-        const response = await issueDownloadUrl(sessionId, { signal: op.signal });
+        const response = await issueDownloadUrl(sessionId, {
+          packagingKey: state.packagingKey,
+          signal: op.signal,
+        });
         if (!op.current()) return;
         if (typeof response?.url !== 'string' || !response.url) {
           throw new Error('Missing download URL');
@@ -432,6 +647,51 @@ export function createExportController({
           busyAction: null,
           downloadGrant: null,
           error: formatExportError(cause, 'download'),
+          errorCode: extractErrorCode(cause),
+        });
+      }
+    },
+
+    async downloadAnswerKey({ target = 'original', versionId, format = 'csv' } = {}) {
+      if (state.busyAction !== null || !state.sessionId || typeof fetchAnswerKey !== 'function') {
+        return;
+      }
+
+      const sessionId = state.sessionId;
+      const op = beginRequest();
+      publish({ busyAction: 'answer_key', error: '', errorCode: null });
+
+      try {
+        const data = await fetchAnswerKey(sessionId, {
+          target,
+          versionId,
+          format,
+          signal: op.signal,
+        });
+        if (!op.current()) return;
+
+        const ext = format === 'json' ? 'json' : 'csv';
+        const targetTag = target === 'version' && versionId ? `v_${versionId}` : target;
+        const filename = `answer_key_${sessionId}_${targetTag}.${ext}`;
+
+        let fileUrl;
+        if (typeof data === 'string') {
+          const mime = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';
+          fileUrl = `data:${mime},` + encodeURIComponent(data);
+        } else if (typeof data === 'object' && data !== null) {
+          fileUrl = 'data:application/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(data, null, 2));
+        } else {
+          fileUrl = String(data);
+        }
+
+        openDownload(fileUrl, filename);
+        publish({ busyAction: null, error: '', errorCode: null });
+        return { data, filename, url: fileUrl };
+      } catch (cause) {
+        if (!op.current()) return;
+        publish({
+          busyAction: null,
+          error: formatExportError(cause, 'answer_key'),
           errorCode: extractErrorCode(cause),
         });
       }
