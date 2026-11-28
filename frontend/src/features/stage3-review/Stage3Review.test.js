@@ -3156,28 +3156,81 @@ test('A01-14 lost accept response shows committed server state without moving', 
   } finally { await harness.unmount(); }
 });
 
-test('A02-13 reject keeps the binding on uncertainty and retires terminal keys', async () => {
-  const data = comparisonSession('reject-key');
+test('F02 allows editing reasons and uses a new key after a pre-reservation failure', async () => {
+  const data = comparisonSession('reject-before-reservation');
   const calls = [];
+  let reads = 0;
   const harness = renderStage3Page(data.id, {
-    loadSession: async () => structuredClone(data),
+    loadSession: async () => {
+      reads++;
+      return structuredClone(data);
+    },
     regenerateQuestionFn: async (_sid, _id, key, { reasons }) => {
       calls.push({ key, reasons });
-      if (calls.length === 2) throw { response: { status: 409, data: { error_code: 'ERR_OPERATION_FINISHED' } } };
-      throw new Error('Lost response');
+      throw { response: { status: 503, data: { error_code: 'ERR_AI_SERVICE_UNAVAILABLE' } } };
     },
   });
   try {
     await harness.render();
     await act(async () => harness.container.querySelector('[data-review-inspect]').click());
-    for (let i = 0; i < 3; i++) {
-      await act(async () => harness.container.querySelector('[data-review-regenerate]').click());
-      await confirmInspection(harness);
-    }
-    assert.deepEqual(calls[1], calls[0]);
-    assert.notEqual(calls[2].key, calls[0].key);
+    await act(async () => harness.container.querySelector('[data-review-regenerate]').click());
+    await act(async () => harness.container.querySelector('fieldset').querySelector('input').click());
+    await confirmInspection(harness);
+    assert.equal(reads, 2);
+    assert.deepEqual(calls[0].reasons, ['INCORRECT_ANSWER']);
+
+    await act(async () => harness.container.querySelector('[aria-label="Đóng kiểm tra đáp án"]').click());
+    await act(async () => harness.container.querySelector('[data-review-inspect]').click());
+    await act(async () => harness.container.querySelector('[data-review-regenerate]').click());
+    const fieldset = harness.container.querySelector('fieldset');
+    assert.equal(fieldset.getAttribute('disabled'), null);
+    const [, noCorrectAnswer] = fieldset.querySelectorAll('input');
+    await act(async () => noCorrectAnswer.click());
+    await confirmInspection(harness);
+
+    assert.deepEqual(calls[1].reasons, ['NO_CORRECT_ANSWER']);
+    assert.notEqual(calls[1].key, calls[0].key);
   } finally { await harness.unmount(); }
 });
+
+for (const [failure, error] of [
+  ['timeout', Object.assign(new Error('Request timed out'), { code: 'ECONNABORTED' })],
+  ['lost response', new Error('Lost response')],
+  ['reservation uncertain', { response: { status: 503, data: { error_code: 'ERR_RESERVATION_UNCERTAIN' } } }],
+  ['active operation', { response: { status: 409, data: { error_code: 'ERR_QUESTION_BUSY' } } }],
+]) {
+  test(`A02-13 reject keeps key and reasons after ${failure} and retires terminal keys`, async () => {
+    const data = comparisonSession('reject-key');
+    const calls = [];
+    const harness = renderStage3Page(data.id, {
+      loadSession: async () => structuredClone(data),
+      regenerateQuestionFn: async (_sid, _id, key, { reasons }) => {
+        calls.push({ key, reasons });
+        if (calls.length === 2) throw { response: { status: 409, data: { error_code: 'ERR_OPERATION_FINISHED' } } };
+        throw error;
+      },
+    });
+    try {
+      await harness.render();
+      await act(async () => harness.container.querySelector('[data-review-inspect]').click());
+      await act(async () => harness.container.querySelector('[data-review-regenerate]').click());
+      await act(async () => harness.container.querySelector('fieldset').querySelector('input').click());
+      await confirmInspection(harness);
+      assert.deepEqual(calls[0].reasons, ['INCORRECT_ANSWER']);
+
+      await act(async () => harness.container.querySelector('[data-review-regenerate]').click());
+      const fieldset = harness.container.querySelector('fieldset');
+      assert.notEqual(fieldset.getAttribute('disabled'), null);
+      assert.equal(fieldset.querySelector('input').checked, true);
+      await confirmInspection(harness);
+      assert.deepEqual(calls[1], calls[0]);
+
+      await act(async () => harness.container.querySelector('[data-review-regenerate]').click());
+      await confirmInspection(harness);
+      assert.notEqual(calls[2].key, calls[0].key);
+    } finally { await harness.unmount(); }
+  });
+}
 
 test('A01-13 older same-session read cannot undo a later confirmed accept', async () => {
   const data = comparisonSession('read-order');

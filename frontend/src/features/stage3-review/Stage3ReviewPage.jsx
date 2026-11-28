@@ -462,7 +462,11 @@ export default function Stage3ReviewPage({
       if (!current()) return;
       if (failure) {
         const code = failure.response?.data?.error_code ?? failure.errorCode;
-        if (['ERR_OPERATION_FINISHED', 'ERR_ATTEMPT_REPLAYED'].includes(code)) actionKeysRef.current.delete(binding);
+        const rejectedBeforeReservation = action === 'reject' && failure.response?.status === 503
+          && code === 'ERR_AI_SERVICE_UNAVAILABLE';
+        if (rejectedBeforeReservation || ['ERR_OPERATION_FINISHED', 'ERR_ATTEMPT_REPLAYED'].includes(code)) {
+          actionKeysRef.current.delete(binding);
+        }
         setActionMessage({ type: 'error', text: extractErrorString(failure) });
       }
       if (!latest) return;

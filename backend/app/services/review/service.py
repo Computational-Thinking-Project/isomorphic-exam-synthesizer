@@ -304,10 +304,19 @@ class ReviewService:
             )
             if existing is not None and existing.operation_status == "active":
                 async with session_lock_registry.get_lock(UUID(session_id)):
-                    await self.repo.recover_stale_operations(session_id)
+                    lock_error = None
+                    try:
+                        await self.repo.recover_stale_operations(session_id)
+                    except ReviewDomainException as exc:
+                        if (exc.status_code, exc.error_code) != (423, "ERR_SESSION_LOCKED"):
+                            raise
+                        # Completion and approval can win the race after the first lookup.
+                        lock_error = exc
                     existing = await self.repo.lookup_regeneration(
                         session_id, question_id, op, reasons=canonical_reasons
                     )
+                    if lock_error is not None and (existing is None or existing.operation_status != "completed"):
+                        raise lock_error
                     if existing is None:
                         raise ReviewDomainException(503, "ERR_INVALID_RESERVATION", "Receipt unavailable")
             if existing is not None:

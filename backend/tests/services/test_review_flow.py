@@ -159,6 +159,7 @@ class State:
                 expires_at=(datetime.now(timezone.utc) + timedelta(minutes=3)).isoformat(),
                 operation_status="active",
                 snapshot=deepcopy(self.snapshot),
+                reasons=deepcopy(params.get("p_reasons", [])),
             )
             self.operations[op] = value
             return deepcopy(value)
@@ -626,6 +627,66 @@ def test_completed_reservation_replays_after_expiry_and_approval(state):
     state.operations[key]["expires_at"] = "2000-01-01T00:00:00Z"
     replay = immediate(state.service().reject_question(state.sid, state.qid, "owner", key))
     assert replay.question_id == first.question_id and state.provider_calls == 1
+
+
+def test_replay_reads_completed_receipt_when_session_locks_during_recovery(state):
+    key = str(uuid4())
+    reasons = ["INCORRECT_ANSWER"]
+    original = state.rpc
+    active_receipt = None
+
+    def capture_reservation(role, name, params):
+        nonlocal active_receipt
+        result = original(role, name, params)
+        if name == "review_reserve_regeneration":
+            active_receipt = result
+        return result
+
+    state.rpc = capture_reservation
+    service = state.service()
+    first = immediate(service.reject_question(state.sid, state.qid, "owner", key, reasons))
+    completed_receipt = state.operations[key]
+    state.operations[key] = active_receipt
+    state.calls.clear()
+
+    def complete_before_recovery(role, name, params):
+        if name == "review_recover_session":
+            state.calls.append((role, name, params))
+            state.operations[key] = completed_receipt
+            state.status = "approved"
+            raise RuntimeError("REVIEW_LOCKED")
+        return original(role, name, params)
+
+    state.rpc = complete_before_recovery
+    replay = immediate(service.reject_question(state.sid, state.qid, "owner", key, reasons))
+
+    assert replay == first
+    lookup = dict(p_session_id=state.sid, p_question_id=state.qid, p_operation_id=key, p_reasons=reasons)
+    assert [name for _, name, _ in state.calls] == [
+        "review_lookup_regeneration", "review_recover_session", "review_lookup_regeneration",
+    ]
+    assert state.calls[0][2] == state.calls[2][2] == lookup
+    assert state.provider_calls == state.charges == state.complete_calls == 1
+
+
+def test_replay_preserves_recovery_lock_when_receipt_is_still_active(state):
+    key = uuid4()
+    service = state.service()
+    immediate(service.repo.reserve_regeneration(state.sid, state.qid, key))
+    original = state.rpc
+
+    def locked_recovery(role, name, params):
+        if name == "review_recover_session":
+            raise RuntimeError("REVIEW_LOCKED")
+        return original(role, name, params)
+
+    state.rpc = locked_recovery
+    with pytest.raises(ReviewDomainException) as error:
+        immediate(service.reject_question(state.sid, state.qid, "owner", str(key)))
+
+    assert error.value.status_code == 423
+    assert error.value.error_code == "ERR_SESSION_LOCKED"
+    assert state.provider_calls == state.charges == 0
 
 
 def test_active_replay_does_not_start_another_generator(state):
