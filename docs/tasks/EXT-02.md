@@ -88,7 +88,12 @@ Phase 1 (26/11, author self-check, not reviewed or accepted). Base `dev@b292443`
   - The identical-versions warning is shown only in shuffle-only mode with N > 1 and both flags off; in AI mode the versions differ anyway.
   - Stage 2 has no shuffle checkboxes (Issue #94); the flags are still edited at Preview before the permutation is persisted.
   - Migration number `028` is tentative until Q05 on #111; the EXT-01 Review guard must come after it.
-- **Not done in phase 1:** backend confirmation of shuffle-only copies to `reviewed` (step 3, needs I-EXT-01); Bank reuse endpoint (step 7, needs I-EXT-02). Until step 3 lands, Review still shows per-question Accept for shuffle-only sessions, and reject/regenerate on a clone slot is guarded only by the EXT-01 Q04 work.
+- **Step 3 (28/11, after I-EXT-01 at 8fb21e6):** migration `028b_ext02_shuffle_only_confirm.sql` (number tentative; order 028 -> 028b -> 029 -> 029b).
+  - `public.confirm_shuffle_only_copies(p_session_id)` (owner or service_role) runs under the session lock. It requires a 1.2 `shuffle_only` job, status `generated` (or `reviewed` for replay), no active Review operation, every version x slot current, and each slot one `ORIGINAL_CLONE` row of `_generation_committed` with a 64-hex fingerprint (content/options/key/solution equal to the frozen source, placeholder kept). It then marks the candidates `approved` and lets `_review_recalculate` set `reviewed` with `progress.ready = true`. Idempotent (`replayed`); any failure raises (`ERR_MODE_NOT_SHUFFLE_ONLY`, `ERR_SHUFFLE_ONLY_NOT_READY`, `REVIEW_BUSY`, `REVIEW_LOCKED`) and changes nothing.
+  - The worker calls it right after a shuffle-only job finishes `generated`. If it fails, the session stays `generated`, and the owner retries with `POST /api/sessions/{id}/shuffle-only/confirm` (in `routes/generation_config.py`, not `sessions.py`).
+  - Manual Accept: `review_accept_question` is wrapped in 028b like the 029b Revert guard. A new Accept on a shuffle-only job raises `ERR_MODE_SHUFFLE_ONLY`; a stored receipt still replays. 029/029b do not redefine Accept, so Duy's files are unchanged.
+  - Evidence gap from I-EXT-01: a question policy must bind to exactly one frozen confirmed source in both modes (`_generation_is_clone` in 028, `mode_mapper.slot_result_kind`).
+- **Not done yet:** Bank reuse endpoint (step 7, waits for the EXT-04 helper `_bank_capacity_check` and bank tables on an integration head). A03 end to end from generation to Preview on an integration head with 028 -> 028b -> 029 -> 029b.
 - I-EXT-03 v2 delivered on 26/11 after EXT-04 feedback; Integrated: not yet (needs the real DB projection after step 7).
 - **Accepted:** none yet.
-- **Pending:** Q05 numbering, I-EXT-01, I-EXT-02, feedback from Quynh and Dat on the I-EXT-03 fixture, reviewer check of this head.
+- **Pending:** Q05 numbering (028, 028b), A03 end to end with EXT-01, I-EXT-02 helper on an integration head, reviewer check of this head.
