@@ -308,9 +308,12 @@ class ReviewService:
                     try:
                         await self.repo.recover_stale_operations(session_id)
                     except ReviewDomainException as exc:
-                        if (exc.status_code, exc.error_code) != (423, "ERR_SESSION_LOCKED"):
+                        if (exc.status_code, exc.error_code) not in (
+                            (423, "ERR_SESSION_LOCKED"),
+                            (409, "ERR_SHUFFLE_REQUIRED"),
+                        ):
                             raise
-                        # Completion and approval can win the race after the first lookup.
+                        # Approval or shuffle can close review after the operation completes.
                         lock_error = exc
                     existing = await self.repo.lookup_regeneration(
                         session_id, question_id, op, reasons=canonical_reasons

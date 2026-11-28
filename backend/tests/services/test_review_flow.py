@@ -629,7 +629,11 @@ def test_completed_reservation_replays_after_expiry_and_approval(state):
     assert replay.question_id == first.question_id and state.provider_calls == 1
 
 
-def test_replay_reads_completed_receipt_when_session_locks_during_recovery(state):
+@pytest.mark.parametrize(("session_status", "rpc_error"), [
+    ("approved", "REVIEW_LOCKED"),
+    ("reviewed", "REVIEW_POST_SHUFFLE_LOCKED"),
+])
+def test_replay_reads_completed_receipt_when_session_locks_during_recovery(state, session_status, rpc_error):
     key = str(uuid4())
     reasons = ["INCORRECT_ANSWER"]
     original = state.rpc
@@ -653,8 +657,8 @@ def test_replay_reads_completed_receipt_when_session_locks_during_recovery(state
         if name == "review_recover_session":
             state.calls.append((role, name, params))
             state.operations[key] = completed_receipt
-            state.status = "approved"
-            raise RuntimeError("REVIEW_LOCKED")
+            state.status = session_status
+            raise RuntimeError(rpc_error)
         return original(role, name, params)
 
     state.rpc = complete_before_recovery
@@ -669,7 +673,11 @@ def test_replay_reads_completed_receipt_when_session_locks_during_recovery(state
     assert state.provider_calls == state.charges == state.complete_calls == 1
 
 
-def test_replay_preserves_recovery_lock_when_receipt_is_still_active(state):
+@pytest.mark.parametrize(("rpc_error", "http_status", "code"), [
+    ("REVIEW_LOCKED", 423, "ERR_SESSION_LOCKED"),
+    ("REVIEW_POST_SHUFFLE_LOCKED", 409, "ERR_SHUFFLE_REQUIRED"),
+])
+def test_replay_preserves_recovery_lock_when_receipt_is_still_active(state, rpc_error, http_status, code):
     key = uuid4()
     service = state.service()
     immediate(service.repo.reserve_regeneration(state.sid, state.qid, key))
@@ -677,15 +685,15 @@ def test_replay_preserves_recovery_lock_when_receipt_is_still_active(state):
 
     def locked_recovery(role, name, params):
         if name == "review_recover_session":
-            raise RuntimeError("REVIEW_LOCKED")
+            raise RuntimeError(rpc_error)
         return original(role, name, params)
 
     state.rpc = locked_recovery
     with pytest.raises(ReviewDomainException) as error:
         immediate(service.reject_question(state.sid, state.qid, "owner", str(key)))
 
-    assert error.value.status_code == 423
-    assert error.value.error_code == "ERR_SESSION_LOCKED"
+    assert error.value.status_code == http_status
+    assert error.value.error_code == code
     assert state.provider_calls == state.charges == 0
 
 
