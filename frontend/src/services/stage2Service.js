@@ -524,3 +524,17 @@ export async function requestEventTicket(sessionId, lastEventId = null, streamEp
   );
   return response.data;
 }
+
+/**
+ * EXT-02: retry the backend confirmation of a generated shuffle-only session.
+ * POST /api/sessions/{id}/shuffle-only/confirm (owner recovery path).
+ */
+export async function confirmShuffleOnlyCopies(sessionId) {
+  if (!sessionId) {
+    throw new Error('Mã phiên làm việc (sessionId) không được để trống.');
+  }
+  const response = await api.post(
+    `/sessions/${encodeURIComponent(sessionId)}/shuffle-only/confirm`,
+  );
+  return response.data;
+}

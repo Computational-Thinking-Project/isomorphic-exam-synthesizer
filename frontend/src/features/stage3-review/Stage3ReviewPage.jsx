@@ -19,6 +19,7 @@ import Stage3InspectionDialog from './Stage3InspectionDialog.jsx';
 import Stage3ReviewNotifications from './Stage3ReviewNotifications.jsx';
 import BrandLogo from '../../components/BrandLogo.jsx';
 import Stage3Comparison, { ReviewQuestionContent } from './Stage3Comparison.jsx';
+import ShuffleOnlyConfirmRetry from './ShuffleOnlyConfirmRetry.jsx';
 import './stage3Review.css';
 import { getSessionDetail } from '../../services/sessions.js';
 import { retryGeneration } from '../../services/stage2Service.js';
@@ -1259,6 +1260,7 @@ export default function Stage3ReviewPage({
       </header>
 
       <Stage3ReviewNotifications key={sessionId} message={actionMessage} />
+      <ShuffleOnlyConfirmRetry session={session} sessionId={sessionId} onConfirmed={loadData} loadDetail={loadSessionDetail} />
       {reviewSyncRequired && <div role="alert" className="stage3-session-notice">
         Chưa đối soát được trạng thái review.
         <button type="button" className="text-highlight underline" onClick={() => void loadData()}>Đọc lại trạng thái</button>

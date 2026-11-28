@@ -100,6 +100,11 @@ Phase 1 (26/11, author self-check, not reviewed or accepted). Base `dev@b292443`
   - Same user + key + payload replays the same session; a different payload raises `ERR_IDEMPOTENCY_CONFLICT`; any failure rolls back.
   - Python: `services/generation/reuse_repository.py` validates the request and receipt and maps errors.
   - TODO hook points for EXT-04: bank item lookup/ownership and `_bank_capacity_check`. The HTTP route `exam_bank_reuse.py` waits for them.
+- Review retry button (28/11, Q-T01 on #111 agreed with EXT-01):
+  - `frontend/src/features/stage3-review/ShuffleOnlyConfirmRetry.jsx` shows "Đã tạo đủ bản sao. Phiên chưa hoàn tất xác nhận." with "Thử xác nhận lại" only for a `shuffle_only` session in `generated` with a copy of every source in every version. The snapshot is owner-only, so this also means the owner.
+  - It calls `POST /api/sessions/{id}/shuffle-only/confirm` (`stage2Service.confirmShuffleOnlyCopies`), then re-reads the session; on `reviewed` with `progress.ready` it opens Preview, otherwise it shows the backend reason. It is disabled while in flight.
+  - The mode comes from the review snapshot (`generation_mode`, EXT-01 029b) or, before that lands, from the saved Stage 2 config.
+  - Integration point: one import and one render line in `Stage3ReviewPage.jsx`, right after `<Stage3ReviewNotifications ... />`, which exists at both `dev` and #111 head 307b649. Whichever of #111/#112 merges second resolves a trivial conflict.
 - I-EXT-03 v3 (28/11): `new_source` stores a missing solution as `null`, matching the reuse core; source confirmation renders the placeholder again (migration 024).
 - **A03 local rehearsal (28/11, not the agreed integration head):** EXT-02 `749c5b9` merged locally with EXT-01 `8fb21e6` (only a `change_log.md` conflict), chain 028 -> 028b -> 029 -> 029b.
   - EXT-01 PG suites: 36 passed.
