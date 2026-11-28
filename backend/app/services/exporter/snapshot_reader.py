@@ -22,9 +22,12 @@ from supabase import Client
 from app.models.schemas import ReviewDomainException
 from app.services.exporter.snapshot_common import LOCKED_STATUSES, valid_timestamp
 from app.services.exporter.snapshot_provenance import is_empty
-from app.services.exporter.snapshot_rows import RawSnapshotRows
+from app.services.exporter.snapshot_rows import BankRoundRows, RawSnapshotRows
 
 SESSION_COLUMNS = "id, user_id, title, status, approved_at, updated_at"
+BANK_ROUND_COLUMNS = "session_id, bank_item_id, owner_id, is_legacy"
+BANK_SNAPSHOT_COLUMNS = "session_id, snapshot_revision, snapshot_payload"
+LOCK_FIELDS = ("user_id", "status", "approved_at", "updated_at")
 
 
 def _rows(response: Any) -> List[Dict[str, Any]]:
@@ -51,8 +54,8 @@ class ExportSnapshotReader:
         )
         return rows[0] if len(rows) == 1 else None
 
-    def load_rows(self, session_id: str, user_id: str) -> RawSnapshotRows:
-        """Return validated-by-the-builder raw rows for an owned, locked session."""
+    def _locked_session(self, session_id: str, user_id: str) -> tuple[str, Dict[str, Any]]:
+        """Canonical id and first read of an owned, approved session, or raise."""
         try:
             canonical_id = str(UUID(session_id))
         except (ValueError, TypeError, AttributeError) as exc:
@@ -76,6 +79,40 @@ class ExportSnapshotReader:
             raise ReviewDomainException(
                 409, "ERR_INVALID_SESSION_STATE", "Phiên đề chưa được phê duyệt để xuất"
             )
+        return canonical_id, first
+
+    def _require_unchanged(self, canonical_id: str, first: Dict[str, Any]) -> None:
+        second = self._session(canonical_id)
+        if second is None or any(second.get(f) != first.get(f) for f in LOCK_FIELDS):
+            raise _changed()
+
+    def load_bank_round(self, session_id: str, user_id: str) -> BankRoundRows:
+        """EXT-03 G3: Bank link and, for a non-legacy round, the Approve snapshot.
+
+        Both tables are read with the caller's RLS client (I-EXT-02 Decided 28/11).
+        Requires the EXT-04 tables; callers enable this path only after Q05.
+        """
+        canonical_id, first = self._locked_session(session_id, user_id)
+        links = _rows(
+            self.db.table("exam_bank_rounds")
+            .select(BANK_ROUND_COLUMNS)
+            .eq("session_id", canonical_id)
+            .execute()
+        )
+        snapshots: List[Dict[str, Any]] = []
+        if any(link.get("is_legacy") is not True for link in links):
+            snapshots = _rows(
+                self.db.table("approved_exam_snapshots")
+                .select(BANK_SNAPSHOT_COLUMNS)
+                .eq("session_id", canonical_id)
+                .execute()
+            )
+        self._require_unchanged(canonical_id, first)
+        return BankRoundRows(session=first, links=tuple(links), snapshots=tuple(snapshots))
+
+    def load_rows(self, session_id: str, user_id: str) -> RawSnapshotRows:
+        """Return validated-by-the-builder raw rows for an owned, locked session."""
+        canonical_id, first = self._locked_session(session_id, user_id)
 
         configs = _rows(
             self.db.table("generation_configs")
@@ -151,12 +188,7 @@ class ExportSnapshotReader:
                     .in_("id", snapshot_ids)
                     .execute()
                 )
-        second = self._session(canonical_id)
-        if second is None or any(
-            second.get(field) != first.get(field)
-            for field in ("user_id", "status", "approved_at", "updated_at")
-        ):
-            raise _changed()
+        self._require_unchanged(canonical_id, first)
 
         n_versions = configs[0].get("n_versions") if len(configs) == 1 else None
         return RawSnapshotRows(

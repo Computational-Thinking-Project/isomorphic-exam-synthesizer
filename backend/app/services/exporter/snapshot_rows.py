@@ -37,3 +37,18 @@ class RawSnapshotRows:
     generation_config: Mapping[str, Any] = field(default_factory=dict)
     provenance_results: tuple[Mapping[str, Any], ...] = ()
     provenance_snapshots: tuple[Mapping[str, Any], ...] = ()
+
+
+@dataclass(frozen=True)
+class BankRoundRows:
+    """Raw EXT-04 rows for one owned, locked session (EXT-03 G3); NOT yet validated.
+
+    session: same columns as ``RawSnapshotRows.session``.
+    links: ``exam_bank_rounds`` rows (session_id, bank_item_id, owner_id, is_legacy).
+    snapshots: ``approved_exam_snapshots`` rows (session_id, snapshot_revision,
+        snapshot_payload); read only for a non-legacy link.
+    """
+
+    session: Mapping[str, Any]
+    links: tuple[Mapping[str, Any], ...]
+    snapshots: tuple[Mapping[str, Any], ...] = ()
