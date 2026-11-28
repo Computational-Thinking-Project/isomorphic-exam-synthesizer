@@ -191,6 +191,51 @@ class ExportSnapshotPostgresFixture(PostgresCase):
 
 
 class ExportSnapshotPostgresTests(ExportSnapshotPostgresFixture):
+    def test_task12_unapproved_http_export_never_claims_uploads_or_signs(self):
+        from unittest.mock import Mock, patch
+
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.api.dependencies import get_current_user, get_user_db
+        from app.api.routes import private_export
+        from app.models.schemas import CurrentUser
+        from app.services.exporter.private_service import PrivateExportService, user_snapshot_loader
+
+        db = SqlReadClient(self)
+        ledger, storage, build = Mock(), Mock(), Mock()
+        service = PrivateExportService(user_snapshot_loader(db), ledger, storage, build=build)
+        app = FastAPI()
+        app.include_router(private_export.router, prefix="/api/sessions")
+        app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+            id=OWNER, email="owner@example.test", access_token="synthetic-test-only"
+        )
+        app.dependency_overrides[get_user_db] = lambda: db
+
+        def run(operation, sid, uid, user_db):
+            self.assertIs(user_db, db)
+            return getattr(service, operation)(sid, uid)
+
+        before = self.value(f"SELECT to_jsonb(s) FROM exam_sessions s WHERE id='{self.sid}';")
+        with patch.object(private_export, "run_private_export", run), TestClient(app) as client:
+            path = f"/api/sessions/{self.sid}/export"
+            for method, target in (
+                (client.post, path),
+                (client.get, path),
+                (client.post, path + "/download-url"),
+            ):
+                response = method(target)
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(response.json()["error_code"], "ERR_INVALID_SESSION_STATE")
+                self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(ledger.mock_calls, [])
+        self.assertEqual(storage.mock_calls, [])
+        build.assert_not_called()
+        self.assertEqual(self.value("SELECT count(*) FROM private_export_ledger;"), "0")
+        self.assertEqual(
+            self.value(f"SELECT to_jsonb(s) FROM exam_sessions s WHERE id='{self.sid}';"), before
+        )
+
     def test_approval_then_export_matches_all_six_preview_slots(self):
         with self.assertRaises(ReviewDomainException) as caught:
             self.load()
