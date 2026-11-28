@@ -17,6 +17,7 @@ from app.services.exporter.exceptions import (
     TypstNotFoundError,
     TypstTimeoutError,
 )
+from app.services.exporter.print_layout import ExamMetadata, ExportConfig, render_exam_header
 from app.services.exporter.typst_converter import convert_markdown_to_typst, escape_typst_text
 
 # PDF File Header Magic Bytes
@@ -70,6 +71,44 @@ def sanitize_compiler_error(raw_stderr: str, temp_dir: Optional[str] = None) -> 
 def _clean_typst_string(s: str) -> str:
     """Escape string literal for Typst #set document(title: "...", author: "...")."""
     return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ").strip()
+
+
+def _question_blocks(questions: Sequence[Dict[str, Any]]) -> str:
+    """Question blocks shared by the MVP and the configured exam layouts."""
+    q_blocks: List[str] = []
+    labels = ["A", "B", "C", "D"]
+
+    for idx, q in enumerate(questions, 1):
+        disp_no = q.get("display_no") or q.get("question_no") or q.get("display_order") or idx
+        raw_stem = q.get("content") or q.get("canonical_content") or q.get("stem") or ""
+        stem = convert_markdown_to_typst(raw_stem)
+        opts = q.get("options") or q.get("canonical_options") or ["", "", "", ""]
+
+        opts_typst = [
+            f"[*{labels[i]}.* {convert_markdown_to_typst(opt)}]" for i, opt in enumerate(opts)
+        ]
+
+        # Use 2-column or 4-column grid depending on option length
+        max_opt_len = max((len(opt) for opt in opts), default=0)
+        if max_opt_len <= 15:
+            grid_cols = "(1fr, 1fr, 1fr, 1fr)"
+        elif max_opt_len <= 45:
+            grid_cols = "(1fr, 1fr)"
+        else:
+            grid_cols = "(1fr,)"
+
+        grid_markup = f"#grid(columns: {grid_cols}, gutter: 8pt, {', '.join(opts_typst)})"
+
+        block = (
+            f"#block(breakable: false)[\n"
+            f"  *Câu {disp_no}:* {stem}\n"
+            f"  #v(4pt)\n"
+            f"  {grid_markup}\n"
+            f"]\n#v(6pt)"
+        )
+        q_blocks.append(block)
+
+    return "\n".join(q_blocks)
 
 
 class TypstCompiler:
@@ -216,40 +255,7 @@ class TypstCompiler:
         clean_version_display = escape_typst_text(str(version_code))
         total_pages_label = " / #t" if include_total_pages else ""
 
-        q_blocks: List[str] = []
-        labels = ["A", "B", "C", "D"]
-
-        for idx, q in enumerate(questions, 1):
-            disp_no = q.get("display_no") or q.get("question_no") or q.get("display_order") or idx
-            raw_stem = q.get("content") or q.get("canonical_content") or q.get("stem") or ""
-            stem = convert_markdown_to_typst(raw_stem)
-            opts = q.get("options") or q.get("canonical_options") or ["", "", "", ""]
-
-            opts_typst = [
-                f"[*{labels[i]}.* {convert_markdown_to_typst(opt)}]" for i, opt in enumerate(opts)
-            ]
-
-            # Use 2-column or 4-column grid depending on option length
-            max_opt_len = max((len(opt) for opt in opts), default=0)
-            if max_opt_len <= 15:
-                grid_cols = "(1fr, 1fr, 1fr, 1fr)"
-            elif max_opt_len <= 45:
-                grid_cols = "(1fr, 1fr)"
-            else:
-                grid_cols = "(1fr,)"
-
-            grid_markup = f"#grid(columns: {grid_cols}, gutter: 8pt, {', '.join(opts_typst)})"
-
-            block = (
-                f"#block(breakable: false)[\n"
-                f"  *Câu {disp_no}:* {stem}\n"
-                f"  #v(4pt)\n"
-                f"  {grid_markup}\n"
-                f"]\n#v(6pt)"
-            )
-            q_blocks.append(block)
-
-        questions_content = "\n".join(q_blocks)
+        questions_content = _question_blocks(questions)
 
         template = f"""// Auto-generated Exam Document
 #set document(title: "{clean_title_meta}", author: "Isomorphic Exam Synthesizer")
@@ -330,6 +336,55 @@ class TypstCompiler:
             self.render_exam_document(
                 version_code, questions, exam_title=exam_title, include_total_pages=False
             )
+            + "\n#pagebreak()\n"
+            + self.render_solution_document(
+                version_code, questions, exam_title=exam_title, include_preamble=False
+            )
+        )
+
+    def render_configured_document(
+        self,
+        version_code: str,
+        questions: Sequence[Dict[str, Any]],
+        *,
+        exam_title: str,
+        metadata: ExamMetadata,
+        config: ExportConfig,
+    ) -> str:
+        """EXT-03 configured PDF: chosen header fields, then the MVP questions and teacher part.
+
+        Null metadata and hidden fields are omitted; code and question count always print.
+        """
+        header = render_exam_header(
+            title=exam_title,
+            version_code=str(version_code),
+            question_count=len(questions),
+            metadata=metadata,
+            config=config,
+        )
+        exam = f"""// Auto-generated Configured Exam Document
+#set document(title: "{_clean_typst_string(exam_title)}", author: "Isomorphic Exam Synthesizer")
+#set page(
+  paper: "a4",
+  margin: (top: 2cm, bottom: 2cm, left: 2cm, right: 2cm),
+  footer: locate(loc => {{
+    let p = counter(page).at(loc).first()
+    align(center)[#text(size: 9pt, fill: luma(100))[Trang #p]]
+  }})
+)
+#set text(font: ("Liberation Serif", "Times New Roman", "DejaVu Serif"), size: 11pt, lang: "vi")
+#set par(justify: true, leading: 0.7em)
+
+{header}
+{_question_blocks(questions)}
+
+#v(16pt)
+#align(center)[
+  #text(weight: "bold")[-------------------- HẾT --------------------]
+]
+"""
+        return (
+            exam
             + "\n#pagebreak()\n"
             + self.render_solution_document(
                 version_code, questions, exam_title=exam_title, include_preamble=False
