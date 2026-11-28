@@ -56,14 +56,16 @@ function defaultOpenDownload(url, filename) {
 const AVAILABLE_VISIBLE_FIELDS = [
   { id: 'title', label: 'Tiêu đề đề thi' },
   { id: 'student_name', label: 'Họ và tên thí sinh' },
-  { id: 'student_id', label: 'Mã số sinh viên / SBD' },
+  { id: 'student_id', label: 'Số báo danh' },
   { id: 'student_class', label: 'Lớp / Phòng thi' },
-  { id: 'institution', label: 'Tên trường / Đơn vị' },
-  { id: 'department', label: 'Khoa / Bộ môn' },
-  { id: 'duration_minutes', label: 'Thời gian làm bài' },
-  { id: 'exam_code', label: 'Mã học phần' },
+  { id: 'school', label: 'Trường / Cơ quan chủ quản' },
+  { id: 'subject', label: 'Môn học' },
+  { id: 'exam_type', label: 'Loại kỳ thi' },
+  { id: 'grade', label: 'Khối lớp' },
   { id: 'semester', label: 'Học kỳ' },
   { id: 'academic_year', label: 'Năm học' },
+  { id: 'exam_date', label: 'Ngày thi' },
+  { id: 'duration_minutes', label: 'Thời gian làm bài' },
 ];
 
 const AVAILABLE_FORMATS = [
