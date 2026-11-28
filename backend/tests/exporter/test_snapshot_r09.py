@@ -1,13 +1,19 @@
 """EXT-03 G1 — R09 provenance compatibility for empty or placeholder solutions.
 
 Cases follow the I-EXT-01 policy fixture (#111 ``8fb21e6``) and the I-EXT-03 v2
-fixture (#112 ``452937a``): a mapping 1.1/1.2 job freezes one policy per source
+fixture (#112 ``452937a``, v3 ``b230f7b``): a mapping 1.1/1.2 job freezes one policy per source
 question, so a clone slot may lack a solution while the session also has AI slots.
 
 Tests marked ``xfail(strict=True)`` reproduce the gaps that EXT-03 G2 fixes
 (docs/tasks/EXT-03.md §3): today the verifier checks the clone rule session-wide
 and treats the Q06 placeholder as a real solution. When G2 lands, each strict xfail
 starts passing and must be turned into a plain test.
+
+Revert cases follow Q-I01-R (#111, Duy, 28/11) and migration 024: a ``w4_frozen``
+Revert candidate has ``is_reverted = true``, ``validation_report.reason = "REVERT"``
+and no ledger row of its own; its source revision, source fingerprint and confirmed
+source hash must match the frozen job snapshot for the same session and source, and
+the placeholder is valid only when the frozen source solution is really missing.
 """
 
 from dataclasses import replace
@@ -173,3 +179,88 @@ def test_placeholder_on_verified_clone_is_treated_as_missing_solution():
 @pytest.mark.xfail(strict=True, reason=G2)
 def test_placeholder_on_ai_slot_is_rejected():
     _rejected(_rows(solution=PLACEHOLDER, mapping_version="1.0", ledger_kind="AI_RESULT"))
+
+
+# --- Revert evidence (Q-I01-R) ----------------------------------------------------
+
+REVISION_ID = "88888888-8888-4888-8888-888888888888"
+SOURCE_FP = "a" * 64
+SOURCE_HASH = "b" * 64
+
+
+def _revert_rows(*, source_solution=None, report_overrides=None, frozen_source_id=None):
+    """Version 101 slot 1 is a Revert candidate from a mapping 1.1 frozen job."""
+    rows = _rows(solution=None, mapping_version="1.1")
+    question = dict(rows.questions[0])
+    sid = question["source_question_id"]
+    report = {
+        "reason": "REVERT",
+        "validation_status": "not_validated",
+        "source_revision_id": REVISION_ID,
+        "source_fingerprint": SOURCE_FP,
+        "confirmed_source_hash": SOURCE_HASH,
+        **(report_overrides or {}),
+    }
+    question.update(
+        solution_md=PLACEHOLDER,
+        canonical_solution_md=PLACEHOLDER,
+        is_reverted=True,
+        has_warning=True,
+        validation_report=report,
+    )
+    job = dict(rows.provenance_snapshots[0])
+    job["confirmed_source_hash"] = SOURCE_HASH
+    job["snapshot_payload"] = {
+        **job["snapshot_payload"],
+        "confirmed_sources": [
+            {
+                "source_question_id": frozen_source_id or sid,
+                "source_revision_id": REVISION_ID,
+                "source_fingerprint": SOURCE_FP,
+                "confirmed_input": {
+                    "question_text": question["content"],
+                    "options": question["options"],
+                    "correct_answer": question["correct_key"],
+                    "solution": source_solution,
+                },
+            }
+        ],
+    }
+    return replace(
+        rows,
+        questions=(question, *rows.questions[1:]),
+        provenance_results=(),
+        provenance_snapshots=(job,),
+    )
+
+
+@pytest.mark.xfail(strict=True, reason=G2)
+@pytest.mark.parametrize("source_solution", [None, "", "   "])
+def test_revert_placeholder_with_missing_frozen_solution_is_accepted(source_solution):
+    rows = _revert_rows(source_solution=source_solution)
+    assert _first(build_approved_snapshot(rows)).solution_md == ""
+
+
+@pytest.mark.xfail(strict=True, reason=G2)
+def test_revert_placeholder_when_frozen_source_has_a_solution_is_rejected():
+    _rejected(_revert_rows(source_solution="Lời giải nguồn đã xác nhận."))
+
+
+@pytest.mark.xfail(strict=True, reason=G2)
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"reason": "ACCEPT"},
+        {"source_revision_id": "99999999-9999-4999-8999-999999999999"},
+        {"source_fingerprint": "d" * 64},
+        {"confirmed_source_hash": "e" * 64},
+    ],
+    ids=["reason", "revision", "fingerprint", "source-hash"],
+)
+def test_revert_placeholder_with_mismatched_evidence_is_rejected(overrides):
+    _rejected(_revert_rows(report_overrides=overrides))
+
+
+@pytest.mark.xfail(strict=True, reason=G2)
+def test_revert_placeholder_bound_to_another_source_is_rejected():
+    _rejected(_revert_rows(frozen_source_id="00000000-0000-4000-8000-000000000000"))
