@@ -54,7 +54,10 @@ from app.services.exporter.bundle_models import (
 )
 from app.services.finalize.repository import FinalizeRepository
 from app.services.finalize.service import FinalizeService
+from app.services.generation import mode_mapper
+from app.services.generation.job_repository import MISSING_SOURCE_SOLUTION
 from app.services.shuffler.service import generate_deterministic_seed
+from tests.migrations.artifact_fixtures import artifact_payload
 from tests.services.finalize_test_client import MockSupabaseClient
 
 MOCK_SESSION_ID = "00000000-0000-0000-0000-000000000001"
@@ -1206,6 +1209,7 @@ def _build_q01_fallback_preview_state() -> Dict[str, Any]:
         {
             "id": snap_id,
             "session_id": MOCK_SESSION_ID,
+            "mapping_version": "1.0",
             "public_modes": ["NUMERICAL", "parameter_variation"],
             "canonical_dimensions": ["values"],
         }
@@ -1254,6 +1258,7 @@ def _build_q01_original_clone_preview_state() -> Dict[str, Any]:
         {
             "id": snap_id,
             "session_id": MOCK_SESSION_ID,
+            "mapping_version": "1.0",
             "public_modes": [],
             "canonical_dimensions": [],
         }
@@ -1279,6 +1284,127 @@ def _build_q01_original_clone_preview_state() -> Dict[str, Any]:
         )
     db_state["generation_target_results"] = ledger_rows
     return db_state
+
+
+def _r09_state(kind: str):
+    state = _build_q01_fallback_preview_state()
+    snapshot = state["generation_job_snapshots"][0]
+    snapshot.update(mapping_version="1.1", confirmed_source_hash="b" * 64)
+    source_id = state["source_questions"][0]["id"]
+    artifact, publication = artifact_payload(source_id)
+    blueprint = publication["canonical_blueprint"]
+    if kind == "ORIGINAL_CLONE":
+        transformations = blueprint["requirement"]["variation_policy"]["allowed_transformations"]
+        blueprint["requirement"]["variation_policy"]["allowed_transformations"] = [
+            transformations[0] | {"dimension": "wording"}
+        ]
+    artifact["confirmed_input"]["solution"] = None
+    frozen = artifact | {"question_no": 1, "canonical_blueprint": blueprint}
+    report = {
+        "source_revision_id": frozen["source_revision_id"],
+        "source_fingerprint": frozen["source_fingerprint"],
+        "confirmed_source_hash": snapshot["confirmed_source_hash"],
+    }
+    snapshot["snapshot_payload"] = {
+        "confirmed_sources": [frozen],
+        "question_policies": {source_id: mode_mapper.question_policy(blueprint)},
+    }
+    for row in state["version_questions"]:
+        if row["source_question_id"] != source_id:
+            continue
+        row.update(solution_md=MISSING_SOURCE_SOLUTION, canonical_solution_md=MISSING_SOURCE_SOLUTION)
+        if kind == "ORIGINAL_CLONE":
+            row.update(has_warning=False, validation_report={})
+        elif kind == "REVERT":
+            row.update(is_reverted=True, validation_report=report | {"reason": "REVERT"})
+        else:
+            row["validation_report"].update(report)
+    if kind == "REVERT":
+        state["generation_target_results"] = [
+            row for row in state["generation_target_results"] if row["source_question_id"] != source_id
+        ]
+    elif kind == "ORIGINAL_CLONE":
+        for row in state["generation_target_results"]:
+            if row["source_question_id"] == source_id:
+                row.update(result_kind=kind, clone_fingerprint="c" * 64)
+    return state, snapshot, frozen
+
+
+async def _read_r09_preview(state):
+    db = MockSupabaseClient(state)
+    return await FinalizeService(db, provenance_db=db).get_preview_snapshot(MOCK_SESSION_ID, MOCK_USER_ID)
+
+
+@pytest.mark.asyncio
+async def test_preview_r09_rejects_placeholder_for_ai_without_missing_solution_evidence():
+    state = _build_q01_fallback_preview_state()
+    state["version_questions"][1].update(
+        solution_md=MISSING_SOURCE_SOLUTION, canonical_solution_md=MISSING_SOURCE_SOLUTION,
+    )
+    with pytest.raises(ReviewDomainException) as caught:
+        await _read_r09_preview(state)
+    assert caught.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["ORIGINAL_CLONE", "CONFIRMED_SOURCE_FALLBACK", "REVERT"])
+async def test_preview_r09_accepts_verified_frozen_slot_and_preserves_placeholder(kind):
+    state, _, _ = _r09_state(kind)
+    preview = await _read_r09_preview(state)
+    for version in preview.versions:
+        assert version.questions[0].solution_md == MISSING_SOURCE_SOLUTION
+        assert version.questions[1].solution_md != ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("damage", ["dimensions", "duplicate_source", "wrong_snapshot", "fingerprint"])
+async def test_preview_r09_rejects_inconsistent_frozen_clone(damage):
+    state, snapshot, frozen = _r09_state("ORIGINAL_CLONE")
+    if damage == "dimensions":
+        snapshot["snapshot_payload"]["question_policies"][frozen["source_question_id"]]["canonical_dimensions"] = ["values"]
+    elif damage == "duplicate_source":
+        snapshot["snapshot_payload"]["confirmed_sources"].append(frozen)
+    elif damage == "wrong_snapshot":
+        state["generation_target_results"][0]["snapshot_id"] = str(uuid4())
+    else:
+        state["generation_target_results"][0]["clone_fingerprint"] = "bad"
+    with pytest.raises(ReviewDomainException) as caught:
+        await _read_r09_preview(state)
+    assert caught.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("damage", ["report_hash", "source_has_solution", "source_is_unbound", "not_reverted"])
+async def test_preview_r09_rejects_unverified_frozen_revert(damage):
+    state, snapshot, frozen = _r09_state("REVERT")
+    if damage == "report_hash":
+        state["version_questions"][0]["validation_report"]["confirmed_source_hash"] = "x" * 64
+    elif damage == "source_has_solution":
+        frozen["confirmed_input"]["solution"] = "The original had a solution."
+    elif damage == "source_is_unbound":
+        snapshot["snapshot_payload"]["confirmed_sources"] = []
+    else:
+        state["version_questions"][0]["is_reverted"] = False
+    with pytest.raises(ReviewDomainException) as caught:
+        await _read_r09_preview(state)
+    assert caught.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(not hasattr(mode_mapper, "slot_result_kind"), reason="EXT-02 provider helper needs integration")
+async def test_preview_r09_mapping_12_uses_frozen_mode_and_rejects_mismatch():
+    state, snapshot, frozen = _r09_state("ORIGINAL_CLONE")
+    snapshot.update(mapping_version="1.2", generation_mode="shuffle_only")
+    snapshot["snapshot_payload"]["generation_mode"] = "shuffle_only"
+    # Shuffle-only may clone even when the frozen Blueprint allows AI variation.
+    _, publication = artifact_payload(frozen["source_question_id"])
+    frozen["canonical_blueprint"] = publication["canonical_blueprint"]
+    preview = await _read_r09_preview(state)
+    assert preview.versions[0].questions[0].solution_md == MISSING_SOURCE_SOLUTION
+    snapshot["snapshot_payload"]["generation_mode"] = "ai_generation"
+    with pytest.raises(ReviewDomainException) as caught:
+        await _read_r09_preview(state)
+    assert caught.value.error_code == "ERR_INCONSISTENT_ANSWER_KEYS"
 
 
 @pytest.mark.asyncio

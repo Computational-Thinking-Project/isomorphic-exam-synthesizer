@@ -1,3 +1,10 @@
+## EXT-04 — Bank, Preview R09 và DELETE/Reuse — 28/11/2026
+
+- **Thay đổi:** thêm fixture Bank, backfill MVP và helper sức chứa theo I-EXT-02. Preview xác minh cả placeholder thiếu lời giải bằng provenance, lấy policy frozen theo từng slot và nhận evidence Revert theo Q-I01-R.
+- **Trạng thái:** SQL ở phạm vi rehearsal. Chốt migration và chuyển caller sau Q05. Mapping 1.2 dùng helper từ EXT-02 trên integration head. [M2 EXT-04](tasks/EXT-04.md)
+
+---
+
 ## EXT-04 — Rehearsal DELETE/Q07 và mẫu receipt F-018 — 28/11/2026
 
 - **Trạng thái:** đã kiểm SQL DELETE trên PostgreSQL cô lập với 028/029/029b ghim theo head provider.

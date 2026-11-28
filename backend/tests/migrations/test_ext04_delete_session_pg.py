@@ -1,5 +1,6 @@
 """Q07 rehearsal on PostgreSQL 15 with the pinned provider SQL."""
 
+import json
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -10,8 +11,11 @@ from test_export_snapshot_pg import OTHER, OWNER, auth
 from test_stage3_schema import BOOTSTRAP, ROOT, PostgresCase
 
 BASE = "b29244346094811eaa038fd31fea67969f8f5b7f"
+EXT02 = "b230f7bc10283132a197ec87212c4bb80beacd55:backend/migrations"
 PROVIDER_MIGRATIONS = (
-    "68ed813516218ebccdabcdcd9cf626ed84301751:backend/migrations/028_generation_mode.sql",
+    f"{EXT02}/028_generation_mode.sql",
+    f"{EXT02}/028b_ext02_shuffle_only_confirm.sql",
+    f"{EXT02}/028c_ext02_reuse_source.sql",
     "8fb21e6f7e50cd241d0df1543389c2749130bda3:backend/migrations/029_ext01_review_reasons.sql",
     "8fb21e6f7e50cd241d0df1543389c2749130bda3:backend/migrations/029b_ext01_review_mode_policy.sql",
 )
@@ -283,6 +287,48 @@ class TestExt04DeleteSession(PostgresCase):
             "ERR_SESSION_NOT_FOUND",
         )
         self.assert_draft_deleted()
+
+    def test_delete_cascades_real_reuse_draft_without_removing_source_round(self):
+        self.seed_review_candidate()
+        self.sql(f"""
+            UPDATE public.version_questions SET status='approved' WHERE id='{self.question}';
+            UPDATE public.exam_versions SET is_finalized=true WHERE id='{self.version}';
+            UPDATE public.exam_sessions SET status='approved', approved_at=now() WHERE id='{self.sid}';
+        """)
+        reused = json.loads(self.value(auth() + f"""
+            SELECT public.reuse_session_source(
+                '{self.sid}', 'version', '{self.version}', 'shuffle_only', 'delete-reused-version'
+            );
+        """))
+        draft_id = reused["session_id"]
+        self.assertEqual(reused["status"], "draft")
+        self.assertEqual(self.value(f"SELECT count(*) FROM public.source_questions WHERE session_id='{draft_id}';"), "1")
+        self.assertEqual(self.value(f"SELECT count(*) FROM public.ext02_reuse_receipts WHERE new_session_id='{draft_id}';"), "1")
+        self.sql(DELETE_SCHEMA.with_name("ext04_exam_bank.sql").read_text(encoding="utf-8"))
+        self.sql(f"""
+            INSERT INTO public.exam_bank_drafts (
+                session_id, owner_id, source_type, source_bank_item_id, source_session_id, source_version_id
+            ) SELECT '{draft_id}', owner_id, 'version', bank_item_id, session_id, '{self.version}'
+            FROM public.exam_bank_rounds WHERE session_id = '{self.sid}';
+        """)
+        source_version = self.value(f"SELECT to_jsonb(v) FROM public.exam_versions v WHERE id='{self.version}';")
+        source_question = self.value(f"SELECT to_jsonb(q) FROM public.version_questions q WHERE id='{self.question}';")
+        source_code = self.value(
+            f"SELECT to_jsonb(c) FROM public.exam_bank_version_codes c WHERE version_id='{self.version}';"
+        )
+        self.sql(auth() + f"SELECT public.delete_draft_session('{draft_id}');")
+        for table, key in (
+            ("exam_sessions", "id"), ("source_questions", "session_id"),
+            ("ext02_reuse_receipts", "new_session_id"), ("exam_bank_drafts", "session_id"),
+        ):
+            self.assertEqual(self.value(f"SELECT count(*) FROM public.{table} WHERE {key}='{draft_id}';"), "0")
+        self.assertEqual(self.value(f"SELECT status FROM public.exam_sessions WHERE id='{self.sid}';"), "approved")
+        self.assertEqual(self.value(f"SELECT to_jsonb(v) FROM public.exam_versions v WHERE id='{self.version}';"), source_version)
+        self.assertEqual(self.value(f"SELECT to_jsonb(q) FROM public.version_questions q WHERE id='{self.question}';"), source_question)
+        self.assertEqual(
+            self.value(f"SELECT to_jsonb(c) FROM public.exam_bank_version_codes c WHERE version_id='{self.version}';"),
+            source_code,
+        )
 
     def call_as_writer(self):
         # Reset the role for the writer's pg_stat_activity/pg_blocking_pids synchronization.

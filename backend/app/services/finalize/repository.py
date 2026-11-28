@@ -16,6 +16,8 @@ from supabase import Client
 
 from app.models.schemas import ReviewDomainException
 from app.services.blueprint.adapters import normalized_text
+from app.services.generation import mode_mapper
+from app.services.generation.job_repository import MISSING_SOURCE_SOLUTION
 from app.services.shuffler.service import generate_deterministic_seed, sync_solution_text
 
 logger = logging.getLogger(__name__)
@@ -28,6 +30,10 @@ MAX_TEXT_LEN = 16000
 def _is_empty_text(value: Any) -> bool:
     """Return True when value is None or blank whitespace text."""
     return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _is_missing_solution(value: Any) -> bool:
+    return _is_empty_text(value) or (isinstance(value, str) and value.strip() == MISSING_SOURCE_SOLUTION)
 
 
 def _is_original_clone_config(config_row: Dict[str, Any]) -> bool:
@@ -67,7 +73,6 @@ def _has_fallback_validation_report(question_row: Dict[str, Any]) -> bool:
 
 def _classify_empty_solution_kind(
     question_row: Dict[str, Any],
-    config_row: Dict[str, Any],
 ) -> Optional[str]:
     """Identify allowed empty-solution origin ('CONFIRMED_SOURCE_FALLBACK' or 'ORIGINAL_CLONE').
 
@@ -79,13 +84,97 @@ def _classify_empty_solution_kind(
     if _has_fallback_validation_report(question_row):
         return "CONFIRMED_SOURCE_FALLBACK"
     report = question_row.get("validation_report")
-    if (
-        _is_original_clone_config(config_row)
-        and question_row.get("has_warning") is False
-        and (report is None or report == {})
-    ):
+    if question_row.get("has_warning") is False and (report is None or report == {}):
         return "ORIGINAL_CLONE"
     return None
+
+
+def _frozen_source(snapshot: Dict[str, Any], source_id: str) -> Optional[Dict[str, Any]]:
+    payload = snapshot.get("snapshot_payload")
+    sources = payload.get("confirmed_sources") if isinstance(payload, dict) else None
+    if not isinstance(sources, list):
+        return None
+    matches = [
+        row for row in sources if isinstance(row, dict) and row.get("source_question_id") == source_id
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _matches_frozen_report(
+    report: Dict[str, Any], snapshot: Dict[str, Any], source: Dict[str, Any],
+) -> bool:
+    expected = {
+        "source_revision_id": source.get("source_revision_id"),
+        "source_fingerprint": source.get("source_fingerprint"),
+        "confirmed_source_hash": snapshot.get("confirmed_source_hash"),
+    }
+    return all(
+        isinstance(value, str) and bool(value.strip()) and report.get(key) == value
+        for key, value in expected.items()
+    )
+
+
+def _missing_in_frozen_input(source: Dict[str, Any]) -> bool:
+    data = source.get("confirmed_input")
+    return (
+        isinstance(data, dict)
+        and {"question_text", "options", "correct_answer"} <= data.keys()
+        and _is_empty_text(data.get("solution"))
+    )
+
+
+def _frozen_slot_kind(
+    snapshot: Dict[str, Any], source_id: str, source: Dict[str, Any],
+) -> Optional[str]:
+    version = snapshot.get("mapping_version")
+    if version not in ("1.1", "1.2"):
+        return None
+    blueprint = source.get("canonical_blueprint")
+    policies = snapshot["snapshot_payload"].get("question_policies")
+    if not isinstance(blueprint, dict) or not isinstance(policies, dict):
+        return None
+
+    try:
+        expected = mode_mapper.question_policy(blueprint)
+        if version == "1.2":
+            # The EXT-02 helper and its generation_mode column land together.
+            # A pre-028 checkout must still be able to read existing 1.0/1.1 jobs.
+            resolve_slot = getattr(mode_mapper, "slot_result_kind", None)
+            if resolve_slot is None:
+                return None
+            if snapshot.get("generation_mode") == "shuffle_only":
+                expected = {"result_kind": "ORIGINAL_CLONE", "canonical_dimensions": []}
+            if resolve_slot(snapshot, source_id) != expected["result_kind"]:
+                return None
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return None
+    return cast(str, expected["result_kind"]) if policies.get(source_id) == expected else None
+
+
+def _has_verified_frozen_revert(
+    question: Dict[str, Any], snapshot: Optional[Dict[str, Any]], source_id: str,
+) -> bool:
+    report = question.get("validation_report")
+    if (
+        snapshot is None
+        or snapshot.get("mapping_version") not in ("1.0", "1.1", "1.2")
+        or question.get("is_reverted") is not True
+        or question.get("regenerated_from_id") is not None
+        or not isinstance(report, dict)
+        or report.get("reason") != "REVERT"
+    ):
+        return False
+    source = _frozen_source(snapshot, source_id)
+    return (
+        source is not None
+        and source.get("question_no") == question.get("canonical_question_no")
+        and _matches_frozen_report(report, snapshot, source)
+        and _missing_in_frozen_input(source)
+        and (
+            snapshot.get("mapping_version") == "1.0"
+            or _frozen_slot_kind(snapshot, source_id, source) is not None
+        )
+    )
 
 
 def _is_valid_ledger_entry(
@@ -94,33 +183,45 @@ def _is_valid_ledger_entry(
     session_id: str,
     source_id: str,
     ledger_by_qid: Dict[str, Dict[str, Any]],
-    snapshots_by_id: Dict[str, Dict[str, Any]],
+    snapshot: Optional[Dict[str, Any]],
+    config_row: Dict[str, Any],
 ) -> bool:
     """Cross-check empty-solution provenance against generation_target_results ledger."""
     qid = str(question_row.get("id", ""))
     entry = ledger_by_qid.get(qid)
-    if not entry:
+    if not entry or not snapshot:
         return False
     if (
         entry.get("is_success") is not True
         or str(entry.get("session_id", "")) != session_id
         or str(entry.get("source_question_id", "")) != source_id
         or entry.get("result_kind") != expected_kind
+        or not snapshot.get("id")
+        or entry.get("snapshot_id") != snapshot["id"]
     ):
         return False
     if expected_kind == "ORIGINAL_CLONE":
         clone_fp = entry.get("clone_fingerprint")
         if not isinstance(clone_fp, str) or not CLONE_FINGERPRINT_REGEX.fullmatch(clone_fp):
             return False
-        snapshot = snapshots_by_id.get(str(entry.get("snapshot_id", "")))
-        if (
-            not snapshot
-            or str(snapshot.get("session_id", "")) != session_id
-            or snapshot.get("public_modes") != []
-            or snapshot.get("canonical_dimensions") != []
-        ):
-            return False
-    return True
+    if snapshot.get("mapping_version") == "1.0":
+        return expected_kind == "CONFIRMED_SOURCE_FALLBACK" or (
+            _is_original_clone_config(config_row)
+            and snapshot.get("public_modes") == []
+            and snapshot.get("canonical_dimensions") == []
+        )
+
+    source = _frozen_source(snapshot, source_id)
+    if (
+        source is None
+        or source.get("question_no") != question_row.get("canonical_question_no")
+        or not _missing_in_frozen_input(source)
+    ):
+        return False
+    slot_kind = _frozen_slot_kind(snapshot, source_id, source)
+    if expected_kind == "ORIGINAL_CLONE":
+        return slot_kind == expected_kind
+    return slot_kind == "AI_RESULT" and _matches_frozen_report(question_row["validation_report"], snapshot, source)
 
 
 def _now_iso() -> str:
@@ -169,13 +270,13 @@ class FinalizeRepository:
 
     def _fetch_provenance_ledger(
         self, session_id: str, question_ids: List[str]
-    ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
-        """Load generation ledger entries and clone snapshots for empty-solution provenance checks."""
+    ) -> Tuple[Dict[str, Dict[str, Any]], Optional[Dict[str, Any]]]:
+        """Load evidence scoped to the exam. Revert candidates use the job without a ledger row."""
         if not question_ids:
-            return {}, {}
+            return {}, None
         provenance_db = self._resolve_provenance_db()
         if provenance_db is None:
-            return {}, {}
+            return {}, None
         target_rows = _get_rows(
             provenance_db.table("generation_target_results")
             .select(
@@ -187,7 +288,6 @@ class FinalizeRepository:
             .execute()
         )
         ledger_by_qid: Dict[str, Dict[str, Any]] = {}
-        clone_snapshot_ids: set[str] = set()
         for row in target_rows:
             qid = str(row.get("version_question_id", ""))
             if not qid:
@@ -199,24 +299,29 @@ class FinalizeRepository:
                     "Phát hiện trùng lặp biên nhận sinh đề cho câu hỏi xem trước",
                 )
             ledger_by_qid[qid] = row
-            if row.get("result_kind") == "ORIGINAL_CLONE" and row.get("snapshot_id"):
-                clone_snapshot_ids.add(str(row["snapshot_id"]))
 
-        snapshots_by_id: Dict[str, Dict[str, Any]] = {}
-        if clone_snapshot_ids:
-            snap_rows = _get_rows(
+        snapshots = _get_rows(
+            provenance_db.table("generation_job_snapshots")
+            .select("id, session_id, mapping_version, public_modes, canonical_dimensions, confirmed_source_hash, snapshot_payload")
+            .eq("session_id", session_id)
+            .execute()
+        )
+        if len(snapshots) > 1:
+            raise ReviewDomainException(409, "ERR_INCONSISTENT_ANSWER_KEYS", "Phiên có trùng snapshot sinh đề")
+        if not snapshots or not snapshots[0].get("id") or snapshots[0].get("session_id") != session_id:
+            return ledger_by_qid, None
+        snapshot = snapshots[0]
+        if snapshot.get("mapping_version") == "1.2":
+            mode_rows = _get_rows(
                 provenance_db.table("generation_job_snapshots")
-                .select("id, session_id, public_modes, canonical_dimensions")
+                .select("generation_mode")
                 .eq("session_id", session_id)
-                .in_("id", sorted(clone_snapshot_ids))
+                .eq("id", snapshot["id"])
                 .execute()
             )
-            for snap in snap_rows:
-                sid = str(snap.get("id", ""))
-                if sid:
-                    snapshots_by_id[sid] = snap
-
-        return ledger_by_qid, snapshots_by_id
+            if len(mode_rows) == 1:
+                snapshot["generation_mode"] = mode_rows[0].get("generation_mode")
+        return ledger_by_qid, snapshot
 
     async def get_session_meta(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Fetch session metadata including current status and approval timestamp."""
@@ -853,9 +958,9 @@ class FinalizeRepository:
         empty_solution_qids = [
             str(q["id"])
             for q in raw_questions
-            if q.get("id") and _is_empty_text(q.get("solution_md"))
+            if q.get("id") and _is_missing_solution(q.get("solution_md"))
         ]
-        ledger_by_qid, snapshots_by_id = self._fetch_provenance_ledger(
+        ledger_by_qid, job_snapshot = self._fetch_provenance_ledger(
             session_id, empty_solution_qids
         )
 
@@ -1035,8 +1140,8 @@ class FinalizeRepository:
                 if canonical_solution_md is not None and not isinstance(canonical_solution_md, str):
                     raise inconsistent(f"Lời giải gốc câu {q_no} trong phiên bản {v_code} không hợp lệ")
 
-                has_display_solution = not _is_empty_text(solution_md)
-                has_canonical_solution = not _is_empty_text(canonical_solution_md)
+                has_display_solution = not _is_missing_solution(solution_md)
+                has_canonical_solution = not _is_missing_solution(canonical_solution_md)
 
                 if has_display_solution:
                     if not has_canonical_solution:
@@ -1047,16 +1152,16 @@ class FinalizeRepository:
                 else:
                     if has_canonical_solution:
                         raise inconsistent(f"Lời giải câu {q_no} trong phiên bản {v_code} bị rỗng hoặc thiếu")
-                    expected_kind = _classify_empty_solution_kind(q, config_row)
-                    if expected_kind is None:
-                        raise inconsistent(f"Lời giải câu {q_no} trong phiên bản {v_code} bị rỗng hoặc thiếu")
-                    if self._resolve_provenance_db() is None or not _is_valid_ledger_entry(
-                        expected_kind, q, session_id, src_id, ledger_by_qid, snapshots_by_id
+                    expected_kind = _classify_empty_solution_kind(q)
+                    if not _has_verified_frozen_revert(q, job_snapshot, src_id) and (
+                        expected_kind is None or not _is_valid_ledger_entry(
+                            expected_kind, q, session_id, src_id, ledger_by_qid, job_snapshot, config_row
+                        )
                     ):
                         raise inconsistent(
                             f"Lời giải câu {q_no} trong phiên bản {v_code} thiếu provenance fallback/clone hợp lệ"
                         )
-                    normalized_solution = ""
+                    normalized_solution = solution_md.strip() if isinstance(solution_md, str) else ""
 
                 # Exporter DisplayQuestion Invariant: Options 4 distinct after normalization, each 1..16000 chars
                 if (
