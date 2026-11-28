@@ -159,6 +159,7 @@ class State:
                 expires_at=(datetime.now(timezone.utc) + timedelta(minutes=3)).isoformat(),
                 operation_status="active",
                 snapshot=deepcopy(self.snapshot),
+                reasons=deepcopy(params.get("p_reasons", [])),
             )
             self.operations[op] = value
             return deepcopy(value)
@@ -211,7 +212,8 @@ class State:
                 invalidated_version_ids=[self.vid],
                 progress=counts(),
             )
-            record.update(operation_status="completed", settlement=deepcopy(result))
+            record.update(operation_status="completed", settlement=deepcopy(result),
+                          completion_candidate=None if self.bad_result else deepcopy(payload))
             if self.lost_completion:
                 self.lost_completion = False
                 raise ConnectionError("response lost after commit")
@@ -432,7 +434,7 @@ def test_success_uses_frozen_receipt_and_worker_permit(state):
 def test_real_targeted_callable_uses_frozen_source_and_durable_permit(state):
     seen = []
 
-    async def generate(source, blueprint, *, confirmed_source_hash, context, excluded_identities):
+    async def generate(source, blueprint, *, confirmed_source_hash, context, excluded_identities, teacher_feedback, variation_modes):
         seen.append((source.model_dump(), deepcopy(blueprint), confirmed_source_hash))
         assert excluded_identities
         await context.reserve_request()
@@ -474,7 +476,7 @@ def test_real_targeted_callable_denied_permit_settles_without_completion(state):
             )
         return original(role, name, params)
 
-    async def generate(source, blueprint, *, confirmed_source_hash, context, excluded_identities):
+    async def generate(source, blueprint, *, confirmed_source_hash, context, excluded_identities, teacher_feedback, variation_modes):
         try:
             await context.reserve_request()
         except GatewayError as exc:
@@ -627,6 +629,88 @@ def test_completed_reservation_replays_after_expiry_and_approval(state):
     assert replay.question_id == first.question_id and state.provider_calls == 1
 
 
+@pytest.mark.parametrize(("session_status", "rpc_error"), [
+    ("approved", "REVIEW_LOCKED"),
+    ("reviewed", "REVIEW_POST_SHUFFLE_LOCKED"),
+])
+def test_replay_reads_completed_receipt_when_session_locks_during_recovery(state, session_status, rpc_error):
+    key = str(uuid4())
+    reasons = ["INCORRECT_ANSWER"]
+    original = state.rpc
+    active_receipt = None
+
+    def capture_reservation(role, name, params):
+        nonlocal active_receipt
+        result = original(role, name, params)
+        if name == "review_reserve_regeneration":
+            active_receipt = result
+        return result
+
+    state.rpc = capture_reservation
+    service = state.service()
+    first = immediate(service.reject_question(state.sid, state.qid, "owner", key, reasons))
+    completed_receipt = state.operations[key]
+    state.operations[key] = active_receipt
+    state.calls.clear()
+
+    def complete_before_recovery(role, name, params):
+        if name == "review_recover_session":
+            state.calls.append((role, name, params))
+            state.operations[key] = completed_receipt
+            state.status = session_status
+            raise RuntimeError(rpc_error)
+        return original(role, name, params)
+
+    state.rpc = complete_before_recovery
+    replay = immediate(service.reject_question(state.sid, state.qid, "owner", key, reasons))
+
+    assert replay == first
+    lookup = dict(p_session_id=state.sid, p_question_id=state.qid, p_operation_id=key, p_reasons=reasons)
+    assert [name for _, name, _ in state.calls] == [
+        "review_lookup_regeneration", "review_recover_session", "review_lookup_regeneration",
+    ]
+    assert state.calls[0][2] == state.calls[2][2] == lookup
+    assert state.provider_calls == state.charges == state.complete_calls == 1
+
+
+@pytest.mark.parametrize(("rpc_error", "http_status", "code"), [
+    ("REVIEW_LOCKED", 423, "ERR_SESSION_LOCKED"),
+    ("REVIEW_POST_SHUFFLE_LOCKED", 409, "ERR_SHUFFLE_REQUIRED"),
+])
+@pytest.mark.parametrize("receipt_status", ["active", "missing", "failed", "recovered"])
+def test_replay_after_recovery_lock_uses_final_receipt_status(state, rpc_error, http_status, code, receipt_status):
+    key = uuid4()
+    reasons = ["INCORRECT_ANSWER"]
+    service = state.service()
+    immediate(service.repo.reserve_regeneration(state.sid, state.qid, key, reasons=reasons))
+    original = state.rpc
+    state.calls.clear()
+
+    def locked_recovery(role, name, params):
+        if name == "review_recover_session":
+            state.calls.append((role, name, params))
+            if receipt_status == "missing":
+                del state.operations[str(key)]
+            elif receipt_status in ("failed", "recovered"):
+                immediate(service.repo.settle_failure(state.sid, state.qid, key, "GENERATION_FAILED"))
+                if receipt_status == "recovered":
+                    receipt = state.operations[str(key)]
+                    receipt["operation_status"] = receipt_status
+                    receipt["settlement"].update(operation_status=receipt_status, recovered=True)
+            raise RuntimeError(rpc_error)
+        return original(role, name, params)
+
+    state.rpc = locked_recovery
+    with pytest.raises(ReviewDomainException) as error:
+        immediate(service.reject_question(state.sid, state.qid, "owner", str(key), reasons))
+
+    expected = (409, "ERR_OPERATION_FINISHED") if receipt_status in ("failed", "recovered") else (http_status, code)
+    assert (error.value.status_code, error.value.error_code) == expected
+    lookup = dict(p_session_id=state.sid, p_question_id=state.qid, p_operation_id=str(key), p_reasons=reasons)
+    assert [params for _, name, params in state.calls if name == "review_lookup_regeneration"] == [lookup, lookup]
+    assert state.provider_calls == state.charges == 0
+
+
 def test_active_replay_does_not_start_another_generator(state):
     key = uuid4()
     immediate(state.service().repo.reserve_regeneration(state.sid, state.qid, key))
@@ -639,10 +723,11 @@ def test_completed_replay_without_adapter_reads_receipt_without_mutations(state)
     key = str(uuid4())
     first = immediate(state.service().reject_question(state.sid, state.qid, "owner", key))
     state.status = "approved"
+    state.rows[first.question_id].update(status="rejected", content="later edit")
     state.calls.clear()
     offline = ReviewService(state.owner, state.worker, ai_generator=None)
     result = immediate(offline.reject_question(state.sid, state.qid, "owner", key))
-    assert result.question_id == first.question_id
+    assert result == first
     assert [n for _, n, _ in state.calls] == ["review_lookup_regeneration"]
     assert state.provider_calls == state.charges == 1
 
@@ -660,7 +745,10 @@ def test_existing_noncompleted_replay_without_adapter_has_no_mutation(state, sta
     with pytest.raises(ReviewDomainException) as error:
         immediate(ReviewService(state.owner, state.worker).reject_question(state.sid, state.qid, "owner", str(key)))
     assert error.value.status_code == 409
-    assert [n for _, n, _ in state.calls] == ["review_lookup_regeneration"]
+    expected = ["review_lookup_regeneration"]
+    if status == "active":
+        expected.extend(["review_recover_session", "review_lookup_regeneration"])
+    assert [n for _, n, _ in state.calls] == expected
     assert state.charges == state.provider_calls == 0
 
 
@@ -968,3 +1056,14 @@ def test_openapi_documents_optional_key_for_all_mutations():
         ]["post"]["parameters"]
         header = next(p for p in parameters if p["name"] == "Idempotency-Key")
         assert header["in"] == "header" and header["required"] is False
+
+
+def test_expired_same_key_recovers_before_ai_availability(state):
+    key = uuid4()
+    immediate(state.service().repo.reserve_regeneration(state.sid, state.qid, key))
+    state.operations[str(key)]["expires_at"] = "2000-01-01T00:00:00+00:00"
+    with pytest.raises(ReviewDomainException) as error:
+        immediate(ReviewService(state.owner, state.worker).reject_question(state.sid, state.qid, "owner", str(key)))
+    assert error.value.error_code == "ERR_OPERATION_FINISHED"
+    assert state.operations[str(key)]["operation_status"] == "recovered"
+    assert state.charges == state.provider_calls == 0

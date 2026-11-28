@@ -18,7 +18,7 @@ import {
 import Stage3InspectionDialog from './Stage3InspectionDialog.jsx';
 import Stage3ReviewNotifications from './Stage3ReviewNotifications.jsx';
 import BrandLogo from '../../components/BrandLogo.jsx';
-import Stage3Comparison, { ReviewQuestionContent } from './Stage3Comparison.jsx';
+import Stage3Comparison, { ReviewQuestionContent, ReviewSolution } from './Stage3Comparison.jsx';
 import './stage3Review.css';
 import { getSessionDetail } from '../../services/sessions.js';
 import { retryGeneration } from '../../services/stage2Service.js';
@@ -27,8 +27,8 @@ import {
   rejectAndRegenerateQuestion,
   revertQuestion,
   fetchReviewSnapshot,
+  recoverReviewSession,
   adaptReviewSnapshot,
-  normalizeOptions,
 } from '../../services/stage3Service.js';
 
 function getVariantWarningFlags(variant) {
@@ -152,6 +152,22 @@ function findVariantInSession(session, versionIndex, questionNo) {
   return null;
 }
 
+function findNextUnreviewed(session, version, number) {
+  const versions = session.config?.n_versions || session.exam_versions.length;
+  const questions = session.source_questions.length;
+  for (let dv = 0; dv < versions; dv++) {
+    const nextVersion = (version - 1 + dv) % versions + 1;
+    for (let dq = 0; dq < questions; dq++) {
+      const nextNumber = ((dv === 0 ? number : 0) + dq) % questions + 1;
+      const candidate = findVariantInSession(session, nextVersion, nextNumber);
+      if (candidate && !['approved', 'regenerating', 'rejected'].includes(candidate.status)) {
+        return { version: nextVersion, number: nextNumber };
+      }
+    }
+  }
+  return null;
+}
+
 function versionLabel(session, index) {
   const version = session?.exam_versions?.find((item, offset) => (item.version_index ?? item.index ?? offset + 1) === index);
   return version?.version_code ? `Mã đề #${version.version_code}` : `Đề ${index}`;
@@ -199,6 +215,7 @@ function generateClientUUID() {
  */
 export default function Stage3ReviewPage({
   loadSession = fetchReviewSnapshot,
+  recoverSession = recoverReviewSession,
   loadSessionDetail = getSessionDetail,
   retryGen = retryGeneration,
   acceptQuestionFn = acceptQuestion,
@@ -221,12 +238,13 @@ export default function Stage3ReviewPage({
   const [reviewSyncRequired, setReviewSyncRequired] = useState(false);
 
   // Trạng thái modal Kiểm tra đáp án (SolutionDialog)
-  const [selectedSolution, setSelectedSolution] = useState(null);
+  const [inspection, setInspection] = useState(null);
+  const inspectedVariant = inspection && findVariantInSession(session, inspection.versionIndex, inspection.qNo);
+  const selectedSolution = useMemo(() => inspectedVariant ? { ...inspection, variant: inspectedVariant } : null,
+    [inspection, inspectedVariant]);
   const [approvalFocus, setApprovalFocus] = useState(null);
   const workspaceRef = useRef(null);
-  const [isRegeneratingSingle, setIsRegeneratingSingle] = useState(false);
-  const [isApprovingSingle, setIsApprovingSingle] = useState(false);
-  const [isRevertingSingle, setIsRevertingSingle] = useState(false);
+  const [pendingActions, setPendingActions] = useState(new Map());
   const [isShuffle409, setIsShuffle409] = useState(false);
   const [approvedVariantIds, setApprovedVariantIds] = useState(new Set());
 
@@ -236,9 +254,12 @@ export default function Stage3ReviewPage({
   const isMountedRef = useRef(true);
   const activeSessionIdRef = useRef(sessionId);
   const navigationTimerRef = useRef(null);
+  const navigationEpoch = useRef(0);
+  const pendingRef = useRef(new Map());
+  const [activeRecovery, setActiveRecovery] = useState(false);
   const actionKeysRef = useRef(new Map());
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async ({ background = false, recover = true } = {}) => {
     if (!sessionId) {
       if (isMountedRef.current) {
         setIsLoading(false);
@@ -250,7 +271,7 @@ export default function Stage3ReviewPage({
     const currentOp = ++loadOperationRef.current;
     const targetSessionId = sessionId;
 
-    setIsLoading(true);
+    if (!background) setIsLoading(true);
     setError(null);
     setIsShuffle409(false);
     setLockedDetail(null);
@@ -264,15 +285,25 @@ export default function Stage3ReviewPage({
       ) {
         return;
       }
-      const data = adaptReviewSnapshot(rawData);
+      let data = adaptReviewSnapshot(rawData);
+      let active = data?.exam_versions?.some(v => v.questions?.some(q => q.status === 'regenerating'));
+      if (active && recover && !data.read_only && data.generation_mode !== 'shuffle_only') {
+        const response = await recoverSession(targetSessionId);
+        if (!isMountedRef.current || loadOperationRef.current !== currentOp ||
+            activeSessionIdRef.current !== targetSessionId) return;
+        data = adaptReviewSnapshot(response.snapshot);
+        active = response.has_active_operation;
+      }
+      setActiveRecovery(Boolean(active));
       setReviewSyncRequired(false);
-      setSelectedSolution(null);
+      if (!background) setInspection(null);
       setSession(data);
       setLockedDetail(null);
 
       const initialApproved = extractApprovedIds(data);
       setApprovedVariantIds(initialApproved);
       setIsLoading(false);
+      return data;
     } catch (err) {
       if (
         !isMountedRef.current ||
@@ -336,10 +367,14 @@ export default function Stage3ReviewPage({
         }
       }
 
-      setError(extractErrorString(err, 'Không thể tải chi tiết phiên làm việc.'));
+      if (background) {
+        setReviewSyncRequired(true);
+        setActionMessage({ type: 'error', text: 'Thao tác chưa đối soát được. Vui lòng đọc lại trạng thái.' });
+      }
+      else setError(extractErrorString(err, 'Không thể tải chi tiết phiên làm việc.'));
       setIsLoading(false);
     }
-  }, [sessionId, loadSession, loadSessionDetail]);
+  }, [sessionId, loadSession, loadSessionDetail, recoverSession]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -362,14 +397,14 @@ export default function Stage3ReviewPage({
     setSelectedQuestionNo(1);
     setIsRetryingAll(false);
     setReviewSyncRequired(false);
-    setSelectedSolution(null);
+    setInspection(null);
     setApprovalFocus(null);
     setApprovedVariantIds(new Set());
     setActionMessage(null);
-    setIsRegeneratingSingle(false);
-    setIsApprovingSingle(false);
-    setIsRevertingSingle(false);
+    setPendingActions(new Map());
     actionKeysRef.current.clear();
+    pendingRef.current.clear();
+    setActiveRecovery(false);
 
     loadData();
 
@@ -385,582 +420,85 @@ export default function Stage3ReviewPage({
     };
   }, [loadData, sessionId]);
 
-  // Cập nhật variant trong session state
-  const updateVariantInSession = useCallback((updatedVariant, targetVIdx, targetQNo) => {
-    setSession((prev) => {
-      if (!prev) return prev;
-      const next = { ...prev };
-      const qNoToMatch = targetQNo ?? updatedVariant.question_no ?? updatedVariant.number;
-
-      const mergeVariantSlot = (oldQ, nextVar) => {
-        const merged = { ...oldQ, ...nextVar };
-        // Đảm bảo xóa sạch hoàn toàn attempts / warning_flag của câu cũ khi câu mới sinh thành công (không phải fallback)
-        if (!nextVar.is_fallback) {
-          merged.is_fallback = false;
-          merged.source_fallback = false;
-          merged.attempts = nextVar.attempts ?? 1;
-          merged.warning_flag = nextVar.warning_flag || null;
-        }
-        return merged;
-      };
-
-      if (Array.isArray(next.version_questions)) {
-        next.version_questions = next.version_questions.map((q) => {
-          const matchesId =
-            (q.id && updatedVariant.id && q.id === updatedVariant.id) ||
-            (q.candidate_id && updatedVariant.candidate_id && q.candidate_id === updatedVariant.candidate_id) ||
-            (q.id && updatedVariant.candidate_id && q.id === updatedVariant.candidate_id) ||
-            (q.candidate_id && updatedVariant.id && q.candidate_id === updatedVariant.id);
-          const qVIdx = q.version_index ?? q.version_code;
-          const matchesSlot = targetVIdx && qVIdx === targetVIdx && (q.question_no ?? q.number) === qNoToMatch;
-          return matchesId || matchesSlot ? mergeVariantSlot(q, updatedVariant) : q;
-        });
-      }
-
-      if (Array.isArray(next.exam_versions)) {
-        next.exam_versions = next.exam_versions.map((ver, idx) => {
-          const currentVIdx = ver.version_index ?? ver.index ?? idx + 1;
-          const questionsKey = ver.questions ? 'questions' : ver.version_questions ? 'version_questions' : 'questions';
-          const qList = ver[questionsKey] || [];
-          const updatedList = qList.map((q) => {
-            const matchesId =
-              (q.id && updatedVariant.id && q.id === updatedVariant.id) ||
-              (q.candidate_id && updatedVariant.candidate_id && q.candidate_id === updatedVariant.candidate_id) ||
-              (q.id && updatedVariant.candidate_id && q.id === updatedVariant.candidate_id) ||
-              (q.candidate_id && updatedVariant.id && q.candidate_id === updatedVariant.id);
-            const matchesSlot = targetVIdx && currentVIdx === targetVIdx && (q.question_no ?? q.number) === qNoToMatch;
-            return matchesId || matchesSlot ? mergeVariantSlot(q, updatedVariant) : q;
-          });
-          return { ...ver, [questionsKey]: updatedList };
-        });
-      }
-
-      return next;
-    });
-  }, []);
-
-  // Xử lý mở modal Kiểm tra đáp án
-  const handleOpenSolutionModal = useCallback((variant, qNo, versionIndex) => {
-    const originalQuestion = session?.source_questions?.find(
-      (sq) => (sq.source_question_id && sq.source_question_id === variant.source_question_id) || (sq.id && sq.id === variant.source_question_id)
-    ) || session?.source_questions?.find(
-      (sq) => (sq.question_no ?? sq.number) === qNo
-    );
+  const handleOpenSolutionModal = (_variant, qNo, versionIndex) => {
     setSelectedQuestionNo(qNo);
-    setSelectedSolution({
-      variant: {
-        ...variant,
-        options: normalizeOptions(variant.options),
-      },
-      qNo,
-      versionIndex,
-      originalQuestion: originalQuestion ? {
-        ...originalQuestion,
-        options: normalizeOptions(originalQuestion.options),
-      } : null,
-    });
-  }, [session]);
+    setInspection({ qNo, versionIndex });
+  };
 
   const isFinalLocked = ['approved', 'exported'].includes(session?.status);
-  const isReviewReadOnly = isFinalLocked || Boolean(session?.read_only);
-  const canRetryPartial = session?.status === 'partial_generated' && !isFinalLocked;
+  const isPreviewBlocked = isFinalLocked || Boolean(session?.read_only);
+  const isShuffleOnly = session?.generation_mode === 'shuffle_only';
+  const isReviewReadOnly = isPreviewBlocked || isShuffleOnly;
+  const canRetryPartial = session?.status === 'partial_generated' && !isFinalLocked && !isShuffleOnly;
 
-  // Xử lý Tạo lại câu hỏi trong SolutionDialog (Reject & Targeted Regeneration)
-  const handleRegenerateSingle = useCallback(async () => {
-    if (!selectedSolution?.variant || isRegeneratingSingle || isReviewReadOnly || reviewSyncRequired) return;
-    const { variant, qNo, versionIndex } = selectedSolution;
-    const targetQId = variant.candidate_id || variant.id || variant.question_id;
-    if (!targetQId) {
-      setActionMessage({
-        type: 'error',
-        text: 'Thiếu định danh câu hỏi để thao tác. Hãy tải lại trang để đồng bộ dữ liệu.',
-      });
-      return;
-    }
-
-    const currentOp = ++mutationOperationRef.current;
-    const targetSessionId = sessionId;
-
-    // Giữ nguyên Idempotency-Key ổn định qua các lần retry cho đến khi thành công
-    const actionLookupKey = `reject-${targetQId}`;
-    let idempotencyKey = actionKeysRef.current.get(actionLookupKey);
-    if (!idempotencyKey) {
-      idempotencyKey = generateClientUUID();
-      actionKeysRef.current.set(actionLookupKey, idempotencyKey);
-    }
-
-    setIsRegeneratingSingle(true);
+  async function mutate(action, selection, reasons = []) {
+    if (!selection || isReviewReadOnly || reviewSyncRequired || isRetryingAll) return;
+    const { variant, versionIndex, qNo } = selection;
+    const id = variant.candidate_id || variant.id || variant.question_id;
+    if (!id || pendingRef.current.has(id) || variant.status === 'regenerating') return;
+    if (action === 'reject' && (variant.result_kind === 'ORIGINAL_CLONE' || activeRecovery || [...pendingRef.current.values()].includes('reject'))) return;
+    const op = mutationOperationRef.current;
+    const epoch = navigationEpoch.current;
+    const current = () => isMountedRef.current && activeSessionIdRef.current === sessionId && mutationOperationRef.current === op;
+    const binding = JSON.stringify([action, id]);
+    const previousAttempt = actionKeysRef.current.get(binding);
+    const attempt = previousAttempt || { key: generateClientUUID(), reasons };
+    const { key } = attempt;
+    actionKeysRef.current.set(binding, attempt);
+    pendingRef.current.set(id, action);
+    setPendingActions(new Map(pendingRef.current));
+    ++loadOperationRef.current;
     setActionMessage(null);
-
+    let response;
+    let failure;
     try {
-      const res = await regenerateQuestionFn(sessionId, targetQId, idempotencyKey);
-
-      // Chặn stale response nếu người dùng chuyển session hoặc operation token không còn khớp
-      if (
-        !isMountedRef.current ||
-        mutationOperationRef.current !== currentOp ||
-        activeSessionIdRef.current !== targetSessionId
-      ) {
-        return;
-      }
-
-      // Xóa action key sau khi gọi thành công
-      actionKeysRef.current.delete(actionLookupKey);
-      actionKeysRef.current.delete(`accept-${targetQId}`);
-
-      const newOptions = normalizeOptions(res?.options || variant.options);
-      // Tạo object mới sạch từ response; không kế thừa cờ fallback/warning từ candidate cũ
-      const newCandidateId = res?.candidate_id || res?.question_id || res?.id || variant.candidate_id || variant.id;
-      const updatedVariant = {
-        id: newCandidateId,
-        candidate_id: newCandidateId,
-        question_id: newCandidateId,
-        source_question_id: variant.source_question_id,
-        question_no: variant.question_no ?? qNo,
-        number: variant.number ?? qNo,
-        version_index: versionIndex,
-        status: 'pending_review',
-        content: res?.content || res?.stem_latex || res?.stem || variant.content,
-        options: newOptions,
-        correct_key: res?.correct_key || variant.correct_key,
-        solution_md: res?.solution_md ?? res?.solution ?? '',
-        is_fallback: Boolean(res?.is_fallback),
-        source_fallback: Boolean(res?.source_fallback),
-        has_warning: Boolean(res?.has_warning),
-        warning_message: res?.warning_message || null,
-        validation_report: res?.validation_report || null,
-        attempts: res?.attempts ?? (res?.is_fallback ? (variant.attempts ?? 4) : 1),
-        warning_flag: res?.warning_flag || (res?.is_fallback ? 'fallback' : null),
-      };
-
-      // Cập nhật session và giữ nguyên modal mở với nội dung câu mới
-      updateVariantInSession(updatedVariant, versionIndex, qNo);
-      setSelectedSolution((prev) => {
-        if (!prev) return null;
-        return {
-          ...prev,
-          variant: updatedVariant,
-        };
-      });
-
-      // Bỏ duyệt khỏi danh sách duyệt
-      setApprovedVariantIds((prev) => {
-        const next = new Set(prev);
-        if (variant.id) next.delete(variant.id);
-        if (variant.candidate_id) next.delete(variant.candidate_id);
-        if (updatedVariant.id) next.delete(updatedVariant.id);
-        if (updatedVariant.candidate_id) next.delete(updatedVariant.candidate_id);
-        return next;
-      });
-
-      setActionMessage({
-        type: 'success',
-        text: `Đã tạo lại câu ${qNo} (đề ${versionIndex}). Kiểm tra đáp án và duyệt phiên bản mới.`,
-      });
-
-      // Refetch current snapshot sau regenerate để cập nhật candidate thay thế và persisted progress
-      try {
-        const latestRaw = await loadSession(targetSessionId);
-        if (
-          isMountedRef.current &&
-          mutationOperationRef.current === currentOp &&
-          activeSessionIdRef.current === targetSessionId &&
-          latestRaw
-        ) {
-          const adapted = adaptReviewSnapshot(latestRaw);
-          const snapshotVariant = findVariantInSession(adapted, versionIndex, qNo);
-
-          // Nếu snapshot trả về vẫn mang ID câu cũ bị từ chối (do mock tĩnh hoặc DB replication lag),
-          // ưu tiên giữ lại updatedVariant mới sinh thay vì bị rollback về câu cũ
-          const isStaleRejected =
-            snapshotVariant &&
-            (snapshotVariant.id === variant.id ||
-              (variant.candidate_id && snapshotVariant.candidate_id === variant.candidate_id));
-
-          if (isStaleRejected) {
-            adapted.exam_versions = (adapted.exam_versions || []).map((ver) => {
-              if ((ver.version_index ?? 1) === versionIndex) {
-                const qList = (ver.questions || []).map((q) => {
-                  if ((q.question_no ?? q.number) === qNo) {
-                    return updatedVariant;
-                  }
-                  return q;
-                });
-                return { ...ver, questions: qList };
-              }
-              return ver;
-            });
-          }
-
-          setSession(adapted);
-          const replacement = findVariantInSession(adapted, versionIndex, qNo) || updatedVariant;
-          if (replacement) {
-            setSelectedSolution((prev) => (prev ? { ...prev, variant: replacement } : null));
-          }
-          const authoritativeApproved = extractApprovedIds(adapted);
-          setApprovedVariantIds((prev) => {
-            const next = new Set(prev);
-            if (variant.id) next.delete(variant.id);
-            if (variant.candidate_id) next.delete(variant.candidate_id);
-            if (replacement?.id) next.delete(replacement.id);
-            if (replacement?.candidate_id) next.delete(replacement.candidate_id);
-            authoritativeApproved.forEach((id) => {
-              if (
-                id !== variant.id &&
-                id !== variant.candidate_id &&
-                (!replacement || (id !== replacement.id && id !== replacement.candidate_id))
-              ) {
-                next.add(id);
-              }
-            });
-            return next;
-          });
-        }
-      } catch {
-        // Refetch thất bại trong nền không làm hỏng dữ liệu hiển thị từ regenerateQuestionFn
-      }
+      if (action === 'reject') response = await regenerateQuestionFn(sessionId, id, key, { reasons: attempt.reasons });
+      else response = await (action === 'accept' ? acceptQuestionFn : revertQuestionFn)(sessionId, id, key);
     } catch (err) {
-      if (
-        !isMountedRef.current ||
-        mutationOperationRef.current !== currentOp ||
-        activeSessionIdRef.current !== targetSessionId
-      ) {
-        return;
-      }
-      setActionMessage({
-        type: 'error',
-        text: extractErrorString(err, 'Không thể tạo lại câu hỏi.'),
-      });
-    } finally {
-      if (
-        isMountedRef.current &&
-        mutationOperationRef.current === currentOp &&
-        activeSessionIdRef.current === targetSessionId
-      ) {
-        setIsRegeneratingSingle(false);
-      }
+      failure = err;
     }
-  }, [selectedSolution, isRegeneratingSingle, isReviewReadOnly, reviewSyncRequired, regenerateQuestionFn, sessionId, updateVariantInSession, loadSession]);
-
-  // Xử lý Duyệt biến thể trong SolutionDialog
-  const handleApproveSingle = useCallback(async () => {
-    if (!selectedSolution?.variant || isApprovingSingle || isReviewReadOnly || reviewSyncRequired) return;
-    const { variant, qNo, versionIndex } = selectedSolution;
-    const targetQId = variant.candidate_id || variant.id || variant.question_id;
-    if (!targetQId) {
-      setActionMessage({
-        type: 'error',
-        text: 'Thiếu định danh câu hỏi để thao tác. Hãy tải lại trang để đồng bộ dữ liệu.',
-      });
-      return;
-    }
-
-    const currentOp = ++mutationOperationRef.current;
-    const targetSessionId = sessionId;
-
-    // Giữ nguyên Idempotency-Key ổn định qua các lần retry
-    const actionLookupKey = `accept-${targetQId}`;
-    let idempotencyKey = actionKeysRef.current.get(actionLookupKey);
-    if (!idempotencyKey) {
-      idempotencyKey = generateClientUUID();
-      actionKeysRef.current.set(actionLookupKey, idempotencyKey);
-    }
-
-    setIsApprovingSingle(true);
-    setActionMessage(null);
-
+    if (!current()) return;
     try {
-      await acceptQuestionFn(sessionId, targetQId, idempotencyKey);
-
-      // Chặn stale response nếu người dùng chuyển session hoặc operation token không còn khớp
-      if (
-        !isMountedRef.current ||
-        mutationOperationRef.current !== currentOp ||
-        activeSessionIdRef.current !== targetSessionId
-      ) {
+      const latest = await loadData({ background: true, recover: false });
+      if (!current()) return;
+      if (failure) {
+        const code = failure.response?.data?.error_code ?? failure.errorCode;
+        const rejectedBeforeReservation = action === 'reject' && failure.response?.status === 503
+          && code === 'ERR_AI_SERVICE_UNAVAILABLE';
+        // This response only rules out a reservation for the current request.
+        if ((!previousAttempt && rejectedBeforeReservation) ||
+            ['ERR_OPERATION_FINISHED', 'ERR_ATTEMPT_REPLAYED'].includes(code)) {
+          actionKeysRef.current.delete(binding);
+        }
+        setActionMessage({ type: 'error', text: extractErrorString(failure) });
+      }
+      if (!latest) return;
+      const candidate = findVariantInSession(latest, versionIndex, qNo);
+      const latestId = candidate?.candidate_id || candidate?.id || candidate?.question_id;
+      if (failure) return;
+      const confirmed = action === 'accept' ? latestId === id && candidate.status === 'approved'
+        : latestId && latestId === response?.question_id && (action === 'reject' ? latestId !== id : candidate.is_reverted);
+      if (!confirmed) {
+        setReviewSyncRequired(true);
         return;
       }
-
-      actionKeysRef.current.delete(actionLookupKey);
-
-      const updatedVariant = {
-        ...variant,
-        status: 'approved',
-      };
-
-      updateVariantInSession(updatedVariant, versionIndex, qNo);
-      setSelectedSolution((prev) => {
-        if (!prev) return null;
-        return {
-          ...prev,
-          variant: updatedVariant,
-        };
-      });
-
-      setApprovedVariantIds((prev) => {
-        const next = new Set(prev);
-        if (variant.id) next.add(variant.id);
-        if (variant.candidate_id) next.add(variant.candidate_id);
-        if (variant.question_id) next.add(variant.question_id);
-        return next;
-      });
-
-      setActionMessage({
-        type: 'success',
-        text: `Đã duyệt câu ${qNo} · Đề ${versionIndex}.`,
-      });
-
-      // Refetch current snapshot sau accept để cập nhật persisted review progress và freshness token
-      try {
-        const latestRaw = await loadSession(targetSessionId);
-        if (!latestRaw) throw new Error('Missing review snapshot');
-        if (
-          isMountedRef.current &&
-          mutationOperationRef.current === currentOp &&
-          activeSessionIdRef.current === targetSessionId &&
-          latestRaw
-        ) {
-          const adapted = adaptReviewSnapshot(latestRaw);
-          const targetCandidateId = variant.candidate_id || variant.id || variant.question_id;
-
-          // Chỉ áp dụng optimistic approved nếu candidate tại slot vẫn đúng là candidate vừa được duyệt (Issue #85)
-          adapted.exam_versions = (adapted.exam_versions || []).map((ver) => {
-            if ((ver.version_index ?? 1) === versionIndex) {
-              const qList = (ver.questions || []).map((q) => {
-                if ((q.question_no ?? q.number) === qNo) {
-                  const currentCandidateId = q.candidate_id || q.id || q.question_id;
-                  if (targetCandidateId && currentCandidateId === targetCandidateId) {
-                    return { ...q, status: 'approved' };
-                  }
-                }
-                return q;
-              });
-              return { ...ver, questions: qList };
-            }
-            return ver;
-          });
-          setSession(adapted);
-
-          // Cập nhật selectedSolution nếu đang mở đúng slot này
-          setSelectedSolution((prev) => {
-            if (!prev) return null;
-            if (prev.versionIndex === versionIndex && prev.qNo === qNo) {
-              const latestVariant = findVariantInSession(adapted, versionIndex, qNo);
-              if (latestVariant) {
-                return { ...prev, variant: latestVariant };
-              }
-            }
-            return prev;
-          });
-
-          const authoritativeApproved = extractApprovedIds(adapted);
-          setApprovedVariantIds((prev) => {
-            const merged = new Set(prev);
-            authoritativeApproved.forEach((id) => merged.add(id));
-            if (variant.id) merged.add(variant.id);
-            if (variant.candidate_id) merged.add(variant.candidate_id);
-            if (variant.question_id) merged.add(variant.question_id);
-            return merged;
-          });
-          const latestCandidate = findVariantInSession(adapted, versionIndex, qNo);
-          const latestId = latestCandidate?.candidate_id || latestCandidate?.id || latestCandidate?.question_id;
-          if (latestId === targetCandidateId && isVariantApproved(latestCandidate, authoritativeApproved)) {
-            const versions = adapted.config?.n_versions || adapted.exam_versions?.length || 1;
-            const questions = adapted.source_questions?.length || 0;
-            const total = versions * questions;
-            const start = (qNo - 1) * versions + versionIndex;
-            let nextPair = null;
-            for (let offset = 0; offset < total; offset++) {
-              const position = (start + offset) % total;
-              const version = position % versions + 1;
-              const number = Math.floor(position / versions) + 1;
-              if (!isVariantApproved(findVariantInSession(adapted, version, number), authoritativeApproved)) {
-                nextPair = { version, number }; break;
-              }
-            }
-            setSelectedSolution(null);
-            if (nextPair) {
-              setActiveVersionTab(nextPair.version);
-              setSelectedQuestionNo(nextPair.number);
-            }
-            setApprovalFocus(nextPair ? nextPair.number : 'finalize');
-          }
-
-        }
-      } catch {
-        if (isMountedRef.current && mutationOperationRef.current === currentOp && activeSessionIdRef.current === targetSessionId) {
-          setReviewSyncRequired(true);
-          setActionMessage({ type: 'error', text: 'Đã nhận phản hồi duyệt nhưng chưa đối soát được trạng thái. Đọc lại trạng thái trước khi tiếp tục.' });
-        }
+      actionKeysRef.current.delete(binding);
+      if (action === 'accept' && epoch === navigationEpoch.current && !latest.read_only) {
+        setInspection(null);
+        const next = findNextUnreviewed(latest, versionIndex, qNo);
+        if (next) {
+          setActiveVersionTab(next.version);
+          setSelectedQuestionNo(next.number);
+          setApprovalFocus(next.number);
+        } else if (latest.progress?.ready && latest.status === 'reviewed') setApprovalFocus('finalize');
       }
-    } catch (err) {
-      if (
-        !isMountedRef.current ||
-        mutationOperationRef.current !== currentOp ||
-        activeSessionIdRef.current !== targetSessionId
-      ) {
-        return;
-      }
-      setActionMessage({
-        type: 'error',
-        text: extractErrorString(err, 'Không thể duyệt câu hỏi.'),
-      });
     } finally {
-      if (
-        isMountedRef.current &&
-        mutationOperationRef.current === currentOp &&
-        activeSessionIdRef.current === targetSessionId
-      ) {
-        setIsApprovingSingle(false);
+      if (current()) {
+        pendingRef.current.delete(id);
+        setPendingActions(new Map(pendingRef.current));
       }
     }
-  }, [selectedSolution, isApprovingSingle, isReviewReadOnly, reviewSyncRequired, acceptQuestionFn, sessionId, updateVariantInSession, loadSession]);
-
-  // Xử lý Khôi phục đề gốc (Revert candidate)
-  const handleRevertSingle = useCallback(async () => {
-    if (!selectedSolution?.variant || isRevertingSingle || isReviewReadOnly || reviewSyncRequired) return;
-    const { variant, qNo, versionIndex } = selectedSolution;
-    const targetQId = variant.candidate_id || variant.id || variant.question_id;
-    if (!targetQId) {
-      setActionMessage({
-        type: 'error',
-        text: 'Thiếu định danh câu hỏi để thao tác. Hãy tải lại trang để đồng bộ dữ liệu.',
-      });
-      return;
-    }
-
-    const currentOp = ++mutationOperationRef.current;
-    const targetSessionId = sessionId;
-
-    const actionLookupKey = `revert-${targetQId}`;
-    let idempotencyKey = actionKeysRef.current.get(actionLookupKey);
-    if (!idempotencyKey) {
-      idempotencyKey = generateClientUUID();
-      actionKeysRef.current.set(actionLookupKey, idempotencyKey);
-    }
-
-    setIsRevertingSingle(true);
-    setActionMessage(null);
-
-    try {
-      const res = await revertQuestionFn(sessionId, targetQId, idempotencyKey);
-
-      if (
-        !isMountedRef.current ||
-        mutationOperationRef.current !== currentOp ||
-        activeSessionIdRef.current !== targetSessionId
-      ) {
-        return;
-      }
-
-      actionKeysRef.current.delete(actionLookupKey);
-      actionKeysRef.current.delete(`accept-${targetQId}`);
-      actionKeysRef.current.delete(`reject-${targetQId}`);
-
-      const originalQuestion = session?.source_questions?.find(
-        (sq) => (sq.source_question_id && sq.source_question_id === variant.source_question_id) || (sq.id && sq.id === variant.source_question_id)
-      ) || session?.source_questions?.find(
-        (sq) => (sq.question_no ?? sq.number) === qNo
-      );
-
-      const newOptions = normalizeOptions(res?.options || originalQuestion?.options || variant.options);
-      const newCandidateId = res?.candidate_id || res?.question_id || res?.id || targetQId;
-      const updatedVariant = {
-        ...variant,
-        ...(res || {}),
-        id: newCandidateId,
-        candidate_id: newCandidateId,
-        question_id: newCandidateId,
-        source_question_id: variant.source_question_id,
-        question_no: variant.question_no ?? qNo,
-        number: variant.number ?? qNo,
-        version_index: versionIndex,
-        status: 'pending_review',
-        content: res?.content || originalQuestion?.raw_content || originalQuestion?.content || variant.content,
-        options: newOptions,
-        correct_key: res?.correct_key || originalQuestion?.correct_key || variant.correct_key,
-        solution_md: res?.solution_md !== undefined ? res.solution_md : (originalQuestion?.solution_md || ''),
-        is_reverted: true,
-        origin: 'reverted',
-        is_fallback: false,
-        source_fallback: false,
-        has_warning: false,
-        warning_message: null,
-      };
-
-      updateVariantInSession(updatedVariant, versionIndex, qNo);
-      setSelectedSolution((prev) => (prev ? { ...prev, variant: updatedVariant } : null));
-
-      setApprovedVariantIds((prev) => {
-        const next = new Set(prev);
-        if (variant.id) next.delete(variant.id);
-        if (variant.candidate_id) next.delete(variant.candidate_id);
-        if (updatedVariant.id) next.delete(updatedVariant.id);
-        if (updatedVariant.candidate_id) next.delete(updatedVariant.candidate_id);
-        return next;
-      });
-
-      setActionMessage({
-        type: 'success',
-        text: `Đã khôi phục đề gốc cho câu ${qNo} (Đề ${versionIndex}). Câu sẽ cần được duyệt lại.`,
-      });
-
-      try {
-        const latestRaw = await loadSession(targetSessionId);
-        if (
-          isMountedRef.current &&
-          mutationOperationRef.current === currentOp &&
-          activeSessionIdRef.current === targetSessionId &&
-          latestRaw
-        ) {
-          const adapted = adaptReviewSnapshot(latestRaw);
-          const snapshotVariant = findVariantInSession(adapted, versionIndex, qNo);
-          const isStale = snapshotVariant && !snapshotVariant.is_reverted;
-          if (isStale) {
-            adapted.exam_versions = (adapted.exam_versions || []).map((ver) => {
-              if ((ver.version_index ?? 1) === versionIndex) {
-                const qList = (ver.questions || []).map((q) => {
-                  if ((q.question_no ?? q.number) === qNo) {
-                    return updatedVariant;
-                  }
-                  return q;
-                });
-                return { ...ver, questions: qList };
-              }
-              return ver;
-            });
-          }
-          setSession(adapted);
-          const replacement = findVariantInSession(adapted, versionIndex, qNo) || updatedVariant;
-          if (replacement) {
-            setSelectedSolution((prev) => (prev ? { ...prev, variant: replacement } : null));
-          }
-        }
-      } catch {
-        // refetch fail silently
-      }
-    } catch (err) {
-      if (
-        !isMountedRef.current ||
-        mutationOperationRef.current !== currentOp ||
-        activeSessionIdRef.current !== targetSessionId
-      ) {
-        return;
-      }
-      setActionMessage({
-        type: 'error',
-        text: extractErrorString(err, 'Không thể khôi phục câu hỏi về đề gốc.'),
-      });
-    } finally {
-      if (
-        isMountedRef.current &&
-        mutationOperationRef.current === currentOp &&
-        activeSessionIdRef.current === targetSessionId
-      ) {
-        setIsRevertingSingle(false);
-      }
-    }
-  }, [selectedSolution, isRevertingSingle, isReviewReadOnly, reviewSyncRequired, revertQuestionFn, sessionId, session, updateVariantInSession, loadSession]);
+  }
 
   const handleRetryAllMissing = async () => {
     if (!canRetryPartial || isRetryingAll) return;
@@ -1053,11 +591,11 @@ export default function Stage3ReviewPage({
   ) || session?.source_questions?.find((source) => (source.question_no ?? source.number) === currentQuestionNo);
 
   const selectVersion = (version) => {
-    if (isApprovingSingle || isRegeneratingSingle || isRevertingSingle || isRetryingAll) return;
+    ++navigationEpoch.current;
     const question = currentQuestionNo ?? selectedQuestionNo;
     setSelectedQuestionNo(question);
     setActiveVersionTab(version);
-    setSelectedSolution(null);
+    setInspection(null);
   };
   const handleVersionKeyDown = (event, version) => {
     const next = event.key === 'ArrowRight' ? version % numVersions + 1
@@ -1069,26 +607,21 @@ export default function Stage3ReviewPage({
     event.currentTarget.parentNode?.querySelector(`[data-review-version="${next}"]`)?.focus();
   };
   const goToNextUnreviewed = () => {
-    const start = ((currentQuestionNo ?? 1) - 1) * numVersions + activeVersionTab;
-    for (let offset = 0; offset < totalExpectedSlots; offset++) {
-      const position = (start + offset) % totalExpectedSlots;
-      const version = position % numVersions + 1;
-      const number = Math.floor(position / numVersions) + 1;
-      const candidate = findVariantInSession(session, version, number);
-      if (!isVariantApproved(candidate, approvedVariantIds)) {
-        setSelectedQuestionNo(number);
-        setActiveVersionTab(version);
-        setSelectedSolution(null);
-        return;
-      }
+    ++navigationEpoch.current;
+    const next = findNextUnreviewed(session, activeVersionTab, currentQuestionNo ?? 1);
+    if (next) {
+      setSelectedQuestionNo(next.number);
+      setActiveVersionTab(next.version);
+      setInspection(null);
+      return;
     }
     setActionMessage({ type: 'success', text: 'Không còn câu chưa duyệt.' });
   };
 
   const handleSelectNavigatorQuestion = (qNo) => {
-    if (isApprovingSingle || isRegeneratingSingle || isRevertingSingle || isRetryingAll) return;
+    ++navigationEpoch.current;
     setSelectedQuestionNo(qNo);
-    setSelectedSolution(null);
+    setInspection(null);
   };
 
   const restoredViewRef = useRef(null);
@@ -1119,7 +652,7 @@ export default function Stage3ReviewPage({
   }, [approvalFocus, selectedSolution]);
 
   const isFinalizeDisabled =
-    totalExpectedSlots === 0 || approvedCount < totalExpectedSlots || isPartial || isReviewReadOnly || reviewSyncRequired || isApprovingSingle || isRegeneratingSingle || isRevertingSingle || isRetryingAll;
+    session?.progress?.ready !== true || session?.status !== 'reviewed' || activeRecovery || isPreviewBlocked || reviewSyncRequired || pendingActions.size > 0 || isRetryingAll;
 
   const isSelectedVariantApproved = useMemo(() => {
     return isVariantApproved(selectedSolution?.variant, approvedVariantIds);
@@ -1231,7 +764,7 @@ export default function Stage3ReviewPage({
     );
   }
 
-  const isAllApproved = totalExpectedSlots > 0 && approvedCount >= totalExpectedSlots && !isPartial;
+  const isAllApproved = !isFinalizeDisabled;
   const headerBadge = isFinalLocked
     ? { label: 'Đã phê duyệt & Khóa đề', className: 'border-approved-border bg-approved-bg text-approved-ink' }
     : isReviewReadOnly
@@ -1259,6 +792,8 @@ export default function Stage3ReviewPage({
       </header>
 
       <Stage3ReviewNotifications key={sessionId} message={actionMessage} />
+      {activeRecovery && <div role="status">Đang tạo lại câu hỏi. <button type="button"
+        onClick={() => void loadData()}>Kiểm tra lại</button></div>}
       {reviewSyncRequired && <div role="alert" className="stage3-session-notice">
         Chưa đối soát được trạng thái review.
         <button type="button" className="text-highlight underline" onClick={() => void loadData()}>Đọc lại trạng thái</button>
@@ -1332,7 +867,7 @@ export default function Stage3ReviewPage({
                 const isNavApproved = isVariantApproved(navVariant, approvedVariantIds);
                 const { isFallback: navFallback, hasWarning: navWarning } = getVariantWarningFlags(navVariant);
                 const isNavSelected = currentQuestionNo === qNo;
-                const isNavBusy = isNavSelected && (isRegeneratingSingle || isApprovingSingle || isRevertingSingle);
+                const isNavBusy = Boolean(navVariant && pendingActions.has(navVariant.candidate_id || navVariant.id || navVariant.question_id));
 
                 const statusText = isNavMissing
                   ? 'Thiếu câu'
@@ -1361,7 +896,7 @@ export default function Stage3ReviewPage({
                     data-review-nav-q={qNo}
                     aria-current={isNavSelected ? 'true' : undefined}
                     aria-label={`Câu ${qNo}: ${statusText}`}
-                    disabled={isApprovingSingle || isRegeneratingSingle || isRevertingSingle}
+                    disabled={isRetryingAll}
                     onClick={() => handleSelectNavigatorQuestion(qNo)}
                     className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-all disabled:opacity-60 ${pillTone} ${
                       isNavSelected ? 'ring-2 ring-highlight ring-offset-1' : ''
@@ -1391,7 +926,7 @@ export default function Stage3ReviewPage({
               <button
                 key={vIdx}
                 type="button"
-                disabled={isApprovingSingle || isRegeneratingSingle || isRevertingSingle || isRetryingAll}
+                disabled={isRetryingAll}
                 id={`stage3-version-${vIdx}`}
                 data-review-version={vIdx}
                 role="tab"
@@ -1469,8 +1004,8 @@ export default function Stage3ReviewPage({
             variant.validation_report?.message ||
             'Câu hỏi có cảnh báo nghiệm hoặc ràng buộc cần lưu ý.';
 
-          const pinned = selectedSolution?.qNo === qNo && selectedSolution?.versionIndex === activeVersionTab;
-          const isCardBusy = pinned && (isRegeneratingSingle || isApprovingSingle || isRevertingSingle);
+          const busyAction = pendingActions.get(variant.candidate_id || variant.id || variant.question_id);
+          const isCardBusy = Boolean(busyAction) || variant.status === 'regenerating';
           return (
             <div
               key={qNo}
@@ -1490,7 +1025,7 @@ export default function Stage3ReviewPage({
                   {isCardBusy ? (
                     <span className="inline-flex items-center gap-1 rounded-full border border-support-line bg-support-bg px-2.5 py-0.5 text-[11px] font-medium text-highlight">
                       <Loader2 className="h-3 w-3 animate-spin" />
-                      {isRegeneratingSingle ? 'Đang tạo lại' : isRevertingSingle ? 'Đang khôi phục' : 'Đang duyệt'}
+                      {busyAction === 'reject' || variant.status === 'regenerating' ? 'Đang tạo lại' : busyAction === 'revert' ? 'Đang khôi phục' : 'Đang duyệt'}
                     </span>
                   ) : isApproved ? (
                     <span className="inline-flex items-center gap-1 rounded-full border border-approved-border bg-approved-bg px-2.5 py-0.5 text-[11px] font-medium text-approved-ink">
@@ -1560,6 +1095,14 @@ export default function Stage3ReviewPage({
               )}
 
               <ReviewQuestionContent question={variant} />
+              <ReviewSolution question={variant} />
+              {!isReviewReadOnly && <button type="button" data-review-inline-approve
+                className="rounded-lg border border-accent-border bg-accent px-4 py-2"
+                disabled={isApproved || reviewSyncRequired || isCardBusy || isRetryingAll || !currentVariant || !(
+                    variant.candidate_id || variant.id || variant.question_id)}
+                onClick={() => void mutate('accept', { variant, qNo, versionIndex: activeVersionTab })}>
+                {isApproved ? 'Đã duyệt' : 'Duyệt biến thể'}
+              </button>}
 
 
 
@@ -1569,21 +1112,25 @@ export default function Stage3ReviewPage({
       </Stage3Comparison>
 
       {selectedSolution && <Stage3InspectionDialog
-        key={`${sessionId}-${selectedSolution.qNo}-${selectedSolution.versionIndex}`}
+        key={`${sessionId}-${selectedSolution.versionIndex}-${selectedSolution.qNo}-${selectedSolution.variant.candidate_id || selectedSolution.variant.id}`}
+        boundReasons={actionKeysRef.current.get(JSON.stringify(['reject', selectedSolution.variant.candidate_id ||
+          selectedSolution.variant.id || selectedSolution.variant.question_id]))?.reasons}
         selection={selectedSolution} versionLabel={versionLabel(session, selectedSolution.versionIndex)}
-        message={actionMessage} readOnly={isReviewReadOnly || reviewSyncRequired} approved={isSelectedVariantApproved}
-        busy={isRegeneratingSingle || isApprovingSingle || isRevertingSingle}
+        message={actionMessage} readOnly={isReviewReadOnly || reviewSyncRequired || selectedSolution.variant.status === 'regenerating'} approved={isSelectedVariantApproved}
+        busy={pendingActions.has(selectedSolution.variant.candidate_id || selectedSolution.variant.id || selectedSolution.variant.question_id)}
+        canRegenerate={selectedSolution.variant.result_kind !== 'ORIGINAL_CLONE'}
+        rejectBusy={activeRecovery || [...pendingActions.values()].includes('reject')}
         canRevert={Boolean(session?.confirmation_id && session?.job_snapshot_id && (selectedSolution.variant.candidate_id || selectedSolution.variant.id || selectedSolution.variant.question_id))}
-        onClose={() => setSelectedSolution(null)} onApprove={handleApproveSingle}
-        onRegenerate={handleRegenerateSingle} onRevert={handleRevertSingle} onNext={goToNextUnreviewed}
+        onClose={() => setInspection(null)} onApprove={() => mutate('accept', selectedSolution)}
+        onRegenerate={reasons => mutate('reject', selectedSolution, reasons)} onRevert={() => mutate('revert', selectedSolution)} onNext={goToNextUnreviewed}
       />}
 
       <div className="stage3-pair-actions">
         <button type="button" data-review-inspect={true}
-          disabled={!currentVariant || isRegeneratingSingle || isApprovingSingle || isRevertingSingle || isRetryingAll}
+          disabled={!currentVariant || isRetryingAll}
           aria-expanded={Boolean(inspectionOpen)}
           aria-controls={currentVariant ? `solution-${activeVersionTab}-${currentQuestionNo}` : undefined}
-          onClick={() => inspectionOpen ? setSelectedSolution(null) : handleOpenSolutionModal(currentVariant, currentQuestionNo, activeVersionTab)}
+          onClick={() => inspectionOpen ? setInspection(null) : handleOpenSolutionModal(currentVariant, currentQuestionNo, activeVersionTab)}
           className="inline-flex items-center gap-2 rounded-lg border border-accent-border bg-accent px-4 py-2 text-sm font-semibold text-strong hover:opacity-90 disabled:opacity-50">
           <Eye className="h-4 w-4" aria-hidden="true" />
           {inspectionOpen ? 'Đóng đối chiếu' : 'Kiểm tra đáp án'}
@@ -1642,7 +1189,7 @@ export default function Stage3ReviewPage({
             )}
             {isFinalizeDisabled ? (
               <p className="text-xs sm:text-sm text-muted" role="status">
-                {reviewSyncRequired ? 'Cần đọc lại trạng thái review.' : isReviewReadOnly ? 'Phiên đang chỉ xem hoặc đã khóa.' : totalExpectedSlots === 0 ? 'Chưa có đủ dữ liệu câu hỏi.' : isPartial ? 'Cần sinh đủ câu và duyệt tất cả câu hỏi.' : `Còn ${Math.max(0, totalExpectedSlots - approvedCount)} câu chưa duyệt.`}
+                {reviewSyncRequired ? 'Cần đọc lại trạng thái review.' : isReviewReadOnly ? 'Phiên đang chỉ xem hoặc đã khóa.' : totalExpectedSlots === 0 ? 'Chưa có đủ dữ liệu câu hỏi.' : isPartial ? 'Cần sinh đủ câu và duyệt tất cả câu hỏi.' : approvedCount === totalExpectedSlots ? 'Đang chờ phiên sẵn sàng xem trước.' : `Còn ${Math.max(0, totalExpectedSlots - approvedCount)} câu chưa duyệt.`}
               </p>
             ) : (
               <p className="text-xs font-semibold text-approved-ink" role="status">

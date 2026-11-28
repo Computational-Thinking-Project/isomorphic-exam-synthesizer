@@ -1,0 +1,176 @@
+{
+  "revision": 1,
+  "description": "Synthetic projected fields for consumer compatibility checks; blueprint objects contain policy fields only.",
+  "legacy_snapshot": {
+    "id": "a0000000-0000-0000-0000-000000000001",
+    "session_id": "10000000-0000-0000-0000-000000000001",
+    "mapping_version": "1.0",
+    "public_modes": [],
+    "canonical_dimensions": [],
+    "snapshot_payload": {}
+  },
+  "mixed_snapshot": {
+    "id": "a0000000-0000-0000-0000-000000000001",
+    "session_id": "10000000-0000-0000-0000-000000000001",
+    "mapping_version": "1.1",
+    "public_modes": [
+      "parameter_variation"
+    ],
+    "canonical_dimensions": [
+      "values"
+    ],
+    "snapshot_payload": {
+      "confirmed_sources": [
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000001",
+          "canonical_blueprint": {
+            "requirement": {
+              "variation_policy": {
+                "id": "R_VARIATION",
+                "equivalence_level": "strict_structure",
+                "allowed_transformations": [
+                  {
+                    "id": "V_CONTEXT",
+                    "dimension": "wording",
+                    "description": "Đổi tên nhân vật, màu hoặc vật trang trí.",
+                    "target_refs": [
+                      "E_LAMPS"
+                    ],
+                    "preconditions": [
+                      "Giữ tính phân biệt của các vật và phép lắp đồng khả năng."
+                    ],
+                    "limits": []
+                  }
+                ],
+                "parameter_domains": [
+                  {
+                    "quantity_ref": "Q_K",
+                    "description": "Bội nguyên dương của 55.",
+                    "allowed_values": null,
+                    "minimum": {
+                      "type": "integer",
+                      "value": 55
+                    },
+                    "maximum": null,
+                    "conditions": [
+                      "k là số nguyên.",
+                      "k chia hết cho 55."
+                    ]
+                  }
+                ],
+                "forbidden_changes": [
+                  "Đổi số cạnh hoặc số bóng đỏ.",
+                  "Đổi mọi hình vuông thành tồn tại một hình vuông.",
+                  "Cung cấp hình minh họa."
+                ],
+                "workload_limits": [
+                  "Giữ bước suy ra phân bố (2,1,1).",
+                  "Không thêm kiến thức ngoài hình học đường tròn và tổ hợp cơ bản."
+                ]
+              }
+            }
+          }
+        },
+        {
+          "source_question_id": "20000000-0000-0000-0000-000000000002",
+          "canonical_blueprint": {
+            "requirement": {
+              "variation_policy": {
+                "id": "R_VARIATION",
+                "equivalence_level": "strict_structure",
+                "allowed_transformations": [
+                  {
+                    "id": "V_CONTEXT",
+                    "dimension": "values",
+                    "description": "Đổi tên nhân vật, màu hoặc vật trang trí.",
+                    "target_refs": [
+                      "E_LAMPS"
+                    ],
+                    "preconditions": [
+                      "Giữ tính phân biệt của các vật và phép lắp đồng khả năng."
+                    ],
+                    "limits": []
+                  }
+                ],
+                "parameter_domains": [
+                  {
+                    "quantity_ref": "Q_K",
+                    "description": "Bội nguyên dương của 55.",
+                    "allowed_values": null,
+                    "minimum": {
+                      "type": "integer",
+                      "value": 55
+                    },
+                    "maximum": null,
+                    "conditions": [
+                      "k là số nguyên.",
+                      "k chia hết cho 55."
+                    ]
+                  }
+                ],
+                "forbidden_changes": [
+                  "Đổi số cạnh hoặc số bóng đỏ.",
+                  "Đổi mọi hình vuông thành tồn tại một hình vuông.",
+                  "Cung cấp hình minh họa."
+                ],
+                "workload_limits": [
+                  "Giữ bước suy ra phân bố (2,1,1).",
+                  "Không thêm kiến thức ngoài hình học đường tròn và tổ hợp cơ bản."
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "question_policies": {
+        "20000000-0000-0000-0000-000000000001": {
+          "canonical_dimensions": [],
+          "result_kind": "ORIGINAL_CLONE"
+        },
+        "20000000-0000-0000-0000-000000000002": {
+          "canonical_dimensions": [
+            "values"
+          ],
+          "result_kind": "AI_RESULT"
+        }
+      }
+    }
+  },
+  "slots": [
+    {
+      "source_question_id": "20000000-0000-0000-0000-000000000001",
+      "version_question_id": "40000000-0000-0000-0000-000000000005",
+      "result_kind": "ORIGINAL_CLONE",
+      "solution_md": null
+    },
+    {
+      "source_question_id": "20000000-0000-0000-0000-000000000002",
+      "version_question_id": "40000000-0000-0000-0000-000000000008",
+      "result_kind": "AI_RESULT",
+      "solution_md": "5x = 15 nên x = 3."
+    }
+  ],
+  "negative_overrides": [
+    {
+      "path": "/mapping_version",
+      "value": "unknown"
+    },
+    {
+      "path": "/snapshot_payload/question_policies",
+      "value": {}
+    },
+    {
+      "path": "/snapshot_payload/question_policies/20000000-0000-0000-0000-000000000001",
+      "value": {
+        "canonical_dimensions": [
+          "values"
+        ],
+        "result_kind": "AI_RESULT"
+      }
+    },
+    {
+      "path": "/session_id",
+      "value": "10000000-0000-0000-0000-000000000002"
+    }
+  ]
+}

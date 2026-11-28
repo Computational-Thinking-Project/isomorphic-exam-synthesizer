@@ -8,6 +8,7 @@ or second operation ledger is implemented here.
 import asyncio
 import logging
 import re
+from collections.abc import Iterable
 from typing import Any, Dict, List, Optional, Union, cast
 from uuid import UUID, uuid4
 
@@ -16,6 +17,8 @@ from supabase import Client
 from app.models.schemas import (
     ReviewAcquireUnavailableError,
     ReviewDomainException,
+    ReviewReasonCode,
+    canonicalize_review_reasons,
 )
 from app.services.generation.attempts import AttemptPermit
 from app.services.review.receipts import (
@@ -35,6 +38,17 @@ from app.services.review.validation import validate_candidate
 logger = logging.getLogger(__name__)
 
 
+def _canonical_reasons_or_422(
+    reasons: Optional[Iterable[ReviewReasonCode | str]],
+) -> list[ReviewReasonCode]:
+    try:
+        return canonicalize_review_reasons(reasons)
+    except (TypeError, ValueError) as exc:
+        raise ReviewDomainException(
+            422, "ERR_INVALID_PAYLOAD", "Invalid rejection reasons"
+        ) from exc
+
+
 def _get_rows(res: Any) -> List[Dict[str, Any]]:
     """Extract list of dict rows safely from Supabase query response."""
     if not res or not getattr(res, "data", None):
@@ -52,6 +66,13 @@ def _map_rpc_exception(exc: Exception, rpc_name: Optional[str] = None) -> Review
         return ReviewDomainException(
             404, "ERR_QUESTION_NOT_FOUND", "Không tìm thấy câu hỏi hoặc phiên thi"
         )
+    for code, detail in (
+        ("ERR_MODE_SHUFFLE_ONLY", "Phiên chỉ xáo đề không cho phép tạo lại hoặc khôi phục câu."),
+        ("ERR_SLOT_POLICY_CLONE_ONLY", "Câu này giữ nguyên đề gốc và không cho phép tạo lại."),
+        ("ERR_CONFIG_CONFLICT", "Cấu hình sinh đề đã khóa không hợp lệ hoặc không khớp."),
+    ):
+        if code in msg:
+            return ReviewDomainException(409, code, detail)
     if "REVIEW_BUSY" in msg:
         return ReviewDomainException(
             409,
@@ -74,7 +95,9 @@ def _map_rpc_exception(exc: Exception, rpc_name: Optional[str] = None) -> Review
         return ReviewDomainException(
             429, "ERR_REVIEW_QUOTA_EXHAUSTED", "Đã hết quota 30 lượt sinh lại của buổi review"
         )
-    if "REVIEW_NOT_READY" in msg or "REVIEW_POST_SHUFFLE_LOCKED" in msg:
+    if "REVIEW_POST_SHUFFLE_LOCKED" in msg:
+        return ReviewDomainException(409, "ERR_SHUFFLE_REQUIRED", "Review closed after shuffle")
+    if "REVIEW_NOT_READY" in msg:
         return ReviewDomainException(
             409, "ERR_REVIEW_STATE_CONFLICT", "Trạng thái phiên thi không hợp lệ cho thao tác thẩm định"
         )
@@ -186,10 +209,20 @@ class ReviewRepository:
         )
 
     async def reserve_max_quota_and_start_regenerating(
-        self, session_id: str, question_id: str, user_id: str, operation_id: Optional[UUID] = None
+        self,
+        session_id: str,
+        question_id: str,
+        user_id: str,
+        operation_id: Optional[UUID] = None,
+        reasons: Optional[Iterable[ReviewReasonCode | str]] = None,
     ) -> ReservationReceipt:
         """Compatibility name; callers must retain the complete durable receipt."""
-        return await self.reserve_regeneration(session_id, question_id, operation_id or uuid4())
+        return await self.reserve_regeneration(
+            session_id,
+            question_id,
+            operation_id or uuid4(),
+            reasons=reasons,
+        )
 
     def _rpc(
         self, name: str, parameters: Dict[str, Any], *, worker: bool = False
@@ -211,35 +244,63 @@ class ReviewRepository:
         return rpc_object(response.data)
 
     async def lookup_regeneration(
-        self, session_id: str, question_id: str, operation_id: UUID
+        self,
+        session_id: str,
+        question_id: str,
+        operation_id: UUID,
+        reasons: Optional[Iterable[ReviewReasonCode | str]] = None,
     ) -> ReservationReceipt | None:
-        data = self._rpc("review_lookup_regeneration", {
-            "p_session_id": session_id, "p_question_id": question_id,
-            "p_operation_id": str(operation_id),
-        })
+        canonical_reasons = _canonical_reasons_or_422(reasons)
+        data = self._rpc(
+            "review_lookup_regeneration",
+            {
+                "p_session_id": session_id,
+                "p_question_id": question_id,
+                "p_operation_id": str(operation_id),
+                "p_reasons": [reason.value for reason in canonical_reasons],
+            },
+        )
         if data == {"found": False} and type(data.get("found")) is bool:
             return None
         if set(data) != {"found", "reservation"} or data.get("found") is not True:
             raise ReviewDomainException(503, "ERR_INVALID_RESERVATION", "Invalid receipt lookup")
-        receipt = reservation_receipt(data["reservation"], session_id, question_id, operation_id)
+        receipt = reservation_receipt(
+            data["reservation"],
+            session_id,
+            question_id,
+            operation_id,
+            reasons=canonical_reasons,
+        )
         if not receipt.replayed:
             raise ReviewDomainException(503, "ERR_INVALID_RESERVATION", "Lookup did not return a replay")
         return receipt
 
     async def reserve_regeneration(
-        self, session_id: str, question_id: str, operation_id: UUID
+        self,
+        session_id: str,
+        question_id: str,
+        operation_id: UUID,
+        reasons: Optional[Iterable[ReviewReasonCode | str]] = None,
     ) -> ReservationReceipt:
+        canonical_reasons = _canonical_reasons_or_422(reasons)
         data = self._rpc(
             "review_reserve_regeneration",
             {
                 "p_session_id": session_id,
                 "p_question_id": question_id,
                 "p_operation_id": str(operation_id),
+                "p_reasons": [reason.value for reason in canonical_reasons],
             },
         )
         # Expiry belongs to DB-clock acquire/complete checks. Settled receipts can
         # legitimately replay after the original lease has expired.
-        return reservation_receipt(data, session_id, question_id, operation_id)
+        return reservation_receipt(
+            data,
+            session_id,
+            question_id,
+            operation_id,
+            reasons=canonical_reasons,
+        )
 
     async def complete_regeneration(
         self, session_id: str, question_id: str, operation_id: UUID, candidate: Dict[str, Any]

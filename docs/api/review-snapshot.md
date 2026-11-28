@@ -49,6 +49,7 @@ interface ReviewSnapshotResponse {
   session_id: string; // UUID
   session_status: string; // "generated" | "partial_generated" | "reviewed" | "failed"
   read_only: boolean;
+  generation_mode?: "ai_generation" | "shuffle_only" | null;
   confirmation_id: string; // UUID
   job_snapshot_id: string; // UUID
   confirmed_source_hash: string; // SHA-256 hex string
@@ -86,6 +87,7 @@ interface ReviewSnapshotVersion {
 interface ReviewSnapshotSlot {
   source_question_id: string; // UUID
   question_no: number;
+  result_kind?: "AI_RESULT" | "ORIGINAL_CLONE" | null;
   candidate: ReviewSnapshotCandidate | null;
 }
 
@@ -106,6 +108,10 @@ interface ReviewSnapshotCandidate {
 ```
 
 ---
+
+Kể từ migration `029b`, snapshot công bố `generation_mode` từ frozen job và `result_kind` của từng slot, kể cả slot còn thiếu candidate. `result_kind` là policy của slot. Trường `candidate.origin` mô tả nguồn gốc của dữ liệu đang hiển thị. Hai trường capability có thể vắng hoặc null trên response cũ. Khi mode có giá trị, tất cả slot phải có policy hợp lệ. Capability là một phần của `freshness_token`.
+
+Review của `shuffle_only` chỉ xem. Nút Preview vẫn theo trạng thái `reviewed` và readiness của server. Trong `ai_generation`, slot `ORIGINAL_CLONE` vẫn cho Accept/Revert theo các guard hiện có. RPC trả `409 ERR_SLOT_POLICY_CLONE_ONLY` khi gửi Reject mới cho slot đó, `409 ERR_MODE_SHUFFLE_ONLY` cho Reject/Revert mới trong shuffle-only, và `409 ERR_CONFIG_CONFLICT` nếu frozen config thiếu hoặc không nhất quán.
 
 ## 4. Invariants & Quy tắc Ràng buộc
 

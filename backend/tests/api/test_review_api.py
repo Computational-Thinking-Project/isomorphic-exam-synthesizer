@@ -201,6 +201,7 @@ def test_reject_question_with_idempotency_key(
                 MOCK_QUESTION_ID,
                 mock_current_user.id,
                 idempotency_key=idempotency_uuid,
+                reasons=[],
             )
     finally:
         app.dependency_overrides.clear()

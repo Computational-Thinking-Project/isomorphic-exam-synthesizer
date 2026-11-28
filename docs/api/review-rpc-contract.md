@@ -28,8 +28,8 @@ payloads/results JSONB. Each mutation is one short transaction; AI runs outside 
 
 | RPC | Parameters after `p_` | Allowed caller | Main result |
 |---|---|---|---|
-| `review_lookup_regeneration` | `session_id UUID, question_id UUID, operation_id UUID` | Owner JWT only | `{found:false}` or `{found:true,reservation:<stored receipt with current operation_status/settlement>}`; read only |
-| `review_reserve_regeneration` | `session_id UUID, question_id UUID, operation_id UUID` | Owner JWT | `operation_id, question_id, expires_at, max_attempts, snapshot, operation_status` |
+| `review_lookup_regeneration` | `session_id UUID, question_id UUID, operation_id UUID, reasons JSONB` (029) | Owner JWT only | `{found:false}` or `{found:true,reservation:<stored receipt with current operation_status/settlement>}`; read only |
+| `review_reserve_regeneration` | `session_id UUID, question_id UUID, operation_id UUID, reasons JSONB` (029) | Owner JWT | `operation_id, question_id, expires_at, max_attempts, snapshot, operation_status` |
 | `review_acquire_attempt` | `operation_id UUID, attempt_id UUID` | Worker | The six-field permit below |
 | `review_complete_regeneration` | `operation_id UUID, candidate JSONB` | Worker | `operation_id, previous_question_id, question_id, api_calls_used, invalidated_version_ids, progress` |
 | `review_fail_regeneration` | `operation_id UUID, error_code TEXT` | Worker | `operation_id, question_id, api_calls_used, operation_status, recovered, progress` |
@@ -237,6 +237,32 @@ Storage errors use `ARTIFACT_NOT_FOUND`, `ARTIFACT_WORKER_REQUIRED`,
 failure retains `REVIEW_SOURCE_MISMATCH`; the pinned strict caller maps invalid
 frozen evidence to HTTP 422 `ERR_SOURCE_NOT_CONFIRMED`. TASK-301's producer maps
 artifact errors at the public boundary; raw SQL/provider exceptions are not public payloads.
+
+### EXT-01 local contract (migration 029, shared rollout pending Q05)
+
+The four SQL arguments use the `p_` prefix. Both authenticated RPCs require canonicalizable reasons. Historical reservations without a reasons field bind to the empty set. A different set on the same key returns HTTP 409 `ERR_ATTEMPT_REPLAYED`. Completed owner receipts include the ledger's `completion_candidate` and `settlement`. The first response, uncertain completion and replay project these fields with the original pending-review status. Clients read the snapshot for current state.
+
+`POST /api/sessions/{session_id}/review/recover` authenticates the session owner, checks the owner snapshot before the worker call, then returns `{recovered_count, has_active_operation, snapshot}` after a fresh snapshot read. The worker checks editability and the post-shuffle boundary under the database session lock. A failed final read can be retried. An active keyed Reject attempts expiry recovery and looks up the original binding again before testing AI availability. A live lease returns `ERR_QUESTION_BUSY`, a failed or recovered operation returns `ERR_OPERATION_FINISHED`.
+
+### Q04 frozen generation policy (029b)
+
+Apply `028_generation_mode` before `029_ext01_review_reasons` and `029b_ext01_review_mode_policy` on the integration branch. Review uses the EXT-02 SQL helpers for frozen mode and slot policy. An isolated branch without 028 can resolve only historical mapping 1.0/1.1. A new or unknown mapping requires the producer contract and fails closed otherwise. Existing pre-job workflows retain their legacy behavior.
+
+Owner idempotency lookup and the replay branches precede mode checks. New Reject and Revert writes enforce policy under the session lock. A fresh AI reservation carries `variation_dimensions` on the receipt, separate from the artifact snapshot. Mapping 1.0 uses the job-wide dimensions and 1.1/1.2 use the frozen per-source dimensions. The targeted adapter uses these canonical dimensions and keeps the original artifact checks. The snapshot API publishes the [mode and slot capabilities](review-snapshot.md#3-cấu-trúc-response-200-ok).
+
+### Q07 private recovery for EXT-04 DELETE
+
+`public._review_recover_expired_locked(uuid) → jsonb` returns the same recovery receipt array used by the worker RPC, or `[]` when no active lease has expired. The helper locks the operation after the caller has locked and authorized the parent session row. It calls `public._review_finish_failure_locked(public.review_operations, text, boolean) → jsonb`, which consumes the locked row and enforces the existing settlement invariants. Both helpers are security invoker. EXECUTE is revoked from PUBLIC, anon, authenticated and service_role. The trusted SECURITY DEFINER entry point must run as the migration owner or a trusted database owner with equivalent access. Confirm effective ownership in the target before rollout.
+
+Inside the future DELETE transaction, authenticate, lock `exam_sessions` and verify ownership under that lock. Reject approved/exported or non-null `approved_at` with 423 and active generation with 409. Then invoke the helper using the locked session ID:
+
+```sql
+PERFORM public._review_recover_expired_locked(locked_session.id);
+```
+
+Recheck session eligibility and the operation ledger under the same lock. If an active operation remains, return 409 `ERR_REVIEW_OPERATION_ACTIVE`. Continue with EXT-04 deletion checks and deletion in that transaction. A failed transaction rolls back recovery with deletion. Draft cleanup with no active operation returns `[]`. Live leases stay active. Expired operations must pass the existing session and current-candidate invariants, restore prior status, retain charged calls and audit actor, and recalculate readiness.
+
+The public worker session RPC retains its authorization, session guards and response shape. Operation failure and recovery continue through the worker-authorized wrapper. EXT-04 consumer acceptance and tests against production DELETE are pending.
 
 ### Caller recovery order (R1)
 

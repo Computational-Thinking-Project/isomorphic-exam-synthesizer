@@ -96,10 +96,13 @@ def frozen_inputs(receipt: ReservationReceipt) -> dict[str, Any]:
                     raise ValueError("Invalid peer set")
                 ids.add(qid)
                 versions.add(vid)
-        return {
+        inputs = {
             key: data[key]
             for key in ("source_snapshot", "blueprint", "current_variant", "peer_variants")
         }
+        if receipt.variation_dimensions is not None:
+            inputs["variation_modes"] = receipt.variation_dimensions
+        return inputs
     except (ValueError, KeyError, TypeError, AttributeError, ToolError) as exc:
         raise ReviewDomainException(
             422,

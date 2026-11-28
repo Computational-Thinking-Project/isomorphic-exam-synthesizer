@@ -8,18 +8,21 @@ Exposes:
 """
 
 import logging
-from typing import Any, Callable, Optional
+from typing import Annotated, Any, Callable, Optional
 
-from fastapi import APIRouter, Depends, Header, Request, Response, status
+from fastapi import APIRouter, Body, Depends, Header, Request, Response, status
 from supabase import Client
 
 from app.api.dependencies import assert_ownership, get_current_user, get_service_db, get_user_db
 from app.models.schemas import (
     CurrentUser,
     RegeneratedQuestionResponse,
+    RejectQuestionRequest,
     ReviewActionResponse,
     ReviewProgressResponse,
+    ReviewRecoveryResponse,
     ReviewSnapshotResponse,
+    canonicalize_review_reasons,
 )
 from app.services.review.service import ReviewService, action_key, resource_ids
 
@@ -84,12 +87,13 @@ async def accept_question_endpoint(
     summary="Reject question and regenerate a new variant (TASK-301)",
     description=(
         "Từ chối câu hỏi biến thể và kích hoạt AI sinh lại câu mới ngoài DB transaction. "
-        "Thao tác nhị phân nghiêm ngặt (không nhận text từ chối thủ công)."
+        "Hỗ trợ optional structured reason codes (chuẩn hóa sort + deduplicate; không nhận free text)."
     ),
 )
 async def reject_question_endpoint(
     session_id: str,
     version_question_id: str,
+    payload: Annotated[Optional[RejectQuestionRequest], Body()] = None,
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     current_user: CurrentUser = Depends(get_current_user),
     db: Client = Depends(get_user_db),
@@ -97,6 +101,9 @@ async def reject_question_endpoint(
     ai_generator: Optional[Callable[..., Any]] = Depends(get_ai_generator),
 ) -> RegeneratedQuestionResponse:
     """Reject question variant and trigger targeted regeneration."""
+    canonical_reasons = canonicalize_review_reasons(
+        payload.reasons if payload is not None else None
+    )
     resource_ids(session_id, version_question_id)
     if idempotency_key is not None:
         action_key(idempotency_key)
@@ -105,7 +112,11 @@ async def reject_question_endpoint(
 
     service = ReviewService(db=db, service_db=service_db, ai_generator=ai_generator)
     return await service.reject_question(
-        session_id, version_question_id, current_user.id, idempotency_key=idempotency_key
+        session_id,
+        version_question_id,
+        current_user.id,
+        idempotency_key=idempotency_key,
+        reasons=canonical_reasons,
     )
 
 
@@ -177,3 +188,15 @@ async def get_review_snapshot_endpoint(
 
     service = ReviewService(db=db)
     return await service.get_current_snapshot(session_id, current_user.id)
+
+
+@router.post("/{session_id}/review/recover", response_model=ReviewRecoveryResponse)
+async def recover_review_endpoint(
+    session_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Client = Depends(get_user_db),
+    service_db: Client = Depends(get_service_db),
+) -> ReviewRecoveryResponse:
+    resource_ids(session_id)
+    assert_ownership("exam_sessions", session_id, current_user.id, db=db)
+    return await ReviewService(db=db, service_db=service_db).recover(session_id)

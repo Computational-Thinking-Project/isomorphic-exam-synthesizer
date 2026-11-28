@@ -284,6 +284,7 @@ async def setup_real_postgres_database(isolated_pg_dsn):  # noqa: F811
         for migration in (
             "008_finalize_persist_shuffle_rpc.sql",
             "009_finalize_security_boundary.sql",
+            "029_ext01_review_reasons.sql",
         ):
             path = os.path.abspath(
                 os.path.join(os.path.dirname(__file__), "../../migrations", migration)
@@ -620,6 +621,7 @@ async def test_preview_snapshot_on_real_pg(
                     1, '["A1","B1","C1","D1"]'::jsonb, 'A', 'Chọn đáp án A', 'Chọn đáp án A', 'approved', true),
                    ('{q2_102}', '{v102_id}', '{src2_id}', 2, 'Question 2 v102', '["A2","B2","C2","D2"]'::jsonb, 'C',
                     2, '["A2","B2","C2","D2"]'::jsonb, 'C', 'Chọn đáp án C', 'Chọn đáp án C', 'approved', true);
+        SELECT public._review_recalculate('{s_id}');
         """)
     finally:
         await conn.close()

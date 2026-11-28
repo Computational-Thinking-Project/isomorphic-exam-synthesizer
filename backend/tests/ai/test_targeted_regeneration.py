@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -8,7 +9,7 @@ from uuid import uuid4
 import pytest
 
 from app.models.generation import ValidationReport
-from app.models.schemas import SourceQuestion
+from app.models.schemas import ReviewReasonCode, SourceQuestion
 from app.models.targeted import RegeneratedVariantResult
 from app.services.blueprint.adapters import prepare_sources
 from app.services.blueprint.common import canonical
@@ -183,3 +184,51 @@ async def test_denied_permit_does_not_consume_candidate_or_retry(handoff):
     assert exc.value.api_calls_count == 0
     assert len(handoff.responses) == 1
     handoff.args["acquire_attempt"].assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_teacher_feedback_survives_schema_and_duplicate_retries(handoff):
+    h = handoff
+    h.responses[:] = ["broken json", h.data["candidates"][0], h.data["candidates"][1]]
+    await h.adapter(**h.args, teacher_reasons=(ReviewReasonCode.INCORRECT_ANSWER,))
+    prompts = [json.loads(call.kwargs["contents"].split("\nINPUT_JSON:\n", 1)[1]) for call in h.gateway.generate_content.await_args_list]
+    assert len(prompts) == 3
+    for prompt in prompts:
+        assert prompt["feedback"][0]["code"] == "INCORRECT_ANSWER"
+    assert len(prompts[0]["feedback"]) == 1
+    assert all(len(prompt["feedback"]) > 1 for prompt in prompts[1:])
+
+@pytest.mark.asyncio
+async def test_teacher_feedback_survives_solution_only_repair(handoff):
+    h = handoff
+    candidate = h.data["candidates"][1]
+    broken = copy.deepcopy(candidate)
+    broken["solution"]["correct_key"] = next(key for key in "ABCD" if key != candidate["correct_key"])
+    h.responses[:] = [broken, candidate["solution"]]
+    result = await h.adapter(**h.args, teacher_reasons=(ReviewReasonCode.INCORRECT_SOLUTION,))
+    assert result["api_calls_count"] == 2
+    repair = json.loads(h.gateway.generate_content.await_args_list[1].kwargs["contents"].split("\nINPUT_JSON:\n", 1)[1])
+    assert repair["feedback"][0]["code"] == "INCORRECT_SOLUTION"
+    assert repair["previous"]["question_text"] == candidate["question_text"]
+
+
+@pytest.mark.skipif(os.getenv("RUN_EXT01_LIVE_AI") != "1", reason="opt-in Gemini smoke")
+@pytest.mark.asyncio
+async def test_live_teacher_feedback_with_synthetic_source(handoff):
+    from app.core.config import settings
+    from app.services.ai.gateway import GeminiGateway
+
+    if not settings.get_gemini_api_keys():
+        pytest.skip("Gemini credentials unavailable")
+    async with GeminiGateway(settings) as gateway:
+        adapter = TargetedRegenerator(GenerationService(gateway))
+        result = await adapter(**handoff.args, teacher_reasons=(ReviewReasonCode.INCORRECT_SOLUTION,))
+    assert 1 <= result["api_calls_count"] == len(handoff.grants) <= 4
+    assert result["validation_report"]["is_valid"] and result["solution_md"]
+
+
+@pytest.mark.asyncio
+async def test_frozen_variation_modes_reach_targeted_prompt(handoff):
+    await handoff.adapter(**handoff.args, variation_modes=["values", "context"])
+    prompt = handoff.gateway.generate_content.await_args.kwargs["contents"]
+    assert json.loads(prompt.split("INPUT_JSON:\n", 1)[1])["variation_modes"] == ["values", "context"]

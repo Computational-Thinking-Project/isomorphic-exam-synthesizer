@@ -1,3 +1,25 @@
+## EXT-01 · Q04 guard theo frozen generation policy
+
+Migration `029b` áp dụng sau ledger/recovery `029` và schema mode `028` của EXT-02 trên head ghép. Reject/Revert mới dùng frozen mode dưới session lock. Reject dùng slot policy, lưu dimensions trong reservation receipt và chuyển đến targeted prompt. Snapshot chiếu capabilities cho Review UI. Replay giữ ràng buộc đã ghi trước khi xét guard mới. [Contract API](api/review-snapshot.md#3-cấu-trúc-response-200-ok)
+
+## EXT-01 · Q07 recovery dưới khóa session
+
+Migration `029` cung cấp recovery private cho transaction DELETE của EXT-04 và dùng lại settlement của worker. Quyền EXECUTE của các RPC worker và response public được giữ. EXT-04 chờ nối và kiểm consumer. [Contract](api/review-rpc-contract.md#q07-private-recovery-for-ext-04-delete)
+
+## EXT-01 · Q05 migration numbering
+
+`029_ext01_review_reasons.sql` tiếp sau `028_generation_mode.sql` của EXT-02. Lượt đổi số giữ nguyên SQL. Applied ledger dùng chung chưa xác minh và rollout chờ G3. [Phương án rollout](tasks/EXT-01/02-durable-reasons.md#section-3-2-1)
+
+## DEC-EXT01-001 · Receipt bất biến và phục hồi Review theo phiên
+
+Ngày 27/11/2026. EXT-01, Duy phụ trách. Bản triển khai G0/G1 trong Draft PR #111. Rollout DB dùng chung ở trạng thái proposed.
+
+- **Bối cảnh.** Sau khi mất response, candidate hiện tại có thể đã được duyệt hoặc thay thế. Reload tab cũng có thể mất key của operation đang giữ lease.
+- **Quyết định.** Migration 028 local chiếu candidate đã commit và ràng buộc reasons vào receipt. Reject dùng cùng projection cho ba đường trả kết quả. POST recovery xác minh owner và guard, dùng DB clock, trả snapshot. Targeted regeneration nhận feedback cố định từ receipt. Stage 3 đọc lại snapshot sau thao tác và mở Preview theo readiness của server.
+- **Ảnh hưởng.** Worker và owner tiếp tục dùng hai quyền RPC riêng. Consumer có fixture Review revision 1 và mẫu tương thích. Deployment và các contract Q04–Q08 còn chờ owner. [Contract](api/review-rpc-contract.md) · [Bàn giao](tasks/EXT-01/09-inputs-handoff.md#handoff-20261127)
+
+---
+
 ## PR #109 — Windows full regression passed — 25/11/2026
 
 - Sau xác nhận của Philip về khả năng phát sinh telemetry, full frontend Windows **621/621 pass**,0fail/skip/cancel/108.27s, HEAD72adb9f/source8a6f600. [Checkpoint6.25](tasks/ISSUE-95.md) thay trạng thái full bị chặn/chưa xác nhận trước đó bằng kết quả mới.

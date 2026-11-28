@@ -1,6 +1,14 @@
 import MathRenderer from '../../components/MathRenderer.jsx';
 import { normalizeOptions } from '../../services/stage3Service.js';
 
+export function ReviewSolution({ question }) {
+  const solution = question?.solution_md?.trim();
+  return <section aria-label="Lời giải"><h3>Lời giải</h3>
+    {solution && solution !== 'Không có lời giải cho câu hỏi này.'
+      ? <MathRenderer content={solution} /> : <p>Chưa có lời giải</p>}
+  </section>;
+}
+
 export function ReviewQuestionContent({ question }) {
   const options = normalizeOptions(question?.options);
   const key = String(question?.correct_key || question?.answer || '').trim().toUpperCase();
@@ -33,7 +41,7 @@ export default function Stage3Comparison({ source, questionNo, versionIndex, tab
           <span className="stage3-readonly-badge">Chỉ đọc</span>
         </header>
         <div className="stage3-panel-body" tabIndex={0} key={questionNo}>
-          {source ? <ReviewQuestionContent question={source} /> : <p>Chưa có câu nguồn để đối chiếu.</p>}
+          {source ? <><ReviewQuestionContent question={source} /><ReviewSolution question={source} /></> : <p>Chưa có câu nguồn để đối chiếu.</p>}
         </div>
       </section>
       <section data-review-variant className="stage3-read-panel stage3-variant-panel" aria-label="Biến thể đang đối chiếu">
