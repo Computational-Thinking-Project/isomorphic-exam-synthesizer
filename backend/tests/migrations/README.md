@@ -1,5 +1,29 @@
 # TASK-302 PostgreSQL schema and RPC tests
 
+## EXT-04 Bank and guarded DELETE rehearsal
+
+Both suites load the pinned `dev@b292443` schema through 027. The Bank suite
+applies the Bank fixture to populated DBs and checks backfill replay, owner
+isolation, legacy ledger preservation and the advisory capacity check. The DELETE
+suite adds 028/028b/028c from #112 and 029/029b from #111. The Git objects
+must be available locally. From the repo root:
+
+```powershell
+git fetch --no-tags origin b230f7bc10283132a197ec87212c4bb80beacd55 8fb21e6f7e50cd241d0df1543389c2749130bda3
+$env:RUN_POSTGRES_MIGRATION_TESTS = '1'
+python -m pytest backend/tests/migrations/test_ext04_exam_bank_pg.py backend/tests/migrations/test_ext04_delete_session_pg.py -q
+```
+
+The disposable PostgreSQL database tests authorization, cascades, live Review
+leases, and rollback of expired-lease recovery when deletion fails. It also
+checks DELETE after the real Reuse RPC creates a draft from a stored version.
+The race
+cases observe PostgreSQL blocking before allowing the other transaction to
+commit. Writers that win against DELETE use seeded session/ledger changes under
+the real lock. When DELETE wins, the waiters are the actual generation claim,
+Review reserve and MVP Approve RPCs. This fixture has no runtime migration number.
+HTTP route and failed-clone cleanup cutover evidence is tracked in [EXT-04 M2](../../../docs/tasks/EXT-04.md).
+
 ## W4-MVP-07 export snapshot
 
 `test_export_snapshot_pg.py` requires backend Python dependencies, Docker CLI

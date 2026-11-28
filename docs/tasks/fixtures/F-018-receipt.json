@@ -1,0 +1,62 @@
+{
+  "artifact": "F-018",
+  "revision": 1,
+  "evidence": "synthetic_contract_examples",
+  "route": "GET /api/sessions/{session_id}/finalize/receipt",
+  "cases": {
+    "ext_approved_round": {
+      "http_status": 200,
+      "body": {
+        "session_id": "20000000-0000-4000-8000-000000000002",
+        "status": "approved",
+        "approved_at": "2026-11-28T08:30:00Z",
+        "message": "Đã duyệt và lưu",
+        "bank_item_id": "20000000-0000-4000-8000-000000000100",
+        "save_action": "append_existing",
+        "preview_revision": "synthetic-approved-preview-revision",
+        "versions": [
+          {
+            "version_id": "20000000-0000-4000-8000-000000000201",
+            "public_version_code": "105"
+          },
+          {
+            "version_id": "20000000-0000-4000-8000-000000000202",
+            "public_version_code": "106"
+          }
+        ]
+      }
+    },
+    "legacy_backfilled_round": {
+      "http_status": 200,
+      "body": {
+        "session_id": "20000000-0000-4000-8000-000000000003",
+        "status": "approved",
+        "approved_at": "2026-11-20T08:30:00Z",
+        "message": "Đã duyệt và lưu",
+        "bank_item_id": "20000000-0000-4000-8000-000000000101",
+        "save_action": "create_new",
+        "preview_revision": null,
+        "versions": [
+          {
+            "version_id": "20000000-0000-4000-8000-000000000203",
+            "public_version_code": "101"
+          }
+        ]
+      }
+    },
+    "unapproved_round": {
+      "http_status": 404,
+      "body": {
+        "error_code": "ERR_FINALIZE_RECEIPT_NOT_FOUND",
+        "detail": "Chưa có kết quả duyệt của lượt này."
+      }
+    },
+    "locked_round_missing_evidence": {
+      "http_status": 409,
+      "body": {
+        "error_code": "ERR_FINALIZE_RECEIPT_UNAVAILABLE",
+        "detail": "Không đọc được kết quả duyệt đã lưu của lượt này."
+      }
+    }
+  }
+}

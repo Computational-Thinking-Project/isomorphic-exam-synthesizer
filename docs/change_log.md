@@ -1,3 +1,27 @@
+## EXT-04 — Bank, Preview R09 và DELETE/Reuse — 28/11/2026
+
+- **Thay đổi:** thêm fixture Bank, backfill MVP và helper sức chứa theo I-EXT-02. Preview xác minh cả placeholder thiếu lời giải bằng provenance, lấy policy frozen theo từng slot và nhận evidence Revert theo Q-I01-R.
+- **Trạng thái:** SQL ở phạm vi rehearsal. Chốt migration và chuyển caller sau Q05. Mapping 1.2 dùng helper từ EXT-02 trên integration head. [M2 EXT-04](tasks/EXT-04.md)
+
+---
+
+## EXT-04 — Rehearsal DELETE/Q07 và mẫu receipt F-018 — 28/11/2026
+
+- **Trạng thái:** đã kiểm SQL DELETE trên PostgreSQL cô lập với 028/029/029b ghim theo head provider.
+- **Quyết định:** DELETE kiểm owner, trạng thái và các tác vụ dưới khóa phiên. Recovery Review hết lease chạy trong cùng transaction với DELETE. Việc chuyển caller, áp migration và kiểm quyền môi trường đích chờ Q05.
+- Mẫu receipt EXT/legacy và lỗi F-018 dùng cho mock UI. [M2 EXT-04](tasks/EXT-04.md#deleteq07-và-mẫu-receipt-f-018-ngày-28112026)
+
+---
+
+## DEC-EXT04-001 — Metadata và Settings theo owner — 28/11/2026
+
+- **Người đề xuất:** Quỳnh. **Trạng thái:** đã kiểm API và PostgreSQL cô lập; Q05 còn mở cho rollout.
+- **Ngữ cảnh:** mặc định metadata cần tách khỏi thông tin vận hành `subject`/`grade` của lượt đề. Hai bản PATCH partial đồng thời cần giữ được các field riêng của từng bản.
+- **Quyết định:** `GET/PATCH /api/users/me/settings` dùng chung model tám trường nullable. PostgreSQL lưu theo owner, có RLS và RPC merge các field gửi trong một lần ghi. Schema Settings ở fixture rehearsal tới khi xác nhận chuỗi migration Q05.
+- **Phạm vi:** router Users, `ExamMetadata`, schema/test rehearsal và contract Settings để Hùng tích hợp ở EXT-04. Xem [M2 EXT-04](tasks/EXT-04.md).
+
+---
+
 ## PR #109 — Windows full regression passed — 25/11/2026
 
 - Sau xác nhận của Philip về khả năng phát sinh telemetry, full frontend Windows **621/621 pass**,0fail/skip/cancel/108.27s, HEAD72adb9f/source8a6f600. [Checkpoint6.25](tasks/ISSUE-95.md) thay trạng thái full bị chặn/chưa xác nhận trước đó bằng kết quả mới.
