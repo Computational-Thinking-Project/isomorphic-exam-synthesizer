@@ -225,8 +225,8 @@ def test_written_boxes_has_one_row_of_a_to_d_boxes_per_question(count):
     exam = _exam_part(_render(config, count=count))
     sheet = exam[exam.index("PHIẾU TRẢ LỜI") : exam.index("*Câu 1:*")]
     for n in range(1, count + 1):
-        assert sheet.count(f"[*{n}.* ") == 1
-    assert f"[*{count + 1}.* " not in sheet
+        assert sheet.count(f"[*{n}.*]") == 1
+    assert f"[*{count + 1}.*]" not in sheet
     assert sheet.count("box(width: 9pt") == 4 * count
     # The sheet sits above the questions, below the student box.
     assert exam.index("Họ và tên") < exam.index("PHIẾU TRẢ LỜI") < exam.index("*Câu 1:*")

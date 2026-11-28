@@ -190,8 +190,11 @@ def _written_boxes(question_count: int) -> str:
             if number > question_count:
                 cells.append("[]")
                 continue
-            options = " ".join(f"#{box} {label}" for label in "ABCD")
-            cells.append(f"[*{number}.* {options}]")
+            # Letter then its box, with a wider gap before the next letter, so each box
+            # visibly belongs to one option. The whole row sits in one unbreakable box
+            # (no justification or wrapping) behind a fixed-width question number.
+            options = "#h(5pt)".join(f"{label}#h(1.5pt)#{box}" for label in "ABCD")
+            cells.append(f"[#box[#box(width: 17pt)[*{number}.*]{options}]]")
     # Typst fills row by row, so reorder column-major cells into reading order.
     ordered = [cells[col * rows + row] for row in range(rows) for col in range(columns)]
     return (
@@ -199,8 +202,8 @@ def _written_boxes(question_count: int) -> str:
         '  #text(weight: "bold")[PHIẾU TRẢ LỜI] '
         '#text(size: 9pt, style: "italic")[(đánh dấu X vào một ô cho mỗi câu)]\n'
         "  #v(4pt)\n"
-        f"  #grid(columns: ({', '.join(['1fr'] * columns)}), row-gutter: 6pt, "
-        f"{', '.join(ordered)})\n"
+        f"  #grid(columns: ({', '.join(['1fr'] * columns)}), column-gutter: 6pt, "
+        f"row-gutter: 7pt, {', '.join(ordered)})\n"
         "]\n#v(8pt)"
     )
 
