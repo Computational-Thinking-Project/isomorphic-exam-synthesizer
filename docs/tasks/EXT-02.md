@@ -93,7 +93,18 @@ Phase 1 (26/11, author self-check, not reviewed or accepted). Base `dev@b292443`
   - The worker calls it right after a shuffle-only job finishes `generated`. If it fails, the session stays `generated`, and the owner retries with `POST /api/sessions/{id}/shuffle-only/confirm` (in `routes/generation_config.py`, not `sessions.py`).
   - Manual Accept: `review_accept_question` is wrapped in 028b like the 029b Revert guard. A new Accept on a shuffle-only job raises `ERR_MODE_SHUFFLE_ONLY`; a stored receipt still replays. 029/029b do not redefine Accept, so Duy's files are unchanged.
   - Evidence gap from I-EXT-01: a question policy must bind to exactly one frozen confirmed source in both modes (`_generation_is_clone` in 028, `mode_mapper.slot_result_kind`).
-- **Not done yet:** Bank reuse endpoint (step 7, waits for the EXT-04 helper `_bank_capacity_check` and bank tables on an integration head). A03 end to end from generation to Preview on an integration head with 028 -> 028b -> 029 -> 029b.
+  - Audit: an owner-triggered confirmation (recovery route) writes one `review_logs` `ACCEPT` row per copy with the verified owner and reason `SHUFFLE_ONLY_CONFIRM`. The worker path writes none: `ck_review_logs_actor_required` forbids a NULL actor and the schema has no system-actor marker. Proposal for EXT-01: add an explicit system-actor marker if Review wants worker rows too.
+- **Step 7 core (28/11, no EXT-04 tables yet):** migration `028c_ext02_reuse_source.sql` (tentative) adds `public.reuse_session_source(source_session_id, source_type, source_version_id, generation_mode, idempotency_key)` (authenticated owner only) and private table `ext02_reuse_receipts`.
+  - It creates a new draft session (title/subject/grade inherited) whose source questions come from the frozen confirmed source (`original`) or from the stored post-shuffle projection of one finalized version (`version`: display order, options, display key, solution; old seed not applied; the solution placeholder becomes NULL).
+  - It enforces 1-20 questions and returns `next_step = confirm_source` (the new source is confirmed through the normal pipeline).
+  - Same user + key + payload replays the same session; a different payload raises `ERR_IDEMPOTENCY_CONFLICT`; any failure rolls back.
+  - Python: `services/generation/reuse_repository.py` validates the request and receipt and maps errors.
+  - TODO hook points for EXT-04: bank item lookup/ownership and `_bank_capacity_check`. The HTTP route `exam_bank_reuse.py` waits for them.
+- **A03 local rehearsal (28/11, not the agreed integration head):** EXT-02 `749c5b9` merged locally with EXT-01 `8fb21e6` (only a `change_log.md` conflict), chain 028 -> 028b -> 029 -> 029b.
+  - EXT-01 PG suites: 36 passed.
+  - EXT-02 suites plus A03 checks: 63 passed. These cover the worker auto-confirm to `reviewed`, Reject/Revert/Accept blocked with `ERR_MODE_SHUFFLE_ONLY`, an AI-mode clone slot with Reject `ERR_SLOT_POLICY_CLONE_ONLY` and Accept/Revert allowed, 0/21 vs 1/20 sources, and resume.
+  - One expected difference: the 028-only worker test that uses manual Accept is superseded by auto-confirm once 028b is applied. One 028b-before/after test was deselected.
+- **Not done yet:** Bank HTTP route and capacity check (wait for EXT-04 helper and bank tables), A03 on the agreed integration head.
 - I-EXT-03 v2 delivered on 26/11 after EXT-04 feedback; Integrated: not yet (needs the real DB projection after step 7).
 - **Accepted:** none yet.
 - **Pending:** Q05 numbering (028, 028b), A03 end to end with EXT-01, I-EXT-02 helper on an integration head, reviewer check of this head.
